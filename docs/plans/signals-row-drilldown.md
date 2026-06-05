@@ -251,7 +251,7 @@ DenseVirtualTable expanded-row support
 **Verification:**
 
 - Add or update a source/behavior test proving the side panel is gone and inline drilldown is present.
-- Run `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsRowModel.test.js src/features/platform/platformRootSource.test.js --test-name-pattern "Signals"`
+- Run `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsRowModel.validation.js src/features/platform/platformRootSource.validation.js --validation-name-pattern "Signals"`
 - `git diff --check -- artifacts/pyrus/src/screens/SignalsScreen.jsx`
 
 **Dependencies:** Task 1.
@@ -259,7 +259,7 @@ DenseVirtualTable expanded-row support
 **Files likely touched:**
 
 - `artifacts/pyrus/src/screens/SignalsScreen.jsx`
-- `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
 
 **Estimated scope:** Medium.
 
@@ -279,7 +279,7 @@ DenseVirtualTable expanded-row support
 **Verification:**
 
 - Add focused model/component-source tests for the drilldown sections.
-- Run `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsRowModel.test.js src/features/platform/platformRootSource.test.js --test-name-pattern "Signals"`
+- Run `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsRowModel.validation.js src/features/platform/platformRootSource.validation.js --validation-name-pattern "Signals"`
 - Browser QA later confirms text does not overlap at desktop and mobile widths.
 
 **Dependencies:** Task 2.
@@ -388,8 +388,8 @@ After Task 5:
 Use targeted commands first:
 
 ```bash
-pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsRowModel.test.js
-pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js --test-name-pattern "Signals"
+pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsRowModel.validation.js
+pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js --validation-name-pattern "Signals"
 pnpm --filter @workspace/pyrus run typecheck
 git diff --check -- artifacts/pyrus/src/screens/SignalsScreen.jsx artifacts/pyrus/src/features/signals/signalsRowModel.js artifacts/pyrus/src/components/platform/DenseVirtualTable.jsx docs/plans/signals-row-drilldown.md
 ```

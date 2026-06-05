@@ -455,9 +455,11 @@ async function runProfile(input: {
       if (profile.lastError) {
         await dependencies.updateProfileLastError(profile.id, null);
       }
-      return;
-    }
-    if (streamingAvailable) {
+      dependencies.logger.debug?.(
+        { profileId: profile.id, timeframe },
+        "Signal monitor stream is fresh; continuing bounded history backfill for coverage",
+      );
+    } else if (streamingAvailable) {
       dependencies.logger.debug?.(
         { profileId: profile.id, timeframe },
         "Signal monitor stream is configured but source activity is stale; running history fallback",

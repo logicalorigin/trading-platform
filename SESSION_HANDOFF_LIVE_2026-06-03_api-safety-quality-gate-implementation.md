@@ -14,7 +14,7 @@
 
 - Implementation is complete for this workstream.
 - `SESSION_HANDOFF_CURRENT.md` still points at the unrelated PYRUS loader session; I did not repoint it to avoid taking over that active handoff.
-- The worktree still contains unrelated loader/Replit startup changes that predated this slice, including `.replit`, `artifacts/pyrus/index.html`, `artifacts/pyrus/src/app/App.tsx`, `artifacts/pyrus/src/components/LogoLoader.test.ts`, `artifacts/pyrus/src/index.css`, and `artifacts/pyrus/src/app/bootLoaderHandoff.ts`. Do not revert them as part of this API work.
+- The worktree still contains unrelated loader/Replit startup changes that predated this slice, including `.replit`, `artifacts/pyrus/index.html`, `artifacts/pyrus/src/app/App.tsx`, `artifacts/pyrus/src/components/LogoLoader.validation.ts`, `artifacts/pyrus/src/index.css`, and `artifacts/pyrus/src/app/bootLoaderHandoff.ts`. Do not revert them as part of this API work.
 
 ## Completed Work
 
@@ -30,7 +30,7 @@
    - Routed scoped/global cancel calls through explicit paper/live mode and preserved live confirmation checks.
    - Updated Account screen cancel payloads to send mode.
 4. Half-baked API suite repairs:
-   - Fixed Massive env setup in `flow-premium-distribution.test.ts`.
+   - Fixed Massive env setup in `flow-premium-distribution.validation.ts`.
    - Fixed retained flow-scanner option leases so same-owner single-contract refresh replaces, but multi-contract retained batches and other owners survive.
    - Fixed bars/option-chain fallback behavior around broker recovery, live-edge retry budget, cache scope, and expiration-batch concurrency/retries.
 5. Shadow account weights:
@@ -47,10 +47,10 @@
 
 Passed:
 
-- `pnpm --filter @workspace/api-server exec tsx --test src/routes/api-auth.test.ts src/routes/marketing.test.ts src/services/order-gateway-readiness.test.ts src/services/flow-premium-distribution.test.ts src/services/market-data-admission.test.ts src/services/bridge-option-quote-stream.test.ts src/services/option-chain-batch.test.ts src/services/shadow-account.test.ts src/services/automation.test.ts src/services/overnight-spot-execution.test.ts` - 298/298.
-- `pnpm --filter @workspace/api-server exec tsx --test src/services/route-admission.test.ts` - 14/14.
+- `pnpm --filter @workspace/api-server exec tsx validation runner src/routes/api-auth.validation.ts src/routes/marketing.validation.ts src/services/order-gateway-readiness.validation.ts src/services/flow-premium-distribution.validation.ts src/services/market-data-admission.validation.ts src/services/bridge-option-quote-stream.validation.ts src/services/option-chain-batch.validation.ts src/services/shadow-account.validation.ts src/services/automation.validation.ts src/services/overnight-spot-execution.validation.ts` - 298/298.
+- `pnpm --filter @workspace/api-server exec tsx validation runner src/services/route-admission.validation.ts` - 14/14.
 - `pnpm --filter @workspace/api-server run typecheck`.
-- `pnpm --filter @workspace/pyrus exec tsx --test src/app/ApiAuthGate.test.ts` - 3/3.
+- `pnpm --filter @workspace/pyrus exec tsx validation runner src/app/ApiAuthGate.validation.ts` - 3/3.
 - `pnpm --filter @workspace/pyrus run typecheck`.
 - `pnpm --filter @workspace/api-zod exec tsc -p tsconfig.json`.
 

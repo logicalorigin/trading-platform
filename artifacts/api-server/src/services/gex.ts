@@ -18,12 +18,15 @@ import {
 } from "./platform";
 import {
   enqueueMarketDataJob,
+  getMarketDataIngestDiagnostics,
   getLatestChartGexSnapshot,
   getLatestGexSnapshot,
   isMarketDataIngestDatabaseConfigured,
   isMarketDataIngestConfigured,
   type EnqueueMarketDataJobInput,
+  type EnqueueMarketDataJobResult,
   type LatestGexSnapshot,
+  type MarketDataIngestDiagnostics,
 } from "./market-data-ingest";
 import {
   buildGexProjection,
@@ -40,10 +43,10 @@ export type GexOptionRow = {
   expireMonth: number;
   expireDay: number;
   cp: "C" | "P";
-  ticker: string | null;
-  underlying: string | null;
+  ticker?: string | null;
+  underlying?: string | null;
   expirationDate: string;
-  providerContractId: string | null;
+  providerContractId?: string | null;
   gamma: number;
   delta: number;
   openInterest: number;
@@ -51,11 +54,11 @@ export type GexOptionRow = {
   bid: number;
   ask: number;
   multiplier: number;
-  sharesPerContract: number;
-  volume: number;
-  updatedAt: string | null;
-  quoteFreshness: MarketDataFreshness | null;
-  marketDataMode: string | null;
+  sharesPerContract?: number;
+  volume?: number;
+  updatedAt?: string | null;
+  quoteFreshness?: MarketDataFreshness | null;
+  marketDataMode?: string | null;
 };
 
 export type GexResponse = {
@@ -179,6 +182,10 @@ const GEX_DASHBOARD_CACHE_TTL_MS = readPositiveIntegerEnv(
   "GEX_DASHBOARD_CACHE_TTL_MS",
   15_000,
 );
+const GEX_DASHBOARD_STALE_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "GEX_DASHBOARD_STALE_CACHE_TTL_MS",
+  5_000,
+);
 const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
   "GEX_DASHBOARD_LOAD_TIMEOUT_MS",
   10_000,
@@ -233,6 +240,7 @@ let gexIngestFacadeForTests: {
   getLatestChartGexSnapshot?: typeof getLatestChartGexSnapshot;
   getLatestGexSnapshot?: typeof getLatestGexSnapshot;
   enqueueMarketDataJob?: typeof enqueueMarketDataJob;
+  getDiagnostics?: typeof getMarketDataIngestDiagnostics;
   isConfigured?: typeof isMarketDataIngestConfigured;
 } | null = null;
 let gexProjectionRatesProviderForTests:
@@ -341,9 +349,12 @@ function getGexIngestFacade(): {
   getLatestChartGexSnapshot: typeof getLatestChartGexSnapshot;
   getLatestGexSnapshot: typeof getLatestGexSnapshot;
   enqueueMarketDataJob: typeof enqueueMarketDataJob;
+  getDiagnostics: typeof getMarketDataIngestDiagnostics;
   isConfigured: typeof isMarketDataIngestConfigured;
 } {
   const testFullSnapshot = gexIngestFacadeForTests?.getLatestGexSnapshot;
+  const isConfigured =
+    gexIngestFacadeForTests?.isConfigured ?? isMarketDataIngestConfigured;
   return {
     getLatestChartGexSnapshot:
       gexIngestFacadeForTests?.getLatestChartGexSnapshot ??
@@ -354,8 +365,34 @@ function getGexIngestFacade(): {
       testFullSnapshot ?? getLatestGexSnapshot,
     enqueueMarketDataJob:
       gexIngestFacadeForTests?.enqueueMarketDataJob ?? enqueueMarketDataJob,
-    isConfigured:
-      gexIngestFacadeForTests?.isConfigured ?? isMarketDataIngestConfigured,
+    getDiagnostics:
+      gexIngestFacadeForTests?.getDiagnostics ??
+      (gexIngestFacadeForTests
+        ? async () => buildNeutralGexIngestDiagnostics(isConfigured())
+        : getMarketDataIngestDiagnostics),
+    isConfigured,
+  };
+}
+
+function buildNeutralGexIngestDiagnostics(
+  configured: boolean,
+): MarketDataIngestDiagnostics {
+  return {
+    configured,
+    providerConfigured: configured,
+    queueDepth: {},
+    oldestQueuedAgeMs: null,
+    runningCount: 0,
+    expiredLeaseCount: 0,
+    claimableQueuedJobCount: 0,
+    claimableQueuedJobsByKind: {},
+    workerLikelyInactive: false,
+    workerInactiveReason: null,
+    blockedGexJobCount: 0,
+    oldestBlockedGexAgeMs: null,
+    blockedGexJobs: [],
+    recentProviderFailures: [],
+    recentCompletedJobs: [],
   };
 }
 
@@ -530,39 +567,196 @@ async function waitForChartGexProjectionChain(
 async function queueGexSnapshotRefresh(
   ticker: string,
   reason: string,
-): Promise<void> {
+): Promise<GexSnapshotRefreshOutcome> {
   const dedupeBucket = Math.floor(Date.now() / 60_000);
   const facade = getGexIngestFacade();
   const baseInput = {
     symbol: ticker,
     payload: { reason, dedupeBucket },
   } satisfies Pick<EnqueueMarketDataJobInput, "symbol" | "payload">;
-  await Promise.all([
-    facade.enqueueMarketDataJob({
+  const inputs = [
+    {
       ...baseInput,
       priority: 1,
-      kind: "stock_snapshot",
-    }),
-    facade.enqueueMarketDataJob({
+      kind: "stock_snapshot" as const,
+    },
+    {
       ...baseInput,
       priority: 2,
-      kind: "option_chain_snapshot",
-    }),
-    facade.enqueueMarketDataJob({
+      kind: "option_chain_snapshot" as const,
+    },
+    {
       ...baseInput,
       priority: 3,
-      kind: "gex_snapshot",
+      kind: "gex_snapshot" as const,
+    },
+  ];
+  const results = await Promise.all(
+    inputs.map(async (input): Promise<GexSnapshotRefreshJobResult> => {
+      try {
+        const result = await facade.enqueueMarketDataJob(input);
+        return { kind: input.kind, ...result };
+      } catch (error) {
+        return {
+          kind: input.kind,
+          queued: false,
+          dedupeKey: "",
+          reason:
+            error instanceof Error && error.message
+              ? error.message
+              : "enqueue_error",
+        };
+      }
     }),
-  ]);
+  );
+  let diagnostics: MarketDataIngestDiagnostics | null = null;
+  let diagnosticsError: string | null = null;
+  try {
+    diagnostics = await facade.getDiagnostics();
+  } catch (error) {
+    diagnosticsError =
+      error instanceof Error && error.message
+        ? error.message
+        : "diagnostics_unavailable";
+  }
+  return {
+    results,
+    allQueued: results.every((result) => result.queued),
+    diagnostics,
+    diagnosticsError,
+    workerLikelyInactive: Boolean(diagnostics?.workerLikelyInactive),
+    workerInactiveReason: diagnostics?.workerInactiveReason ?? null,
+  };
+}
+
+type GexSnapshotRefreshJobKind =
+  | "stock_snapshot"
+  | "option_chain_snapshot"
+  | "gex_snapshot";
+
+type GexSnapshotRefreshJobResult = EnqueueMarketDataJobResult & {
+  kind: GexSnapshotRefreshJobKind;
+};
+
+type GexSnapshotRefreshOutcome = {
+  results: GexSnapshotRefreshJobResult[];
+  allQueued: boolean;
+  diagnostics: MarketDataIngestDiagnostics | null;
+  diagnosticsError: string | null;
+  workerLikelyInactive: boolean;
+  workerInactiveReason: string | null;
+};
+
+function describeGexRefreshFailures(
+  outcome: GexSnapshotRefreshOutcome,
+): string {
+  return outcome.results
+    .filter((result) => !result.queued)
+    .map((result) =>
+      result.reason ? `${result.kind} (${result.reason})` : result.kind,
+    )
+    .join(", ");
+}
+
+function buildGexRefreshPendingDetail(ticker: string): string {
+  return `The market-data ingest worker must hydrate option-chain data and compute a GEX snapshot for ${ticker} before this route can return fresh data.`;
+}
+
+function buildGexRefreshUnavailableError(
+  ticker: string,
+  outcome: GexSnapshotRefreshOutcome,
+): HttpError | null {
+  const failures = describeGexRefreshFailures(outcome);
+  if (failures) {
+    return new HttpError(
+      503,
+      `GEX snapshot refresh could not be queued for ${ticker}.`,
+      {
+        code: "gex_snapshot_enqueue_failed",
+        detail: `The refresh queue rejected one or more required jobs: ${failures}.`,
+      },
+    );
+  }
+  if (outcome.workerLikelyInactive) {
+    const reason =
+      outcome.workerInactiveReason ?? "claimable jobs are waiting without a running worker";
+    return new HttpError(
+      503,
+      `GEX snapshot worker appears inactive for ${ticker}.`,
+      {
+        code: "gex_snapshot_worker_inactive",
+        detail: `${buildGexRefreshPendingDetail(ticker)} Worker diagnostic: ${reason}.`,
+      },
+    );
+  }
+  return null;
+}
+
+function buildPersistedGexStaleMessage(
+  outcome: GexSnapshotRefreshOutcome | null,
+): string {
+  if (!outcome) {
+    return "Returning the latest persisted GEX snapshot while a refresh is being scheduled.";
+  }
+  const failures = describeGexRefreshFailures(outcome);
+  if (failures) {
+    return `Returning the latest persisted GEX snapshot because the refresh queue rejected required jobs: ${failures}.`;
+  }
+  if (outcome.workerLikelyInactive) {
+    const reason =
+      outcome.workerInactiveReason ?? "claimable jobs are waiting without a running worker";
+    return `Returning the latest persisted GEX snapshot; refresh jobs are queued but the market-data ingest worker appears inactive (${reason}).`;
+  }
+  if (outcome.diagnosticsError) {
+    return `Returning the latest persisted GEX snapshot while a refresh is queued. Ingest diagnostics were unavailable: ${outcome.diagnosticsError}.`;
+  }
+  return "Returning the latest persisted GEX snapshot while a refresh is queued.";
 }
 
 function markPersistedGexSnapshotStale(
   snapshot: LatestGexSnapshot,
+  outcome: GexSnapshotRefreshOutcome | null,
 ): GexResponse {
   return markGexDashboardStale(
-    snapshot.payload,
-    "Returning the latest persisted GEX snapshot while a refresh is queued.",
+    compactPersistedGexDashboard(snapshot.payload),
+    buildPersistedGexStaleMessage(outcome),
   );
+}
+
+function cachePersistedGexSnapshotStale(
+  ticker: string,
+  snapshot: LatestGexSnapshot,
+  outcome: GexSnapshotRefreshOutcome | null,
+): GexResponse {
+  const stale = markPersistedGexSnapshotStale(snapshot, outcome);
+  gexDashboardCache.set(ticker, {
+    expiresAt: Date.now() + GEX_DASHBOARD_STALE_CACHE_TTL_MS,
+    data: stale,
+  });
+  return stale;
+}
+
+function schedulePersistedGexSnapshotRefresh(
+  ticker: string,
+  snapshot: LatestGexSnapshot,
+  reason: string,
+): GexResponse {
+  const stale = cachePersistedGexSnapshotStale(ticker, snapshot, null);
+  void queueGexSnapshotRefresh(ticker, reason)
+    .then((outcome) => {
+      const current = gexDashboardCache.get(ticker);
+      if (
+        current?.data?.isStale === true &&
+        current.data.ticker === stale.ticker &&
+        current.data.timestamp === stale.timestamp
+      ) {
+        cachePersistedGexSnapshotStale(ticker, snapshot, outcome);
+      }
+    })
+    .catch(() => {
+      // Stale data is already cached for the caller; the next cache miss will retry.
+    });
+  return stale;
 }
 
 function firstEnv(names: string[]): string | null {
@@ -990,6 +1184,105 @@ function ensureGexExpirationCoverage(data: GexResponse): GexResponse {
   };
 }
 
+function resolveGexDashboardReferenceTimeMs(data: GexResponse): number {
+  for (const value of [
+    data.timestamp,
+    data.source.chainUpdatedAt,
+    data.source.quoteUpdatedAt,
+  ]) {
+    const time = Date.parse(String(value || ""));
+    if (Number.isFinite(time)) {
+      return time;
+    }
+  }
+  return Date.now();
+}
+
+function validGexExpirationParts(
+  year: number | null,
+  month: number | null,
+  day: number | null,
+): { year: number; month: number; day: number } | null {
+  if (
+    year == null ||
+    month == null ||
+    day == null ||
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return null;
+  }
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+function compactPersistedGexOption(row: GexOptionRow): GexOptionRow | null {
+  const strike = finiteOrNull(row.strike);
+  const expiration = validGexExpirationParts(
+    finiteOrNull(row.expireYear),
+    finiteOrNull(row.expireMonth),
+    finiteOrNull(row.expireDay),
+  );
+  const cp = row.cp === "C" || row.cp === "P" ? row.cp : null;
+  if (strike == null || !expiration || !cp) {
+    return null;
+  }
+  const multiplier =
+    positiveOrNull(row.multiplier) ??
+    positiveOrNull(row.sharesPerContract) ??
+    100;
+
+  return {
+    strike,
+    expireYear: expiration.year,
+    expireMonth: expiration.month,
+    expireDay: expiration.day,
+    cp,
+    expirationDate:
+      row.expirationDate ||
+      `${String(expiration.year).padStart(4, "0")}-${String(
+        expiration.month,
+      ).padStart(2, "0")}-${String(expiration.day).padStart(2, "0")}`,
+    gamma: finiteOrZero(row.gamma),
+    delta: finiteOrZero(row.delta),
+    openInterest: Math.max(0, finiteOrZero(row.openInterest)),
+    impliedVol: finiteOrZero(row.impliedVol),
+    bid: finiteOrZero(row.bid),
+    ask: finiteOrZero(row.ask),
+    multiplier,
+  };
+}
+
+function compactPersistedGexDashboard(data: GexResponse): GexResponse {
+  const normalized = ensureGexExpirationCoverage(data);
+  const referenceTimeMs = resolveGexDashboardReferenceTimeMs(normalized);
+  const options = normalized.options.flatMap((row) => {
+    const compact = compactPersistedGexOption(row);
+    if (!compact) {
+      return [];
+    }
+    const expirationTimeMs = gexRowExpirationTimeMs(compact);
+    if (expirationTimeMs != null && expirationTimeMs <= referenceTimeMs) {
+      return [];
+    }
+    return [compact];
+  });
+
+  return {
+    ...normalized,
+    options,
+  };
+}
+
 function markGexDashboardStale(data: GexResponse, message: string): GexResponse {
   const normalized = ensureGexExpirationCoverage(data);
   return {
@@ -1300,7 +1593,7 @@ export async function getGexDashboardData(input: {
       GEX_SNAPSHOT_MAX_AGE_MS,
     );
     if (snapshot && !snapshot.stale) {
-      const payload = ensureGexExpirationCoverage(snapshot.payload);
+      const payload = compactPersistedGexDashboard(snapshot.payload);
       gexDashboardCache.set(ticker, {
         expiresAt: Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
         data: payload,
@@ -1308,20 +1601,27 @@ export async function getGexDashboardData(input: {
       return payload;
     }
     if (snapshot) {
-      void queueGexSnapshotRefresh(ticker, "gex_snapshot_stale").catch(() => {});
-      const stale = markPersistedGexSnapshotStale(snapshot);
-      gexDashboardCache.set(ticker, {
-        expiresAt: 0,
-        data: stale,
-      });
-      return stale;
+      return schedulePersistedGexSnapshotRefresh(
+        ticker,
+        snapshot,
+        "gex_snapshot_stale",
+      );
     }
     if (facade.isConfigured()) {
-      await queueGexSnapshotRefresh(ticker, "gex_snapshot_missing");
+      const refresh = await queueGexSnapshotRefresh(
+        ticker,
+        "gex_snapshot_missing",
+      );
+      const unavailableError = buildGexRefreshUnavailableError(
+        ticker,
+        refresh,
+      );
+      if (unavailableError) {
+        throw unavailableError;
+      }
       throw new HttpError(503, `GEX snapshot is pending for ${ticker}.`, {
         code: "gex_snapshot_pending",
-        detail:
-          "The market-data ingest worker must hydrate option-chain data and compute a GEX snapshot before this route can return fresh data.",
+        detail: buildGexRefreshPendingDetail(ticker),
       });
     }
   }
@@ -1344,7 +1644,14 @@ export async function getGexZeroGammaData(input: {
   try {
     data = await getGexDashboardData(input);
   } catch (error) {
-    if (isHttpError(error) && error.code === "gex_snapshot_pending") {
+    if (
+      isHttpError(error) &&
+      [
+        "gex_snapshot_pending",
+        "gex_snapshot_enqueue_failed",
+        "gex_snapshot_worker_inactive",
+      ].includes(String(error.code))
+    ) {
       const ticker = normalizeSymbol(input.underlying);
       return {
         ticker,

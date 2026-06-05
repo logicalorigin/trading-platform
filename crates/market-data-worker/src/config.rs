@@ -25,8 +25,11 @@ pub struct MarketDataProviderConfig {
 impl WorkerConfig {
     pub fn from_env() -> Result<Self> {
         let database_url = std::env::var("DATABASE_URL")
+            .or_else(|_| std::env::var("LOCAL_DATABASE_URL"))
             .or_else(|_| build_pg_env_database_url())
-            .map_err(|_| anyhow!("DATABASE_URL or PG* database env must be set"))?;
+            .map_err(|_| {
+                anyhow!("DATABASE_URL, LOCAL_DATABASE_URL, or PG* database env must be set")
+            })?;
         let worker_id = std::env::var("MARKET_DATA_WORKER_ID")
             .unwrap_or_else(|_| format!("market-data-worker:{}", std::process::id()));
         Ok(Self {
@@ -95,22 +98,14 @@ fn first_env(names: &[&str]) -> Option<String> {
 }
 
 fn read_market_data_provider_config() -> Option<MarketDataProviderConfig> {
-    if let Some(api_key) = first_env(&["MASSIVE_API_KEY", "MASSIVE_MARKET_DATA_API_KEY"]) {
-        return Some(MarketDataProviderConfig {
+    first_env(&["MASSIVE_API_KEY", "MASSIVE_MARKET_DATA_API_KEY"]).map(|api_key| {
+        MarketDataProviderConfig {
             provider: "massive".into(),
             base_url: std::env::var("MASSIVE_API_BASE_URL")
                 .unwrap_or_else(|_| "https://api.massive.com".into())
                 .trim_end_matches('/')
                 .to_string(),
             api_key,
-        });
-    }
-    first_env(&["MASSIVE_API_KEY", "MASSIVE_MARKET_DATA_API_KEY"]).map(|api_key| MarketDataProviderConfig {
-        provider: "massive".into(),
-        base_url: std::env::var("MASSIVE_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.massive.com".into())
-            .trim_end_matches('/')
-            .to_string(),
-        api_key,
+        }
     })
 }

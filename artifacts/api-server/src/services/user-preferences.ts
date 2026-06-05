@@ -100,7 +100,15 @@ const toSnapshot = (row: {
   updatedAt: row.updatedAt.toISOString(),
 });
 
-export async function getUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
+let cachedPreferenceSnapshot: PreferenceSnapshot | null = null;
+let preferenceSnapshotReadPromise: Promise<PreferenceSnapshot> | null = null;
+
+export function __clearUserPreferencesCacheForTests(): void {
+  cachedPreferenceSnapshot = null;
+  preferenceSnapshotReadPromise = null;
+}
+
+async function loadUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
   try {
     const rows = await db
       .select()
@@ -122,6 +130,25 @@ export async function getUserPreferencesSnapshot(): Promise<PreferenceSnapshot> 
   } catch {
     return readFallback();
   }
+}
+
+export async function getUserPreferencesSnapshot(): Promise<PreferenceSnapshot> {
+  if (cachedPreferenceSnapshot) {
+    return cachedPreferenceSnapshot;
+  }
+  if (preferenceSnapshotReadPromise) {
+    return preferenceSnapshotReadPromise;
+  }
+
+  preferenceSnapshotReadPromise = loadUserPreferencesSnapshot()
+    .then((snapshot) => {
+      cachedPreferenceSnapshot = snapshot;
+      return snapshot;
+    })
+    .finally(() => {
+      preferenceSnapshotReadPromise = null;
+    });
+  return preferenceSnapshotReadPromise;
 }
 
 export async function updateUserPreferencesSnapshot(
@@ -153,8 +180,12 @@ export async function updateUserPreferencesSnapshot(
         },
       })
       .returning();
-    return toSnapshot(updated);
+    const snapshot = toSnapshot(updated);
+    cachedPreferenceSnapshot = snapshot;
+    return snapshot;
   } catch {
-    return writeFallback(preferences);
+    const snapshot = writeFallback(preferences);
+    cachedPreferenceSnapshot = snapshot;
+    return snapshot;
   }
 }

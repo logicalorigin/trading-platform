@@ -80,6 +80,10 @@ import {
   type StockMinuteAggregateSubscription,
   type StockMinuteAggregateMessage,
 } from "./stock-aggregate-stream";
+import {
+  loadSignalMonitorLocalBarCache,
+  primeSignalMonitorLocalBarCache,
+} from "./signal-monitor-local-bar-cache";
 
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
@@ -197,6 +201,7 @@ const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
   "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
+const SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS = 60_000;
 const SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
@@ -252,27 +257,27 @@ const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
 const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
 const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
-  number
+  number | null
 > = {
-  normal: 240,
-  watch: 240,
-  high: 240,
+  normal: null,
+  watch: null,
+  high: null,
 };
 const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
-  number
+  number | null
 > = {
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 };
 const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
-  number
+  number | null
 > = {
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -662,7 +667,7 @@ function resolveSignalMonitorMatrixExactCells(input: {
   const allowedSymbols = new Set(input.allowedSymbols);
   const cells = normalizedCells.filter((cell) => allowedSymbols.has(cell.symbol));
   const cap = resolveSignalMonitorMatrixExactCellCap(input);
-  if (cells.length > cap) {
+  if (cap != null && cells.length > cap) {
     throw new HttpError(400, "Signal monitor matrix exact-cell request is too large.", {
       code: "signal_monitor_matrix_cells_limit_exceeded",
       detail: `At ${input.pressure} pressure, request at most ${cap} matrix cells.`,
@@ -1412,6 +1417,10 @@ let signalMonitorMatrixStockAggregateSubscription: StockMinuteAggregateSubscript
 let signalMonitorMatrixStockAggregateReleaseTimer: ReturnType<
   typeof setTimeout
 > | null = null;
+let signalMonitorLocalBarCacheWarmupStarted = false;
+let signalMonitorLocalBarCacheWarmupTimer: ReturnType<typeof setInterval> | null =
+  null;
+let signalMonitorLocalBarCacheWarmupInFlight = false;
 const signalMonitorCompletedBarsCounters = {
   hit: 0,
   staleHit: 0,
@@ -2849,17 +2858,56 @@ function loadSignalMonitorStreamCompletedBars(input: {
   });
 }
 
-function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
-  if (
-    !isBackgroundStockAggregateStreamingEnabled() &&
-    !isForegroundSignalMatrixStockAggregateStreamingEnabled()
-  ) {
+async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
+  if (signalMonitorLocalBarCacheWarmupInFlight) {
     return;
   }
+  signalMonitorLocalBarCacheWarmupInFlight = true;
+  try {
+    const environment = getRuntimeMode();
+    const profile = getRuntimeSignalMonitorProfile(environment);
+    const resolved = await resolveSignalMonitorProfileUniverse(profile, {
+      ensureWatchlist: false,
+    });
+    const symbols = resolveSignalMonitorUniverseSymbols(resolved);
+    if (symbols.length) {
+      primeSignalMonitorLocalBarCache(symbols);
+    }
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Signal monitor local bar cache warmup failed",
+    );
+  } finally {
+    signalMonitorLocalBarCacheWarmupInFlight = false;
+  }
+}
+
+export function startSignalMonitorLocalBarCacheWarmup(): void {
+  if (signalMonitorLocalBarCacheWarmupStarted) {
+    return;
+  }
+  signalMonitorLocalBarCacheWarmupStarted = true;
+  void refreshSignalMonitorLocalBarCacheWarmup();
+  signalMonitorLocalBarCacheWarmupTimer = setInterval(() => {
+    void refreshSignalMonitorLocalBarCacheWarmup();
+  }, SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS);
+  signalMonitorLocalBarCacheWarmupTimer.unref?.();
+}
+
+function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
   if (!normalizedSymbols.length) {
+    return;
+  }
+
+  primeSignalMonitorLocalBarCache(normalizedSymbols);
+  if (
+    !isBackgroundStockAggregateStreamingEnabled() &&
+    !isForegroundSignalMatrixStockAggregateStreamingEnabled()
+  ) {
     return;
   }
 
@@ -4107,6 +4155,39 @@ export async function loadSignalMonitorCompletedBars(input: {
       input.evaluatedAt,
     );
   };
+  const readLocalCacheCompletedBars = async () => {
+    if (barSourcePolicy === "ibkr-only") {
+      return [];
+    }
+    const bars = await loadSignalMonitorLocalBarCache({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+      limit: completedLimit,
+    });
+    return buildCompletedBars(bars);
+  };
+  const readFreshLocalCacheSnapshot = async () => {
+    const localBars = await readLocalCacheCompletedBars();
+    if (!localBars.length) {
+      return null;
+    }
+    const snapshot = {
+      bars: localBars.slice(-completedLimit),
+      latestBarAt: signalMonitorBarClosedAt(localBars.at(-1)),
+    };
+    if (
+      localBars.length >= completedLimit &&
+      !shouldRetrySignalMonitorCompletedBars({
+        completedBars: snapshot.bars,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+      })
+    ) {
+      return snapshot;
+    }
+    return null;
+  };
   const readPreviousCacheWithLiveEdge = () => {
     if (
       input.retryStale === false ||
@@ -4189,6 +4270,12 @@ export async function loadSignalMonitorCompletedBars(input: {
   if (liveEdgeCached) {
     return cloneCompletedBarsSnapshot(liveEdgeCached);
   }
+  const localCacheSnapshot = await readFreshLocalCacheSnapshot();
+  throwIfSignalMonitorAborted(input.signal);
+  if (localCacheSnapshot) {
+    writeSignalMonitorCompletedBarsCache(cacheKey, localCacheSnapshot);
+    return cloneCompletedBarsSnapshot(localCacheSnapshot);
+  }
   const inFlight = signalMonitorCompletedBarsInFlight.get(cacheKey);
   if (inFlight) {
     signalMonitorCompletedBarsCounters.inFlightJoin += 1;
@@ -4227,6 +4314,8 @@ export async function loadSignalMonitorCompletedBars(input: {
       throwIfSignalMonitorAborted(input.signal);
       latestBar = completedBars.at(-1);
     }
+    acceptNewerBars(await readLocalCacheCompletedBars(), true);
+    throwIfSignalMonitorAborted(input.signal);
     acceptNewerBars(
       filterSignalMonitorBarsForSourcePolicy(
         loadSignalMonitorStreamCompletedBars({

@@ -129,7 +129,7 @@ function quoteFromState(state: QuoteState): MassiveStockQuote | null {
     vega: null,
     updatedAt: state.updatedAt,
     providerContractId: null,
-    transport: "tws",
+    transport: "massive_websocket",
     delayed: false,
     freshness: "live",
     marketDataMode: "live",

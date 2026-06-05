@@ -19,11 +19,11 @@
 
 - `artifacts/pyrus/src/features/charting/PyrusSignalsSettingsMenu.tsx`
 - `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx`
-- `artifacts/pyrus/src/features/charting/ResearchChartSurface.test.ts`
+- `artifacts/pyrus/src/features/charting/ResearchChartSurface.validation.ts`
 - `artifacts/pyrus/src/features/charting/model.ts`
-- `artifacts/pyrus/src/features/charting/model.test.ts`
+- `artifacts/pyrus/src/features/charting/model.validation.ts`
 - `artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.ts`
-- `artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.test.ts`
+- `artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.validation.ts`
 - `artifacts/pyrus/src/features/charting/types.ts`
 - `artifacts/pyrus/src/features/trade/TradeEquityPanel.jsx`
 - `artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx`
@@ -31,10 +31,10 @@
 
 ## Validation Snapshot
 
-- `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1 pnpm --filter @workspace/pyrus exec playwright test e2e/chart-parity.spec.ts -g "renders the live Pyrus Signals parity fixture and settings surface" --config playwright.config.ts` from `artifacts/pyrus` — passed.
+- `PYRUS_BROWSER_QA_NO_WEB_SERVER=1 pnpm --filter @workspace/pyrus exec browser QA test e2e/chart-parity.browser-validation.ts -g "renders the live Pyrus Signals parity fixture and settings surface" --config browser QA.config.ts` from `artifacts/pyrus` — passed.
 - Safe browser probe: `/?pyrusQa=safe&lab=chart-parity&scenario=pyrus-signals`, primary chart switched to `1m`, secondary badges enabled, source timeframe `2m` selected — rendered five `2m BUY/SELL` badges with `data-chart-indicator-source-timeframe="2m"` and no page/console errors.
 - Safe browser probe: `/?pyrusQa=safe&lab=chart-parity&scenario=pyrus-signals`, default `5m` chart, secondary badges enabled, source timeframe `15m` selected — rendered three `15m BUY/SELL` badges with `data-chart-indicator-source-timeframe="15m"` and no page/console errors.
-- `node --import tsx --test src/features/charting/model.test.ts src/features/charting/pyrusSignalsPineAdapter.test.ts src/features/charting/ResearchChartSurface.test.ts` from `artifacts/pyrus` — passed, 119 tests.
+- `node JS validation runner src/features/charting/model.validation.ts src/features/charting/pyrusSignalsPineAdapter.validation.ts src/features/charting/ResearchChartSurface.validation.ts` from `artifacts/pyrus` — passed, 119 tests.
 - `pnpm --filter @workspace/pyrus run typecheck` — passed.
 - `git diff --check -- <secondary-signal touched files and live handoff>` — passed.
 - Prior handoff validation: focused Node charting tests passed, `pnpm --filter @workspace/pyrus run typecheck` passed, and `git diff --check` on touched files passed.

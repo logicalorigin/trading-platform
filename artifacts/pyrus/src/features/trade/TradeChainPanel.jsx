@@ -6,6 +6,7 @@ import {
   useRef,
 } from "react";
 import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
+import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -208,6 +209,7 @@ const ChainStatePanel = ({
   detail,
   loading = false,
   actionLabel = null,
+  loadingWaitItems = null,
   onAction = null,
   tone = CSS_COLOR.textSec,
 }) => (
@@ -258,6 +260,22 @@ const ChainStatePanel = ({
         {title}
       </span>
       <span style={{ fontSize: textSize("caption"), fontFamily: T.sans }}>{detail}</span>
+      {loading ? (
+        <ContainerLoadingStatus
+          items={
+            loadingWaitItems || [
+              {
+                id: `${title}:wait`,
+                label: title,
+                status: "loading",
+                detail,
+                endpoint: "/api/options/chains",
+              },
+            ]
+          }
+          testId="trade-chain-loading-waits"
+        />
+      ) : null}
     </span>
     {actionLabel && onAction ? (
       <button

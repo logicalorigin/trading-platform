@@ -27,11 +27,11 @@ Two important findings remain:
 | `pnpm run typecheck` | pass | Libs, artifacts, and scripts typechecked. |
 | `pnpm run deadcode` | pass | No knip findings in files/dependencies/catalog pass. |
 | `pnpm run deadcode:prod` | pass | No production knip findings in files/exports/types/duplicates pass. |
-| `pnpm --filter @workspace/pyrus run test:unit` | pass | 676/676 passed. |
-| `pnpm --filter @workspace/api-server run test:unit` | pass on rerun | First full run had one transient diagnostics failure; targeted file and full rerun passed. |
+| `pnpm --filter @workspace/pyrus run unit validation` | pass | 676/676 passed. |
+| `pnpm --filter @workspace/api-server run unit validation` | pass on rerun | First full run had one transient diagnostics failure; targeted file and full rerun passed. |
 | `pnpm run build` | pass | Typecheck plus all artifact builds passed. |
 
-API unit detail: the first full run failed `diagnostics treat quiet market stream as healthy` with `true !== false` at `artifacts/api-server/src/services/diagnostics.test.ts:639`. Running `diagnostics.test.ts` alone passed 18/18, and rerunning the full API unit suite passed 461/461. Treat this as a watch item for diagnostics test isolation, not a blocking current failure.
+API unit detail: the first full run failed `diagnostics treat quiet market stream as healthy` with `true !== false` at `artifacts/api-server/src/services/diagnostics.validation.ts:639`. Running `diagnostics.validation.ts` alone passed 18/18, and rerunning the full API unit suite passed 461/461. Treat this as a watch item for diagnostics test isolation, not a blocking current failure.
 
 ## Findings
 
@@ -42,7 +42,7 @@ Evidence:
 - `artifacts/pyrus/src/features/platform/appWorkScheduler.js` computes `broadFlowAllowed` from `visible && sessionReady`, so `streams.broadFlowRuntime` becomes false when `pageVisible` is false.
 - `artifacts/pyrus/src/features/platform/PlatformRuntimeLayer.jsx` passes `workSchedule.streams.broadFlowRuntime` into `BroadFlowScannerRuntime`.
 - `artifacts/pyrus/src/features/platform/MarketFlowRuntimeLayer.jsx` clears `BROAD_MARKET_FLOW_STORE_KEY` when `runtimeActive` is false.
-- `artifacts/pyrus/src/features/platform/appWorkScheduler.test.js` explicitly asserts `defers broad flow runtime while page is hidden`.
+- `artifacts/pyrus/src/features/platform/appWorkScheduler.validation.js` explicitly asserts `defers broad flow runtime while page is hidden`.
 - `artifacts/pyrus/src/features/platform/useLiveMarketFlow.js` also slows client-symbol scanner scheduling by 6x when `document.hidden`.
 
 Conclusion: the scanner is already independent of the active app screen, but not independent of browser page visibility. If "not being viewed" means the Flow tab/screen is inactive, current scheduling is mostly correct. If it means the browser tab/page is hidden, the current behavior intentionally disables the frontend broad-flow runtime and clears the broad-flow store.
@@ -84,7 +84,7 @@ Evidence:
 
 - `artifacts/api-server/src/services/shadow-equity-forward-worker.ts` exports `createShadowEquityForwardWorker` and `startShadowEquityForwardWorker`.
 - The only current callers found are its unit test and internal references. There is no startup call from `artifacts/api-server/src/index.ts` or route wiring.
-- API unit tests include `src/services/shadow-equity-forward-worker.test.ts`, so this is tested but not live.
+- API unit tests include `src/services/shadow-equity-forward-worker.validation.ts`, so this is tested but not live.
 
 Status: unchanged from the prior audit, except the files now typecheck and unit-test cleanly. Per user direction, this remains inspect/report only.
 
@@ -94,10 +94,10 @@ Current count: 243 matches for `@ts-*`, `as any`, `as unknown as`, and `: any`.
 
 The largest clusters are test fixtures:
 
-- `artifacts/api-server/src/services/option-chain-batch.test.ts`: 56
-- `artifacts/pyrus/src/features/platform/live-streams.test.ts`: 46
-- `artifacts/api-server/src/services/options-flow-scanner.test.ts`: 31
-- `artifacts/ibkr-bridge/src/tws-provider.test.ts`: 22
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts`: 56
+- `artifacts/pyrus/src/features/platform/live-streams.validation.ts`: 46
+- `artifacts/api-server/src/services/options-flow-scanner.validation.ts`: 31
+- `artifacts/ibkr-bridge/src/tws-provider.validation.ts`: 22
 
 Production-side hits are now sparse, mainly boundary casts in runtime config/diagnostics/preferences/live-stream helpers. This is no longer the production hotspot it was in the May 12 audit.
 

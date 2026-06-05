@@ -24,11 +24,11 @@ Proceed after landing the signal matrix pending-hydration and matrix-pressure wo
 
 - `artifacts/api-server/src/routes/signal-monitor.ts`
 - `artifacts/api-server/src/services/signal-monitor.ts`
-- `artifacts/api-server/src/services/signal-monitor.test.ts`
+- `artifacts/api-server/src/services/signal-monitor.validation.ts`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.test.js`
+- `artifacts/pyrus/src/features/signals/signalsRowModel.validation.js`
 - `artifacts/pyrus/src/screens/SignalsScreen.jsx`
-- `artifacts/pyrus/src/screens/SignalsScreen.test.js`
+- `artifacts/pyrus/src/screens/SignalsScreen.validation.js`
 - `lib/api-spec/openapi.yaml`
 - `lib/api-client-react/src/generated/api.schemas.ts`
 - `lib/api-client-react/src/generated/api.ts`
@@ -42,15 +42,15 @@ Proceed after landing the signal matrix pending-hydration and matrix-pressure wo
 
 ## Validation
 
-- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/features/signals/signalsRowModel.test.js src/screens/SignalsScreen.test.js`
+- PASS: `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-monitor.validation.ts`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/features/signals/signalsRowModel.validation.js src/screens/SignalsScreen.validation.js`
 - PASS: `git diff --check`
 - PASS: `pnpm -C artifacts/api-server run typecheck`
 - PASS: `pnpm -C artifacts/pyrus run typecheck`
 - PASS: `pnpm -C lib/api-client-react run typecheck`
 - PASS: `pnpm -C artifacts/api-server run build`
 - PASS: `git diff --cached --check`
-- PASS: `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec playwright test e2e/safe-qa-route-performance.spec.ts --project=chromium`
+- PASS: `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec browser QA test e2e/safe-qa-route-performance.browser-validation.ts --project=chromium`
 - NOTE: `pnpm -C lib/api-spec run codegen` generated output but exited 1 because its trailing `pnpm -w run typecheck:libs` was refused by the live-runtime hot validation guard.
 - NOTE: Safe Signals smoke passed but reported a soft budget violation: `maxLongTaskMs` 365ms vs 300ms; slow baseline requests were `/api/session`, `/api/watchlists`, and `/api/universe/logos`.
 

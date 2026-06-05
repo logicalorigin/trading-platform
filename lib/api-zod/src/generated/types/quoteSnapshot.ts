@@ -5,8 +5,8 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
 import type { MarketDataFreshness } from './marketDataFreshness';
+import type { MarketDataTransport } from './marketDataTransport';
 import type { QuoteSnapshotLatency } from './quoteSnapshotLatency';
 import type { QuoteSnapshotMarketDataMode } from './quoteSnapshotMarketDataMode';
 import type { QuoteSource } from './quoteSource';
@@ -25,10 +25,12 @@ export interface QuoteSnapshot {
   low: number | null;
   prevClose: number | null;
   volume: number | null;
+  /** Underlying reference price from option computations, when available. */
+  underlyingPrice?: number | null;
   /** @nullable */
   providerContractId: string | null;
   source: QuoteSource;
-  transport: IbkrBridgeHealthTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   /** @nullable */

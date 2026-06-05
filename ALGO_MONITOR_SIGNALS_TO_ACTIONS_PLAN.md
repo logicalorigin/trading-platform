@@ -151,7 +151,7 @@ In the sidebar, the card's `onClick` calls `onOpenAlgo?.({ signalKey: signal?.si
 
 ### 4. Tests
 
-- Look for `PlatformAlgoMonitorSidebar.test.*`:
+- Look for `PlatformAlgoMonitorSidebar.validation.*`:
   ```
   grep -rln "PlatformAlgoMonitorSidebar" artifacts/pyrus/src
   ```
@@ -191,7 +191,7 @@ In the sidebar, the card's `onClick` calls `onOpenAlgo?.({ signalKey: signal?.si
 
 1. **Type + tests + build**
    - `pnpm --filter @workspace/pyrus typecheck`
-   - `pnpm --filter @workspace/pyrus test:unit`
+   - `pnpm --filter @workspace/pyrus unit validation`
    - `pnpm --filter @workspace/pyrus build`
 
 2. **Manual** (per CLAUDE.md, use Replit's Run Replit App entry)

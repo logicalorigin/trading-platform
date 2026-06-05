@@ -35,16 +35,16 @@ Three frontend issues combined:
 
 ## Regression Tests
 
-- `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`: verifies Massive remains visible from line-usage websocket diagnostics when runtime provider diagnostics lag.
-- `artifacts/pyrus/src/features/market/marketChartWiring.test.js`: verifies Market chart grid no longer owns quote stream subscription setup.
+- `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.validation.js`: verifies Massive remains visible from line-usage websocket diagnostics when runtime provider diagnostics lag.
+- `artifacts/pyrus/src/features/market/marketChartWiring.validation.js`: verifies Market chart grid no longer owns quote stream subscription setup.
 
 ## Validation
 
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/market/marketChartWiring.test.js` (`65/65`).
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/IbkrConnectionStatus.validation.js src/features/market/marketChartWiring.validation.js` (`65/65`).
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
 - Passed: `git diff --check`.
 - Live browser verification passed against `http://127.0.0.1:18747/` without restarting the app, and the browser tab was closed afterward.
 
 ## Concern
 
-Full `pnpm --filter @workspace/pyrus run test:unit` still has an unrelated existing failure in `src/screens/account/accountCalendarData.test.js`, which asserts that the unchanged Account screen source contains `summary: displaySummaryData`.
+Full `pnpm --filter @workspace/pyrus run unit validation` still has an unrelated existing failure in `src/screens/account/accountCalendarData.validation.js`, which asserts that the unchanged Account screen source contains `summary: displaySummaryData`.

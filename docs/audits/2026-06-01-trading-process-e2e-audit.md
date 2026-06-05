@@ -129,11 +129,11 @@ Required fix: clear diagnostics readiness and API child-exit issues before live 
 
 Passed:
 
-- `pnpm --dir artifacts/api-server exec tsx --test src/services/signal-options-automation.test.ts`
-- `pnpm --dir artifacts/api-server exec tsx --test src/services/signal-options-worker.test.ts src/services/order-gateway-readiness.test.ts`
-- `pnpm --dir artifacts/api-server exec tsx --test src/services/account-orders.test.ts src/services/account-positions.test.ts src/services/ibkr-bridge-runtime.test.ts`
-- `pnpm --dir artifacts/api-server exec tsx --test src/services/automation.test.ts`
-- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/algo/AlgoAuditPanel.test.js src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js`
+- `pnpm --dir artifacts/api-server exec tsx validation runner src/services/signal-options-automation.validation.ts`
+- `pnpm --dir artifacts/api-server exec tsx validation runner src/services/signal-options-worker.validation.ts src/services/order-gateway-readiness.validation.ts`
+- `pnpm --dir artifacts/api-server exec tsx validation runner src/services/account-orders.validation.ts src/services/account-positions.validation.ts src/services/ibkr-bridge-runtime.validation.ts`
+- `pnpm --dir artifacts/api-server exec tsx validation runner src/services/automation.validation.ts`
+- `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/algo/AlgoAuditPanel.validation.js src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/algoHelpers.validation.js`
 - `pnpm --dir artifacts/api-server exec tsc --noEmit --pretty false`
 - `pnpm --dir artifacts/pyrus exec tsc --noEmit --pretty false`
 - `pnpm --dir artifacts/api-server run build`

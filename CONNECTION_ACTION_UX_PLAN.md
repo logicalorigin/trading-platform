@@ -151,7 +151,7 @@ Add `lastActivityAt: ISO string | null` to the broker connection payload — the
 - `artifacts/ibkr-bridge/src/app.ts` — structured error codes.
 - `artifacts/ibkr-bridge/src/service.ts` — track `lastActivityAt`.
 
-For test files, mirror existing `*.test.ts` next to each modified service; the pyrus side follows the same `*.test.js` convention seen in `positionDisplayModel.test.js`.
+For test files, mirror existing `*.validation.ts` next to each modified service; the pyrus side follows the same `*.validation.js` convention seen in `positionDisplayModel.validation.js`.
 
 ---
 

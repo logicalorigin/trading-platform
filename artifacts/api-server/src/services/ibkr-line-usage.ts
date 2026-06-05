@@ -14,6 +14,7 @@ import {
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import { getMassiveStockQuoteStreamDiagnostics } from "./massive-stock-quote-stream";
+import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
 import {
   getMarketDataAdmissionDiagnostics,
   setMarketDataAdmissionBridgeLineBudget,
@@ -1486,10 +1487,12 @@ async function buildIbkrLineUsageSnapshot(options: {
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const massiveStockQuotes = getMassiveStockQuoteStreamDiagnostics();
+  const signalMonitorLocalBars = getSignalMonitorLocalBarCacheDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
   const massiveProvider = getRuntimeMassiveProviderDiagnostics({
     streams: {
       massiveStockQuotes,
+      signalMonitorLocalBars,
       stockAggregates,
     },
   });

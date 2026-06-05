@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  getGetQuoteSnapshotsQueryKey,
   getBars as getBarsRequest,
   useGetQuoteSnapshots,
 } from "@workspace/api-client-react";
@@ -15,7 +16,6 @@ import {
   usePositionQuoteSnapshotStream,
 } from "./live-streams";
 import { usePositionMarketDataSymbols } from "./positionMarketDataStore";
-import { usePageVisible } from "./usePageVisible";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
   BARS_QUERY_DEFAULTS,
@@ -28,6 +28,10 @@ import {
   syncRuntimeMarketData,
 } from "./runtimeMarketDataModel";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "./sparklineConfig";
+import {
+  usePlatformFreshnessQueryHydration,
+  usePlatformFreshnessQueryPublisher,
+} from "./platformFreshnessBus";
 
 const settleWithConcurrency = async (items, concurrency, mapper) => {
   const results = new Array(items.length);
@@ -84,13 +88,11 @@ const summarizeSparklineBars = (barsBySymbol = {}) =>
   );
 
 export const resolveQuoteStreamDisabledReason = ({
-  pageVisible,
   quoteStreamRuntimeEnabled,
   symbolCount,
   eventSourceAvailable,
   upstreamDisabledReason = null,
 } = {}) => {
-  if (!pageVisible) return "page-hidden";
   if (upstreamDisabledReason) return upstreamDisabledReason;
   if (!quoteStreamRuntimeEnabled) return "runtime-disabled";
   if (!symbolCount) return "empty-symbol-batch";
@@ -138,16 +140,20 @@ export const MarketDataSubscriptionProvider = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled = false,
+  positionQuoteStreamRuntimeEnabled = quoteStreamRuntimeEnabled,
   quoteStreamDisabledReason: upstreamQuoteStreamDisabledReason = null,
+  positionQuoteStreamDisabledReason:
+    upstreamPositionQuoteStreamDisabledReason = null,
   quoteStreamCoverageDiagnostics = null,
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
   lowPriorityHistoryEnabled = true,
   sparklineHistoryRuntimeEnabled = true,
   sparklineConcurrency = 4,
+  platformFreshnessBus = null,
   children,
 }) => {
-  const pageVisible = usePageVisible();
+  const queryClient = useQueryClient();
   const positionQuoteSymbols = usePositionMarketDataSymbols();
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
@@ -215,17 +221,16 @@ export const MarketDataSubscriptionProvider = ({
   const eventSourceAvailable =
     typeof window === "undefined" || typeof window.EventSource !== "undefined";
   const quoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
-    pageVisible,
     quoteStreamRuntimeEnabled,
     symbolCount: streamedQuoteSymbols.length,
     eventSourceAvailable,
     upstreamDisabledReason: upstreamQuoteStreamDisabledReason,
   });
   const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
-    pageVisible,
-    quoteStreamRuntimeEnabled,
+    quoteStreamRuntimeEnabled: positionQuoteStreamRuntimeEnabled,
     symbolCount: positionQuoteSymbols.length,
     eventSourceAvailable,
+    upstreamDisabledReason: upstreamPositionQuoteStreamDisabledReason,
   });
   const quoteStreamRuntimeActive = Boolean(
     !quoteStreamDisabledReason,
@@ -234,7 +239,7 @@ export const MarketDataSubscriptionProvider = ({
     !positionQuoteStreamDisabledReason,
   );
   const marketAggregateStreamRuntimeActive = Boolean(
-    pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
+    marketStockAggregateStreamingEnabled && marketScreenActive,
   );
   const streamCoveredQuoteSymbols = useMemo(() => {
     const symbols = [
@@ -258,6 +263,10 @@ export const MarketDataSubscriptionProvider = ({
   const restQuoteSymbolsKey = useMemo(
     () => restQuoteSymbols.join(","),
     [restQuoteSymbols],
+  );
+  const restQuoteSnapshotQueryKey = useMemo(
+    () => getGetQuoteSnapshotsQueryKey({ symbols: restQuoteSymbolsKey }),
+    [restQuoteSymbolsKey],
   );
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -307,10 +316,9 @@ export const MarketDataSubscriptionProvider = ({
   useRuntimeWorkloadFlag(
     "market:subscription-streams",
     Boolean(
-      pageVisible &&
-        (quoteStreamRuntimeActive ||
-          (marketAggregateStreamRuntimeActive &&
-            streamedAggregateSymbols.length > 0)),
+      quoteStreamRuntimeActive ||
+        (marketAggregateStreamRuntimeActive &&
+          streamedAggregateSymbols.length > 0),
     ),
     {
       kind: "stream",
@@ -321,7 +329,7 @@ export const MarketDataSubscriptionProvider = ({
   );
   useRuntimeWorkloadFlag(
     "market:position-quote-stream",
-    Boolean(pageVisible && positionQuoteStreamRuntimeActive),
+    Boolean(positionQuoteStreamRuntimeActive),
     {
       kind: "stream",
       label: "Position spot stream",
@@ -354,12 +362,29 @@ export const MarketDataSubscriptionProvider = ({
     { symbols: restQuoteSymbolsKey },
     {
       query: {
-        enabled: Boolean(pageVisible && restQuoteSymbolsKey),
+        enabled: Boolean(restQuoteSymbolsKey),
         staleTime: 60_000,
         retry: false,
       },
     },
   );
+  usePlatformFreshnessQueryHydration({
+    bus: platformFreshnessBus,
+    family: "market-quotes",
+    freshnessKey: restQuoteSnapshotQueryKey,
+    queryKey: restQuoteSnapshotQueryKey,
+    queryClient,
+    enabled: Boolean(restQuoteSymbolsKey),
+  });
+  usePlatformFreshnessQueryPublisher({
+    bus: platformFreshnessBus,
+    family: "market-quotes",
+    freshnessKey: restQuoteSnapshotQueryKey,
+    data: quotesQuery.data,
+    enabled: Boolean(restQuoteSymbolsKey && quotesQuery.data),
+    ttlMs: 60_000,
+    payloadSizeClass: "medium",
+  });
   const sparklineQuery = useQuery({
     queryKey: [
       "market-sparklines",

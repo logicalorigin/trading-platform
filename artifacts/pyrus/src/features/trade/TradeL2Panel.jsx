@@ -17,7 +17,6 @@ import {
   toneForOptionSide,
 } from "../platform/semanticToneModel.js";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
-import { usePageVisible } from "../platform/usePageVisible";
 import {
   formatExecutionContractLabel,
   getBrokerMarketDepthRequest,
@@ -63,7 +62,6 @@ export const TradeL2Panel = ({
   streamingPaused = false,
 }) => {
   const queryClient = useQueryClient();
-  const pageVisible = usePageVisible();
   const tradeFlowSnapshot = useTradeFlowSnapshot(slot.ticker);
   const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
   const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
@@ -151,7 +149,6 @@ export const TradeL2Panel = ({
   useEffect(() => {
     if (
       !brokerRuntimeEnabled ||
-      !pageVisible ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -189,7 +186,6 @@ export const TradeL2Panel = ({
   }, [
     accountId,
     brokerRuntimeEnabled,
-    pageVisible,
     queryClient,
     selectedContractMeta?.providerContractId,
     slot.ticker,
@@ -325,6 +321,7 @@ export const TradeL2Panel = ({
           title="Loading IBKR depth"
           detail="Requesting the live contract price ladder from the broker bridge."
           loading
+          loadingEndpoint="/api/ibkr/market-depth"
           tone={CSS_COLOR.accent}
         />
       );
@@ -545,6 +542,7 @@ export const TradeL2Panel = ({
           title="Loading IBKR fills"
           detail="Requesting broker executions for the selected option contract."
           loading
+          loadingEndpoint="/api/ibkr/executions"
           tone={CSS_COLOR.accent}
         />
       );

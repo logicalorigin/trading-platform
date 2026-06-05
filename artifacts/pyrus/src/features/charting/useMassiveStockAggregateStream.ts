@@ -163,6 +163,14 @@ let latencyNotifyScheduled = false;
 let streamPaused = false;
 const pendingSymbolNotifications = new Set<string>();
 
+const scheduleRealtimeFlush = (callback: () => void): void => {
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(callback);
+    return;
+  }
+  setTimeout(callback, 0);
+};
+
 const flushStoreListeners = () => {
   storeNotifyScheduled = false;
   storeVersion += 1;
@@ -175,12 +183,7 @@ const notifyStoreListeners = () => {
   }
 
   storeNotifyScheduled = true;
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(flushStoreListeners);
-    return;
-  }
-
-  setTimeout(flushStoreListeners, 0);
+  scheduleRealtimeFlush(flushStoreListeners);
 };
 
 const flushSymbolStoreListeners = () => {
@@ -213,12 +216,7 @@ const notifySymbolStoreListeners = (symbol: string) => {
   }
 
   symbolStoreNotifyScheduled = true;
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(flushSymbolStoreListeners);
-    return;
-  }
-
-  setTimeout(flushSymbolStoreListeners, 0);
+  scheduleRealtimeFlush(flushSymbolStoreListeners);
 };
 
 const notifyLatencyStoreListeners = () => {

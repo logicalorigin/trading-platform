@@ -5,6 +5,8 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { MarketDataFreshness } from './marketDataFreshness';
+import type { MarketDataTransport } from './marketDataTransport';
 import type { PositionQuoteSource } from './positionQuoteSource';
 
 export interface PositionQuote {
@@ -21,4 +23,33 @@ export interface PositionQuote {
   freshness: string | null;
   marketDataMode: string | null;
   source: PositionQuoteSource;
+  providerContractId?: string | null;
+  transport?: MarketDataTransport | null;
+  delayed?: boolean | null;
+  dataUpdatedAt?: Date | null;
+  ageMs?: number | null;
+  cacheAgeMs?: number | null;
+  status?: string | null;
+  reason?: string | null;
+  quoteStatus?: string | null;
+  quoteReason?: string | null;
+  greeksStatus?: string | null;
+  greeksReason?: string | null;
+  demandStatus?: string | null;
+  demandReason?: string | null;
+  quoteFreshness?: MarketDataFreshness | null;
+  greeksFreshness?: MarketDataFreshness | null;
+  unavailableDetail?: string | null;
+  price?: number | null;
+  dayChange?: number | null;
+  dayChangePercent?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  impliedVolatility?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  /** Underlying reference price from option computations, when available. */
+  underlyingPrice?: number | null;
 }

@@ -34,7 +34,7 @@ Fix plan:
 - Remove `action: "symbol"` from `SIGNALS_SORT_KEYS_BY_COLUMN_ID`.
 - Keep `symbol: "symbol"` as the canonical Symbol sort.
 - Optionally set action column meta label to a descriptive non-sort label such as `Open trade`, but leave `sortable: false`.
-- Update `SignalsScreen.table-cells.test.js` and `platformRootSource.test.js` so the action column is explicitly non-sortable instead of expected to have a sort key.
+- Update `SignalsScreen.table-cells.validation.js` and `platformRootSource.validation.js` so the action column is explicitly non-sortable instead of expected to have a sort key.
 
 Suggested validation:
 
@@ -45,9 +45,9 @@ Suggested validation:
 
 Evidence:
 
-- `artifacts/pyrus/src/screens/SignalsScreen.table-cells.test.js:5` to `29` reads `SignalsScreen.jsx` as text and checks regexes rather than rendering headers/cells.
-- `artifacts/pyrus/src/screens/SignalsScreen.table-cells.test.js:11` to `25` currently requires the buggy `action -> symbol` sort mapping.
-- `artifacts/pyrus/src/features/platform/platformRootSource.test.js:2234` to `2239` checks that every listed Signals table column has a sort-key regex match, also locking in the action-column behavior.
+- `artifacts/pyrus/src/screens/SignalsScreen.table-cells.validation.js:5` to `29` reads `SignalsScreen.jsx` as text and checks regexes rather than rendering headers/cells.
+- `artifacts/pyrus/src/screens/SignalsScreen.table-cells.validation.js:11` to `25` currently requires the buggy `action -> symbol` sort mapping.
+- `artifacts/pyrus/src/features/platform/platformRootSource.validation.js:2234` to `2239` checks that every listed Signals table column has a sort-key regex match, also locking in the action-column behavior.
 
 Impact:
 
@@ -73,8 +73,8 @@ Fix plan:
 
 Validation run:
 
-- PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/SignalsScreen.table-cells.test.js src/features/signals/signalsRowModel.test.js src/features/signals/signalsMatrixHydration.test.js src/features/signals/signalMatrixSnapshotCache.test.js` - 32/32 passed.
-- PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js` - 90/90 passed.
+- PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/SignalsScreen.table-cells.validation.js src/features/signals/signalsRowModel.validation.js src/features/signals/signalsMatrixHydration.validation.js src/features/signals/signalMatrixSnapshotCache.validation.js` - 32/32 passed.
+- PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js` - 90/90 passed.
 - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
 - PASS: `PYRUS_ALLOW_HOT_VALIDATION=1 pnpm exec tsc -b lib/db/tsconfig.json lib/api-client-react/tsconfig.json`.
 
@@ -90,7 +90,7 @@ Validation run:
 
 - Fixed the P1 action-column defect in `artifacts/pyrus/src/screens/SignalsScreen.jsx` by removing `action: "symbol"` from `SIGNALS_SORT_KEYS_BY_COLUMN_ID`.
 - The action column remains locked via `SIGNALS_LOCKED_COLUMN_IDS = ["symbol", "action"]`, but now derives `sortable: false`, `sortKey: undefined`, and no empty `sortTitle`.
-- Updated `artifacts/pyrus/src/screens/SignalsScreen.table-cells.test.js` and the focused Signals route guard in `artifacts/pyrus/src/features/platform/platformRootSource.test.js` to assert that `action` is not mapped to Symbol sorting.
+- Updated `artifacts/pyrus/src/screens/SignalsScreen.table-cells.validation.js` and the focused Signals route guard in `artifacts/pyrus/src/features/platform/platformRootSource.validation.js` to assert that `action` is not mapped to Symbol sorting.
 
 ### Matrix data path audit
 
@@ -123,10 +123,10 @@ Validation run:
 
 ### Validation
 
-- PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/SignalsScreen.table-cells.test.js src/features/signals/signalsRowModel.test.js src/features/signals/signalsMatrixHydration.test.js src/features/signals/signalMatrixSnapshotCache.test.js` - 34/34.
-- PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js --test-name-pattern "exact|unavailable|stale|missing|cell|pressure"` - 29/29.
-- PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts --test-name-pattern "matrix|cache|stored hydration|unavailable|exact cells|pressure"` - 63/63.
-- PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signals screen is registered as a first-class platform route" src/features/platform/platformRootSource.test.js` - 1/1.
+- PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/SignalsScreen.table-cells.validation.js src/features/signals/signalsRowModel.validation.js src/features/signals/signalsMatrixHydration.validation.js src/features/signals/signalMatrixSnapshotCache.validation.js` - 34/34.
+- PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js --validation-name-pattern "exact|unavailable|stale|missing|cell|pressure"` - 29/29.
+- PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts --validation-name-pattern "matrix|cache|stored hydration|unavailable|exact cells|pressure"` - 63/63.
+- PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signals screen is registered as a first-class platform route" src/features/platform/platformRootSource.validation.js` - 1/1.
 - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
 - PASS: `pnpm --filter @workspace/api-server run typecheck`.
 - PASS: scoped `git diff --check` for the touched Signals/matrix files.

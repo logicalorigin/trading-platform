@@ -6,8 +6,8 @@ import {
   normalizeSignalStatus,
 } from "./signalStateFreshness.js";
 
-export const SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE = 2;
-export const SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE = 4;
+export const SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE = null;
+export const SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE = null;
 
 const stateTimeframe = (state) => String(state?.timeframe || "").trim();
 const NON_HYDRATED_MATRIX_STATUSES = new Set([

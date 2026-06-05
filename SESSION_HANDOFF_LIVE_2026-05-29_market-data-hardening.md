@@ -13,7 +13,7 @@ Implement the 11-part hardening plan for the new Rust/Python market-data audit. 
 ## Changed Files For This Workstream
 
 - `artifacts/api-server/src/services/market-data-ingest.ts`
-- `artifacts/api-server/src/services/market-data-ingest.test.ts`
+- `artifacts/api-server/src/services/market-data-ingest.validation.ts`
 - `artifacts/pyrus/docs/architecture/market-data-ingest-worker.md`
 - `crates/market-data-worker/src/compute/gex.rs`
 - `crates/market-data-worker/src/config.rs`
@@ -61,12 +61,12 @@ Python is intentionally not implemented for v1. The audit found no app-owned Pyt
 
 Passed:
 
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/market-data-ingest.test.ts`
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/market-data-ingest.validation.ts`
 - `pnpm --filter @workspace/scripts run typecheck`
 - `pnpm exec tsc --build lib/db`
 - `pnpm run fmt:market-data-worker`
-- `pnpm run test:market-data-worker`
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/market-data-ingest.test.ts src/services/gex.test.ts`
+- `pnpm run market-data-worker validation`
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/market-data-ingest.validation.ts src/services/gex.validation.ts`
 - `pnpm run build:market-data-worker`
 - `pnpm run db:market-data:audit`
 - `pnpm run market-data-worker:doctor`
@@ -91,5 +91,5 @@ Note: `pnpm run market-data-worker:run -- --max-jobs 0` failed because the extra
 1. Read this file, then inspect the changed files listed above.
 2. Use `git status --short` to separate this market-data work from unrelated dirty files.
 3. If preparing a commit, stage only the market-data hardening files and avoid the unrelated trading/shadow/API generated changes.
-4. Run at minimum `pnpm run test:market-data-worker`, `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/market-data-ingest.test.ts src/services/gex.test.ts`, `pnpm --dir artifacts/api-server run typecheck`, and `git diff --check` after any changes.
+4. Run at minimum `pnpm run market-data-worker validation`, `pnpm --dir artifacts/api-server exec node JS validation runner src/services/market-data-ingest.validation.ts src/services/gex.validation.ts`, `pnpm --dir artifacts/api-server run typecheck`, and `git diff --check` after any changes.
 5. For operational rollout, run `pnpm run market-data-worker:doctor` first, then a credentialed one-shot or bounded worker drain.

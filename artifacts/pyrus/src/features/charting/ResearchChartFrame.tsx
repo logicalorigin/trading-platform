@@ -305,6 +305,7 @@ type ResearchChartFrameProps = {
     title?: string | null;
     detail?: string | null;
     eyebrow?: string | null;
+    loadingWaitItems?: Array<Record<string, unknown>> | null;
   } | null;
   drawMode?: "horizontal" | "vertical" | "box" | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;

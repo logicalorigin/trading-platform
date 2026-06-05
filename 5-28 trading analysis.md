@@ -436,10 +436,10 @@ Unit and integration coverage:
 Expected targeted validation commands after implementation:
 
 ```bash
-pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts
-pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts
-pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js
-pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/pyrusSignalsPineAdapter.test.ts
+pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts
+pnpm --filter @workspace/api-server exec node JS validation runner src/services/shadow-account.validation.ts
+pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js
+pnpm --filter @workspace/pyrus exec node JS validation runner src/features/charting/pyrusSignalsPineAdapter.validation.ts
 pnpm --filter @workspace/api-server run typecheck
 pnpm --filter @workspace/pyrus run typecheck
 pnpm --filter @workspace/scripts run test:shadow-options-management-review

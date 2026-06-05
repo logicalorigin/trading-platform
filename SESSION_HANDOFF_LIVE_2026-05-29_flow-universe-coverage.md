@@ -148,9 +148,9 @@
 
 ## Validation Snapshot
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-optionability-verifier.test.ts src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-optionability-verifier.validation.ts src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts`
 - `pnpm --filter @workspace/api-server exec node --import tsx -e "const m = await import('./src/services/platform.ts'); console.log(typeof m.startFlowUniverseOptionabilityVerifier, typeof m.getFlowUniverseOptionabilityVerifierDiagnostics);"`
-- `git diff --check -- artifacts/api-server/src/services/flow-universe-optionability-verifier.ts artifacts/api-server/src/services/flow-universe-optionability-verifier.test.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/index.ts scripts/src/verify-flow-universe-optionability.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md`
+- `git diff --check -- artifacts/api-server/src/services/flow-universe-optionability-verifier.ts artifacts/api-server/src/services/flow-universe-optionability-verifier.validation.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/index.ts scripts/src/verify-flow-universe-optionability.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md`
 - `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f lib/db/migrations/20260529_flow_universe_coverage.sql`
 - `pnpm --filter @workspace/scripts run universe:sync:listings -- --dry-run=true`
 - `pnpm --filter @workspace/scripts run universe:sync:sp500 -- --dry-run=true`
@@ -180,13 +180,13 @@
 - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=22 --batch=8 --symbols=PWR,POWL,IONQ,RGTI,QBTS,APLD,CLSK,HUT,CORZ,SYM,AMBA,CGNX,ZBRA,ISRG,ROK,TSM,MU,QCOM,ARM,ASML,MRVL,ANET --watchlists=false`
 - `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=22 --delay-ms=750 --symbols=PWR,POWL,IONQ,RGTI,QBTS,APLD,CLSK,HUT,CORZ,SYM,AMBA,CGNX,ZBRA,ISRG,ROK,TSM,MU,QCOM,ARM,ASML,MRVL,ANET --watchlists=false`
 - Post-fill fixed-source audit: 623 planner candidates and 0 watchlist priority misses.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts`
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/market-data-work-planner.test.ts src/services/ibkr-line-usage.test.ts src/services/options-flow-scanner.test.ts` (112 passing)
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts src/services/market-data-work-planner.validation.ts src/services/ibkr-line-usage.validation.ts src/services/options-flow-scanner.validation.ts` (112 passing)
 - `pnpm --filter @workspace/api-server run typecheck`
-- `git diff --check -- artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe-planner.test.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts`
+- `git diff --check -- artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe-planner.validation.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts`
 - Post-run DB audits for source membership coverage, hydration status counts, optionability counts, scanner-ready count, sync-state cursors, and source membership missing listing keys.
 - `pnpm --filter @workspace/scripts run typecheck`
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-optionability-verifier.test.ts src/services/flow-universe-planner.test.ts`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-optionability-verifier.validation.ts src/services/flow-universe-planner.validation.ts`
 - `pnpm run replit:config:status`
 - `git diff --check -- scripts/src/sync-listed-universe.ts scripts/src/sync-sp500-universe.ts scripts/src/hydrate-universe-catalog-ibkr.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md SESSION_HANDOFF_MASTER.md`
 - Post-restart live validation:
@@ -198,20 +198,20 @@
   - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks --limit=25 --batch=10 --dry-run=true`
   - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=etf --limit=25 --batch=10 --dry-run=true`
   - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks,etf --limit=50 --batch=10`
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/market-data-work-planner.test.ts src/services/ibkr-line-usage.test.ts`
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts src/services/market-data-work-planner.validation.ts src/services/ibkr-line-usage.validation.ts`
   - `pnpm --filter @workspace/scripts run typecheck`
-  - `git diff --check -- scripts/src/hydrate-universe-catalog-ibkr.ts artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/flow-universe-planner.test.ts SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_MASTER.md`
+  - `git diff --check -- scripts/src/hydrate-universe-catalog-ibkr.ts artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/flow-universe-planner.validation.ts SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_MASTER.md`
 - Previous focused validations retained:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/nasdaq-symbol-directory.test.ts src/services/sp500-constituents.test.ts src/services/flow-universe.test.ts`
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/nasdaq-symbol-directory.test.ts src/services/sp500-constituents.test.ts`
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowScannerConfig.test.js`
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/nasdaq-symbol-directory.validation.ts src/services/sp500-constituents.validation.ts src/services/flow-universe.validation.ts`
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts src/services/nasdaq-symbol-directory.validation.ts src/services/sp500-constituents.validation.ts`
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/marketFlowScannerConfig.validation.js`
   - `pnpm --filter @workspace/api-spec run codegen`
   - `pnpm --filter @workspace/scripts run universe:sync:listings -- --dry-run=true`
   - `pnpm --filter @workspace/scripts run universe:sync:sp500 -- --dry-run=true`
 - Current blocked broad validations:
   - `pnpm --filter @workspace/api-server run typecheck` fails at unrelated `src/services/signal-options-automation.ts(7533,34): Property 'detail' does not exist on type 'never'.`
   - `pnpm --filter @workspace/scripts run typecheck` fails at the same unrelated API file.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` has three unrelated source-contract failures around platform background readiness, operational page route delays, and hidden-mounted Trade execution warmth.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` has three unrelated source-contract failures around platform background readiness, operational page route delays, and hidden-mounted Trade execution warmth.
 
 ## Next Recommended Steps
 

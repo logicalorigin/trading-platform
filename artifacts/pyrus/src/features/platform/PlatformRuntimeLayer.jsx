@@ -11,6 +11,7 @@ export const PlatformRuntimeLayer = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled,
+  positionQuoteStreamRuntimeEnabled,
   quoteStreamDisabledReason,
   quoteStreamCoverageDiagnostics,
   marketStockAggregateStreamingEnabled,
@@ -23,6 +24,7 @@ export const PlatformRuntimeLayer = ({
   broadFlowRuntimeEnabled,
   broadFlowScannerConfig,
   broadFlowStartupDelayMs,
+  platformFreshnessBus,
   children,
 }) => (
   <MarketDataSubscriptionProviderComponent
@@ -34,6 +36,7 @@ export const PlatformRuntimeLayer = ({
     streamedQuoteSymbols={streamedQuoteSymbols}
     streamedAggregateSymbols={streamedAggregateSymbols}
     quoteStreamRuntimeEnabled={quoteStreamRuntimeEnabled}
+    positionQuoteStreamRuntimeEnabled={positionQuoteStreamRuntimeEnabled}
     quoteStreamDisabledReason={quoteStreamDisabledReason}
     quoteStreamCoverageDiagnostics={quoteStreamCoverageDiagnostics}
     marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
@@ -41,6 +44,7 @@ export const PlatformRuntimeLayer = ({
     lowPriorityHistoryEnabled={lowPriorityHistoryEnabled}
     sparklineHistoryRuntimeEnabled={sparklineHistoryEnabled}
     sparklineConcurrency={sparklineConcurrency}
+    platformFreshnessBus={platformFreshnessBus}
   >
     <SharedMarketFlowRuntimeComponent
       symbols={watchlistSymbols}

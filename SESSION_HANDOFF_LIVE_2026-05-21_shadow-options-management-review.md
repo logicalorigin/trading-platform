@@ -19,7 +19,7 @@ The user asked to review the shadow account trading results together and analyze
   - Reads committed `automation` shadow option ledger rows only.
   - Does not mutate `shadow_orders`, `shadow_fills`, replay rows, deployment config, or strategy config.
 - Added focused test:
-  - `scripts/src/shadow-options-management-review.test.ts`
+  - `scripts/src/shadow-options-management-review.validation.ts`
 - Updated script wiring/docs:
   - `scripts/package.json`
   - `scripts/README.md`
@@ -71,7 +71,7 @@ The user asked to review the shadow account trading results together and analyze
 - `pnpm --filter @workspace/scripts run test:signal-options-exit-policy-sweep` passed 7/7.
 - Scoped `git diff --check` passed for:
   - `scripts/src/shadow-options-management-review.ts`
-  - `scripts/src/shadow-options-management-review.test.ts`
+  - `scripts/src/shadow-options-management-review.validation.ts`
   - `scripts/package.json`
   - `scripts/README.md`
   - `SESSION_HANDOFF_CURRENT.md`

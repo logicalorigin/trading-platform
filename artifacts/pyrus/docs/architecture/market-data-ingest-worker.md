@@ -51,7 +51,7 @@ Persisted GEX payloads include `source.expirationCoverage` so the API and GEX pa
   - blocked GEX jobs are waiting on missing or failed same-bucket stock/option-chain prerequisites.
   - inactive-worker jobs are claimable now, but no `market-data-worker` process is draining them.
 - Retention is dry-run by default. Use `market-data-worker:retention -- --execute` only after reviewing the reported cutoff and eligible row counts.
-- Replit startup config does not start this worker automatically; run it through the package scripts or the deployment process that owns background workers.
+- Replit dev startup starts this worker after the API becomes healthy when database config and a Massive provider key are present. Missing config emits a `worker-skipped` lifecycle event so the web app can still start. Production deployments still need the deployment process that owns background workers to run `market-data-worker:run`.
 
 Before investigating stale or missing GEX, verify the worker can reach the queue:
 

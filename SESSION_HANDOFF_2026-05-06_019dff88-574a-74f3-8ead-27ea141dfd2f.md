@@ -59,25 +59,25 @@ i need you to study our replit ide container and how its workflows work and func
 - `2026-05-06T23:06:19.841Z` Agent: The repo already documents the intended Replit shape: one user-facing `Project` workflow, API on `8080`, web on `18747`, and no separate Replit `IBKR Bridge` workflow. I’m going t…
 - … 4205 lower-signal transcript events omitted …
 - `2026-05-08T15:39:53.205Z` Agent: Agreed, that choice was too coarse. The better framing is not “which provider wins,” it is “what is a chart marker supposed to represent.” Right now the code treats confirmed prin…
-- `2026-05-08T15:39:53.213Z` Tool: exec_command sed -n '280,420p' artifacts/rayalgo/e2e/market-premium-flow.spec.ts && sed -n '380,425p' artifacts/rayalgo/e2e/market-premium-flow.spec.ts && sed -n '430,490p' artifacts/rayalgo/e…
+- `2026-05-08T15:39:53.213Z` Tool: exec_command sed -n '280,420p' artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts && sed -n '380,425p' artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts && sed -n '430,490p' artifacts/rayalgo/e…
 - `2026-05-08T15:39:53.238Z` Tool: exec_command sed -n '4740,4805p' artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx && sed -n '6840,6945p' artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx && sed…
 - `2026-05-08T15:39:53.266Z` Tool: exec_command rg -n "mapFlowEventToUi|sourceBasis|basis:|confidence:|snapshot_activity|confirmed_trade" artifacts/rayalgo/src/features/platform/useLiveMarketFlow.js artifacts/rayalgo/src/featur…
-- `2026-05-08T15:40:02.313Z` Tool: exec_command sed -n '60,170p' artifacts/rayalgo/src/features/flow/flowEventMapper.js && sed -n '120,240p' artifacts/rayalgo/src/features/charting/flowChartEvents.test.ts && sed -n '540,690p' a…
-- `2026-05-08T15:40:02.341Z` Tool: exec_command rg -n "mockMarketApi|includeConfirmedHistory|snapshot_activity|confirmed_trade" artifacts/rayalgo/e2e/market-premium-flow.spec.ts | head -n 80 && sed -n '1,160p' artifacts/rayalgo…
+- `2026-05-08T15:40:02.313Z` Tool: exec_command sed -n '60,170p' artifacts/rayalgo/src/features/flow/flowEventMapper.js && sed -n '120,240p' artifacts/rayalgo/src/features/charting/flowChartEvents.validation.ts && sed -n '540,690p' a…
+- `2026-05-08T15:40:02.341Z` Tool: exec_command rg -n "mockMarketApi|includeConfirmedHistory|snapshot_activity|confirmed_trade" artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts | head -n 80 && sed -n '1,160p' artifacts/rayalgo…
 - `2026-05-08T15:40:02.366Z` Tool: exec_command rg -n "chartViewport|viewportSnapshot|onViewportSnapshot|externalViewportUserTouched|viewportUserTouched" artifacts/rayalgo/src/features/charting/ResearchChartFrame.tsx artifacts/…
 - `2026-05-08T15:40:16.211Z` Tool: exec_command sed -n '1,320p' artifacts/rayalgo/src/features/platform/marketFlowStore.js
-- `2026-05-08T15:40:16.233Z` Tool: exec_command sed -n '150,250p' artifacts/rayalgo/e2e/market-premium-flow.spec.ts
+- `2026-05-08T15:40:16.233Z` Tool: exec_command sed -n '150,250p' artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts
 - `2026-05-08T15:40:16.263Z` Tool: exec_command git diff -- artifacts/rayalgo/src/features/platform/marketFlowStore.js artifacts/rayalgo/src/features/platform/useLiveMarketFlow.js artifacts/rayalgo/src/features/charting/chartEv…
 
 ## High-Signal Changed Files
 
 - `SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
-- `artifacts/api-server/src/services/runtime-diagnostics.test.ts`
+- `artifacts/api-server/src/services/runtime-diagnostics.validation.ts`
 - `artifacts/api-server/src/services/shadow-account.ts`
-- `artifacts/api-server/src/services/storage-health.test.ts`
+- `artifacts/api-server/src/services/storage-health.validation.ts`
 - `artifacts/api-server/src/services/storage-health.ts`
 - `artifacts/rayalgo/scripts/checkDevRuntime.mjs`
 - `lib/db/drizzle.config.ts`
@@ -89,11 +89,11 @@ i need you to study our replit ide container and how its workflows work and func
 ## main...origin/main [ahead 1]
  M SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
- M artifacts/api-server/src/services/runtime-diagnostics.test.ts
+ M artifacts/api-server/src/services/runtime-diagnostics.validation.ts
  M artifacts/api-server/src/services/shadow-account.ts
- M artifacts/api-server/src/services/storage-health.test.ts
+ M artifacts/api-server/src/services/storage-health.validation.ts
  M artifacts/api-server/src/services/storage-health.ts
  M artifacts/rayalgo/scripts/checkDevRuntime.mjs
  M lib/db/drizzle.config.ts
@@ -108,11 +108,11 @@ i need you to study our replit ide container and how its workflows work and func
 ```text
  ...6-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md | 440 ++++++++++++++++-----
  SESSION_HANDOFF_MASTER.md                          |   4 +-
- .../api-server/src/services/diagnostics.test.ts    |   2 +-
+ .../api-server/src/services/diagnostics.validation.ts    |   2 +-
  artifacts/api-server/src/services/diagnostics.ts   |  17 +-
- .../src/services/runtime-diagnostics.test.ts       |   2 +-
+ .../src/services/runtime-diagnostics.validation.ts       |   2 +-
  .../api-server/src/services/shadow-account.ts      |   4 +-
- .../api-server/src/services/storage-health.test.ts |  17 +
+ .../api-server/src/services/storage-health.validation.ts |  17 +
  .../api-server/src/services/storage-health.ts      |  60 +--
  artifacts/rayalgo/scripts/checkDevRuntime.mjs      |  70 +++-
  lib/db/drizzle.config.ts                           |   6 +-
@@ -123,17 +123,17 @@ i need you to study our replit ide container and how its workflows work and func
 ## Validations Detected In Transcript
 
 - `2026-05-08T00:12:23.653Z` /bin/bash -lc npm run build (exit 0)
-- `2026-05-08T00:13:59.905Z` /bin/bash -lc npm run test:unit (exit 0)
-- `2026-05-08T00:18:28.487Z` /bin/bash -lc npm run test:unit (exit 0)
+- `2026-05-08T00:13:59.905Z` /bin/bash -lc npm run unit validation (exit 0)
+- `2026-05-08T00:18:28.487Z` /bin/bash -lc npm run unit validation (exit 0)
 - `2026-05-08T00:19:10.707Z` /bin/bash -lc npm run typecheck (exit 0)
 - `2026-05-08T00:19:27.118Z` /bin/bash -lc npm run build (exit 0)
-- `2026-05-08T00:19:42.644Z` /bin/bash -lc npx playwright test e2e/trade-options-layout.spec.ts -g "Trade spot and option charts drag-pan through the shared chart frame" (exit 1)
-- `2026-05-08T00:20:08.422Z` /bin/bash -lc npm run test:e2e:replit -- e2e/trade-options-layout.spec.ts -g "Trade spot and option charts drag-pan through the shared chart frame" (exit 0)
-- `2026-05-08T00:20:33.302Z` /bin/bash -lc npm run test:e2e:replit -- e2e/flow-layout.spec.ts -g "Flow inspection hydrates fallback flow contracts through the shared option chart endpoint" (exit 0)
-- `2026-05-08T00:20:56.810Z` /bin/bash -lc npm run test:e2e:replit -- e2e/platform-shell.spec.ts -g "market chart frame changes timeframe from the dropdown and zooms" (exit 0)
+- `2026-05-08T00:19:42.644Z` /bin/bash -lc npx browser QA test e2e/trade-options-layout.browser-validation.ts -g "Trade spot and option charts drag-pan through the shared chart frame" (exit 1)
+- `2026-05-08T00:20:08.422Z` /bin/bash -lc npm run browser validation:replit -- e2e/trade-options-layout.browser-validation.ts -g "Trade spot and option charts drag-pan through the shared chart frame" (exit 0)
+- `2026-05-08T00:20:33.302Z` /bin/bash -lc npm run browser validation:replit -- e2e/flow-layout.browser-validation.ts -g "Flow inspection hydrates fallback flow contracts through the shared option chart endpoint" (exit 0)
+- `2026-05-08T00:20:56.810Z` /bin/bash -lc npm run browser validation:replit -- e2e/platform-shell.browser-validation.ts -g "market chart frame changes timeframe from the dropdown and zooms" (exit 0)
 - `2026-05-08T01:30:49.809Z` /bin/bash -lc ls artifacts/api-server/src/services | head && rg -n "__setPolygonMarketDataClientFactoryForTests|describe\(.*platform|test\(.*getQuoteSnapshots|node:test|vitest" ar… (exit 2)
 - `2026-05-08T14:48:05.014Z` /bin/bash -lc pnpm --filter @workspace/rayalgo exec tsc --noEmit --pretty false (exit 0)
-- `2026-05-08T14:59:05.597Z` /bin/bash -lc pnpm --filter @workspace/rayalgo exec playwright test e2e/trade-options-layout.spec.ts -g "Trade charts render flow on spot and option charts" (exit 1)
+- `2026-05-08T14:59:05.597Z` /bin/bash -lc pnpm --filter @workspace/rayalgo exec browser QA test e2e/trade-options-layout.browser-validation.ts -g "Trade charts render flow on spot and option charts" (exit 1)
 
 ## What Changed This Session
 

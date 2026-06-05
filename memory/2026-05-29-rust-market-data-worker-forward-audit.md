@@ -29,15 +29,15 @@
   - A newer `dedupeBucket` cancels older queued/running/failed `stock_snapshot`, `option_chain_snapshot`, and `gex_snapshot` jobs for the same symbol.
   - Completed older jobs remain as historical evidence.
 
-- `artifacts/api-server/src/services/market-data-ingest.test.ts`
+- `artifacts/api-server/src/services/market-data-ingest.validation.ts`
   - Added coverage that only numeric minute buckets are supersedable.
 
 ## Live Validation
 
 - `pnpm run fmt:market-data-worker` passed.
-- `pnpm run test:market-data-worker` passed: 17 tests.
+- `pnpm run market-data-worker validation` passed: 17 tests.
 - `pnpm run build:market-data-worker` passed.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/market-data-ingest.test.ts src/services/gex.test.ts` passed: 21 tests after supersede patch.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/market-data-ingest.validation.ts src/services/gex.validation.ts` passed: 21 tests after supersede patch.
 - `pnpm --dir artifacts/api-server run typecheck` passed.
 - `pnpm run db:market-data:audit` passed before live drain.
 - `pnpm run market-data-worker:doctor` passed after live drain.

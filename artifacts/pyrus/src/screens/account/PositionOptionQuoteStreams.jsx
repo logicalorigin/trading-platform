@@ -48,13 +48,29 @@ export const structuredOptionProviderContractId = (contract) => {
     .replace(/=+$/, "")}`;
 };
 
-const optionProviderContractId = (contract) =>
-  structuredOptionProviderContractId(contract) ||
-  normalizedProviderContractId(contract?.providerContractId || contract?.conid);
+export const optionProviderContractIds = (contract) =>
+  Array.from(
+    new Set(
+      [
+        structuredOptionProviderContractId(contract),
+        normalizedProviderContractId(contract?.providerContractId),
+        normalizedProviderContractId(contract?.conid),
+      ].filter(Boolean),
+    ),
+  );
 
-const rowOptionProviderContractId = (row) =>
-  optionProviderContractId(row?.optionContract) ||
-  normalizedProviderContractId(row?.optionQuote?.providerContractId);
+export const rowOptionProviderContractIds = (row) => {
+  const contractProviderContractIds = optionProviderContractIds(row?.optionContract);
+  return Array.from(
+    new Set(
+      [
+        contractProviderContractIds[0],
+        normalizedProviderContractId(row?.optionQuote?.providerContractId),
+        ...contractProviderContractIds.slice(1),
+      ].filter(Boolean),
+    ),
+  );
+};
 
 const rowOptionUnderlying = (row) => {
   const text = String(
@@ -82,15 +98,17 @@ export const optionQuoteStreamGroupOwner = (
 export const buildPositionOptionQuoteGroups = (rows) => {
   const groups = new Map();
   rows.forEach((row) => {
-    const providerContractId = rowOptionProviderContractId(row);
-    if (!providerContractId) return;
+    const providerContractIds = rowOptionProviderContractIds(row);
+    if (!providerContractIds.length) return;
     const underlying = rowOptionUnderlying(row);
     const key = underlying || "__unknown__";
     const group = groups.get(key) || {
       underlying,
       providerContractIds: new Set(),
     };
-    group.providerContractIds.add(providerContractId);
+    providerContractIds.forEach((providerContractId) => {
+      group.providerContractIds.add(providerContractId);
+    });
     groups.set(key, group);
   });
   return Array.from(groups.values()).map((group) => ({
@@ -111,7 +129,7 @@ const PositionOptionQuoteStreamGroup = ({
     enabled: Boolean(enabled && providerContractIds.length),
     owner,
     intent: "account-monitor-live",
-    requiresGreeks: false,
+    requiresGreeks: true,
   });
   return null;
 };

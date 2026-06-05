@@ -410,8 +410,24 @@ export function buildPositionQuoteFromSnapshot(
   const bid = finiteNumberOrNull(quote.bid);
   const ask = finiteNumberOrNull(quote.ask);
   const quoteRecord = quote as QuoteSnapshot & {
+    cacheAgeMs?: unknown;
+    dataUpdatedAt?: unknown;
+    dayChange?: unknown;
+    dayChangePercent?: unknown;
+    demandReason?: unknown;
+    demandStatus?: unknown;
+    greeksFreshness?: unknown;
+    greeksReason?: unknown;
+    greeksStatus?: unknown;
     last?: unknown;
     mark?: unknown;
+    quoteFreshness?: unknown;
+    quoteReason?: unknown;
+    quoteStatus?: unknown;
+    reason?: unknown;
+    status?: unknown;
+    undPrice?: unknown;
+    underlyingPrice?: unknown;
   };
   const last =
     positiveNumberOrNull(quoteRecord.last) ?? positiveNumberOrNull(quote.price);
@@ -439,6 +455,63 @@ export function buildPositionQuoteFromSnapshot(
     freshness: quote.freshness ?? null,
     marketDataMode: quote.marketDataMode ?? null,
     source,
+    providerContractId: quote.providerContractId ?? null,
+    transport: quote.transport ?? null,
+    delayed: quote.delayed ?? null,
+    dataUpdatedAt:
+      quote.dataUpdatedAt instanceof Date && !Number.isNaN(quote.dataUpdatedAt.getTime())
+        ? quote.dataUpdatedAt
+        : null,
+    ageMs: finiteNumberOrNull(quote.ageMs),
+    cacheAgeMs: finiteNumberOrNull(quoteRecord.cacheAgeMs),
+    status:
+      typeof quoteRecord.status === "string"
+        ? quoteRecord.status
+        : typeof quoteRecord.quoteStatus === "string"
+          ? quoteRecord.quoteStatus
+          : null,
+    reason: typeof quoteRecord.reason === "string" ? quoteRecord.reason : null,
+    quoteStatus:
+      typeof quoteRecord.quoteStatus === "string" ? quoteRecord.quoteStatus : null,
+    quoteReason:
+      typeof quoteRecord.quoteReason === "string" ? quoteRecord.quoteReason : null,
+    greeksStatus:
+      typeof quoteRecord.greeksStatus === "string" ? quoteRecord.greeksStatus : null,
+    greeksReason:
+      typeof quoteRecord.greeksReason === "string" ? quoteRecord.greeksReason : null,
+    demandStatus:
+      typeof quoteRecord.demandStatus === "string" ? quoteRecord.demandStatus : null,
+    demandReason:
+      typeof quoteRecord.demandReason === "string" ? quoteRecord.demandReason : null,
+    quoteFreshness:
+      typeof quoteRecord.quoteFreshness === "string"
+        ? quoteRecord.quoteFreshness
+        : quote.freshness ?? null,
+    greeksFreshness:
+      typeof quoteRecord.greeksFreshness === "string"
+        ? quoteRecord.greeksFreshness
+        : quote.freshness ?? null,
+    unavailableDetail:
+      typeof quoteRecord.quoteReason === "string"
+        ? quoteRecord.quoteReason
+        : typeof quoteRecord.reason === "string"
+          ? quoteRecord.reason
+          : null,
+    price: finiteNumberOrNull(quote.price),
+    dayChange: finiteNumberOrNull(quoteRecord.dayChange ?? quote.change),
+    dayChangePercent: finiteNumberOrNull(
+      quoteRecord.dayChangePercent ?? quote.changePercent,
+    ),
+    volume: finiteNumberOrNull(quote.volume),
+    openInterest: finiteNumberOrNull(quote.openInterest),
+    impliedVolatility: finiteNumberOrNull(quote.impliedVolatility),
+    delta: finiteNumberOrNull(quote.delta),
+    gamma: finiteNumberOrNull(quote.gamma),
+    theta: finiteNumberOrNull(quote.theta),
+    vega: finiteNumberOrNull(quote.vega),
+    underlyingPrice: positiveNumberOrNull(
+      quoteRecord.underlyingPrice ?? quoteRecord.undPrice,
+    ),
   };
 }
 

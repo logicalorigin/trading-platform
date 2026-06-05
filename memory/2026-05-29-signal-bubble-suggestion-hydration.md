@@ -33,13 +33,13 @@ Current live payload facts without browser reload:
 
 ## Regression Test
 
-- `signal matrix symbol sets prioritize suggested signal rows before open-position spillover` in `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`.
+- `signal matrix symbol sets prioritize suggested signal rows before open-position spillover` in `artifacts/pyrus/src/features/platform/signalMatrixScheduler.validation.js`.
 
 ## Validation
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js src/features/platform/headerBroadcastModel.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js src/features/platform/headerBroadcastModel.validation.js`
 - `pnpm --filter @workspace/pyrus run typecheck`
-- `git diff --check -- artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx SESSION_HANDOFF_LIVE_2026-05-29_native-signal-matrix-hydration.md SESSION_HANDOFF_MASTER.md`
+- `git diff --check -- artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.validation.js artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx SESSION_HANDOFF_LIVE_2026-05-29_native-signal-matrix-hydration.md SESSION_HANDOFF_MASTER.md`
 
 ## Status
 

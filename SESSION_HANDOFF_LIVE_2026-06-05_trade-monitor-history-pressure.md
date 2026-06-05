@@ -17,16 +17,16 @@ Proceed through the remaining Signals/Matrix/Massive work after landing the Sign
 - User pushed `8e2e6ac` to `origin/main`.
 - The committed code slice was focused to:
   - `artifacts/api-server/src/services/trade-monitor-worker.ts`
-  - `artifacts/api-server/src/services/trade-monitor-worker.test.ts`
+  - `artifacts/api-server/src/services/trade-monitor-worker.validation.ts`
 - Scope: cap history fallback batch size, interleave pinned/expanded symbols so broad fallback rotates fairly, and abort/skip slow per-symbol bar loads without blocking loaded siblings.
 
 ## Validation
 
-- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/trade-monitor-worker.test.ts`
+- PASS: `pnpm -C artifacts/api-server exec tsx validation runner src/services/trade-monitor-worker.validation.ts`
 - PASS: `pnpm -C artifacts/api-server run typecheck`
-- PASS: `git diff --check artifacts/api-server/src/services/trade-monitor-worker.ts artifacts/api-server/src/services/trade-monitor-worker.test.ts`
+- PASS: `git diff --check artifacts/api-server/src/services/trade-monitor-worker.ts artifacts/api-server/src/services/trade-monitor-worker.validation.ts`
 - PASS: `pnpm -C artifacts/api-server run build`
-- PASS post-push safe Signals smoke: `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec playwright test e2e/safe-qa-route-performance.spec.ts --project=chromium`
+- PASS post-push safe Signals smoke: `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec browser QA test e2e/safe-qa-route-performance.browser-validation.ts --project=chromium`
   - Signals ready: `627ms`
   - API requests: `4`
   - Slow API calls: `0`

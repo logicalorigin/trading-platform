@@ -148,7 +148,7 @@ our forward-looking price projection on charts based on GEX data should use the 
 - `2026-06-01T22:58:06.381Z` Agent: On the styling point: the custom GEX future labels are definitely boxed/dashed differently from the native axis. I’m going to change them to plain native-axis-like text/ticks usin…
 - `2026-06-01T22:58:06.385Z` Tool: exec_command sed -n '300,410p' artifacts/pyrus/src/features/market/MarketChartCell.jsx
 - `2026-06-01T22:58:06.431Z` Tool: exec_command rg -n "useGexProjectionConeOverlay|gexProjection" artifacts/pyrus/src -g'*.jsx' -g'*.js' -g'*.tsx' -g'*.ts'
-- `2026-06-01T22:58:06.433Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module <<'NODE' import { chromium } from '@playwright/test'; const result = { logs: [], errors: [] }; const browser = await chrom…
+- `2026-06-01T22:58:06.433Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module <<'NODE' import { chromium } from 'browser QA package'; const result = { logs: [], errors: [] }; const browser = await chrom…
 - `2026-06-01T22:58:36.624Z` User: and it looks like the forward looking price estimation band based on gex is only going to june 5 (on the 1h chart at least)
 
 ## High-Signal Changed Files
@@ -156,17 +156,17 @@ our forward-looking price projection on charts based on GEX data should use the 
 - `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
 - `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
 - `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
-- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js`
 - `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
 - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
-- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
 - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
 
 ## Repo State Snapshot
 
@@ -175,17 +175,17 @@ our forward-looking price projection on charts based on GEX data should use the 
  M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
  M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
  M artifacts/pyrus/src/features/platform/memoryPressureClient.js
- M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js
  M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
  M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
- M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js
  M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
  M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js
 ```
 
 ## Diff Summary
@@ -194,17 +194,17 @@ our forward-looking price projection on charts based on GEX data should use the 
  ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
  SESSION_HANDOFF_CURRENT.md                         |  27 +++---
  SESSION_HANDOFF_MASTER.md                          |   2 +-
- .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ .../api-server/src/services/diagnostics.validation.ts    |  67 ++++++++++++++
  artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
  .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
  .../src/features/platform/memoryPressureClient.js  |   1 +
- .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../features/platform/memoryPressureModel.validation.js  |  12 +++
  .../platform/memoryPressurePopoverModel.js         |  11 ++-
  .../features/platform/useMemoryPressureSignal.js   |   4 +
- .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ .../platform/useMemoryPressureSignal.validation.js       |   7 ++
  artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
  artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
- .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ .../src/screens/algo/OperationsSignalRow.validation.js   |  20 +++-
  14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
@@ -223,8 +223,8 @@ our forward-looking price projection on charts based on GEX data should use the 
 ## Current Status
 
 - Closed out on 2026-06-02 UTC.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 10 tests.
-- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/gex-projection.validation.ts src/services/treasury-yield-curve.validation.ts src/services/gex-projection-api.validation.ts` passed with 10 tests.
+- `pnpm --dir artifacts/pyrus exec node JS validation runner src/features/gex/useGexProjection.validation.js src/features/gex/gexProjectionChartWiring.validation.js src/features/charting/ResearchChartSurface.validation.ts` passed with 91 tests.
 - `pnpm --filter @workspace/api-server run typecheck` passed.
 - `pnpm --filter @workspace/pyrus run typecheck` passed.
 - `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 with 8 overlay points from `2026-06-02` through `2026-06-11`; warm retries completed in about 255-366ms.

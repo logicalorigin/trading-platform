@@ -24,7 +24,7 @@ strikesAroundMoney?: number;
  */
 strikeCoverage?: OptionChainStrikeCoverage;
 /**
- * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+ * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to metadata.
  */
 quoteHydration?: OptionChainQuoteHydration;
 };

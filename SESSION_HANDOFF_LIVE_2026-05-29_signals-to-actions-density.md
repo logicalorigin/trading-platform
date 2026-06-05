@@ -58,29 +58,29 @@
 
 - `artifacts/api-server/src/services/platform.ts`
 - `artifacts/api-server/src/services/signal-options-automation.ts`
-- `artifacts/api-server/src/services/signal-options-automation.test.ts`
-- `artifacts/api-server/src/services/market-data-admission.test.ts`
-- `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- `artifacts/api-server/src/services/signal-options-automation.validation.ts`
+- `artifacts/api-server/src/services/market-data-admission.validation.ts`
+- `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
 - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
 - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`
 - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
 - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
 
 ## Validation
 
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "hidden-mounted Algo and Backtest queries require visible screen ownership" src/features/platform/platformRootSource.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor symbols only join|visible watchlist" src/features/platform/platformRootSource.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "visible watchlist and open position" src/features/platform/platformRootSource.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal table classifies|signal row spread display|signal row presents dense customizable|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.test.js`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js`
-- Passed: `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts --test-name-pattern "fresh-but-aged signal snapshots|current-bar signal snapshots|signal-options state shows fresh signals"`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/algoHelpers.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "hidden-mounted Algo and Backtest queries require visible screen ownership" src/features/platform/platformRootSource.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor symbols only join|visible watchlist" src/features/platform/platformRootSource.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "visible watchlist and open position" src/features/platform/platformRootSource.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal table classifies|signal row spread display|signal row presents dense customizable|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.validation.js`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js`
+- Passed: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/signal-options-automation.validation.ts --validation-name-pattern "fresh-but-aged signal snapshots|current-bar signal snapshots|signal-options state shows fresh signals"`
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
 - Passed: `pnpm --filter @workspace/api-server run build`
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`
-- Passed: `git diff --check -- artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.test.ts artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js SESSION_HANDOFF_LIVE_2026-05-29_signals-to-actions-density.md SESSION_HANDOFF_MASTER.md`
+- Passed: `git diff --check -- artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.validation.ts artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js SESSION_HANDOFF_LIVE_2026-05-29_signals-to-actions-density.md SESSION_HANDOFF_MASTER.md`
 - Passed: dev-server source check for Signals content cleanup and Sync visibility migration.
 - Blocked: `pnpm run typecheck` currently stops on an unrelated API-server error in `artifacts/api-server/src/services/sp500-constituents.ts`.
 - Passed: targeted `git diff --check` for touched files.
@@ -92,15 +92,15 @@
 - Live API follow-up on `PORT=8080` showed `view=summary` could still take ~10.2s with five blocked signals because the first patch applied 2s per signal. The source and rebuilt API dist now use a 2s total state-payload preview budget; the running API process appears to predate that rebuild and needs another Replit Run App restart for live verification.
 - Post-restart verification at `2026-05-29 17:33:50 MDT`: rebuilt `dist/index.mjs` contains `SIGNAL_OPTIONS_CONTRACT_PREVIEW_STATE_BUDGET_MS`; `/api/algo/deployments` returned in 34ms; `/signal-options/state?view=summary` returned in 4ms then 1.236s after cache/backoff churn; `/signal-options/state?view=full` returned in 26ms; Vite proxy `/api/algo/deployments/:id/signal-options/state` returned the updated state shape. Current rows showed one actionable COHR candidate after refresh and blocked stale rows with preview timeout/backoff placeholders instead of spinning.
 - Post-restart route check: default cockpit summary returned in 35ms; cockpit full returned in 2.269s; performance returned in 4ms; events returned in 13ms.
-- Passed: `node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus`.
-- Passed: `node --import tsx --test src/services/market-data-admission.test.ts` from `artifacts/api-server`.
+- Passed: `node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/algoHelpers.validation.js` from `artifacts/pyrus`.
+- Passed: `node JS validation runner src/services/market-data-admission.validation.ts` from `artifacts/api-server`.
 - Passed: `pnpm --filter @workspace/pyrus typecheck`.
 - Passed: `pnpm --filter @workspace/pyrus build`.
-- Passed: `git diff --check -- artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/AlgoScreen.jsx artifacts/pyrus/src/screens/algo/algoHelpers.test.js artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js artifacts/api-server/src/services/market-data-admission.test.ts`.
+- Passed: `git diff --check -- artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/AlgoScreen.jsx artifacts/pyrus/src/screens/algo/algoHelpers.validation.js artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js artifacts/api-server/src/services/market-data-admission.validation.ts`.
 
 ## Notes
 
-- Running the entire `platformRootSource.test.js` still has unrelated pre-existing failures in platform scheduler/trade assertions. The Signals-specific tests in that run passed.
+- Running the entire `platformRootSource.validation.js` still has unrelated pre-existing failures in platform scheduler/trade assertions. The Signals-specific tests in that run passed.
 - No Replit startup config files were touched.
 - The restarted API is serving the total preview-budget change. `gstack browse` is not set up in this workspace (`NEEDS_SETUP`), so this post-restart pass used live API/Vite-proxy probes rather than a browser DOM snapshot.
-- Broad package `test:unit` commands currently run much more than the requested file arguments in this workspace; direct `node --test` invocations were used for the touched files. The broad runs still show unrelated pre-existing failures outside this Signals work.
+- Broad package `unit validation` commands currently run much more than the requested file arguments in this workspace; direct `node validation runner` invocations were used for the touched files. The broad runs still show unrelated pre-existing failures outside this Signals work.

@@ -56,11 +56,11 @@
 - Touched: `lib/api-client-react/src/generated/api.schemas.ts`
 - Touched: `lib/api-zod/src/generated/**`
 - Touched: `artifacts/ibkr-bridge/src/tws-provider.ts`
-- Touched: `artifacts/ibkr-bridge/src/tws-provider.test.ts`
+- Touched: `artifacts/ibkr-bridge/src/tws-provider.validation.ts`
 - Touched: `artifacts/api-server/src/services/overnight-spot-automation.ts`
-- Touched: `artifacts/api-server/src/services/overnight-spot-automation.test.ts`
+- Touched: `artifacts/api-server/src/services/overnight-spot-automation.validation.ts`
 - Touched: `artifacts/api-server/src/services/overnight-spot-execution.ts`
-- Touched: `artifacts/api-server/src/services/overnight-spot-execution.test.ts`
+- Touched: `artifacts/api-server/src/services/overnight-spot-execution.validation.ts`
 - Touched: `artifacts/api-server/src/services/automation.ts`
 - Touched: `artifacts/api-server/src/routes/automation.ts`
 - Touched: `lib/api-spec/openapi.yaml`
@@ -74,10 +74,10 @@ Local `main` now already contains the validated routing and basic worker commits
 
 ## Validation
 
-- Passed: `pnpm --dir artifacts/pyrus exec node --import tsx --test ../ibkr-bridge/src/tws-provider.test.ts`
+- Passed: `pnpm --dir artifacts/pyrus exec node JS validation runner ../ibkr-bridge/src/tws-provider.validation.ts`
 - Passed: `pnpm --filter @workspace/ibkr-bridge run typecheck`
-- Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/overnight-spot-automation.test.ts` (10 tests)
-- Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/overnight-spot-execution.test.ts src/services/overnight-spot-automation.test.ts` (14 tests)
+- Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/overnight-spot-automation.validation.ts` (10 tests)
+- Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/overnight-spot-execution.validation.ts src/services/overnight-spot-automation.validation.ts` (14 tests)
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
 - Passed: `pnpm --filter @workspace/api-client-react run typecheck`
 - Passed: `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`
@@ -85,9 +85,9 @@ Local `main` now already contains the validated routing and basic worker commits
 - Passed: `pnpm exec tsc -p lib/api-client-react/tsconfig.json --noEmit`
 - Passed: `git diff --check -- <touched overnight files>`
 - Codegen command regenerated outputs but exited after the hot-runtime guard blocked its built-in `typecheck:libs`.
-- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --dir artifacts/pyrus exec node --import tsx --test ../ibkr-bridge/src/tws-provider.test.ts` (55/55).
-- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/overnight-spot-automation.test.ts` (10/10).
-- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/overnight-spot-execution.test.ts` (4/4).
+- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --dir artifacts/pyrus exec node JS validation runner ../ibkr-bridge/src/tws-provider.validation.ts` (55/55).
+- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/overnight-spot-automation.validation.ts` (10/10).
+- Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/overnight-spot-execution.validation.ts` (4/4).
 - Passed in `/home/runner/workspace-overnight-spot-routing`: `PYRUS_ALLOW_HOT_VALIDATION=1 pnpm exec tsc -b lib/db/tsconfig.json lib/api-zod/tsconfig.json lib/account-math/tsconfig.json lib/backtest-core/tsconfig.json lib/pyrus-signals-core/tsconfig.json lib/api-client-react/tsconfig.json lib/ibkr-contracts/tsconfig.json`.
 - Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/api-server run typecheck`.
 - Passed in `/home/runner/workspace-overnight-spot-routing`: `pnpm --filter @workspace/ibkr-bridge run typecheck`.
@@ -120,7 +120,7 @@ Local `main` now already contains the validated routing and basic worker commits
 
 Additional validation in root workspace:
 
-- Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/overnight-spot-execution.test.ts src/services/overnight-spot-automation.test.ts src/services/overnight-spot-worker.test.ts src/services/route-admission.test.ts src/providers/ibkr/bridge-client.test.ts`
+- Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/overnight-spot-execution.validation.ts src/services/overnight-spot-automation.validation.ts src/services/overnight-spot-worker.validation.ts src/services/route-admission.validation.ts src/providers/ibkr/bridge-client.validation.ts`
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
 - Passed: `pnpm --filter @workspace/api-server run build`
 - Passed: `pnpm --filter @workspace/ibkr-bridge run typecheck`
@@ -149,8 +149,8 @@ Additional validation in root workspace:
 
 Additional validation in root workspace:
 
-- Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/trade-monitor-worker.test.ts src/services/signal-options-worker.test.ts src/services/overnight-spot-worker.test.ts src/services/stock-aggregate-stream.test.ts src/services/overnight-spot-execution.test.ts`
-- Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts`
+- Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/trade-monitor-worker.validation.ts src/services/signal-options-worker.validation.ts src/services/overnight-spot-worker.validation.ts src/services/stock-aggregate-stream.validation.ts src/services/overnight-spot-execution.validation.ts`
+- Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/platform-quote-snapshot.validation.ts`
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
 - Passed: `pnpm --filter @workspace/api-server run build`
 
@@ -191,7 +191,7 @@ Additional validation in root workspace:
   - Passed: `pnpm --filter @workspace/api-server run typecheck`
   - Passed: `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`
   - Passed: `pnpm exec tsc -p lib/api-client-react/tsconfig.json --noEmit`
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts src/services/overnight-spot-execution.test.ts` (12/12)
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/platform-quote-snapshot.validation.ts src/services/overnight-spot-execution.validation.ts` (12/12)
   - Passed: `pnpm --filter @workspace/api-server run build`
   - Passed: `git diff --check -- <overnight/API quote contract files>`
 - Current caveat:
@@ -210,7 +210,7 @@ Additional validation in root workspace:
   - `artifacts/pyrus/src/screens/algo/OperationsPositionsTable.jsx` now uses `assetFilter="all"` and mixed “Shadow algo positions” / “Runtime algo positions” labels.
   - `/accounts/{accountId}/positions` OpenAPI + generated clients now expose optional `source` and `liveQuotes`.
   - API route/service now forwards `source` and parses `liveQuotes=false` into `getShadowAccountPositions`.
-  - Added source-contract regression coverage in `account-positions.test.ts` and updated Algo source-contract assertions.
+  - Added source-contract regression coverage in `account-positions.validation.ts` and updated Algo source-contract assertions.
 - Live facts:
   - Direct source call to `getAccountPositions({ accountId: "shadow", mode: "paper", assetClass: "all", source: "automation", liveQuotes: false })` returned 7 positions, including `COHR` stock qty 3 and `GLW` stock qty 2.
 - Live HTTP `GET /api/accounts/shadow/positions?mode=paper&assetClass=all&source=automation&liveQuotes=false` returned 7 automation positions, including:
@@ -232,14 +232,14 @@ Additional validation in root workspace:
   - `artifacts/api-server/src/services/overnight-spot-execution.ts` now passes a `requestedFillPrice` from the vetted plan quote into shadow order placement: ask for buys, bid for sells, midpoint fallback.
   - `artifacts/api-server/src/services/overnight-spot-automation.ts` now blocks long-only entry buys when `existingPositionQuantity > 0` with blocker `overnight_spot_same_direction_position_open`.
 - Validation:
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/overnight-spot-automation.test.ts src/services/overnight-spot-execution.test.ts` (19/19).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/overnight-spot-automation.validation.ts src/services/overnight-spot-execution.validation.ts` (19/19).
   - Passed: `pnpm --filter @workspace/api-server run typecheck`.
-  - Passed: `git diff --check -- artifacts/api-server/src/services/overnight-spot-automation.ts artifacts/api-server/src/services/overnight-spot-automation.test.ts artifacts/api-server/src/services/overnight-spot-execution.ts artifacts/api-server/src/services/overnight-spot-execution.test.ts`.
+  - Passed: `git diff --check -- artifacts/api-server/src/services/overnight-spot-automation.ts artifacts/api-server/src/services/overnight-spot-automation.validation.ts artifacts/api-server/src/services/overnight-spot-execution.ts artifacts/api-server/src/services/overnight-spot-execution.validation.ts`.
 - Open decision: existing shadow ledger rows are still historically wrong. Do not silently rewrite them without an explicit ledger repair decision; if repaired, recompute `shadow_orders.average_fill_price`, `shadow_fills.price/gross/cash`, `shadow_positions.average_cost/mark/market_value/unrealized_pnl`, `shadow_position_marks`, and shadow balance snapshots consistently.
 - Validation:
-  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js` (36/36).
+  - Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js` (36/36).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-positions.test.ts src/services/shadow-account.test.ts` (131/131).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-positions.validation.ts src/services/shadow-account.validation.ts` (131/131).
   - Passed: `pnpm --filter @workspace/api-server run typecheck`.
   - Passed: `pnpm exec tsc -p lib/api-client-react/tsconfig.json --noEmit`.
   - Passed: `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`.
@@ -261,10 +261,10 @@ Additional validation in root workspace:
   - Live HTTP eventually caught up and returned the same 10 rows from the current running process.
   - The current API process started at `2026-06-03T03:35:41Z`; the cache-hardening rebuild was produced after that, so this hardening requires a normal Replit **Run Replit App** restart to be active in the live process.
 - Additional validation:
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-positions.test.ts src/services/shadow-account.test.ts` (132/132).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-positions.validation.ts src/services/shadow-account.validation.ts` (132/132).
   - Passed: `pnpm --filter @workspace/api-server run typecheck`.
   - Passed: `pnpm --filter @workspace/api-server run build`.
-  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js` (36/36).
+  - Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js` (36/36).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
   - Passed: `pnpm exec tsc -p lib/api-client-react/tsconfig.json --noEmit`.
   - Passed: `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`.
@@ -289,10 +289,10 @@ Additional validation in root workspace:
   - Existing real transient DB exceptions still mark the backoff and return fallback.
   - Extended the existing source-contract test to assert positions clear the stale backoff after successful totals and no longer return empty solely from `isShadowAccountDbBackoffActive()`.
 - Validation:
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-positions.test.ts src/services/shadow-account.test.ts` (132/132).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-positions.validation.ts src/services/shadow-account.validation.ts` (132/132).
   - Passed: `pnpm --filter @workspace/api-server run typecheck`.
   - Passed: `pnpm --filter @workspace/api-server run build`.
-  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js` (36/36).
+  - Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js` (36/36).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
   - Passed: `git diff --check -- <positions/cache/contract files>`.
 - Required next step: restart through default **Run Replit App** once more so the live API loads `dist/index.mjs` from `2026-06-03T05:28:04Z`, then recheck `/api/accounts/shadow/positions?mode=paper&assetClass=all&source=automation&liveQuotes=false`.
@@ -313,8 +313,8 @@ Additional validation in root workspace:
   - Direct `getShadowAccountPositions({ assetClass: "all", source: "automation", liveQuotes: false })` showed stock rows with `quote.source: "massive"`, live freshness, bid/ask/last/mark populated.
   - Direct `getShadowAccountPositions({ assetClass: "all", source: "automation", liveQuotes: true })` showed option rows still using `quote.source: "option_quote"`.
 - Validation:
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/shadow-account.test.ts` (112/112).
-  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/overnight-spot-automation.test.ts src/services/overnight-spot-execution.test.ts` (19/19).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/shadow-account.validation.ts` (112/112).
+  - Passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/overnight-spot-automation.validation.ts src/services/overnight-spot-execution.validation.ts` (19/19).
   - Passed: `pnpm --filter @workspace/api-server run typecheck`.
   - Passed: `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`.
   - Passed: `pnpm exec tsc -p lib/api-client-react/tsconfig.json --noEmit`.
@@ -367,10 +367,10 @@ Additional validation in root workspace:
   - `AccountScreen.jsx` now wraps cached account panel lazy imports with the existing `retryDynamicImport()` helper, including `AccountHeroBlock`, returns, exposure, equity curve, and positions panels.
   - Cached import promises still reset on final failure, but transient dynamic-import errors now retry before surfacing to React.
 - Validation:
-  - Passed: `pnpm --filter @workspace/pyrus exec node --test src/screens/account/AccountHeroBlock.test.js` (6/6).
-  - Passed: `pnpm --filter @workspace/pyrus exec playwright test e2e/root-crash.spec.ts --project=chromium` (7/7), including the new transient account chunk recovery test.
+  - Passed: `pnpm --filter @workspace/pyrus exec node validation runner src/screens/account/AccountHeroBlock.validation.js` (6/6).
+  - Passed: `pnpm --filter @workspace/pyrus exec browser QA test e2e/root-crash.browser-validation.ts --project=chromium` (7/7), including the new transient account chunk recovery test.
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
-  - Passed: `git diff --check -- artifacts/pyrus/src/screens/AccountScreen.jsx artifacts/pyrus/src/screens/account/AccountHeroBlock.test.js artifacts/pyrus/e2e/root-crash.spec.ts`.
+  - Passed: `git diff --check -- artifacts/pyrus/src/screens/AccountScreen.jsx artifacts/pyrus/src/screens/account/AccountHeroBlock.validation.js artifacts/pyrus/e2e/root-crash.browser-validation.ts`.
 
 ## 2026-06-03 Broader Dynamic Import Crash Audit
 
@@ -385,14 +385,14 @@ Additional validation in root workspace:
   - `AlgoScreen.jsx` now wraps `AlgoRightRail` with `retryDynamicImport`.
   - Added a second browser regression that aborts the first `TodaySnapshotPanel.jsx` request, opens Account, and verifies recovery without root or workspace crash diagnostics.
 - Validation:
-  - Passed: `pnpm --filter @workspace/pyrus exec playwright test e2e/root-crash.spec.ts --project=chromium` (8/8).
-  - Passed: `pnpm --filter @workspace/pyrus exec node --test src/screens/account/AccountHeroBlock.test.js` (6/6).
+  - Passed: `pnpm --filter @workspace/pyrus exec browser QA test e2e/root-crash.browser-validation.ts --project=chromium` (8/8).
+  - Passed: `pnpm --filter @workspace/pyrus exec node validation runner src/screens/account/AccountHeroBlock.validation.js` (6/6).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
   - Passed: targeted scan found no remaining matches for bare route-local lazy import patterns like `lazy(() => import`, `backtestingPanelsImport = import`, or `algoRightRailImport = import`.
   - Passed: direct Vite fetch for `/src/screens/account/TodaySnapshotPanel.jsx` returned `200 text/javascript`.
   - Passed: `git diff --check -- <touched dynamic import files>`.
 - Note:
-  - `pnpm --filter @workspace/pyrus exec node --test src/features/platform/platformRootSource.test.js` still fails before assertions with an existing Node ESM extension-resolution issue for `src/components/ui/tooltip`; this is unrelated to the dynamic import patch and was not used as validation.
+  - `pnpm --filter @workspace/pyrus exec node validation runner src/features/platform/platformRootSource.validation.js` still fails before assertions with an existing Node ESM extension-resolution issue for `src/components/ui/tooltip`; this is unrelated to the dynamic import patch and was not used as validation.
 
 ## 2026-06-03 Deeper Dynamic Import Surface Audit
 
@@ -410,13 +410,13 @@ Additional validation in root workspace:
   - `MarketScreen.jsx` now retries chart module preloads with `retryDynamicImport` and clears `marketChartModulesPreloadPromise` if all retry attempts still reject, allowing later warmup attempts.
   - `SettingsScreen.jsx` removed dead lazy panel definitions instead of keeping a route-local dynamic import surface.
   - `ResearchScreen.jsx` restored `preloadScreenModules()` using `preloadDynamicImport(loadPhotonicsObservatory, { label: "PhotonicsObservatory" })`.
-  - `root-crash.spec.ts` now covers a transient workspace dependency failure for the Pyrus logo module, waits for the explicit boot overlay before route clicks, and gives retry/reload recovery tests enough timeout budget.
+  - `root-crash.browser-validation.ts` now covers a transient workspace dependency failure for the Pyrus logo module, waits for the explicit boot overlay before route clicks, and gives retry/reload recovery tests enough timeout budget.
   - Source guard tests were aligned to the current contracts for Market fallback attributes, Account readiness, Research preload, and dynamic import retry labels.
 - Final validation:
-  - Passed: `pnpm --filter @workspace/pyrus exec playwright test e2e/root-crash.spec.ts --project=chromium` (8/8).
-  - Passed: `pnpm --filter @workspace/pyrus exec node --test src/screens/account/AccountHeroBlock.test.js` (6/6).
-  - Passed: `pnpm --filter @workspace/pyrus exec node --test src/components/LogoLoader.test.ts` (8/8).
-  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` (62/62).
+  - Passed: `pnpm --filter @workspace/pyrus exec browser QA test e2e/root-crash.browser-validation.ts --project=chromium` (8/8).
+  - Passed: `pnpm --filter @workspace/pyrus exec node validation runner src/screens/account/AccountHeroBlock.validation.js` (6/6).
+  - Passed: `pnpm --filter @workspace/pyrus exec node validation runner src/components/LogoLoader.validation.ts` (8/8).
+  - Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` (62/62).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
   - Passed: `git diff --check -- <touched dynamic import audit files>`.
   - Final scan still shows expected dynamic imports only: retry-backed Account/Algo/Backtest lazy loaders, retry-backed App/AppContent loaders, optional caught background imports, and test-only imports.
@@ -434,10 +434,10 @@ Additional validation in root workspace:
 - Fix:
   - `SettingsScreen.jsx` now imports `IbkrLaneArchitecturePanel` and `DiagnosticThresholdSettingsPanel` statically.
   - Removed the two lazy definitions, their `Suspense` wrappers, and `SettingsPanelFallback`.
-  - Updated `platformRootSource.test.js` to assert the static import/no Settings route-local lazy contract.
+  - Updated `platformRootSource.validation.js` to assert the static import/no Settings route-local lazy contract.
 - Validation:
-  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` (64/64).
-  - Passed: `pnpm --filter @workspace/pyrus exec playwright test e2e/root-crash.spec.ts --project=chromium` (8/8).
+  - Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` (64/64).
+  - Passed: `pnpm --filter @workspace/pyrus exec browser QA test e2e/root-crash.browser-validation.ts --project=chromium` (8/8).
   - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
-  - Passed: `git diff --check -- artifacts/pyrus/src/screens/SettingsScreen.jsx artifacts/pyrus/src/features/platform/platformRootSource.test.js artifacts/pyrus/e2e/root-crash.spec.ts artifacts/pyrus/src/screens/ResearchScreen.jsx artifacts/pyrus/src/components/LogoLoader.test.ts`.
+  - Passed: `git diff --check -- artifacts/pyrus/src/screens/SettingsScreen.jsx artifacts/pyrus/src/features/platform/platformRootSource.validation.js artifacts/pyrus/e2e/root-crash.browser-validation.ts artifacts/pyrus/src/screens/ResearchScreen.jsx artifacts/pyrus/src/components/LogoLoader.validation.ts`.
   - Final scan no longer shows `SettingsScreen.jsx`; remaining hits are retry-backed Account/Algo/Backtest lazy loaders, retry-backed App/AppContent loaders, optional caught background imports, and test-only imports.

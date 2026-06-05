@@ -25,13 +25,13 @@
 
 ## Validation
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "selected MTF frames|six-frame matrix|entry-gate policy defaults|requires MTF alignment|seen signal keys" src/services/signal-options-automation.test.ts`: pass, 5/5.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts`: pass, 136/136.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-worker.test.ts`: pass, 25/25.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/bridge-option-quote-stream.test.ts`: pass, 33/33.
-- `pnpm --filter pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`: pass, 36/36.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test ../../scripts/src/pyrus-signals-options-sweep.test.ts`: pass, 5/5.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "MTF timeframe selection|profile normalization" ../../lib/backtest-core/src/signal-options.test.ts`: pass, 8/8.
+- `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "selected MTF frames|six-frame matrix|entry-gate policy defaults|requires MTF alignment|seen signal keys" src/services/signal-options-automation.validation.ts`: pass, 5/5.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts`: pass, 136/136.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-worker.validation.ts`: pass, 25/25.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/bridge-option-quote-stream.validation.ts`: pass, 33/33.
+- `pnpm --filter pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js`: pass, 36/36.
+- `pnpm --filter @workspace/api-server exec node JS validation runner ../../scripts/src/pyrus-signals-options-sweep.validation.ts`: pass, 5/5.
+- `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "MTF timeframe selection|profile normalization" ../../lib/backtest-core/src/signal-options.validation.ts`: pass, 8/8.
 - `PYRUS_ALLOW_HOT_VALIDATION=1 pnpm exec tsc -b lib/db/tsconfig.json lib/api-zod/tsconfig.json lib/account-math/tsconfig.json lib/backtest-core/tsconfig.json lib/pyrus-signals-core/tsconfig.json lib/api-client-react/tsconfig.json`: pass.
 - `pnpm --filter @workspace/api-server run typecheck`: pass.
 - `pnpm --filter pyrus typecheck`: pass.
@@ -43,7 +43,7 @@
 - No Replit startup config was touched, so `pnpm run audit:replit-startup` was not required.
 - Clean extraction committed at `/home/runner/workspace-signal-options-mtf-entry-sweep` on branch `codex/signal-options-mtf-entry-sweep`, commit `a8f0a4d`.
 - Branch base includes `codex/api-signal-monitor-pressure` plus cherry-picked data-quality commit `2735a89`.
-- Applied the dirty-root MTF/UI patch, resolved the two conflicted automation files, trimmed two unrelated loading-state assertions from `algoHelpers.test.js`, and added minimal bridge quote-stream `releaseLeasesOnAbort` support required by the extracted automation path.
+- Applied the dirty-root MTF/UI patch, resolved the two conflicted automation files, trimmed two unrelated loading-state assertions from `algoHelpers.validation.js`, and added minimal bridge quote-stream `releaseLeasesOnAbort` support required by the extracted automation path.
 - Final commit is 10 files, 3165 insertions, 516 deletions. The clean extraction worktree is clean.
 - Initial full Pyrus helper validation failed because two dirty-root loading-state assertions targeted `AlgoScreen.jsx`/`AlgoLivePage.jsx`, which are intentionally outside this branch. Those assertions were reverted to the branch base; the remaining full helper suite passes.
 

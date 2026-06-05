@@ -406,9 +406,7 @@ export const useLiveMarketFlow = (
 
     const schedule = (delay) => {
       if (cancelled) return;
-      const visibilityMultiplier =
-        typeof document !== "undefined" && document.hidden ? 6 : 1;
-      timer = setTimeout(runOnce, Math.max(250, delay * visibilityMultiplier));
+      timer = setTimeout(runOnce, Math.max(250, delay));
     };
 
     const runOnce = async () => {

@@ -448,6 +448,11 @@ export const EquityCurvePanel = ({
   const baseRightRail =
     rightRail ?? (chartData?.flexConfigured ? "Flex + snapshots" : "Snapshots");
   const blockingError = hasPoints ? null : query.error;
+  const equityLoading = Boolean(
+    !hasPoints &&
+      (query?.isFetching ||
+        (query?.isPending && query?.fetchStatus !== "idle")),
+  );
   const chartHeight = compact ? CHART_HEIGHT_COMPACT : CHART_HEIGHT;
 
   const headerControls = (
@@ -479,7 +484,7 @@ export const EquityCurvePanel = ({
     <Panel
       title="Equity Curve"
       rightRail={baseRightRail}
-      loading={(query.isPending || query.isLoading) && !hasPoints}
+      loading={equityLoading}
       error={blockingError}
       onRetry={query.refetch}
       minHeight={compact ? 320 : 460}

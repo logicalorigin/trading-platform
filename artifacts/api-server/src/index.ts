@@ -12,13 +12,13 @@ import {
   startRuntimeFlightRecorder,
 } from "./services/runtime-flight-recorder";
 import {
+  getAccountPositionVisibilityProbe,
   listAccounts,
   startAccountFlexRefreshScheduler,
 } from "./services/account";
 import {
   getRuntimeDiagnostics,
-  listOrders,
-  listPositions,
+  getOrderVisibilityProbe,
   startFlowUniverseOptionabilityVerifier,
   startIbkrWatchlistPrewarmRuntime,
   startOptionsFlowScanner,
@@ -26,6 +26,7 @@ import {
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
+import { startSignalMonitorLocalBarCacheWarmup } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-usage";
@@ -127,10 +128,16 @@ async function collectDiagnosticsInput() {
         ? firstAccount.id
         : undefined;
   const positionsProbe = await readOnlyProbe("positions probe", () =>
-    listPositions({ accountId, mode }),
+    accountId
+      ? getAccountPositionVisibilityProbe({
+          accountId,
+          mode,
+          source: "diagnostics-collector",
+        })
+      : Promise.resolve({ count: 0 }),
   );
   const ordersProbe = await readOnlyProbe("orders probe", () =>
-    listOrders({ accountId, mode }),
+    Promise.resolve(getOrderVisibilityProbe({ accountId, mode })),
   );
   const ordersProbeValue = ordersProbe.ok ? asRecord(ordersProbe.value) : {};
 
@@ -143,7 +150,10 @@ async function collectDiagnosticsInput() {
       positions: positionsProbe.ok
         ? {
             ok: true,
-            count: asArray(asRecord(positionsProbe.value).positions).length,
+            count:
+              typeof asRecord(positionsProbe.value).count === "number"
+                ? asRecord(positionsProbe.value).count
+                : 0,
           }
         : { ok: false, error: positionsProbe.error },
       orders: ordersProbe.ok
@@ -181,6 +191,7 @@ server.listen(port, () => {
   startFlowUniverseOptionabilityVerifier();
   startTradeMonitorWorker();
   startIbkrLineUsageGenerationCoordinator();
+  startSignalMonitorLocalBarCacheWarmup();
   void startPythonComputeRuntime().catch((err) => {
     logger.warn({ err }, "Failed to start Python compute runtime");
   });

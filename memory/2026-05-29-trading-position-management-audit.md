@@ -112,26 +112,26 @@ The `TRL` issue was a stale display-state gap. Shadow option marks kept updating
   - Added `stopLoss` and `takeProfit` to the account-position API contract and regenerated typed clients/schemas.
   - Clarified that `takeProfit` is an explicit take-profit price, not runner activation.
   - Normalized generated client EOF whitespace so codegen output passes `git diff --check`.
-- `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- `artifacts/api-server/src/services/signal-options-automation.validation.ts`
   - Added regression coverage for after-hours entry/exit events, opposite-signal close blocking, stale fallback rejection, and fresh `option_quote` shadow fallback exits.
-- `artifacts/api-server/src/services/shadow-account.test.ts`
+- `artifacts/api-server/src/services/shadow-account.validation.ts`
   - Added regression coverage for entry mirroring respecting option sessions.
   - Added regression coverage that runner trail activation does not populate take-profit fields.
-- `artifacts/pyrus/src/features/account/positionTradeManagement.test.js`
+- `artifacts/pyrus/src/features/account/positionTradeManagement.validation.js`
   - Added regression coverage that runner trail activation does not populate `TP`, while explicit automation take-profit still does.
-- `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.js`
+- `artifacts/pyrus/src/features/trade/TradePositionsPanel.validation.js`
   - Added regression coverage for live open-position rows preserving automation stop values and removing the table `TP` / `DIST` columns.
-- `artifacts/pyrus/src/screens/account/PositionsPanel.test.js`
+- `artifacts/pyrus/src/screens/account/PositionsPanel.validation.js`
   - Added regression coverage that shared Account/Algo position-table defaults no longer include `target` / `TP` or standalone `riskDistance` / `DIST`.
-- `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+- `artifacts/pyrus/src/screens/algo/algoHelpers.validation.js`
   - Added regression coverage that Algo account-position merging keeps shadow ledger membership authoritative.
 
 ## Validation
 
-- Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts src/services/signal-options-automation.test.ts` (`195/195`).
-- Passed: `pnpm --filter @workspace/pyrus exec node --test src/features/account/positionTradeManagement.test.js src/features/trade/TradePositionsPanel.test.js` (`10/10`).
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/features/account/positionTradeManagement.test.js` (`65/65`).
-- Passed again after moving distance into `SL` / `TRL`: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js src/features/account/positionTradeManagement.test.js` (`65/65`).
+- Passed: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/shadow-account.validation.ts src/services/signal-options-automation.validation.ts` (`195/195`).
+- Passed: `pnpm --filter @workspace/pyrus exec node validation runner src/features/account/positionTradeManagement.validation.js src/features/trade/TradePositionsPanel.validation.js` (`10/10`).
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/features/account/positionTradeManagement.validation.js` (`65/65`).
+- Passed again after moving distance into `SL` / `TRL`: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/screens/algo/algoHelpers.validation.js src/features/account/positionTradeManagement.validation.js` (`65/65`).
 - Passed: `pnpm --filter @workspace/api-server run typecheck`.
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
 - Passed: `pnpm run audit:api-codegen`.
@@ -153,10 +153,10 @@ The `TRL` issue was a stale display-state gap. Shadow option marks kept updating
 - Compact risk distance now displays as a signed percentage under the active `SL` or `TRL` cell, while full `away` / `past` wording remains in the tooltip.
 - Tightened Trade open-position table padding/widths and changed its stop-distance corner badge to a compact signed percentage with amber/red tones for near/breached stops.
 - Validation passed:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js src/features/account/positionTradeManagement.test.js` (`67/67`).
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/screens/algo/algoHelpers.validation.js src/features/account/positionTradeManagement.validation.js` (`67/67`).
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/pyrus run build`.
-  - `git diff --check -- artifacts/pyrus/src/features/account/positionTableColumns.js artifacts/pyrus/src/screens/account/PositionsPanel.jsx artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx artifacts/pyrus/src/screens/account/PositionsPanel.test.js artifacts/pyrus/src/features/trade/TradePositionsPanel.test.js`.
+  - `git diff --check -- artifacts/pyrus/src/features/account/positionTableColumns.js artifacts/pyrus/src/screens/account/PositionsPanel.jsx artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx artifacts/pyrus/src/screens/account/PositionsPanel.validation.js artifacts/pyrus/src/features/trade/TradePositionsPanel.validation.js`.
 - Browser check against the already-running Replit app reached the shell, but Account, Algo, and Trade positions surfaces did not hydrate a positions table in this session; Account stayed at deferred `Loading positions`, Algo stayed at `Loading signal operations`, and Trade had no `trade-open-positions-table-scroll` instance.
 
 ## Visual Alignment Follow-up - 2026-05-29T16:23Z
@@ -166,7 +166,7 @@ The `TRL` issue was a stale display-state gap. Shadow option marks kept updating
 - Trade open-position table now uses the same centered visual alignment for numeric columns and symmetric left/right padding.
 - Added regression assertions so asymmetric compact padding strings do not come back.
 - Validation passed:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js src/features/account/positionTradeManagement.test.js` (`67/67`).
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/screens/algo/algoHelpers.validation.js src/features/account/positionTradeManagement.validation.js` (`67/67`).
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/pyrus run build`.
   - targeted `git diff --check`.
@@ -178,7 +178,7 @@ The `TRL` issue was a stale display-state gap. Shadow option marks kept updating
 - Removed visible secondary text under `Bid / Ask`; spread/freshness detail is still available in the cell title for debugging, but no longer consumes table space.
 - Live bid/ask streaming path remains unchanged: visible option rows still mount `PositionOptionQuoteStreams`, and `useLiveOptionPositionRows` still overlays `getStoredOptionQuoteSnapshot(...)` data before rendering.
 - Validation passed:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js src/features/account/positionTradeManagement.test.js` (`67/67`).
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/screens/algo/algoHelpers.validation.js src/features/account/positionTradeManagement.validation.js` (`67/67`).
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/pyrus run build`.
   - targeted `git diff --check`.
@@ -191,7 +191,7 @@ The `TRL` issue was a stale display-state gap. Shadow option marks kept updating
 - Tightened dense Account/Algo cell/header padding again from `2px 3px` to `1px 2px` (`actions` uses `1px 1px`).
 - Narrowed the shared Account/Algo `Greeks` column to `clamp(50px, 5vw, 64px)` and `Signal` to `clamp(66px, 7vw, 92px)`.
 - Validation passed:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/PositionsPanel.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js src/features/account/positionTradeManagement.test.js` (`67/67`).
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/trade/TradePositionsPanel.validation.js src/screens/algo/algoHelpers.validation.js src/features/account/positionTradeManagement.validation.js` (`67/67`).
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/pyrus run build`.
   - targeted `git diff --check`.

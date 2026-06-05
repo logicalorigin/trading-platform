@@ -9,14 +9,14 @@ import type { Bar } from './bar';
 import type { BarsHistoryPage } from './barsHistoryPage';
 import type { BarsResponseMarketDataMode } from './barsResponseMarketDataMode';
 import type { ChartBarTimeframe } from './chartBarTimeframe';
-import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
 import type { MarketDataFreshness } from './marketDataFreshness';
+import type { MarketDataTransport } from './marketDataTransport';
 
 export interface BarsResponse {
   symbol: string;
   timeframe: ChartBarTimeframe;
   bars: Bar[];
-  transport: IbkrBridgeHealthTransport | null;
+  transport: MarketDataTransport | null;
   delayed: boolean;
   gapFilled: boolean;
   freshness: MarketDataFreshness;

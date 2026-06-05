@@ -14,6 +14,7 @@ use std::time::Instant;
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use reqwest::StatusCode;
 use serde_json::json;
 use tracing::{error, info, warn};
 
@@ -24,7 +25,10 @@ use crate::ingest::{
     persist_option_chain_snapshots, persist_provider_request_log, persist_stock_snapshot,
     ProviderRequestLogInput,
 };
-use crate::jobs::{claim_next_job, complete_job, fail_job, heartbeat_job, IngestJob};
+use crate::jobs::{
+    claim_next_job, complete_job, fail_gex_jobs_with_failed_prerequisites, fail_job, heartbeat_job,
+    IngestJob,
+};
 use crate::providers::massive::{
     fetch_option_chain_snapshots, fetch_stock_snapshot, OptionChainFetchResult,
 };
@@ -116,10 +120,9 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
     let pool = connect_pool(&config).await?;
     match kind {
         "stock_snapshot" => {
-            let provider = config
-                .market_data_provider
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
+            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
+            })?;
             let client = reqwest::Client::new();
             let started_at = Instant::now();
             let snapshot = match fetch_stock_snapshot(&client, provider, symbol).await {
@@ -169,10 +172,9 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             Ok(())
         }
         "option_chain_snapshot" => {
-            let provider = config
-                .market_data_provider
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
+            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
+            })?;
             let client = reqwest::Client::new();
             let started_at = Instant::now();
             let fetch = match fetch_option_chain_snapshots(
@@ -260,6 +262,18 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
             info!(completed_jobs, "market-data worker reached max job limit");
             return Ok(());
         }
+        match fail_gex_jobs_with_failed_prerequisites(&pool).await {
+            Ok(count) if count > 0 => {
+                info!(
+                    count,
+                    "marked queued gex jobs failed because prerequisites failed"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                error!(err = %error, "market-data worker prerequisite reconciliation failed");
+            }
+        }
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("market-data worker shutting down");
@@ -301,10 +315,9 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
 async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob) -> Result<()> {
     match job.kind.as_str() {
         "stock_snapshot" => {
-            let provider = config
-                .market_data_provider
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
+            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
+            })?;
             let client = reqwest::Client::new();
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
@@ -364,10 +377,9 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
             .await
         }
         "option_chain_snapshot" => {
-            let provider = config
-                .market_data_provider
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
+            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
+            })?;
             let client = reqwest::Client::new();
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
@@ -540,9 +552,19 @@ fn http_status_from_error(error: &anyhow::Error) -> Option<i32> {
 }
 
 fn is_transient_job_error(error: &anyhow::Error) -> bool {
+    if let Some(status) = error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(|error| error.status())
+    {
+        return status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+    }
+
     let message = error.to_string();
     !(message.contains("unsupported market-data job kind")
         || message.contains("unsupported once job kind")
         || message.contains("symbol is required")
-        || message.contains("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))
+        || message.contains("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
+        || message.contains("provider returned no usable stock snapshot")
+        || message.contains("provider returned no option-chain snapshots")
+        || message.contains("option-chain snapshot truncated"))
 }

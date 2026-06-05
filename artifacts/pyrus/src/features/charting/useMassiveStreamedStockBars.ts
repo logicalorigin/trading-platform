@@ -8,7 +8,6 @@ import {
 import type { BrokerStockAggregateMessage } from "./useMassiveStockAggregateStream";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
 import { useRuntimeTickerSnapshot } from "../platform/runtimeTickerStore";
-import { usePageVisible } from "../platform/usePageVisible";
 import {
   markChartLivePatchPending,
   recordChartHydrationCounter,
@@ -177,21 +176,34 @@ const liveBarFallbackThrottleByStreamUrl = new Map<
   }
 >();
 
-const requestLiveFrame = (callback: () => void): ReturnType<typeof setTimeout> | number => {
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    return window.requestAnimationFrame(callback);
+type LiveFlushHandle =
+  | ReturnType<typeof setTimeout>
+  | number
+  | { cancelled: boolean; timer: ReturnType<typeof setTimeout> | null };
+
+const requestLiveFrame = (callback: () => void): LiveFlushHandle => {
+  const handle = { cancelled: false, timer: null as ReturnType<typeof setTimeout> | null };
+  const flush = () => {
+    if (!handle.cancelled) {
+      callback();
+    }
+  };
+
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(flush);
+    return handle;
   }
 
-  return setTimeout(callback, 0);
+  handle.timer = setTimeout(flush, 0);
+  return handle;
 };
 
-const cancelLiveFrame = (handle: ReturnType<typeof setTimeout> | number): void => {
-  if (
-    typeof window !== "undefined" &&
-    typeof window.cancelAnimationFrame === "function" &&
-    typeof handle === "number"
-  ) {
-    window.cancelAnimationFrame(handle);
+const cancelLiveFrame = (handle: LiveFlushHandle): void => {
+  if (typeof handle === "object" && "cancelled" in handle) {
+    handle.cancelled = true;
+    if (handle.timer !== null) {
+      clearTimeout(handle.timer);
+    }
     return;
   }
 
@@ -208,13 +220,13 @@ const createLiveBarFrameScheduler = <T,>({
   getBucketKey: (item: T) => string | null;
   getSignature?: (item: T) => string;
   apply: (items: T[], stats: LiveFrameSchedulerStats) => void;
-  requestFrame?: (callback: () => void) => ReturnType<typeof setTimeout> | number;
-  cancelFrame?: (handle: ReturnType<typeof setTimeout> | number) => void;
+  requestFrame?: (callback: () => void) => LiveFlushHandle;
+  cancelFrame?: (handle: LiveFlushHandle) => void;
 }): LiveFrameScheduler<T> => {
   const pendingByBucket = new Map<string, T>();
   let queued = 0;
   let duplicates = 0;
-  let frameHandle: ReturnType<typeof setTimeout> | number | null = null;
+  let frameHandle: LiveFlushHandle | null = null;
 
   const flush = () => {
     frameHandle = null;
@@ -1896,7 +1908,6 @@ export const useHistoricalBarStreamState = ({
   const baseBarsRef = useRef(normalizedBaseBars);
   const fetchLatestBarsRef = useRef(fetchLatestBars);
   const lastStreamSignatureRef = useRef<string | null>(null);
-  const pageVisible = usePageVisible();
   const streamedBarLimit = useMemo(
     () => resolvePatchedBarLimit(timeframe, normalizedBaseBars),
     [normalizedBaseBars, timeframe],
@@ -1932,14 +1943,14 @@ export const useHistoricalBarStreamState = ({
   }, [fetchLatestBars]);
 
   useEffect(() => {
-    if (!enabled || !pageVisible) {
+    if (!enabled) {
       setStreamStatus("deferred");
       return;
     }
     if (!streamUrl || typeof window === "undefined") {
       setStreamStatus("unsupported");
     }
-  }, [enabled, pageVisible, streamUrl]);
+  }, [enabled, streamUrl]);
 
   useEffect(() => {
     setStreamedBars((current) => {
@@ -1962,7 +1973,7 @@ export const useHistoricalBarStreamState = ({
   }, [normalizedBaseBars, streamedBarLimit, timeframe]);
 
   useEffect(() => {
-    if (!enabled || !pageVisible || !streamUrl || typeof window === "undefined") {
+    if (!enabled || !streamUrl || typeof window === "undefined") {
       return;
     }
 
@@ -2176,7 +2187,6 @@ export const useHistoricalBarStreamState = ({
   }, [
     enabled,
     instrumentationScope,
-    pageVisible,
     scopeKey,
     streamUrl,
     streamPriority,

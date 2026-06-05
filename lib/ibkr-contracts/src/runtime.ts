@@ -24,6 +24,11 @@ export type IbkrRuntimeConfig = {
 
 export type IbkrTransport = "client_portal" | "tws";
 
+export type MarketDataTransport =
+  | IbkrTransport
+  | "massive_rest"
+  | "massive_websocket";
+
 export type IbkrMarketDataMode =
   | "live"
   | "frozen"

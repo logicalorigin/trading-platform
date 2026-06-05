@@ -77,6 +77,7 @@ import {
   TextField,
   ThresholdHistogram,
 } from "../../components/platform/primitives.jsx";
+import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import {
   SortableColumnHeaderCell,
   TableHeaderDndContext,
@@ -195,6 +196,7 @@ const SectionCard = ({
   emptyTitle = "No data",
   emptyBody = "This section will populate once matching trades are available.",
   minHeight = 180,
+  loadingWaitItems = null,
   style,
 }) => (
   <section className="ra-panel-enter" style={sectionCardStyle(style)}>
@@ -227,6 +229,20 @@ const SectionCard = ({
     <div style={{ padding: sp("8px 10px 10px"), minHeight: dim(minHeight), minWidth: 0 }}>
       {loading ? (
         <div style={{ display: "grid", gap: sp(5) }}>
+          <ContainerLoadingStatus
+            items={
+              loadingWaitItems || [
+                {
+                  id: `${title}:analysis`,
+                  label: `${title} analysis`,
+                  status: "loading",
+                  detail: "closed trades and account analysis model",
+                  endpoint: "/api/accounts/closed-trades",
+                },
+              ]
+            }
+            testId="account-analysis-section-loading-waits"
+          />
           <Skeleton height={dim(18)} />
           <Skeleton height={dim(Math.max(80, minHeight - 46))} />
         </div>

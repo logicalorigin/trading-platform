@@ -21,7 +21,7 @@
 ## Validation Snapshot
 
 - PASS: focused Pyrus tests:
-  `pnpm --filter @workspace/pyrus exec node --import tsx --test src/lib/designDoctrine.source.test.js src/features/platform/semanticToneModel.test.js src/components/platform/primitives.test.js src/features/flow/flowSemanticTone.source.test.js src/features/gex/gexSemanticTone.source.test.js src/features/trade/tradeSemanticTone.source.test.js src/features/market/marketSemanticTone.source.test.js src/screens/SignalsScreen.table-cells.test.js src/screens/SignalsScreen.test.js`
+  `pnpm --filter @workspace/pyrus exec node JS validation runner src/lib/designDoctrine.source.validation.js src/features/platform/semanticToneModel.validation.js src/components/platform/primitives.validation.js src/features/flow/flowSemanticTone.source.validation.js src/features/gex/gexSemanticTone.source.validation.js src/features/trade/tradeSemanticTone.source.validation.js src/features/market/marketSemanticTone.source.validation.js src/screens/SignalsScreen.table-cells.validation.js src/screens/SignalsScreen.validation.js`
 - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
 - PASS: `pnpm --filter @workspace/pyrus run build` (existing large-chunk warning only).
 - PASS: live safe-mode DOM color scan across Signals, Flow, GEX, Trade, Market:
@@ -30,7 +30,7 @@
   - Directional green label/SVG count: 0 on all five screens.
   - Screenshots written to `/tmp/pyrus-semantic-tone-qa`.
 - PASS: safe-QA route profile:
-  `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals,flow,gex,trade,market pnpm --filter @workspace/pyrus exec playwright test e2e/safe-qa-route-performance.spec.ts --project=chromium`
+  `PYRUS_BROWSER_QA_NO_WEB_SERVER=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals,flow,gex,trade,market pnpm --filter @workspace/pyrus exec browser QA test e2e/safe-qa-route-performance.browser-validation.ts --project=chromium`
   Existing harness reported soft performance-budget notes only; test passed.
 - PASS: `git diff --check`.
 

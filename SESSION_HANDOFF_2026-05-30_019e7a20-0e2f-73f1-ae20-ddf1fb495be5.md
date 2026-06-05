@@ -27,26 +27,26 @@
 ## Implementation Notes
 
 - Main touched API files: `resource-pressure.ts`, `platform.ts`, `signal-options-worker.ts`, `signal-options-worker-state.ts`, `signal-monitor.ts`, `signal-options-automation.ts`.
-- Main touched regression tests: `resource-pressure.test.ts`, `route-admission.test.ts`, `signal-options-worker.test.ts`, `signal-options-automation.test.ts`, `options-flow-scanner.test.ts`, `diagnostics.test.ts`.
-- Pyrus regression guard added in `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`.
+- Main touched regression tests: `resource-pressure.validation.ts`, `route-admission.validation.ts`, `signal-options-worker.validation.ts`, `signal-options-automation.validation.ts`, `options-flow-scanner.validation.ts`, `diagnostics.validation.ts`.
+- Pyrus regression guard added in `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`.
 - One existing options-flow stale-skip test fixture was widened from a 1 ms scanner interval to 100 ms to avoid runner-jitter flakes while preserving the stale diagnostics assertion.
 - The repo remains heavily dirty from other sessions. No unrelated files were reverted.
 
 ## Validation Snapshot
 
-- Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/resource-pressure.test.ts src/services/route-admission.test.ts src/services/signal-options-automation.test.ts src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts`
-- Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts`
-- Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/diagnostics.test.ts`
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/appWorkScheduler.test.js`
-- Passed after first live-check follow-up: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts`
-- Passed after second live-check follow-up: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts`
+- Passed: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/resource-pressure.validation.ts src/services/route-admission.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-monitor.validation.ts src/services/signal-options-worker.validation.ts`
+- Passed: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/options-flow-scanner.validation.ts`
+- Passed: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/diagnostics.validation.ts`
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/useMemoryPressureSignal.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/appWorkScheduler.validation.js`
+- Passed after first live-check follow-up: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-monitor.validation.ts`
+- Passed after second live-check follow-up: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts`
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`
 - Passed after second live-check follow-up: `pnpm --filter @workspace/api-server run build`
-- Passed after second live-check follow-up: `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-monitor.test.ts artifacts/api-server/src/services/signal-options-automation.test.ts`
-- Passed: `git diff --check -- artifacts/api-server/src/services/resource-pressure.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/signal-options-worker.ts artifacts/api-server/src/services/signal-options-worker-state.ts artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/resource-pressure.test.ts artifacts/api-server/src/services/route-admission.test.ts artifacts/api-server/src/services/signal-options-worker.test.ts artifacts/api-server/src/services/signal-options-automation.test.ts artifacts/api-server/src/services/options-flow-scanner.test.ts artifacts/api-server/src/services/diagnostics.test.ts artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
-- Noted: a single all-in-one API `node --test` invocation that mixed options-flow with unrelated suites hit shared runtime-state noise; the affected options-flow suite passed when run alone.
-- Noted: `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js` has pre-existing threshold expectation failures when run directly; not changed as part of this scanner fix.
+- Passed after second live-check follow-up: `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-monitor.validation.ts artifacts/api-server/src/services/signal-options-automation.validation.ts`
+- Passed: `git diff --check -- artifacts/api-server/src/services/resource-pressure.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/signal-options-worker.ts artifacts/api-server/src/services/signal-options-worker-state.ts artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/resource-pressure.validation.ts artifacts/api-server/src/services/route-admission.validation.ts artifacts/api-server/src/services/signal-options-worker.validation.ts artifacts/api-server/src/services/signal-options-automation.validation.ts artifacts/api-server/src/services/options-flow-scanner.validation.ts artifacts/api-server/src/services/diagnostics.validation.ts artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`
+- Noted: a single all-in-one API `node validation runner` invocation that mixed options-flow with unrelated suites hit shared runtime-state noise; the affected options-flow suite passed when run alone.
+- Noted: `artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js` has pre-existing threshold expectation failures when run directly; not changed as part of this scanner fix.
 
 ## Next Recommended Steps
 

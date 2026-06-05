@@ -24,7 +24,7 @@ Implemented and validated the chart overlay fixes, including post-restart browse
   - Derives real-account stop loss / take profit from closing stop and limit open orders.
   - Reads raw shadow stop/trail payloads in addition to normalized risk overlays.
   - Made trailing-stop inference direction-aware for shorts.
-- `artifacts/pyrus/src/features/charting/chartPositionOverlays.test.ts`
+- `artifacts/pyrus/src/features/charting/chartPositionOverlays.validation.ts`
   - Added regressions for real-account open-order SL/TP lines.
   - Added regressions for raw shadow last-stop / wire-trail HSL/TRL lines.
 - `artifacts/pyrus/src/screens/TradeScreen.jsx`
@@ -33,18 +33,18 @@ Implemented and validated the chart overlay fixes, including post-restart browse
   - Added visible chart admission headers to Trade flow live/history requests.
 - `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx`
   - Added a one-point fallback for position risk-line paths so single-bar option charts still render current SL/TP/TRL labels and lines.
-- `artifacts/pyrus/src/features/charting/ResearchChartSurface.test.ts`
+- `artifacts/pyrus/src/features/charting/ResearchChartSurface.validation.ts`
   - Added regression coverage for one-point position risk-line rendering.
-- `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
   - Added regression coverage for Trade chart flow requests using visible chart admission headers.
 
 ## Validation
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/chartPositionOverlays.test.ts src/features/charting/chartEvents.test.ts src/features/charting/flowChartEvents.test.ts src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/market/marketChartWiring.test.js src/features/platform/platformRootSource.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/charting/chartPositionOverlays.validation.ts src/features/charting/chartEvents.validation.ts src/features/charting/flowChartEvents.validation.ts src/features/gex/useGexProjection.validation.js src/features/gex/gexProjectionChartWiring.validation.js src/features/market/marketChartWiring.validation.js src/features/platform/platformRootSource.validation.js`
   - Passed: 167/167.
 - `pnpm --filter @workspace/pyrus typecheck`
   - Passed.
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/ResearchChartSurface.test.ts src/features/charting/chartPositionOverlays.test.ts src/features/platform/platformRootSource.test.js src/features/charting/chartEvents.test.ts src/features/charting/flowChartEvents.test.ts src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/market/marketChartWiring.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/charting/ResearchChartSurface.validation.ts src/features/charting/chartPositionOverlays.validation.ts src/features/platform/platformRootSource.validation.js src/features/charting/chartEvents.validation.ts src/features/charting/flowChartEvents.validation.ts src/features/gex/useGexProjection.validation.js src/features/gex/gexProjectionChartWiring.validation.js src/features/market/marketChartWiring.validation.js`
   - Passed: 254/254.
 - Post-restart browser probe against `http://127.0.0.1:18747/`:
   - Spot SPY chart rendered 361 bars, GEX cone present, GEX future axis present.

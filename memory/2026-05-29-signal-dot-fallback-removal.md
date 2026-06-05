@@ -19,7 +19,7 @@ The same pattern existed in header interval context and watchlist signal sorting
 
 ## Validation
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/headerBroadcastModel.test.js src/features/platform/watchlistModel.test.js src/features/platform/signalMatrixScheduler.test.js`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "shared signal dots preserve watchlist behavior after extraction|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/headerBroadcastModel.validation.js src/features/platform/watchlistModel.validation.js src/features/platform/signalMatrixScheduler.validation.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "shared signal dots preserve watchlist behavior after extraction|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.validation.js`
 - `pnpm --filter @workspace/pyrus run typecheck`
 - `git diff --check --` on the touched fallback-removal files

@@ -90,7 +90,7 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
 - `2026-05-06T17:27:39.506Z` Tool: exec_command set -o pipefail unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH export RAYALGO_MEMORY_SOAK=1 export RAYALGO_MEMORY_SOAK_LIVE_API=1 export RAYALGO_MEMORY_SOAK_MINUTES=15 export RAYALG…
 - `2026-05-06T17:27:44.501Z` Agent: The soak is running now. I’m going to monitor it through completion and report the first concrete failure if it trips before the 15 minutes are up.
 - `2026-05-06T17:27:45.001Z` Tool: write_stdin session 96749
-- `2026-05-06T17:28:19.560Z` Agent: The browser launched and the Playwright test is in its single-worker run. No failure has surfaced in the first startup window; I’m continuing to watch.
+- `2026-05-06T17:28:19.560Z` Agent: The browser launched and the browser QA test is in its single-worker run. No failure has surfaced in the first startup window; I’m continuing to watch.
 - `2026-05-06T17:28:19.910Z` Tool: write_stdin session 96749
 - `2026-05-06T17:28:53.936Z` Agent: Still running with no new failure output. For this spec that usually means it is inside the timed cycling loop; the summary comes near the end unless an assertion fails early.
 - `2026-05-06T17:28:54.423Z` Tool: write_stdin session 96749
@@ -113,21 +113,21 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
 - `artifacts/api-server/src/services/account.ts`
 - `artifacts/api-server/src/services/backtesting.ts`
 - `artifacts/api-server/src/services/bridge-governor.ts`
-- `artifacts/api-server/src/services/bridge-option-quote-stream.test.ts`
+- `artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts`
 - `artifacts/api-server/src/services/bridge-option-quote-stream.ts`
 - `artifacts/api-server/src/services/bridge-streams.ts`
-- `artifacts/api-server/src/services/flow-universe.test.ts`
+- `artifacts/api-server/src/services/flow-universe.validation.ts`
 - `artifacts/api-server/src/services/flow-universe.ts`
 - `artifacts/api-server/src/services/ibkr-account-bridge.ts`
 - `artifacts/api-server/src/services/ibkr-lanes.ts`
-- `artifacts/api-server/src/services/ibkr-line-usage.test.ts`
+- `artifacts/api-server/src/services/ibkr-line-usage.validation.ts`
 - `artifacts/api-server/src/services/ibkr-line-usage.ts`
-- `artifacts/api-server/src/services/market-data-admission.test.ts`
+- `artifacts/api-server/src/services/market-data-admission.validation.ts`
 - `artifacts/api-server/src/services/market-data-admission.ts`
-- `artifacts/api-server/src/services/option-chain-batch.test.ts`
-- `artifacts/api-server/src/services/options-flow-radar-scanner.test.ts`
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts`
+- `artifacts/api-server/src/services/options-flow-radar-scanner.validation.ts`
 - `artifacts/api-server/src/services/options-flow-radar-scanner.ts`
-- `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+- `artifacts/api-server/src/services/options-flow-scanner.validation.ts`
 - `artifacts/api-server/src/services/options-flow-scanner.ts`
 
 ## Repo State Snapshot
@@ -148,94 +148,94 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  M artifacts/api-server/src/services/account.ts
  M artifacts/api-server/src/services/backtesting.ts
  M artifacts/api-server/src/services/bridge-governor.ts
- M artifacts/api-server/src/services/bridge-option-quote-stream.test.ts
+ M artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts
  M artifacts/api-server/src/services/bridge-option-quote-stream.ts
  M artifacts/api-server/src/services/bridge-streams.ts
- M artifacts/api-server/src/services/flow-universe.test.ts
+ M artifacts/api-server/src/services/flow-universe.validation.ts
  M artifacts/api-server/src/services/flow-universe.ts
  M artifacts/api-server/src/services/ibkr-account-bridge.ts
  M artifacts/api-server/src/services/ibkr-lanes.ts
- M artifacts/api-server/src/services/ibkr-line-usage.test.ts
+ M artifacts/api-server/src/services/ibkr-line-usage.validation.ts
  M artifacts/api-server/src/services/ibkr-line-usage.ts
- M artifacts/api-server/src/services/market-data-admission.test.ts
+ M artifacts/api-server/src/services/market-data-admission.validation.ts
  M artifacts/api-server/src/services/market-data-admission.ts
- M artifacts/api-server/src/services/option-chain-batch.test.ts
- M artifacts/api-server/src/services/options-flow-radar-scanner.test.ts
+ M artifacts/api-server/src/services/option-chain-batch.validation.ts
+ M artifacts/api-server/src/services/options-flow-radar-scanner.validation.ts
  M artifacts/api-server/src/services/options-flow-radar-scanner.ts
- M artifacts/api-server/src/services/options-flow-scanner.test.ts
+ M artifacts/api-server/src/services/options-flow-scanner.validation.ts
  M artifacts/api-server/src/services/options-flow-scanner.ts
  M artifacts/api-server/src/services/platform-bridge-health.ts
  M artifacts/api-server/src/services/platform-runtime-status.ts
  M artifacts/api-server/src/services/platform.ts
- D artifacts/api-server/src/services/research-earnings-events.test.ts
+ D artifacts/api-server/src/services/research-earnings-events.validation.ts
  M artifacts/api-server/src/services/research.ts
- M artifacts/api-server/src/services/runtime-diagnostics.test.ts
+ M artifacts/api-server/src/services/runtime-diagnostics.validation.ts
  M artifacts/api-server/src/services/shadow-account.ts
  M artifacts/api-server/src/services/signal-monitor.ts
- M artifacts/api-server/src/services/signal-options-automation.test.ts
+ M artifacts/api-server/src/services/signal-options-automation.validation.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
  M artifacts/api-server/src/ws/options-quotes.ts
  M artifacts/backtest-worker/src/index.ts
  M artifacts/ibgateway-bridge-windows-current.tar.gz
  M artifacts/ibkr-bridge/src/provider.ts
  M artifacts/ibkr-bridge/src/service.ts
- M artifacts/ibkr-bridge/src/tws-provider.test.ts
+ M artifacts/ibkr-bridge/src/tws-provider.validation.ts
  M artifacts/ibkr-bridge/src/tws-provider.ts
  M artifacts/rayalgo/docs/architecture/modularization-tracker.md
- M artifacts/rayalgo/e2e/flow-layout.spec.ts
- M artifacts/rayalgo/e2e/header-broadcast-scrollers.spec.ts
- M artifacts/rayalgo/e2e/market-live-flow.spec.ts
- M artifacts/rayalgo/e2e/market-premium-flow.spec.ts
- M artifacts/rayalgo/e2e/market-responsive.spec.ts
- M artifacts/rayalgo/e2e/memory-soak.spec.ts
- M artifacts/rayalgo/e2e/platform-shell.spec.ts
- M artifacts/rayalgo/e2e/trade-options-layout.spec.ts
- M artifacts/rayalgo/e2e/watchlist-scan.spec.ts
+ M artifacts/rayalgo/e2e/flow-layout.browser-validation.ts
+ M artifacts/rayalgo/e2e/header-broadcast-scrollers.browser-validation.ts
+ M artifacts/rayalgo/e2e/market-live-flow.browser-validation.ts
+ M artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts
+ M artifacts/rayalgo/e2e/market-responsive.browser-validation.ts
+ M artifacts/rayalgo/e2e/memory-soak.browser-validation.ts
+ M artifacts/rayalgo/e2e/platform-shell.browser-validation.ts
+ M artifacts/rayalgo/e2e/trade-options-layout.browser-validation.ts
+ M artifacts/rayalgo/e2e/watchlist-scan.browser-validation.ts
  M artifacts/rayalgo/package.json
  M artifacts/rayalgo/src/components/platform/primitives.jsx
  D artifacts/rayalgo/src/features/account/accountPortfolioRiskStripModel.js
  M artifacts/rayalgo/src/features/backtesting/BacktestingPanels.tsx
  D artifacts/rayalgo/src/features/charting/ChartHydrationStatusStrip.tsx
  M artifacts/rayalgo/src/features/charting/ResearchChartFrame.tsx
- M artifacts/rayalgo/src/features/charting/ResearchChartSurface.test.ts
+ M artifacts/rayalgo/src/features/charting/ResearchChartSurface.validation.ts
  M artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx
  M artifacts/rayalgo/src/features/charting/ResearchChartWidgetChrome.tsx
  M artifacts/rayalgo/src/features/charting/chartApiBars.js
- M artifacts/rayalgo/src/features/charting/chartApiBars.test.js
+ M artifacts/rayalgo/src/features/charting/chartApiBars.validation.js
  M artifacts/rayalgo/src/features/charting/chartBarsPayloads.ts
- M artifacts/rayalgo/src/features/charting/chartEvents.test.ts
+ M artifacts/rayalgo/src/features/charting/chartEvents.validation.ts
  M artifacts/rayalgo/src/features/charting/chartEvents.ts
- D artifacts/rayalgo/src/features/charting/chartLoadingStatusModel.test.ts
+ D artifacts/rayalgo/src/features/charting/chartLoadingStatusModel.validation.ts
  D artifacts/rayalgo/src/features/charting/chartLoadingStatusModel.ts
- D artifacts/rayalgo/src/features/charting/chartNumberFormat.test.ts
+ D artifacts/rayalgo/src/features/charting/chartNumberFormat.validation.ts
  D artifacts/rayalgo/src/features/charting/chartNumberFormat.ts
  M artifacts/rayalgo/src/features/charting/displayChartSession.ts
- M artifacts/rayalgo/src/features/charting/flowChartEvents.test.ts
+ M artifacts/rayalgo/src/features/charting/flowChartEvents.validation.ts
  M artifacts/rayalgo/src/features/charting/flowChartEvents.ts
- M artifacts/rayalgo/src/features/charting/model.test.ts
+ M artifacts/rayalgo/src/features/charting/model.validation.ts
  M artifacts/rayalgo/src/features/charting/model.ts
  M artifacts/rayalgo/src/features/charting/rayReplicaPineAdapter.ts
- M artifacts/rayalgo/src/features/charting/useMassiveStreamedStockBars.test.ts
+ M artifacts/rayalgo/src/features/charting/useMassiveStreamedStockBars.validation.ts
  M artifacts/rayalgo/src/features/charting/useMassiveStreamedStockBars.ts
  M artifacts/rayalgo/src/features/charting/useOptionChartBars.js
  M artifacts/rayalgo/src/features/flow/ContractDetailInline.jsx
  M artifacts/rayalgo/src/features/flow/FlowScannerStatusPanel.jsx
  D artifacts/rayalgo/src/features/flow/flowRelatedEventsModel.js
- D artifacts/rayalgo/src/features/flow/flowRelatedEventsModel.test.js
+ D artifacts/rayalgo/src/features/flow/flowRelatedEventsModel.validation.js
  M artifacts/rayalgo/src/features/flow/flowScannerStatusModel.js
- M artifacts/rayalgo/src/features/flow/flowScannerStatusModel.test.js
+ M artifacts/rayalgo/src/features/flow/flowScannerStatusModel.validation.js
  M artifacts/rayalgo/src/features/market/MarketActivityPanel.jsx
  D artifacts/rayalgo/src/features/market/MarketCalendarOverlay.jsx
  M artifacts/rayalgo/src/features/market/MiniChartCell.jsx
  M artifacts/rayalgo/src/features/market/MultiChartGrid.jsx
  D artifacts/rayalgo/src/features/market/marketCalendarModel.js
- D artifacts/rayalgo/src/features/market/marketCalendarModel.test.js
- M artifacts/rayalgo/src/features/market/marketChartWiring.test.js
+ D artifacts/rayalgo/src/features/market/marketCalendarModel.validation.js
+ M artifacts/rayalgo/src/features/market/marketChartWiring.validation.js
  M artifacts/rayalgo/src/features/market/marketGridTrackState.js
  M artifacts/rayalgo/src/features/platform/HeaderBroadcastScrollerStack.jsx
  M artifacts/rayalgo/src/features/platform/HeaderStatusCluster.jsx
  M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.jsx
- M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.test.js
+ M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.validation.js
  M artifacts/rayalgo/src/features/platform/MarketFlowRuntimeLayer.jsx
  M artifacts/rayalgo/src/features/platform/PlatformApp.jsx
  M artifacts/rayalgo/src/features/platform/PlatformRuntimeLayer.jsx
@@ -245,34 +245,34 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  D artifacts/rayalgo/src/features/platform/WorkspaceLinkChip.jsx
  M artifacts/rayalgo/src/features/platform/bridgeRuntimeModel.js
  D artifacts/rayalgo/src/features/platform/flowActionModel.js
- D artifacts/rayalgo/src/features/platform/flowActionModel.test.js
+ D artifacts/rayalgo/src/features/platform/flowActionModel.validation.js
  M artifacts/rayalgo/src/features/platform/flowFilterStore.js
- M artifacts/rayalgo/src/features/platform/flowFilterStore.test.js
+ M artifacts/rayalgo/src/features/platform/flowFilterStore.validation.js
  M artifacts/rayalgo/src/features/platform/headerBroadcastModel.js
- M artifacts/rayalgo/src/features/platform/headerBroadcastModel.test.js
+ M artifacts/rayalgo/src/features/platform/headerBroadcastModel.validation.js
  M artifacts/rayalgo/src/features/platform/ibkrBridgeSession.js
  M artifacts/rayalgo/src/features/platform/ibkrPopoverModel.js
  D artifacts/rayalgo/src/features/platform/linkedWorkspaceModel.js
- D artifacts/rayalgo/src/features/platform/linkedWorkspaceModel.test.js
+ D artifacts/rayalgo/src/features/platform/linkedWorkspaceModel.validation.js
  M artifacts/rayalgo/src/features/platform/live-streams.ts
  M artifacts/rayalgo/src/features/platform/marketActivityLaneModel.js
- M artifacts/rayalgo/src/features/platform/marketActivityLaneModel.test.js
+ M artifacts/rayalgo/src/features/platform/marketActivityLaneModel.validation.js
  M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.js
- M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.test.js
+ M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.validation.js
  M artifacts/rayalgo/src/features/platform/marketFlowStore.js
- M artifacts/rayalgo/src/features/platform/marketFlowStore.test.js
- M artifacts/rayalgo/src/features/platform/platformRootSource.test.js
+ M artifacts/rayalgo/src/features/platform/marketFlowStore.validation.js
+ M artifacts/rayalgo/src/features/platform/platformRootSource.validation.js
  D artifacts/rayalgo/src/features/platform/shellStatusModel.js
- D artifacts/rayalgo/src/features/platform/shellStatusModel.test.js
+ D artifacts/rayalgo/src/features/platform/shellStatusModel.validation.js
  M artifacts/rayalgo/src/features/platform/tradeFlowStore.js
- M artifacts/rayalgo/src/features/platform/tradeFlowStore.test.js
+ M artifacts/rayalgo/src/features/platform/tradeFlowStore.validation.js
  M artifacts/rayalgo/src/features/platform/tradeOptionChainStore.js
- M artifacts/rayalgo/src/features/platform/tradeOptionChainStore.test.js
+ M artifacts/rayalgo/src/features/platform/tradeOptionChainStore.validation.js
  M artifacts/rayalgo/src/features/platform/useLiveMarketFlow.js
  M artifacts/rayalgo/src/features/platform/watchlistModel.js
- M artifacts/rayalgo/src/features/platform/watchlistModel.test.js
+ M artifacts/rayalgo/src/features/platform/watchlistModel.validation.js
  D artifacts/rayalgo/src/features/platform/workspacePresetModel.js
- D artifacts/rayalgo/src/features/platform/workspacePresetModel.test.js
+ D artifacts/rayalgo/src/features/platform/workspacePresetModel.validation.js
  M artifacts/rayalgo/src/features/research/PhotonicsObservatory.jsx
  M artifacts/rayalgo/src/features/trade/TradeChainPanel.jsx
  M artifacts/rayalgo/src/features/trade/TradeEquityPanel.jsx
@@ -281,15 +281,15 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  M artifacts/rayalgo/src/features/trade/TradePositionsPanel.jsx
  M artifacts/rayalgo/src/features/trade/TradeWorkspaceChrome.jsx
  M artifacts/rayalgo/src/features/trade/optionChainLoadingPlan.js
- M artifacts/rayalgo/src/features/trade/optionChainLoadingPlan.test.js
+ M artifacts/rayalgo/src/features/trade/optionChainLoadingPlan.validation.js
  M artifacts/rayalgo/src/features/trade/optionChainRows.js
  M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.js
- M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.test.js
+ M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.validation.js
  M artifacts/rayalgo/src/features/trade/tradeChartState.js
  D artifacts/rayalgo/src/features/trade/tradePreviewLaneModel.js
- D artifacts/rayalgo/src/features/trade/tradePreviewLaneModel.test.js
+ D artifacts/rayalgo/src/features/trade/tradePreviewLaneModel.validation.js
  D artifacts/rayalgo/src/features/trade/tradeTicketReadinessModel.js
- D artifacts/rayalgo/src/features/trade/tradeTicketReadinessModel.test.js
+ D artifacts/rayalgo/src/features/trade/tradeTicketReadinessModel.validation.js
  M artifacts/rayalgo/src/index.css
  M artifacts/rayalgo/src/screens/AccountScreen.jsx
  M artifacts/rayalgo/src/screens/AlgoScreen.jsx
@@ -300,7 +300,7 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  M artifacts/rayalgo/src/screens/ResearchScreen.jsx
  M artifacts/rayalgo/src/screens/SettingsScreen.jsx
  M artifacts/rayalgo/src/screens/TradeScreen.jsx
- M artifacts/rayalgo/src/screens/TradeScreen.search-handlers.test.mjs
+ M artifacts/rayalgo/src/screens/TradeScreen.search-handlers.validation.mjs
  M artifacts/rayalgo/src/screens/account/AccountHeaderStrip.jsx
  M artifacts/rayalgo/src/screens/account/AccountReturnsPanel.jsx
  M artifacts/rayalgo/src/screens/account/AllocationPanel.jsx
@@ -309,7 +309,7 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  M artifacts/rayalgo/src/screens/account/RiskDashboardPanel.jsx
  M artifacts/rayalgo/src/screens/account/TradesOrdersPanel.jsx
  M artifacts/rayalgo/src/screens/account/TradingPatternsPanel.jsx
- M artifacts/rayalgo/src/screens/account/accountPositionRows.test.js
+ M artifacts/rayalgo/src/screens/account/accountPositionRows.validation.js
  M artifacts/rayalgo/src/screens/account/accountUtils.jsx
  M artifacts/rayalgo/src/screens/settings/DiagnosticThresholdSettingsPanel.jsx
  M artifacts/rayalgo/src/screens/settings/IbkrLaneArchitecturePanel.jsx
@@ -341,30 +341,30 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
 ?? SESSION_HANDOFF_2026-05-06_019dfe1c-e228-72b2-932c-6d9faa06df81.md
 ?? SESSION_HANDOFF_2026-05-06_019dfe45-759c-77c0-b66f-9cc21addb43b.md
 ?? SESSION_HANDOFF_2026-05-06_019dfe49-d18c-7bd1-97d1-7e004ff154f0.md
-?? artifacts/api-server/src/services/account-trade-annotations.test.ts
+?? artifacts/api-server/src/services/account-trade-annotations.validation.ts
 ?? artifacts/api-server/src/services/shadow-equity-forward-test.ts
-?? artifacts/api-server/src/services/shadow-equity-forward-worker.test.ts
+?? artifacts/api-server/src/services/shadow-equity-forward-worker.validation.ts
 ?? artifacts/api-server/src/services/shadow-equity-forward-worker.ts
-?? artifacts/rayalgo/e2e/account-visual-review.spec.ts
-?? artifacts/rayalgo/src/features/charting/useOptionChartBars.test.js
+?? artifacts/rayalgo/e2e/account-visual-review.browser-validation.ts
+?? artifacts/rayalgo/src/features/charting/useOptionChartBars.validation.js
 ?? artifacts/rayalgo/src/features/platform/appWorkScheduler.js
-?? artifacts/rayalgo/src/features/platform/appWorkScheduler.test.js
+?? artifacts/rayalgo/src/features/platform/appWorkScheduler.validation.js
 ?? artifacts/rayalgo/src/features/platform/flowSourceState.js
-?? artifacts/rayalgo/src/features/platform/flowSourceState.test.js
-?? artifacts/rayalgo/src/features/platform/ibkrBridgeSession.test.js
+?? artifacts/rayalgo/src/features/platform/flowSourceState.validation.js
+?? artifacts/rayalgo/src/features/platform/ibkrBridgeSession.validation.js
 ?? artifacts/rayalgo/src/features/platform/runtimeControlModel.js
-?? artifacts/rayalgo/src/features/platform/runtimeControlModel.test.js
+?? artifacts/rayalgo/src/features/platform/runtimeControlModel.validation.js
 ?? artifacts/rayalgo/src/features/platform/useRuntimeControlSnapshot.js
 ?? artifacts/rayalgo/src/features/platform/workPressureModel.js
-?? artifacts/rayalgo/src/features/platform/workPressureModel.test.js
-?? artifacts/rayalgo/src/features/trade/optionChainRows.test.js
+?? artifacts/rayalgo/src/features/platform/workPressureModel.validation.js
+?? artifacts/rayalgo/src/features/trade/optionChainRows.validation.js
 ?? artifacts/rayalgo/src/screens/account/ExpiryCalendarHeatmap.jsx
 ?? artifacts/rayalgo/src/screens/account/IntradayPnlPanel.jsx
 ?? artifacts/rayalgo/src/screens/account/PositionTreemapPanel.jsx
 ?? artifacts/rayalgo/src/screens/account/accountRefreshPolicy.js
-?? artifacts/rayalgo/src/screens/account/accountRefreshPolicy.test.js
+?? artifacts/rayalgo/src/screens/account/accountRefreshPolicy.validation.js
 ?? artifacts/rayalgo/src/screens/account/tradeOutcomeHistogramModel.js
-?? artifacts/rayalgo/src/screens/account/tradeOutcomeHistogramModel.test.js
+?? artifacts/rayalgo/src/screens/account/tradeOutcomeHistogramModel.validation.js
 ?? lib/api-zod/src/generated/types/algoCockpitAttentionItem.ts
 ?? lib/api-zod/src/generated/types/algoCockpitAttentionItemSeverity.ts
 ?? lib/api-zod/src/generated/types/algoCockpitFleetSummary.ts
@@ -396,94 +396,94 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  artifacts/api-server/src/services/account.ts       |  166 ++
  artifacts/api-server/src/services/backtesting.ts   |  187 +-
  .../api-server/src/services/bridge-governor.ts     |   17 +-
- .../services/bridge-option-quote-stream.test.ts    |  190 ++
+ .../services/bridge-option-quote-stream.validation.ts    |  190 ++
  .../src/services/bridge-option-quote-stream.ts     |   29 +-
  .../api-server/src/services/bridge-streams.ts      |  175 +-
- .../api-server/src/services/flow-universe.test.ts  |   44 +
+ .../api-server/src/services/flow-universe.validation.ts  |   44 +
  artifacts/api-server/src/services/flow-universe.ts |  103 +-
  .../api-server/src/services/ibkr-account-bridge.ts |    2 +-
  artifacts/api-server/src/services/ibkr-lanes.ts    |    5 +-
- .../src/services/ibkr-line-usage.test.ts           |    4 +
+ .../src/services/ibkr-line-usage.validation.ts           |    4 +
  .../api-server/src/services/ibkr-line-usage.ts     |   12 +-
- .../src/services/market-data-admission.test.ts     |   74 +-
+ .../src/services/market-data-admission.validation.ts     |   74 +-
  .../src/services/market-data-admission.ts          |   36 +-
- .../src/services/option-chain-batch.test.ts        |  164 +-
- .../services/options-flow-radar-scanner.test.ts    |   43 +-
+ .../src/services/option-chain-batch.validation.ts        |  164 +-
+ .../services/options-flow-radar-scanner.validation.ts    |   43 +-
  .../src/services/options-flow-radar-scanner.ts     |   16 +-
- .../src/services/options-flow-scanner.test.ts      |  551 +++++-
+ .../src/services/options-flow-scanner.validation.ts      |  551 +++++-
  .../src/services/options-flow-scanner.ts           |  187 +-
  .../src/services/platform-bridge-health.ts         |   11 +-
  .../src/services/platform-runtime-status.ts        |    8 +
  artifacts/api-server/src/services/platform.ts      |  692 ++++++--
- .../src/services/research-earnings-events.test.ts  |  162 --
+ .../src/services/research-earnings-events.validation.ts  |  162 --
  artifacts/api-server/src/services/research.ts      |  237 ---
- .../src/services/runtime-diagnostics.test.ts       |    8 +
+ .../src/services/runtime-diagnostics.validation.ts       |    8 +
  .../api-server/src/services/shadow-account.ts      |    8 +-
  .../api-server/src/services/signal-monitor.ts      |   20 +
- .../src/services/signal-options-automation.test.ts |  165 ++
+ .../src/services/signal-options-automation.validation.ts |  165 ++
  .../src/services/signal-options-automation.ts      |  594 ++++++-
  artifacts/api-server/src/ws/options-quotes.ts      |    1 +
  artifacts/backtest-worker/src/index.ts             |  311 +++-
  artifacts/ibgateway-bridge-windows-current.tar.gz  |  Bin 1539852 -> 1542958 bytes
  artifacts/ibkr-bridge/src/provider.ts              |    8 +
  artifacts/ibkr-bridge/src/service.ts               |   16 +
- artifacts/ibkr-bridge/src/tws-provider.test.ts     |   72 +
+ artifacts/ibkr-bridge/src/tws-provider.validation.ts     |   72 +
  artifacts/ibkr-bridge/src/tws-provider.ts          |  126 +-
  .../docs/architecture/modularization-tracker.md    |    2 +-
- artifacts/rayalgo/e2e/flow-layout.spec.ts          |  311 +---
- .../rayalgo/e2e/header-broadcast-scrollers.spec.ts |   64 +-
- artifacts/rayalgo/e2e/market-live-flow.spec.ts     |    8 +-
- artifacts/rayalgo/e2e/market-premium-flow.spec.ts  |   15 +-
- artifacts/rayalgo/e2e/market-responsive.spec.ts    |  392 ++--
- artifacts/rayalgo/e2e/memory-soak.spec.ts          |    9 +
- artifacts/rayalgo/e2e/platform-shell.spec.ts       | 1096 ++++--------
- artifacts/rayalgo/e2e/trade-options-layout.spec.ts |  126 +-
- artifacts/rayalgo/e2e/watchlist-scan.spec.ts       |  227 +--
+ artifacts/rayalgo/e2e/flow-layout.browser-validation.ts          |  311 +---
+ .../rayalgo/e2e/header-broadcast-scrollers.browser-validation.ts |   64 +-
+ artifacts/rayalgo/e2e/market-live-flow.browser-validation.ts     |    8 +-
+ artifacts/rayalgo/e2e/market-premium-flow.browser-validation.ts  |   15 +-
+ artifacts/rayalgo/e2e/market-responsive.browser-validation.ts    |  392 ++--
+ artifacts/rayalgo/e2e/memory-soak.browser-validation.ts          |    9 +
+ artifacts/rayalgo/e2e/platform-shell.browser-validation.ts       | 1096 ++++--------
+ artifacts/rayalgo/e2e/trade-options-layout.browser-validation.ts |  126 +-
+ artifacts/rayalgo/e2e/watchlist-scan.browser-validation.ts       |  227 +--
  artifacts/rayalgo/package.json                     |    2 +-
  .../rayalgo/src/components/platform/primitives.jsx |  129 +-
  .../account/accountPortfolioRiskStripModel.js      |  280 ---
  .../src/features/backtesting/BacktestingPanels.tsx |  371 +++-
  .../charting/ChartHydrationStatusStrip.tsx         |  111 --
  .../src/features/charting/ResearchChartFrame.tsx   |    6 +-
- .../features/charting/ResearchChartSurface.test.ts |  179 +-
+ .../features/charting/ResearchChartSurface.validation.ts |  179 +-
  .../src/features/charting/ResearchChartSurface.tsx |  659 +++----
  .../charting/ResearchChartWidgetChrome.tsx         |   65 +-
  .../rayalgo/src/features/charting/chartApiBars.js  |  174 +-
- .../src/features/charting/chartApiBars.test.js     |   58 +
+ .../src/features/charting/chartApiBars.validation.js     |   58 +
  .../src/features/charting/chartBarsPayloads.ts     |   18 +
- .../src/features/charting/chartEvents.test.ts      |  165 +-
+ .../src/features/charting/chartEvents.validation.ts      |  165 +-
  .../rayalgo/src/features/charting/chartEvents.ts   |  206 ++-
- .../charting/chartLoadingStatusModel.test.ts       |   87 -
+ .../charting/chartLoadingStatusModel.validation.ts       |   87 -
  .../features/charting/chartLoadingStatusModel.ts   |  166 --
- .../features/charting/chartNumberFormat.test.ts    |   69 -
+ .../features/charting/chartNumberFormat.validation.ts    |   69 -
  .../src/features/charting/chartNumberFormat.ts     |  169 --
  .../src/features/charting/displayChartSession.ts   |    4 +-
- .../src/features/charting/flowChartEvents.test.ts  |   22 +
+ .../src/features/charting/flowChartEvents.validation.ts  |   22 +
  .../src/features/charting/flowChartEvents.ts       |   16 +-
- .../rayalgo/src/features/charting/model.test.ts    |   82 +-
+ .../rayalgo/src/features/charting/model.validation.ts    |   82 +-
  artifacts/rayalgo/src/features/charting/model.ts   |  141 +-
  .../src/features/charting/rayReplicaPineAdapter.ts |    9 +-
- .../charting/useMassiveStreamedStockBars.test.ts   |   50 +
+ .../charting/useMassiveStreamedStockBars.validation.ts   |   50 +
  .../charting/useMassiveStreamedStockBars.ts        |  158 +-
  .../src/features/charting/useOptionChartBars.js    |  112 +-
  .../src/features/flow/ContractDetailInline.jsx     |  182 +-
  .../src/features/flow/FlowScannerStatusPanel.jsx   |  258 +--
  .../src/features/flow/flowRelatedEventsModel.js    |   74 -
- .../features/flow/flowRelatedEventsModel.test.js   |   75 -
+ .../features/flow/flowRelatedEventsModel.validation.js   |   75 -
  .../src/features/flow/flowScannerStatusModel.js    |  169 +-
- .../features/flow/flowScannerStatusModel.test.js   |   19 +
+ .../features/flow/flowScannerStatusModel.validation.js   |   19 +
  .../src/features/market/MarketActivityPanel.jsx    |   14 +-
  .../src/features/market/MarketCalendarOverlay.jsx  | 1015 -----------
  .../rayalgo/src/features/market/MiniChartCell.jsx  |   18 +-
  .../rayalgo/src/features/market/MultiChartGrid.jsx |  178 +-
  .../src/features/market/marketCalendarModel.js     |  447 -----
- .../features/market/marketCalendarModel.test.js    |  187 --
- .../src/features/market/marketChartWiring.test.js  |   88 +-
+ .../features/market/marketCalendarModel.validation.js    |  187 --
+ .../src/features/market/marketChartWiring.validation.js  |   88 +-
  .../src/features/market/marketGridTrackState.js    |   21 +-
  .../platform/HeaderBroadcastScrollerStack.jsx      |  134 +-
  .../src/features/platform/HeaderStatusCluster.jsx  |  165 +-
  .../src/features/platform/IbkrConnectionStatus.jsx |   56 +-
- .../features/platform/IbkrConnectionStatus.test.js |  167 +-
+ .../features/platform/IbkrConnectionStatus.validation.js |  167 +-
  .../features/platform/MarketFlowRuntimeLayer.jsx   |   38 +-
  .../rayalgo/src/features/platform/PlatformApp.jsx  |  646 ++-----
  .../src/features/platform/PlatformRuntimeLayer.jsx |    2 -
@@ -493,34 +493,34 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  .../src/features/platform/WorkspaceLinkChip.jsx    |  100 --
  .../src/features/platform/bridgeRuntimeModel.js    |   25 +
  .../src/features/platform/flowActionModel.js       |  104 --
- .../src/features/platform/flowActionModel.test.js  |   59 -
+ .../src/features/platform/flowActionModel.validation.js  |   59 -
  .../src/features/platform/flowFilterStore.js       |  286 +--
- .../src/features/platform/flowFilterStore.test.js  |  173 +-
+ .../src/features/platform/flowFilterStore.validation.js  |  173 +-
  .../src/features/platform/headerBroadcastModel.js  |    5 +-
- .../features/platform/headerBroadcastModel.test.js |   16 +-
+ .../features/platform/headerBroadcastModel.validation.js |   16 +-
  .../src/features/platform/ibkrBridgeSession.js     |   43 +-
  .../src/features/platform/ibkrPopoverModel.js      |  147 +-
  .../src/features/platform/linkedWorkspaceModel.js  |  254 ---
- .../features/platform/linkedWorkspaceModel.test.js |  134 --
+ .../features/platform/linkedWorkspaceModel.validation.js |  134 --
  .../rayalgo/src/features/platform/live-streams.ts  |  179 +-
  .../features/platform/marketActivityLaneModel.js   |    4 +-
- .../platform/marketActivityLaneModel.test.js       |   34 +-
+ .../platform/marketActivityLaneModel.validation.js       |   34 +-
  .../features/platform/marketFlowScannerConfig.js   |   27 +-
- .../platform/marketFlowScannerConfig.test.js       |   40 +-
+ .../platform/marketFlowScannerConfig.validation.js       |   40 +-
  .../src/features/platform/marketFlowStore.js       |   33 +-
- .../src/features/platform/marketFlowStore.test.js  |   84 +-
- .../features/platform/platformRootSource.test.js   |  123 +-
+ .../src/features/platform/marketFlowStore.validation.js  |   84 +-
+ .../features/platform/platformRootSource.validation.js   |  123 +-
  .../src/features/platform/shellStatusModel.js      |   81 -
- .../src/features/platform/shellStatusModel.test.js |   37 -
+ .../src/features/platform/shellStatusModel.validation.js |   37 -
  .../src/features/platform/tradeFlowStore.js        |   21 +-
- .../src/features/platform/tradeFlowStore.test.js   |   41 +
+ .../src/features/platform/tradeFlowStore.validation.js   |   41 +
  .../src/features/platform/tradeOptionChainStore.js |   19 +-
- .../platform/tradeOptionChainStore.test.js         |   49 +
+ .../platform/tradeOptionChainStore.validation.js         |   49 +
  .../src/features/platform/useLiveMarketFlow.js     |  225 ++-
  .../src/features/platform/watchlistModel.js        |  270 ---
- .../src/features/platform/watchlistModel.test.js   |  160 --
+ .../src/features/platform/watchlistModel.validation.js   |  160 --
  .../src/features/platform/workspacePresetModel.js  |  484 -----
- .../features/platform/workspacePresetModel.test.js |  133 --
+ .../features/platform/workspacePresetModel.validation.js |  133 --
  .../src/features/research/PhotonicsObservatory.jsx |   57 +-
  .../rayalgo/src/features/trade/TradeChainPanel.jsx |  283 +--
  .../src/features/trade/TradeEquityPanel.jsx        |  258 +--
@@ -529,15 +529,15 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  .../src/features/trade/TradePositionsPanel.jsx     |   34 +-
  .../src/features/trade/TradeWorkspaceChrome.jsx    |    2 -
  .../src/features/trade/optionChainLoadingPlan.js   |   83 +-
- .../features/trade/optionChainLoadingPlan.test.js  |  129 +-
+ .../features/trade/optionChainLoadingPlan.validation.js  |  129 +-
  .../rayalgo/src/features/trade/optionChainRows.js  |   82 +-
  .../src/features/trade/optionQuoteHydrationPlan.js |  181 +-
- .../trade/optionQuoteHydrationPlan.test.js         |  102 +-
+ .../trade/optionQuoteHydrationPlan.validation.js         |  102 +-
  .../rayalgo/src/features/trade/tradeChartState.js  |   17 -
  .../src/features/trade/tradePreviewLaneModel.js    |   45 -
- .../features/trade/tradePreviewLaneModel.test.js   |   42 -
+ .../features/trade/tradePreviewLaneModel.validation.js   |   42 -
  .../features/trade/tradeTicketReadinessModel.js    |  189 --
- .../trade/tradeTicketReadinessModel.test.js        |   85 -
+ .../trade/tradeTicketReadinessModel.validation.js        |   85 -
  artifacts/rayalgo/src/index.css                    |  140 +-
  artifacts/rayalgo/src/screens/AccountScreen.jsx    |  420 ++---
  artifacts/rayalgo/src/screens/AlgoScreen.jsx       | 1411 +++++++++++++--
@@ -548,7 +548,7 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  artifacts/rayalgo/src/screens/ResearchScreen.jsx   |   71 +-
  artifacts/rayalgo/src/screens/SettingsScreen.jsx   |  177 +-
  artifacts/rayalgo/src/screens/TradeScreen.jsx      |  775 +++-----
- .../screens/TradeScreen.search-handlers.test.mjs   |    6 +
+ .../screens/TradeScreen.search-handlers.validation.mjs   |    6 +
  .../src/screens/account/AccountHeaderStrip.jsx     |  238 ++-
  .../src/screens/account/AccountReturnsPanel.jsx    |  590 ++++--
  .../src/screens/account/AllocationPanel.jsx        |   94 +-
@@ -557,7 +557,7 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
  .../src/screens/account/RiskDashboardPanel.jsx     |  133 +-
  .../src/screens/account/TradesOrdersPanel.jsx      |  618 +++++--
  .../src/screens/account/TradingPatternsPanel.jsx   |  547 ++++--
- .../screens/account/accountPositionRows.test.js    |   62 -
+ .../screens/account/accountPositionRows.validation.js    |   62 -
  .../rayalgo/src/screens/account/accountUtils.jsx   |   85 +-
  .../settings/DiagnosticThresholdSettingsPanel.jsx  |   11 +-
  .../screens/settings/IbkrLaneArchitecturePanel.jsx |   11 +-
@@ -610,9 +610,9 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
   - `artifacts/rayalgo/package.json` updates unit-test membership for new/removed tests.
   - Ignored Replit/Nix caches updated immediately after the Nix change: `.cache/replit/nix/env.json`, `.cache/replit/toolchain.json`, `.cache/replit/env/latest.json`, `.cache/nix/binary-cache-v7.sqlite`.
 - Found May 6 browser-test crash evidence around 10:40-11:00 MDT:
-  - Playwright test results under `artifacts/rayalgo/test-results` failed before app load.
+  - browser QA test results under `artifacts/rayalgo/test-results` failed before app load.
   - Error contexts report Chromium failing with `/lib/x86_64-linux-gnu/libpthread.so.0: version GLIBC_PRIVATE not found (required by /nix/store/.../librt.so.1)`.
-  - `artifacts/rayalgo/e2e/memory-soak.spec.ts` has an unstaged diff, but its file mtime is May 5 15:02 MDT, so it is not proof of a May 6 soak edit.
+  - `artifacts/rayalgo/e2e/memory-soak.browser-validation.ts` has an unstaged diff, but its file mtime is May 5 15:02 MDT, so it is not proof of a May 6 soak edit.
 
 ## Current Status
 
@@ -627,5 +627,5 @@ we just dropped two in-flight sessions moments ago when (one was digging into ou
 ## Next Recommended Steps
 
 1. Preserve and review the crash-adjacent cleanup files listed above before cleaning/staging anything.
-2. Validate with `REPLIT_LD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset first, then verify whether the added Nix packages actually resolve Playwright/font/runtime issues.
+2. Validate with `REPLIT_LD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset first, then verify whether the added Nix packages actually resolve browser QA/font/runtime issues.
 3. Split the dirty worktree into environment/dependency cleanup, generated/ignored artifacts, and unrelated feature work before staging.

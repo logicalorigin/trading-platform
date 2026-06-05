@@ -149,6 +149,7 @@ import {
 } from "./account-flex-model";
 import {
   declareIbkrLiveDemand,
+  type IbkrLiveDemandQuoteState,
   readIbkrLiveDemandState,
   releaseIbkrLiveDemand,
 } from "./ibkr-live-demand-coordinator";
@@ -1298,6 +1299,36 @@ async function readPositionsForUniverseUncached(
   return readOpenPositions();
 }
 
+export async function getAccountPositionVisibilityProbe(input: {
+  accountId: string;
+  assetClass?: string | null;
+  mode?: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode ?? getRuntimeMode();
+  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const positions = await listPositionsForUniverse(universe, mode);
+  const filteredPositions =
+    input.assetClass && input.assetClass !== "all"
+      ? positions.filter(
+          (position) =>
+            normalizeAssetClassLabel(position).toLowerCase() ===
+            input.assetClass?.toLowerCase(),
+        )
+      : positions;
+
+  return {
+    accountId: universe.requestedAccountId,
+    isCombined: universe.isCombined,
+    mode,
+    source: input.source ?? universe.source,
+    count: filteredPositions.length,
+    updatedAt:
+      accountMetricUpdatedAt(universe.accounts)?.toISOString() ??
+      new Date().toISOString(),
+  };
+}
+
 type AccountUniverseOrderResult = {
   orders: BrokerOrderSnapshot[];
   degraded?: boolean;
@@ -1395,9 +1426,270 @@ async function fetchEquityQuoteSnapshotsForPositions(
   return quotesBySymbol;
 }
 
+type AccountPositionOptionQuoteDemandState = IbkrLiveDemandQuoteState;
+
+type AccountPositionOptionQuoteSnapshot = PositionQuoteSnapshot & {
+  providerContractId: string | null;
+};
+
+const demandFreshnessForStatus = (status: string | null | undefined): string | null => {
+  if (status === "live" || status === "stale" || status === "pending") {
+    return status;
+  }
+  if (status === "unavailable" || status === "rejected") {
+    return "unavailable";
+  }
+  return null;
+};
+
+function finiteQuoteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function quoteDate(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+function quoteTimestampMs(value: unknown): number | null {
+  const date = quoteDate(value);
+  return date ? date.getTime() : null;
+}
+
+function optionQuoteStatusRank(status: unknown): number {
+  switch (String(status ?? "").trim().toLowerCase()) {
+    case "live":
+      return 5;
+    case "stale":
+      return 4;
+    case "pending":
+      return 3;
+    case "unavailable":
+      return 2;
+    case "rejected":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function optionQuoteDemandStateTimestampMs(
+  state: AccountPositionOptionQuoteDemandState,
+): number | null {
+  return (
+    quoteTimestampMs(state.quote?.dataUpdatedAt) ??
+    quoteTimestampMs(state.quote?.updatedAt)
+  );
+}
+
+function compareOptionQuoteDemandStates(
+  left: AccountPositionOptionQuoteDemandState,
+  right: AccountPositionOptionQuoteDemandState,
+): number {
+  const leftHasQuote = left.quote ? 1 : 0;
+  const rightHasQuote = right.quote ? 1 : 0;
+  if (leftHasQuote !== rightHasQuote) {
+    return leftHasQuote - rightHasQuote;
+  }
+
+  const leftStatusRank = optionQuoteStatusRank(left.quoteStatus);
+  const rightStatusRank = optionQuoteStatusRank(right.quoteStatus);
+  if (leftStatusRank !== rightStatusRank) {
+    return leftStatusRank - rightStatusRank;
+  }
+
+  const leftFreshnessRank = optionQuoteStatusRank(left.quote?.freshness);
+  const rightFreshnessRank = optionQuoteStatusRank(right.quote?.freshness);
+  if (leftFreshnessRank !== rightFreshnessRank) {
+    return leftFreshnessRank - rightFreshnessRank;
+  }
+
+  const leftTimestamp = optionQuoteDemandStateTimestampMs(left);
+  const rightTimestamp = optionQuoteDemandStateTimestampMs(right);
+  if (leftTimestamp !== null && rightTimestamp !== null && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  if (leftTimestamp !== null && rightTimestamp === null) {
+    return 1;
+  }
+  if (leftTimestamp === null && rightTimestamp !== null) {
+    return -1;
+  }
+
+  const leftCacheAge = finiteQuoteNumber(left.cacheAgeMs);
+  const rightCacheAge = finiteQuoteNumber(right.cacheAgeMs);
+  if (leftCacheAge !== null && rightCacheAge !== null && leftCacheAge !== rightCacheAge) {
+    return rightCacheAge - leftCacheAge;
+  }
+  if (leftCacheAge !== null && rightCacheAge === null) {
+    return 1;
+  }
+  if (leftCacheAge === null && rightCacheAge !== null) {
+    return -1;
+  }
+
+  return 0;
+}
+
+function bestOptionQuoteDemandState(
+  states: AccountPositionOptionQuoteDemandState[],
+): AccountPositionOptionQuoteDemandState | null {
+  return states.reduce<AccountPositionOptionQuoteDemandState | null>(
+    (best, state) =>
+      !best || compareOptionQuoteDemandStates(state, best) > 0 ? state : best,
+    null,
+  );
+}
+
+function accountOptionQuoteFromDemandState(
+  state: AccountPositionOptionQuoteDemandState | null | undefined,
+): AccountPositionOptionQuoteSnapshot | null {
+  if (!state) {
+    return null;
+  }
+
+  const quote = state.quote;
+  const quoteSnapshot = quote
+    ? buildPositionQuoteFromSnapshot(quote, null, "option_quote")
+    : null;
+  const quoteFreshness =
+    quote?.freshness ?? demandFreshnessForStatus(state.quoteStatus);
+  const greeksFreshness =
+    quote && state.greeksStatus === "live"
+      ? quote.freshness ?? "live"
+      : demandFreshnessForStatus(state.greeksStatus);
+  const reason = state.quoteReason ?? state.reason ?? null;
+  const greeksReason = state.greeksReason ?? null;
+
+  return {
+    bid: quoteSnapshot?.bid ?? null,
+    ask: quoteSnapshot?.ask ?? null,
+    mid: quoteSnapshot?.mid ?? null,
+    last: quoteSnapshot?.last ?? null,
+    mark: quoteSnapshot?.mark ?? null,
+    spread: quoteSnapshot?.spread ?? null,
+    spreadPercent: quoteSnapshot?.spreadPercent ?? null,
+    bidSize: quoteSnapshot?.bidSize ?? null,
+    askSize: quoteSnapshot?.askSize ?? null,
+    updatedAt: quoteSnapshot?.updatedAt ?? quoteDate(quote?.updatedAt),
+    freshness: quoteFreshness,
+    marketDataMode: quote?.marketDataMode ?? null,
+    source: quote ? "option_quote" : "position_mark",
+    providerContractId: state.providerContractId,
+    transport: quote?.transport ?? null,
+    delayed: quote?.delayed ?? null,
+    dataUpdatedAt: quoteDate(quote?.dataUpdatedAt),
+    ageMs: finiteQuoteNumber(quote?.ageMs),
+    cacheAgeMs: state.cacheAgeMs ?? finiteQuoteNumber(quote?.cacheAgeMs),
+    status: state.quoteStatus,
+    reason,
+    quoteStatus: state.quoteStatus,
+    quoteReason: state.quoteReason,
+    greeksStatus: state.greeksStatus,
+    greeksReason,
+    demandStatus: state.status,
+    demandReason: state.reason,
+    quoteFreshness,
+    greeksFreshness,
+    unavailableDetail: reason ?? greeksReason,
+    price: finiteQuoteNumber(quote?.price),
+    dayChange: finiteQuoteNumber(
+      (quote as (QuoteSnapshot & { dayChange?: unknown }) | null)?.dayChange ??
+        quote?.change,
+    ),
+    dayChangePercent: finiteQuoteNumber(
+      (quote as (QuoteSnapshot & { dayChangePercent?: unknown }) | null)
+        ?.dayChangePercent ?? quote?.changePercent,
+    ),
+    volume: finiteQuoteNumber(quote?.volume),
+    openInterest: finiteQuoteNumber(quote?.openInterest),
+    impliedVolatility: finiteQuoteNumber(quote?.impliedVolatility),
+    delta: finiteQuoteNumber(quote?.delta),
+    gamma: finiteQuoteNumber(quote?.gamma),
+    theta: finiteQuoteNumber(quote?.theta),
+    vega: finiteQuoteNumber(quote?.vega),
+    underlyingPrice: quoteSnapshot?.underlyingPrice ?? null,
+  };
+}
+
+function optionQuoteDemandStateForPosition(
+  position: AccountPositionOptionQuoteDemandRow,
+  optionQuoteDemandStates:
+    | Map<string, AccountPositionOptionQuoteDemandState>
+    | undefined,
+): AccountPositionOptionQuoteDemandState | null {
+  if (!optionQuoteDemandStates) {
+    return null;
+  }
+  const providerContractIds = optionQuoteProviderContractIdsForPosition(position);
+  const states = providerContractIds.flatMap((providerContractId) => {
+    const state = optionQuoteDemandStates.get(providerContractId);
+    return state ? [state] : [];
+  });
+  return bestOptionQuoteDemandState(states);
+}
+
+function optionQuoteSnapshotForPosition(
+  position: AccountPositionOptionQuoteDemandRow,
+  optionQuoteDemandStates:
+    | Map<string, AccountPositionOptionQuoteDemandState>
+    | undefined,
+): QuoteSnapshot | null {
+  return optionQuoteDemandStateForPosition(position, optionQuoteDemandStates)?.quote ?? null;
+}
+
+function accountOptionQuoteForPosition(
+  position: AccountPositionOptionQuoteDemandRow,
+  optionQuoteDemandStates:
+    | Map<string, AccountPositionOptionQuoteDemandState>
+    | undefined,
+): AccountPositionOptionQuoteSnapshot | null {
+  return accountOptionQuoteFromDemandState(
+    optionQuoteDemandStateForPosition(position, optionQuoteDemandStates),
+  );
+}
+
+function attachAccountOptionQuoteMetadata(
+  quote: PositionQuoteSnapshot | null,
+  state: AccountPositionOptionQuoteDemandState | null | undefined,
+): PositionQuoteSnapshot | null {
+  if (!quote || !state) {
+    return quote;
+  }
+  return {
+    ...quote,
+    providerContractId: state.providerContractId,
+    status: state.quoteStatus,
+    reason: state.quoteReason,
+    quoteStatus: state.quoteStatus,
+    quoteReason: state.quoteReason,
+    greeksStatus: state.greeksStatus,
+    greeksReason: state.greeksReason,
+    demandStatus: state.status,
+    demandReason: state.reason,
+    quoteFreshness: quote.freshness ?? demandFreshnessForStatus(state.quoteStatus),
+    greeksFreshness:
+      state.greeksStatus === "live"
+        ? quote.freshness ?? "live"
+        : demandFreshnessForStatus(state.greeksStatus),
+    cacheAgeMs: state.cacheAgeMs,
+    unavailableDetail: state.quoteReason ?? state.reason ?? state.greeksReason,
+  };
+}
+
 async function fetchOptionQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
-): Promise<Map<string, QuoteSnapshot>> {
+): Promise<Map<string, AccountPositionOptionQuoteDemandState>> {
   const providerContractIds = positions.flatMap((position) => {
     return optionQuoteProviderContractIdsForPosition(position);
   });
@@ -1408,7 +1700,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
   }
 
   const owner = declareAccountPositionOptionQuoteDemands(positions, "mixed");
-  let quoteEntries: QuoteSnapshot[] = [];
+  let demandStateEntries: AccountPositionOptionQuoteDemandState[] = [];
   try {
     const positionsByUnderlying = positions.reduce((map, position) => {
       const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
@@ -1430,13 +1722,13 @@ async function fetchOptionQuoteSnapshotsForPositions(
         const providerContractIdsForUnderlying = Array.from(
           new Set(underlyingProviderContractIds),
         );
-        quoteEntries.push(
+        demandStateEntries.push(
           ...readIbkrLiveDemandState({
             owner: ownerForUnderlying,
             underlying,
             providerContractIds: providerContractIdsForUnderlying,
-            requiresGreeks: false,
-          }).states.flatMap((state) => (state.quote ? [state.quote] : [])),
+            requiresGreeks: true,
+          }).states,
         );
       },
     );
@@ -1447,30 +1739,30 @@ async function fetchOptionQuoteSnapshotsForPositions(
     );
   }
 
-  const quotesByProviderContractId = new Map(
-    quoteEntries
-      .flatMap((quote) => {
-        const providerContractId = String(quote.providerContractId ?? "").trim();
-        return providerContractId ? [[providerContractId, quote] as const] : [];
-      }),
+  const demandStatesByProviderContractId = new Map(
+    demandStateEntries.flatMap((state) => {
+      const providerContractId = String(state.providerContractId ?? "").trim();
+      return providerContractId ? [[providerContractId, state] as const] : [];
+    }),
   );
   positions.forEach((position) => {
     const providerContractIdsForPosition =
       optionQuoteProviderContractIdsForPosition(position);
-    const quote = providerContractIdsForPosition
-      .map((providerContractId) =>
-        quotesByProviderContractId.get(providerContractId),
-      )
-      .find((candidate): candidate is QuoteSnapshot => Boolean(candidate));
-    if (!quote) {
+    const state = bestOptionQuoteDemandState(
+      providerContractIdsForPosition.flatMap((providerContractId) => {
+        const candidate = demandStatesByProviderContractId.get(providerContractId);
+        return candidate ? [candidate] : [];
+      }),
+    );
+    if (!state) {
       return;
     }
     providerContractIdsForPosition.forEach((providerContractId) => {
-      quotesByProviderContractId.set(providerContractId, quote);
+      demandStatesByProviderContractId.set(providerContractId, state);
     });
   });
 
-  return quotesByProviderContractId;
+  return demandStatesByProviderContractId;
 }
 
 type AccountPositionOptionQuoteDemandRow = {
@@ -1634,7 +1926,7 @@ function declareAccountPositionOptionQuoteDemands(
         providerContractIds: Array.from(new Set(underlyingProviderContractIds)),
         intent: "account-monitor-live",
         fallbackProvider: "cache",
-        requiresGreeks: false,
+        requiresGreeks: true,
         ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
       });
     },
@@ -1684,7 +1976,7 @@ function positionMarketHydrationCacheKey(
 async function hydratePositionMarkets(
   positions: BrokerPositionSnapshot[],
   quotesBySymbol?: Map<string, QuoteSnapshot>,
-  optionQuotesByProviderContractId?: Map<string, QuoteSnapshot>,
+  optionQuotesByProviderContractId?: Map<string, AccountPositionOptionQuoteDemandState>,
   openDatesByPositionId?: Map<
     string,
     {
@@ -1712,7 +2004,7 @@ async function hydratePositionMarkets(
 async function hydratePositionMarketsUncached(
   positions: BrokerPositionSnapshot[],
   quotesBySymbol?: Map<string, QuoteSnapshot>,
-  optionQuotesByProviderContractId?: Map<string, QuoteSnapshot>,
+  optionQuotesByProviderContractId?: Map<string, AccountPositionOptionQuoteDemandState>,
   openDatesByPositionId?: Map<
     string,
     {
@@ -1727,7 +2019,7 @@ async function hydratePositionMarketsUncached(
   return new Map(
     positions.map((position) => {
       const quote = position.optionContract
-        ? optionQuoteForPosition(position, optionQuotesByProviderContractId)
+        ? optionQuoteSnapshotForPosition(position, optionQuotesByProviderContractId)
         : positionQuotes.get(normalizeSymbol(positionReferenceSymbol(position)));
       const openedAt = bestOpenedAtForPosition(
         position,
@@ -2000,10 +2292,13 @@ function quoteForPosition(
   position: BrokerPositionSnapshot,
   mark: number | null | undefined,
   equityQuoteSnapshots: Map<string, QuoteSnapshot>,
-  optionQuoteSnapshots: Map<string, QuoteSnapshot>,
+  optionQuoteSnapshots: Map<string, AccountPositionOptionQuoteDemandState>,
 ): PositionQuoteSnapshot | null {
+  const optionDemandState = position.optionContract
+    ? optionQuoteDemandStateForPosition(position, optionQuoteSnapshots)
+    : null;
   const snapshot = position.optionContract
-    ? optionQuoteForPosition(position, optionQuoteSnapshots)
+    ? optionDemandState?.quote ?? null
     : equityQuoteSnapshots.get(normalizeSymbol(positionReferenceSymbol(position)));
   const enriched = buildPositionQuoteFromSnapshot(
     snapshot,
@@ -2014,24 +2309,22 @@ function quoteForPosition(
         ? "massive"
         : "bridge_quote",
   );
-  return choosePositionQuote(position.quote, enriched);
+  return choosePositionQuote(
+    position.quote,
+    attachAccountOptionQuoteMetadata(enriched, optionDemandState),
+  );
 }
 
 function optionQuoteForPosition(
   position: AccountPositionOptionQuoteDemandRow,
-  optionQuoteSnapshots: Map<string, QuoteSnapshot> | undefined,
-): QuoteSnapshot | null {
+  optionQuoteSnapshots:
+    | Map<string, AccountPositionOptionQuoteDemandState>
+    | undefined,
+): AccountPositionOptionQuoteSnapshot | null {
   if (!optionQuoteSnapshots) {
     return null;
   }
-  const providerContractIds = optionQuoteProviderContractIdsForPosition(position);
-  for (const providerContractId of providerContractIds) {
-    const quote = optionQuoteSnapshots.get(providerContractId);
-    if (quote) {
-      return quote;
-    }
-  }
-  return null;
+  return accountOptionQuoteForPosition(position, optionQuoteSnapshots);
 }
 
 function earlierPositionOpen(
@@ -2120,6 +2413,7 @@ async function getCachedOptionChainContracts(
       expirationDate,
       maxExpirations: 1,
       strikesAroundMoney: OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY,
+      quoteHydration: "metadata",
     });
     let resolvedContracts = initialContracts;
     const matchedInitial = positions.filter((position) =>
@@ -2132,6 +2426,7 @@ async function getCachedOptionChainContracts(
         expirationDate,
         maxExpirations: 1,
         strikesAroundMoney: OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY,
+        quoteHydration: "metadata",
       });
       resolvedContracts = mergeOptionChainContracts([
         initialContracts,
@@ -4074,10 +4369,12 @@ export async function getAccountPositions(input: {
 
   const mode = input.mode ?? getRuntimeMode();
   const response = await getAccountPositionsUncached({ ...input, mode });
-  declareAccountPositionOptionQuoteDemands(
-    response.positions,
-    response.accountId || input.accountId,
-  );
+  if (input.liveQuotes !== false) {
+    declareAccountPositionOptionQuoteDemands(
+      response.positions,
+      response.accountId || input.accountId,
+    );
+  }
   return response;
 }
 
@@ -4086,6 +4383,7 @@ async function getAccountPositionsUncached(input: {
   assetClass?: string | null;
   mode: RuntimeMode;
   source?: string | null;
+  liveQuotes?: boolean;
 }) {
   const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
@@ -4106,7 +4404,11 @@ async function getAccountPositionsUncached(input: {
       enrichPositionGreeks(result, { refreshChains: false }),
     ),
     positionsPromise.then((result) => fetchEquityQuoteSnapshotsForPositions(result)),
-    positionsPromise.then((result) => fetchOptionQuoteSnapshotsForPositions(result)),
+    positionsPromise.then((result) =>
+      input.liveQuotes === false
+        ? new Map<string, AccountPositionOptionQuoteDemandState>()
+        : fetchOptionQuoteSnapshotsForPositions(result),
+    ),
     positionsPromise.then((result) =>
       fetchFlexOpenDatesForPositions(universe.accountIds, result),
     ),
@@ -4320,22 +4622,27 @@ async function getAccountPositionsUncached(input: {
         openedAt: row.openedAt,
         openedAtSource: row.openedAtSource,
         optionQuote: row.optionContract
-          ? optionQuoteForPosition(row, optionQuoteSnapshots)
+          ? accountOptionQuoteForPosition(row, optionQuoteSnapshots)
           : null,
-        quote: buildPositionQuoteFromSnapshot(
+        quote: attachAccountOptionQuoteMetadata(
+          buildPositionQuoteFromSnapshot(
+            row.optionContract
+              ? optionQuoteSnapshotForPosition(row, optionQuoteSnapshots)
+              : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
+            row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
+            row.optionContract
+              ? "option_quote"
+              : (
+                  equityQuoteSnapshots.get(
+                    normalizeSymbol(row.marketDataSymbol || row.symbol),
+                  ) as (QuoteSnapshot & { source?: string }) | undefined
+                )?.source === "massive"
+                ? "massive"
+                : "bridge_quote",
+          ),
           row.optionContract
-            ? optionQuoteForPosition(row, optionQuoteSnapshots)
-            : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
-          row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
-          row.optionContract
-            ? "option_quote"
-            : (
-                equityQuoteSnapshots.get(
-                  normalizeSymbol(row.marketDataSymbol || row.symbol),
-                ) as (QuoteSnapshot & { source?: string }) | undefined
-              )?.source === "massive"
-              ? "massive"
-              : "bridge_quote",
+            ? optionQuoteDemandStateForPosition(row, optionQuoteSnapshots)
+            : null,
         ),
       }))
     : filteredPositions.map((position) => {
@@ -4389,7 +4696,7 @@ async function getAccountPositionsUncached(input: {
           openedAt: openedAt.openedAt,
           openedAtSource: openedAt.openedAtSource,
           optionQuote: position.optionContract
-            ? optionQuoteForPosition(position, optionQuoteSnapshots)
+            ? accountOptionQuoteForPosition(position, optionQuoteSnapshots)
             : null,
           quote: quoteForPosition(
             position,
@@ -4895,6 +5202,8 @@ type NormalizedAccountTrade = {
   dte?: number | null;
 };
 
+type FlexTradeRecord = typeof flexTradesTable.$inferSelect;
+
 type AccountClosedTradeFilters = {
   from?: Date | null;
   to?: Date | null;
@@ -5075,6 +5384,187 @@ const isClosedFlexTradeRow = (row: {
   }
   const realizedPnl = toNumber(row.realizedPnl);
   return realizedPnl != null && realizedPnl !== 0;
+};
+
+type InferredFlexLot = {
+  row: FlexTradeRecord;
+  side: "buy" | "sell";
+  quantity: number;
+  price: number;
+  openedAt: Date;
+  commissionRemaining: number;
+};
+
+const flexTradeDate = (row: FlexTradeRecord): Date =>
+  row.tradeDate instanceof Date ? row.tradeDate : new Date(row.tradeDate);
+
+const flexTradeSide = (row: FlexTradeRecord): "buy" | "sell" | null => {
+  const side = String(row.side || "").trim().toLowerCase();
+  if (side === "buy" || side === "sell") return side;
+  const quantity = toNumber(row.quantity);
+  if (quantity == null || Math.abs(quantity) <= POSITION_QUANTITY_EPSILON) {
+    return null;
+  }
+  return quantity < 0 ? "sell" : "buy";
+};
+
+const flexTradeAssetClassLabel = (row: FlexTradeRecord): string =>
+  normalizeTradeAssetClassLabel({
+    assetClass: row.assetClass,
+    symbol: row.symbol,
+  });
+
+const flexTradeContractKey = (row: FlexTradeRecord): string =>
+  [
+    row.providerAccountId,
+    flexTradeAssetClassLabel(row).toLowerCase(),
+    normalizeSymbol(row.symbol || ""),
+  ].join("|");
+
+const flexTradeMultiplier = (row: FlexTradeRecord): number =>
+  flexTradeAssetClassLabel(row).toLowerCase() === "options" ? 100 : 1;
+
+const flexTradeToNormalizedClosedTrade = (
+  row: FlexTradeRecord,
+): NormalizedAccountTrade => ({
+  id: row.tradeId,
+  source: "FLEX" as const,
+  accountId: row.providerAccountId,
+  symbol: row.symbol,
+  side: row.side,
+  assetClass: flexTradeAssetClassLabel(row),
+  quantity: toNumber(row.quantity) ?? 0,
+  openDate: null,
+  closeDate: row.tradeDate,
+  avgOpen: null,
+  avgClose: toNumber(row.price),
+  realizedPnl: toNumber(row.realizedPnl),
+  realizedPnlPercent: null,
+  holdDurationMinutes: null,
+  commissions: toNumber(row.commission),
+  currency: row.currency,
+});
+
+const buildInferredFlexClosedTrades = (
+  rows: FlexTradeRecord[],
+): NormalizedAccountTrade[] => {
+  const lotsByKey = new Map<string, InferredFlexLot[]>();
+  const trades: NormalizedAccountTrade[] = [];
+  const sorted = [...rows].sort(
+    (left, right) => flexTradeDate(left).getTime() - flexTradeDate(right).getTime(),
+  );
+
+  for (const row of sorted) {
+    const side = flexTradeSide(row);
+    const quantity = Math.abs(toNumber(row.quantity) ?? 0);
+    const price = toNumber(row.price);
+    const tradeDate = flexTradeDate(row);
+    if (
+      !side ||
+      quantity <= POSITION_QUANTITY_EPSILON ||
+      price == null ||
+      Number.isNaN(tradeDate.getTime())
+    ) {
+      continue;
+    }
+
+    const key = flexTradeContractKey(row);
+    const lots = lotsByKey.get(key) ?? [];
+    lotsByKey.set(key, lots);
+    const rowCommission = toNumber(row.commission) ?? 0;
+
+    if (!lots.length || lots[0]?.side === side) {
+      lots.push({
+        row,
+        side,
+        quantity,
+        price,
+        openedAt: tradeDate,
+        commissionRemaining: rowCommission,
+      });
+      continue;
+    }
+
+    let remaining = quantity;
+    let matchedQuantity = 0;
+    let openValue = 0;
+    let realizedPnl = 0;
+    let commissions = rowCommission;
+    let earliestOpen: Date | null = null;
+    const multiplier = flexTradeMultiplier(row);
+
+    while (remaining > POSITION_QUANTITY_EPSILON && lots.length) {
+      const lot = lots[0]!;
+      const lotQuantityBefore = lot.quantity;
+      const closeQuantity = Math.min(remaining, lot.quantity);
+      const lotCommissionShare =
+        lotQuantityBefore > POSITION_QUANTITY_EPSILON
+          ? lot.commissionRemaining * (closeQuantity / lotQuantityBefore)
+          : 0;
+      matchedQuantity += closeQuantity;
+      openValue += closeQuantity * lot.price;
+      commissions += lotCommissionShare;
+      earliestOpen =
+        !earliestOpen || lot.openedAt.getTime() < earliestOpen.getTime()
+          ? lot.openedAt
+          : earliestOpen;
+      realizedPnl +=
+        lot.side === "buy"
+          ? (price - lot.price) * closeQuantity * multiplier
+          : (lot.price - price) * closeQuantity * multiplier;
+      lot.quantity -= closeQuantity;
+      lot.commissionRemaining -= lotCommissionShare;
+      remaining -= closeQuantity;
+      if (lot.quantity <= POSITION_QUANTITY_EPSILON) {
+        lots.shift();
+      }
+    }
+
+    if (matchedQuantity > POSITION_QUANTITY_EPSILON) {
+      const avgOpen = openValue / matchedQuantity;
+      trades.push({
+        id: `inferred:${row.tradeId}`,
+        source: "FLEX" as const,
+        accountId: row.providerAccountId,
+        symbol: row.symbol,
+        side,
+        assetClass: flexTradeAssetClassLabel(row),
+        quantity: matchedQuantity,
+        openDate: earliestOpen,
+        closeDate: tradeDate,
+        avgOpen,
+        avgClose: price,
+        realizedPnl,
+        realizedPnlPercent:
+          avgOpen > 0 ? ((price - avgOpen) / Math.abs(avgOpen)) * 100 : null,
+        holdDurationMinutes: earliestOpen
+          ? (tradeDate.getTime() - earliestOpen.getTime()) / 60_000
+          : null,
+        commissions,
+        currency: row.currency,
+      });
+    }
+
+    if (remaining > POSITION_QUANTITY_EPSILON) {
+      lots.push({
+        row,
+        side,
+        quantity: remaining,
+        price,
+        openedAt: tradeDate,
+        commissionRemaining:
+          quantity > POSITION_QUANTITY_EPSILON
+            ? rowCommission * (remaining / quantity)
+            : 0,
+      });
+    }
+  }
+
+  return trades.sort((left, right) => {
+    const leftTime = left.closeDate?.getTime() ?? 0;
+    const rightTime = right.closeDate?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
 };
 
 const orderActivityDate = (order: BrokerOrderSnapshot): Date =>
@@ -5735,12 +6225,6 @@ async function listClosedTradesForUniverse(
   input: AccountClosedTradeFilters,
 ): Promise<NormalizedAccountTrade[]> {
   const conditions = [inArray(flexTradesTable.providerAccountId, universe.accountIds)];
-  if (input.from) {
-    conditions.push(gte(flexTradesTable.tradeDate, input.from));
-  }
-  if (input.to) {
-    conditions.push(lte(flexTradesTable.tradeDate, input.to));
-  }
   if (input.symbol) {
     conditions.push(eq(flexTradesTable.symbol, normalizeSymbol(input.symbol)));
   }
@@ -5756,48 +6240,16 @@ async function listClosedTradesForUniverse(
         .orderBy(desc(flexTradesTable.tradeDate)),
   });
 
-  return flexRows
+  const explicitClosedTrades = flexRows
     .filter(isClosedFlexTradeRow)
-    .map((row) => ({
-      id: row.tradeId,
-      source: "FLEX" as const,
-      accountId: row.providerAccountId,
-      symbol: row.symbol,
-      side: row.side,
-      assetClass: normalizeTradeAssetClassLabel({
-        assetClass: row.assetClass,
-        symbol: row.symbol,
-      }),
-      quantity: toNumber(row.quantity) ?? 0,
-      openDate: null,
-      closeDate: row.tradeDate,
-      avgOpen: null,
-      avgClose: toNumber(row.price),
-      realizedPnl: toNumber(row.realizedPnl),
-      realizedPnlPercent: null,
-      holdDurationMinutes: null,
-      commissions: toNumber(row.commission),
-      currency: row.currency,
-    }))
-    .filter((trade) => {
-      if (
-        input.assetClass &&
-        input.assetClass !== "all" &&
-        trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
-      ) {
-        return false;
-      }
-      if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
-        return false;
-      }
-      if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
-        return false;
-      }
-      if (!matchesHoldDurationBucket(trade.holdDurationMinutes, input.holdDuration)) {
-        return false;
-      }
-      return true;
-    });
+    .map(flexTradeToNormalizedClosedTrade);
+  const trades = explicitClosedTrades.length
+    ? explicitClosedTrades
+    : buildInferredFlexClosedTrades(flexRows);
+
+  return trades.filter((trade) =>
+    accountTradeMatchesClosedTradeFilters(trade, input),
+  );
 }
 
 export async function getAccountClosedTrades(input: {
@@ -6762,6 +7214,7 @@ export const __accountOrderInternalsForTests = {
 };
 
 export const __accountTradeAnnotationInternalsForTests = {
+  buildInferredFlexClosedTrades,
   buildAccountTradeAnnotationKey,
   isClosedFlexTradeRow,
   normalizeAccountAnnotationMode,

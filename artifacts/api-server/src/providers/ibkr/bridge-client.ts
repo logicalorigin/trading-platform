@@ -386,19 +386,35 @@ function hydrateLatency(
   };
 }
 
+function positiveNumberOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
 function hydrateQuote(
   raw: Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date },
 ): QuoteSnapshot {
+  const rawRecord = raw as typeof raw & {
+    undPrice?: unknown;
+    underlyingPrice?: unknown;
+  };
+  const { undPrice: _undPrice, ...quote } = rawRecord;
+  const underlyingPrice =
+    positiveNumberOrNull(rawRecord.underlyingPrice) ??
+    positiveNumberOrNull(rawRecord.undPrice);
   return {
-    ...raw,
-    symbol: normalizeSymbol(raw.symbol),
+    ...quote,
+    symbol: normalizeSymbol(rawRecord.symbol),
     // Older bridge versions don't emit openInterest; normalize to null
     // so downstream code can rely on the field always being present.
-    openInterest: raw.openInterest ?? null,
+    openInterest: rawRecord.openInterest ?? null,
+    underlyingPrice,
     updatedAt:
-      raw.updatedAt instanceof Date ? raw.updatedAt : new Date(raw.updatedAt),
-    dataUpdatedAt: raw.dataUpdatedAt ? toDate(raw.dataUpdatedAt) : null,
-    latency: hydrateLatency(raw.latency),
+      rawRecord.updatedAt instanceof Date
+        ? rawRecord.updatedAt
+        : new Date(rawRecord.updatedAt),
+    dataUpdatedAt: rawRecord.dataUpdatedAt ? toDate(rawRecord.dataUpdatedAt) : null,
+    latency: hydrateLatency(rawRecord.latency),
   };
 }
 
@@ -811,8 +827,12 @@ export class IbkrBridgeClient {
     return hydrateHealth(await this.request<BridgeHealthSnapshot>("/healthz"));
   }
 
-  async getLaneDiagnostics(): Promise<BridgeLaneDiagnosticsSnapshot> {
-    return this.request<BridgeLaneDiagnosticsSnapshot>("/diagnostics/lanes");
+  async getLaneDiagnostics(input: {
+    timeoutMs?: number;
+  } = {}): Promise<BridgeLaneDiagnosticsSnapshot> {
+    return this.request<BridgeLaneDiagnosticsSnapshot>("/diagnostics/lanes", {
+      timeoutMs: input.timeoutMs,
+    });
   }
 
   async updateLaneDiagnostics(
@@ -993,6 +1013,7 @@ export class IbkrBridgeClient {
     underlying?: string | null;
     providerContractIds: string[];
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<QuoteSnapshot[]> {
     const normalizedProviderContractIds = Array.from(
       new Set(
@@ -1011,7 +1032,10 @@ export class IbkrBridgeClient {
       >;
     }>(
       "/options/quotes",
-      { signal: input.signal, timeoutMs: this.optionQuoteRequestTimeoutMs },
+      {
+        signal: input.signal,
+        timeoutMs: input.timeoutMs ?? this.optionQuoteRequestTimeoutMs,
+      },
       {
         underlying: input.underlying ?? undefined,
         contracts: normalizedProviderContractIds.join(","),
@@ -1839,7 +1863,7 @@ export class IbkrBridgeClient {
         strikesAroundMoney: input.strikesAroundMoney,
         strikeCoverage: input.strikeCoverage,
         underlyingSpotPrice: input.underlyingSpotPrice ?? undefined,
-        quoteHydration: input.quoteHydration,
+        quoteHydration: input.quoteHydration ?? "metadata",
       },
     );
     return payload.contracts.map(hydrateOptionChainContract);
@@ -1867,6 +1891,7 @@ export class IbkrBridgeClient {
           contractType: "call",
           maxExpirations: input.maxExpirations,
           strikesAroundMoney: 1,
+          quoteHydration: "metadata",
           signal: input.signal,
         });
 

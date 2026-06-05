@@ -838,9 +838,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
       sourceIndex: getInitialBloombergSourceIndex(),
     }),
   );
-  const [pageVisible, setPageVisible] = useState(
-    () => typeof document === "undefined" || !document.hidden,
-  );
   const [playbackState, setPlaybackState] = useState({
     currentTime: 0,
     bufferedStart: null,
@@ -915,21 +912,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
       window.clearTimeout(hideControlsTimerRef.current);
       hideControlsTimerRef.current = null;
     }
-  }, []);
-
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return undefined;
-    }
-
-    const handleVisibilityChange = () => {
-      setPageVisible(!document.hidden);
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
   }, []);
 
   useEffect(() => {
@@ -1286,9 +1268,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
       ? null
       : collapsed
         ? 4_000
-      : pageVisible
-        ? 1_000
-        : 3_000;
+      : 1_000;
   const shouldForceControlsVisible =
     collapsed ||
     moreMenuOpen ||
@@ -1544,7 +1524,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
   });
   useRuntimeWorkloadFlag(
     "bloomberg:catchup",
-    Boolean(playbackSessionEnabled && !collapsed && pageVisible && transportRate > 1),
+    Boolean(playbackSessionEnabled && !collapsed && transportRate > 1),
     {
       kind: "media",
       label: "Bloomberg catch-up",
@@ -2137,7 +2117,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
   useEffect(() => {
     if (
       !playbackSessionEnabled ||
-      !pageVisible ||
       playerStatus === "error"
     ) {
       return undefined;
@@ -2211,7 +2190,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     };
   }, [
     handleWatchdogRecovery,
-    pageVisible,
     playbackSessionEnabled,
     playerStatus,
     reloadKey,
@@ -2223,15 +2201,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     }
     const hls = hlsRef.current;
     const video = videoRef.current;
-    if (!pageVisible) {
-      // Keep the Bloomberg session alive while hidden; only remember whether
-      // the browser should be nudged back into playback when visibility returns.
-      wasPlayingBeforeHiddenRef.current = Boolean(
-        video && (!video.paused || playerStatus === "loading"),
-      );
-      return undefined;
-    }
-
     if (hls) {
       try {
         hls.startLoad(-1);
@@ -2251,7 +2220,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     }
     return undefined;
   }, [
-    pageVisible,
     playbackSessionEnabled,
     playerStatus,
     reloadKey,
@@ -2277,7 +2245,6 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     if (
       !playbackSessionEnabled ||
       collapsed ||
-      !pageVisible ||
       transportRate <= 1
     ) {
       return undefined;
@@ -2319,10 +2286,10 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     return () => {
       window.clearInterval(catchupTimer);
     };
-  }, [collapsed, getLiveTargetTime, pageVisible, playbackSessionEnabled, syncPlaybackState, transportRate]);
+  }, [collapsed, getLiveTargetTime, playbackSessionEnabled, syncPlaybackState, transportRate]);
 
   useEffect(() => {
-    if (!playbackSessionEnabled || !pageVisible || transportRate > 1) {
+    if (!playbackSessionEnabled || transportRate > 1) {
       return undefined;
     }
 
@@ -2380,7 +2347,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     return () => {
       window.clearInterval(followTimer);
     };
-  }, [getLiveTargetTime, pageVisible, playbackSessionEnabled, syncPlaybackState, transportRate]);
+  }, [getLiveTargetTime, playbackSessionEnabled, syncPlaybackState, transportRate]);
 
   const hasBufferedWindow =
     Number.isFinite(playbackState.bufferedStart) &&

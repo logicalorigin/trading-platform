@@ -1,6 +1,11 @@
 export type ApiRequestSample = {
   method: string;
   path: string;
+  routeClass?: string | null;
+  requestFamily?: string | null;
+  fetchPriority?: number | null;
+  requestOrigin?: string | null;
+  clientRole?: string | null;
   statusCode: number;
   durationMs: number;
   recordedAt: number;
@@ -11,15 +16,40 @@ const MAX_REQUEST_SAMPLES = 2_000;
 
 const requestSamples: ApiRequestSample[] = [];
 
+function normalizeMetricContextValue(value: string | null | undefined): string | null {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, "-");
+  return normalized ? normalized.slice(0, 64) : null;
+}
+
+function normalizeMetricFetchPriority(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
 export function recordApiRequest(input: {
   method: string;
   path: string;
+  routeClass?: string | null;
+  requestFamily?: string | null;
+  fetchPriority?: number | null;
+  requestOrigin?: string | null;
+  clientRole?: string | null;
   statusCode: number;
   durationMs: number;
 }): void {
   requestSamples.push({
     method: input.method,
     path: input.path,
+    routeClass: input.routeClass ?? null,
+    requestFamily: normalizeMetricContextValue(input.requestFamily),
+    fetchPriority: normalizeMetricFetchPriority(input.fetchPriority),
+    requestOrigin: normalizeMetricContextValue(input.requestOrigin),
+    clientRole: normalizeMetricContextValue(input.clientRole),
     statusCode: input.statusCode,
     durationMs: Math.max(0, Math.round(input.durationMs)),
     recordedAt: Date.now(),

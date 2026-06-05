@@ -41,6 +41,10 @@ export type IbkrLiveDemandQuoteState = {
   providerContractId: string;
   status: IbkrLiveDemandStatus;
   reason: string | null;
+  quoteStatus: IbkrLiveDemandStatus;
+  quoteReason: string | null;
+  greeksStatus: IbkrLiveDemandStatus;
+  greeksReason: string | null;
   quote: (QuoteSnapshot & { source?: "ibkr" }) | null;
   cacheAgeMs: number | null;
 };
@@ -227,24 +231,69 @@ function resolveMissingQuoteState(input: {
   return { status: "unavailable", reason: "not_requested" };
 }
 
-function resolveQuoteState(input: {
-  quote: QuoteSnapshot & { source?: "ibkr" };
-  requiresGreeks: boolean;
-}): { status: IbkrLiveDemandStatus; reason: string | null } {
-  const freshness = String(input.quote.freshness ?? "").trim();
+function resolveQuoteFreshnessState(
+  quote: QuoteSnapshot & { source?: "ibkr" },
+): { status: IbkrLiveDemandStatus; reason: string | null } {
+  const freshness = String(quote.freshness ?? "").trim();
   if (freshness === "unavailable") {
     return { status: "unavailable", reason: "quote_unavailable" };
   }
   if (freshness === "pending" || freshness === "metadata") {
     return { status: "pending", reason: "quote_pending" };
   }
-  if (input.requiresGreeks && !quoteHasAnyGreek(input.quote)) {
-    return { status: "pending", reason: "awaiting_greeks" };
-  }
   if (freshness === "stale") {
     return { status: "stale", reason: "stale_quote" };
   }
   return { status: "live", reason: null };
+}
+
+function resolveGreeksState(input: {
+  quote: QuoteSnapshot & { source?: "ibkr" };
+  requiresGreeks: boolean;
+}): { status: IbkrLiveDemandStatus; reason: string | null } {
+  const quoteState = resolveQuoteFreshnessState(input.quote);
+  if (quoteHasAnyGreek(input.quote)) {
+    return quoteState;
+  }
+  if (quoteState.status === "stale") {
+    return { status: "stale", reason: "stale_greeks" };
+  }
+  if (quoteState.status === "unavailable") {
+    return { status: "unavailable", reason: "greeks_unavailable" };
+  }
+  if (input.requiresGreeks) {
+    return { status: "pending", reason: "awaiting_greeks" };
+  }
+  return { status: "unavailable", reason: "greeks_not_requested" };
+}
+
+function resolveQuoteState(input: {
+  quote: QuoteSnapshot & { source?: "ibkr" };
+  requiresGreeks: boolean;
+}): {
+  status: IbkrLiveDemandStatus;
+  reason: string | null;
+  quoteStatus: IbkrLiveDemandStatus;
+  quoteReason: string | null;
+  greeksStatus: IbkrLiveDemandStatus;
+  greeksReason: string | null;
+} {
+  const quoteState = resolveQuoteFreshnessState(input.quote);
+  const greeksState = resolveGreeksState(input);
+  const incompleteGreeks =
+    input.requiresGreeks &&
+    (greeksState.status === "pending" ||
+      greeksState.status === "stale" ||
+      greeksState.status === "unavailable");
+  const overallState = incompleteGreeks ? greeksState : quoteState;
+  return {
+    status: overallState.status,
+    reason: overallState.reason,
+    quoteStatus: quoteState.status,
+    quoteReason: quoteState.reason,
+    greeksStatus: greeksState.status,
+    greeksReason: greeksState.reason,
+  };
 }
 
 export function declareIbkrLiveDemand(input: IbkrLiveDemandDeclaration): void {
@@ -352,6 +401,10 @@ export function readIbkrLiveDemandState(
           providerContractId,
           status: state.status,
           reason: state.reason,
+          quoteStatus: state.quoteStatus,
+          quoteReason: state.quoteReason,
+          greeksStatus: state.greeksStatus,
+          greeksReason: state.greeksReason,
           quote,
           cacheAgeMs: quoteCacheAgeMs(quote),
         };
@@ -365,6 +418,10 @@ export function readIbkrLiveDemandState(
         providerContractId,
         status: missing.status,
         reason: missing.reason,
+        quoteStatus: missing.status,
+        quoteReason: missing.reason,
+        greeksStatus: missing.status,
+        greeksReason: missing.reason,
         quote: null,
         cacheAgeMs: null,
       };

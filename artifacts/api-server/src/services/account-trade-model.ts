@@ -65,7 +65,12 @@ export function normalizeTradeAssetClassLabel(input: {
   symbol: string;
 }): string {
   const normalized = (input.assetClass ?? "").trim().toLowerCase();
-  if (normalized.includes("option")) {
+  const compactSymbol = input.symbol.replace(/\s+/g, "").toUpperCase();
+  if (
+    normalized.includes("option") ||
+    normalized === "opt" ||
+    /^[A-Z0-9.]+\d{6}[CP]\d{8}$/.test(compactSymbol)
+  ) {
     return "Options";
   }
   if (isEtfSymbol(input.symbol)) {

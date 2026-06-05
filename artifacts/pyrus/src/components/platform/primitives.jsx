@@ -3,6 +3,7 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
+import { ContainerLoadingStatus } from "./ContainerLoadingStatus.jsx";
 
 const CSS_COLOR = Object.freeze({
   bg1: "var(--ra-surface-1)",
@@ -994,6 +995,8 @@ export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
   loading = false,
+  loadingWaitItems,
+  loadingEndpoint,
   tone,
   variant = "neutral",
   icon,
@@ -1011,6 +1014,19 @@ export const DataUnavailableState = ({
   const accentBorder =
     variant === "neutral" ? CSS_COLOR.border : cssColorMix(variantTone, 33);
   const titleColor = resolvedTone || CSS_COLOR.text;
+  const waitItems =
+    loadingWaitItems ||
+    (loading
+      ? [
+          {
+            id: `${title}:wait`,
+            label: title,
+            status: "loading",
+            detail,
+            endpoint: loadingEndpoint,
+          },
+        ]
+      : []);
   return (
     <div
       role={variant === "error" ? "alert" : undefined}
@@ -1076,6 +1092,11 @@ export const DataUnavailableState = ({
         >
           {detail}
         </div>
+        <ContainerLoadingStatus
+          items={waitItems}
+          testId="data-unavailable-loading-waits"
+          style={{ textAlign: "left" }}
+        />
         {action ? (
           <div
             style={{

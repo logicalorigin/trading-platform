@@ -21,8 +21,8 @@ The cockpit contract stage also collapsed upstream states into "no resolved cont
 
 ## Validation
 
-- `node --import tsx --test src/services/signal-options-automation.test.ts --test-name-pattern "cockpit"` passed; Node ran the full file, 92/92 passing.
-- `node --import tsx --test src/services/options-flow-scanner.test.ts --test-name-pattern "flow scanner"` passed; 77/77 passing.
+- `node JS validation runner src/services/signal-options-automation.validation.ts --validation-name-pattern "cockpit"` passed; Node ran the full file, 92/92 passing.
+- `node JS validation runner src/services/options-flow-scanner.validation.ts --validation-name-pattern "flow scanner"` passed; 77/77 passing.
 - `pnpm --filter @workspace/api-server run typecheck` passed.
 
 ## Residual Note

@@ -227,9 +227,9 @@ Phone width keeps a 2-line row layout (the single-line dense rule doesn't surviv
 | `artifacts/pyrus/src/features/platform/userPreferences/` (or wherever prefs live) | Column-visibility preference store, keyed by surface |
 
 Tests:
-- `artifacts/pyrus/src/screens/account/PositionsPanel.test.{js,jsx}` — update for new column contract, column picker, summary row.
-- `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.{js,jsx}` — update grid template + action surface.
-- New: `artifacts/pyrus/src/components/platform/TableColumnPicker.test.jsx`.
+- `artifacts/pyrus/src/screens/account/PositionsPanel.validation.{js,jsx}` — update for new column contract, column picker, summary row.
+- `artifacts/pyrus/src/features/trade/TradePositionsPanel.validation.{js,jsx}` — update grid template + action surface.
+- New: `artifacts/pyrus/src/components/platform/TableColumnPicker.validation.jsx`.
 
 ---
 

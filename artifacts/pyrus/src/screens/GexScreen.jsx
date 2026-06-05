@@ -34,7 +34,7 @@ import {
   computeSignals,
   computeSqueeze,
   expConcentration,
-  gammaPriceProfile,
+  formatGexStrikePrice,
   gexByExpiry,
   isFiniteNumber,
   normalizeGexResponseOptions,
@@ -505,7 +505,7 @@ const GexTooltip = ({ active, payload, spot }) => {
       }}
     >
       <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
-        ${row.strike} · {fmtPercent((row.strike - spot) / spot)}
+        {formatGexStrikePrice(row.strike)} · {fmtPercent((row.strike - spot) / spot)}
       </div>
       <div style={{ color: toneForNetGex(row.netGex) }}>
         Net {fmtCurrency(row.netGex)}
@@ -554,6 +554,7 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
+            tickFormatter={formatGexStrikePrice}
             tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
@@ -664,101 +665,6 @@ const tooltipBoxStyle = {
   boxShadow: ELEVATION.md,
 };
 
-const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
-  const data = useMemo(() => gammaPriceProfile(rows, spot), [rows, spot]);
-  const zeroPrice = useMemo(() => {
-    for (let index = 0; index < data.length - 1; index += 1) {
-      const left = data[index];
-      const right = data[index + 1];
-      if (
-        (left.netGex <= 0 && right.netGex >= 0) ||
-        (left.netGex >= 0 && right.netGex <= 0)
-      ) {
-        const t = left.netGex / (left.netGex - right.netGex);
-        return left.price + t * (right.price - left.price);
-      }
-    }
-    return null;
-  }, [data]);
-
-  return (
-    <ChartShell
-      title="Gamma Price Profile"
-      subtitle={`Projected Net Gamma across spot levels using provider IV (${providerIvCount}/${rows.length} contracts).`}
-    >
-      {data.length ? (
-        <MeasuredChartFrame
-          height={220}
-          minHeight={220}
-          placeholderLabel="Preparing gamma price profile"
-          testId="gex-gamma-price-frame"
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
-            <XAxis
-              dataKey="price"
-              type="number"
-              domain={["dataMin", "dataMax"]}
-              tickFormatter={(value) => `$${value.toFixed(0)}`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const row = payload[0].payload;
-                return (
-                  <div style={tooltipBoxStyle}>
-                    <b>{fmtPrice(row.price)}</b>
-                    <div style={{ color: toneForNetGex(row.netGex) }}>
-                      Net {fmtCurrency(row.netGex)}
-                    </div>
-                  </div>
-                );
-              }}
-            />
-            <ReferenceLine
-              x={spot}
-              stroke={CSS_COLOR.cyan}
-              strokeDasharray="4 4"
-              label={{ value: "Spot", fill: CSS_COLOR.cyan, fontSize: fs(10), position: "top" }}
-            />
-            {zeroPrice != null ? (
-              <ReferenceLine
-                x={zeroPrice}
-                stroke={CSS_COLOR.amber}
-                strokeDasharray="2 4"
-                label={{ value: "Zero", fill: CSS_COLOR.amber, fontSize: fs(10), position: "top" }}
-              />
-            ) : null}
-            <Bar dataKey="netGex" isAnimationActive={false}>
-              {data.map((row) => (
-                <Cell key={row.price} fill={toneForNetGex(row.netGex)} />
-              ))}
-            </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </MeasuredChartFrame>
-      ) : (
-        <DataUnavailableState
-          title="Provider IV unavailable"
-          detail="IBKR did not return implied volatility for these contracts, so the projected gamma profile is withheld instead of using a local IV estimate."
-          minHeight={160}
-        />
-      )}
-    </ChartShell>
-  );
-};
-
 const OiChart = ({ rows, spot }) => {
   const [range, setRange] = useState("near");
   const allRows = useMemo(() => oiByStrike(rows), [rows]);
@@ -796,6 +702,7 @@ const OiChart = ({ rows, spot }) => {
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
+            tickFormatter={formatGexStrikePrice}
             tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
@@ -815,7 +722,7 @@ const OiChart = ({ rows, spot }) => {
               const row = payload[0].payload;
               return (
                 <div style={tooltipBoxStyle}>
-                  <b>${row.strike}</b>
+                  <b>{formatGexStrikePrice(row.strike)}</b>
                   <div style={{ color: GEX_CALL_TONE }}>Call OI {fmtNumber(row.callOi)}</div>
                   <div style={{ color: GEX_PUT_TONE }}>Put OI {fmtNumber(row.putOi)}</div>
                 </div>
@@ -915,7 +822,7 @@ const HeatmapCard = ({ rows, spot }) => {
           >
             <thead>
               <tr>
-                <th style={{ ...heatmapHeaderStyle, ...heatmapStickyColumnStyle }}>
+                <th style={heatmapCornerHeaderStyle}>
                   Strike
                 </th>
                 {model.expirations.map((expiration) => (
@@ -933,10 +840,8 @@ const HeatmapCard = ({ rows, spot }) => {
                 <tr key={strike}>
                   <td
                     style={{
-                      ...heatmapHeaderStyle,
-                      ...heatmapStickyColumnStyle,
+                      ...heatmapStrikeCellStyle,
                       fontVariantNumeric: "tabular-nums",
-                      textAlign: "right",
                       color: Math.abs(strike - spot) < 0.5 ? CSS_COLOR.cyan : CSS_COLOR.textSec,
                     }}
                   >
@@ -1035,11 +940,27 @@ const heatmapHeaderStyle = {
   zIndex: 2,
 };
 
-const heatmapStickyColumnStyle = {
+const heatmapCornerHeaderStyle = {
+  ...heatmapHeaderStyle,
   minWidth: dim(92),
   left: 0,
-  zIndex: 3,
+  zIndex: 4,
   borderRight: `1px solid ${CSS_COLOR.border}`,
+};
+
+const heatmapStrikeCellStyle = {
+  minWidth: dim(92),
+  padding: sp("6px 7px"),
+  textAlign: "right",
+  color: CSS_COLOR.textDim,
+  background: CSS_COLOR.bg1,
+  borderBottom: `1px solid ${CSS_COLOR.border}`,
+  borderRight: `1px solid ${CSS_COLOR.border}`,
+  whiteSpace: "nowrap",
+  fontWeight: FONT_WEIGHTS.label,
+  position: "sticky",
+  left: 0,
+  zIndex: 1,
 };
 
 const heatmapExpirationHeaderStyle = {
@@ -1446,7 +1367,7 @@ const ProfileTable = ({ profile, spot }) => {
           style={{ ...tableCellStyle, textAlign: "left", color: CSS_COLOR.text }}
         >
           <div style={{ fontVariantNumeric: "tabular-nums" }}>
-            {fmtPrice(row.strike)}
+            {formatGexStrikePrice(row.strike)}
           </div>
           <div style={profileStrikeDeltaStyle}>
             Spot {fmtPercent((row.strike - spot) / spot)}
@@ -1614,7 +1535,6 @@ export default function GexScreen({
   const [series, setSeries] = useState("net");
   const [view, setView] = useState("graph");
   const [expirationFilter, setExpirationFilter] = useState("all");
-  const [ivAdjustment, setIvAdjustment] = useState(0);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [gexRootRef, gexRootSize] = useElementSize();
   const { isPhone, isNarrow } = responsiveFlags(gexRootSize.width);
@@ -1707,17 +1627,6 @@ export default function GexScreen({
     if (expirationFilter === "all") return rows;
     return rows.filter((row) => row.expirationDate === expirationFilter);
   }, [expirationFilter, rows]);
-  const ivScenarioRows = useMemo(() => {
-    if (ivAdjustment === 0) return filteredRows;
-    const scale = Math.max(0.5, 1 + ivAdjustment);
-    return filteredRows.map((row) => ({
-      ...row,
-      impliedVol:
-        isFiniteNumber(row.impliedVol) && row.impliedVol > 0
-          ? row.impliedVol * scale
-          : row.impliedVol,
-    }));
-  }, [filteredRows, ivAdjustment]);
   const metrics = useMemo(
     () => (spot != null ? aggregateMetrics(filteredRows, spot) : null),
     [filteredRows, spot],
@@ -2069,28 +1978,8 @@ export default function GexScreen({
           </div>
           <TickerMetaSummary data={gexData} />
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: sp(6), color: CSS_COLOR.textSec }}>
-              <SlidersHorizontal size={14} />
-              <span style={{ fontSize: textSize("caption"), display: "inline-flex", alignItems: "center", gap: sp(3) }}>
-                IV scenario
-                <InfoTooltipIcon entry={getGexGlossaryEntry("ivSimulation")} />
-              </span>
-              <span style={{ marginLeft: "auto", color: CSS_COLOR.amber, fontWeight: FONT_WEIGHTS.emphasis }}>
-                {ivAdjustment >= 0 ? "+" : ""}
-                {(ivAdjustment * 100).toFixed(0)}%
-              </span>
-            </div>
-            <input
-              type="range"
-              min={-50}
-              max={50}
-              step={1}
-              value={ivAdjustment * 100}
-              onChange={(event) => setIvAdjustment(Number(event.target.value) / 100)}
-              style={{ width: "100%", accentColor: CSS_COLOR.accent, marginTop: sp(8) }}
-            />
             <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-              Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
+              Sourced strikes {filteredRows.length.toLocaleString("en-US")} · Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
             </div>
             <div
               data-testid="gex-source-last-updated"
@@ -2182,14 +2071,14 @@ export default function GexScreen({
               />
               <MetricTile
                 label="Call Wall"
-                value={fmtPrice(metrics.callWall)}
+                value={formatGexStrikePrice(metrics.callWall)}
                 sub={fmtPercent((metrics.callWall - spot) / spot)}
                 color={GEX_CALL_TONE}
                 glossaryKey="callWall"
               />
               <MetricTile
                 label="Put Wall"
-                value={fmtPrice(metrics.putWall)}
+                value={formatGexStrikePrice(metrics.putWall)}
                 sub={fmtPercent((metrics.putWall - spot) / spot)}
                 color={CSS_COLOR.red}
                 glossaryKey="putWall"
@@ -2251,20 +2140,7 @@ export default function GexScreen({
               }}
             >
               <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(320)}px), 1fr))`,
-                    gap: sp(10),
-                  }}
-                >
-                  <ExpiryChart rows={filteredRows} spot={spot} />
-                  <GammaPriceChart
-                    rows={ivScenarioRows}
-                    providerIvCount={providerIvCount}
-                    spot={spot}
-                  />
-                </div>
+                <ExpiryChart rows={filteredRows} spot={spot} />
                 <SectionHeading title="Open Interest Analysis" />
                 <OiChart rows={filteredRows} spot={spot} />
               </div>

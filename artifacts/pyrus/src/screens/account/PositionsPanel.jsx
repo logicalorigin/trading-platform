@@ -25,7 +25,7 @@ import {
 import {
   PositionOptionQuoteStreams,
   buildPositionOptionQuoteGroups,
-  structuredOptionProviderContractId,
+  rowOptionProviderContractIds,
 } from "./PositionOptionQuoteStreams.jsx";
 import {
   CSS_COLOR,
@@ -203,14 +203,6 @@ const firstText = (...values) => {
 const isInternalOptionIdentifier = (value) =>
   /^twsopt:/i.test(String(value ?? "").trim());
 
-const isOpraOptionTicker = (value) =>
-  /^O:/i.test(String(value ?? "").trim());
-
-const normalizedProviderContractId = (value) => {
-  const text = String(value || "").trim();
-  return text && !isOpraOptionTicker(text) ? text : "";
-};
-
 const firstDisplayText = (...values) => {
   for (const value of values) {
     const text = String(value ?? "").trim();
@@ -219,16 +211,88 @@ const firstDisplayText = (...values) => {
   return "";
 };
 
-const optionProviderContractId = (contract) => {
-  return (
-    structuredOptionProviderContractId(contract) ||
-    normalizedProviderContractId(contract?.providerContractId || contract?.conid)
-  );
+const quoteTimestampMs = (value) => {
+  if (!value) return null;
+  const timestamp =
+    value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 };
 
-const rowOptionProviderContractId = (row) =>
-  optionProviderContractId(row?.optionContract) ||
-  normalizedProviderContractId(row?.optionQuote?.providerContractId);
+const optionQuoteStatusRank = (value) => {
+  switch (firstText(value).toLowerCase()) {
+    case "live":
+      return 5;
+    case "stale":
+      return 4;
+    case "pending":
+      return 3;
+    case "unavailable":
+      return 2;
+    case "rejected":
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+const liveOptionQuoteStatusRank = (quote) =>
+  optionQuoteStatusRank(
+    firstText(
+      quote?.quoteStatus,
+      quote?.status,
+      quote?.quoteFreshness,
+      quote?.freshness,
+    ),
+  );
+
+const liveOptionQuoteTimestampMs = (quote) =>
+  quoteTimestampMs(firstText(quote?.dataUpdatedAt, quote?.updatedAt, quote?.quoteUpdatedAt));
+
+const compareLiveOptionQuotes = (left, right) => {
+  if (!left && !right) return 0;
+  if (left && !right) return 1;
+  if (!left && right) return -1;
+
+  const leftStatusRank = liveOptionQuoteStatusRank(left);
+  const rightStatusRank = liveOptionQuoteStatusRank(right);
+  if (leftStatusRank !== rightStatusRank) {
+    return leftStatusRank - rightStatusRank;
+  }
+
+  const leftFreshnessRank = optionQuoteStatusRank(left?.freshness);
+  const rightFreshnessRank = optionQuoteStatusRank(right?.freshness);
+  if (leftFreshnessRank !== rightFreshnessRank) {
+    return leftFreshnessRank - rightFreshnessRank;
+  }
+
+  const leftTimestamp = liveOptionQuoteTimestampMs(left);
+  const rightTimestamp = liveOptionQuoteTimestampMs(right);
+  if (leftTimestamp !== null && rightTimestamp !== null && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  if (leftTimestamp !== null && rightTimestamp === null) return 1;
+  if (leftTimestamp === null && rightTimestamp !== null) return -1;
+
+  const leftCacheAge = firstFiniteNumber(left?.cacheAgeMs, left?.ageMs);
+  const rightCacheAge = firstFiniteNumber(right?.cacheAgeMs, right?.ageMs);
+  if (leftCacheAge !== null && rightCacheAge !== null && leftCacheAge !== rightCacheAge) {
+    return rightCacheAge - leftCacheAge;
+  }
+  if (leftCacheAge !== null && rightCacheAge === null) return 1;
+  if (leftCacheAge === null && rightCacheAge !== null) return -1;
+
+  return 0;
+};
+
+const freshestLiveOptionQuoteForRow = (row, liveQuoteByProviderContractId = {}) =>
+  rowOptionProviderContractIds(row)
+    .map((providerContractId) => liveQuoteByProviderContractId[providerContractId])
+    .filter(Boolean)
+    .reduce(
+      (best, quote) =>
+        compareLiveOptionQuotes(quote, best) > 0 ? quote : best,
+      null,
+    );
 
 const formatOptionRightLabel = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
@@ -365,6 +429,7 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
   const mid = firstPositiveFiniteNumber(liveQuote.mid, current.mid, quoteMid({ bid, ask }));
   return {
     ...current,
+    providerContractId: firstText(liveQuote.providerContractId, current.providerContractId),
     bid,
     ask,
     mid,
@@ -403,9 +468,25 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
     gamma: firstFiniteNumber(liveQuote.gamma, current.gamma),
     theta: firstFiniteNumber(liveQuote.theta, current.theta),
     vega: firstFiniteNumber(liveQuote.vega, current.vega),
+    underlyingPrice: firstPositiveFiniteNumber(
+      liveQuote.underlyingPrice,
+      current.underlyingPrice,
+    ),
     openInterest: firstFiniteNumber(liveQuote.openInterest, current.openInterest),
     volume: firstFiniteNumber(liveQuote.volume, current.volume),
     quoteFreshness: firstText(liveQuote.freshness, current.quoteFreshness, current.freshness),
+    greeksFreshness: firstText(liveQuote.greeksFreshness, current.greeksFreshness),
+    status: firstText(liveQuote.status, liveQuote.quoteStatus, current.status),
+    reason: firstText(liveQuote.reason, liveQuote.quoteReason, current.reason),
+    quoteStatus: firstText(liveQuote.quoteStatus, liveQuote.status, current.quoteStatus),
+    quoteReason: firstText(liveQuote.quoteReason, current.quoteReason),
+    greeksStatus: firstText(liveQuote.greeksStatus, current.greeksStatus),
+    greeksReason: firstText(liveQuote.greeksReason, current.greeksReason),
+    demandStatus: firstText(liveQuote.demandStatus, current.demandStatus),
+    demandReason: firstText(liveQuote.demandReason, current.demandReason),
+    unavailableDetail: firstText(liveQuote.unavailableDetail, current.unavailableDetail),
+    cacheAgeMs: firstFiniteNumber(liveQuote.cacheAgeMs, current.cacheAgeMs),
+    ageMs: firstFiniteNumber(liveQuote.ageMs, current.ageMs),
     marketDataMode: firstText(liveQuote.marketDataMode, current.marketDataMode),
     quoteUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.quoteUpdatedAt),
     dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.dataUpdatedAt),
@@ -620,9 +701,47 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
         firstFiniteNumber(row.dayChangePercent) != null),
   );
   const delta = firstFiniteNumber(optionQuote?.delta);
+  const underlyingPrice = firstPositiveFiniteNumber(
+    optionQuote?.underlyingPrice,
+    displayOptionQuote?.underlyingPrice,
+    row?.optionQuote?.underlyingPrice,
+  );
+  const underlyingQuoteSource = firstText(
+    optionQuote?.underlyingPriceSource,
+    displayOptionQuote?.underlyingPriceSource,
+    optionQuote?.source,
+    displayOptionQuote?.source,
+  );
+  const underlyingMarket =
+    underlyingPrice != null
+      ? {
+          ...(row.underlyingMarket || {}),
+          symbol:
+            resolvePositionUnderlyingSymbol(row) ||
+            row.underlyingMarket?.symbol ||
+            row.symbol,
+          price: underlyingPrice,
+          mark: underlyingPrice,
+          updatedAt: firstText(
+            optionQuote?.dataUpdatedAt,
+            optionQuote?.updatedAt,
+            row.underlyingMarket?.updatedAt,
+          ),
+          dataUpdatedAt: firstText(
+            optionQuote?.dataUpdatedAt,
+            row.underlyingMarket?.dataUpdatedAt,
+          ),
+          source: underlyingQuoteSource === "massive" ? "massive" : "ibkr",
+          transport: firstText(
+            optionQuote?.transport,
+            row.underlyingMarket?.transport,
+          ),
+        }
+      : row.underlyingMarket;
 
   return {
     ...row,
+    ...(underlyingMarket ? { underlyingMarket } : {}),
     optionQuote: displayOptionQuote,
     averageCost: averageCost ?? row.averageCost,
     mark,
@@ -639,6 +758,15 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
         : row.betaWeightedDelta,
   };
 };
+
+const applyFreshestLiveOptionQuoteToRow = (
+  row,
+  liveQuoteByProviderContractId = {},
+) =>
+  applyLiveOptionQuoteToRow(
+    row,
+    freshestLiveOptionQuoteForRow(row, liveQuoteByProviderContractId),
+  );
 
 const isOptionPosition = (row) =>
   Boolean(row?.optionContract) ||
@@ -1356,11 +1484,9 @@ export const useLiveOptionPositionRows = ({
       : {};
     return applyDisplayWeights(
       inputRows.map((row) => {
-        const optionPatchedRow = applyLiveOptionQuoteToRow(
+        const optionPatchedRow = applyFreshestLiveOptionQuoteToRow(
           row,
-          liveQuoteByProviderContractId[
-            rowOptionProviderContractId(row)
-          ],
+          liveQuoteByProviderContractId,
         );
         const symbol = resolvePositionUnderlyingSymbol(optionPatchedRow);
         return applyLiveEquityQuoteToRow(
@@ -1396,6 +1522,7 @@ export const useLiveOptionPositionRows = ({
 export const __positionsPanelInternalsForTests = {
   applyDisplayWeights,
   applyLiveEquityQuoteToRow,
+  applyFreshestLiveOptionQuoteToRow,
   applyLiveOptionQuoteToRow,
   automationPositionMetrics,
   automationStopTone,
@@ -1421,6 +1548,8 @@ const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
     staticUnderlying?.price,
     staticUnderlying?.mark,
     quoteMid(staticUnderlying),
+    row?.optionQuote?.underlyingPrice,
+    row?.quote?.underlyingPrice,
     equityFallback,
   );
 };
@@ -1433,6 +1562,8 @@ const positionUnderlyingPriceTitle = (row, snapshotsBySymbol, maskValues) => {
     snapshot?.dataUpdatedAt,
     snapshot?.updatedAt,
     row?.underlyingMarket?.updatedAt,
+    row?.optionQuote?.dataUpdatedAt,
+    row?.optionQuote?.updatedAt,
   );
   return [
     "Underlying spot",
@@ -1560,14 +1691,64 @@ const positionDisplayForRow = (row) => buildPositionDisplayModel(row, row?.optio
 const quoteSourceLabel = (quote) =>
   quote?.source ? formatEnumLabel(quote.source) : null;
 
-const formatQuoteUpdatedDetail = (quote) =>
-  [
+const formatQuoteStateLabel = (value) => {
+  const state = firstText(value);
+  return state ? formatEnumLabel(state) : null;
+};
+
+const formatQuoteReasonLabel = (value) => {
+  const reason = firstText(value);
+  return reason ? formatEnumLabel(reason) : null;
+};
+
+const optionGreeksStatusLabel = (quote) => {
+  if (
+    firstFiniteNumber(
+      quote?.delta,
+      quote?.gamma,
+      quote?.theta,
+      quote?.vega,
+    ) != null
+  ) {
+    return "";
+  }
+  const greeksStatus = firstText(quote?.greeksStatus, quote?.greeksFreshness).toLowerCase();
+  const greeksReason = firstText(quote?.greeksReason).toLowerCase();
+  if (greeksReason === "awaiting_greeks" || greeksStatus === "pending") {
+    return "Greeks pending";
+  }
+  if (greeksStatus === "stale") {
+    return "Greeks stale";
+  }
+  if (greeksStatus === "unavailable" || greeksStatus === "rejected") {
+    return "Greeks unavailable";
+  }
+  return "";
+};
+
+const formatQuoteUpdatedDetail = (quote) => {
+  const quoteStatus = firstText(quote?.quoteStatus, quote?.status);
+  const quoteReason = firstText(
+    quote?.quoteReason,
+    quote?.reason,
+    quote?.unavailableDetail,
+  );
+  const quoteState =
+    quoteStatus && quoteStatus !== "live"
+      ? [
+          formatQuoteStateLabel(quoteStatus),
+          formatQuoteReasonLabel(quoteReason),
+        ].filter(Boolean).join(": ")
+      : null;
+  return [
     formatPositionQuoteFreshnessLabel(quote),
+    quoteState,
     quoteSourceLabel(quote),
     quote?.marketDataMode ? formatEnumLabel(quote.marketDataMode) : null,
   ]
     .filter(Boolean)
     .join(" · ");
+};
 
 const formatPositionBidAskPair = (quote, maskValues) => {
   const formatSide = (value) =>
@@ -1601,16 +1782,27 @@ const PositionQuoteCell = ({ row, maskValues }) => {
     formatAccountPercent(value, 1, maskValues),
   );
   const detail = [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · ");
+  const explicitQuoteStatus = firstText(quote?.quoteStatus, quote?.status);
+  const explicitQuoteReason = firstText(
+    quote?.quoteReason,
+    quote?.reason,
+    quote?.unavailableDetail,
+  );
   const quoteIssues = collectQuoteDataIssues(
     {
       ...(quote || {}),
       freshness: quote?.quoteFreshness ?? quote?.freshness,
-      status: quoteHasBidAsk ? quote?.status : quote?.mark != null ? "metadata" : "unavailable",
-      unavailableDetail: quoteHasBidAsk
-        ? null
+      status: quoteHasBidAsk
+        ? explicitQuoteStatus || quote?.status
         : quote?.mark != null
-          ? "Only a mark is available; bid and ask are missing."
-          : "Bid, ask, and mark are unavailable.",
+          ? explicitQuoteStatus || "metadata"
+          : explicitQuoteStatus || "unavailable",
+      reason: explicitQuoteReason || quote?.reason,
+      unavailableDetail: quoteHasBidAsk
+        ? explicitQuoteReason || null
+        : quote?.mark != null
+          ? explicitQuoteReason || "Only a mark is available; bid and ask are missing."
+          : explicitQuoteReason || "Bid, ask, and mark are unavailable.",
     },
     {
       valueLabel: `${row?.symbol || row?.underlyingSymbol || "Position"} quote`,
@@ -1811,12 +2003,26 @@ const compactGreekNumber = (value, digits = 2) => {
 };
 
 const DenseGreekCell = ({ row, title }) => {
-  const delta = compactGreekNumber(row?.optionQuote?.delta, 2);
-  const theta = compactGreekNumber(row?.optionQuote?.theta, 2);
+  const quote = row?.optionQuote || row?.quote || null;
+  const delta = compactGreekNumber(quote?.delta, 2);
+  const theta = compactGreekNumber(quote?.theta, 2);
+  const greeksStatus = optionGreeksStatusLabel(quote);
   if (!delta && !theta) {
-    return (
+    const content = greeksStatus || MISSING_VALUE;
+    const tooltip = [
+      title,
+      greeksStatus,
+      formatQuoteReasonLabel(quote?.greeksReason),
+    ].filter(Boolean).join(" · ");
+    return tooltip ? (
+      <AppTooltip content={tooltip}>
+        <span style={denseColumnTextStyle({ color: CSS_COLOR.textDim })}>
+          {content}
+        </span>
+      </AppTooltip>
+    ) : (
       <span style={denseColumnTextStyle({ color: CSS_COLOR.textDim })}>
-        {MISSING_VALUE}
+        {content}
       </span>
     );
   }

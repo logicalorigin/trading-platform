@@ -2043,6 +2043,7 @@ export const TradePositionsPanel = ({
               title="Loading broker fills"
               detail="Requesting broker execution history for the active account."
               loading
+              loadingEndpoint="/api/ibkr/executions"
               tone={CSS_COLOR.accent}
             />
           ) : !executionRows.length ? (
@@ -2236,6 +2237,7 @@ export const TradePositionsPanel = ({
               title="Loading live orders"
               detail="Requesting live IBKR orders for the active account."
               loading
+              loadingEndpoint="/api/ibkr/orders"
               tone={CSS_COLOR.accent}
             />
           ) : !liveOrders.length ? (

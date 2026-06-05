@@ -19,7 +19,7 @@ The remaining findings cluster around three themes: **API contract drift on the 
 2. **`HIGH` — No environment variable documentation surface** (Cat 18). 40 unique `process.env.*` / `import.meta.env.*` references; no `.env.example`; `replit.md` only mentions 2 by name (`PYRUS_DATABASE_SOURCE`, `LOCAL_DATABASE_URL`). **Action**: add `.env.example` at repo root.
 3. **`MED` — `pnpm-workspace.yaml` declares `lib/integrations/*` but the directory does not exist** (Cat 10). Orphan glob; pnpm install will warn. **Action**: remove the glob or create the directory.
 4. **`MED` — `artifacts/api-server/src/services/shadow-equity-forward-worker.ts` has no production caller** (Cat 1 / Cat 2). `startShadowEquityForwardWorker` is exported but only referenced from its own test file. `knip` does not flag it (likely missed via indirect import path). **Action**: confirm whether dormant WIP, gated feature, or removed.
-5. **`MED` — 21 orphan test files** where the obvious sibling implementation file is missing (Cat 7). Most under `artifacts/api-server/src/services/`. Likely testing logic exported from differently-named modules (e.g., `account-risk.test.ts` exercises `account-risk-model.ts`) but **some are real orphans for code that was renamed/deleted**. **Action**: walk each test, confirm what it covers, delete if dead.
+5. **`MED` — 21 orphan test files** where the obvious sibling implementation file is missing (Cat 7). Most under `artifacts/api-server/src/services/`. Likely testing logic exported from differently-named modules (e.g., `account-risk.validation.ts` exercises `account-risk-model.ts`) but **some are real orphans for code that was renamed/deleted**. **Action**: walk each test, confirm what it covers, delete if dead.
 
 ### Sentinel-clean categories (audit ran, nothing found)
 
@@ -88,7 +88,7 @@ Any finding inside these areas is tagged `wip-protected: yes` and excluded from 
 
 | Cluster | Files | Severity | WIP | Suggested action |
 |---|---|---|---|---|
-| **Dormant `shadow-equity-forward` worker** | `artifacts/api-server/src/services/shadow-equity-forward-worker.ts` (266 LOC, exports `createShadowEquityForwardWorker`, `startShadowEquityForwardWorker`) + `shadow-equity-forward-test.ts` (~34 KB). `startShadowEquityForwardWorker` is exported but the only caller in the repo is its own `shadow-equity-forward-worker.test.ts`. No reference from `artifacts/api-server/src/index.ts` or routes. | **med** | no | Confirm whether this is dormant WIP, gated feature, or abandoned. If dormant, document intent; if abandoned, delete. |
+| **Dormant `shadow-equity-forward` worker** | `artifacts/api-server/src/services/shadow-equity-forward-worker.ts` (266 LOC, exports `createShadowEquityForwardWorker`, `startShadowEquityForwardWorker`) + `shadow-equity-forward-test.ts` (~34 KB). `startShadowEquityForwardWorker` is exported but the only caller in the repo is its own `shadow-equity-forward-worker.validation.ts`. No reference from `artifacts/api-server/src/index.ts` or routes. | **med** | no | Confirm whether this is dormant WIP, gated feature, or abandoned. If dormant, document intent; if abandoned, delete. |
 
 **Cleared as intentional (not findings)**:
 - `marketFlowStore.js` vs `tradeFlowStore.js` — both use the same store boilerplate but serve scope-distinct purposes (broad market vs trade-active). Confirmed in `APP_SURFACE_OWNERSHIP_REVIEW.md` as deferred-but-intentional sibling structure. **wip-protected: yes**.
@@ -172,7 +172,7 @@ No hand-written TS interfaces in `artifacts/api-server/src/services/` were found
 | Doc | Broken path | Reality |
 |---|---|---|
 | `REPO_CLEANUP_INVENTORY.md` | `artifacts/pyrus/src/features/charting/ResearchChartDashboardStrip.ts` | File does not exist on disk. Either renamed during cleanup or never landed. |
-| `REPO_CLEANUP_INVENTORY.md` | `scripts/runUnitTests.mjs` | No `runUnitTests.mjs` at workspace `scripts/`; actual files live at `artifacts/api-server/scripts/runUnitTests.mjs` and `artifacts/pyrus/scripts/runUnitTests.mjs`. |
+| `REPO_CLEANUP_INVENTORY.md` | `scripts/unit validation runner.mjs` | No `unit validation runner.mjs` at workspace `scripts/`; actual files live at `artifacts/api-server/scripts/unit validation runner.mjs` and `artifacts/pyrus/scripts/unit validation runner.mjs`. |
 
 | Severity | WIP | Suggested action |
 |---|---|---|
@@ -192,27 +192,27 @@ All other backticked paths in `CLAUDE.md`, `AGENTS.md`, `replit.md`, `APP_SURFAC
 `MED` severity — manual walk recommended.
 
 ```
-artifacts/api-server/src/routes/platform-activation-origin.test.ts
-artifacts/api-server/src/services/account-list.test.ts
-artifacts/api-server/src/services/account-orders.test.ts
-artifacts/api-server/src/services/account-positions.test.ts
-artifacts/api-server/src/services/account-snapshot-persistence.test.ts
-artifacts/api-server/src/services/account-trade-annotations.test.ts
-artifacts/api-server/src/services/backtesting-strategies.test.ts
-artifacts/api-server/src/services/flow-premium-distribution.test.ts        ← wip-protected
-artifacts/api-server/src/services/option-chain-batch.test.ts               ← wip-protected
-artifacts/api-server/src/services/order-gateway-readiness.test.ts
-artifacts/api-server/src/services/order-read-resilience.test.ts
-artifacts/api-server/src/services/runtime-diagnostics.test.ts
-artifacts/api-server/src/providers/ibkr/client-history-period.test.ts
-artifacts/pyrus/src/features/charting/chartHydrationWiring.test.js       ← wip-protected
-artifacts/pyrus/src/features/gex/gexDataWiring.test.js
-artifacts/pyrus/src/features/gex/gexNarrative.test.js
-artifacts/pyrus/src/features/gex/intradaySnapshots.test.js
-artifacts/pyrus/src/features/market/marketChartWiring.test.js
-artifacts/pyrus/src/features/platform/gexScreenWiring.test.js
-artifacts/pyrus/src/features/platform/platformRootSource.test.js
-artifacts/pyrus/src/screens/account/accountPositionRows.test.js
+artifacts/api-server/src/routes/platform-activation-origin.validation.ts
+artifacts/api-server/src/services/account-list.validation.ts
+artifacts/api-server/src/services/account-orders.validation.ts
+artifacts/api-server/src/services/account-positions.validation.ts
+artifacts/api-server/src/services/account-snapshot-persistence.validation.ts
+artifacts/api-server/src/services/account-trade-annotations.validation.ts
+artifacts/api-server/src/services/backtesting-strategies.validation.ts
+artifacts/api-server/src/services/flow-premium-distribution.validation.ts        ← wip-protected
+artifacts/api-server/src/services/option-chain-batch.validation.ts               ← wip-protected
+artifacts/api-server/src/services/order-gateway-readiness.validation.ts
+artifacts/api-server/src/services/order-read-resilience.validation.ts
+artifacts/api-server/src/services/runtime-diagnostics.validation.ts
+artifacts/api-server/src/providers/ibkr/client-history-period.validation.ts
+artifacts/pyrus/src/features/charting/chartHydrationWiring.validation.js       ← wip-protected
+artifacts/pyrus/src/features/gex/gexDataWiring.validation.js
+artifacts/pyrus/src/features/gex/gexNarrative.validation.js
+artifacts/pyrus/src/features/gex/intradaySnapshots.validation.js
+artifacts/pyrus/src/features/market/marketChartWiring.validation.js
+artifacts/pyrus/src/features/platform/gexScreenWiring.validation.js
+artifacts/pyrus/src/features/platform/platformRootSource.validation.js
+artifacts/pyrus/src/screens/account/accountPositionRows.validation.js
 ```
 
 **Caveat**: this is a heuristic. Many are likely testing functionality re-exported from an `index.ts` or from a model file with a different name. Manual walk: open each test, identify what it actually imports, then decide if the imports point at live code. The `*-wip-protected*` markers are findings inside the protected WIP boundaries.
@@ -314,14 +314,14 @@ Legitimate inline note about a future Replit artifact-controller behavior; not s
 
 | File | Hits | Category |
 |---|---|---|
-| `artifacts/api-server/src/services/option-chain-batch.test.ts` | 56 | test fixture casts (wip-protected) |
-| `artifacts/pyrus/src/features/platform/live-streams.test.ts` | 46 | test fixture casts |
+| `artifacts/api-server/src/services/option-chain-batch.validation.ts` | 56 | test fixture casts (wip-protected) |
+| `artifacts/pyrus/src/features/platform/live-streams.validation.ts` | 46 | test fixture casts |
 | `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` | 38 | **production hotspot** |
-| `artifacts/api-server/src/services/options-flow-scanner.test.ts` | 31 | test fixture casts |
-| `artifacts/ibkr-bridge/src/tws-provider.test.ts` | 22 | test fixture casts |
+| `artifacts/api-server/src/services/options-flow-scanner.validation.ts` | 31 | test fixture casts |
+| `artifacts/ibkr-bridge/src/tws-provider.validation.ts` | 22 | test fixture casts |
 | `artifacts/api-server/src/services/platform.ts` | 8 | **production code** |
-| `artifacts/api-server/src/services/runtime-diagnostics.test.ts` | 7 | test fixture casts |
-| `artifacts/api-server/src/services/flow-premium-distribution.test.ts` | 7 | test fixture casts (wip-protected) |
+| `artifacts/api-server/src/services/runtime-diagnostics.validation.ts` | 7 | test fixture casts |
+| `artifacts/api-server/src/services/flow-premium-distribution.validation.ts` | 7 | test fixture casts (wip-protected) |
 | (remaining 60 hits) | <10 each | mostly tests |
 
 | Severity | WIP | Suggested action |
@@ -406,9 +406,9 @@ process.env.VITE_PROXY_API_TARGET
 ## WIP-protected items (informational; not flagged for action)
 
 Per `REPO_CLEANUP_INVENTORY.md`:
-- **Polygon premium-distribution flow**: `artifacts/api-server/src/providers/polygon/`, `artifacts/api-server/src/services/flow-premium-distribution.{ts,test.ts}`, related pyrus flow surfaces. Findings within this boundary are tagged but not actioned: `sampleFlowPremiumDistribution.mjs` (Cat 1), `flow-premium-distribution.test.ts` orphan test (Cat 7), `option-chain-batch.test.ts` orphan test (Cat 7).
+- **Polygon premium-distribution flow**: `artifacts/api-server/src/providers/polygon/`, `artifacts/api-server/src/services/flow-premium-distribution.{ts,test.ts}`, related pyrus flow surfaces. Findings within this boundary are tagged but not actioned: `sampleFlowPremiumDistribution.mjs` (Cat 1), `flow-premium-distribution.validation.ts` orphan test (Cat 7), `option-chain-batch.validation.ts` orphan test (Cat 7).
 - **Option-intent work**: `artifacts/api-server/src/services/option-order-intent.ts` and related.
-- **Chart/flow recovery code**: `chartHydrationWiring.test.js` orphan test (Cat 7), `gexDataWiring.test.js` orphan test (Cat 7), `gexNarrative.test.js`, `gexScreenWiring.test.js`, `intradaySnapshots.test.js`, `marketChartWiring.test.js` — collectively wip-protected. Action deferred.
+- **Chart/flow recovery code**: `chartHydrationWiring.validation.js` orphan test (Cat 7), `gexDataWiring.validation.js` orphan test (Cat 7), `gexNarrative.validation.js`, `gexScreenWiring.validation.js`, `intradaySnapshots.validation.js`, `marketChartWiring.validation.js` — collectively wip-protected. Action deferred.
 
 Per `APP_SURFACE_OWNERSHIP_REVIEW.md`:
 - **Trade option-chain ownership** cleanup deferred — affects `tradeOptionChainStore.js` and the trade-flow store pair (Cat 2 cleared cluster).

@@ -14,12 +14,12 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 
 - Added `python/pyrus_compute/` with a uv-managed FastAPI compute service.
 - Added Python jobs: `benchmark_matrix`, `portfolio_risk`, and `greek_scenario_matrix`.
-- Added Python dependencies and lockfile for FastAPI/Uvicorn/Pydantic/orjson, NumPy/SciPy/Polars/PyArrow, and pytest/ruff/mypy/httpx.
+- Added Python dependencies and lockfile for FastAPI/Uvicorn/Pydantic/orjson, NumPy/SciPy/Polars/PyArrow, and Python validation/ruff/mypy/httpx.
 - Added root commands in `package.json` through `scripts/run-python-compute.mjs`.
 - Added API-server Python supervisor in `artifacts/api-server/src/services/python-compute.ts`.
 - Wired opt-in startup from `artifacts/api-server/src/index.ts` using `PYRUS_PYTHON_COMPUTE_ENABLED=1`.
 - Added diagnostics collection for Python compute status.
-- Added API bridge tests and included them in `artifacts/api-server/scripts/runUnitTests.mjs`.
+- Added API bridge tests and included them in `artifacts/api-server/scripts/unit validation runner.mjs`.
 - Updated `.gitignore` for Python virtualenv/cache outputs.
 - Added `artifacts/api-server/src/services/account-greek-scenarios.ts` to convert account option positions/position-scaled greeks into Python `greek_scenario_matrix` jobs.
 - Wired `getAccountRisk` to attach `greekScenarios` only when `PYRUS_PYTHON_GREEK_SCENARIOS_ENABLED=1` and `PYRUS_PYTHON_COMPUTE_ENABLED=1`.
@@ -35,7 +35,7 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - Updated `artifacts/api-server/src/services/shadow-account.ts` with a Greek-specific shadow quote cache and mark-derived Black-Scholes Greek estimates for shadow options whose bridge/row quote payload still lacks Greek fields.
 - Added focused bridge and shadow tests covering price-only Greek rehydration, Greek cache preservation, and Greek estimate fallback behavior.
 - Updated `python/pyrus_compute/src/pyrus_compute/jobs.py` and `python/pyrus_compute/src/pyrus_compute/models.py` so each option scenario is bounded by option value rules. Python inputs now carry `strike` and `right`; long/short option scenarios are bounded by intrinsic/no-arbitrage upper value instead of raw unbounded Greek Taylor output. Added Python tests for long loss, short gain, and long-put strike gain bounds.
-- Updated `artifacts/api-server/src/services/account-risk-model.ts` to pass option `strike` and `right` into Python Greek scenario inputs, with a focused API assertion in `account-greek-scenarios.test.ts`.
+- Updated `artifacts/api-server/src/services/account-risk-model.ts` to pass option `strike` and `right` into Python Greek scenario inputs, with a focused API assertion in `account-greek-scenarios.validation.ts`.
 - Updated `artifacts/pyrus/src/screens/account/PortfolioExposurePanel.jsx` to label the row as `Worst Shock` instead of `Worst Case`, because the value is the worst tested Greek shock row, not an exact maximum-loss proof.
 - Added the next Python compute phase to the plan: replace the bounded Greek Taylor approximation with Black-Scholes scenario repricing in Python. Keep the current bounded Greek engine as a fallback when inputs such as IV, rate, expiry, strike, or right are missing.
 - Implemented that Black-Scholes phase locally: added `python/pyrus_compute/src/pyrus_compute/black_scholes.py` with price/Greeks and implied-volatility inference; extended `greek_scenario_matrix` inputs with IV/rate/yield/pricing-model fields; and changed scenario rows to use Black-Scholes repricing whenever contract inputs are complete.
@@ -54,25 +54,25 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - `pnpm run python-compute:test` passed: 8 tests.
 - `pnpm run python-compute:lint` passed.
 - `pnpm run python-compute:typecheck` passed.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/python-compute.test.ts` passed.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-greek-scenarios.test.ts src/services/python-compute.test.ts` passed: 11 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/python-compute.validation.ts` passed.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-greek-scenarios.validation.ts src/services/python-compute.validation.ts` passed: 11 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed.
 - `pnpm --dir artifacts/api-server run build` passed.
-- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.test.js` passed: 11 tests.
+- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.validation.js` passed: 11 tests.
 - `pnpm --filter @workspace/pyrus run typecheck` passed.
 - `pnpm --filter @workspace/api-client-react run typecheck` passed.
 - `pnpm run audit:api-codegen` passed after regenerating API clients.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-greek-scenarios.test.ts` passed: 6 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-greek-scenarios.validation.ts` passed: 6 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed after coverage diagnostics.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-greek-scenarios.test.ts` passed after unit fixtures: 7 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-greek-scenarios.validation.ts` passed after unit fixtures: 7 tests.
 - `pnpm run python-compute:test` passed after unit fixtures: 9 tests.
 - `pnpm run python-compute:lint` passed.
 - `pnpm run python-compute:typecheck` passed.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/runtime-diagnostics.test.ts` passed after exposing runtime Python diagnostics: 12 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/runtime-diagnostics.validation.ts` passed after exposing runtime Python diagnostics: 12 tests.
 - `pnpm --filter @workspace/scripts run typecheck` passed.
 - `pnpm --filter @workspace/scripts run pyrus:greek-scenarios -- --help` passed.
 - Live service smoke passed on `127.0.0.1:18769/health`.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/shadow-account.test.ts src/services/account-greek-scenarios.test.ts src/services/python-compute.test.ts` passed after bridge-backed shadow Greek hydration: 119 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/shadow-account.validation.ts src/services/account-greek-scenarios.validation.ts src/services/python-compute.validation.ts` passed after bridge-backed shadow Greek hydration: 119 tests.
 - `pnpm run python-compute:test` passed after bridge-backed shadow Greek hydration: 10 tests.
 - `pnpm run python-compute:lint` passed.
 - `pnpm run python-compute:typecheck` passed.
@@ -80,40 +80,40 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - `pnpm --dir artifacts/api-server run build` passed and rebuilt `artifacts/api-server/dist/index.mjs`.
 - Source-level `getShadowAccountRisk()` validation with `PYRUS_PYTHON_COMPUTE_PORT=18771` passed: 5/5 shadow option positions matched to Greek snapshots, 0 skipped positions, 140 scenarios, worst estimated PnL `-11094.032017`, best estimated PnL `22963.455423`.
 - Pre-restart live inspector still shows old running process state: 1/5 eligible, 4 missing Greek snapshots, Python pid `12685`.
-- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.test.js` passed after bridge-backed shadow Greek hydration: 11 tests.
+- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.validation.js` passed after bridge-backed shadow Greek hydration: 11 tests.
 - Targeted `git diff --check` passed for the shadow-risk and handoff files touched in this step.
 - After user restart, `pnpm --filter @workspace/scripts run pyrus:greek-scenarios -- --account-id shadow --mode paper --json` reached the new app/Python process on 2026-05-30T18:50:49Z (`pid=18612`) but still reported 1/5 eligible, 4 missing Greek snapshots, and 140 scenarios, exposing the bridge price-only/no-Greek snapshot issue.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/bridge-option-quote-stream.test.ts --test-name-pattern 'Greeks|price-only'` passed after the bridge cache fix: 24 tests.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/shadow-account.test.ts --test-name-pattern 'shadow risk exposes|greek estimates'` passed after the shadow Greek fallback fix: 107 tests.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/bridge-option-quote-stream.test.ts src/services/shadow-account.test.ts src/services/account-greek-scenarios.test.ts src/services/python-compute.test.ts` passed after the final patch: 144 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/bridge-option-quote-stream.validation.ts --validation-name-pattern 'Greeks|price-only'` passed after the bridge cache fix: 24 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/shadow-account.validation.ts --validation-name-pattern 'shadow risk exposes|greek estimates'` passed after the shadow Greek fallback fix: 107 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/bridge-option-quote-stream.validation.ts src/services/shadow-account.validation.ts src/services/account-greek-scenarios.validation.ts src/services/python-compute.validation.ts` passed after the final patch: 144 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed after the final patch.
 - `pnpm run python-compute:test` passed after the final patch: 10 tests.
 - `pnpm run python-compute:lint` passed.
 - `pnpm run python-compute:typecheck` passed.
-- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.test.js` passed after the final patch: 11 tests.
+- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.validation.js` passed after the final patch: 11 tests.
 - Source-level `getShadowAccountRisk()` validation with `PYRUS_PYTHON_COMPUTE_PORT=18774` passed after the final patch: 5/5 shadow option positions matched to Greek snapshots, 0 missing Greek snapshots, 140 scenarios, worst estimated PnL `-5413.278923`, best estimated PnL `23363.118702`.
 - `pnpm --dir artifacts/api-server run build` passed after the final patch and rebuilt `artifacts/api-server/dist/index.mjs`.
-- `git diff --check -- artifacts/api-server/src/services/bridge-option-quote-stream.ts artifacts/api-server/src/services/bridge-option-quote-stream.test.ts artifacts/api-server/src/services/shadow-account.ts artifacts/api-server/src/services/shadow-account.test.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
+- `git diff --check -- artifacts/api-server/src/services/bridge-option-quote-stream.ts artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts artifacts/api-server/src/services/shadow-account.ts artifacts/api-server/src/services/shadow-account.validation.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
 - After the user restarted the default Replit Run App, `pnpm --filter @workspace/scripts run pyrus:greek-scenarios -- --account-id shadow --mode paper --json` passed on 2026-05-30T19:38:41Z: Python compute `healthy`, pid `22383`, `greekScenarios.status=completed`, `eligiblePositions=5`, `missingGreekSnapshot=0`, `scenarioCount=140`, worst estimated PnL `-13460.992495`, best estimated PnL `25330.415901`.
 - Source-level shadow risk validation after the premium/value-bound patch reported `premiumExposure=10217.50`, `eligiblePositions=5`, `missingGreekSnapshot=0`, `scenarioCount=140`, worst estimated PnL `-8795.423418`, best estimated PnL `26715.336013`, and `boundedPositionScenarioCount=170`.
 - `pnpm run python-compute:test` passed after the premium/value-bound patch: 13 tests.
 - `pnpm run python-compute:lint` passed.
 - `pnpm run python-compute:typecheck` passed.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-greek-scenarios.test.ts src/services/python-compute.test.ts` passed after the premium-bound patch: 13 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-greek-scenarios.validation.ts src/services/python-compute.validation.ts` passed after the premium-bound patch: 13 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed after adding `strike`/`right` to the scenario input contract.
 - `pnpm --dir artifacts/api-server run build` passed after adding `strike`/`right` and rebuilt `artifacts/api-server/dist/index.mjs`.
-- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.test.js` passed after the `Worst Shock` UI label update: 11 tests.
-- `git diff --check -- python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/account-risk-model.ts artifacts/api-server/src/services/account-greek-scenarios.test.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed.
+- `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/PortfolioExposurePanel.validation.js` passed after the `Worst Shock` UI label update: 11 tests.
+- `git diff --check -- python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/account-risk-model.ts artifacts/api-server/src/services/account-greek-scenarios.validation.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed.
 - After the user restarted Replit, `pnpm --filter @workspace/scripts run pyrus:greek-scenarios -- --account-id shadow --mode paper --json` passed on 2026-05-30T19:57:06Z: Python compute `healthy`, pid `28763`, `eligiblePositions=5`, `missingGreekSnapshot=0`, `scenarioCount=140`, worst estimated PnL `-8795.995295`, best estimated PnL `26715.07156`.
 - Raw live `/api/accounts/shadow/risk?mode=paper` confirmed `premiumExposure=10217.5`, `boundedPositionScenarioCount=170`, worst `boundedPositionCount=2`, and all 5 positions carry `strike`/`right`.
 - `pnpm run python-compute:test` passed after Black-Scholes repricing: 16 tests.
 - `pnpm run python-compute:lint` passed after Black-Scholes repricing.
 - `pnpm run python-compute:typecheck` passed after Black-Scholes repricing.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-greek-scenarios.test.ts src/services/shadow-account.test.ts src/services/python-compute.test.ts` passed after IV wiring: 120 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-greek-scenarios.validation.ts src/services/shadow-account.validation.ts src/services/python-compute.validation.ts` passed after IV wiring: 120 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed after IV wiring.
 - `pnpm --dir artifacts/api-server run build` passed after IV wiring and rebuilt `artifacts/api-server/dist/index.mjs`.
 - `pnpm --filter @workspace/scripts run typecheck` passed after inspector diagnostics.
-- `git diff --check -- python/pyrus_compute/src/pyrus_compute/black_scholes.py python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/account-risk-model.ts artifacts/api-server/src/services/account.ts artifacts/api-server/src/services/shadow-account.ts artifacts/api-server/src/services/account-greek-scenarios.test.ts scripts/src/pyrus-greek-scenarios.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed.
+- `git diff --check -- python/pyrus_compute/src/pyrus_compute/black_scholes.py python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/account-risk-model.ts artifacts/api-server/src/services/account.ts artifacts/api-server/src/services/shadow-account.ts artifacts/api-server/src/services/account-greek-scenarios.validation.ts scripts/src/pyrus-greek-scenarios.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed.
 - Pre-restart live inspector on 2026-05-30T20:16:24Z still reached the older running Python/API process: `scenarioCount=140`, worst estimated PnL `-9958.641452`, and worst components still showed Greek Taylor keys (`delta`, `gamma`, `theta`, `vega`). Restart the default Replit Run App before expecting live `pricingModel=black_scholes`/`repricing` diagnostics.
 - After the user restarted the default Replit Run App, `pnpm --filter @workspace/scripts run pyrus:greek-scenarios -- --account-id shadow --mode paper --json` passed on 2026-05-30T20:40:05Z: Python compute `healthy`, pid `37334`, `eligiblePositions=5`, `scenarioCount=140`, `pricingModel=black_scholes`, `repricedPositionScenarioCount=700`, `fallbackPositionScenarioCount=0`, `boundedPositionScenarioCount=0`, worst estimated PnL `-10216.662615`, best estimated PnL `20417.544889`.
 - Raw live `/api/accounts/shadow/risk?mode=paper` confirmed `premiumExposure=10217.5`, all five positions have `pricingModel=black_scholes`, all five use input IV, and worst repriced shock `-10216.669408` remains just inside the shadow option premium/value envelope.
@@ -121,9 +121,9 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - `pnpm run python-compute:lint` passed after adding `portfolio_optimization`.
 - `pnpm run python-compute:typecheck` passed after adding `portfolio_optimization`.
 - `pnpm run python-compute:doctor` passed after adding `portfolio_optimization`.
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/python-compute.test.ts` passed after adding the TS job type: 6 tests.
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/python-compute.validation.ts` passed after adding the TS job type: 6 tests.
 - `pnpm --dir artifacts/api-server run typecheck` passed after adding the TS job type.
-- `git diff --check -- python/pyrus_compute/src/pyrus_compute/app.py python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_app.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/python-compute.ts artifacts/api-server/src/services/python-compute.test.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
+- `git diff --check -- python/pyrus_compute/src/pyrus_compute/app.py python/pyrus_compute/src/pyrus_compute/jobs.py python/pyrus_compute/src/pyrus_compute/models.py python/pyrus_compute/tests/test_app.py python/pyrus_compute/tests/test_jobs.py artifacts/api-server/src/services/python-compute.ts artifacts/api-server/src/services/python-compute.validation.ts SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
 - After the user restarted the default Replit Run App, live Python compute validation passed on 2026-05-30T20:57:xxZ: Python compute `healthy`, pid `46715`, capabilities include `portfolio_optimization`, and a direct internal `portfolio_optimization` sample job completed with `advisoryOnly=true`, `objective=min_variance`, no warnings, and no error.
 - Post-restart shadow Greek inspector also passed on 2026-05-30T20:58:08Z: Python compute pid `46715`, `pricingModel=black_scholes`, `repricedPositionScenarioCount=700`, `fallbackPositionScenarioCount=0`, `boundedPositionScenarioCount=0`, 5/5 eligible positions, worst estimated PnL `-10216.96508`.
 - Final commit validation on 2026-05-30: Python compute doctor/test/lint/typecheck, focused API Python/Greek/shadow/quote/runtime tests, API-server typecheck/build, scripts typecheck, API-client typecheck, account exposure panel test, and staged diff check passed. `pnpm --filter @workspace/pyrus run typecheck` is blocked by unrelated unstaged charting errors in `ResearchChartSurface.tsx` and `chartPositionOverlays.ts`.
@@ -131,13 +131,13 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - `pnpm --filter @workspace/scripts run typecheck` passed after adding the portfolio optimization inspector.
 - `pnpm --filter @workspace/scripts run pyrus:portfolio-optimization -- --help` passed.
 - Live portfolio optimization inspector passed on 2026-05-30T21:48:18Z against `http://127.0.0.1:18747/api`: Python compute `healthy`, pid `601`, runtime diagnostics latency `13957ms`, capabilities include `portfolio_optimization`, sample job completed in `1.361ms` with `advisoryOnly=true`, `objective=min_variance`, no warnings, and no error.
-- `git diff --check -- scripts/src/pyrus-portfolio-optimization.ts scripts/src/pyrus-portfolio-optimization.test.ts scripts/package.json SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed after handoff updates.
+- `git diff --check -- scripts/src/pyrus-portfolio-optimization.ts scripts/src/pyrus-portfolio-optimization.validation.ts scripts/package.json SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed after handoff updates.
 - Task 8A library spike completed on 2026-05-30T22:19:42Z. `docs/spikes/portfolio-risk-library-spike-2026-05-30.md` records source checks, isolated install/runtime measurements, sample outputs, and the decision to admit no external optimizer dependency this wave.
 - Post-spike validation passed: `pnpm run python-compute:doctor`, `pnpm run python-compute:test` (20 tests), `pnpm run python-compute:lint`, `pnpm run python-compute:typecheck`, `pnpm run audit:markdown-paths`, and targeted `git diff --check`.
-- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/account/accountSafeQaFixtures.test.js src/screens/account/PortfolioExposurePanel.test.js` passed after adding the safe-QA Portfolio Exposure fixture: 16 tests.
+- `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/account/accountSafeQaFixtures.validation.js src/screens/account/PortfolioExposurePanel.validation.js` passed after adding the safe-QA Portfolio Exposure fixture: 16 tests.
 - `pnpm --dir artifacts/pyrus run typecheck` passed after fixture wiring.
-- `pnpm --dir artifacts/pyrus exec node --import tsx --test --test-name-pattern "safe QA mode disables platform live and diagnostics side effects" src/features/platform/platformRootSource.test.js` passed. A prior incorrectly ordered pattern run executed the full source file and hit the known unrelated pre-existing failures in that file; the safe-QA guard itself passed.
-- `git diff --check -- artifacts/pyrus/src/screens/AccountScreen.jsx artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js artifacts/pyrus/src/screens/account/accountSafeQaFixtures.test.js SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
+- `pnpm --dir artifacts/pyrus exec node JS validation runner --validation-name-pattern "safe QA mode disables platform live and diagnostics side effects" src/features/platform/platformRootSource.validation.js` passed. A prior incorrectly ordered pattern run executed the full source file and hit the known unrelated pre-existing failures in that file; the safe-QA guard itself passed.
+- `git diff --check -- artifacts/pyrus/src/screens/AccountScreen.jsx artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js artifacts/pyrus/src/screens/account/accountSafeQaFixtures.validation.js SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
 - `pnpm run replit:config:lock` passed; startup config remains locked.
 
 ## Current Status
@@ -184,7 +184,7 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - Resumed on 2026-05-31 at 09:38:29 MDT. Current task is the next recorded slice: add a deterministic safe-QA Portfolio Exposure fixture so completed Greek shock and option-risk review rows render without live account queries or a warmed React Query cache.
 - Safe-QA Portfolio Exposure now has deterministic fixture data for completed Greek scenario shock details and option-risk reviews, independent of live account requests and prior React Query cache state.
 - Added `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js` with deterministic safe-QA summary, allocation, positions, completed Black-Scholes Greek scenarios, and options-scoped review-only `riskRecommendations`.
-- Added `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.test.js` to prove the fixture includes completed shock/review content, remains review-only, seeds React Query with requests disabled, and is wired from `AccountScreen.jsx`.
+- Added `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.validation.js` to prove the fixture includes completed shock/review content, remains review-only, seeds React Query with requests disabled, and is wired from `AccountScreen.jsx`.
 - Wired `AccountScreen.jsx` to pass safe-QA fixture data as `initialData` for account summary, allocation, positions, and risk queries only when `safeQaMode` is active.
 
 ## ib_async Recommendation
@@ -259,12 +259,12 @@ Implementation slices:
 24. Completed: Task 8A portfolio risk library spike. Compared `skfolio`, `Riskfolio-Lib`, `PyPortfolioOpt`, and `empyrical-reloaded`; recorded decision in `docs/spikes/portfolio-risk-library-spike-2026-05-30.md`; no external optimizer dependency admitted for this wave. Keep native advisory `portfolio_optimization`; prefer `skfolio` only for a future advanced optimizer spike.
 25. Completed locally: added options-native `riskRecommendations` to live and shadow account risk payloads, with a pure builder/test suite that consumes option premium, Greek coverage, scenario shock PnL, management flags, expiry, and concentration. The builder stays advisory-only and does not emit trade-ticket fields.
 26. Completed locally: rendered `Option Risk Reviews` in the desktop Portfolio Exposure panel and added frontend summary/source tests.
-27. Validation passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-risk-recommendations.test.ts src/services/account-greek-scenarios.test.ts`; `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/account/PortfolioExposurePanel.test.js`; `pnpm --dir artifacts/api-server run typecheck`; `pnpm --dir artifacts/pyrus run typecheck`; `pnpm --filter @workspace/api-spec run codegen`; `pnpm run audit:api-codegen`; `pnpm run audit:markdown-paths`; targeted `git diff --check`; `pnpm run replit:config:lock`.
+27. Validation passed: `pnpm --dir artifacts/api-server exec node JS validation runner src/services/account-risk-recommendations.validation.ts src/services/account-greek-scenarios.validation.ts`; `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/account/PortfolioExposurePanel.validation.js`; `pnpm --dir artifacts/api-server run typecheck`; `pnpm --dir artifacts/pyrus run typecheck`; `pnpm --filter @workspace/api-spec run codegen`; `pnpm run audit:api-codegen`; `pnpm run audit:markdown-paths`; targeted `git diff --check`; `pnpm run replit:config:lock`.
 28. Completed: live-dogfooded `/api/accounts/shadow/risk?mode=paper` after restart; confirmed option-risk advisory payload is present, ready, options-scoped, and read-only.
 29. Completed: browser-dogfooded the Account / Portfolio Exposure panel with `?pyrusQa=safe`; confirmed `Option Risk Reviews` renders. Also fixed safe-QA shell/runtime gaps that caused 429 console noise from live positions/orders, market quote/bars, latest diagnostics, and client-metrics writes.
-30. Validation passed: focused safe-QA source test, `useMemoryPressureSignal.test.js`, `PortfolioExposurePanel.test.js`, Pyrus typecheck, and targeted `git diff --check`. Full `platformRootSource.test.js` still has unrelated pre-existing failures outside the safe-QA test pattern.
+30. Validation passed: focused safe-QA source test, `useMemoryPressureSignal.validation.js`, `PortfolioExposurePanel.validation.js`, Pyrus typecheck, and targeted `git diff --check`. Full `platformRootSource.validation.js` still has unrelated pre-existing failures outside the safe-QA test pattern.
 31. Completed: added a dedicated safe fixture for Portfolio Exposure so `?pyrusQa=safe` can show completed Greek scenario shock details without relying on live account queries or prior React Query cache.
 32. Completed: browser-dogfooded Account / Portfolio Exposure with `?pyrusQa=safe`; confirmed the deterministic safe-QA fixture renders completed Greek scenario shocks and `Option Risk Reviews`.
 33. Completed: fixed safe-QA side-effect leaks found during browser validation: gated Account section prefetches behind `accountQueriesEnabled`, disabled safe-QA account list boot queries, passed `safeQaMode` into the IBKR header diagnostics gate, and tied position quote streams/registrations to live quote enablement.
-34. Validation passed: `pnpm run python-compute:test`; `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/account/accountSafeQaFixtures.test.js src/screens/account/PortfolioExposurePanel.test.js`; targeted safe-QA/platform source tests by `--test-name-pattern`; Playwright smoke at `http://127.0.0.1:18747/?pyrusQa=safe` with no account, market-data, diagnostics, quote, bars, or position-stream API side effects. Full `platformRootSource.test.js` still has unrelated pre-existing failures in this dirty worktree outside the safe-QA pattern.
+34. Validation passed: `pnpm run python-compute:test`; `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/account/accountSafeQaFixtures.validation.js src/screens/account/PortfolioExposurePanel.validation.js`; targeted safe-QA/platform source tests by `--validation-name-pattern`; browser QA smoke at `http://127.0.0.1:18747/?pyrusQa=safe` with no account, market-data, diagnostics, quote, bars, or position-stream API side effects. Full `platformRootSource.validation.js` still has unrelated pre-existing failures in this dirty worktree outside the safe-QA pattern.
 35. Next: decide whether the native `portfolio_optimization` job should feed a future options-risk advisory wrapper, or remain internal. Keep any user-facing surface options-risk-specific rather than generic allocation/rebalance guidance.

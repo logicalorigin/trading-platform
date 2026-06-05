@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import LogoLoader from "../../components/LogoLoader";
 import {
   getPreloadedScreenComponent,
@@ -93,6 +94,15 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
       />
     );
   }
+  const routeWaitItems = [
+    {
+      id: `${screenId}:route-module`,
+      label: `${shell.title} route module`,
+      status: error ? "retrying" : "loading",
+      detail: error ? "Screen bundle fetch failed" : shell.detail,
+      blocking: true,
+    },
+  ];
 
   return (
     <section
@@ -159,6 +169,10 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
       <div style={{ color: "var(--ra-text-secondary)", fontSize: 13, lineHeight: 1.35 }}>
         {error ? "The route module failed to load; retrying the screen bundle." : shell.detail}
       </div>
+      <ContainerLoadingStatus
+        items={routeWaitItems}
+        testId="screen-loading-waits"
+      />
       <div
         style={{
           display: "grid",

@@ -22,12 +22,12 @@ The app had moved scanner admission to verified optionability, but optionability
 
 ## Evidence
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-optionability-verifier.test.ts src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts` passed.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/flow-universe-optionability-verifier.validation.ts src/services/flow-universe-planner.validation.ts src/services/flow-universe.validation.ts` passed.
 - Platform import smoke for verifier exports passed.
 - `git diff --check` passed for touched files.
 
 ## Remaining Concerns
 
 - Full API/scripts typecheck is blocked by unrelated `signal-options-automation.ts:7533`.
-- Pyrus `platformRootSource.test.js` currently has unrelated source-contract failures.
+- Pyrus `platformRootSource.validation.js` currently has unrelated source-contract failures.
 - Live IBKR behavior still needs confirmation through Replit Run App with the migration/catalog sync/hydration applied.

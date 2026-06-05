@@ -22,6 +22,18 @@ const finiteOrNull = (value) => {
 
 const finiteOrZero = (value) => finiteOrNull(value) ?? 0;
 
+export const isGexHalfDollarStrike = (value) => {
+  const strike = finiteOrNull(value);
+  if (strike == null || strike <= 0) return false;
+  const halfDollarSteps = Math.round(strike * 2);
+  return Math.abs(strike * 2 - halfDollarSteps) < 1e-6;
+};
+
+export const formatGexStrikePrice = (value) => {
+  const strike = finiteOrNull(value);
+  return strike != null ? `$${strike.toFixed(2)}` : "—";
+};
+
 export const normalizeGexTicker = (value, fallback = "SPY") => {
   const normalized = String(value || "")
     .trim()
@@ -100,7 +112,7 @@ export const normalizeGexOptionChain = (contracts = []) => {
     const cp = normalizeRight(contract.right);
     const expirationParts = parseExpirationDateParts(contract.expirationDate);
     const strike = finiteOrNull(contract.strike);
-    if (!cp || !expirationParts || !isFiniteNumber(strike)) return;
+    if (!cp || !expirationParts || !isGexHalfDollarStrike(strike)) return;
 
     const gamma = finiteOrNull(quote.gamma);
     const openInterest = finiteOrNull(quote.openInterest);
@@ -169,13 +181,10 @@ export const normalizeGexResponseOptions = (options = []) => {
     const impliedVolatility = finiteOrNull(option?.impliedVol);
     const multiplier = finiteOrNull(option?.multiplier) ?? 100;
 
-    if (gamma != null) coverage.withGamma += 1;
-    if (openInterest != null) coverage.withOpenInterest += 1;
-    if (impliedVolatility != null) coverage.withImpliedVolatility += 1;
-
     if (
       !cp ||
       strike == null ||
+      !isGexHalfDollarStrike(strike) ||
       expireYear == null ||
       expireMonth == null ||
       expireDay == null ||
@@ -187,6 +196,9 @@ export const normalizeGexResponseOptions = (options = []) => {
     coverage.usable += 1;
     coverage.calls += cp === "C" ? 1 : 0;
     coverage.puts += cp === "P" ? 1 : 0;
+    coverage.withGamma += gamma != null ? 1 : 0;
+    coverage.withOpenInterest += openInterest != null ? 1 : 0;
+    coverage.withImpliedVolatility += impliedVolatility != null ? 1 : 0;
 
     const expirationDate = `${String(expireYear).padStart(4, "0")}-${String(
       expireMonth,
@@ -426,52 +438,6 @@ export const maxPainStrike = (rows = []) => {
     }
   });
   return bestStrike;
-};
-
-export const gammaPriceProfile = (rows = [], spot, now = new Date()) => {
-  const price = finiteOrNull(spot);
-  if (!price || price <= 0) return [];
-  const minPrice = price * 0.95;
-  const maxPrice = price * 1.05;
-  const steps = 60;
-  const baked = rows
-    .map((option) => {
-      const sigma = finiteOrNull(option.impliedVol);
-      if (!sigma || sigma <= 0) return null;
-      const days = Math.max(0.5, expirationDayDistance(option, now));
-      const tenor = days / 365;
-      const sigmaK = option.strike * sigma * Math.sqrt(tenor);
-      return {
-        strike: option.strike,
-        sign: option.cp === "P" ? -1 : 1,
-        oi: Math.max(0, finiteOrZero(option.openInterest)),
-        multiplier: finiteOrNull(option.multiplier) ?? 100,
-        sigmaK,
-        oneOverScale: 1 / (sigma * Math.sqrt(tenor) * Math.sqrt(2 * Math.PI)),
-      };
-    })
-    .filter((option) => option && option.oi > 0 && option.sigmaK > 0);
-
-  if (!baked.length) return [];
-
-  return Array.from({ length: steps + 1 }, (_, index) => {
-    const projectedSpot = minPrice + ((maxPrice - minPrice) * index) / steps;
-    const netGex = baked.reduce((sum, option) => {
-      const z = (projectedSpot - option.strike) / option.sigmaK;
-      const kernel = (Math.exp(-(z * z) / 2) * option.oneOverScale) / projectedSpot;
-      return (
-        sum +
-        option.sign *
-          option.oi *
-          option.multiplier *
-          projectedSpot *
-          projectedSpot *
-          0.01 *
-          kernel
-      );
-    }, 0);
-    return { price: projectedSpot, netGex };
-  });
 };
 
 const formatPriceForNarrative = (value) => {

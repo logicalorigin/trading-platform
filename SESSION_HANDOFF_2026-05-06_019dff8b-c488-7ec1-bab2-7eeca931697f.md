@@ -121,9 +121,9 @@ agent|connector' | head -300
   │ 127\.0\.0\.1:5432" artifacts lib scripts .replit
   │ … +1 lines
   └ artifacts/api-server/src/services/account-snapshot-
-    persistence.test.ts:6:process.env["DATABASE_URL"]
+    persistence.validation.ts:6:process.env["DATABASE_URL"]
     … +34 lines (ctrl + t to view transcript)
-    rward-worker.test.ts:6:process.env["DATABASE_URL"]
+    rward-worker.validation.ts:6:process.env["DATABASE_URL"]
     ??= "postgres://test:test@127.0.0.1:5432/test";
 
 • Ran unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; ps
@@ -356,11 +356,11 @@ Frustrated. Wants the IDE Database tab to display Neon, which is structurally ou
 
 - `SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
-- `artifacts/api-server/src/services/runtime-diagnostics.test.ts`
+- `artifacts/api-server/src/services/runtime-diagnostics.validation.ts`
 - `artifacts/api-server/src/services/shadow-account.ts`
-- `artifacts/api-server/src/services/storage-health.test.ts`
+- `artifacts/api-server/src/services/storage-health.validation.ts`
 - `artifacts/api-server/src/services/storage-health.ts`
 - `artifacts/rayalgo/scripts/checkDevRuntime.mjs`
 - `lib/db/drizzle.config.ts`
@@ -372,11 +372,11 @@ Frustrated. Wants the IDE Database tab to display Neon, which is structurally ou
 ## main...origin/main [ahead 1]
  M SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
- M artifacts/api-server/src/services/runtime-diagnostics.test.ts
+ M artifacts/api-server/src/services/runtime-diagnostics.validation.ts
  M artifacts/api-server/src/services/shadow-account.ts
- M artifacts/api-server/src/services/storage-health.test.ts
+ M artifacts/api-server/src/services/storage-health.validation.ts
  M artifacts/api-server/src/services/storage-health.ts
  M artifacts/rayalgo/scripts/checkDevRuntime.mjs
  M lib/db/drizzle.config.ts
@@ -391,11 +391,11 @@ Frustrated. Wants the IDE Database tab to display Neon, which is structurally ou
 ```text
  ...6-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md | 440 ++++++++++++++++-----
  SESSION_HANDOFF_MASTER.md                          |   4 +-
- .../api-server/src/services/diagnostics.test.ts    |   2 +-
+ .../api-server/src/services/diagnostics.validation.ts    |   2 +-
  artifacts/api-server/src/services/diagnostics.ts   |  17 +-
- .../src/services/runtime-diagnostics.test.ts       |   2 +-
+ .../src/services/runtime-diagnostics.validation.ts       |   2 +-
  .../api-server/src/services/shadow-account.ts      |   4 +-
- .../api-server/src/services/storage-health.test.ts |  17 +
+ .../api-server/src/services/storage-health.validation.ts |  17 +
  .../api-server/src/services/storage-health.ts      |  60 +--
  artifacts/rayalgo/scripts/checkDevRuntime.mjs      |  70 +++-
  lib/db/drizzle.config.ts                           |   6 +-
@@ -410,7 +410,7 @@ Frustrated. Wants the IDE Database tab to display Neon, which is structurally ou
 - `2026-05-08T15:36:47.159Z` /bin/bash -lc unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; pnpm run typecheck:libs (exit 0)
 - `2026-05-08T15:39:36.780Z` /bin/bash -lc unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; pnpm run typecheck:libs (exit 0)
 - `2026-05-08T15:40:26.434Z` /bin/bash -lc unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; pnpm run typecheck:libs (exit 0)
-- `2026-05-08T17:52:45.042Z` /bin/bash -lc unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; pnpm --filter @workspace/rayalgo exec playwright test --list (exit 0)
+- `2026-05-08T17:52:45.042Z` /bin/bash -lc unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; pnpm --filter @workspace/rayalgo exec browser QA test --list (exit 0)
 - `2026-05-08T18:57:39.086Z` /bin/bash -lc pnpm --filter @workspace/rayalgo exec node --check scripts/checkDevRuntime.mjs (exit 1)
 - `2026-05-08T18:57:57.598Z` /bin/bash -lc pnpm --filter @workspace/rayalgo exec node --check scripts/checkDevRuntime.mjs && git diff --check (exit 0)
 - `2026-05-08T18:58:16.886Z` /bin/bash -lc git ls-files lib/db/dist | head -20 && pnpm --filter @workspace/db exec tsc -p tsconfig.json (exit 0)
@@ -430,21 +430,21 @@ Frustrated. Wants the IDE Database tab to display Neon, which is structurally ou
   - `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/api.schemas.ts`, and `lib/api-zod/src/generated/*` include `coverageMode`, `hydrationStatus`, `hydrationWarning`, `hydratedSymbolCount`, and `hydrationDiagnostics`.
   - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` now mirrors production mapping for quote probes, option trade condition metadata, trade call diagnostics, condition/exchange codes, and larger live sampling caps.
 - Added/updated focused coverage in:
-  - `artifacts/api-server/src/providers/polygon/market-data.test.ts`
-  - `artifacts/api-server/src/services/flow-premium-distribution.test.ts`
-  - `artifacts/rayalgo/e2e/flow-layout.spec.ts`
+  - `artifacts/api-server/src/providers/polygon/market-data.validation.ts`
+  - `artifacts/api-server/src/services/flow-premium-distribution.validation.ts`
+  - `artifacts/rayalgo/e2e/flow-layout.browser-validation.ts`
 
 ## Current Status
 
 - Branch `main` is ahead of `origin/main` by 4 commits with a dirty worktree. Files under `artifacts/rayalgo/src/features/charting/*`, `artifacts/rayalgo/src/features/trade/*`, and `artifacts/rayalgo/src/screens/TradeScreen.jsx` were pre-existing/unrelated changes and were not touched for this premium-distribution task.
 - Validation completed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/flow-premium-distribution.test.ts` passed: 16/16.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/providers/polygon/market-data.validation.ts src/services/flow-premium-distribution.validation.ts` passed: 16/16.
   - `pnpm --filter @workspace/api-server run typecheck` passed.
   - `pnpm --filter @workspace/rayalgo run typecheck` passed.
   - `pnpm --filter @workspace/api-client-react run typecheck` passed.
   - `pnpm --dir lib/api-zod exec tsc -p tsconfig.json --noEmit` passed.
   - `pnpm --filter @workspace/api-server exec node --import tsx scripts/sampleFlowPremiumDistribution.mjs --help` passed.
-  - `pnpm --filter @workspace/rayalgo run test:e2e:replit -- e2e/flow-layout.spec.ts -g "Flow premium distribution renders six compact Webull-style widgets"` ran the full `flow-layout` file due wrapper arg forwarding and passed: 13/13.
+  - `pnpm --filter @workspace/rayalgo run browser validation:replit -- e2e/flow-layout.browser-validation.ts -g "Flow premium distribution renders six compact Webull-style widgets"` ran the full `flow-layout` file due wrapper arg forwarding and passed: 13/13.
   - `git diff --check` passed.
 - Bounded live route probe used env caps (`UNIVERSE_MAX_SYMBOLS=2`, `MAX_PAGES=1`, `TRADE_CONTRACT_LIMIT=2`, `TRADE_LIMIT=20`) and returned `status: "ok"`, `coverageMode: "universe"`, `hydrationStatus: "complete"`, `quoteAccess: "forbidden"`, `tradeAccess: "forbidden"`, `snapshotCount: 500`, `usablePremiumSnapshotCount: 439`, and warning: `Option quotes and option trades unavailable for current Polygon/Massive entitlement; totals are hydrated but side bars are unavailable.`
 - Live sampler over `SPY,QQQ,NVDA` confirmed `api.massive.com` returns 250 option snapshots per symbol with day price/volume and `last_trade`, but no `last_quote`; `/v3/quotes/{optionsTicker}` and `/v3/trades/{optionsTicker}` currently return 403 for the sampled option contracts. Condition metadata endpoint loaded successfully.

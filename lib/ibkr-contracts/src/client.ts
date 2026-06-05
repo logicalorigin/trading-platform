@@ -1,6 +1,6 @@
 import type {
   IbkrMarketDataMode,
-  IbkrTransport,
+  MarketDataTransport,
   RuntimeMode,
 } from "./runtime";
 
@@ -132,6 +132,7 @@ export type PositionQuoteSource =
   | "unknown";
 
 export type PositionQuoteSnapshot = {
+  providerContractId?: string | null;
   bid: number | null;
   ask: number | null;
   mid: number | null;
@@ -145,6 +146,33 @@ export type PositionQuoteSnapshot = {
   freshness: string | null;
   marketDataMode: string | null;
   source: PositionQuoteSource;
+  transport?: MarketDataTransport | null;
+  delayed?: boolean | null;
+  dataUpdatedAt?: Date | null;
+  ageMs?: number | null;
+  cacheAgeMs?: number | null;
+  status?: string | null;
+  reason?: string | null;
+  quoteStatus?: string | null;
+  quoteReason?: string | null;
+  greeksStatus?: string | null;
+  greeksReason?: string | null;
+  demandStatus?: string | null;
+  demandReason?: string | null;
+  quoteFreshness?: MarketDataFreshness | string | null;
+  greeksFreshness?: MarketDataFreshness | string | null;
+  unavailableDetail?: string | null;
+  price?: number | null;
+  dayChange?: number | null;
+  dayChangePercent?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  impliedVolatility?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  underlyingPrice?: number | null;
 };
 
 export type BrokerOrderSnapshot = {
@@ -216,9 +244,10 @@ export type QuoteSnapshot = {
   gamma: number | null;
   theta: number | null;
   vega: number | null;
+  underlyingPrice?: number | null;
   updatedAt: Date;
   providerContractId: string | null;
-  transport: IbkrTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   marketDataMode?: IbkrMarketDataMode | null;
@@ -248,7 +277,7 @@ export type BrokerBarSnapshot = {
   providerContractId: string | null;
   outsideRth: boolean;
   partial: boolean;
-  transport: IbkrTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   marketDataMode?: IbkrMarketDataMode | null;

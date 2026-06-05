@@ -2348,7 +2348,7 @@ export class IbkrClient {
       const rights: OptionRight[] = input.contractType
         ? [input.contractType]
         : ["call", "put"];
-      const quoteHydration = input.quoteHydration ?? "snapshot";
+      const quoteHydration = input.quoteHydration ?? "metadata";
 
       const contracts = (
         await Promise.all(

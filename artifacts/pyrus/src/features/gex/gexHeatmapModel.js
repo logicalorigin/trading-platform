@@ -1,4 +1,9 @@
-import { contractGex, isFiniteNumber } from "./gexModel.js";
+import {
+  contractGex,
+  formatGexStrikePrice,
+  isGexHalfDollarStrike,
+  isFiniteNumber,
+} from "./gexModel.js";
 import {
   formatGexDteLabel,
   formatGexExpirationHeaderLabel,
@@ -79,11 +84,7 @@ export const formatHeatmapCellValue = (value) => {
 };
 
 export const formatHeatmapStrikeLabel = (strike) => {
-  if (!isFiniteNumber(strike)) return "—";
-  if (Number.isInteger(strike) && Math.abs(strike) >= 10) {
-    return `$${Math.round(strike).toLocaleString("en-US")}`;
-  }
-  return `$${strike.toFixed(2)}`;
+  return formatGexStrikePrice(strike);
 };
 
 export const buildGexHeatmapModel = (rows = [], spot, referenceDate = new Date()) => {
@@ -105,11 +106,11 @@ export const buildGexHeatmapModel = (rows = [], spot, referenceDate = new Date()
   rows.forEach((row) => {
     const key = normalizeHeatmapExpirationKey(row?.expirationDate);
     const strike = row?.strike;
-    if (!key || !isFiniteNumber(strike)) return;
+    const right = normalizeHeatmapRight(row?.cp);
+    if (!key || !isFiniteNumber(strike) || !isGexHalfDollarStrike(strike) || !right) return;
 
     expirationKeys.add(key);
     const value = contractGex(row, spot);
-    const right = normalizeHeatmapRight(row?.cp);
     const openInterest = Math.max(0, finiteOrZero(row?.openInterest));
 
     const strikeMap = cellMap.get(strike) || new Map();

@@ -55,7 +55,7 @@
 **Proposed fix.** Two complementary moves:
 1. **Cut one atom.** `ConfluenceChip` and `SignalDots` both encode multi-timeframe agreement. `SignalDots` is more informative (it shows *which* timeframes agree, not just how many). Drop the chip on desktop or move it inside the dots' tooltip; line ~664–668 of `OperationsSignalRow.jsx`.
 2. **Bump row height to 56px** (still inside compact density norms) — gives breathing room without dropping data.
-**Risk.** None significant. Tests at `OperationsSignalRow.test.js` only enforce 5-column structure, not individual atoms.
+**Risk.** None significant. Tests at `OperationsSignalRow.validation.js` only enforce 5-column structure, not individual atoms.
 
 #### A2. Two-line cell pattern inverts importance
 **Observation.** The `DataCell` pattern is `main` (11px, fs(11)) on top and `detail` (caption ~10px, dim) below. In **Action** (`OperationsSignalRow.jsx:1258–1274`), `main = "BUY 1c PUT NVDA $115 5/24"` and `detail = "1ct @ $2.10 · $210"`. The price/risk numbers a trader cares about are on the dim line. Same in **Execution** (mid/spread on main, age + Greeks on detail) and in **Since** (relative time on main, bars+timeframe on detail — and bars-from-signal is often the more decision-relevant fact).
@@ -89,7 +89,7 @@
 - Rebalance grid tracks to `1.0 / 0.45 / 1.0 / 0.95 / 1.1`.
 - Render the verdict as a **tinted pill** with the verdict glyph at size 18 and verdict label in 12px medium weight (so it visually outranks neighbors). Pill background = `${verdict.tone}1c` (matching the current accent treatment elsewhere).
 - Move sync/latest microcopy into the cell tooltip or a smaller second line below the pill.
-**Risk.** `OperationsSignalRow.test.js` (lines validating 5-col layout) and the matching helpers will need a snapshot refresh.
+**Risk.** `OperationsSignalRow.validation.js` (lines validating 5-col layout) and the matching helpers will need a snapshot refresh.
 
 #### B2. No inline action — every act requires expand → drill → confirm
 **Observation.** The row is `TableExpandableRow`-wrapped; toggling sets `algoFocus` and renders the drill underneath. There is no inline "Submit" / "Approve" / "Block" affordance.
@@ -222,11 +222,11 @@ This consolidates everything we want above the table and resolves the wrap-jitte
 - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx` — header strip layout, search input, filter dropdown, status line.
 - `artifacts/pyrus/src/screens/algo/algoHelpers.js` — `signalSinceDisplay`, `actionPlanDisplay`, quote/Greeks formatters (main/detail flip).
 - `artifacts/pyrus/src/components/platform/signal-language.{jsx,js}` — palette documentation, verdict pill variant.
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js` — snapshot/contract updates.
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js` — snapshot/contract updates.
 
 ## Verification path for any fix
 
 1. Run the app and screenshot the Algo Live page at desktop (≥1440px), tablet (~1024px), phone (≤414px) — before and after.
 2. Eyeball at default and at the system's largest text-scale setting.
-3. `pnpm --filter @pyrus/pyrus run test` (or workspace equivalent) — update `OperationsSignalRow.test.js` as needed.
+3. `pnpm --filter @pyrus/pyrus run test` (or workspace equivalent) — update `OperationsSignalRow.validation.js` as needed.
 4. Per `CLAUDE.md`: if any Replit startup file is touched in the process, run `pnpm run audit:replit-startup`.

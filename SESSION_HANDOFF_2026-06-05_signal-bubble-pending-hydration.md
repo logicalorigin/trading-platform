@@ -19,12 +19,12 @@ Fix:
 
 ## Validation
 
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js`
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/features/signals/signalsRowModel.test.js`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/signalMatrixScheduler.validation.js`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/features/signals/signalsRowModel.validation.js`
 - PASS: `pnpm -C artifacts/pyrus run typecheck`
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/platformRootSource.test.js`
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/screens/SignalsScreen.test.js`
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/components/platform/primitives.test.js`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/screens/SignalsScreen.validation.js`
+- PASS: `pnpm -C artifacts/pyrus exec tsx validation runner src/components/platform/primitives.validation.js`
 - PASS: safe-QA browser smoke on `http://127.0.0.1:18747/?pyrusQa=safe` with Signals route showed exact foreground plan (`storedStateBootstrap: false`), `24` pending states, `295` pending dots, `22` queued interval cells, and no console/page errors.
 - PASS: scoped `git diff --check` for touched signal-bubble files.
 

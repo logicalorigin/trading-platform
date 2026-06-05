@@ -17,7 +17,7 @@ screens.
 
 All files under `artifacts/pyrus/`. Package `@workspace/pyrus`. Single global stylesheet
 `artifacts/pyrus/src/index.css` (imported in `main.tsx`; class-based; **read/asserted by
-`artifacts/pyrus/src/lib/uiTokens.test.js`** — keep it green). No backend / OpenAPI /
+`artifacts/pyrus/src/lib/uiTokens.validation.js`** — keep it green). No backend / OpenAPI /
 `optionSelection` / `exitPolicy` schema changes; no new dependencies.
 
 ## Decisions locked
@@ -200,13 +200,13 @@ Spans `.algo-cell--full`; below it a `.algo-settings-grid` of the non-axis cells
 - `screens/algo/AlgoSettingsRegion.jsx` — single section loop; B2 cells; `ContractSelectionCell`; `ExitLadderTrack`; remove full-size path.
 - `screens/algo/HaltStrip.jsx` — board redesign (C1–C4) + class reflow.
 - `screens/algo/AlgoDiagnosticsTab.jsx`, `AlgoDiagnosticsFooter.jsx`, `AlgoSaveBar.jsx` — polish (G).
-- `lib/uiTokens.test.js` — keep/extend `index.css` assertions.
+- `lib/uiTokens.validation.js` — keep/extend `index.css` assertions.
 - Delete `SettingsFormRow.jsx` only if no other importer.
 
 ## Verification
 
 1. `pnpm --filter @workspace/pyrus typecheck`.
-2. `pnpm --filter @workspace/pyrus run test` — add focused tests: `ContractSelectionCell` (CALL/PUT click patches correct path+slot; selected renders `aria-checked`; arrow-key nav), `ExitLadderTrack` (marker click opens input; commit patches correct `exitPolicy.*`; Esc cancels), `HaltStrip` (state pill + left-accent per status). Keep `uiTokens.test.js` green.
+2. `pnpm --filter @workspace/pyrus run test` — add focused tests: `ContractSelectionCell` (CALL/PUT click patches correct path+slot; selected renders `aria-checked`; arrow-key nav), `ExitLadderTrack` (marker click opens input; commit patches correct `exitPolicy.*`; Esc cancels), `HaltStrip` (state pill + left-accent per status). Keep `uiTokens.validation.js` green.
 3. **Container-query reflow smoke (key check):** run app → Algo page → resize window / collapse-expand shell sidebars so the rail width changes. Confirm halt board, sections, strike ladder, exit track, diagnostics reflow purely via CSS at ~380px and phone. Verify green-call/red-put tones, tabular right-aligned numerics, all element states (hover/focus/disabled/dirty/invalid), dirty dots, and save/discard.
 4. If any Replit startup file is touched (it should not be), run `pnpm run audit:replit-startup`.
 

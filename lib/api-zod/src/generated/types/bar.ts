@@ -6,8 +6,8 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { BarMarketDataMode } from './barMarketDataMode';
-import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
 import type { MarketDataFreshness } from './marketDataFreshness';
+import type { MarketDataTransport } from './marketDataTransport';
 
 export interface Bar {
   timestamp: Date;
@@ -29,7 +29,7 @@ export interface Bar {
   providerContractId?: string | null;
   outsideRth?: boolean;
   partial?: boolean;
-  transport: IbkrBridgeHealthTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   /** @nullable */

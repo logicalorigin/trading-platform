@@ -304,7 +304,7 @@ Use `tenant_id = "local"` until real multi-user auth exists, but design tables s
 
 **Verification:**
 
-- `pnpm --filter @workspace/api-server run test:unit`
+- `pnpm --filter @workspace/api-server run unit validation`
 - Focused regression on order gateway readiness tests.
 
 **Dependencies:** Task 3
@@ -386,7 +386,7 @@ Use `tenant_id = "local"` until real multi-user auth exists, but design tables s
 
 **Verification:**
 
-- `pnpm --filter @workspace/pyrus run test:unit`
+- `pnpm --filter @workspace/pyrus run unit validation`
 - Browser QA with `?pyrusQa=safe`.
 
 **Dependencies:** Task 7
@@ -576,10 +576,10 @@ Recommended validation commands:
 
 ```bash
 pnpm run audit:api-codegen
-pnpm --filter @workspace/api-server run test:unit
+pnpm --filter @workspace/api-server run unit validation
 pnpm --filter @workspace/api-server run typecheck
-pnpm --filter @workspace/pyrus run test:unit
-pnpm --filter @workspace/pyrus run test:e2e -- --grep broker
+pnpm --filter @workspace/pyrus run unit validation
+pnpm --filter @workspace/pyrus run browser validation -- --grep broker
 pnpm run typecheck
 ```
 

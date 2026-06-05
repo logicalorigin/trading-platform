@@ -59,17 +59,17 @@ install skills and dependencies and clean up/remove invalid
 ## High-Signal Changed Files
 
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/scripts/runUnitTests.mjs`
+- `artifacts/api-server/scripts/unit validation runner.mjs`
 - `artifacts/api-server/src/providers/polygon/market-data.ts`
 - `artifacts/api-server/src/routes/platform.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`
 - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/option-chain-batch.test.ts`
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts`
 - `artifacts/api-server/src/services/platform.ts`
 - `artifacts/api-server/src/services/shadow-account.ts`
-- `artifacts/rayalgo/e2e/flow-layout.spec.ts`
-- `artifacts/rayalgo/e2e/memory-soak.spec.ts`
-- `artifacts/rayalgo/scripts/runUnitTests.mjs`
+- `artifacts/rayalgo/e2e/flow-layout.browser-validation.ts`
+- `artifacts/rayalgo/e2e/memory-soak.browser-validation.ts`
+- `artifacts/rayalgo/scripts/unit validation runner.mjs`
 - `artifacts/rayalgo/src/app/App.tsx`
 - `artifacts/rayalgo/src/components/platform/primitives.jsx`
 - `artifacts/rayalgo/src/components/ui/dropdown-menu.tsx`
@@ -78,7 +78,7 @@ install skills and dependencies and clean up/remove invalid
 - `artifacts/rayalgo/src/features/charting/RayReplicaSettingsMenu.tsx`
 - `artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx`
 - `artifacts/rayalgo/src/features/charting/ResearchChartWidgetChrome.tsx`
-- `artifacts/rayalgo/src/features/charting/chartEvents.test.ts`
+- `artifacts/rayalgo/src/features/charting/chartEvents.validation.ts`
 - `artifacts/rayalgo/src/features/charting/chartEvents.ts`
 - `artifacts/rayalgo/src/features/charting/useOptionChartBars.js`
 - `artifacts/rayalgo/src/features/flow/ContractDetailInline.jsx`
@@ -94,17 +94,17 @@ install skills and dependencies and clean up/remove invalid
 ```text
 ## main...origin/main
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/scripts/runUnitTests.mjs
+ M artifacts/api-server/scripts/unit validation runner.mjs
  M artifacts/api-server/src/providers/polygon/market-data.ts
  M artifacts/api-server/src/routes/platform.ts
- M artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts
+ M artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts
  M artifacts/api-server/src/services/ibkr-bridge-runtime.ts
- M artifacts/api-server/src/services/option-chain-batch.test.ts
+ M artifacts/api-server/src/services/option-chain-batch.validation.ts
  M artifacts/api-server/src/services/platform.ts
  M artifacts/api-server/src/services/shadow-account.ts
- M artifacts/rayalgo/e2e/flow-layout.spec.ts
- M artifacts/rayalgo/e2e/memory-soak.spec.ts
- M artifacts/rayalgo/scripts/runUnitTests.mjs
+ M artifacts/rayalgo/e2e/flow-layout.browser-validation.ts
+ M artifacts/rayalgo/e2e/memory-soak.browser-validation.ts
+ M artifacts/rayalgo/scripts/unit validation runner.mjs
  M artifacts/rayalgo/src/app/App.tsx
  M artifacts/rayalgo/src/components/platform/primitives.jsx
  M artifacts/rayalgo/src/components/ui/dropdown-menu.tsx
@@ -113,7 +113,7 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/features/charting/RayReplicaSettingsMenu.tsx
  M artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx
  M artifacts/rayalgo/src/features/charting/ResearchChartWidgetChrome.tsx
- M artifacts/rayalgo/src/features/charting/chartEvents.test.ts
+ M artifacts/rayalgo/src/features/charting/chartEvents.validation.ts
  M artifacts/rayalgo/src/features/charting/chartEvents.ts
  M artifacts/rayalgo/src/features/charting/useOptionChartBars.js
  M artifacts/rayalgo/src/features/flow/ContractDetailInline.jsx
@@ -123,7 +123,7 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/features/market/MarketActivityPanel.jsx
  M artifacts/rayalgo/src/features/market/MiniChartPremiumFlowIndicator.jsx
  M artifacts/rayalgo/src/features/market/MultiChartGrid.jsx
- M artifacts/rayalgo/src/features/market/marketChartWiring.test.js
+ M artifacts/rayalgo/src/features/market/marketChartWiring.validation.js
  M artifacts/rayalgo/src/features/platform/BloombergLiveDock.jsx
  M artifacts/rayalgo/src/features/platform/FooterMemoryPressureIndicator.jsx
  M artifacts/rayalgo/src/features/platform/HeaderAccountStrip.jsx
@@ -131,22 +131,22 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/features/platform/HeaderKpiStrip.jsx
  M artifacts/rayalgo/src/features/platform/HeaderStatusCluster.jsx
  M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.jsx
- M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.test.js
+ M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.validation.js
  M artifacts/rayalgo/src/features/platform/LatencyDebugStrip.jsx
  M artifacts/rayalgo/src/features/platform/MarketDataSubscriptionProvider.jsx
  M artifacts/rayalgo/src/features/platform/PlatformApp.jsx
  M artifacts/rayalgo/src/features/platform/PlatformShell.jsx
  M artifacts/rayalgo/src/features/platform/PlatformWatchlist.jsx
  M artifacts/rayalgo/src/features/platform/appWorkScheduler.js
- M artifacts/rayalgo/src/features/platform/appWorkScheduler.test.js
+ M artifacts/rayalgo/src/features/platform/appWorkScheduler.validation.js
  M artifacts/rayalgo/src/features/platform/bridgeRuntimeModel.js
  M artifacts/rayalgo/src/features/platform/flowFilterStore.js
- M artifacts/rayalgo/src/features/platform/flowFilterStore.test.js
+ M artifacts/rayalgo/src/features/platform/flowFilterStore.validation.js
  M artifacts/rayalgo/src/features/platform/marketActivityLaneModel.js
  M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.js
- M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.test.js
+ M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.validation.js
  M artifacts/rayalgo/src/features/platform/marketIdentity.jsx
- M artifacts/rayalgo/src/features/platform/platformRootSource.test.js
+ M artifacts/rayalgo/src/features/platform/platformRootSource.validation.js
  M artifacts/rayalgo/src/features/platform/tickerSearch/TickerSearch.jsx
  M artifacts/rayalgo/src/features/platform/useMemoryPressureSignal.js
  M artifacts/rayalgo/src/features/platform/useRuntimeControlSnapshot.js
@@ -164,7 +164,7 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/features/trade/TradeStrategyGreeksPanel.jsx
  M artifacts/rayalgo/src/features/trade/TradeWorkspaceChrome.jsx
  M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.js
- M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.test.js
+ M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.validation.js
  M artifacts/rayalgo/src/features/trade/tradeBrokerRequests.js
  M artifacts/rayalgo/src/index.css
  M artifacts/rayalgo/src/lib/formatters.js
@@ -179,7 +179,7 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/screens/ResearchScreen.jsx
  M artifacts/rayalgo/src/screens/SettingsScreen.jsx
  M artifacts/rayalgo/src/screens/TradeScreen.jsx
- M artifacts/rayalgo/src/screens/TradeScreen.search-handlers.test.mjs
+ M artifacts/rayalgo/src/screens/TradeScreen.search-handlers.validation.mjs
  M artifacts/rayalgo/src/screens/account/AccountHeaderStrip.jsx
  M artifacts/rayalgo/src/screens/account/AccountReturnsPanel.jsx
  M artifacts/rayalgo/src/screens/account/AllocationPanel.jsx
@@ -194,7 +194,7 @@ install skills and dependencies and clean up/remove invalid
  M artifacts/rayalgo/src/screens/account/TradesOrdersPanel.jsx
  M artifacts/rayalgo/src/screens/account/TradingPatternsPanel.jsx
  M artifacts/rayalgo/src/screens/account/accountUtils.jsx
- M artifacts/rayalgo/src/screens/diagnostics/localAlerts.test.js
+ M artifacts/rayalgo/src/screens/diagnostics/localAlerts.validation.js
  M artifacts/rayalgo/src/screens/settings/DiagnosticThresholdSettingsPanel.jsx
  M artifacts/rayalgo/src/screens/settings/IbkrLaneArchitecturePanel.jsx
  M lib/api-client-react/src/generated/api.schemas.ts
@@ -211,20 +211,20 @@ install skills and dependencies and clean up/remove invalid
 ?? SESSION_HANDOFF_2026-05-06_019dff67-f5a1-7332-8624-585ac4cd1435.md
 ?? SESSION_HANDOFF_2026-05-06_019dff68-fd69-7fd1-84aa-f97b89d2efe8.md
 ?? SESSION_HANDOFF_2026-05-06_019dff6f-d657-70a2-bed9-7c3a2469bed7.md
-?? artifacts/api-server/src/providers/polygon/market-data.test.ts
-?? artifacts/api-server/src/services/flow-premium-distribution.test.ts
-?? artifacts/api-server/src/services/option-order-intent.test.ts
+?? artifacts/api-server/src/providers/polygon/market-data.validation.ts
+?? artifacts/api-server/src/services/flow-premium-distribution.validation.ts
+?? artifacts/api-server/src/services/option-order-intent.validation.ts
 ?? artifacts/api-server/src/services/option-order-intent.ts
 ?? artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts
 ?? artifacts/rayalgo/src/features/flow/flowTapeColumns.js
-?? artifacts/rayalgo/src/features/flow/flowTapeColumns.test.js
+?? artifacts/rayalgo/src/features/flow/flowTapeColumns.validation.js
 ?? artifacts/rayalgo/src/features/trade/optionSellCallIntent.js
-?? artifacts/rayalgo/src/features/trade/optionSellCallIntent.test.js
-?? artifacts/rayalgo/src/lib/formatters.test.js
+?? artifacts/rayalgo/src/features/trade/optionSellCallIntent.validation.js
+?? artifacts/rayalgo/src/lib/formatters.validation.js
 ?? artifacts/rayalgo/src/screens/account/accountCalendarData.js
-?? artifacts/rayalgo/src/screens/account/accountCalendarData.test.js
+?? artifacts/rayalgo/src/screens/account/accountCalendarData.validation.js
 ?? artifacts/rayalgo/src/screens/account/accountPnlCalendarModel.js
-?? artifacts/rayalgo/src/screens/account/accountPnlCalendarModel.test.js
+?? artifacts/rayalgo/src/screens/account/accountPnlCalendarModel.validation.js
 ?? lib/api-zod/src/generated/types/flowPremiumDistributionBucket.ts
 ?? lib/api-zod/src/generated/types/flowPremiumDistributionBuckets.ts
 ?? lib/api-zod/src/generated/types/flowPremiumDistributionResponse.ts
@@ -242,17 +242,17 @@ install skills and dependencies and clean up/remove invalid
 
 ```text
  SESSION_HANDOFF_MASTER.md                          |    4 +
- artifacts/api-server/scripts/runUnitTests.mjs      |    3 +
+ artifacts/api-server/scripts/unit validation runner.mjs      |    3 +
  .../src/providers/polygon/market-data.ts           | 1060 +++++++++-
  artifacts/api-server/src/routes/platform.ts        |   25 +-
- .../src/services/ibkr-bridge-runtime.test.ts       |   14 +-
+ .../src/services/ibkr-bridge-runtime.validation.ts       |   14 +-
  .../api-server/src/services/ibkr-bridge-runtime.ts |   40 +-
- .../src/services/option-chain-batch.test.ts        |   52 +
+ .../src/services/option-chain-batch.validation.ts        |   52 +
  artifacts/api-server/src/services/platform.ts      |  524 +++++
  .../api-server/src/services/shadow-account.ts      |   13 +
- artifacts/rayalgo/e2e/flow-layout.spec.ts          |  146 +-
- artifacts/rayalgo/e2e/memory-soak.spec.ts          |   10 +-
- artifacts/rayalgo/scripts/runUnitTests.mjs         |    3 +
+ artifacts/rayalgo/e2e/flow-layout.browser-validation.ts          |  146 +-
+ artifacts/rayalgo/e2e/memory-soak.browser-validation.ts          |   10 +-
+ artifacts/rayalgo/scripts/unit validation runner.mjs         |    3 +
  artifacts/rayalgo/src/app/App.tsx                  |    6 +-
  .../rayalgo/src/components/platform/primitives.jsx |    8 +-
  .../rayalgo/src/components/ui/dropdown-menu.tsx    |    2 +-
@@ -261,7 +261,7 @@ install skills and dependencies and clean up/remove invalid
  .../features/charting/RayReplicaSettingsMenu.tsx   |   14 +-
  .../src/features/charting/ResearchChartSurface.tsx |   18 +-
  .../charting/ResearchChartWidgetChrome.tsx         |   18 +-
- .../src/features/charting/chartEvents.test.ts      |   24 +
+ .../src/features/charting/chartEvents.validation.ts      |   24 +
  .../rayalgo/src/features/charting/chartEvents.ts   |   25 +-
  .../src/features/charting/useOptionChartBars.js    |   15 +-
  .../src/features/flow/ContractDetailInline.jsx     |   76 +-
@@ -271,7 +271,7 @@ install skills and dependencies and clean up/remove invalid
  .../src/features/market/MarketActivityPanel.jsx    |   36 +-
  .../market/MiniChartPremiumFlowIndicator.jsx       |    4 +-
  .../rayalgo/src/features/market/MultiChartGrid.jsx |   10 +-
- .../src/features/market/marketChartWiring.test.js  |   26 +
+ .../src/features/market/marketChartWiring.validation.js  |   26 +
  .../src/features/platform/BloombergLiveDock.jsx    |   20 +-
  .../platform/FooterMemoryPressureIndicator.jsx     |    2 +-
  .../src/features/platform/HeaderAccountStrip.jsx   |    6 +-
@@ -279,22 +279,22 @@ install skills and dependencies and clean up/remove invalid
  .../src/features/platform/HeaderKpiStrip.jsx       |    8 +-
  .../src/features/platform/HeaderStatusCluster.jsx  |   67 +-
  .../src/features/platform/IbkrConnectionStatus.jsx |   29 +-
- .../features/platform/IbkrConnectionStatus.test.js |  175 ++
+ .../features/platform/IbkrConnectionStatus.validation.js |  175 ++
  .../src/features/platform/LatencyDebugStrip.jsx    |    2 +-
  .../platform/MarketDataSubscriptionProvider.jsx    |    1 +
  .../rayalgo/src/features/platform/PlatformApp.jsx  |   17 +-
  .../src/features/platform/PlatformShell.jsx        |   12 +-
  .../src/features/platform/PlatformWatchlist.jsx    |  106 +-
  .../src/features/platform/appWorkScheduler.js      |    4 +-
- .../src/features/platform/appWorkScheduler.test.js |   26 +-
+ .../src/features/platform/appWorkScheduler.validation.js |   26 +-
  .../src/features/platform/bridgeRuntimeModel.js    |    5 +-
  .../src/features/platform/flowFilterStore.js       |   11 +
- .../src/features/platform/flowFilterStore.test.js  |   50 +
+ .../src/features/platform/flowFilterStore.validation.js  |   50 +
  .../features/platform/marketActivityLaneModel.js   |   13 +-
  .../features/platform/marketFlowScannerConfig.js   |    2 +-
- .../platform/marketFlowScannerConfig.test.js       |   17 +-
+ .../platform/marketFlowScannerConfig.validation.js       |   17 +-
  .../src/features/platform/marketIdentity.jsx       |    6 +-
- .../features/platform/platformRootSource.test.js   |  236 ++-
+ .../features/platform/platformRootSource.validation.js   |  236 ++-
  .../platform/tickerSearch/TickerSearch.jsx         |   16 +-
  .../features/platform/useMemoryPressureSignal.js   |   27 +-
  .../features/platform/useRuntimeControlSnapshot.js |   30 +-
@@ -312,7 +312,7 @@ install skills and dependencies and clean up/remove invalid
  .../features/trade/TradeStrategyGreeksPanel.jsx    |   24 +-
  .../src/features/trade/TradeWorkspaceChrome.jsx    |   30 +-
  .../src/features/trade/optionQuoteHydrationPlan.js |   22 +-
- .../trade/optionQuoteHydrationPlan.test.js         |   23 +
+ .../trade/optionQuoteHydrationPlan.validation.js         |   23 +
  .../src/features/trade/tradeBrokerRequests.js      |   10 +-
  artifacts/rayalgo/src/index.css                    |    2 +-
  artifacts/rayalgo/src/lib/formatters.js            |   76 +-
@@ -327,7 +327,7 @@ install skills and dependencies and clean up/remove invalid
  artifacts/rayalgo/src/screens/ResearchScreen.jsx   |    2 +-
  artifacts/rayalgo/src/screens/SettingsScreen.jsx   |  269 ++-
  artifacts/rayalgo/src/screens/TradeScreen.jsx      |   75 +-
- .../screens/TradeScreen.search-handlers.test.mjs   |   12 +
+ .../screens/TradeScreen.search-handlers.validation.mjs   |   12 +
  .../src/screens/account/AccountHeaderStrip.jsx     |   10 +-
  .../src/screens/account/AccountReturnsPanel.jsx    |  864 ++++++---
  .../src/screens/account/AllocationPanel.jsx        |    8 +-
@@ -342,7 +342,7 @@ install skills and dependencies and clean up/remove invalid
  .../src/screens/account/TradesOrdersPanel.jsx      |   59 +-
  .../src/screens/account/TradingPatternsPanel.jsx   |   24 +-
  .../rayalgo/src/screens/account/accountUtils.jsx   |   31 +-
- .../src/screens/diagnostics/localAlerts.test.js    |   39 +
+ .../src/screens/diagnostics/localAlerts.validation.js    |   39 +
  .../settings/DiagnosticThresholdSettingsPanel.jsx  |  102 +-
  .../screens/settings/IbkrLaneArchitecturePanel.jsx |   48 +-
  lib/api-client-react/src/generated/api.schemas.ts  |  178 ++

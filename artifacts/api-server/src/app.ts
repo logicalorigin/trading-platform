@@ -8,7 +8,11 @@ import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
 import { resolveApiRequestLogLevel } from "./lib/request-logging";
 import { recordApiRequest } from "./services/request-metrics";
-import { apiRouteAdmissionMiddleware } from "./services/route-admission";
+import {
+  apiRouteAdmissionMiddleware,
+  getApiRouteAdmission,
+  readApiRouteRequestContext,
+} from "./services/route-admission";
 
 const app: Express = express();
 
@@ -62,9 +66,16 @@ app.use(applyIsolationHeaders);
 app.use((req, res, next) => {
   const startedAt = Date.now();
   res.on("finish", () => {
+    const admission = getApiRouteAdmission(res);
+    const requestContext = readApiRouteRequestContext(req);
     recordApiRequest({
       method: req.method,
       path: req.path || req.url?.split("?")[0] || "/",
+      routeClass: admission.routeClass,
+      requestFamily: requestContext.requestFamily,
+      fetchPriority: requestContext.fetchPriority,
+      requestOrigin: requestContext.requestOrigin,
+      clientRole: requestContext.clientRole,
       statusCode: res.statusCode,
       durationMs: Date.now() - startedAt,
     });

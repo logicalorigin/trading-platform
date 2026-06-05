@@ -466,7 +466,12 @@ export async function fetchOptionChainSnapshotPayload(
     underlyings: await Promise.all(
       normalizedUnderlyings.map(async (underlying) => ({
         underlying,
-        contracts: (await getOptionChain({ underlying })).contracts,
+        contracts: (
+          await getOptionChain({
+            underlying,
+            quoteHydration: "metadata",
+          })
+        ).contracts,
         updatedAt: new Date().toISOString(),
       })),
     ),

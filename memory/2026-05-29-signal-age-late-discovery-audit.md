@@ -43,8 +43,8 @@ On a 5 minute profile, that meant the table often saw a signal about 10-15 minut
 
 ## Validation
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/algo/OperationsSignalRow.validation.js`
 - `pnpm --filter @workspace/api-server typecheck`
 - `pnpm --filter @workspace/pyrus typecheck`
 

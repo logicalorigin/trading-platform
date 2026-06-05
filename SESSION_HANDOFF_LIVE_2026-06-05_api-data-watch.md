@@ -1,0 +1,397 @@
+# Live Session Handoff: API/Data Watch
+
+- Session ID: pending
+- CWD: `/home/runner/workspace`
+- Created: 2026-06-05 07:08 MT / 2026-06-05 13:08 UTC
+- User request: "please watch our api and data lines for 5 minutes to find any and all issues"
+- Last Updated: 2026-06-05 12:37:23 MDT / 2026-06-05T18:37:23Z
+- Current step: Higher-level Massive-to-STA trace found Massive websocket ingress healthy. The first concrete realtime blocker is inside signal evaluation/worker stream routing: partial live bars are discarded, and the signal-options worker stream path is gated/configured like a stable historical scan.
+- Active runtime surfaces:
+  - `.pyrus-runtime/flight-recorder/api-current.json`
+  - `.pyrus-runtime/flight-recorder/current.json`
+  - `.pyrus-runtime/flight-recorder/api-events-2026-06-05.jsonl`
+  - `.pyrus-runtime/flight-recorder/events-2026-06-05.jsonl`
+  - `.pyrus-runtime/flight-recorder/incidents.jsonl`
+- Initial observations:
+  - Replit artifact supervisor is running API, web, and Python compute service processes.
+  - `api-current.json` shows elevated API latency and one recent `429` on `/api/bars`.
+- Existing `SESSION_HANDOFF_CURRENT.md`, `SESSION_HANDOFF_MASTER.md`, and `SESSION_HANDOFF_LIVE_2026-06-05_cache-bars-pressure.md` were already modified before this task.
+- Latest higher-level Massive-to-STA trace:
+  - Live Massive provider ingress is not the first blocker. `/api/diagnostics/runtime` showed Massive configured/realtime with websocket status `ok`, active `AM`, `Q`, and `T` channels, active consumers, and last message ages in milliseconds. Quote feed covered 510 symbols; aggregate feed covered 500 symbols.
+  - Runtime topology was healthy for this part of the path: API process was running on `PORT=8080`; Rust `market-data-worker run` was running. The Rust worker owns queued persisted `stock_snapshot`, `option_chain_snapshot`, and `gex_snapshot` jobs, not the live STA signal feed.
+  - Active route context is the enabled paper deployment `7e2e4e6f-749f-4e65-a011-87d3559a23b0` with 500 symbols. Disabled live deployment `56f68cec-e3bb-4c14-a501-ee703f7c2bc0` has 90 symbols but is not the active STA path.
+  - First concrete blocker is in `signal-monitor.ts`: `stableSignalMonitorPyrusBarEntries(...)` removes bars whose `sourceBar.partial === true`, and signal selection rejects events from partial bars. Therefore `includeProvisionalLiveEdge` cannot actually make live in-progress bars actionable. With the active `5m` profile, STA receives signals only after a 5-minute bar closes, matching the observed 5-minute batches.
+  - Related worker/routing blocker is in `signal-options-worker.ts`: default stream availability is gated by `isBackgroundStockAggregateStreamingEnabled() && isStockAggregateStreamingAvailable()`. The running API environment did not include `PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED`, so the worker stream evaluator can be off even while Massive foreground stream ingress is healthy.
+  - The worker stream evaluator is also currently configured for stable/history behavior: `includeProvisionalLiveEdge: false`, `allowHistoricalFallback: true`, and `barSourcePolicy: "mixed"`. Existing tests assert that old behavior, so the test suite must be updated with the fix.
+  - Exact next fix should make the signal-options/STA stream path explicitly live: enable it from actual stock aggregate stream availability, request provisional/live-edge bars, disable REST/history fallback on stream ticks, and add a signal-monitor live-evaluation mode that allows partial live bars only for the STA realtime path.
+  - Stop point: do not move downstream to IBKR contract selection until this blocker is fixed and live-proved.
+- Latest Diagnostics restart audit:
+  - Runtime check after user restart showed one API server and one Vite server, DB reachable, and no duplicate process issue. Live Diagnostics still reported `degraded`, driven by API/resource pressure rather than stale processes.
+  - Live evidence before these latest source changes:
+    - API slow routes included `/bars`, `/accounts/combined/positions`, `/diagnostics/runtime`, `/accounts/shadow/equity-history`, `/signal-monitor/state`, and order/position routes.
+    - Resource pressure was high because API latency dominated; bars cache counters showed heavy cold work: `cacheMiss: 96`, `providerFetch: 420`, with hydration mostly `signal-matrix:miss`.
+    - Orders snapshot showed `degraded=true`, `reason=orders_cached_stale`, `stale=true`, `orderCount=0`, and `visibilityFailures=0`, proving a passive stale empty snapshot alone could degrade the orders section.
+    - Direct `/api/bars?...requestFamily=chart-visible&fetchPriority=8` was admitted as `active-screen` but bars internals reported `X-Pyrus-Request-Family: unspecified`, proving the route helpers only read headers while admission also read query context.
+  - Implemented source fixes:
+    - `app.ts` records route admission class and request context into request metrics.
+    - `request-metrics.ts` stores sanitized request family, fetch priority, request origin, and client role.
+    - `diagnostics.ts` exposes dominant/all/slow request families and priority ranges in slow-route rows.
+    - `route-admission.ts` exports the shared request-context reader so metrics and admission use the same source.
+    - `routes/platform.ts` reads bars request family/priority from query params as well as headers.
+    - `platform.ts` keeps stale empty order visibility snapshots informational in passive diagnostics; degraded stale snapshots still degrade when the cached payload had open orders or prior degraded metadata.
+    - `signal-monitor.ts` no longer blocks automatic exact-cell startup/poll requests on fresh provider recompute when complete stored DB coverage is available; it returns stored rows and schedules background refresh.
+  - Validation passed:
+    - `pnpm -C artifacts/api-server exec node JS validation runner src/services/diagnostics.validation.ts src/services/route-admission.validation.ts src/services/runtime-flight-recorder.validation.ts`
+    - `pnpm -C artifacts/api-server exec node JS validation runner src/services/order-read-resilience.validation.ts src/services/diagnostics.validation.ts src/services/route-admission.validation.ts`
+    - `pnpm -C artifacts/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/services/order-read-resilience.validation.ts src/services/diagnostics.validation.ts`
+    - `pnpm -C artifacts/api-server typecheck`
+    - `pnpm -C artifacts/api-server build`
+    - `git diff --check`
+  - Caveat: runtime doctor after build warns API PID `138585` started at `2026-06-05T18:24:33.764Z`, before current API bundle rebuild at `2026-06-05T18:33:59.147Z`; restart through normal Replit Run App before live validation.
+- Latest degraded diagnostics RCA/fix:
+  - Live `/api/diagnostics/latest` initially showed degraded snapshots for API, browser, resource-pressure, and automation. The API/resource driver was rolling slow-route pressure dominated by Account positions, then later signal-matrix/bars/account reads; browser/resource snapshots were downstream reflections of the same slow windows.
+  - Direct probes showed Account positions can still cold-read slowly (`~4-5s`) but warm quickly. This remains a separate Account cold-read optimization target; no response-cache change was made because current source contracts intentionally avoid full live Account response caching.
+  - Found a diagnostics infrastructure mismatch: request admission classifies `/api/accounts/...positions?mode=live` with full URL context, but request metrics stored only the query-stripped path and diagnostics reclassified it later. Request metrics now carry the actual admission route class used by middleware.
+  - Found diagnostics order probing was too active: the collector called live `listOrders`, which can start/contend with IBKR bridge order reads and then report `orders_timeout`, `orders_busy`, or `orders_refreshing`. Added passive `getOrderVisibilityProbe()` and wired diagnostics collection to it, so diagnostics observes cached/suppressed/busy order visibility state without queueing a fresh bridge read.
+  - Found signal-options automation warning was over-sensitive for broad 500-symbol scans: any unavailable signal input warned even when the total stale/unavailable tail was below the existing 10% degraded-input threshold. Classifier and event creation now require the same degraded ratio threshold for stale and unavailable inputs.
+  - Live caveat: the running API process did not fully pick up the source changes before restart; source and `dist/index.mjs` both contain the fixes. Normal Replit Run App restart is needed for live diagnostics proof.
+  - Validation passed:
+    - `pnpm -C artifacts/api-server exec node JS validation runner src/services/diagnostics.validation.ts src/services/order-read-resilience.validation.ts src/services/route-admission.validation.ts src/services/runtime-flight-recorder.validation.ts` (`72/72`)
+    - `pnpm -C artifacts/api-server run typecheck`
+    - `pnpm -C artifacts/api-server run build`
+    - `git diff --check`
+- Latest cross-tab freshness restart audit:
+  - Restarted runtime check showed the fresh dev pair on Vite `18747` and API `8080`, with no stale-bundle warning.
+  - Code review found one real blocker risk in `usePlatformFreshnessQueryHydration`: the hook requested a shared snapshot before subscribing, so a fast response from another tab could be missed. The hook now subscribes first, requests second, and returns the unsubscribe cleanup.
+  - Added a focused source regression for subscribe-before-request ordering and proved it failed before the fix and passed after.
+  - Served Vite source confirmed the running app has the subscribe-before-request ordering in `platformFreshnessBus.ts`; market quote sharing still hydrates only lightweight quote snapshots and does not broadcast sparkline/bar payloads.
+  - Validation passed:
+    - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformFreshnessBus.validation.ts src/components/platform/ContainerLoadingStatus.validation.js src/features/platform/workspaceLeadership.validation.js src/features/platform/appWorkScheduler.validation.js src/features/platform/MarketDataSubscriptionProvider.validation.js`
+    - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js`
+    - `pnpm -C artifacts/pyrus run typecheck`
+    - `git diff --check`
+    - Safe QA route performance sequence for market/account/signals/algo/gex/trade/research.
+  - Diagnostics `/api/diagnostics/latest` was reachable with HTTP 200. The latest diagnostics snapshot still reported overall `degraded`, but no parsed current API/browser slow-route blocker was found for this slice.
+  - Residual: Signals safe QA still shows non-failing soft performance noise on cold startup and warm long tasks. Treat that as a separate performance target, not as a new blocker from the cross-tab freshness bus.
+- Latest cross-tab freshness implementation:
+  - Added `platformFreshnessBus.ts` with stable query-key serialization, BroadcastChannel publish/subscribe, request/response snapshot solicitation for newly opened tabs, metadata-only localStorage writes, TTL checks, React Query hydration, and shared-payload echo suppression.
+  - Wired root lightweight data through the bus without reintroducing visibility gates: session, watchlists, signal monitor profile, signal monitor state, and signal monitor events use their existing query keys and current freshness windows.
+  - Passed the same freshness bus through `PlatformRuntimeLayer` into `MarketDataSubscriptionProvider`; REST quote snapshots publish/hydrate as `market-quotes`.
+  - Kept heavy data excluded: bars, GEX, matrix bodies, broad scanner bodies, and sparklines are not broadcast as payloads.
+  - Extended `ContainerLoadingStatus` so wait lines can show plain source/freshness states (`Live`, `Shared`, `Cached`, `Refreshing`, `Waiting`, `Stale`) and normalize internal terms such as `leader-bus` to `Shared`, avoiding leader/follower user-facing nomenclature.
+  - Preserved baseline behavior: hidden workspace leaders still keep realtime work, platform root polling remains live while hidden, quote snapshots remain live while hidden, and the current no-extra-delay Algo monitor/live-page behavior remains protected by source contracts.
+  - Validation passed:
+    - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformFreshnessBus.validation.ts src/components/platform/ContainerLoadingStatus.validation.js src/features/platform/workspaceLeadership.validation.js src/features/platform/appWorkScheduler.validation.js src/features/platform/MarketDataSubscriptionProvider.validation.js`
+    - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js`
+    - `pnpm -C artifacts/pyrus run typecheck`
+    - `git diff --check`
+    - `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=market PYRUS_SAFE_QA_SLOW_API_MS=750 pnpm -C artifacts/pyrus exec browser QA test e2e/safe-qa-route-performance.browser-validation.ts --project=chromium`
+  - CAVEAT: worktree remains broad and dirty from prior audit slices; do not commit the entire dirty tree as one lump. I did not touch Replit startup config or control-plane files in this slice.
+- Latest API data endpoint/option-line audit:
+  - Re-audited the hidden-tab/live-data work and option-chain data-line boundaries. Main realtime modules no longer use page visibility or `requestAnimationFrame` for data flushing; remaining header lane `requestAnimationFrame` use is visual measurement only, not market-data ingestion.
+  - Changed public option-chain service default from `snapshot` to `metadata`; OpenAPI/generated docs now say metadata is the default. Explicit `quoteHydration=snapshot` remains available for intentionally snapshot-backed routes such as GEX.
+  - Lower-level IBKR chain clients now default omitted `quoteHydration` to `metadata`; bridge-client expiration fallback also requests metadata-only chain contracts.
+  - Patched app-owned chain consumers that could leak quote lines: `/api/streams/options/chains`, account legacy chain refresh, signal-options active-position provider-id fallback, and signal-options contract resolver preview/default path.
+  - User Trade option chains already request metadata and now get live quotes via bounded execution/visible quote streams. Selected/held contracts are pinned as `execution-live`; visible rows are capped through the visible quote plan.
+  - Signal-options live entry contract selection now uses metadata chain selection plus `automation-live` quote demand with retained leases; position marks declare/read live demand instead of relying on chain snapshots.
+  - Remaining explicit snapshot chains are intentional: GEX dashboard/projection and the no-live-demand Greek-selector branch that requires live Greeks.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/providers/ibkr/bridge-client.validation.ts src/services/bridge-streams-source.validation.ts src/services/option-chain-batch.validation.ts src/services/account-positions.validation.ts`
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts`
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/live-streams.validation.ts src/features/trade/optionQuoteHydrationPlan.validation.js src/features/trade/optionChainLoadingPlan.validation.js src/features/trade/optionChainRows.validation.js src/screens/algo/algoHelpers.validation.js`
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/bridge-option-quote-stream.validation.ts src/services/ibkr-live-demand-coordinator.validation.ts src/services/market-data-admission.validation.ts src/services/platform-massive-stock-routing.validation.ts`
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/gex.validation.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - `pnpm --filter @workspace/pyrus run build`
+    - Scoped `git diff --check`
+  - CAVEAT: worktree remains broad and dirty from prior audit slices; do not land the entire tree as one lump.
+- Latest scoped F option spot fix:
+  - Verified against IBKR docs that option computation ticks can include the underlying price as `undPrice`.
+  - API bridge quote hydration now accepts IBKR-style `undPrice`, normalizes it to `underlyingPrice`, and does not expose the raw alias.
+  - Shared IBKR/API/generated quote contracts now include optional `underlyingPrice` on `QuoteSnapshot` and `PositionQuote`.
+  - Account position quote building now carries `underlyingPrice` through `optionQuote`/`quote` for option rows.
+  - Pyrus account option quote overlays preserve `underlyingPrice` through live option quote caches/account stream patches and materialize it into the existing `underlyingMarket` display model, so the Spot column can show the F underlying even when the separate equity snapshot path is absent.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/providers/ibkr/bridge-client.validation.ts src/services/account-positions.validation.ts` (`50/50`)
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/platform/live-streams.validation.ts src/features/account/positionDisplayModel.validation.js` (`113/113`)
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/bridge-option-quote-stream.validation.ts src/services/ibkr-live-demand-coordinator.validation.ts` (`40/40`)
+    - API/Pyrus/api-client-react typechecks, api-zod and ibkr-contracts project builds, API build, Pyrus build, and scoped `git diff --check`.
+  - Scope note: no Replit startup/control-plane files were touched in this F spot slice.
+- Latest STA realtime backend source fix:
+  - Source symptom reproduced before fix: live monitor had fresh states but `0` bar-zero actionable states while STA still returned aged `signal_too_old` rows.
+  - Live STA read model now exposes only stable current actionable signals: `fresh=true`, direction/time present, `status="ok"`, and `barsSinceSignal === 0`.
+  - Fast stored-state STA reads now include `barsSinceSignal = 0`; full summary reads use the same actionable-state filter and no longer trust inconsistent `actionEligible: true` payloads.
+  - Signal-monitor durable event persistence is narrowed to incremental, stable, bar-zero signals with signal lag <= 15s. Late/backfilled fresh-window discoveries can update monitor state but cannot create live STA events.
+  - Signal-options worker stream evaluation no longer uses the old `24` symbol batch / `2s` per-symbol throttle and no longer requests provisional live-edge bars.
+  - Python/matrix signal state mapping now filters out partial live-edge bars before building matrix state or Python compute inputs.
+  - Validation passed: `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts` (`263/263`), `pnpm -C artifacts/api-server run typecheck`, `pnpm -C artifacts/api-server run build`, page-visibility regression tests (`97/97`), and scoped `git diff --check`.
+  - Source probe after build: monitor `196` states, `15` fresh, `0` bar-zero actionable; patched STA service returned `0` signals and `0` nonzero rows.
+  - Running API PID `96225` started at `2026-06-05 11:15:12 MDT`, before this build. Live HTTP still showed old behavior across robust probes: `10-14` STA signals, `0` actionable, nonzero bars. A normal Replit Run App restart is required before live API proof can reflect the source fix.
+- Latest hidden-tab realtime runtime fix:
+  - Root cause confirmed in source: the app had multiple app-level `pageVisible`/visibility gates that stopped or reset live work when the tab was hidden, then resumed and caught up when visible again.
+  - `buildPlatformWorkSchedule` no longer accepts or derives scheduling decisions from `pageVisible`; realtime work is controlled by `runtimeActive` plus real operational gates such as safe QA, workspace leadership, broker readiness, pressure, and startup state.
+  - Workspace leadership no longer gives up leadership when hidden. A hidden leader keeps its heartbeat, visible tabs do not steal a fresh hidden leader, and the no-storage fallback elects the current instance regardless of visibility.
+  - Platform root polling and stream gates now stay live while hidden: session/watchlist polling uses fixed intervals, quote-stream disabled reasons no longer include `page-hidden`, position-alert/signal-matrix foreground gates no longer depend on visibility, and background resume readiness resets only on screen changes.
+  - Market data subscription and REST fallback stay live while hidden: quote streams, position quote streams, market aggregate stream flags, and quote snapshot fallback no longer require `pageVisible`.
+  - Stream/chart/runtime hooks no longer read hidden visibility: `live-streams.ts`, `useMassiveStreamedStockBars.ts`, `useLiveMarketFlow.js`, `useMemoryPressureSignal.js`, `TradeL2Panel.jsx`, and `BloombergLiveDock.jsx` no longer pause, slow, or defer their app-owned realtime work because the document is hidden.
+  - Post-restart verification found the remaining browser-level catch-up vector: data cache/store flushes using `requestAnimationFrame`. Because rAF is paused in hidden Chrome tabs, quote/chart/account/aggregate updates could still queue and flush on return. Patched those realtime data flushes to use microtask/timer scheduling instead.
+  - Patched rAF data-flush paths: option quote store notifications, account page payload queue, live option quote patch queue, live chart bar patch scheduler, and Massive stock aggregate store/symbol notifications.
+  - Remaining `pageVisible` in `PlatformApp.jsx` is diagnostic snapshot state only.
+- Latest hidden-tab validation:
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/appWorkScheduler.validation.js src/features/platform/workspaceLeadership.validation.js src/features/platform/MarketDataSubscriptionProvider.validation.js src/features/platform/useMemoryPressureSignal.validation.js src/features/platform/platformRootSource.validation.js` (`117/117`).
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/live-streams.validation.ts src/features/charting/useMassiveStreamedStockBars.validation.ts` (`89/89`), including no-rAF regression guards.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus run build`.
+  - PASS: `git diff --check` on the touched hidden-tab runtime files.
+  - Restart/runtime proof: `/api/healthz` 200, Vite index 200, restarted Vite-served realtime modules had no `requestAnimationFrame`, `page-hidden`, or old visibility gates. Safe QA browser load reached `[data-testid="platform-screen-stack"]`/market shell with no console errors and no failed requests. Headless Chromium did not expose a true hidden page state and Xvfb is unavailable, so this container could not run a real headed hidden-tab simulation.
+- Latest Diagnostics/Settings audit pass:
+  - Live route-admission evidence: `/api/diagnostics/history` and `/api/diagnostics/events` returned 429 under high pressure because admission classified them as `deferred-analytics`. They are now active diagnostics evidence routes; live HTTP after rebuild showed `X-Pyrus-Route-Class: active-screen`, `X-Pyrus-Pressure-Level: high`, and `X-Pyrus-Admission-Action: allow`.
+  - Diagnostics collector/count fix: collector/threshold snapshots no longer inflate `eventCount`; unchanged collector events avoid unnecessary SSE rebroadcast; frontend local alert snapshot sync uses authoritative repeat counts.
+  - Legacy positions root cause: `/api/positions` called `listPositions(query)` and blocking display quote enrichment, which in turn requested option quote snapshots. The route now delegates to account positions with `liveQuotes: false`, and real-account account positions honor that flag instead of only the shadow path honoring it.
+  - Settings backend root cause: `/api/settings/backend` called full `getIbkrLaneArchitecture()` just to count IBKR lanes. It now uses `getIbkrLaneArchitectureSummary()`.
+  - Bridge lane diagnostics root cause: full lane architecture synchronously fetched bridge diagnostics with an unbounded/default bridge timeout and no cache. `getLaneDiagnostics` now accepts `timeoutMs`; lane diagnostics use a bounded timeout, in-flight coalescing, and a short TTL cache.
+  - Additional Settings issue found after live source proof: `/api/settings/ibkr-lanes` serialized the full bridge diagnostic `state.bridge.marketDataGeneration` even though the Settings panel does not read it. Live payload was ~210 KB, with `state` ~114 KB and `marketDataGeneration` ~83 KB. Source now serializes compact bridge state only.
+  - Source proof for compact lane payload: direct `getIbkrLaneArchitecture()` source probe returned `bytes: 121537`, with `state: 16993`, bridge state keys `pressure`, `updatedAt`, `scheduler`, `subscriptions`, and `limits`, and `hasMarketDataGeneration: false`.
+  - Live warm-route proof after the earlier rebuild: diagnostics history `126-189 ms`, diagnostics events `96-145 ms` after first read, backend settings `82-119 ms` after first reads, and legacy positions `89-90 ms` warm reads under high pressure. Current API PID `84940` started at `10:40:06 MDT`; latest compact-lane build was `10:45:33 MDT`, so live HTTP proof of the compact lane payload needs a normal Replit Run App restart.
+- Latest Diagnostics/Settings validation:
+  - PASS: `pnpm -C artifacts/api-server exec tsx validation runner src/services/diagnostics.validation.ts src/services/route-admission.validation.ts src/services/account-positions.validation.ts src/services/backend-settings.validation.ts` (`94/94`).
+  - PASS: `pnpm -C artifacts/pyrus exec node validation runner src/screens/diagnostics/localAlerts.validation.js` (`11/11`).
+  - PASS: `pnpm -C artifacts/api-server exec tsx validation runner src/services/backend-settings.validation.ts` (`5/5`) after the compact lane payload regression.
+  - PASS: `pnpm -C artifacts/api-server run typecheck`.
+  - PASS: `pnpm -C artifacts/api-server run build`.
+  - PASS: scoped and full `git diff --check`, including after the handoff update.
+- Latest account positions quote freshness fix:
+  - Root cause fixed: account position option quote demand requested quote-only data and account hydration flattened only `state.quote`, so quote snapshots with missing/stale Greeks were either dropped or lost diagnostics before reaching the UI.
+  - Backend now requests account option quote streams with `requiresGreeks: true`, keeps `IbkrLiveDemandQuoteState` entries even when Greeks are pending/stale, and maps demand metadata into `optionQuote`/`quote` payloads.
+  - API contracts now type `AccountPositionRow.optionQuote` and add optional `PositionQuote` diagnostics: provider id, transport/delayed, data/update ages, quote/Greeks/demand status+reason, quote/Greeks freshness, unavailable detail, and Greek/volume fields.
+  - Frontend `positionDisplayModel`, Account positions table, `PositionOptionQuoteStreams`, and `live-streams` preserve those fields through initial REST rows and websocket/cache patches. Dense Greeks cells render explicit Greek status labels when no Greeks exist.
+  - Live positions API soak: 13 samples over 152s against `/api/accounts/combined/positions?mode=live`; F option bid/ask stayed present (`0.52 / 0.54`), but `quoteStatus` and `greeksStatus` were always `stale`, with `greeksReason: stale_quote` and increasing `cacheAgeMs`. Remaining issue is upstream F contract stream freshness, not UI/API quote loss.
+  - Runtime diagnostics: IBKR bridge strict-ready/live, option quote stream active with 2 consumers and 45 union contracts, but the F account contract did not receive fresh events during the watch.
+  - Safe browser QA Account table QA: `?pyrusQa=safe`, 13 samples over 120s, no console errors, table rendered bid/ask and Δ/θ cells. Scrolled table excerpt showed SPY/QQQ/MSFT option rows with bid/ask and Greek cells.
+  - Second post-restart watch at `2026-06-05T16:42Z`: 13 live account-position samples over 188s, all HTTP 200. FCEL stayed live and moved continuously (`dataUpdatedAt` advanced to `2026-06-05T16:45:08Z` during the watch, then `2026-06-05T16:47:42Z` on final probe). The F option started `pending`, then served stale bid/ask/Greeks; bid stayed `0.47`, ask moved `0.49 -> 0.48`, delta/theta recomputed, but upstream `dataUpdatedAt` remained pinned at `2026-06-05T16:39:29.051Z` and status stayed `quoteStatus="stale"`, `greeksStatus="stale"`, `reason="stale_quote"`.
+  - Second runtime diagnostics: latest diagnostics improved to `degraded`/warning. IBKR bridge remained `transport: tws`, configured/reachable/authenticated/strict-ready, `marketDataMode: live`, `liveMarketDataAvailable: true`. Option quote stream was active; F contract appeared in desired provider ids. One focused runtime pull briefly showed `lastError: "Upstream request failed."`, then a follow-up showed `lastError: null`, `activeConsumerCount: 3`, `unionProviderContractIdCount: 90`, `nonLiveProviderContractIdCount: 0`, and `lastEventAt: 2026-06-05T16:46:49.813Z`.
+  - Corrected safe-mode browser QA Account probe clicked the real `Account` nav, reached `[data-testid="account-screen"]`, rendered `Current Positions · 3`, and had zero console/page/request failures. Safe QA uses fixture positions, so browser evidence proves clean account rendering only; real FCEL/F freshness evidence came from live API/runtime diagnostics.
+- Latest account positions quote validation:
+  - PASS: `node JS validation runner src/services/ibkr-live-demand-coordinator.validation.ts src/services/account-positions.validation.ts`
+  - PASS: `node JS validation runner src/features/account/positionDisplayModel.validation.js src/screens/account/PositionsPanel.validation.js src/features/platform/live-streams.validation.ts`
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`
+  - PASS: `pnpm --filter @workspace/api-client-react run typecheck`
+  - PASS: `pnpm exec tsc --build lib/api-zod/tsconfig.json`
+  - PASS: `pnpm exec tsc --build lib/ibkr-contracts/tsconfig.json`
+  - PASS: `git diff --check`
+  - CAVEAT: `pnpm --filter @workspace/api-spec run codegen` and `pnpm run audit:api-codegen` regenerated outputs successfully, then failed at the guarded broad `typecheck:libs` step because the live PYRUS runtime is hot. Guard was not overridden; targeted checks passed.
+- Watch artifact: `/tmp/pyrus-api-data-watch-20260605T130425Z.log`
+- Watch window: 2026-06-05T13:04:25Z to 2026-06-05T13:09:57Z, 332 seconds, 20 samples.
+- Latest TLT/STA RCA:
+  - TLT was not a test row and not the disabled 90-symbol live deployment. Live `/api/algo/deployments` showed active paper deployment `7e2e4e6f-749f-4e65-a011-87d3559a23b0`, enabled, 500 symbols; disabled live deployment `56f68cec-e3bb-4c14-a501-ee703f7c2bc0` still has 90 symbols.
+  - Persisted signal-monitor event `4694e539-8afe-4457-a414-3bdff0af559e` proves the disappearing TLT row was a real event: `buy`, `signalAt=2026-06-05T15:45:03.386Z`, `emittedAt=2026-06-05T15:45:04.652Z`, `latestBarAt=2026-06-05T15:45:03.386Z`, `signalBarAt=2026-06-05T15:45:00.000Z`.
+  - Current signal-monitor state later had TLT as old `sell` at `2026-06-05T12:30:00.000Z`, latest bar `2026-06-05T15:53:09.438Z`, `fresh=false`, `barsSinceSignal=40`. Root cause is provisional/forming live-edge bar events being persisted/actioned, then disappearing when stable state re-evaluates.
+  - Fixed source now selects the latest non-partial signal event for durable signal-monitor state. Partial live-edge signal events remain available for context but no longer become durable current signals.
+  - Fixed STA summary timeout behavior: signal-refresh paths with no stale snapshot fail closed instead of cold-fallbacking to an empty signal state. Stale snapshots can still be served, but empty cold snapshots cannot replace STA signal state during signal refresh. Log text now says `Rejecting Signal Options dashboard snapshot timeout without cold fallback` when that branch fires.
+  - UI/live STA historical-event surface was checked: `AlgoScreen` calls `buildVisibleSignalRows` without `includeSignalHistory`; the helper defaults history off and has a regression test excluding signal-monitor history by default. `Historical Signal` in the table is a stale-row action blocker label, not a separate historical/test table being merged.
+  - Built `dist/index.mjs` contains `selectStableSignalMonitorSignalEvent`, `allowColdFallback: false`, `allowColdFallback: !shouldRefreshStoredSignals`, and the corrected reject log. Running API PID `56640` still started before that build, so a normal Replit restart is required before live proof.
+- Latest validation passed:
+  - `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/algo-cockpit-streams.validation.ts src/services/trade-monitor-worker.validation.ts src/services/signal-options-worker.validation.ts` from `artifacts/api-server` (282/282).
+  - `pnpm -C artifacts/api-server run typecheck`.
+  - `pnpm -C artifacts/api-server run build`.
+- Latest post-restart STA proof:
+  - Watch window: `2026-06-05T16:03:57Z` to `2026-06-05T16:06:37Z`, 25 samples, 24 successful samples, 1 timeout sample.
+  - Active paper deployment stayed enabled with `500` symbols; disabled live deployment still had `90` symbols, confirming the old 90 surface is not the active STA path.
+  - Signal-monitor state count ranged `203-214`, not 90.
+  - STA rows ranged `13-14`; cockpit signals ranged `13-14`.
+  - STA `cachedAt` advanced on every successful sample (`24` unique values), from `2026-06-05T16:04:01.077Z` to `2026-06-05T16:06:37.653Z`; this is realtime/sub-minute updating, not a five-minute batch.
+  - No successful sample had zero STA rows, zero cockpit rows, or stale empty fallback behavior.
+  - TLT never appeared in STA. TLT remained in signal-monitor state only as the old non-fresh `sell` from `2026-06-05T12:30:00.000Z`, proving the partial-bar TLT `buy` no longer enters STA after the fix.
+- Latest remaining-pressure RCA:
+  - Current flight recorder after the STA watch showed API pressure `high` on API PID `65841`; the dominant slow route had shifted to `GET /positions` with `p95Ms: 32363`, while `/api/bars` was being shed quickly with 429 under pressure.
+  - Direct `/api/positions` probes reproduced the issue live: reads took `40.0s`, `35.1s`, `34.4s`, `24.1s`, and `22.7s`; after pressure rose, a later `/positions` call returned a fast `504`.
+  - The route path is `/positions` -> `listPositions(query)` -> `client.listPositions(...)` -> `enrichBrokerPositionsForDisplay(...)`. The repeated long reads after a non-empty response showed the slow segment was not just the short positions cache; option quote display enrichment was blocking.
+  - Concrete root cause: `enrichBrokerPositionsForDisplay` requests option quote snapshots with `intent: "visible-live"`, but `fetchBridgeOptionQuoteSnapshots` only attached the existing `IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS` timeout to `flow-scanner-live`, `account-monitor-live`, and signal-options automation live owners. `visible-live` therefore waited on `bridgeClient.getOptionQuoteSnapshots(...)` without the bounded foreground timeout.
+  - Fixed source: `visible-live` snapshot hydration now keeps visible/options admission semantics but uses the same bounded foreground snapshot timeout. A stalled bridge call returns cached/empty quote metadata instead of holding the active-screen API route for 20-40s.
+  - Running API PID `65841` predates the patch. `pnpm -C artifacts/api-server run build` rebuilt `dist/index.mjs`; live `/api/positions` verification requires the normal Replit Run App restart.
+- Latest timeout-patch validation passed:
+  - `node JS validation runner src/services/bridge-option-quote-stream.validation.ts` from `artifacts/api-server` (`36/36`).
+  - `pnpm -C artifacts/api-server run typecheck`.
+  - `pnpm -C artifacts/api-server run build`.
+  - `git diff --check -- artifacts/api-server/src/services/bridge-option-quote-stream.ts artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_MASTER.md SESSION_HANDOFF_LIVE_2026-06-05_api-data-watch.md SESSION_HANDOFF_LIVE_2026-06-05_cache-bars-pressure.md`.
+  - Broader adjacent command `node JS validation runner src/services/account-positions.validation.ts src/services/bridge-option-quote-stream.validation.ts src/services/market-data-admission.validation.ts src/services/bridge-governor.validation.ts` had one existing dirty-worktree failure in `account-positions.validation.ts` around a source regex for `demandStatus`; the bridge option timeout, market-data admission, and bridge-governor tests passed.
+- Findings:
+  - API health probes timed out 4/20 times at the 5s client timeout; successful probes still reached 2.143s.
+  - API pressure stayed `high` for the full window. Final drivers were API latency at 17105 ms and cache pressure at `watch`.
+  - Recorder observed 38 unique recent `429 GET /api/bars` failures in the rolling request summaries, last at 2026-06-05T13:08:04.605Z.
+  - `api-events-2026-06-05.jsonl` recorded 5 `api-memory-pressure` events during the exact watch window; RSS ranged 1785.6-2128.8 MiB against a 1536 MiB threshold.
+  - API runtime process `dist/index.mjs` stayed alive but was saturated: RSS rose from 1836036 KiB to 2160132 KiB and CPU was about 94-96%.
+  - Supervisor heartbeats were steady: 66 heartbeat events during the window and no new incident rows.
+  - Data-line pressure was not the limiting issue. `/api/settings/ibkr-line-usage` returned normal line pressure; a post-watch sample showed 14 active lines, 186 remaining, bridge pressure `degraded`.
+  - Runtime diagnostics after the watch showed high memory pressure, 26 persisted market-data jobs queued, `persistWorkerInactive: true`, and scanner quiet-session state with 8 active deep scans and 178 queued deep scans.
+- Validation status: Monitoring complete; no app restart or Replit control-plane action performed.
+- Implementation completed:
+  - Added provider-neutral `MarketDataTransport` contract values: `client_portal`, `tws`, `massive_rest`, `massive_websocket`.
+  - Regenerated API clients/zod output so quote/bar payloads and responses no longer reuse `IbkrBridgeHealthTransport`.
+  - Updated Massive quote/bar production mappings: REST/stored bars use `massive_rest`; websocket quote/aggregate paths use `massive_websocket`; IBKR paths remain `tws`.
+  - Fixed Rust worker config and diagnostics: `LOCAL_DATABASE_URL` is accepted, duplicate Massive env lookup removed, doctor requires provider config, missing-provider message names `MASSIVE_MARKET_DATA_API_KEY`.
+  - Added worker permanent/transient failure classification and same-bucket GEX prerequisite reconciliation so blocked GEX jobs fail when stock/option-chain prerequisites already failed.
+  - Added GEX refresh outcome handling: enqueue failures, inactive-worker diagnostics, and pending refresh now surface distinct `gex_snapshot_enqueue_failed`, `gex_snapshot_worker_inactive`, and `gex_snapshot_pending` states.
+  - Updated GEX universe refresh planning to avoid immediate re-enqueue for recent permanent prerequisite failures.
+  - Updated Replit dev supervisor to start `market-data-worker:run` after API health when DB and Massive provider config are present, skip explicitly when missing config, and treat a started worker exit as supervisor-fatal.
+- Validation passed:
+  - `pnpm --dir artifacts/api-server exec node JS validation runner src/services/gex.validation.ts src/services/gex-universe-refresh.validation.ts`
+  - `pnpm --dir artifacts/api-server exec node JS validation runner src/services/gex.validation.ts src/services/gex-universe-refresh.validation.ts src/services/platform-quote-snapshot.validation.ts src/services/bar-contract.validation.ts src/services/account-positions.validation.ts`
+  - `pnpm --dir artifacts/api-server exec node JS validation runner src/services/market-data-ingest.validation.ts`
+  - `pnpm --dir artifacts/api-server run typecheck`
+  - `pnpm --filter @workspace/api-client-react run typecheck`
+  - `pnpm exec tsc -p lib/api-zod/tsconfig.json --noEmit`
+  - `pnpm exec tsc -p lib/ibkr-contracts/tsconfig.json --noEmit`
+  - `pnpm run fmt:market-data-worker`
+  - `pnpm run market-data-worker validation`
+  - `pnpm run build:market-data-worker`
+  - `node --check artifacts/pyrus/scripts/runDevApp.mjs && node --check scripts/check-replit-startup-guards.mjs`
+  - `pnpm run audit:replit-startup`
+  - `git diff --check`
+- Validation caveat:
+  - `pnpm run audit:api-codegen` regenerated the clients successfully but failed at its built-in `pnpm -w run typecheck:libs` step because the live PYRUS/Replit runtime is hot. The hot-runtime guard was not overridden; targeted library/API typechecks passed instead.
+- Follow-up UI diagnostics pass:
+  - Added `ContainerLoadingStatus` with text-only wait lines, elapsed timers, status labels, query-state helpers, and endpoint sanitization that strips hosts/query strings and masks account/long ids.
+  - Wired route module fallback, `DataUnavailableState`, account `Panel`, and account lazy-panel Suspense fallbacks so visible loading containers name the active module/data boundary.
+  - Corrected Account lazy-panel fallback semantics: Suspense fallbacks report the code module as the active wait and include API dependencies as context, instead of showing fake active API waits.
+  - Wired custom loading surfaces in Algo, Research, GEX, Trade option chart, Trade deferred panels, option chain, Signals, flow contract detail, Algo monitor sidebar, trade positions/L2, and account trading-analysis sections.
+  - Added chart empty-state pass-through so `loadingWaitItems` on the Trade option chart are actually rendered by `ResearchChartSurface`.
+  - Added focused source-contract coverage for the diagnostic wiring.
+- UI diagnostics validation passed:
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/components/platform/ContainerLoadingStatus.validation.js`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js`
+  - `pnpm -C artifacts/pyrus run typecheck`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/components/platform/primitives.validation.js`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/components/LogoLoader.validation.ts src/screens/algo/algoHelpers.validation.js`
+  - `git diff --check`
+  - Safe-mode browser smoke against `http://127.0.0.1:18747/?pyrusQa=safe`: Market shell reached `market-render-root`, no console/page errors, no failed responses.
+- STA/API worker follow-up:
+  - Fixed STA exact-cell matrix refresh so stale 5-minute matrix cache cannot satisfy visible STA exact cells; stale cache now awaits fresh refresh for STA exact-cell requests.
+  - Fixed signal-options worker action scans so worker scans requiring action work bypass current stored monitor state and force live-edge refresh.
+  - Fixed signal-options fast summary refresh so `refreshSignalsFromMonitorState: true` is honored; fresh summary responses now return `cacheStatus: "hit"` instead of stale fast-signal-state metadata when refresh succeeds.
+  - Fixed live STA action rows so signal-monitor event history is opt-in and no longer appears in the live action table by default. This directly addresses AAPU historical rows with `Historical Signal` contract/quote/greeks/gate cells.
+  - Fixed the signal-monitor profile worker (`trade-monitor-worker.ts`) so fresh aggregate stream activity no longer suppresses bounded history backfill. The old gate let a fresh stream advance the rotation cursor without writing missing 500-universe coverage.
+  - Invalidated `/api/signal-monitor/state` memory cache when signal-monitor profile evaluation metadata is updated, so worker writes are visible to stale-fast state readers.
+  - Fixed the exact `90 states` symptom after restart: `readSignalMonitorStateFresh` resolved 500+ universe symbols but filtered persisted states through pinned `watchlistSymbols`, which was 90 for the active paper profile. The DB already had 517 active signal-monitor rows; the state route was hiding expansion-universe rows. It now filters current state rows through resolved active `symbols` instead.
+- STA/API validation passed:
+  - `node JS validation runner src/services/trade-monitor-worker.validation.ts src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts` from `artifacts/api-server` (277 tests), including the state-universe regression assertion.
+  - `pnpm -C artifacts/api-server run typecheck`
+  - `pnpm -C artifacts/api-server run build`
+  - `pnpm -C artifacts/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js` (45 tests).
+  - `pnpm -C artifacts/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` (27 tests).
+- Live verification status:
+  - Before the latest rebuild, live `/api/signal-monitor/state?environment=paper` on port 8080 showed `cacheStatus: "stale"`, `stateCount: 59`, `universeSymbols: 500`, and only `fresh: 2`; a full synchronous `/api/signal-monitor/evaluate` timed out after 180 seconds with zero bytes, confirming full-universe HTTP scans are not viable for real-time.
+  - After the user restart at 2026-06-05T15:19Z, live `/api/signal-monitor/state?environment=paper` still reported `states: 90` while the profile had `maxSymbols: 500` and a 500-symbol universe. Direct DB inspection showed `total: 623`, `active: 517`, `ok: 430`, `fresh: 26`, proving worker hydration was not limited to 90.
+  - The fixed source, run against the live DB in a separate process, returned `states: 303`, `universe: 532`, and `expansionRows: 214`, proving the route filter fix removes the watchlist-only cap. The running API still returns 90 because PID `50190` started at 2026-06-05 09:19:11 MDT before this rebuild and has not reloaded.
+  - Next required action is a normal Replit Run App restart. After restart, verify `/api/healthz`, `/api/signal-monitor/state?environment=paper`, `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state`, and exact STA `/api/signal-monitor/matrix` over several polls.
+- Loading audit pass after visible wait diagnostics:
+  - Fixed cross-route signal-matrix ownership in `PlatformApp.jsx`: matrix requests now preserve a normalized reason, only explicit surface reasons can own background matrix hydration, auxiliary frame data waits for the active route ready phase, and stale/in-flight matrix evaluations are aborted and epoch-guarded. Browser audit after the fix showed stale matrix work aborting instead of completing on GEX/Account/Settings/Market.
+  - Fixed Account Equity Curve false loading: disabled/no-data React Query state no longer renders `Loading Equity Curve`; loading now requires an active fetch or non-idle pending fetch. Focused Account browser sample showed no visible wait containers and rendered the empty state.
+  - Fixed DB-backed GEX over-payload: persisted GEX dashboard payloads are compacted before API response, optional broker metadata is omitted, and expired option rows are filtered using the snapshot reference time. Direct source-service measurement on SPY dropped from the sampled 6.5 MB dashboard payload to ~2.75 MB, with 13,034 non-expired rows and preserved GEX math fields.
+  - Fixed GEX route readiness:  shell readiness can paint immediately, but derived/background readiness waits until data, empty state, or error settles. This prevents unrelated background surfaces from competing while GEX is still waiting.
+  - Fixed Algo Monitor whole-card cockpit loading: the sidebar no longer blocks the entire card on cockpit REST fallback; deployments are the only shell prerequisite, cockpit uses previous query data, and stream/query-cache cockpit snapshots fill sections as they arrive.
+  - Fixed cockpit scan-stage semantics: current signal state no longer renders `worker waiting Ns; signal state current`; it renders ready/next-scan wording. Partial refreshes such as `12/500 symbols` still report worker waiting.
+  - Built the API bundle with `pnpm -C artifacts/api-server run build`; running API PID still predates the rebuild, so live HTTP verification of backend changes needs normal Replit Run App restart.
+- Loading audit evidence:
+  - Direct `getGexDashboardData({ underlying: "SPY" })` via `tsx`: ~1006 ms, ~2,747,170 bytes, 13,034 options, first row contains only screen-needed GEX fields.
+  - Direct `getAlgoDeploymentCockpit(...)` via `tsx`: ~1600 ms, ~18,559 bytes, 14 signals, scan stage detail `500 symbols ready`.
+  - Safe browser launch at `http://127.0.0.1:18747/?pyrusQa=safe`: 2727 ms to sample, no console issues, no failed requests, no visible wait containers.
+- Loading audit validation passed:
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/gex.validation.ts`
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-options-automation.validation.ts`
+  - `pnpm -C artifacts/api-server run typecheck`
+  - `pnpm -C artifacts/api-server run build`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/gex/gexDataWiring.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/live-streams.validation.ts src/screens/account/accountCalendarData.validation.js`
+  - `pnpm -C artifacts/pyrus run typecheck`
+  - `git diff --check`
+
+- Post-restart check and follow-up fixes:
+  - Confirmed API process PID `56640` and Vite process PID `56774` were restarted at 09:43 MDT and the health endpoint responded quickly.
+  - Live cockpit after restart was healthy: repeated cockpit calls were `1.65s`, `0.06s`, `0.53s` and scan detail read `500 symbols ready; last refresh 500 symbols`.
+  - Live signal-monitor state after restart returned `195` paper states and `500` universe symbols, so the old exact 90-row symptom was no longer the active cap in the restarted bundle.
+  - Found remaining GEX issue: `/api/gex/SPY` and `/api/gex/SPY/zero-gamma` still took `2-11s` while serving stale persisted data. Root cause was stale persisted snapshots awaiting refresh enqueue/diagnostics and caching with `expiresAt: 0`, repeating the slow path every request.
+  - Fixed GEX stale-while-revalidate: stale persisted snapshots now return immediately, cache for `GEX_DASHBOARD_STALE_CACHE_TTL_MS` (default 5s), and schedule refresh/diagnostics in the background. Source probe: first stale SPY GEX `760ms`, repeat GEX `0ms`, zero-gamma `2ms`.
+  - Safe browser launch check: `http://127.0.0.1:18747/?pyrusQa=safe` reached `[data-testid="platform-screen-stack"]`, no root crash, no boot loader, no console errors, DOM ready `294ms`, load `621ms`. Only slow launch API was `/api/settings/preferences` at ~1.6s.
+  - Fixed preferences GET path with an in-process coalesced snapshot cache. Source probe: first preferences read `42ms`, repeats `0ms`; writes update the cache after persistence/fallback write.
+  - Rechecked the earlier account 1W trades symptom. Live API returned zero closed trades for 1W/30D/365D/ALL, while Flex health reported `flexTradeRowCount: 26`. Raw Flex rows had signed buy/sell quantities but `openClose: null` and `realizedPnl: 0`, so the old service discarded all rows.
+  - Fixed account closed trades by reconstructing Flex round trips from FIFO buy/sell lots when explicit close markers are absent, fetching prior opening rows before applying date filters, and recognizing IBKR `OPT`/OCC option symbols as Options. Source probe for `U24762790` since `2026-05-29`: `9` closed trades, `4` Options and `5` Stocks, summary realized P&L `2018.97`.
+  - Confirmed Ford options position payload no longer shows the impossible `-$51k` P&L: live positions returned F option `marketValue: 290.00`, `unrealizedPnl: -229.84`; FCEL stock returned `unrealizedPnl: 497.10`.
+- Post-restart follow-up validation passed:
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/account-trade-annotations.validation.ts src/services/account-orders.validation.ts`
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/gex.validation.ts src/services/account-trade-annotations.validation.ts src/services/account-orders.validation.ts src/services/user-preferences-model.validation.ts src/services/signal-options-automation.validation.ts` (187/187)
+  - `pnpm -C artifacts/api-server run typecheck`
+  - `pnpm -C artifacts/api-server run build`
+  - `git diff --check`
+- Live proof after API self-restart to PID `64333`:
+  - `/api/gex/SPY`: `326ms`, repeat `54ms`, compact option rows preserved.
+  - `/api/gex/SPY/zero-gamma`: `18ms`.
+  - `/api/settings/preferences`: `13ms`, repeat `17ms`.
+  - `/api/accounts/U24762790/closed-trades?from=2026-05-29&source=check-work-live`: `9` trades, `4` Options and `5` Stocks, realized P&L `2018.97`.
+  - `/api/signal-monitor/state?environment=paper`: `214` states, `500` universe symbols, old exact 90-row cap absent.
+  - `/api/algo/deployments/paper-enabled/cockpit`: `78ms`; scan-stage detail `500 symbols ready; last refresh 500 symbols; next scan in 59s`.
+- Remaining caution:
+  - Runtime diagnostics still show broader account compute pressure under load, with risk-build operations able to spike into ~1-2s. Treat that as a separate follow-up from the fixed launch/GEX/preferences/closed-trades symptoms.
+
+- Latest account positions realtime quote freshness implementation:
+  - Root cause: option positions could have both a structured IBKR alias and a numeric conid alias. The backend/frontend subscribed to or selected the first available alias in several places, so a stale structured quote could beat a live numeric quote and the table could keep rendering old bid/ask/Greeks.
+  - Backend `getAccountPositions` option quote hydration now selects the best demand state across aliases by quote presence, quote/Greeks status, quote timestamp, demand timestamp, and cache age. The account route can therefore prefer a live numeric conid over a stale structured alias while still carrying split quote/Greeks diagnostics.
+  - Frontend account positions quote groups now stream every relevant alias: generated structured id, hydrated/current quote id, option contract provider id, and conid. The rendered row then picks the freshest live snapshot across those aliases instead of only checking the first id.
+  - Account stream cache patching now applies the same alias freshness comparison. The merge path keeps provider identity from the quote side that supplied the usable market quote, so live numeric quote updates win over stale structured aliases without breaking the existing structured-live-over-mark-only-snapshot guard.
+  - Consumer audit: the Accounts page uses `useGetAccountPositions` / `/api/accounts/:id/positions`; legacy `/api/positions` remains in Trade, Portfolio Pulse, and alert surfaces and is separately patched from IBKR account streams.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `cd artifacts/api-server && node JS validation runner src/services/account-positions.validation.ts src/services/ibkr-live-demand-coordinator.validation.ts src/services/bridge-option-quote-stream.validation.ts`
+    - `cd artifacts/pyrus && node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/platform/live-streams.validation.ts src/features/account/positionDisplayModel.validation.js`
+    - `git diff --check`
+    - `pnpm run audit:replit-startup`
+
+- Latest Algo page no-delay content pass:
+  - Root cause for the visible content delay was in the route code, not backend data: `AlgoScreen.jsx` waited 650ms before mounting `LazyAlgoLivePage`, `AlgoLivePage.jsx` waited another 1500ms before rendering the right rail, and the live workspace/right rail were nested lazy chunks behind those gates.
+  - Fixed `AlgoScreen.jsx` so `AlgoLivePage` and `AlgoRightRail` are static route imports and render directly as first-viewport Algo content. The Algo `preloadScreenModules` contract now delegates to `preloadAlgoLivePageModules()` and no longer starts delayed nested loaders.
+  - Fixed `AlgoLivePage.jsx` so right rail content renders immediately via `rightRail ?? rightRailFallback`; removed `ALGO_RIGHT_RAIL_DEFER_MS` and `rightRailRenderAllowed`.
+  - Updated source guards in `platformRootSource.validation.js` to fail if the old Algo hydration timer, lazy live-page/right-rail loaders, Suspense loading placeholders, or right-rail defer timer return.
+  - Validation passed:
+    - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js src/features/platform/live-streams.validation.ts src/screens/algo/OperationsSignalRow.validation.js` (`166/166`)
+    - `pnpm -C artifacts/pyrus run typecheck`
+  - Safe browser proof on existing Replit app `http://127.0.0.1:18747/?pyrusQa=safe`: `algo-screen` at 1673ms, `algo-live-grid` at 1964ms, STA table at 1972ms, right rail at 1978ms, `loadingCount: 0`, `optionQuoteRestRequestCount: 0`, `matrixRequestCount: 1`.
+
+- Latest STA fresh-state blocker fix:
+  - Confirmed first blocker in the Massive-to-STA trace: `/api/algo/deployments/:deploymentId/signal-options/state` used the fast summary dashboard cache, allowing 15s fresh cache, 120s stale cache, and stale fallback while a refresh continued. That path can delay or misrepresent live STA rows.
+  - Fixed `signal-options-automation.ts` so `refreshSignalsFromMonitorState: true` bypasses cached/stale summary rows, uses a separate in-flight lane from stored summary refreshes, and rejects on refresh timeout/error instead of serving stale or cold-empty signal rows.
+  - Full-view state refresh now also rethrows signal-refresh failures when the route explicitly asks for fresh signal-monitor rows.
+  - Updated `signal-options-automation.validation.ts` source guards to remove the old stale-fallback expectation and assert no `staleFallback`/summary-cache read in the fresh STA branch, a separate `signalOptionsFastSignalRefreshInFlight`, and explicit timeout rejection.
+  - Validation passed:
+    - `pnpm -C artifacts/pyrus exec tsx validation runner ../api-server/src/services/signal-options-automation.validation.ts` (`141/141`)
+    - `pnpm -C artifacts/pyrus exec tsc -p ../api-server/tsconfig.json --noEmit`
+    - `git diff --check -- artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.validation.ts`
+  - Stop point: do not continue to IBKR contract-selection blockers until this first blocker is restarted/live-proved or the user explicitly directs otherwise.
+
+- Latest account positions quote freshness audit after no-guessing correction:
+  - Process failure recorded: the diagnostics route was initially guessed as `/api/runtime/diagnostics`; source later confirmed the real route is `/api/diagnostics/runtime` via `artifacts/api-server/src/routes/platform.ts`.
+  - Source audit found the intended alias fix in place: backend best-state selection across option aliases, frontend subscription/render selection across structured/current/numeric ids, and stream-cache alias freshness selection.
+  - Current validation passed:
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `cd artifacts/api-server && node JS validation runner src/services/account-positions.validation.ts src/services/ibkr-live-demand-coordinator.validation.ts src/services/bridge-option-quote-stream.validation.ts` (`74/74`)
+    - `cd artifacts/pyrus && node JS validation runner src/screens/account/PositionsPanel.validation.js src/features/platform/live-streams.validation.ts src/features/account/positionDisplayModel.validation.js` (`113/113`)
+    - Scoped `git diff --check` for the positions/stream/instruction files.
+  - Live runtime audit over 12 samples from `12:19:17` to `12:21:37 MDT`: every successful `/api/accounts/combined/positions?mode=live` sample showed the F option provider `880754762` but `optionQuote.providerContractId=twsopt:...`, `bid=null`, `ask=null`, `price=null`, `quoteStatus=pending`, `greeksStatus=pending`.
+  - Matching `/api/diagnostics/runtime` samples showed option quote stream active and both F aliases requested (`hasFNumeric=true`, `hasFStructured=true`). Before a mid-watch server bounce, global option quote events advanced but F stayed pending; after the bounce, cache/event counters reset to zero and later reported `lastError="Upstream request failed."` with pressure normal.
+  - Audit conclusion: do not claim the user-visible symptom is fixed. The alias-selection implementation is covered and appears correct, but current live runtime still lacks usable F option quote data. Next scoped investigation should target why the bridge option quote stream/hydration is not delivering/promoting quotes for the requested F aliases.
+  - One-minute recheck at `2026-06-05T18:25:51Z` to `2026-06-05T18:26:55Z`: FCEL stock updated on every sample (`17.605 -> 17.6 -> 17.5996 -> 17.5937 -> 17.63 -> 17.59`) with fresh `dataUpdatedAt` timestamps. The F option remained unchanged on all six samples with `bid=null`, `ask=null`, `price=null`, `quoteStatus=pending`, `greeksStatus=pending`, and `optionQuote.providerContractId=twsopt:...`. Diagnostics continued to show stream active, pressure normal, both F aliases requested, no event-count movement for this window, and `lastError="Upstream request failed."`.
+  - Correction after direct bridge call: user was right that the data exists. A raw authenticated bridge `GET /options/quotes?underlying=F&contracts=880754762,twsopt:...` returned both F quotes with bid `0.50`, ask `0.51`, price `0.50`, IV/Greeks, and provider ids for both numeric and structured aliases. The raw bridge call took `61154ms`.
+  - Immediately after that raw bridge call, the app API returned the same two quotes in `1410ms` (`upstreamMs=340`) and `/api/accounts/combined/positions?mode=live` showed the F option with bid `0.5`, ask `0.51`, price `0.5`, provider `880754762`, `quoteStatus=stale`, `greeksStatus=stale`, delta `0.45648844718084336`, theta `-0.01536366694978214`.
+  - Corrected conclusion: the earlier "bridge returned no usable quote" conclusion was wrong/incomplete. The app was timing out or aborting cold option quote hydration before the bridge returned data; the manual raw bridge request warmed the bridge/API path and the positions row then populated. Investigate timeout/cache/stream promotion behavior around cold option quote hydration next.
+  - Fix implemented at `2026-06-05T18:47:01Z`: removed the local foreground live option quote snapshot timeout wrapper from `fetchBridgeOptionQuoteSnapshots`. Account-monitor and visible-live option quote hydration now pass the original caller abort signal through instead of a short `IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS` signal.
+  - Also added `timeoutMs` override support to `IbkrBridgeClient.getOptionQuoteSnapshots` and pass `timeoutMs: 0` for account-monitor/visible-live quote hydration, so those foreground paths do not hit the bridge client's default option quote request timeout after the local wrapper is removed.
+  - Regression tests now set the old `IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS=25`, delay the fake bridge response past that window, and assert automation/account/visible live quote snapshots still return quotes. Account/visible tests also assert `timeoutMs: 0` is sent to the bridge client.
+  - Validation passed:
+    - `node JS validation runner src/providers/ibkr/bridge-client.validation.ts src/services/bridge-option-quote-stream.validation.ts` (`53/53`)
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `node JS validation runner src/services/account-positions.validation.ts src/services/ibkr-live-demand-coordinator.validation.ts src/services/bridge-option-quote-stream.validation.ts` (`74/74`)
+    - `pnpm -C artifacts/api-server run build`
+    - Scoped `git diff --check`

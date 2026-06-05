@@ -114,10 +114,10 @@ export function createWorkspaceLeadershipStore({
     const visible = readDocumentVisible(documentRef);
     if (!storage) {
       emit({
-        isLeader: visible,
+        isLeader: true,
         visible,
-        leaderId: visible ? instanceId : null,
-        reason: visible ? "storage-unavailable" : "page-hidden",
+        leaderId: instanceId,
+        reason: "storage-unavailable",
       });
       return snapshot;
     }
@@ -125,18 +125,17 @@ export function createWorkspaceLeadershipStore({
     const leader = readLeader();
     const leaderId =
       typeof leader?.instanceId === "string" ? leader.instanceId : null;
-    const leaderVisible = leader?.visible === true;
     const leaderExpiresAt = Number(leader?.expiresAt);
     const leaderFresh =
       leaderId && Number.isFinite(leaderExpiresAt) && leaderExpiresAt > now();
     const ownLeader = leaderId === instanceId;
-    const canClaim = !leaderFresh || ownLeader || (visible && !leaderVisible);
+    const canClaim = !leaderFresh || ownLeader;
 
-    if (visible && canClaim) {
-      if (!writeLeader(true)) {
+    if (canClaim) {
+      if (!writeLeader(visible)) {
         emit({
           isLeader: true,
-          visible: true,
+          visible,
           leaderId: instanceId,
           reason: "storage-unavailable",
         });
@@ -144,30 +143,9 @@ export function createWorkspaceLeadershipStore({
       }
       emit({
         isLeader: true,
-        visible: true,
+        visible,
         leaderId: instanceId,
         reason: ownLeader ? "leader-heartbeat" : "leader-claimed",
-      });
-      return snapshot;
-    }
-
-    if (!visible && ownLeader) {
-      clearOwnLeader();
-    } else if (!visible && !leaderFresh) {
-      if (!writeLeader(false)) {
-        emit({
-          isLeader: false,
-          visible: false,
-          leaderId: null,
-          reason: "page-hidden",
-        });
-        return snapshot;
-      }
-      emit({
-        isLeader: true,
-        visible: false,
-        leaderId: instanceId,
-        reason: "hidden-standby",
       });
       return snapshot;
     }
@@ -176,7 +154,7 @@ export function createWorkspaceLeadershipStore({
       isLeader: false,
       visible,
       leaderId: leaderFresh ? leaderId : null,
-      reason: visible ? "follower" : "page-hidden",
+      reason: "follower",
     });
     return snapshot;
   };

@@ -14,7 +14,7 @@ long symbols, the sparkline↔price alignment is loose, and it gets cramped at n
 replaces the desktop + mobile-dense forks. Uses the CSS container-query approach adopted as the
 app-wide standard (see `ALGO_RIGHT_RAIL_REDESIGN.md` Part A).
 
-Frontend under `artifacts/pyrus/`. Stylesheet `src/index.css` (asserted by `lib/uiTokens.test.js`).
+Frontend under `artifacts/pyrus/`. Stylesheet `src/index.css` (asserted by `lib/uiTokens.validation.js`).
 No backend / schema changes.
 
 ## Decisions locked
@@ -136,7 +136,7 @@ the existing expand toggle (expands to full cards). `overflow-y:auto`, `ra-scrol
 - `src/features/platform/PlatformShell.jsx` — render `WatchlistMicroRail` in the collapsed sidebar.
 - New `src/features/platform/WatchlistMicroRail.jsx` (Part D).
 - `src/features/platform/watchlistModel.js` — surface `bid`/`ask`/`volume`/`chg`/`pct` onto the row model if not already; volume compact formatter (reuse if present).
-- `lib/uiTokens.test.js` — keep/extend `index.css` assertions.
+- `lib/uiTokens.validation.js` — keep/extend `index.css` assertions.
 
 ## Verification
 
@@ -144,7 +144,7 @@ the existing expand toggle (expands to full cards). `overflow-y:auto`, `ra-scrol
 2. `pnpm --filter @workspace/pyrus run test` — add tests: `WatchlistRow` renders all elements
    (symbol, signal pill+dots, price, chg$, %chg, spark, vol, bid/ask) with no element dropped; null
    bid/ask/vol → `—`; selected → bg tint; persistent %chg color by sign; `WatchlistMicroRail` click
-   expands. Keep `uiTokens.test.js` green.
+   expands. Keep `uiTokens.validation.js` green.
 3. **Fluid/reflow smoke (key check):** run app → resize the watchlist sidebar across 196→320px and
    open the 380px mobile drawer. Confirm: at wide widths one dense line shows everything; as it
    narrows, sparkline + gaps shrink (cqi), text scales to its 10px floor, then content reflows to 2

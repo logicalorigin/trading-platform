@@ -292,8 +292,14 @@ export async function loadStoredMarketBars(
           .orderBy(desc(barCacheTable.startsAt))
           .limit(limit);
 
+    const normalizedSourceName = input.sourceName.toLowerCase();
     const delayed =
-      input.sourceName.includes("massive") && !isMassiveStocksRealtimeConfigured();
+      normalizedSourceName.includes("delayed") ||
+      (normalizedSourceName.includes("massive") &&
+        !isMassiveStocksRealtimeConfigured());
+    const transport = normalizedSourceName.includes("websocket")
+      ? "massive_websocket"
+      : "massive_rest";
     const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
 
     return normalizeBarsToStoreTimeframe(
@@ -309,7 +315,7 @@ export async function loadStoredMarketBars(
           providerContractId: null,
           outsideRth: input.outsideRth !== false,
           partial: false,
-          transport: "tws" as const,
+          transport,
           delayed,
           freshness,
           dataUpdatedAt: row.startsAt,

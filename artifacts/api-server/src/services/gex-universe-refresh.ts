@@ -49,6 +49,7 @@ const GEX_UNIVERSE_REFRESH_JOB_PRIORITIES: Record<
   option_chain_snapshot: 2,
   gex_snapshot: 3,
 };
+const GEX_UNIVERSE_PREREQUISITE_FAILURE_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
 export type GexUniverseRefreshScope = "high_beta_500" | "symbols";
 
@@ -660,6 +661,49 @@ function resolveSymbolHydration(input: {
   };
 }
 
+function isRecentPermanentPrerequisiteFailure(
+  row: GexUniverseRefreshJobRow,
+  now: Date,
+): boolean {
+  const kind = String(row.kind);
+  if (
+    kind !== "stock_snapshot" &&
+    kind !== "option_chain_snapshot" &&
+    kind !== "gex_snapshot"
+  ) {
+    return false;
+  }
+  const updatedAt = toDate(row.updatedAt ?? row.createdAt);
+  if (
+    !updatedAt ||
+    now.getTime() - updatedAt.getTime() > GEX_UNIVERSE_PREREQUISITE_FAILURE_COOLDOWN_MS
+  ) {
+    return false;
+  }
+  return isPermanentPrerequisiteFailureMessage(row.lastError);
+}
+
+function isPermanentPrerequisiteFailureMessage(
+  message: string | null | undefined,
+): boolean {
+  const normalized = message?.toLowerCase() ?? "";
+  if (!normalized) {
+    return false;
+  }
+  if (
+    normalized.includes("provider returned no usable stock snapshot") ||
+    normalized.includes("provider returned no option-chain snapshots") ||
+    normalized.includes("option-chain snapshot truncated") ||
+    normalized.includes("massive_api_key or massive_market_data_api_key must be set")
+  ) {
+    return true;
+  }
+  return (
+    /\b(400|401|403|404|422)\b/.test(normalized) &&
+    /\b(http|status|client error|response)\b/.test(normalized)
+  );
+}
+
 export async function resolveGexUniverseSymbols(
   input: RefreshGexUniverseSnapshotsInput,
   dependencies: Pick<
@@ -798,6 +842,9 @@ export function buildGexUniverseRefreshPlan(input: {
     const runningJobs = jobs.filter((row) => row.status === "running");
     const queuedJobs = jobs.filter((row) => row.status === "queued");
     const failedJobs = jobs.filter((row) => row.status === "failed");
+    const permanentPrerequisiteFailures = failedJobs.filter((row) =>
+      isRecentPermanentPrerequisiteFailure(row, now),
+    );
     const activeJobs = [...runningJobs, ...queuedJobs];
     const hydration = resolveSymbolHydration({ snapshot, computedAt, now });
     let status: GexUniverseRefreshSymbolStatus;
@@ -810,6 +857,9 @@ export function buildGexUniverseRefreshPlan(input: {
     } else if (queuedJobs.length > 0) {
       status = "queued";
       reason = "refresh_job_queued";
+    } else if (permanentPrerequisiteFailures.length > 0) {
+      status = "failed";
+      reason = "recent_permanent_prerequisite_failure";
     } else if (!computedAt && failedJobs.length > 0) {
       status = "failed";
       eligible = true;

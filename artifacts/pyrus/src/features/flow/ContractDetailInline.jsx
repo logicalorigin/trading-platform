@@ -1138,6 +1138,7 @@ export const ContractDetailInline = ({
                 >
                   <DataUnavailableState
                     loading={Boolean(optionChartLoadingDetail)}
+                    loadingEndpoint="/api/chart/option-bars"
                     title={
                       optionChartLoadingDetail
                         ? "Loading option history"

@@ -62,4 +62,5 @@ export interface AccountPositionRow {
   openedAt?: Date | null;
   openedAtSource?: PositionOpenedAtSource | null;
   quote?: PositionQuote | null;
+  optionQuote?: PositionQuote | null;
 }

@@ -37,6 +37,34 @@ const normalizeQuoteSource = (value, fallback) => {
   return source;
 };
 
+const isAutomationEventQuoteSource = (source) =>
+  source === "automation_event_quote";
+
+const quoteMetadata = (quote) => ({
+  providerContractId: firstText(quote?.providerContractId),
+  transport: firstText(quote?.transport),
+  delayed: quote?.delayed ?? null,
+  dataUpdatedAt: firstText(quote?.dataUpdatedAt),
+  ageMs: finiteNumber(quote?.ageMs),
+  cacheAgeMs: finiteNumber(quote?.cacheAgeMs),
+  status: firstText(quote?.status, quote?.quoteStatus),
+  reason: firstText(quote?.reason),
+  quoteStatus: firstText(quote?.quoteStatus, quote?.status),
+  quoteReason: firstText(quote?.quoteReason),
+  greeksStatus: firstText(quote?.greeksStatus),
+  greeksReason: firstText(quote?.greeksReason),
+  demandStatus: firstText(quote?.demandStatus),
+  demandReason: firstText(quote?.demandReason),
+  quoteFreshness: firstText(quote?.quoteFreshness, quote?.freshness),
+  greeksFreshness: firstText(quote?.greeksFreshness),
+  underlyingPrice: positiveNumber(quote?.underlyingPrice),
+  unavailableDetail: firstText(
+    quote?.unavailableDetail,
+    quote?.quoteReason,
+    quote?.reason,
+  ),
+});
+
 const buildQuote = (quote, fallbackMark, source) => {
   if (!quote) {
     const mark = positiveNumber(fallbackMark);
@@ -59,16 +87,20 @@ const buildQuote = (quote, fallbackMark, source) => {
         };
   }
 
-  const bid = finiteNumber(quote.bid);
-  const ask = finiteNumber(quote.ask);
-  const last = positiveNumber(quote.last ?? quote.price);
-  const quotedMid = positiveNumber(quote.mid);
+  const normalizedSource = normalizeQuoteSource(quote.source, source);
+  const automationEventQuote = isAutomationEventQuoteSource(normalizedSource);
+  const bid = automationEventQuote ? null : finiteNumber(quote.bid);
+  const ask = automationEventQuote ? null : finiteNumber(quote.ask);
+  const last = automationEventQuote ? null : positiveNumber(quote.last ?? quote.price);
+  const quotedMid = automationEventQuote ? null : positiveNumber(quote.mid);
   const mid =
     bid != null && ask != null && (bid > 0 || ask > 0)
       ? (bid + ask) / 2
       : quotedMid;
   const mark = mid ?? positiveNumber(quote.mark) ?? last ?? positiveNumber(fallbackMark);
-  const spread = bid != null && ask != null ? ask - bid : finiteNumber(quote.spread);
+  const spread = automationEventQuote
+    ? null
+    : bid != null && ask != null ? ask - bid : finiteNumber(quote.spread);
   return {
     bid,
     ask,
@@ -77,14 +109,35 @@ const buildQuote = (quote, fallbackMark, source) => {
     mark,
     spread,
     spreadPercent:
-      finiteNumber(quote.spreadPercent) ??
+      automationEventQuote
+        ? null
+        : finiteNumber(quote.spreadPercent) ??
       (spread != null && mark != null && mark > 0 ? (spread / mark) * 100 : null),
-    bidSize: finiteNumber(quote.bidSize),
-    askSize: finiteNumber(quote.askSize),
+    bidSize: automationEventQuote ? null : finiteNumber(quote.bidSize),
+    askSize: automationEventQuote ? null : finiteNumber(quote.askSize),
     updatedAt: firstText(quote.updatedAt, quote.dataUpdatedAt, quote.quoteUpdatedAt),
-    freshness: firstText(quote.freshness),
+    freshness: firstText(quote.quoteFreshness, quote.freshness),
     marketDataMode: firstText(quote.marketDataMode),
-    source: normalizeQuoteSource(quote.source, source),
+    source: normalizedSource,
+    ...quoteMetadata(quote),
+  };
+};
+
+const markOnlyQuote = (quote, fallbackMark, source) => {
+  const mark = positiveNumber(fallbackMark) ?? positiveNumber(quote?.mark);
+  if (!quote && mark == null) return null;
+  return {
+    ...(quote || {}),
+    bid: null,
+    ask: null,
+    mid: null,
+    last: null,
+    mark,
+    spread: null,
+    spreadPercent: null,
+    bidSize: null,
+    askSize: null,
+    source,
   };
 };
 
@@ -121,10 +174,13 @@ export const getPositionOpenedAt = (row) => {
 
 export const getPositionQuote = (row, liveOptionQuote = null) => {
   const backendQuote = buildQuote(row?.quote, row?.mark ?? row?.marketPrice, "bridge_quote");
+  const backendDisplayQuote = isAutomationEventQuoteSource(row?.optionQuote?.source)
+    ? markOnlyQuote(backendQuote, row?.mark ?? row?.marketPrice, "automation_event_quote")
+    : backendQuote;
   return chooseBestQuote(
     liveOptionQuote ? buildQuote(liveOptionQuote, row?.mark, "option_quote") : null,
     row?.optionQuote ? buildQuote(row.optionQuote, row?.mark, "option_quote") : null,
-    backendQuote,
+    backendDisplayQuote,
   );
 };
 

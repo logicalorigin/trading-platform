@@ -395,6 +395,7 @@ export * from './listSignalMonitorBreadthHistoryParams';
 export * from './listSignalMonitorEventsParams';
 export * from './marketDataFreshness';
 export * from './marketDataProvider';
+export * from './marketDataTransport';
 export * from './newsArticle';
 export * from './newsPublisher';
 export * from './newsResponse';

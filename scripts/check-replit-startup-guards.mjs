@@ -301,6 +301,17 @@ check(
   "runDevApp.mjs must keep API port ownership checks so a stale API health response cannot satisfy a new supervisor.",
 );
 check(
+  pyrusRunner.includes("market-data-worker:run") &&
+    pyrusRunner.includes("resolveMarketDataWorkerStartup") &&
+    pyrusRunner.includes("worker-started") &&
+    pyrusRunner.includes("worker-skipped") &&
+    pyrusRunner.includes("MASSIVE_MARKET_DATA_API_KEY") &&
+    pyrusRunner.includes("LOCAL_DATABASE_URL") &&
+    pyrusRunner.includes("workerPid") &&
+    pyrusRunner.includes("exitWatchers.push(workerExit)"),
+  "runDevApp.mjs must start the market-data worker when database and Massive provider config are present, skip it explicitly when config is missing, and treat a started worker exit as supervisor-fatal.",
+);
+check(
   pyrusRunner.includes("pyrus-dev-supervisor-${apiPort}.lock") &&
     pyrusRunner.includes("acquireSupervisorLock") &&
     pyrusRunner.includes("skipDuplicateReplitStart") &&

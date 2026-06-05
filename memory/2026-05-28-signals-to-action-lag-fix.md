@@ -11,7 +11,7 @@
   - Historical signal-option event candidates no longer rehydrate into active action rows unless their current signal is still actionable.
   - Signal-options `state` and `cockpit` routes are active-screen routes; only performance analytics remains deferred/cache-only.
 - **Evidence:**
-  - Passed `pnpm --dir artifacts/api-server exec node --import tsx --test --test-concurrency=1 src/services/route-admission.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts src/services/option-chain-batch.test.ts` (`201` tests).
+  - Passed `pnpm --dir artifacts/api-server exec node JS validation runner --test-concurrency=1 src/services/route-admission.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-monitor.validation.ts src/services/option-chain-batch.validation.ts` (`201` tests).
   - Passed `pnpm --filter @workspace/api-server typecheck`.
   - Passed `pnpm --filter @workspace/api-server run build`.
   - Passed scoped `git diff --check`.
@@ -29,7 +29,7 @@
   - The foreground priority list is now selected/visible/open-position/recent-monitor symbols only; the rest of the active watchlist rotates as background.
 - **Evidence:**
   - Direct matrix probe at `2026-05-28T20:22Z` returned fresh Massive-backed latest bars when asked: `2m 20:22`, `5m 20:15`, `15m 20:00`.
-  - Passed `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js` (`71` tests).
+  - Passed `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js` (`71` tests).
   - Passed `pnpm --filter @workspace/pyrus run typecheck`.
   - Passed `pnpm --filter @workspace/pyrus run build`.
   - Passed scoped `git diff --check`.

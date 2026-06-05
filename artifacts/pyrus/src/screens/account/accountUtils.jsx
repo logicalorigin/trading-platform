@@ -19,6 +19,7 @@ import {
 const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import { SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
 
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
@@ -595,6 +596,8 @@ export const Panel = ({
   action,
   children,
   loading,
+  loadingWaitItems,
+  loadingEndpoint,
   error,
   onRetry,
   minHeight = 0,
@@ -686,7 +689,25 @@ export const Panel = ({
       {action}
     </div>
     <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(compact ? 4 : 6) }}>
-      {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
+      {loading ? (
+        <div style={{ display: "grid", gap: sp(8) }}>
+          <ContainerLoadingStatus
+            items={
+              loadingWaitItems || [
+                {
+                  id: `${title || "account-panel"}:loading`,
+                  label: title || "Account panel",
+                  status: "loading",
+                  detail: subtitle,
+                  endpoint: loadingEndpoint,
+                },
+              ]
+            }
+            testId="account-panel-loading-waits"
+          />
+          <SkeletonRows />
+        </div>
+      ) : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
 );

@@ -26,10 +26,10 @@
 
 ## Validation
 
-- `node --import tsx --test src/services/market-data-admission.test.ts src/services/ibkr-line-usage.test.ts`
-- `node --import tsx --test src/services/options-flow-scanner.test.ts`
-- `node --import tsx --test src/services/bridge-option-quote-stream.test.ts src/ws/options-quotes.test.ts`
-- `node --import tsx --test src/features/platform/marketFlowScannerConfig.test.js src/features/platform/live-streams.test.ts`
+- `node JS validation runner src/services/market-data-admission.validation.ts src/services/ibkr-line-usage.validation.ts`
+- `node JS validation runner src/services/options-flow-scanner.validation.ts`
+- `node JS validation runner src/services/bridge-option-quote-stream.validation.ts src/ws/options-quotes.validation.ts`
+- `node JS validation runner src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/live-streams.validation.ts`
 - `pnpm run audit:api-codegen`
 - `pnpm --filter @workspace/api-server run typecheck`
 - `pnpm --filter @workspace/pyrus run typecheck`

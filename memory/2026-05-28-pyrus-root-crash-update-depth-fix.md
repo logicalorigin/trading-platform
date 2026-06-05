@@ -26,10 +26,10 @@ This was not one tooltip-only issue.
 
 Targeted tests passed:
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/ResearchChartSurface.test.ts`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/charting/ResearchChartSurface.validation.ts`
 - `pnpm --filter @workspace/pyrus run typecheck`
 - `pnpm --filter @workspace/pyrus run build`
 
@@ -37,9 +37,9 @@ Live headed-browser verification against the reported Replit URL loaded the app 
 
 ## Regression Tests
 
-- `src/screens/algo/algoHelpers.test.js` checks stable Algo startup fallbacks and idempotent cleanup setters.
-- `src/features/platform/signalMatrixScheduler.test.js` checks no-op signal-matrix state equality.
-- `src/features/platform/platformRootSource.test.js` checks the signal-matrix no-op guard, stable signal-monitor fallbacks, guarded tooltip behavior, and the IBKR line-usage native title/ARIA call site.
+- `src/screens/algo/algoHelpers.validation.js` checks stable Algo startup fallbacks and idempotent cleanup setters.
+- `src/features/platform/signalMatrixScheduler.validation.js` checks no-op signal-matrix state equality.
+- `src/features/platform/platformRootSource.validation.js` checks the signal-matrix no-op guard, stable signal-monitor fallbacks, guarded tooltip behavior, and the IBKR line-usage native title/ARIA call site.
 
 ## Status
 

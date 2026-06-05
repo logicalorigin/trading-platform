@@ -52,15 +52,15 @@ scanner live lines were 0 and most of the line pool was idle.
     but no scanner live lines are admitted while capacity remains.
   - Let line drift outrank generic scanner-active in the utilization reason.
 
-- `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+- `artifacts/api-server/src/services/options-flow-scanner.validation.ts`
   - Updated the regression to assert historical hydration is capped at 8 while
     live scanner quote leases are admitted for the larger candidate set.
 
 ## Verification
 
-- `cd artifacts/api-server && node --import tsx --test src/services/options-flow-scanner.test.ts --test-name-pattern "historical hydration while admitting live scanner quotes"`
+- `cd artifacts/api-server && node JS validation runner src/services/options-flow-scanner.validation.ts --validation-name-pattern "historical hydration while admitting live scanner quotes"`
   - Passed: 77 tests, 0 failed.
-- `cd artifacts/api-server && node --import tsx --test src/services/ibkr-line-usage.test.ts`
+- `cd artifacts/api-server && node JS validation runner src/services/ibkr-line-usage.validation.ts`
   - Passed: 10 tests, 0 failed.
 - `pnpm --filter @workspace/api-server run typecheck`
   - Passed.

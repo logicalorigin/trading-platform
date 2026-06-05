@@ -186,3 +186,47 @@ pub async fn fail_job(
         return Ok(result.rows_affected() > 0);
     }
 }
+
+pub async fn fail_gex_jobs_with_failed_prerequisites(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        with failed_prerequisites as (
+          select distinct on (candidate.id)
+            candidate.id,
+            prerequisite.kind,
+            prerequisite.last_error
+          from market_data_ingest_jobs candidate
+          join market_data_ingest_jobs prerequisite
+            on prerequisite.symbol = candidate.symbol
+           and prerequisite.kind in ('stock_snapshot', 'option_chain_snapshot')
+           and prerequisite.status = 'failed'
+           and coalesce(prerequisite.payload->>'dedupeBucket', '') =
+             coalesce(candidate.payload->>'dedupeBucket', '')
+          where candidate.kind = 'gex_snapshot'
+            and candidate.status = 'queued'
+            and coalesce(candidate.payload->>'dedupeBucket', '') <> ''
+          order by
+            candidate.id,
+            prerequisite.updated_at desc nulls last,
+            prerequisite.created_at desc
+        )
+        update market_data_ingest_jobs gex
+        set
+          status = 'failed',
+          lease_owner = null,
+          lease_expires_at = null,
+          last_error = concat(
+            'prerequisite ',
+            failed.kind,
+            ' failed: ',
+            coalesce(nullif(failed.last_error, ''), 'unknown error')
+          ),
+          updated_at = now()
+        from failed_prerequisites failed
+        where gex.id = failed.id
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}

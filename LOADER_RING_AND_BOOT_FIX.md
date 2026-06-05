@@ -34,7 +34,7 @@ Plus leftover migration cruft to tidy.
 
 - Container loaders show the **branded ring mark on big panels only**; small/inline panels keep `LoadingSpinner`.
 - Boot fix targets the confirmed **two-in-sequence** double Suspense → show a **single** continuous boot loader.
-- **Fold in cleanup** of verified-dead loader CSS/assets, updating `LogoLoader.test.ts`.
+- **Fold in cleanup** of verified-dead loader CSS/assets, updating `LogoLoader.validation.ts`.
 
 ## Fix
 
@@ -75,18 +75,18 @@ Eliminate the second loader by making the two lazy chunks load under **one** vis
 - `artifacts/pyrus/src/components/platform/primitives.jsx` — `PanelRingLoader` + Panel loading branch + `loaderVariant`.
 - `artifacts/pyrus/src/app/App.tsx` and `app/AppContent.tsx` — single-boot-loader (preload PlatformApp, continuous inner fallback, dedupe testId).
 - `artifacts/pyrus/src/index.css` — remove verified-dead loader rules.
-- `artifacts/pyrus/src/components/LogoLoader.test.ts` — update assertions: the boot-loader wiring
+- `artifacts/pyrus/src/components/LogoLoader.validation.ts` — update assertions: the boot-loader wiring
   (single loader / testId change), the new Panel ring-loader path, and any removed CSS class
-  assertions (e.g. `.pyrus-loader-lockup`). `lib/uiTokens.test.js` if it asserts removed rules.
+  assertions (e.g. `.pyrus-loader-lockup`). `lib/uiTokens.validation.js` if it asserts removed rules.
 
 No backend/schema changes. The ring SVG itself is unchanged (already correct).
 
 ## Verification
 
 1. `pnpm --filter @workspace/pyrus typecheck`.
-2. `pnpm --filter @workspace/pyrus run test` — update `LogoLoader.test.ts` to the new wiring; add a
+2. `pnpm --filter @workspace/pyrus run test` — update `LogoLoader.validation.ts` to the new wiring; add a
    test that `Panel` with `minHeight ≥ 160` (or `loaderVariant="ring"`) renders the ring mark and a
-   small panel renders `LoadingSpinner`. Keep `uiTokens.test.js` green.
+   small panel renders `LoadingSpinner`. Keep `uiTokens.validation.js` green.
 3. **Manual (key checks):**
    - Container ring: open the Account page and trigger a panel `loading` state (e.g. switch
      accounts / refetch) on a large panel → it shows the **animated logo ring**, not a bare spinner;

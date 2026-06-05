@@ -8,30 +8,35 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1h",
   "1d",
 ]);
+const SIGNAL_MATRIX_PRESSURE_LEVELS = Object.freeze({
+  normal: true,
+  watch: true,
+  high: true,
+});
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 });
 const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 30,
-  watch: 30,
-  high: 30,
+  normal: null,
+  watch: null,
+  high: null,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 });
 const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 48,
-  watch: 36,
-  high: 24,
+  normal: null,
+  watch: null,
+  high: null,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
@@ -67,7 +72,7 @@ const NON_HYDRATED_MATRIX_STATUSES = new Set([
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
 const normalizePressureLevel = (pressureLevel) =>
-  Object.hasOwn(SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE, pressureLevel)
+  Object.hasOwn(SIGNAL_MATRIX_PRESSURE_LEVELS, pressureLevel)
     ? pressureLevel
     : "normal";
 
@@ -87,10 +92,7 @@ export const resolveSignalMatrixActiveScreenRequestTaskLimit = (
   pressureLevel,
 ) => {
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
-  return Math.min(
-    ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-    SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-  );
+  return ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
 };
 
 export const resolveSignalMatrixStaVisiblePageExactCellLimit = (pressureLevel) =>
@@ -102,10 +104,7 @@ export const resolveSignalMatrixStaVisiblePageRequestTaskLimit = (
   pressureLevel,
 ) => {
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
-  return Math.min(
-    STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-    STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-  );
+  return STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
 };
 
 export const resolveSignalMatrixBusyQueueDelayMs = (pressureLevel) =>
@@ -547,33 +546,10 @@ export function buildSignalMatrixRequestPlan({
   );
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
   const explicitExactCellLimit = normalizeRequestLimit(requestExactCellLimit);
-  const pressureExactCellLimit = Math.min(
-    explicitExactCellLimit ??
-      SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-    Math.max(
-      SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE.normal,
-      STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE.normal,
-    ),
-  );
-  const pressureRequestTaskLimit = Math.min(
-    REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
-    pressureExactCellLimit,
-  );
+  const pressureExactCellLimit =
+    explicitExactCellLimit ?? SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel];
   const explicitRequestTaskLimit = normalizeRequestLimit(requestTaskLimit);
-  const resolvedRequestTaskLimit = Math.min(
-    explicitRequestTaskLimit ?? pressureRequestTaskLimit,
-    pressureExactCellLimit,
-  );
   const explicitRequestLimit = normalizeRequestLimit(requestSymbolLimit);
-  const taskBoundSymbolLimit = Math.max(
-    1,
-    Math.floor(resolvedRequestTaskLimit / matrixTimeframes.length),
-  );
-  const baseRequestLimit = Math.min(
-    explicitRequestLimit ?? taskBoundSymbolLimit,
-    taskBoundSymbolLimit,
-  );
-  const selectionSymbolLimit = explicitRequestLimit ?? universe.length;
   const normalizedNowMs = Number.isFinite(nowMs) ? nowMs : null;
   const missingTimeframesBySymbol = buildMissingTimeframesBySymbol({
     symbols: universe,
@@ -589,6 +565,21 @@ export function buildSignalMatrixRequestPlan({
     missingSymbols,
     missingTimeframesBySymbol,
   );
+  const pressureRequestTaskLimit = REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
+  const resolvedRequestTaskLimit =
+    explicitRequestTaskLimit ??
+    pressureRequestTaskLimit ??
+    pressureExactCellLimit ??
+    missingCells.length;
+  const taskBoundSymbolLimit =
+    resolvedRequestTaskLimit > 0 && matrixTimeframes.length
+      ? Math.max(1, Math.floor(resolvedRequestTaskLimit / matrixTimeframes.length))
+      : universe.length;
+  const baseRequestLimit = Math.min(
+    explicitRequestLimit ?? taskBoundSymbolLimit,
+    taskBoundSymbolLimit,
+  );
+  const selectionSymbolLimit = explicitRequestLimit ?? universe.length;
   const priorityCandidates = startupProtected
     ? []
     : orderedPriority.filter(needsHydration);

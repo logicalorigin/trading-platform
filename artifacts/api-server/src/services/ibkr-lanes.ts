@@ -79,6 +79,14 @@ type LaneMembership = IbkrLaneSymbolResolution & {
   notes: string[];
 };
 
+type BridgeLaneDiagnosticsState = {
+  pressure: string | null;
+  updatedAt: Date | string | null;
+  scheduler: Record<string, Record<string, unknown>>;
+  subscriptions: Record<string, unknown>;
+  limits: Record<string, Record<string, unknown>>;
+};
+
 export type IbkrLaneArchitectureSnapshot = {
   updatedAt: Date;
   persistence: {
@@ -102,7 +110,7 @@ export type IbkrLaneArchitectureSnapshot = {
     apiGovernor: unknown;
     optionsFlow: unknown;
     flowCoverage: unknown;
-    bridge: BridgeLaneDiagnosticsSnapshot | null;
+    bridge: BridgeLaneDiagnosticsState | null;
     bridgeError: string | null;
   };
 };
@@ -115,6 +123,26 @@ type PersistedLaneOverrides = {
   optionsFlow?: Partial<OptionsFlowRuntimeConfig>;
   updatedAt?: string;
 };
+
+type BridgeLaneDiagnosticsResult = {
+  bridge: BridgeLaneDiagnosticsSnapshot | null;
+  bridgeError: string | null;
+};
+
+const BRIDGE_LANE_DIAGNOSTICS_TIMEOUT_MS = Math.max(
+  250,
+  Number(process.env["IBKR_BRIDGE_LANE_DIAGNOSTICS_TIMEOUT_MS"] ?? "2000"),
+);
+const BRIDGE_LANE_DIAGNOSTICS_CACHE_TTL_MS = Math.max(
+  500,
+  Number(process.env["IBKR_BRIDGE_LANE_DIAGNOSTICS_CACHE_TTL_MS"] ?? "5000"),
+);
+
+let bridgeLaneDiagnosticsCache: {
+  value: BridgeLaneDiagnosticsResult;
+  expiresAt: number;
+} | null = null;
+let bridgeLaneDiagnosticsInFlight: Promise<BridgeLaneDiagnosticsResult> | null = null;
 
 type UpdatePayload = {
   managementToken?: unknown;
@@ -221,6 +249,18 @@ function safeRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function pickRecordFields(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const record = safeRecord(value);
+  return Object.fromEntries(
+    keys
+      .filter((key) => Object.prototype.hasOwnProperty.call(record, key))
+      .map((key) => [key, record[key]]),
+  );
 }
 
 function isGovernorCategory(value: string): value is BridgeWorkCategory {
@@ -528,24 +568,105 @@ function buildBridgeControls(bridge: BridgeLaneDiagnosticsSnapshot | null): Lane
   return controls;
 }
 
-async function fetchBridgeLaneDiagnostics(): Promise<{
-  bridge: BridgeLaneDiagnosticsSnapshot | null;
-  bridgeError: string | null;
-}> {
-  try {
-    return {
-      bridge: await new IbkrBridgeClient().getLaneDiagnostics(),
-      bridgeError: null,
-    };
-  } catch (error) {
-    return {
-      bridge: null,
-      bridgeError:
-        error instanceof Error && error.message
-          ? error.message
-          : "IBKR bridge lane diagnostics are unavailable.",
-    };
+function compactBridgeLaneDiagnostics(
+  bridge: BridgeLaneDiagnosticsSnapshot | null,
+): BridgeLaneDiagnosticsState | null {
+  if (!bridge) {
+    return null;
   }
+
+  const scheduler = Object.fromEntries(
+    Object.entries(safeRecord(bridge.scheduler)).map(([lane, rawLane]) => [
+      lane,
+      pickRecordFields(rawLane, [
+        "active",
+        "queued",
+        "concurrency",
+        "queueCap",
+        "backoffMs",
+        "failureCount",
+        "pressure",
+      ]),
+    ]),
+  );
+  const limits = Object.fromEntries(
+    Object.entries(safeRecord(bridge.limits)).map(([key, rawLimit]) => [
+      key,
+      pickRecordFields(rawLimit, ["value", "defaultValue", "source"]),
+    ]),
+  );
+
+  return {
+    pressure: typeof bridge.pressure === "string" ? bridge.pressure : null,
+    updatedAt: bridge.updatedAt ?? null,
+    scheduler,
+    subscriptions: pickRecordFields(bridge.subscriptions, [
+      "activeEquitySubscriptions",
+      "activeOptionSubscriptions",
+      "activeSubscriptions",
+      "queuedEquitySubscriptions",
+      "queuedOptionSubscriptions",
+      "maxLiveEquityLines",
+      "maxLiveOptionLines",
+      "maxMarketDataLines",
+    ]),
+    limits,
+  };
+}
+
+function invalidateBridgeLaneDiagnosticsCache(): void {
+  bridgeLaneDiagnosticsCache = null;
+}
+
+async function fetchBridgeLaneDiagnostics(): Promise<BridgeLaneDiagnosticsResult> {
+  const now = Date.now();
+  if (bridgeLaneDiagnosticsCache && bridgeLaneDiagnosticsCache.expiresAt > now) {
+    return bridgeLaneDiagnosticsCache.value;
+  }
+  if (bridgeLaneDiagnosticsInFlight) {
+    return bridgeLaneDiagnosticsInFlight;
+  }
+
+  bridgeLaneDiagnosticsInFlight = (async () => {
+    let result: BridgeLaneDiagnosticsResult;
+    try {
+      result = {
+        bridge: await new IbkrBridgeClient().getLaneDiagnostics({
+          timeoutMs: BRIDGE_LANE_DIAGNOSTICS_TIMEOUT_MS,
+        }),
+        bridgeError: null,
+      };
+    } catch (error) {
+      result = {
+        bridge: null,
+        bridgeError:
+          error instanceof Error && error.message
+            ? error.message
+            : "IBKR bridge lane diagnostics are unavailable.",
+      };
+    }
+
+    bridgeLaneDiagnosticsCache = {
+      value: result,
+      expiresAt: Date.now() + BRIDGE_LANE_DIAGNOSTICS_CACHE_TTL_MS,
+    };
+    return result;
+  })().finally(() => {
+    bridgeLaneDiagnosticsInFlight = null;
+  });
+
+  return bridgeLaneDiagnosticsInFlight;
+}
+
+export function getIbkrLaneArchitectureSummary(): {
+  membershipCount: number;
+  policyUpdatedAt: string | null;
+} {
+  const lanePolicy = getIbkrLanePolicySnapshot();
+  return {
+    membershipCount: Object.keys(laneLabels).length,
+    policyUpdatedAt: lanePolicy.policy.updatedAt,
+  };
 }
 
 function collectWatchlistSymbols(value: unknown): string[] {
@@ -993,7 +1114,7 @@ export async function getIbkrLaneArchitecture(): Promise<IbkrLaneArchitectureSna
       apiGovernor: getBridgeGovernorConfigSnapshot(),
       optionsFlow: getOptionsFlowRuntimeConfigSnapshot(),
       flowCoverage: getOptionsFlowUniverseCoverage(),
-      bridge,
+      bridge: compactBridgeLaneDiagnostics(bridge),
       bridgeError,
     },
   };
@@ -1029,6 +1150,7 @@ export async function updateIbkrLaneArchitecture(
 
   if (bridgeUpdate.scheduler || bridgeUpdate.limits) {
     await new IbkrBridgeClient().updateLaneDiagnostics(bridgeUpdate);
+    invalidateBridgeLaneDiagnosticsCache();
   }
 
   return getIbkrLaneArchitecture();

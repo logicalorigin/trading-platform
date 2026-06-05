@@ -148,7 +148,7 @@ PORT=18747 node scripts/reap-dev-port.mjs   # pyrus preview
 ```
 `fuser` is unavailable on this NixOS image, and `ps`/`pgrep` may be too; if the reaper can't identify the PID, check `/proc/net/tcp[6]` directly (`:HEX_PORT`, HEX = `printf '%04X' PORT`).
 
-Playwright must attach to the existing app inside Replit: `artifacts/pyrus/playwright.config.ts` disables its `webServer` block when Replit env markers are present. Set `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` only for an intentional maintenance run.
+browser QA must attach to the existing app inside Replit: `artifacts/pyrus/browser QA.config.ts` disables its `webServer` block when Replit env markers are present. Set `PYRUS_BROWSER_QA_ALLOW_WEB_SERVER=1` only for an intentional maintenance run.
 
 `ensurePreviewReachable` is intentionally removed from the PYRUS artifact TOML — its health-poll of `/` re-mounted the iframe on probe hiccups (HMR stalls), causing ~20 reloads/min. If preview gating is ever needed again, raise the proxy's tolerance rather than re-adding a tight health probe.
 
@@ -167,7 +167,7 @@ Replit's workspace daemon watches a small set of config files; any save re-evalu
 - `replit.nix` — same daemon, same reload.
 
 **Test patterns that do NOT cause a reload:**
-- Verify API code: `pnpm --filter @workspace/api-server run typecheck` / `... run test:unit`.
+- Verify API code: `pnpm --filter @workspace/api-server run typecheck` / `... run unit validation`.
 - Verify a route: `curl -sS http://127.0.0.1:8080/api/healthz` against the running server; `restart_workflow "artifacts/api-server: API Server"` only if the change is in compiled output.
 - For pyrus: `pnpm --filter @workspace/pyrus run typecheck` plus live Vite HMR; only restart the pyrus workflow if you edited `vite.config.ts` or `package.json`.
 

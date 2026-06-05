@@ -37,12 +37,12 @@
 ## Validation
 
 - Passed: `pnpm run audit:replit-startup`
-- Passed: `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/platformRootSource.test.js src/features/platform/appWorkScheduler.test.js src/features/platform/signalMatrixScheduler.test.js` (129 pass)
+- Passed: `pnpm --filter @workspace/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js src/features/platform/appWorkScheduler.validation.js src/features/platform/signalMatrixScheduler.validation.js` (129 pass)
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`
 - Passed: `pnpm --filter @workspace/api-server run typecheck`
-- Passed: `timeout 45s pnpm --filter @workspace/api-server exec tsx --test src/services/platform-massive-stock-routing.test.ts src/services/signal-monitor.test.ts` (85 pass)
-- Passed: `timeout 45s pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-worker.test.ts` (27 pass)
-- Partial: `timeout 45s pnpm --filter @workspace/api-server exec tsx --test src/services/trade-monitor-worker.test.ts` printed all 16 assertions as pass but did not exit before timeout; treat as a test harness/open-handle gap, not a failed assertion.
+- Passed: `timeout 45s pnpm --filter @workspace/api-server exec tsx validation runner src/services/platform-massive-stock-routing.validation.ts src/services/signal-monitor.validation.ts` (85 pass)
+- Passed: `timeout 45s pnpm --filter @workspace/api-server exec tsx validation runner src/services/signal-options-worker.validation.ts` (27 pass)
+- Partial: `timeout 45s pnpm --filter @workspace/api-server exec tsx validation runner src/services/trade-monitor-worker.validation.ts` printed all 16 assertions as pass but did not exit before timeout; treat as a test harness/open-handle gap, not a failed assertion.
 - Current process check after cleanup: no PYRUS API/web/Replit app processes are running from this shell.
 
 ## Next Steps

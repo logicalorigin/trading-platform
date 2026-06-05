@@ -263,7 +263,7 @@ Light mode (in `:root[data-pyrus-theme="light"], :root[data-pyrus-theme="light"]
 ### 4.2 Source guard
 
 The repo currently has no ESLint config. Use the existing source-audit style in
-`artifacts/pyrus/src/lib/uiTokens.test.js` instead:
+`artifacts/pyrus/src/lib/uiTokens.validation.js` instead:
 
 - Count production `T.<colorKey>` reads under `artifacts/pyrus/src`.
 - Exclude tests and generated research data.
@@ -309,7 +309,7 @@ Remove in Phase 5 cleanup.
 ### 4.4 Acceptance criteria (Phase 0)
 
 - `pnpm -F @workspace/pyrus typecheck` passes
-- `pnpm -F @workspace/pyrus test:unit` passes
+- `pnpm -F @workspace/pyrus unit validation` passes
 - New CSS variables resolve to documented values in both `:root` and light override (eyeball in DevTools)
 - Source guard fails if production `T.<color>` debt expands
 
@@ -351,7 +351,7 @@ artifacts/pyrus/src/components/ui/PulseDot.jsx
 
 - All `T.<color>` reads in Phase 1 file list removed (grep returns zero)
 - `pnpm -F @workspace/pyrus typecheck` passes
-- `pnpm -F @workspace/pyrus test:unit` passes (update `tones.test.js` and any test asserting on these primitives)
+- `pnpm -F @workspace/pyrus unit validation` passes (update `tones.validation.js` and any test asserting on these primitives)
 - Manual visual smoke test: dark and light mode, key primitives render identically to baseline
 - Theme toggle on a screen using primarily these primitives: no clunk on the migrated surfaces
 
@@ -380,14 +380,14 @@ artifacts/pyrus/src/features/platform/bridgeRuntimeModel.js
 ### 6.2 Special notes
 
 - `HeaderBroadcastScrollerStack.jsx` has many `${tone}0d`-style template literals (Pattern B) and a local `colorWithAlpha` (Pattern C). It's the densest file in the codebase for these patterns — budget time accordingly.
-- `bridgeRuntimeModel.js` exports tone helpers consumed by `IbkrConnectionStatus.test.js`. Update both.
+- `bridgeRuntimeModel.js` exports tone helpers consumed by `IbkrConnectionStatus.validation.js`. Update both.
 - `BloombergLiveDock.jsx` already uses `color-mix(in srgb, var(--ra-text-primary) ...)` in one place — mirror that style.
 - The `motionVars({ accent })` calls pass colors into a helper that produces CSS custom property declarations (e.g. `--ra-motion-accent`). Pass `var(--ra-*)` strings instead of `T.*` hex; verify the resulting CSS custom-property values resolve correctly in DevTools.
 
 ### 6.3 Acceptance criteria
 
 - All `T.<color>` reads in Phase 2 file list removed
-- `IbkrConnectionStatus.test.js` updated and passing
+- `IbkrConnectionStatus.validation.js` updated and passing
 - Theme toggle on the cockpit (header + lanes + watchlist + footer) is visually unified — no staggered flash
 - Typecheck + tests pass
 
@@ -469,14 +469,14 @@ artifacts/pyrus/src/screens/research/**
 
 ### 8.2 Special notes
 
-- `PositionsPanel.test.js` and `OperationsSignalRow.test.js` assert `tone === T.<color>`. Update these alongside the helper they exercise.
+- `PositionsPanel.validation.js` and `OperationsSignalRow.validation.js` assert `tone === T.<color>`. Update these alongside the helper they exercise.
 - `AccountScreen.jsx` and `SettingsScreen.jsx` are very long; consider splitting if Codex hits context limits.
 
 ### 8.3 Acceptance criteria
 
 - Zero `T.<color>` reads remain in `screens/`
 - Theme toggle on every screen looks consistent — no clunk
-- All `screens/**.test.*` pass
+- All `screens/**.validation.*` pass
 
 ---
 
@@ -509,7 +509,7 @@ artifacts/pyrus/src/screens/research/**
    ```
 
    This makes any stragglers automatically theme-aware via CSS.
-3. **Update `uiTokens.test.js`:**
+3. **Update `uiTokens.validation.js`:**
    - Tests asserting `THEMES.dark.accent === "#168BFF"` stay — they're testing the palette source.
    - Tests asserting `T.green === "#XXX"` change to `T.green === "var(--ra-green-500)"` (or remove the test if it's redundant with palette tests).
 4. **Remove `setCurrentTheme` callers' assumption that `T` re-resolves** — it now doesn't matter because CSS does the work. Leave `setCurrentTheme` and `CURRENT_THEME` in place for backwards-compat of any non-color JS that uses them (none currently identified, but cheap to keep).
@@ -531,7 +531,7 @@ artifacts/pyrus/src/screens/research/**
 After each PR:
 
 1. **Typecheck**: `pnpm -F @workspace/pyrus typecheck` — must be clean.
-2. **Unit tests**: `pnpm -F @workspace/pyrus test:unit` — must pass. Update test assertions in the same PR as the helper/component change that broke them.
+2. **Unit tests**: `pnpm -F @workspace/pyrus unit validation` — must pass. Update test assertions in the same PR as the helper/component change that broke them.
 3. **Visual smoke test in Replit dev server**:
    - Open the changed surface in dark mode → screenshot.
    - Toggle to light mode → screenshot.
@@ -550,10 +550,10 @@ After each PR:
 - **Inline `style` typing**: TypeScript's `CSSProperties` accepts string values for color props; no type fixes needed for the swap itself.
 - **Memoization**: components memoized on `T.*` props (rare) will stop seeing changes — they shouldn't have been memoizing on hex anyway. If a component re-render regresses, it's likely an unrelated memo prop issue.
 - **Tests asserting exact `T.<color>` values** must be updated in the same PR that migrates the helper they exercise. Known sites:
-  - `IbkrConnectionStatus.test.js`
-  - `OperationsSignalRow.test.js`
-  - `PositionsPanel.test.js`
-  - `tones.test.js` (if present alongside `signal-language/tones.js`)
+  - `IbkrConnectionStatus.validation.js`
+  - `OperationsSignalRow.validation.js`
+  - `PositionsPanel.validation.js`
+  - `tones.validation.js` (if present alongside `signal-language/tones.js`)
 
 ---
 

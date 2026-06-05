@@ -40,3 +40,19 @@ evidence falsifies. The terminal cause of a recycle is a host boundary; be
 explicit about what is proven (what/when changed in the guest) vs unknowable
 (the host scheduler's reason). Do not add Replit workflows, local Postgres
 startup, or root runners to "fix" this class of incident.
+
+## Container MIGRATION signature (vs same-container bounce)
+A live host migration looks different from both an OOM crash and a same-container
+env bounce. Tell-tale signs, all together:
+- **`btime` moves to a value that PRE-DATES the old run's last heartbeat.** The
+  destination container is pre-booted before cutover, so the new `btime` can be
+  *earlier* than the previous supervisor's final heartbeat — they briefly coexist.
+  (Seen: old run heartbeating until 21:45:46Z under btime 18:39:01Z; new container
+  btime 21:28:55Z; cutover ~21:46:36Z.)
+- **Old run drains via `SIGTERM` (`api-child-exit`, graceful), not `SIGKILL`.**
+  OOM-kill = SIGKILL/code; a clean SIGTERM drain ⇒ managed move, not memory.
+- **Fresh DB-token `iat` + env/toolchain/pid1Flags all rewritten at cutover**, and
+  **new low PIDs** (fresh container) replacing high PIDs (long-lived container).
+Contrast: same-container bounce keeps `btime`/PID1 stable and only rewrites
+env/toolchain. Confirm health post-cutover (supervisor heartbeating, children
+alive, API RSS normal) and move on — migration reason is host-side, not guest.

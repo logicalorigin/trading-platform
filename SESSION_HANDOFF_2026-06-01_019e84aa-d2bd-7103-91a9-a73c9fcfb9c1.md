@@ -156,17 +156,17 @@ why isnt the STA table properly selecting contracts?
 - `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
 - `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
 - `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
-- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js`
 - `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
 - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
-- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
 - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
 
 ## Repo State Snapshot
 
@@ -175,17 +175,17 @@ why isnt the STA table properly selecting contracts?
  M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
  M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
  M artifacts/pyrus/src/features/platform/memoryPressureClient.js
- M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js
  M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
  M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
- M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js
  M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
  M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js
 ```
 
 ## Diff Summary
@@ -194,17 +194,17 @@ why isnt the STA table properly selecting contracts?
  ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
  SESSION_HANDOFF_CURRENT.md                         |  27 +++---
  SESSION_HANDOFF_MASTER.md                          |   2 +-
- .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ .../api-server/src/services/diagnostics.validation.ts    |  67 ++++++++++++++
  artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
  .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
  .../src/features/platform/memoryPressureClient.js  |   1 +
- .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../features/platform/memoryPressureModel.validation.js  |  12 +++
  .../platform/memoryPressurePopoverModel.js         |  11 ++-
  .../features/platform/useMemoryPressureSignal.js   |   4 +
- .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ .../platform/useMemoryPressureSignal.validation.js       |   7 ++
  artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
  artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
- .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ .../src/screens/algo/OperationsSignalRow.validation.js   |  20 +++-
  14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 

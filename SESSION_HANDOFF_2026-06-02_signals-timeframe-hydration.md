@@ -22,8 +22,8 @@
 
 ## Validation
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsMatrixHydration.test.js src/features/platform/signalMatrixScheduler.test.js`: pass, 31 tests.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts --test-name-pattern "matrix|source strategy|native"`: pass, 46 tests.
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsMatrixHydration.validation.js src/features/platform/signalMatrixScheduler.validation.js`: pass, 31 tests.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts --validation-name-pattern "matrix|source strategy|native"`: pass, 46 tests.
 - Direct generated-schema parse for `native_timeframes_live_retry`: pass.
 - Fresh API process on port `18748`:
   - `POST /api/signal-monitor/matrix` with `symbols=["SPY"]`, `timeframes=["2m"]`: `200`, `taskCount=1`, `stateCount=1`, `sourceStrategy=native_timeframes_live_retry`.

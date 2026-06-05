@@ -8,6 +8,7 @@ import {
 import { getMassiveApiDiagnostics } from "../providers/massive/market-data";
 import { getMassiveStockQuoteStreamDiagnostics } from "./massive-stock-quote-stream";
 import { getMarketDataAdmissionDiagnostics } from "./market-data-admission";
+import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
 export function getRuntimeMarketDataDiagnostics(input: {
@@ -17,6 +18,7 @@ export function getRuntimeMarketDataDiagnostics(input: {
     bridgeQuote:
       input.bridgeQuoteDiagnostics ?? getBridgeQuoteStreamDiagnostics(),
     massiveStockQuotes: getMassiveStockQuoteStreamDiagnostics(),
+    signalMonitorLocalBars: getSignalMonitorLocalBarCacheDiagnostics(),
     optionQuotes: getBridgeOptionQuoteStreamDiagnostics(),
     stockAggregates: getStockAggregateStreamDiagnostics(),
     marketDataAdmission: getMarketDataAdmissionDiagnostics(),
@@ -263,13 +265,14 @@ function buildMassiveWebSocketDiagnostics(input: {
 export function getRuntimeMassiveProviderDiagnostics(input: {
   streams: Pick<
     ReturnType<typeof getRuntimeMarketDataDiagnostics>,
-    "massiveStockQuotes" | "stockAggregates"
+    "massiveStockQuotes" | "signalMonitorLocalBars" | "stockAggregates"
   >;
   config?: ReturnType<typeof getMassiveRuntimeConfig>;
 }) {
   const config = input.config ?? getMassiveRuntimeConfig();
   return {
     ...getMassiveApiDiagnostics(config),
+    localBarCache: input.streams.signalMonitorLocalBars,
     websocket: buildMassiveWebSocketDiagnostics({
       config,
       streams: input.streams,

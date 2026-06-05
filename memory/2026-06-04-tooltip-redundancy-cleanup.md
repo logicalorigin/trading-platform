@@ -24,7 +24,7 @@ controls with tooltip prefixes such as `Sort by`, survived that equality check.
   rich/non-string tooltip content.
 
 Regression coverage was added to
-`artifacts/pyrus/src/features/platform/platformRootSource.test.js`.
+`artifacts/pyrus/src/features/platform/platformRootSource.validation.js`.
 
 Follow-up header-lane fix:
 
@@ -41,6 +41,6 @@ Follow-up header-lane fix:
 
 ## Validation
 
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js`
 - `pnpm --filter @workspace/pyrus typecheck`
-- `git diff --check -- artifacts/pyrus/src/components/ui/tooltip.tsx artifacts/pyrus/src/features/platform/HeaderBroadcastScrollerStack.jsx artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx artifacts/pyrus/src/features/platform/HeaderAccountStrip.jsx artifacts/pyrus/src/features/platform/HeaderKpiStrip.jsx artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- `git diff --check -- artifacts/pyrus/src/components/ui/tooltip.tsx artifacts/pyrus/src/features/platform/HeaderBroadcastScrollerStack.jsx artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx artifacts/pyrus/src/features/platform/HeaderAccountStrip.jsx artifacts/pyrus/src/features/platform/HeaderKpiStrip.jsx artifacts/pyrus/src/features/platform/platformRootSource.validation.js`

@@ -52,6 +52,7 @@ let lifecycleHeartbeatTimer = null;
 let lifecyclePhase = "initializing";
 let apiChild = null;
 let webChild = null;
+let workerChild = null;
 const children = new Set();
 
 function writeLifecycleEvent(event, detail = {}) {
@@ -140,8 +141,53 @@ function currentFlightHeartbeat(extra = {}) {
     lockAcquired: supervisorLockAcquired,
     apiPid: apiChild?.pid ?? null,
     webPid: webChild?.pid ?? null,
+    workerPid: workerChild?.pid ?? null,
     children: currentChildrenSnapshot(),
     ...extra,
+  };
+}
+
+function nonEmptyEnv(name) {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasMarketDataWorkerDatabaseConfig() {
+  return Boolean(
+    nonEmptyEnv("DATABASE_URL") ||
+      nonEmptyEnv("LOCAL_DATABASE_URL") ||
+      (nonEmptyEnv("PGHOST") && nonEmptyEnv("PGDATABASE") && nonEmptyEnv("PGUSER")),
+  );
+}
+
+function hasMarketDataWorkerProviderConfig() {
+  return Boolean(
+    nonEmptyEnv("MASSIVE_API_KEY") ||
+      nonEmptyEnv("MASSIVE_MARKET_DATA_API_KEY"),
+  );
+}
+
+function resolveMarketDataWorkerStartup() {
+  const skippedReasons = [];
+  if (!hasMarketDataWorkerDatabaseConfig()) {
+    skippedReasons.push("database_unconfigured");
+  }
+  if (!hasMarketDataWorkerProviderConfig()) {
+    skippedReasons.push("massive_provider_unconfigured");
+  }
+  return {
+    start: skippedReasons.length === 0,
+    skippedReasons,
+  };
+}
+
+function marketDataWorkerEnv() {
+  return {
+    LOG_LEVEL: process.env.LOG_LEVEL || "warn",
+    RUST_LOG: process.env.RUST_LOG || "market_data_worker=info,info",
+    ...(nonEmptyEnv("DATABASE_URL") || !nonEmptyEnv("LOCAL_DATABASE_URL")
+      ? {}
+      : { DATABASE_URL: process.env.LOCAL_DATABASE_URL }),
   };
 }
 
@@ -769,6 +815,30 @@ try {
   writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
+  let workerExit = null;
+  const workerStartup = resolveMarketDataWorkerStartup();
+  if (workerStartup.start) {
+    lifecyclePhase = "worker-starting";
+    const worker = spawnService(
+      "market-data worker",
+      ["run", "market-data-worker:run"],
+      marketDataWorkerEnv(),
+    );
+    workerChild = worker;
+    workerExit = exitPromise("market-data worker", worker);
+    writeLifecycleEvent("worker-started", { childPid: worker.pid || null });
+    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+  } else {
+    lifecyclePhase = "worker-skipped";
+    console.warn(
+      `[pyrus-dev] market-data worker skipped: ${workerStartup.skippedReasons.join(", ")}`,
+    );
+    writeLifecycleEvent("worker-skipped", {
+      reasons: workerStartup.skippedReasons,
+    });
+    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+  }
+
   lifecyclePhase = "web-starting";
   const web = spawnService(
     "PYRUS web",
@@ -785,7 +855,11 @@ try {
   writeLifecycleEvent("web-started", { childPid: web.pid || null });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
-  const firstExit = await Promise.race([apiExit, exitPromise("PYRUS web", web)]);
+  const exitWatchers = [apiExit, exitPromise("PYRUS web", web)];
+  if (workerExit) {
+    exitWatchers.push(workerExit);
+  }
+  const firstExit = await Promise.race(exitWatchers);
   const code = firstExit.code ?? (firstExit.signal ? 1 : 0);
   console.error(
     `[pyrus-dev] ${firstExit.name} exited: code=${firstExit.code ?? "null"} signal=${firstExit.signal ?? "null"}`,

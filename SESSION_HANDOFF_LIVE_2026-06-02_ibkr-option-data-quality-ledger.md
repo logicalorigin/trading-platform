@@ -20,7 +20,7 @@ Implement the reviewed plan:
 Implementation slice completed for the focused workstream:
 
 - `artifacts/api-server/src/services/signal-options-automation.ts`
-- `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- `artifacts/api-server/src/services/signal-options-automation.validation.ts`
 
 Implemented production internals and test exports:
 
@@ -33,12 +33,12 @@ Implemented production internals and test exports:
 ## Validation Status
 
 - PASS:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts --test-name-pattern "decision snapshots|data quality report"`
-  - Result: 135/135 tests passed in `signal-options-automation.test.ts`.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts --validation-name-pattern "decision snapshots|data quality report"`
+  - Result: 135/135 tests passed in `signal-options-automation.validation.ts`.
 - PASS:
   - `pnpm --filter @workspace/api-server run typecheck`
 - PASS:
-  - `git diff --check -- artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.test.ts SESSION_HANDOFF_LIVE_2026-06-02_ibkr-option-data-quality-ledger.md`
+  - `git diff --check -- artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.validation.ts SESSION_HANDOFF_LIVE_2026-06-02_ibkr-option-data-quality-ledger.md`
 - LIVE PARTIAL:
   - `/api/algo/deployments/paper-enabled/signal-options/state` exposes `dataQuality`.
   - Decision snapshot DB source `signal-options:decision:7e2e4e6f-749f-4e65-a011-87d3559a23b0` remained at `0` rows because validation scans produced no candidate that reached contract resolution.
