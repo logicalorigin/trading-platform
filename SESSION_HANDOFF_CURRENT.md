@@ -2,32 +2,41 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-06-04 21:28:12 MDT`
-- Last Updated (UTC): `2026-06-05T03:28:12Z`
-- Native Codex Session ID: `account-real-shadow-live-cleanup`
-- Summary: Account real/shadow cleanup verified after extra restart audit: P&L Calendar market-day realized/unrealized/trades, Trading Analysis 1D manual SPY fills, Today Snapshot loading, and Orders History execution fallback.
-- Handoff: `SESSION_HANDOFF_LIVE_2026-06-05_accounts-real-shadow-cleanup.md`
+- Last Updated (MT): `2026-06-04 22:48:06 MDT`
+- Last Updated (UTC): `2026-06-05T04:48:06Z`
+- Native Codex Session ID: `pending`
+- Summary: Cache/bars pressure investigation prepared after committing Replit startup guard cleanup.
+- Handoff: `SESSION_HANDOFF_LIVE_2026-06-05_cache-bars-pressure.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Live Account page now renders without stuck account loading placeholders in the focused browser checks.
-- Real-account June 4 market-day P&L Calendar shows realized `+$1.4K`, unrealized `-$56.67`, and `Trades 14`.
-- Trading Analysis `1D` shows `14` activity rows, net P&L about `$1.4K`, and SPY option results/details.
-- Orders History shows `16` execution-backed rows, including the SPY option buys/sells.
-- Extra root cause fixed: live execution rows after midnight UTC are now bucketed by account market date for the calendar.
-- Focused Pyrus tests, Pyrus typecheck, live browser probe, and `git diff --check` passed in the latest pass.
+- Matrix pressure backend fix is committed as `a536a9d`.
+- Signals breadth/KPI committed as `9951f67 feat: add signals breadth kpis`.
+- Trade-monitor worker history fallback pressure slice committed as `8e2e6ac fix: bound trade monitor history fallback`.
+- `origin/main` points at `8e2e6ac`.
+- Local `main` is ahead by `0f13821 chore: restore Replit startup guard`.
+- Replit startup config cleanup is committed; `pnpm run audit:replit-startup` passes and config files are locked.
+- Post-push Signals safe smoke passed: `627ms` ready, `0` slow API calls, max long task `212ms`.
+- Diagnostics after smoke: API `ok`, market-data pressure `normal`, resource pressure `watch` from cache pressure.
+- `/signal-monitor/matrix` is not an API slow-route entry; `/api/bars` still shows browser-side p95 around `1307ms` with no errors.
+- Active workstream is now localizing the remaining `/api/bars` pressure source.
+- User reported another restart, but `pnpm -C artifacts/pyrus exec node scripts/checkDevRuntime.mjs` still shows the same API PID `128950` from `2026-06-05T04:20:14Z`; current API bundle timestamp is `2026-06-05T04:38:34Z`, so live HTTP validation is still stale.
+- Remaining docs/handoff changes are being committed separately from the config fix.
 
 ## Next Recommended Steps
 
-1. Review/land the account real/shadow cleanup slice separately from unrelated dirty Signals/Replit work.
-2. Resume the larger-list platform/header market-data item: recheck Matrix/STA/Massive startup diagnostics and Signals `/bars/batch` fanout, then fix the active shared `/api/bars` 429 route-admission pressure if it still reproduces.
+1. Restart through the normal Replit Run App path until `checkDevRuntime.mjs` shows a fresh API PID newer than the current bundle.
+2. Then localize which screen/client path is producing remaining `/api/bars` pressure.
+3. Inspect backend bars cache/admission behavior for that path, keeping `.replit`, older handoff edits, and plan docs out of code commits unless explicitly requested.
 
 ## Validation Snapshot
 
-- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/screens/account/accountCalendarData.test.js src/screens/account/accountPnlCalendarModel.test.js src/screens/account/TodaySnapshotPanel.test.js src/features/platform/platformRootSource.test.js` (`121/121`).
-- PASS: `pnpm -C artifacts/pyrus run typecheck`.
-- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/account-orders.test.ts src/services/account-page-streams.test.ts src/services/account-positions.test.ts src/services/shadow-account.test.ts` (`184/184`).
-- PASS: `pnpm -C artifacts/api-server run typecheck`.
-- PASS: latest live browser account probe for P&L Calendar, Trading Analysis, Orders, loading placeholders, and max-depth console warning non-reproduction.
+- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`.
+- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js src/screens/SignalsScreen.test.js`.
+- PASS: current-source service probe for non-exact bootstrap vs exact visible-cell leader poll.
+- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/trade-monitor-worker.test.ts`.
+- PASS: `pnpm run audit:replit-startup`.
 - PASS: `git diff --check`.
+- PASS: `pnpm -C artifacts/pyrus exec node scripts/checkDevRuntime.mjs` ran; it reports stale API PID `128950`, so restart is still required before live API validation.
+- PASS: post-push safe Signals Playwright smoke.
