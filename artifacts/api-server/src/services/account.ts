@@ -153,6 +153,7 @@ import {
   readIbkrLiveDemandState,
   releaseIbkrLiveDemand,
 } from "./ibkr-live-demand-coordinator";
+import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import {
   admitMarketDataLeases,
   releaseMarketDataLeases,
@@ -189,6 +190,7 @@ const FLEX_RETRYABLE_ERROR_CODES = new Set(["1001", "1002", "1018"]);
 const OPTION_GREEK_CACHE_TTL_MS = 15_000;
 const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
+const ACCOUNT_OPTION_QUOTE_SNAPSHOT_TASK_MAX_WAIT_MS = 3_000;
 const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
 
 type AccountMetric = {
@@ -1716,21 +1718,41 @@ async function fetchOptionQuoteSnapshotsForPositions(
       return map;
     }, new Map<string, string[]>());
 
-    Array.from(positionsByUnderlying.entries()).forEach(
-      ([underlying, underlyingProviderContractIds]) => {
-        const ownerForUnderlying = `${owner}:${underlying}`;
-        const providerContractIdsForUnderlying = Array.from(
-          new Set(underlyingProviderContractIds),
-        );
-        demandStateEntries.push(
-          ...readIbkrLiveDemandState({
+    const demandStateResults = await Promise.allSettled(
+      Array.from(positionsByUnderlying.entries()).map(
+        async ([underlying, underlyingProviderContractIds]) => {
+          const ownerForUnderlying = `${owner}:${underlying}`;
+          const providerContractIdsForUnderlying = Array.from(
+            new Set(underlyingProviderContractIds),
+          );
+          const snapshotRequest = fetchBridgeOptionQuoteSnapshots({
+            underlying,
+            providerContractIds: providerContractIdsForUnderlying,
+            owner: `${ownerForUnderlying}:snapshot`,
+            intent: "account-monitor-live",
+            fallbackProvider: "cache",
+            requiresGreeks: true,
+          }).catch((error) => {
+            logger.debug?.(
+              { err: error, owner: ownerForUnderlying, underlying },
+              "Account position option quote snapshot failed",
+            );
+          });
+          await Promise.race([
+            snapshotRequest,
+            sleep(ACCOUNT_OPTION_QUOTE_SNAPSHOT_TASK_MAX_WAIT_MS),
+          ]);
+          return readIbkrLiveDemandState({
             owner: ownerForUnderlying,
             underlying,
             providerContractIds: providerContractIdsForUnderlying,
             requiresGreeks: true,
-          }).states,
-        );
-      },
+          }).states;
+        },
+      ),
+    );
+    demandStateEntries = demandStateResults.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
     );
   } catch (error) {
     logger.debug?.(

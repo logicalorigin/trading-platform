@@ -51,6 +51,7 @@ export const PlatformScreenRouter = ({
   signalMonitorEvents,
   signalMonitorEventsLoaded,
   signalMatrixStates,
+  signalMatrixCoverage,
   marketScreenActive,
   flowScreenActive,
   researchConfigured,
@@ -146,6 +147,7 @@ export const PlatformScreenRouter = ({
               : signalMonitorSymbols
           }
           signalMatrixStates={signalMatrixStates}
+          signalMatrixCoverage={signalMatrixCoverage}
           signalMonitorEvents={signalMonitorEvents}
           signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           isVisible={signalsDataActive}

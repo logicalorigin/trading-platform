@@ -268,7 +268,7 @@ export const signalOptionsMtfPresetDefaults = (value) =>
   SIGNAL_OPTIONS_MTF_PRESETS.find((item) => item.value === value) ??
   SIGNAL_OPTIONS_MTF_PRESETS[0];
 
-export const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+export const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 export const PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"];
 
 export const DEFAULT_STRATEGY_SIGNAL_SETTINGS = {
