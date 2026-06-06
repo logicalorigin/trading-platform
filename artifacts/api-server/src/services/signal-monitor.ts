@@ -85,8 +85,8 @@ import {
   primeSignalMonitorLocalBarCache,
 } from "./signal-monitor-local-bar-cache";
 
-export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
-export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
+export type SignalMonitorTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
+export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe;
 export type SignalMonitorDirection = "buy" | "sell";
 export type SignalMonitorBreadthHistoryRange = "day" | "week";
 type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
@@ -170,13 +170,14 @@ function throwIfSignalMonitorAborted(signal?: AbortSignal): void {
 
 const SIGNAL_MONITOR_TIMEFRAMES: readonly SignalMonitorTimeframe[] = [
   "1m",
+  "2m",
   "5m",
   "15m",
   "1h",
   "1d",
 ];
 const SIGNAL_MONITOR_MATRIX_TIMEFRAMES: readonly SignalMonitorMatrixTimeframe[] =
-  ["1m", "2m", "5m", "15m", "1h", "1d"];
+  SIGNAL_MONITOR_TIMEFRAMES;
 const DEFAULT_SIGNAL_MONITOR_TIMEFRAME: SignalMonitorTimeframe = "15m";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE =
   "Postgres is unavailable; signal monitor data is temporarily degraded.";
@@ -345,6 +346,9 @@ export function resolveSignalMonitorTimeframe(
   const resolved = String(value || "").trim() as SignalMonitorTimeframe;
   return SIGNAL_MONITOR_TIMEFRAMES.includes(resolved) ? resolved : fallback;
 }
+
+const resolveSignalMonitorActiveTimeframes = (): SignalMonitorMatrixTimeframe[] =>
+  [...SIGNAL_MONITOR_MATRIX_TIMEFRAMES];
 
 export function withSignalMonitorUniverseScope(
   settings: Record<string, unknown>,
@@ -5325,7 +5329,8 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
   const evaluationSettings = cappedSignalMonitorEvaluationProfile(
     input.profile,
   );
-  const timeframe = resolveSignalMonitorTimeframe(
+  const timeframes = resolveSignalMonitorActiveTimeframes();
+  const rotationTimeframe = resolveSignalMonitorTimeframe(
     evaluationSettings.profile.timeframe,
   );
   const universe = await resolveSignalMonitorProfileUniverse(
@@ -5355,7 +5360,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
         cursor: signalMonitorEvaluationRotationCursors.get(
           signalMonitorEvaluationRotationKey({
             profile: universe.profile,
-            timeframe,
+            timeframe: rotationTimeframe,
           }),
         ),
       });
@@ -5363,7 +5368,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     signalMonitorEvaluationRotationCursors.set(
       signalMonitorEvaluationRotationKey({
         profile: universe.profile,
-        timeframe,
+        timeframe: rotationTimeframe,
       }),
       resolvedBatch.nextCursor,
     );
@@ -5378,14 +5383,19 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     !universe.fallbackUsed &&
     !requestedSymbols;
 
-  const evaluatedStates = await evaluateSymbolsInBatches({
-    profile: universe.profile,
-    symbols,
-    timeframe,
-    mode,
-    evaluatedAt,
-    barSourcePolicy: input.barSourcePolicy,
-  });
+  const evaluatedStates = [];
+  for (const timeframe of timeframes) {
+    evaluatedStates.push(
+      ...(await evaluateSymbolsInBatches({
+        profile: universe.profile,
+        symbols,
+        timeframe,
+        mode,
+        evaluatedAt,
+        barSourcePolicy: input.barSourcePolicy,
+      })),
+    );
+  }
   if (shouldDeactivateMissing) {
     const inactivePatch = { active: false, updatedAt: evaluatedAt };
     await db
@@ -6393,14 +6403,15 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
 
   return withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
     const evaluatedAt = new Date();
-    const timeframe = resolveSignalMonitorTimeframe(
+    const timeframes = resolveSignalMonitorActiveTimeframes();
+    const rotationTimeframe = resolveSignalMonitorTimeframe(
       evaluationProfile.timeframe,
     );
     const universe =
       await resolveRuntimeSignalMonitorProfileUniverse(evaluationProfile);
     const rotationKey = signalMonitorEvaluationRotationKey({
       profile: evaluationProfile,
-      timeframe,
+      timeframe: rotationTimeframe,
     });
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
       sourceSymbols: universe.symbols,
@@ -6411,13 +6422,18 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       rotationKey,
       resolvedBatch.nextCursor,
     );
-    const states = await evaluateRuntimeSymbolsInBatches({
-      profile: evaluationProfile,
-      symbols: resolvedBatch.symbols,
-      timeframe,
-      evaluatedAt,
-      barSourcePolicy: input.barSourcePolicy,
-    });
+    const states = [];
+    for (const timeframe of timeframes) {
+      states.push(
+        ...(await evaluateRuntimeSymbolsInBatches({
+          profile: evaluationProfile,
+          symbols: resolvedBatch.symbols,
+          timeframe,
+          evaluatedAt,
+          barSourcePolicy: input.barSourcePolicy,
+        })),
+      );
+    }
     recordRuntimeSignalEvents({
       profile: evaluationProfile,
       states,
@@ -7234,7 +7250,7 @@ async function readSignalMonitorStateFresh(input: {
       truncated,
       universe,
     } = await resolveSignalMonitorProfileUniverse(profile);
-    const timeframe = resolveSignalMonitorTimeframe(hydratedProfile.timeframe);
+    const timeframes = resolveSignalMonitorActiveTimeframes();
     const currentUniverseSymbols = new Set(
       symbols
         .map((symbol) => normalizeSymbol(symbol).toUpperCase())
@@ -7247,7 +7263,7 @@ async function readSignalMonitorStateFresh(input: {
       .where(
         and(
           eq(signalMonitorSymbolStatesTable.profileId, hydratedProfile.id),
-          eq(signalMonitorSymbolStatesTable.timeframe, timeframe),
+          inArray(signalMonitorSymbolStatesTable.timeframe, timeframes),
           eq(signalMonitorSymbolStatesTable.active, true),
         ),
       )
@@ -7266,7 +7282,9 @@ async function readSignalMonitorStateFresh(input: {
         currentUniverseSymbols.has(symbol) &&
         isSignalMonitorStateCurrentForLane({
           state,
-          timeframe,
+          timeframe: String(
+            state.timeframe || "",
+          ) as SignalMonitorMatrixTimeframe,
           evaluatedAt,
         })
       );
@@ -7280,7 +7298,9 @@ async function readSignalMonitorStateFresh(input: {
         profile: profileToResponse(hydratedProfile),
         states: visibleStates.map((state) =>
           stateToResponseForSnapshot(state, {
-            timeframe,
+            timeframe: String(
+              state.timeframe || "",
+            ) as SignalMonitorMatrixTimeframe,
             evaluatedAt,
             markNonCurrentStale: input.markNonCurrentStale,
           }),
@@ -7373,7 +7393,11 @@ function startSignalMonitorStateRefresh(
   if (existing) {
     return existing;
   }
-  const request = readSignalMonitorStateFresh({ environment })
+  const request = readSignalMonitorStateFresh({
+    environment,
+    includeNonCurrent: true,
+    markNonCurrentStale: true,
+  })
     .then((result) => {
       signalMonitorStateCache.set(cacheKey, {
         ...result,
@@ -7396,7 +7420,11 @@ export async function getSignalMonitorState(input: {
 }) {
   const environment = resolveEnvironment(input.environment);
   if (!input.staleFast) {
-    const fresh = await readSignalMonitorStateFresh({ environment });
+    const fresh = await readSignalMonitorStateFresh({
+      environment,
+      includeNonCurrent: true,
+      markNonCurrentStale: true,
+    });
     return fresh.value;
   }
 

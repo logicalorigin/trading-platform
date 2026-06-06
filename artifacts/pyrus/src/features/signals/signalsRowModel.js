@@ -164,12 +164,28 @@ const buildWatchlistMembership = (watchlists = []) => {
   return bySymbol;
 };
 
-const buildPrimaryStateMap = (states = []) => {
+const buildPrimaryStateMap = (states = [], preferredTimeframe = null) => {
   const bySymbol = new Map();
+  const fallbackBySymbol = new Map();
   (Array.isArray(states) ? states : []).forEach((state) => {
     const symbol = normalizeSignalsTicker(state?.symbol);
     if (!symbol) return;
+    fallbackBySymbol.set(
+      symbol,
+      preferLatestState(fallbackBySymbol.get(symbol), state),
+    );
+    if (
+      preferredTimeframe &&
+      String(state?.timeframe || "").trim() !== preferredTimeframe
+    ) {
+      return;
+    }
     bySymbol.set(symbol, preferLatestState(bySymbol.get(symbol), state));
+  });
+  fallbackBySymbol.forEach((state, symbol) => {
+    if (!bySymbol.has(symbol)) {
+      bySymbol.set(symbol, state);
+    }
   });
   return bySymbol;
 };
@@ -697,7 +713,9 @@ export const resolveSignalMatrixVerdict = ({
 
 const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
   const states = Object.values(matrixStatesByTimeframe || {});
-  const hasProblem = states.some(isProblemSignalState);
+  const hasProblem = states.some(
+    (state) => isProblemSignalState(state) && !isStaleSignalState(state),
+  );
   const hasStale = states.some(isStaleSignalState);
   const hasFresh = states.some(isCurrentFreshSignalState);
   const hasComputed = states.some((state) =>
@@ -721,7 +739,8 @@ const resolveRowStatus = ({
   skipped,
 }) => {
   const status = normalizeSignalStatus(primaryState);
-  const hasProblem = isProblemSignalState(primaryState);
+  const primaryStale = STALE_STATUSES.has(status);
+  const hasProblem = isProblemSignalState(primaryState) && !primaryStale;
 
   if (hasProblem || (!primaryState && matrixStatus?.hasProblem)) {
     return SIGNALS_ROW_STATUS.problem;
@@ -742,8 +761,10 @@ const resolveRowStatus = ({
       ? SIGNALS_ROW_STATUS.activeFresh
       : SIGNALS_ROW_STATUS.activeStale;
   }
-  if (STALE_STATUSES.has(status)) {
-    return SIGNALS_ROW_STATUS.problem;
+  if (primaryStale) {
+    return direction
+      ? SIGNALS_ROW_STATUS.activeStale
+      : SIGNALS_ROW_STATUS.neutral;
   }
   return SIGNALS_ROW_STATUS.neutral;
 };
@@ -771,10 +792,11 @@ const coverageReasonFor = ({
   skipped,
   matrixStatus,
 }) => {
-  if (primaryState?.lastError) return primaryState.lastError;
-  if (rowStatus === SIGNALS_ROW_STATUS.problem) {
-    return primaryState?.status === "stale" ? "Waiting for current monitor state" : "Signal computation unavailable";
+  if (primaryState && normalizeSignalStatus(primaryState) === "stale") {
+    return "Stored monitor state is aged; waiting for current market bars";
   }
+  if (primaryState?.lastError) return primaryState.lastError;
+  if (rowStatus === SIGNALS_ROW_STATUS.problem) return "Signal computation unavailable";
   if (matrixStatus?.hasStale && !matrixStatus?.hasCurrentComputed) {
     return "Waiting for current market bars";
   }
@@ -804,8 +826,19 @@ export const buildSignalsRows = ({
       .map(normalizeSignalsTicker)
       .filter(Boolean),
   );
-  const primaryStatesBySymbol = buildPrimaryStateMap(states);
-  const matrixStatesBySymbol = buildSignalMatrixStatesBySymbol(matrixStates);
+  const responseProfileTimeframe = String(
+    stateResponse?.profile?.timeframe || "",
+  ).trim();
+  const primaryStatesBySymbol = buildPrimaryStateMap(
+    states,
+    SIGNALS_TABLE_TIMEFRAMES.includes(responseProfileTimeframe)
+      ? responseProfileTimeframe
+      : null,
+  );
+  const matrixStatesBySymbol = buildSignalMatrixStatesBySymbol([
+    ...matrixStates,
+    ...states,
+  ]);
   const latestEventsBySymbol = buildLatestEventsBySymbol(events);
   const watchlistMembership = buildWatchlistMembership(watchlists);
   const trackedSymbols = buildTrackedSymbols({

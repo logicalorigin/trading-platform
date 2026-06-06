@@ -1,6 +1,6 @@
 import { formatOptionContractLabel } from "../../lib/formatters";
 
-export const SIGNAL_MONITOR_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+export const SIGNAL_MONITOR_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 export const MARKET_ACTIVITY_RECENT_SIGNAL_MS = 2 * 24 * 60 * 60 * 1000;
 
 export const normalizeSignalMonitorTimeframe = (value) => {

@@ -152,7 +152,11 @@ const isHydratedSignalMatrixState = (state) =>
         (normalizeSignalStatus(state) === "unavailable" &&
           (state.lastEvaluatedAt || state.lastError))),
   );
-const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "1d"];
+const toHydrationCount = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0;
+};
+const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
@@ -2599,6 +2603,7 @@ function SignalProvenanceStrip({ row, onJumpToTrade, phone }) {
 }
 
 function SignalsHydrationStrip({
+  active,
   hydrated,
   missing,
   phone,
@@ -2608,13 +2613,18 @@ function SignalsHydrationStrip({
   const hasUniverse = total > 0;
   const ratio = hasUniverse ? hydrated / total : 0;
   const boundedRatio = Math.max(0, Math.min(1, ratio));
+  const activeCount = hasUniverse ? Math.min(missing, toHydrationCount(active)) : 0;
+  const activeRatio = hasUniverse ? (hydrated + activeCount) / total : 0;
+  const boundedActiveRatio = Math.max(boundedRatio, Math.min(1, activeRatio));
   const complete = hasUniverse && missing === 0;
   const tone = !hasUniverse ? CSS_COLOR.textDim : complete ? CSS_COLOR.green : CSS_COLOR.amber;
   const status = !hasUniverse
     ? "Hydration idle"
     : complete
       ? "Fully hydrated"
-      : `Hydrating ${missing} cells remaining`;
+      : activeCount
+        ? `Hydrating ${activeCount} active, ${missing} remaining`
+        : `Hydrating ${missing} cells remaining`;
 
   return (
     <div
@@ -2660,6 +2670,7 @@ function SignalsHydrationStrip({
         aria-valuemax={100}
         aria-valuenow={Math.round(boundedRatio * 100)}
         style={{
+          position: "relative",
           height: dim(7),
           borderRadius: dim(RADII.pill),
           background: CSS_COLOR.bg3,
@@ -2669,12 +2680,28 @@ function SignalsHydrationStrip({
       >
         <span
           style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            display: "block",
+            width: `${Math.round(boundedActiveRatio * 100)}%`,
+            height: "100%",
+            borderRadius: dim(RADII.pill),
+            background: activeCount ? cssColorMix(tone, 45) : tone,
+            transition: "width 320ms ease-out, background-color 180ms ease-out",
+          }}
+        />
+        <span
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
             display: "block",
             width: `${Math.round(boundedRatio * 100)}%`,
             height: "100%",
             borderRadius: dim(RADII.pill),
             background: tone,
-            transition: "width 180ms ease-out, background-color 180ms ease-out",
+            transition: "width 320ms ease-out, background-color 180ms ease-out",
           }}
         />
       </span>
@@ -2864,6 +2891,7 @@ export default function SignalsScreen({
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
+  signalMatrixCoverage = null,
   isVisible = true,
   safeQaMode = false,
   onReadinessChange,
@@ -4084,7 +4112,7 @@ export default function SignalsScreen({
     markSignalsRouteDataTiming,
   ]);
 
-  const loading = stateQuery.isLoading || profileQuery.isLoading;
+  const loading = stateQuery.isLoading || (!profile && profileQuery.isLoading);
   const errored = stateQuery.isError || profileQuery.isError || eventsQuery.isError;
   useEffect(() => {
     if (!active || loading || errored) {
@@ -4141,6 +4169,13 @@ export default function SignalsScreen({
   const matrixHydrationTotal = matrixHydrationPlan.totalCellCount;
   const matrixHydrationHydrated = matrixHydrationPlan.hydratedCellCount;
   const matrixHydrationMissing = matrixHydrationPlan.missingCellCount;
+  const matrixHydrationActive = Math.min(
+    matrixHydrationMissing,
+    Math.max(
+      toHydrationCount(signalMatrixCoverage?.optimisticPendingCellCount),
+      toHydrationCount(signalMatrixCoverage?.pendingCellCount),
+    ),
+  );
   const matrixHydrationTone =
     matrixHydrationTotal > 0 && matrixHydrationMissing === 0
       ? CSS_COLOR.green
@@ -4258,7 +4293,7 @@ export default function SignalsScreen({
             label="Fresh"
             value={formatCount(summary.fresh)}
             tone={CSS_COLOR.green}
-            subtitle={`${formatCount(summary.pending)} pending`}
+            subtitle={`${formatCount(Math.max(0, summary.active - summary.fresh))} aged`}
             ratio={summary.fresh / activeSignalCount}
           />
           <MetricTile
@@ -4490,6 +4525,7 @@ export default function SignalsScreen({
           }}
         >
           <SignalsHydrationStrip
+            active={matrixHydrationActive}
             hydrated={matrixHydrationHydrated}
             missing={matrixHydrationMissing}
             phone={phone}

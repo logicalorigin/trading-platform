@@ -133,7 +133,7 @@ const SETTINGS_TABS = [
   },
 ];
 
-const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+const SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MONITOR_ENVIRONMENT = "paper";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([

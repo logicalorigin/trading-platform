@@ -2,27 +2,31 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-06-05 16:19:40 MDT`
-- Last Updated (UTC): `2026-06-05T22:19:40.104Z`
-- Native Codex Session ID: `pending`
-- Summary: 2026-06-05 16:19:40 MDT | pending | IB Gateway status recognition fix
-- Handoff: `SESSION_HANDOFF_LIVE_2026-06-05_ib-gateway-status-recognition.md`
+- Last Updated (MT): `2026-06-06 09:19:29 MDT`
+- Last Updated (UTC): `2026-06-06T15:19:29.383Z`
+- Native Codex Session ID: `019e9d7d-0f96-7750-9f11-dd41d293e473`
+- Summary: 2026-06-06 09:19:29 MDT | 019e9d7d-0f96-7750-9f11-dd41d293e473 | lets install all our skills
+- Handoff: `SESSION_HANDOFF_2026-06-06_019e9d7d-0f96-7750-9f11-dd41d293e473.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Patched Pyrus UI status logic so stale health does not override current socket/stream uptime proof.
-- Header now prefers runtime diagnostics bridge health over thinner session runtime metadata.
-- Live runtime still reports the bridge health endpoint unreachable/backed off while the desktop helper is online.
+- Cleanup branch `codex/cleanup-worktree-2026-06-06` was created from `main`.
+- Pending worktree changes were reviewed as intentional workspace state: signal monitor all-timeframe hydration/UI progress, real account option quote snapshot hydration, line-usage column semantics, agent instruction updates, and session handoffs.
+- Validation completed before staging; no blocking failures remain.
 
 ## Next Recommended Steps
 
-1. Reload/restart the Pyrus frontend through the normal Replit app path when ready.
-2. If the UI still cannot see Gateway while the Windows Gateway process is visibly running, debug bridge tunnel/runtime override reachability.
+1. Stage and commit the reviewed work on `codex/cleanup-worktree-2026-06-06`.
+2. Merge the cleanup branch back to `main`, then push `main` if remote accepts it.
 
 ## Validation Snapshot
 
-- `pnpm --filter @workspace/pyrus run typecheck` passed.
-- `/tmp/ibkr-status-assert.mjs` passed via `node_modules/.bin/tsx --tsconfig tsconfig.json`.
-- `pnpm --filter @workspace/pyrus run build` passed with existing Vite warnings.
 - `git diff --check` passed.
+- `pnpm --filter @workspace/api-server run typecheck` passed.
+- `pnpm --filter @workspace/pyrus run typecheck` passed.
+- `PYRUS_ALLOW_HOT_VALIDATION=1 pnpm run audit:api-codegen` passed.
+- `pnpm --filter @workspace/api-server run build` passed.
+- `pnpm --filter @workspace/pyrus run build` passed with existing Vite dynamic-import/chunk warnings.
+- `node --test artifacts/pyrus/src/features/signals/signalsMatrixHydration.test.mjs` passed.
+- `node --test artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.mjs` passed.

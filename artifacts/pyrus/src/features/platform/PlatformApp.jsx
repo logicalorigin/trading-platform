@@ -329,7 +329,7 @@ const PLATFORM_FRESHNESS_TTL_MS = Object.freeze({
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MATRIX_TIMEFRAME_SET = new Set(SIGNAL_MATRIX_TIMEFRAMES);
-const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "algo"];
+const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "signals", "algo"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 1_500;
@@ -3967,11 +3967,12 @@ export default function PlatformApp() {
         knownSymbols: signalMatrixUniverseSymbols,
       });
       if (signalMatrixStatesEqual(current.states, nextStates)) {
-        return current;
+        return current.coverage ? { ...current, coverage: null } : current;
       }
       return {
         ...current,
         states: nextStates,
+        coverage: null,
       };
     });
   }, [signalMatrixUniverseSymbols, signalMatrixSymbolsKey]);
@@ -4226,10 +4227,12 @@ export default function PlatformApp() {
                     SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS,
                     signalMatrixEffectiveCatchupDelayMs ?? 0,
                   )
-                : Math.max(
-                    SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
-                    signalMatrixEffectiveCatchupDelayMs ?? 0,
-                  );
+                : signalMatrixStaVisibleRequestActive
+                  ? signalMatrixEffectiveCatchupDelayMs
+                  : Math.max(
+                      SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
+                      signalMatrixEffectiveCatchupDelayMs ?? 0,
+                    );
           }
         } else if (activeSignalsCatchupPending) {
           signalMatrixQueuedEvaluationRef.current = true;
@@ -5222,6 +5225,7 @@ export default function PlatformApp() {
         signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
       )}
       signalMatrixStates={signalMatrixSnapshot.states}
+      signalMatrixCoverage={signalMatrixSnapshot.coverage || null}
       marketScreenActive={marketScreenActive}
       flowScreenActive={flowScreenActive}
       researchConfigured={researchConfigured}

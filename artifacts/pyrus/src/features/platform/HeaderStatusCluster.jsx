@@ -1133,16 +1133,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(
-                  row.id === "account-monitor"
-                    ? row.needed
-                    : row.effectiveCap ?? row.cap,
-                )
-                  ? Math.round(
-                      row.id === "account-monitor"
-                        ? row.needed
-                        : row.effectiveCap ?? row.cap,
-                    )
+                {Number.isFinite(row.effectiveCap ?? row.cap)
+                  ? Math.round(row.effectiveCap ?? row.cap)
                   : MISSING_VALUE}
               </span>
               <span
@@ -1152,10 +1144,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(
-                  row.id === "account-monitor" ? row.deferred : row.free,
-                )
-                  ? Math.round(row.id === "account-monitor" ? row.deferred : row.free)
+                {Number.isFinite(row.free)
+                  ? Math.round(row.free)
                   : MISSING_VALUE}
               </span>
             </div>

@@ -24,6 +24,16 @@
 - Do not use speculative probes as discovery. Use `rg`, generated clients, route files, tests, or docs to find the correct command/URL/schema first; then run the probe.
 - When evidence disproves the current theory, update the theory explicitly instead of forcing the data to fit the original plan.
 
+## Karpathy-inspired operating rules
+
+Behavioral guidelines from https://github.com/multica-ai/andrej-karpathy-skills. These bias toward caution over speed; use judgment for trivial one-line work.
+
+- Think before coding. State assumptions, surface ambiguity and tradeoffs, push back when warranted, and ask when uncertainty would change the implementation.
+- Keep solutions simple. Ship the minimum code that solves the request; do not add speculative features, one-off abstractions, or configurability that was not requested.
+- Make surgical changes. Touch only what the task requires, match existing style, avoid drive-by refactors, and clean up only unused imports or code made obsolete by your own change.
+- Work from verifiable goals. For non-trivial changes, define success criteria, use tests or focused checks where practical, and loop until the stated checks pass or a blocker is factual.
+- For recurring bugs, remove the source. Identify the persisted state, creator path, and reader path; block stale state from re-entering before treating cleanup as permanent.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it. When in doubt, invoke the skill.
