@@ -14,6 +14,7 @@ import {
 import { AlgoDiagnosticsFooter } from "./AlgoDiagnosticsFooter";
 import { AlgoSaveBar } from "./AlgoSaveBar";
 import { AlgoSettingsRegion } from "./AlgoSettingsRegion";
+import { AlgoTimeframeControlBand } from "./AlgoTimeframeControlBand";
 import { HaltStrip } from "./HaltStrip";
 import {
   deriveWireTrailControlSummary,
@@ -294,6 +295,15 @@ export const AlgoRightRail = ({
           <WireTrailStatusBand
             profile={profileDraft}
             positions={signalOptionsPositions}
+          />
+          <AlgoTimeframeControlBand
+            profileDraft={profileDraft}
+            profileBaseline={profileBaseline}
+            strategySettingsDraft={strategySettingsDraft}
+            strategyBaseline={strategyBaseline}
+            patchProfileDraftPath={patchProfileDraftPath}
+            patchStrategySettingsPath={patchStrategySettingsPath}
+            disabled={!controlsReady || pending}
           />
           <HaltStrip
             cockpit={cockpit}

@@ -38,7 +38,7 @@ type ListExecutionEventsInput = {
   includePayload?: boolean;
 };
 
-const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
+const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
 const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
 
@@ -451,3 +451,7 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
     ),
   };
 }
+
+export const __algoAutomationInternalsForTests = {
+  readSignalTimeframe,
+};
