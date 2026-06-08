@@ -2360,7 +2360,13 @@ async function listSignalOptionsSignalSnapshots(
   return snapshots.sort((left, right) => {
     const leftTime = dateOrNull(left.signalAt)?.getTime() ?? 0;
     const rightTime = dateOrNull(right.signalAt)?.getTime() ?? 0;
-    return rightTime - leftTime;
+    return (
+      rightTime - leftTime ||
+      left.symbol.localeCompare(right.symbol) ||
+      left.timeframe.localeCompare(right.timeframe) ||
+      String(left.direction ?? "").localeCompare(String(right.direction ?? "")) ||
+      String(left.signalKey ?? "").localeCompare(String(right.signalKey ?? ""))
+    );
   });
 }
 
@@ -2485,7 +2491,7 @@ function shouldDeferSignalOptionsHeavyWork() {
   const pressure = getApiResourcePressureSnapshot();
   return {
     pressure,
-    defer: false,
+    defer: pressure.caps.signalOptions.actionScansAllowed === false,
   };
 }
 
@@ -4043,6 +4049,55 @@ function enrichSignalOptionsCandidateWithMatrixMtf(
   };
 }
 
+function selectSignalOptionsMtfMatrixSymbols(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+  seenSignals?: Set<string>;
+  startIndex?: number;
+  maxSymbols?: number | null;
+}) {
+  const maxSymbols =
+    input.maxSymbols == null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, Math.floor(input.maxSymbols));
+  if (maxSymbols <= 0) {
+    return [];
+  }
+
+  const symbols: string[] = [];
+  const seenSymbols = new Set<string>();
+  const startIndex = clampActionCursorIndex(
+    input.startIndex ?? 0,
+    input.states.length,
+  );
+  for (let index = startIndex; index < input.states.length; index += 1) {
+    if (symbols.length >= maxSymbols) {
+      break;
+    }
+    const state = input.states[index];
+    if (!state || !isSignalOptionsActionableSignalState(state)) {
+      continue;
+    }
+    const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
+      continue;
+    }
+    if (seenSymbols.has(symbol)) {
+      continue;
+    }
+    const signalAt = toIsoString(state.currentSignalAt);
+    if (
+      signalAt &&
+      input.seenSignals?.has(buildSignalKey(state, signalAt))
+    ) {
+      continue;
+    }
+    seenSymbols.add(symbol);
+    symbols.push(symbol);
+  }
+  return symbols;
+}
+
 function evaluateSignalOptionsEntryGate(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
@@ -4759,9 +4814,76 @@ function resolveSignalOptionsWorkerMonitorBatchCapacity(
 function shouldBatchSignalOptionsWorkerMonitorRefresh(input: {
   source?: "manual" | "worker";
   pressure: ReturnType<typeof getApiResourcePressureSnapshot>;
+  streamFirstMonitorAvailable?: boolean;
 }): boolean {
-  void input;
-  return false;
+  if (input.source !== "worker") {
+    return false;
+  }
+  if (input.pressure.caps.signalOptions.signalRefreshAllowed === false) {
+    return false;
+  }
+  return (
+    input.streamFirstMonitorAvailable === true ||
+    input.pressure.level === "watch" ||
+    input.pressure.level === "high" ||
+    input.pressure.scannerPressure.level === "watch" ||
+    input.pressure.scannerPressure.level === "high"
+  );
+}
+
+function signalOptionsMonitorStateMergeKey(state: unknown): string | null {
+  const record = asRecord(state);
+  const symbol = normalizeSymbol(String(record.symbol ?? "")).toUpperCase();
+  const timeframe = compactString(record.timeframe);
+  return symbol && timeframe ? `${symbol}:${timeframe}` : null;
+}
+
+function mergeSignalOptionsMonitorStateBatch(input: {
+  stored: unknown;
+  evaluated: unknown;
+}) {
+  const stored = asRecord(input.stored);
+  const evaluated = asRecord(input.evaluated);
+  const storedStates = asArray(stored.states);
+  const evaluatedStates = asArray(evaluated.states);
+  const evaluatedByKey = new Map<string, unknown>();
+
+  for (const state of evaluatedStates) {
+    const key = signalOptionsMonitorStateMergeKey(state);
+    if (key) {
+      evaluatedByKey.set(key, state);
+    }
+  }
+
+  const mergedStates = storedStates.map((state) => {
+    const key = signalOptionsMonitorStateMergeKey(state);
+    if (!key) {
+      return state;
+    }
+    const updated = evaluatedByKey.get(key);
+    if (updated !== undefined) {
+      evaluatedByKey.delete(key);
+      return updated;
+    }
+    return state;
+  });
+  mergedStates.push(...evaluatedByKey.values());
+
+  return {
+    ...stored,
+    ...evaluated,
+    states: mergedStates,
+    universeSymbols: asArray(stored.universeSymbols).length
+      ? stored.universeSymbols
+      : evaluated.universeSymbols,
+    universe: Object.keys(asRecord(stored.universe)).length
+      ? stored.universe
+      : evaluated.universe,
+    truncated: Boolean(stored.truncated) || Boolean(evaluated.truncated),
+    skippedSymbols: asArray(stored.skippedSymbols).length
+      ? stored.skippedSymbols
+      : evaluated.skippedSymbols,
+  };
 }
 
 function shouldRefreshSignalOptionsMonitorState(input: {
@@ -4859,6 +4981,13 @@ function signalOptionsStoredMonitorBatch(input: {
   };
 }
 
+function shouldUseStoredMonitorStateForWorkerReadiness(input: {
+  source?: "manual" | "worker";
+  readinessReason?: AlgoGatewayReadiness["reason"];
+}): boolean {
+  return Boolean(input.source === "worker" && input.readinessReason);
+}
+
 async function loadSignalOptionsMonitorState(input: {
   deployment: AlgoDeployment;
   universe: Set<string>;
@@ -4878,8 +5007,10 @@ async function loadSignalOptionsMonitorState(input: {
     const requireWorkerLiveEdgeRefresh =
       input.source === "worker" && input.requireLiveEdgeRefresh === true;
     if (
-      input.source === "worker" &&
-      input.readinessReason === SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON
+      shouldUseStoredMonitorStateForWorkerReadiness({
+        source: input.source,
+        readinessReason: input.readinessReason,
+      })
     ) {
       const symbols = normalizeSignalOptionsMonitorUniverseSymbols(
         input.universe,
@@ -4895,7 +5026,7 @@ async function loadSignalOptionsMonitorState(input: {
           symbols,
           profile,
           forced: input.forceEvaluate === true,
-          reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON,
+          reason: input.readinessReason ?? SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON,
         }),
       };
     }
@@ -4935,10 +5066,62 @@ async function loadSignalOptionsMonitorState(input: {
     const streamFirstMonitorAvailable =
       process.env["SIGNAL_OPTIONS_STREAM_FIRST_MONITOR"] !== "0" &&
       isStockAggregateStreamingAvailable();
+    const pressure = getApiResourcePressureSnapshot();
     const signalStabilityPolicy =
       input.source === "worker" && streamFirstMonitorAvailable
         ? "allow-partial-live-edge"
         : undefined;
+    if (
+      input.forceEvaluate !== true &&
+      requireWorkerLiveEdgeRefresh &&
+      shouldBatchSignalOptionsWorkerMonitorRefresh({
+        source: input.source,
+        pressure,
+        streamFirstMonitorAvailable,
+      })
+    ) {
+      const batch = resolveSignalOptionsMonitorBatch({
+        deploymentId: input.deployment.id,
+        universe: input.universe,
+        profile,
+        capacity: resolveSignalOptionsWorkerMonitorBatchCapacity(profile),
+      });
+      if (!batch.symbols.length) {
+        return {
+          ...stored,
+          signalOptionsBatch: {
+            ...batch,
+            forced: false,
+            source: "stored_state",
+            reason: "worker_live_edge_batch_empty",
+          },
+        };
+      }
+      const evaluated = await evaluateSignalMonitorProfileSymbols({
+        profile,
+        mode: "incremental",
+        symbols: batch.symbols,
+        maxSymbolsOverride: batch.symbols.length,
+        pressureCapMode: "bypass-soft",
+        evaluationConcurrencyOverride: Math.min(
+          SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY,
+          batch.symbols.length,
+        ),
+        barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
+        includeProvisionalLiveEdge: true,
+        allowHistoricalFallback: streamFirstMonitorAvailable ? false : undefined,
+        signalStabilityPolicy,
+        signal: input.signal,
+      });
+      return {
+        ...mergeSignalOptionsMonitorStateBatch({ stored, evaluated }),
+        signalOptionsBatch: {
+          ...batch,
+          forced: false,
+          source: "worker_live_edge_batch",
+        },
+      };
+    }
     if (
       input.forceEvaluate !== true &&
       input.source === "worker" &&
@@ -5012,20 +5195,17 @@ async function loadSignalOptionsMtfMatrixBySymbol(input: {
   states: SignalMonitorState[];
   universe: Set<string>;
   source: "manual" | "worker";
+  seenSignals?: Set<string>;
+  startIndex?: number;
+  maxSymbols?: number | null;
 }) {
-  const symbols = [
-    ...new Set(
-      input.states
-        .map((state) => normalizeSymbol(state.symbol).toUpperCase())
-        .filter((symbol, index) => {
-          if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
-            return false;
-          }
-          const state = input.states[index];
-          return Boolean(state && isSignalOptionsActionableSignalState(state));
-        }),
-    ),
-  ];
+  const symbols = selectSignalOptionsMtfMatrixSymbols({
+    states: input.states,
+    universe: input.universe,
+    seenSignals: input.seenSignals,
+    startIndex: input.startIndex,
+    maxSymbols: input.maxSymbols,
+  });
   if (!symbols.length) {
     return new Map<string, Map<string, Record<string, unknown>>>();
   }
@@ -6578,6 +6758,21 @@ function candidateLatestTimelineAt(candidate: SignalOptionsCandidate) {
 
 function candidateLatestActivityAt(candidate: SignalOptionsCandidate) {
   return candidateLatestTimelineAt(candidate) ?? candidate.signalAt;
+}
+
+function compareSignalOptionsCandidatesForDisplay(
+  left: SignalOptionsCandidate,
+  right: SignalOptionsCandidate,
+) {
+  const leftTime = dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
+  const rightTime = dateOrNull(candidateLatestActivityAt(right))?.getTime() ?? 0;
+  return (
+    rightTime - leftTime ||
+    left.symbol.localeCompare(right.symbol) ||
+    left.signalAt.localeCompare(right.signalAt) ||
+    String(left.direction ?? "").localeCompare(String(right.direction ?? "")) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function stageStatus(input: {
@@ -9083,11 +9278,7 @@ async function buildStatePayload(input: {
       });
     })
     .sort((left, right) => {
-      const leftTime =
-        dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
-      const rightTime =
-        dateOrNull(candidateLatestActivityAt(right))?.getTime() ?? 0;
-      return rightTime - leftTime;
+      return compareSignalOptionsCandidatesForDisplay(left, right);
     })
     .slice(0, 75);
   const openPremium = activePositions.reduce(
@@ -9485,20 +9676,22 @@ async function withSignalOptionsDashboardSnapshotBudget(
     reason: string;
     staleFallback?: SignalOptionsDashboardSnapshot | null;
     allowColdFallback?: boolean;
+    fallbackOnError?: boolean;
   },
 ): Promise<SignalOptionsDashboardSnapshot> {
   try {
     return await withSignalOptionsDashboardBuildTimeout(promise, input);
   } catch (error) {
-    if (
-      !(error instanceof HttpError) ||
-      error.code !== "signal_options_dashboard_build_timeout"
-    ) {
+    const timedOut =
+      error instanceof HttpError &&
+      error.code === "signal_options_dashboard_build_timeout";
+    if (!timedOut && input.fallbackOnError !== true) {
       throw error;
     }
     const coldFallbackAllowed = input.allowColdFallback !== false;
     logger.warn(
       {
+        err: error,
         deploymentId: input.deploymentId,
         view: input.view,
         timeoutMs: input.timeoutMs,
@@ -9860,9 +10053,9 @@ async function withFreshSignalOptionsStateSignals(
         mergeSignalOptionsCandidate(existing, candidate),
       );
     }
-    const candidates = [...candidatesById.values()].map(
-      signalOptionsCandidateToDashboardCandidate,
-    );
+    const candidates = [...candidatesById.values()]
+      .sort(compareSignalOptionsCandidatesForDisplay)
+      .map(signalOptionsCandidateToDashboardCandidate);
     return {
       ...snapshot.state,
       signals,
@@ -9878,10 +10071,20 @@ async function withFreshSignalOptionsStateSignals(
       "Failed to refresh Signal Options signal list from signal monitor state",
     );
     if (input.refreshSignalsFromMonitorState === true) {
-      throw error;
+      return signalOptionsSignalRefreshFallbackState(snapshot);
     }
     return snapshot.state;
   }
+}
+
+function signalOptionsSignalRefreshFallbackState(
+  snapshot: SignalOptionsDashboardSnapshot,
+): SignalOptionsDashboardSnapshot["state"] {
+  return withSignalOptionsCacheMetadata(snapshot.state, {
+    cachedAt: snapshot.cachedAt,
+    cacheStatus: "stale",
+    reason: "signal_options_state_signal_refresh_failed_fallback",
+  });
 }
 
 function signalOptionsCachedSummarySnapshot(
@@ -9912,6 +10115,73 @@ function signalOptionsExpiredSummaryCacheStillUseful(
     Number.isFinite(cachedAtMs) &&
     now - cachedAtMs <= SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS
   );
+}
+
+function signalOptionsCachedSummaryRefreshFallbackSnapshot(input: {
+  deploymentId: string;
+  now: number;
+  reason: string;
+}): SignalOptionsDashboardSnapshot | null {
+  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
+  const cachedExpiredButUseful =
+    cached !== undefined &&
+    cached.expiresAt <= input.now &&
+    cached.staleExpiresAt <= input.now &&
+    signalOptionsExpiredSummaryCacheStillUseful(cached, input.now);
+  if (
+    cached &&
+    (cached.expiresAt > input.now ||
+      cached.staleExpiresAt > input.now ||
+      cachedExpiredButUseful)
+  ) {
+    return {
+      ...cached,
+      state: withSignalOptionsCacheMetadata(cached.state, {
+        cachedAt: cached.cachedAt,
+        cacheStatus: cached.expiresAt > input.now ? "hit" : "stale",
+        reason:
+          cached.expiresAt > input.now
+            ? undefined
+            : cachedExpiredButUseful
+              ? "signal_options_state_summary_expired_cache_refreshing"
+              : input.reason,
+      }),
+    };
+  }
+
+  const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
+  const fullExpiredButUseful =
+    fullCached !== undefined &&
+    fullCached.expiresAt <= input.now &&
+    fullCached.staleExpiresAt <= input.now &&
+    signalOptionsExpiredSummaryCacheStillUseful(fullCached, input.now);
+  if (
+    fullCached &&
+    (fullCached.expiresAt > input.now ||
+      fullCached.staleExpiresAt > input.now ||
+      fullExpiredButUseful)
+  ) {
+    const summarySnapshot = writeSignalOptionsSummarySnapshotFromFullSnapshot(
+      fullCached,
+      input.deploymentId,
+      input.now,
+    );
+    return {
+      ...summarySnapshot,
+      state: withSignalOptionsCacheMetadata(summarySnapshot.state, {
+        cachedAt: summarySnapshot.cachedAt,
+        cacheStatus: fullCached.expiresAt > input.now ? "hit" : "stale",
+        reason:
+          fullCached.expiresAt > input.now
+            ? undefined
+            : fullExpiredButUseful
+              ? "signal_options_state_summary_expired_cache_refreshing"
+              : input.reason,
+      }),
+    };
+  }
+
+  return null;
 }
 
 function startSignalOptionsFastSummaryRefresh(input: {
@@ -10006,19 +10276,22 @@ function startSignalOptionsFastSummaryRefresh(input: {
       ]);
       currentCandidateEvents.push(event);
     }
-    const candidates = [...candidatesById.values()].map((candidate) => {
-      const eventsForCandidate = candidateEventsById.get(candidate.id) ?? [];
-      const { actionStatus, syncStatus } = deriveCandidateActionStatus({
-        candidate,
-        events: eventsForCandidate,
-      });
-      return signalOptionsCandidateToDashboardCandidate({
-        ...candidate,
-        actionStatus,
-        syncStatus,
-        timeline: eventsForCandidate.map((event) => eventTimelineItem(event)),
-      });
-    });
+    const candidates = [...candidatesById.values()]
+      .map((candidate) => {
+        const eventsForCandidate = candidateEventsById.get(candidate.id) ?? [];
+        const { actionStatus, syncStatus } = deriveCandidateActionStatus({
+          candidate,
+          events: eventsForCandidate,
+        });
+        return {
+          ...candidate,
+          actionStatus,
+          syncStatus,
+          timeline: eventsForCandidate.map((event) => eventTimelineItem(event)),
+        };
+      })
+      .sort(compareSignalOptionsCandidatesForDisplay)
+      .map(signalOptionsCandidateToDashboardCandidate);
     const state = withSignalOptionsCacheMetadata(
       {
         deployment: deploymentToResponse(deployment),
@@ -10088,16 +10361,31 @@ async function buildSignalOptionsFastSummarySnapshot(input: {
   const shouldRefreshStoredSignals =
     input.refreshSignalsFromMonitorState === true;
   if (shouldRefreshStoredSignals) {
+    const staleFallback = signalOptionsCachedSummaryRefreshFallbackSnapshot({
+      deploymentId: input.deploymentId,
+      now,
+      reason: "signal_options_state_summary_fast_signal_refresh_fallback",
+    });
+    if (input.cacheMode === "cache-only") {
+      return (
+        staleFallback ??
+        buildSignalOptionsColdDashboardSnapshot({
+          deploymentId: input.deploymentId,
+          view: "summary",
+          reason:
+            "signal_options_state_summary_fast_cache_only_signal_state_fallback",
+        })
+      );
+    }
     const work = startSignalOptionsFastSummaryRefresh(input);
     return withSignalOptionsDashboardSnapshotBudget(work, {
       deploymentId: input.deploymentId,
       timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
       view: "summary",
-      reason:
-        input.cacheMode === "cache-only"
-          ? "signal_options_state_summary_fast_cache_only_signal_state_timeout"
-          : "signal_options_state_summary_fast_signal_state_timeout",
-      allowColdFallback: false,
+      reason: "signal_options_state_summary_fast_signal_state_timeout",
+      staleFallback,
+      allowColdFallback: true,
+      fallbackOnError: true,
     });
   }
 
@@ -16254,6 +16542,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const readiness = await getAlgoGatewayReadiness();
   const returnSummary =
     source === "worker" || input.responseMode === "summary";
+  const workerReadinessBlocked = Boolean(source === "worker" && !readiness.ready);
   if (
     !readiness.ready &&
     !(source === "worker" && readiness.reason === SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON) &&
@@ -16311,6 +16600,40 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     })
     .where(eq(algoDeploymentsTable.id, deployment.id));
   throwIfSignalOptionsScanAborted(input.signal);
+
+  if (workerReadinessBlocked) {
+    updateSignalOptionsRunMetadata(deployment.id, {
+      phase: "deferred",
+      heavyWorkDeferred: true,
+    });
+    const activePositionCount =
+      await loadSignalOptionsActivePositionCountForWorkerSummary(deployment.id);
+    throwIfSignalOptionsScanAborted(input.signal);
+    const summary = buildWorkerScanSummary({
+      states: evaluated.states as SignalMonitorState[],
+      universe,
+      candidateCount: 0,
+      blockedCandidateCount: 0,
+      activePositionCount,
+      batch: asRecord(asRecord(evaluated).signalOptionsBatch),
+      lastSignalScanAt: signalScanCompletedAt.toISOString(),
+      heavyWorkDeferred: true,
+      activeScanPhase: "deferred",
+    });
+    if (returnSummary) {
+      return {
+        deployment: deploymentToResponse({
+          ...deployment,
+          lastEvaluatedAt: signalScanCompletedAt,
+          lastSignalAt: signalLastSignalAt ?? deployment.lastSignalAt,
+          lastError: null,
+          updatedAt: signalScanCompletedAt,
+        }),
+        summary,
+      };
+    }
+    return listSignalOptionsAutomationState({ deploymentId: deployment.id });
+  }
 
   const heavyWorkDecision = shouldDeferSignalOptionsHeavyWork();
   if (input.skipActionWork === true || heavyWorkDecision.defer) {
@@ -16635,12 +16958,23 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     now: signalScanCompletedAt,
   });
   const positionMarkHaltActive = degradedPositionSymbols.length > 0;
+  const signalMtfMatrixSymbolLimit =
+    source === "worker" && signalActionWorkBudget.itemLimit !== null
+      ? Math.max(
+          0,
+          signalActionWorkBudget.itemLimit -
+            signalActionWorkBudget.processedItems,
+        )
+      : null;
   const signalMtfMatrixBySymbol = hasPendingActionableSignals
     ? await loadSignalOptionsMtfMatrixBySymbol({
         deployment,
         states: signalActionStates,
         universe,
         source,
+        seenSignals,
+        startIndex: nextSignalIndex,
+        maxSymbols: signalMtfMatrixSymbolLimit,
       })
     : new Map<string, Map<string, Record<string, unknown>>>();
   throwIfSignalOptionsScanAborted(input.signal);
@@ -16913,7 +17247,9 @@ export const __signalOptionsAutomationInternalsForTests = {
   shouldDeferSignalOptionsHeavyWork,
   buildWorkerScanSummary,
   buildSignalOptionsActionMapping,
+  buildSignalKey,
   buildSignalOptionsSignalSnapshot,
+  compareSignalOptionsCandidatesForDisplay,
   candidateFromEvent,
   eventTimelineItem,
   isSignalOptionsVisibleSignalState,
@@ -16939,6 +17275,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   isLiveOvernightExitWindow,
   evaluateSignalOptionsEntryGate,
   enrichSignalOptionsCandidateWithMatrixMtf,
+  selectSignalOptionsMtfMatrixSymbols,
   signalOptionsExecutionBlocker,
   resolveSignalOptionsDegradedPositionSymbols,
   signalOptionsGatewayExecutionBlocker,
@@ -16966,12 +17303,14 @@ export const __signalOptionsAutomationInternalsForTests = {
   createSignalOptionsActionWorkBudget,
   resolveSignalOptionsMonitorBatch,
   resolveSignalOptionsWorkerMonitorBatchCapacity,
+  mergeSignalOptionsMonitorStateBatch,
   resolveSignalOptionsMonitorFullRefresh,
   shouldBatchSignalOptionsWorkerMonitorRefresh,
   shouldRefreshSignalOptionsMonitorState,
   hasPendingSignalOptionsActionableState,
   hasUnseenSignalOptionsActionableState,
   orderSignalOptionsActionStates,
+  signalOptionsSignalRefreshFallbackState,
   signalOptionsStrikesAroundMoney,
   signalOptionsLiveQuoteDemandDetailFromResolution,
   signalOptionsSelectedLiveQuoteNeedsRetry,

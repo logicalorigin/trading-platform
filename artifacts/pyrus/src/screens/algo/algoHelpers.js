@@ -375,6 +375,9 @@ const staSourceLatestTimestampMs = (source, arrays) =>
     ...arrays.flatMap((items) => items.map(staSourceTimestampMs)),
   );
 
+const staSourceRowsLatestTimestampMs = (arrays) =>
+  Math.max(0, ...arrays.flatMap((items) => items.map(staSourceTimestampMs)));
+
 const buildStaActionSourceSnapshot = (sourceName, source) => {
   const record = asRecord(source);
   const signals = staSourceArray(record.signals);
@@ -397,7 +400,7 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
     candidates,
     activePositions,
     rowCount,
-    latestMs: staSourceLatestTimestampMs(record, [
+    latestMs: staSourceRowsLatestTimestampMs([
       signals,
       candidates,
       activePositions,
@@ -443,14 +446,15 @@ export const resolveStableStaActionSnapshot = ({
 } = {}) => {
   const cockpitSnapshot = buildStaActionSourceSnapshot("cockpit", cockpit);
   const stateSnapshot = buildStaActionSourceSnapshot("state", signalOptionsState);
-  const currentSnapshot = chooseStaActionSourceSnapshot([
-    cockpitSnapshot,
-    stateSnapshot,
-  ]);
   const failedSources = [
     cockpitFailed ? "cockpit" : null,
     signalOptionsStateFailed ? "state" : null,
   ].filter(Boolean);
+  const currentSnapshot = chooseStaActionSourceSnapshot(
+    [cockpitSnapshot, stateSnapshot].filter(
+      (snapshot) => !failedSources.includes(snapshot.source),
+    ),
+  );
   const previous = asRecord(previousSnapshot);
   const previousRowCount =
     staSourceArray(previous.signals).length +
@@ -464,11 +468,21 @@ export const resolveStableStaActionSnapshot = ({
     staSourceArray(previous.activePositions),
   ]);
   const currentRowCount = currentSnapshot?.rowCount || 0;
-  const previousSourceFailed = failedSources.includes(previousSource);
+  const currentSourceFailed = currentSnapshot
+    ? failedSources.includes(currentSnapshot.source)
+    : false;
+  const failedCurrentSourceRefresh = Boolean(
+    failedSources.length &&
+      hasPrevious &&
+      (!currentSnapshot || currentSourceFailed),
+  );
   const transientEmptyRefresh = Boolean(
     hasPrevious &&
       !currentSnapshot &&
-      [cockpitSnapshot, stateSnapshot].some((snapshot) => snapshot.transient),
+      [cockpitSnapshot, stateSnapshot].some(
+        (snapshot) =>
+          !failedSources.includes(snapshot.source) && snapshot.transient,
+      ),
   );
   const transientRegressiveRefresh = Boolean(
     hasPrevious &&
@@ -479,9 +493,7 @@ export const resolveStableStaActionSnapshot = ({
           currentSnapshot.latestMs < previousLatestMs)),
   );
   const actionSourceDegraded = Boolean(
-    (failedSources.length &&
-      hasPrevious &&
-      (!currentSnapshot || currentRowCount < previousRowCount || previousSourceFailed)) ||
+    failedCurrentSourceRefresh ||
       transientEmptyRefresh ||
       transientRegressiveRefresh,
   );
@@ -569,6 +581,32 @@ const signalRowFamilyKey = (signal) => {
     normalizeMatchToken(signalRecord.direction),
   ];
   return identityParts.every(Boolean) ? identityParts.join("|") : "";
+};
+
+const signalRowTimestampMs = (...values) => {
+  for (const value of values) {
+    const parsed = Date.parse(value || "");
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const signalRowsHaveCompatibleSignalAt = (
+  signalRecord,
+  candidateRecord,
+  candidateSignal,
+) => {
+  const signalMs = signalRowTimestampMs(
+    signalRecord.signalAt,
+    signalRecord.currentSignalAt,
+  );
+  const candidateMs = signalRowTimestampMs(
+    candidateRecord.signalAt,
+    candidateRecord.currentSignalAt,
+    candidateSignal.signalAt,
+    candidateSignal.currentSignalAt,
+  );
+  return !signalMs || !candidateMs || signalMs === candidateMs;
 };
 
 const STA_SIGNAL_HISTORY_TIME_ZONE = "America/New_York";
@@ -733,6 +771,11 @@ export const buildVisibleSignalRows = ({
     const nestedSignal = asRecord(candidateRecord.signal);
     const candidateSignal = {
       ...nestedSignal,
+      signalKey:
+        candidateRecord.signalKey ??
+        nestedSignal.signalKey ??
+        candidateRecord.id ??
+        null,
       symbol: candidateRecord.symbol ?? nestedSignal.symbol,
       timeframe: candidateRecord.timeframe ?? nestedSignal.timeframe,
       direction: candidateRecord.direction ?? nestedSignal.direction,
@@ -806,7 +849,11 @@ export const findSignalOptionsCandidateForSignal = (candidates, signal) => {
         return false;
       }
 
-      return true;
+      return signalRowsHaveCompatibleSignalAt(
+        signalRecord,
+        candidateRecord,
+        candidateSignal,
+      );
     }) || null
   );
 };
@@ -908,6 +955,7 @@ export const entryQualityLabel = (quality) => {
 const clampMetric = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const finiteNumberOrNull = (value) => {
+  if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
@@ -984,7 +1032,9 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
     barsSinceSignal,
     freshWindowBars: windowBars,
     freshnessPct,
-    label: barsLabel !== MISSING_VALUE ? barsLabel : elapsed,
+    label: elapsed,
+    elapsedLabel: elapsed,
+    barsLabel,
     detail:
       elapsed !== MISSING_VALUE
         ? `${elapsed} since signal`

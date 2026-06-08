@@ -90,6 +90,7 @@ import {
   getRuntimeTickerStoreEntryCount,
 } from "./runtimeTickerStore";
 import {
+  buildSignalMatrixExactRequestPlan,
   buildSignalMatrixPendingStates,
   buildSignalMatrixRequestPlan,
   buildSignalMatrixStoredStateBootstrapRequest,
@@ -100,8 +101,6 @@ import {
   resolveSignalMatrixBusyQueueDelayMs,
   resolveSignalMatrixCatchupDelayMs,
   resolveSignalMatrixExactCellLimit,
-  resolveSignalMatrixStaVisiblePageExactCellLimit,
-  resolveSignalMatrixStaVisiblePageRequestTaskLimit,
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 import {
@@ -346,7 +345,6 @@ const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
-const SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS = 250;
 const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 45_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
@@ -398,9 +396,37 @@ const normalizeSignalMatrixRequestTimeframes = (
   return result.length ? result : [...fallback];
 };
 
+const normalizeSignalMatrixRequestCells = (cells = []) => {
+  const seen = new Set();
+  const result = [];
+  (Array.isArray(cells) ? cells : []).forEach((cell) => {
+    const symbol = normalizeTickerSymbol(cell?.symbol);
+    const timeframe = String(cell?.timeframe || "").trim();
+    if (
+      !symbol ||
+      !SIGNAL_MATRIX_TIMEFRAME_SET.has(timeframe)
+    ) {
+      return;
+    }
+    const key = `${symbol}:${timeframe}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push({ symbol, timeframe });
+  });
+  return result;
+};
+
 const signalMatrixSymbolListsEqual = (left = [], right = []) =>
   left.length === right.length &&
   left.every((symbol, index) => symbol === right[index]);
+
+const signalMatrixCellListsEqual = (left = [], right = []) =>
+  left.length === right.length &&
+  left.every(
+    (cell, index) =>
+      cell?.symbol === right[index]?.symbol &&
+      cell?.timeframe === right[index]?.timeframe,
+  );
 
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
@@ -767,10 +793,10 @@ export default function PlatformApp() {
   const memoryPressureSignal = useMemoryPressureMonitor();
   const footerApiSourceRuntime = useRuntimeControlSnapshot({
     enabled: platformRealtimeWorkActive,
+    runtimeDiagnosticsEnabled: false,
     runtimeDiagnosticsQueryKey: "footer-api-sources",
-    runtimeDiagnosticsRefetchInterval: 3_000,
-    lineUsageStreamEnabled: true,
-    lineUsagePollInterval: 2_000,
+    lineUsageStreamEnabled: false,
+    lineUsagePollInterval: 10_000,
     memoryPressure: memoryPressureSignal,
   });
   const userPreferences = useUserPreferences();
@@ -790,6 +816,7 @@ export default function PlatformApp() {
     clientRole: null,
     prioritySymbols: [],
     reason: null,
+    requestCells: [],
     requestOrigin: null,
     symbols: [],
     timeframes: SIGNAL_MATRIX_TIMEFRAMES,
@@ -1555,7 +1582,7 @@ export default function PlatformApp() {
       to: formatIsoDate(to),
     };
   }, []);
-  const visibleWatchlistMarketDataSymbols = useMemo(
+  const watchlistMarketDataSymbols = useMemo(
     () => watchlistSymbols,
     [watchlistSymbols],
   );
@@ -1580,7 +1607,7 @@ export default function PlatformApp() {
         [
           sym,
           ...HEADER_KPI_SYMBOLS,
-          ...visibleWatchlistMarketDataSymbols,
+          ...watchlistMarketDataSymbols,
           ...(broadMarketDataHydrationReady ? broadMarketDataSymbols : []),
           ...(marketScreenActive && broadMarketDataHydrationReady
             ? MARKET_SNAPSHOT_SYMBOLS
@@ -1593,7 +1620,7 @@ export default function PlatformApp() {
     broadMarketDataSymbols,
     marketScreenActive,
     sym,
-    visibleWatchlistMarketDataSymbols,
+    watchlistMarketDataSymbols,
   ]);
   const sparklineSymbols = useMemo(() => {
     const indexSymbols =
@@ -1604,7 +1631,7 @@ export default function PlatformApp() {
       ...new Set(
         [
           sym,
-          ...visibleWatchlistMarketDataSymbols,
+          ...watchlistMarketDataSymbols,
           ...HEADER_KPI_SYMBOLS,
           ...(broadMarketDataHydrationReady ? broadMarketDataSymbols : []),
           ...indexSymbols,
@@ -1616,7 +1643,7 @@ export default function PlatformApp() {
     broadMarketDataSymbols,
     marketScreenActive,
     sym,
-    visibleWatchlistMarketDataSymbols,
+    watchlistMarketDataSymbols,
     watchlistSymbols,
   ]);
   const streamedAggregateSymbols = useMemo(
@@ -1625,7 +1652,7 @@ export default function PlatformApp() {
         [
           sym,
           ...HEADER_KPI_SYMBOLS,
-          ...visibleWatchlistMarketDataSymbols,
+          ...watchlistMarketDataSymbols,
           ...(broadMarketDataHydrationReady ? broadMarketDataSymbols : []),
           ...(marketScreenActive && broadMarketDataHydrationReady
             ? MARKET_SNAPSHOT_SYMBOLS
@@ -1640,7 +1667,7 @@ export default function PlatformApp() {
       broadMarketDataSymbols,
       marketScreenActive,
       sym,
-      visibleWatchlistMarketDataSymbols,
+      watchlistMarketDataSymbols,
       watchlistSymbols,
     ],
   );
@@ -2944,6 +2971,17 @@ export default function PlatformApp() {
       },
     },
   );
+  const signalMonitorStateEmptyRefreshingFallback = Boolean(
+    signalMonitorStateQuery.data?.stateSource === "runtime-fallback" &&
+      signalMonitorStateQuery.data?.refreshing === true &&
+      (!Array.isArray(signalMonitorStateQuery.data?.states) ||
+        signalMonitorStateQuery.data.states.length === 0) &&
+      (!Array.isArray(signalMonitorStateQuery.data?.universeSymbols) ||
+        signalMonitorStateQuery.data.universeSymbols.length === 0),
+  );
+  const signalMonitorStateBootstrapUsable = Boolean(
+    signalMonitorStateQuery.data && !signalMonitorStateEmptyRefreshingFallback,
+  );
   usePlatformFreshnessQueryHydration({
     bus: platformFreshnessBus,
     family: PLATFORM_FRESHNESS_FAMILY.signalState,
@@ -3052,6 +3090,9 @@ export default function PlatformApp() {
     ) {
       return;
     }
+    if (signalMonitorStateEmptyRefreshingFallback) {
+      return;
+    }
     if (signalMonitorStateQuery.isError) {
       failBootProgressTask(
         "signal-state",
@@ -3070,6 +3111,7 @@ export default function PlatformApp() {
     signalMonitorStateQuery.error,
     signalMonitorStateQuery.isError,
     signalMonitorStateQuery.isFetched,
+    signalMonitorStateEmptyRefreshingFallback,
   ]);
   const signalMonitorDegraded = Boolean(
     signalMonitorProfileDegraded ||
@@ -3261,6 +3303,8 @@ export default function PlatformApp() {
     signalsScreenMatrixRequest.prioritySymbols?.length
       ? signalsScreenMatrixRequest.prioritySymbols
       : signalsScreenMatrixSymbols;
+  const signalsScreenMatrixRequestCells =
+    signalsScreenMatrixRequest.requestCells || [];
   const signalsScreenMatrixSymbolsKey = useMemo(
     () => signalsScreenMatrixSymbols.join(","),
     [signalsScreenMatrixSymbols],
@@ -3269,44 +3313,63 @@ export default function PlatformApp() {
     () => signalsScreenMatrixPrioritySymbols.join(","),
     [signalsScreenMatrixPrioritySymbols],
   );
+  const signalsScreenMatrixRequestCellsKey = useMemo(
+    () =>
+      signalsScreenMatrixRequestCells
+        .map((cell) => `${cell.symbol}:${cell.timeframe}`)
+        .join(","),
+    [signalsScreenMatrixRequestCells],
+  );
   const signalsScreenMatrixTimeframes =
     signalsScreenMatrixRequest.timeframes || SIGNAL_MATRIX_TIMEFRAMES;
   const signalsScreenMatrixClientRole =
     signalsScreenMatrixRequest.clientRole || null;
   const signalsScreenMatrixRequestOrigin =
     signalsScreenMatrixRequest.requestOrigin || null;
-  const signalMatrixStaVisibleRequestActive = Boolean(
-    signalsScreenMatrixClientRole === "algo-sta" &&
-      signalsScreenMatrixRequestOrigin === "sta-visible-page" &&
-      signalsScreenMatrixSymbols.length,
-  );
   const signalsScreenMatrixTimeframesKey = useMemo(
     () => signalsScreenMatrixTimeframes.join(","),
     [signalsScreenMatrixTimeframes],
   );
   const handleRequestSignalMatrixHydration = useCallback((request = {}) => {
     const payload = request || {};
+    const normalizedRequestCells = normalizeSignalMatrixRequestCells(
+      payload.requestCells,
+    );
+    const requestCellSymbols = normalizeSignalMatrixRequestSymbols(
+      normalizedRequestCells.map((cell) => cell.symbol),
+    );
+    const requestCellTimeframes = normalizeSignalMatrixRequestTimeframes(
+      normalizedRequestCells.map((cell) => cell.timeframe),
+      [],
+    );
     const normalizedSymbols = normalizeSignalMatrixRequestSymbols(
-      payload.symbols?.length ? payload.symbols : payload.missingSymbols,
+      payload.symbols?.length
+        ? payload.symbols
+        : payload.missingSymbols?.length
+          ? payload.missingSymbols
+          : requestCellSymbols,
     );
     const normalizedPrioritySymbols = normalizeSignalMatrixRequestSymbols(
       payload.prioritySymbols?.length
         ? payload.prioritySymbols
         : payload.requestSymbols?.length
           ? payload.requestSymbols
-          : payload.missingSymbols,
+          : payload.missingSymbols?.length
+            ? payload.missingSymbols
+            : requestCellSymbols,
     );
     const normalizedTimeframes = normalizeSignalMatrixRequestTimeframes(
-      payload.timeframes,
+      payload.timeframes?.length ? payload.timeframes : requestCellTimeframes,
     );
-    const normalizedClientRole =
-      payload.clientRole === "algo-sta" ? "algo-sta" : null;
-    const normalizedRequestOrigin =
-      payload.requestOrigin === "sta-visible-page" ? "sta-visible-page" : null;
+    const symbolSet = new Set(normalizedSymbols);
+    const timeframeSet = new Set(normalizedTimeframes);
+    const normalizedScopedRequestCells = normalizedRequestCells.filter(
+      (cell) => symbolSet.has(cell.symbol) && timeframeSet.has(cell.timeframe),
+    );
+    const normalizedClientRole = null;
+    const normalizedRequestOrigin = null;
     const normalizedReason = String(payload.reason || "").trim() || null;
     if (payload.force && normalizedSymbols.length) {
-      const symbolSet = new Set(normalizedSymbols);
-      const timeframeSet = new Set(normalizedTimeframes);
       setSignalMatrixSnapshot((current) => {
         const nextStates = current.states.filter(
           (state) =>
@@ -3333,6 +3396,10 @@ export default function PlatformApp() {
         current.timeframes || [],
         normalizedTimeframes,
       );
+      const sameRequestCells = signalMatrixCellListsEqual(
+        current.requestCells || [],
+        normalizedScopedRequestCells,
+      );
       const sameMetadata =
         (current.clientRole || null) === normalizedClientRole &&
         (current.requestOrigin || null) === normalizedRequestOrigin &&
@@ -3341,6 +3408,7 @@ export default function PlatformApp() {
         sameSymbols &&
         samePrioritySymbols &&
         sameTimeframes &&
+        sameRequestCells &&
         sameMetadata &&
         !payload.force
       ) {
@@ -3351,6 +3419,7 @@ export default function PlatformApp() {
         clientRole: normalizedClientRole,
         prioritySymbols: normalizedPrioritySymbols,
         reason: normalizedReason,
+        requestCells: normalizedScopedRequestCells,
         requestOrigin: normalizedRequestOrigin,
         symbols: normalizedSymbols,
         timeframes: normalizedTimeframes,
@@ -3369,6 +3438,7 @@ export default function PlatformApp() {
             clientRole: null,
             prioritySymbols: [],
             reason: null,
+            requestCells: [],
             requestOrigin: null,
             symbols: [],
             timeframes: SIGNAL_MATRIX_TIMEFRAMES,
@@ -3392,6 +3462,7 @@ export default function PlatformApp() {
             clientRole: null,
             prioritySymbols: [],
             reason: null,
+            requestCells: [],
             requestOrigin: null,
             symbols: [],
             timeframes: SIGNAL_MATRIX_TIMEFRAMES,
@@ -3428,7 +3499,7 @@ export default function PlatformApp() {
             sym,
             ...HEADER_KPI_SYMBOLS,
             ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
-            ...visibleWatchlistMarketDataSymbols,
+            ...watchlistMarketDataSymbols,
             ...recentSignalMarketDataSymbols,
           ]
             .map(normalizeTickerSymbol)
@@ -3439,7 +3510,7 @@ export default function PlatformApp() {
       marketScreenActive,
       recentSignalMarketDataSymbols,
       sym,
-      visibleWatchlistMarketDataSymbols,
+      watchlistMarketDataSymbols,
     ],
   );
   const [watchlistQuoteRotationCursor, setWatchlistQuoteRotationCursor] =
@@ -3574,7 +3645,7 @@ export default function PlatformApp() {
     () =>
       buildSignalMatrixSymbolSets({
         selectedSymbol: sym,
-        visibleWatchlistSymbols: visibleWatchlistMarketDataSymbols,
+        watchlistPrioritySymbols: watchlistMarketDataSymbols,
         signalsScreenSymbols:
           signalMatrixRequestActive ? signalsScreenMatrixSymbols : [],
         signalsScreenPrioritySymbols:
@@ -3599,7 +3670,7 @@ export default function PlatformApp() {
       signalMonitorSymbols,
       screen,
       sym,
-      visibleWatchlistMarketDataSymbols,
+      watchlistMarketDataSymbols,
       watchlistSymbols,
     ],
   );
@@ -3791,48 +3862,24 @@ export default function PlatformApp() {
     () => resolveSignalMatrixExactCellLimit(activeSignalMatrixAdmissionPressureLevel),
     [activeSignalMatrixAdmissionPressureLevel],
   );
-  const signalMatrixStaVisiblePageRequestTaskLimit = useMemo(
-    () =>
-      resolveSignalMatrixStaVisiblePageRequestTaskLimit(
-        activeSignalMatrixPressureLevel,
-      ),
-    [activeSignalMatrixPressureLevel],
-  );
-  const signalMatrixStaVisiblePageExactCellLimit = useMemo(
-    () =>
-      resolveSignalMatrixStaVisiblePageExactCellLimit(
-        activeSignalMatrixPressureLevel,
-      ),
-    [activeSignalMatrixPressureLevel],
-  );
   const signalMatrixRequestTaskLimit = useMemo(() => {
     if (!signalMatrixRequestActive || !signalMatrixUniverseSymbols.length) {
       return null;
-    }
-    if (signalMatrixStaVisibleRequestActive) {
-      return signalMatrixStaVisiblePageRequestTaskLimit;
     }
     return signalMatrixActiveScreenRequestTaskLimit;
   }, [
     signalMatrixActiveScreenRequestTaskLimit,
     signalMatrixRequestActive,
-    signalMatrixStaVisiblePageRequestTaskLimit,
-    signalMatrixStaVisibleRequestActive,
     signalMatrixUniverseSymbols.length,
   ]);
   const signalMatrixRequestExactCellLimit = useMemo(() => {
     if (!signalMatrixRequestActive || !signalMatrixUniverseSymbols.length) {
       return null;
     }
-    if (signalMatrixStaVisibleRequestActive) {
-      return signalMatrixStaVisiblePageExactCellLimit;
-    }
     return signalMatrixActiveScreenExactCellLimit;
   }, [
     signalMatrixActiveScreenExactCellLimit,
     signalMatrixRequestActive,
-    signalMatrixStaVisiblePageExactCellLimit,
-    signalMatrixStaVisibleRequestActive,
     signalMatrixUniverseSymbols.length,
   ]);
   const signalMatrixRequestSymbolLimit = useMemo(() => {
@@ -3875,37 +3922,17 @@ export default function PlatformApp() {
     [signalMatrixPressureLevel],
   );
   const signalMatrixEffectiveCatchupDelayMs = useMemo(() => {
-    if (signalMatrixCatchupDelayMs == null) {
-      return null;
-    }
-    return signalMatrixStaVisibleRequestActive
-      ? Math.min(
-          signalMatrixCatchupDelayMs,
-          SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS,
-        )
-      : signalMatrixCatchupDelayMs;
-  }, [signalMatrixCatchupDelayMs, signalMatrixStaVisibleRequestActive]);
+    return signalMatrixCatchupDelayMs ?? null;
+  }, [signalMatrixCatchupDelayMs]);
   const signalMatrixRuntimeReady = Boolean(
-      signalMonitorWorkVisible &&
+    signalMonitorWorkVisible &&
       !signalMatrixStartupProtectionActive &&
       signalMatrixActiveScreenRowsReady &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       (signalMatrixPriorityReady || signalMatrixBackgroundReady),
   );
-  const signalMatrixBootstrapSymbols = useMemo(
-    () => {
-      const visibleSymbols = new Set(
-        [sym, ...visibleWatchlistMarketDataSymbols]
-          .map((symbol) => normalizeTickerSymbol(symbol))
-          .filter(Boolean),
-      );
-      return signalMatrixPrioritySymbols.filter((symbol) =>
-        visibleSymbols.has(symbol),
-      );
-    },
-    [signalMatrixPrioritySymbols, sym, visibleWatchlistMarketDataSymbols],
-  );
+  const signalMatrixBootstrapSymbols = signalMatrixUniverseSymbols;
   const signalMatrixBootstrapComplete = useMemo(
     () => {
       if (!signalMatrixBootstrapSymbols.length) {
@@ -3945,8 +3972,9 @@ export default function PlatformApp() {
       !firstScreenReady ||
       signalMonitorProfileQuery.isError ||
       (signalMonitorProfileQuery.isFetched && !signalMonitorProfile?.enabled) ||
-      signalMonitorStateQuery.data ||
-      signalMonitorStateQuery.isFetched ||
+      signalMonitorStateBootstrapUsable ||
+      (signalMonitorStateQuery.isFetched &&
+        !signalMonitorStateEmptyRefreshingFallback) ||
       signalMonitorStateQuery.isError,
   );
   const signalHydrationBootstrapActive = Boolean(
@@ -4109,6 +4137,7 @@ export default function PlatformApp() {
     signalMonitorDisplayReady,
     signalMonitorProfileBootstrapPending,
     signalMonitorStateBootstrapComplete,
+    signalMonitorStateBootstrapUsable,
   ]);
   const scheduleSignalMatrixEvaluation = useCallback((delayMs = 0) => {
     const resolvedDelayMs = Math.max(0, Number(delayMs) || 0);
@@ -4227,12 +4256,10 @@ export default function PlatformApp() {
                     SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS,
                     signalMatrixEffectiveCatchupDelayMs ?? 0,
                   )
-                : signalMatrixStaVisibleRequestActive
-                  ? signalMatrixEffectiveCatchupDelayMs
-                  : Math.max(
-                      SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
-                      signalMatrixEffectiveCatchupDelayMs ?? 0,
-                    );
+                : Math.max(
+                    SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
+                    signalMatrixEffectiveCatchupDelayMs ?? 0,
+                  );
           }
         } else if (activeSignalsCatchupPending) {
           signalMatrixQueuedEvaluationRef.current = true;
@@ -4358,53 +4385,45 @@ export default function PlatformApp() {
       liveSignalMatrixServerPressureObserved
         ? liveSignalMatrixPressureLevel
         : "normal";
-	    const rejectedExactCellLimit =
-	      signalMatrixRejectedExactCellLimitRef.current &&
-	      nowMs - signalMatrixRejectedExactCellLimitRef.current.observedAt <=
-	        SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS
-	        ? signalMatrixRejectedExactCellLimitRef.current.maxCells
-	        : null;
-	    if (
-	      signalMatrixRejectedExactCellLimitRef.current &&
-	      rejectedExactCellLimit == null
-	    ) {
-	      signalMatrixRejectedExactCellLimitRef.current = null;
-	    }
-	    const baseLiveSignalMatrixRequestExactCellLimit =
-	      signalMatrixRequestExactCellLimit == null
-	        ? null
-	        : signalMatrixStaVisibleRequestActive
-	          ? resolveSignalMatrixStaVisiblePageExactCellLimit(
-	              liveActiveSignalMatrixPressureLevel,
-	            )
-	          : resolveSignalMatrixExactCellLimit(liveActiveSignalMatrixPressureLevel);
-	    const liveSignalMatrixRequestExactCellLimit =
-	      baseLiveSignalMatrixRequestExactCellLimit == null
-	        ? null
-	        : rejectedExactCellLimit == null
-	          ? baseLiveSignalMatrixRequestExactCellLimit
-	          : Math.min(
-	              baseLiveSignalMatrixRequestExactCellLimit,
-	              rejectedExactCellLimit,
-	            );
-	    const baseLiveSignalMatrixRequestTaskLimit =
-	      signalMatrixRequestTaskLimit == null
-	        ? null
-	        : signalMatrixStaVisibleRequestActive
-	          ? resolveSignalMatrixStaVisiblePageRequestTaskLimit(
-	              liveActiveSignalMatrixPressureLevel,
-	            )
-	          : resolveSignalMatrixActiveScreenRequestTaskLimit(
-	              liveActiveSignalMatrixPressureLevel,
-	            );
-	    const liveSignalMatrixRequestTaskLimit =
-	      baseLiveSignalMatrixRequestTaskLimit == null ||
-	      liveSignalMatrixRequestExactCellLimit == null
-	        ? baseLiveSignalMatrixRequestTaskLimit
-	        : Math.min(
-	            baseLiveSignalMatrixRequestTaskLimit,
-	            liveSignalMatrixRequestExactCellLimit,
-	          );
+    const rejectedExactCellLimit =
+      signalMatrixRejectedExactCellLimitRef.current &&
+      nowMs - signalMatrixRejectedExactCellLimitRef.current.observedAt <=
+        SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS
+        ? signalMatrixRejectedExactCellLimitRef.current.maxCells
+        : null;
+    if (
+      signalMatrixRejectedExactCellLimitRef.current &&
+      rejectedExactCellLimit == null
+    ) {
+      signalMatrixRejectedExactCellLimitRef.current = null;
+    }
+    const baseLiveSignalMatrixRequestExactCellLimit =
+      signalMatrixRequestExactCellLimit == null
+        ? null
+        : resolveSignalMatrixExactCellLimit(liveActiveSignalMatrixPressureLevel);
+    const liveSignalMatrixRequestExactCellLimit =
+      baseLiveSignalMatrixRequestExactCellLimit == null
+        ? null
+        : rejectedExactCellLimit == null
+          ? baseLiveSignalMatrixRequestExactCellLimit
+          : Math.min(
+              baseLiveSignalMatrixRequestExactCellLimit,
+              rejectedExactCellLimit,
+            );
+    const baseLiveSignalMatrixRequestTaskLimit =
+      signalMatrixRequestTaskLimit == null
+        ? null
+        : resolveSignalMatrixActiveScreenRequestTaskLimit(
+            liveActiveSignalMatrixPressureLevel,
+          );
+    const liveSignalMatrixRequestTaskLimit =
+      baseLiveSignalMatrixRequestTaskLimit == null ||
+      liveSignalMatrixRequestExactCellLimit == null
+        ? baseLiveSignalMatrixRequestTaskLimit
+        : Math.min(
+            baseLiveSignalMatrixRequestTaskLimit,
+            liveSignalMatrixRequestExactCellLimit,
+          );
     if (!claimSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current, nowMs)) {
       scheduleSignalMatrixEvaluation(
         options.queueIfBusy
@@ -4418,11 +4437,26 @@ export default function PlatformApp() {
     }
     const storedStateBootstrapRequest =
       buildSignalMatrixStoredStateBootstrapRequest({
-          symbols: signalMatrixUniverseSymbols,
-          currentStates: signalMatrixStatesRef.current,
-          timeframes: signalMatrixRequestTimeframes,
-          lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
-        });
+        symbols: signalMatrixUniverseSymbols,
+        currentStates: signalMatrixStatesRef.current,
+        timeframes: signalMatrixRequestTimeframes,
+        lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
+      });
+    const exactSignalsRequestPlan =
+      !storedStateBootstrapRequest && signalsScreenMatrixRequestCells.length
+        ? buildSignalMatrixExactRequestPlan({
+            cells: signalsScreenMatrixRequestCells,
+            symbols: signalMatrixUniverseSymbols,
+            prioritySymbols: signalMatrixPrioritySymbols,
+            timeframes: signalMatrixRequestTimeframes,
+            pressureLevel: liveActiveSignalMatrixPressureLevel,
+            backgroundReady: signalMatrixBackgroundReady,
+            startupProtectionActive: signalMatrixStartupProtectionActive,
+            requestSymbolLimit: signalMatrixRequestSymbolLimit,
+            requestTaskLimit: liveSignalMatrixRequestTaskLimit,
+            requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
+          })
+        : null;
     const plan = storedStateBootstrapRequest
       ? {
           requestSymbols: storedStateBootstrapRequest.symbols,
@@ -4439,21 +4473,23 @@ export default function PlatformApp() {
           pressureLevel: liveActiveSignalMatrixPressureLevel,
           coverage: storedStateBootstrapRequest.coverage,
         }
-      : buildSignalMatrixRequestPlan({
-          symbols: signalMatrixUniverseSymbols,
-          prioritySymbols: signalMatrixPrioritySymbols,
-          currentStates: signalMatrixStatesRef.current,
-          timeframes: signalMatrixRequestTimeframes,
-          pressureLevel: liveActiveSignalMatrixPressureLevel,
-          backgroundReady: signalMatrixBackgroundReady,
-          startupProtectionActive: signalMatrixStartupProtectionActive,
-          cursor: signalMatrixRotationCursorRef.current,
-          pollMs: signalMatrixPollMs,
-          nowMs,
-          requestSymbolLimit: signalMatrixRequestSymbolLimit,
-          requestTaskLimit: liveSignalMatrixRequestTaskLimit,
-          requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
-        });
+      : exactSignalsRequestPlan
+        ? exactSignalsRequestPlan
+        : buildSignalMatrixRequestPlan({
+            symbols: signalMatrixUniverseSymbols,
+            prioritySymbols: signalMatrixPrioritySymbols,
+            currentStates: signalMatrixStatesRef.current,
+            timeframes: signalMatrixRequestTimeframes,
+            pressureLevel: liveActiveSignalMatrixPressureLevel,
+            backgroundReady: signalMatrixBackgroundReady,
+            startupProtectionActive: signalMatrixStartupProtectionActive,
+            cursor: signalMatrixRotationCursorRef.current,
+            pollMs: signalMatrixPollMs,
+            nowMs,
+            requestSymbolLimit: signalMatrixRequestSymbolLimit,
+            requestTaskLimit: liveSignalMatrixRequestTaskLimit,
+            requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
+          });
     if (!plan.requestSymbols.length) {
       releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
       if (signalMatrixSurfaceRequestActive && !signalMatrixRouteRequestActive) {
@@ -4463,6 +4499,7 @@ export default function PlatformApp() {
                 clientRole: null,
                 prioritySymbols: [],
                 reason: null,
+                requestCells: [],
                 requestOrigin: null,
                 symbols: [],
                 timeframes: SIGNAL_MATRIX_TIMEFRAMES,
@@ -4568,8 +4605,9 @@ export default function PlatformApp() {
     signalMatrixRequestClientRole,
     signalMatrixRouteRequestActive,
     signalMatrixStartupProtectionActive,
-    signalMatrixStaVisibleRequestActive,
     signalMatrixSurfaceRequestActive,
+    signalsScreenMatrixRequestCells,
+    signalsScreenMatrixRequestCellsKey,
     signalsScreenMatrixClientRole,
     signalsScreenMatrixRequestOrigin,
     screen,
@@ -4704,7 +4742,7 @@ export default function PlatformApp() {
     () => {
       const symbols = [
         ...new Set([
-          ...visibleWatchlistMarketDataSymbols,
+          ...watchlistMarketDataSymbols,
           ...openPositionMarketDataSymbols,
         ]),
       ];
@@ -4717,7 +4755,7 @@ export default function PlatformApp() {
     [
       openPositionMarketDataSymbols,
       platformPressureCaps.prioritySparklineSymbolLimit,
-      visibleWatchlistMarketDataSymbols,
+      watchlistMarketDataSymbols,
     ],
   );
   const runtimeStreamedQuoteSymbols = useMemo(
@@ -5220,6 +5258,17 @@ export default function PlatformApp() {
       signalMonitorEnvironment={signalMonitorEnvironment}
       signalMonitorSymbols={signalMonitorSymbols}
       signalMonitorDisplaySymbols={signalMonitorDisplaySymbols}
+      signalMonitorProfile={signalMonitorProfile}
+      signalMonitorProfileLoading={signalMonitorProfileQuery.isLoading}
+      signalMonitorProfileError={signalMonitorProfileQuery.error || null}
+      signalMonitorState={signalMonitorStateQuery.data || null}
+      signalMonitorStateLoaded={Boolean(
+        (signalMonitorStateQuery.data || signalMonitorStateQuery.isFetched) &&
+          !signalMonitorStateEmptyRefreshingFallback,
+      )}
+      signalMonitorStateLoading={signalMonitorStateQuery.isLoading}
+      signalMonitorStateError={signalMonitorStateQuery.error || null}
+      signalMonitorDataManagedByPlatform
       signalMonitorEvents={signalMonitorEvents}
       signalMonitorEventsLoaded={Boolean(
         signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,

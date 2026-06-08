@@ -87,6 +87,42 @@ export const getSignalSortBucket = (state) => {
   return isCurrentFreshSignalState(state) ? 0 : 1;
 };
 
+const timestampMs = (value) => {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const signalStateActivityMs = (state) =>
+  Math.max(
+    timestampMs(state?.currentSignalAt),
+    timestampMs(state?.latestBarAt),
+    timestampMs(state?.lastEvaluatedAt),
+  );
+
+const signalStateDisplayRank = (state) => {
+  if (!state) return 0;
+  const status = String(state.status || "").trim().toLowerCase();
+  if (status === "pending" || status === "unknown") return 1;
+  if (isCurrentFreshSignalState(state)) return 5;
+  if (hasCurrentSignalDirection(state)) return 4;
+  if (state.latestBarAt || state.currentSignalAt) return 3;
+  if (status === "unavailable" || status === "error" || state.lastError) return 2;
+  return 1;
+};
+
+const preferSignalMatrixDisplayState = (current, candidate) => {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  const currentRank = signalStateDisplayRank(current);
+  const candidateRank = signalStateDisplayRank(candidate);
+  if (candidateRank !== currentRank) {
+    return candidateRank > currentRank ? candidate : current;
+  }
+  return signalStateActivityMs(candidate) >= signalStateActivityMs(current)
+    ? candidate
+    : current;
+};
+
 export const buildSignalMatrixBySymbol = (
   states = [],
   timeframes = WATCHLIST_SIGNAL_TIMEFRAMES,
@@ -96,9 +132,10 @@ export const buildSignalMatrixBySymbol = (
     const symbol = normalizeWatchlistSymbol(state?.symbol);
     const timeframe = normalizeSignalTimeframe(state?.timeframe, timeframes);
     if (!symbol || !timeframe) return;
+    const current = bySymbol[symbol] || {};
     bySymbol[symbol] = {
-      ...(bySymbol[symbol] || {}),
-      [timeframe]: state,
+      ...current,
+      [timeframe]: preferSignalMatrixDisplayState(current[timeframe], state),
     };
   });
   return bySymbol;

@@ -320,12 +320,6 @@ const formatScore = (value) => {
   return Number.isFinite(num) ? num.toFixed(1) : MISSING_VALUE;
 };
 
-const formatBars = (value) => {
-  if (value == null) return MISSING_VALUE;
-  const num = Number(value);
-  return Number.isFinite(num) ? String(Math.round(num)) : MISSING_VALUE;
-};
-
 const liquidityMeta = (candidate) => {
   if (!candidate) return { Icon: MinusCircle, tone: CSS_COLOR.textDim };
   const reason = String(candidate.reason || "");
@@ -733,18 +727,40 @@ const candidateActionStatusValue = (candidate) =>
     .trim()
     .toLowerCase();
 
-const isCandidateContractSelectionPending = (candidate) =>
-  candidateActionStatusValue(candidate) === "candidate";
+const isCandidateContractSelectionPending = (candidate) => {
+  const contractSelectionStatus = contractSelectionStatusValue(candidate);
+  if (contractSelectionStatus) return contractSelectionStatus === "pending";
+  return candidateActionStatusValue(candidate) === "candidate";
+};
+
+const shouldShowContractSelectionStage = (candidate) => {
+  const contractSelectionStatus = contractSelectionStatusValue(candidate);
+  if (contractSelectionStatus) {
+    return (
+      contractSelectionStatus === "pending" ||
+      contractSelectionStatus === "deferred"
+    );
+  }
+  return (
+    candidateActionStatusValue(candidate) === "candidate"
+  );
+};
+
+const selectionStageDetail = (selectionStage) =>
+  selectionStage?.contractDetail ||
+  selectionStage?.quoteDetail ||
+  selectionStage?.detail ||
+  MISSING_VALUE;
 
 const missingContractDisplay = (candidate, blocker, selectionStage) => {
   if (!candidate) {
     return missingDisplay(MISSING_VALUE, MISSING_VALUE);
   }
   if (hasBlockerDisplay(blocker)) return missingDisplay("Not selected", blocker);
-  if (isCandidateContractSelectionPending(candidate)) {
+  if (shouldShowContractSelectionStage(candidate)) {
     return missingDisplay(
       selectionStage?.contractMain || selectionStage?.main || "Resolving",
-      selectionStage?.contractDetail || selectionStage?.detail || MISSING_VALUE,
+      selectionStageDetail(selectionStage),
     );
   }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
@@ -761,23 +777,43 @@ const missingQuoteDisplay = ({ blocker, selectedContractId, selectionStage }) =>
   if (selectedContractId) {
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
-  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
-};
-
-const missingGreeksDisplay = ({ blocker, selectedContractId } = {}) => {
-  if (hasBlockerDisplay(blocker)) return missingDisplay("Not tested", blocker);
-  if (selectedContractId) {
-    return missingDisplay("Greeks pending", MISSING_VALUE);
+  if (hasDisplayValue(selectionStage?.contractMain)) {
+    return missingDisplay("Not requested", selectionStageDetail(selectionStage));
   }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
-const missingSpreadDisplay = ({ blocker, hasQuote, selectedContractId } = {}) => {
+const missingGreeksDisplay = ({
+  candidate,
+  blocker,
+  selectedContractId,
+  selectionStage,
+} = {}) => {
+  if (hasBlockerDisplay(blocker)) return missingDisplay("Not tested", blocker);
+  if (selectedContractId) {
+    return missingDisplay("Greeks pending", MISSING_VALUE);
+  }
+  if (candidate && shouldShowContractSelectionStage(candidate)) {
+    return missingDisplay("Not tested", selectionStageDetail(selectionStage));
+  }
+  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
+};
+
+const missingSpreadDisplay = ({
+  candidate,
+  blocker,
+  hasQuote,
+  selectedContractId,
+  selectionStage,
+} = {}) => {
   if (hasBlockerDisplay(blocker)) return missingDisplay("Not priced", blocker);
   if (selectedContractId && !hasQuote) {
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
   if (selectedContractId) return missingDisplay("Spread pending", MISSING_VALUE);
+  if (candidate && shouldShowContractSelectionStage(candidate)) {
+    return missingDisplay("Not priced", selectionStageDetail(selectionStage));
+  }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
@@ -1098,20 +1134,20 @@ const matrixVerdictDisplay = (verdict) => {
   };
 };
 
-const signalSinceDisplay = (signal, signalAge, bars) => {
+const signalSinceDisplay = (signal, signalAge) => {
   const signalTimestamp = signal?.signalAt ?? signal?.currentSignalAt;
   const signalTime = formatAppTime(signalTimestamp, {}, MISSING_VALUE);
+  const ageLabel =
+    signalAge?.label && signalAge.label !== MISSING_VALUE
+      ? signalAge.label
+      : MISSING_VALUE;
   return {
-    main: signalTime,
-    detail: MISSING_VALUE,
+    main: ageLabel,
+    detail: signalTime,
     title: compactJoin([
       signalTimestamp ? `Signal ${signalTime}` : null,
       signalTimestamp,
-      signalAge?.label && signalAge.label !== MISSING_VALUE
-        ? signalAge.label
-        : bars !== MISSING_VALUE
-          ? `${bars} bars`
-          : null,
+      ageLabel,
     ]),
   };
 };
@@ -1894,14 +1930,25 @@ const resolveRowAction = ({ candidate, blocker, signalRecord, verdict }) => {
 const RowActionButton = ({ action, onAction }) => {
   if (!action) {
     return (
-      <span
-        aria-hidden="true"
-        style={{
-          display: "block",
-          width: "100%",
-          height: dim(24),
-        }}
-      />
+      <AppTooltip content="No row action available">
+        <span
+          data-testid="algo-signal-row-action-none"
+          aria-label="No row action available"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: dim(28),
+            height: dim(24),
+            borderRadius: dim(RADII.sm),
+            border: `1px solid ${CSS_COLOR.borderLight}`,
+            background: cssColorAlpha(CSS_COLOR.textDim, "10"),
+            color: CSS_COLOR.textDim,
+          }}
+        >
+          <MinusCircle size={14} strokeWidth={1.7} aria-hidden="true" />
+        </span>
+      </AppTooltip>
     );
   }
   const Icon = action.Icon;
@@ -2209,7 +2256,12 @@ export const OperationsSignalRow = ({
   const rawGreeks = formatQuoteGreeksSummary(effectiveQuote);
   const greeks = hasDisplayValue(rawGreeks.main)
     ? rawGreeks
-    : missingGreeksDisplay({ candidate, blocker, hasQuote, selectedContractId });
+    : missingGreeksDisplay({
+        candidate,
+        blocker,
+        selectedContractId,
+        selectionStage: liveSelectionStage,
+      });
   const scoreBreakdown =
     providedScoreBreakdown ||
     resolveSignalScoreBreakdown({
@@ -2248,9 +2300,8 @@ export const OperationsSignalRow = ({
   const liveUnderlyingPrice = finiteNumberOrNull(tickerSnapshot?.price);
   const priceFlashClassName = useValueFlash(liveUnderlyingPrice);
   const underlyingPrice = formatMoney(underlyingPriceValue, 2);
-  const bars = formatBars(signalRecord.barsSinceSignal);
   const signalAge = resolveSignalAge(signalRecord);
-  const since = signalSinceDisplay(signalRecord, signalAge, bars);
+  const since = signalSinceDisplay(signalRecord, signalAge);
   const signalMove = resolveSignalMove(signalRecord, tickerSnapshot, candidate);
   const freshnessRatio = resolveFreshnessRatio(signalRecord);
   const signalAgeBlocked =
@@ -2314,7 +2365,13 @@ export const OperationsSignalRow = ({
   const spread =
     rawSpreadWidth !== MISSING_VALUE
       ? missingDisplay(rawSpreadWidth, MISSING_VALUE)
-      : missingSpreadDisplay({ blocker, hasQuote, selectedContractId });
+      : missingSpreadDisplay({
+          candidate,
+          blocker,
+          hasQuote,
+          selectedContractId,
+          selectionStage: liveSelectionStage,
+        });
   const spreadWidth = spread.main;
   const quoteTone = contractIsPreview ? CSS_COLOR.textDim : quoteState.tone;
   const spreadTone = contractIsPreview
@@ -2356,7 +2413,11 @@ export const OperationsSignalRow = ({
     finiteNumberOrNull(effectiveQuote?.last) ??
     finiteNumberOrNull(effectiveQuote?.bid) ??
     finiteNumberOrNull(effectiveQuote?.ask);
-  const ageFlashClassName = useValueFlash(finiteNumberOrNull(signalRecord.barsSinceSignal), {
+  const signalAgeFlashValue = (() => {
+    const parsed = Date.parse(signalRecord.signalAt ?? signalRecord.currentSignalAt ?? "");
+    return Number.isFinite(parsed) ? parsed : null;
+  })();
+  const ageFlashClassName = useValueFlash(signalAgeFlashValue, {
     classify: (next, previous) => {
       const nextNumber = finiteNumberOrNull(next);
       const previousNumber = finiteNumberOrNull(previous);

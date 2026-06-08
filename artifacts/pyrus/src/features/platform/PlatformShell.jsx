@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -828,6 +829,13 @@ export const PlatformShell = ({
       (frameAuxiliaryDataEnabled &&
         (desktopActivitySidebarVisible || mobileActivityVisible)),
   );
+  const activitySignalMatrixStates = useMemo(
+    () => [
+      ...(Array.isArray(signalMonitorStates) ? signalMonitorStates : []),
+      ...(Array.isArray(signalMatrixStates) ? signalMatrixStates : []),
+    ],
+    [signalMatrixStates, signalMonitorStates],
+  );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
     mode: environment || "paper",
@@ -1084,7 +1092,7 @@ export const PlatformShell = ({
       onClose={() => setMobileActivityOpen(false)}
       environment={environment}
       dataEnabled={algoMonitorSurfaceDataEnabled}
-      signalMatrixStates={signalMatrixStates}
+      signalMatrixStates={activitySignalMatrixStates}
       signalMonitorEvents={signalMonitorEvents}
       signalMonitorEventsLoaded={signalMonitorEventsLoaded}
       onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
@@ -1254,7 +1262,7 @@ export const PlatformShell = ({
           <PlatformAlgoMonitorSidebar
             isVisible={desktopActivitySidebarVisible}
             dataEnabled={algoMonitorSurfaceDataEnabled}
-            signalMatrixStates={signalMatrixStates}
+            signalMatrixStates={activitySignalMatrixStates}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={signalMonitorEventsLoaded}
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}

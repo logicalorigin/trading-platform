@@ -53,6 +53,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
+import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
@@ -68,6 +69,7 @@ import {
   publishRuntimeTickerSnapshot,
   useRuntimeTickerSnapshots,
 } from "../../features/platform/runtimeTickerStore";
+import { useMemoryPressureSnapshot } from "../../features/platform/memoryPressureStore";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalsMatrixHydrationPlan } from "../../features/signals/signalsMatrixHydration.js";
@@ -84,6 +86,7 @@ import {
   buildSignalAuditProgressions,
   signalAuditRowKey,
 } from "./algoAuditModel";
+import { shouldPauseAlgoSignalRowSparklines } from "./algoSignalSparklinePressure.js";
 import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_COLUMN_ORDER,
@@ -115,7 +118,7 @@ const SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
   "algo-signal-table",
 );
 const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
-  BARS_REQUEST_PRIORITY.active,
+  BARS_REQUEST_PRIORITY.favoritePrewarm,
   "algo-signal-sparkline",
 );
 const SIGNAL_COLUMN_VISIBILITY_VERSION = 8;
@@ -225,6 +228,31 @@ const SORT_LABELS = {
 const SORT_DIRECTION_LABELS = {
   asc: "ascending",
   desc: "descending",
+};
+
+const OperationsSignalSearchInput = ({ value, onCommit, compact }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      {...inputProps}
+      placeholder={compact ? "Search" : "Symbol or strategy"}
+      aria-label="Search signals by symbol or strategy"
+      style={{
+        width: "100%",
+        minWidth: 0,
+        border: 0,
+        outline: 0,
+        background: "transparent",
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+      }}
+    />
+  );
 };
 
 const COMPACT_SORT_OPTIONS = [
@@ -471,6 +499,25 @@ const compareTimestampValues = (aMs, bMs, sortDirection) =>
     sortDirection,
   );
 
+const rowStableIdentity = (row) => {
+  const signal = asRecord(row.signal);
+  const candidate = asRecord(row.candidate);
+  const candidateSignal = asRecord(candidate.signal);
+  return [
+    signal.signalKey,
+    candidate.signalKey,
+    candidateSignal.signalKey,
+    candidate.id,
+    signal.symbol,
+    signal.timeframe,
+    signal.direction,
+    signal.signalAt,
+  ]
+    .map((value) => String(value || "").trim().toUpperCase())
+    .filter(Boolean)
+    .join("|");
+};
+
 const sameColumnSet = (columns, expected) => {
   const source = new Set(columns);
   const target = new Set(expected);
@@ -590,17 +637,15 @@ const rowMatrixSymbols = (rows = []) => {
 
 export const buildAlgoSignalMatrixHydrationRequest = ({
   rows = [],
-  pageRows = [],
   currentStates = [],
   timeframes,
 } = {}) => {
   const symbols = rowMatrixSymbols(rows);
   if (!symbols.length) return null;
-  const prioritySymbols = rowMatrixSymbols(pageRows);
 
   const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
     symbols,
-    prioritySymbols,
+    prioritySymbols: symbols,
     currentStates,
     timeframes,
   });
@@ -614,16 +659,12 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
 
   return {
     symbols: matrixHydrationPlan.symbols,
-    prioritySymbols: prioritySymbols.length
-      ? prioritySymbols
-      : matrixHydrationPlan.requestSymbols,
+    prioritySymbols: matrixHydrationPlan.symbols,
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
     requestCells: matrixHydrationPlan.requestCells,
     timeframes: matrixHydrationPlan.requestTimeframes,
     requestTimeframes: matrixHydrationPlan.requestTimeframes,
-    clientRole: "algo-sta",
-    requestOrigin: "sta-visible-page",
     reason: "algo-signal-table",
   };
 };
@@ -642,7 +683,10 @@ export const sortRows = (
   const fallbackCompare = (a, b) =>
     compareTimestampValues(signalTimestampMs(a.signal), signalTimestampMs(b.signal), "desc") ||
     compareTimestampValues(rowActivityTimestampMs(a), rowActivityTimestampMs(b), "desc") ||
-    compareTextValues(a.signal.symbol, b.signal.symbol, "asc");
+    compareTextValues(a.signal.symbol, b.signal.symbol, "asc") ||
+    compareTextValues(a.signal.timeframe, b.signal.timeframe, "asc") ||
+    compareTextValues(a.signal.direction, b.signal.direction, "asc") ||
+    compareTextValues(rowStableIdentity(a), rowStableIdentity(b), "asc");
   const baseCompare = (a, b) => {
     if (sortKey === "symbol") {
       return (
@@ -1101,11 +1145,10 @@ export const OperationsSignalTable = ({
     () =>
       buildAlgoSignalMatrixHydrationRequest({
         rows,
-        pageRows,
         currentStates: signalMatrixStates,
         timeframes: SIGNALS_TABLE_TIMEFRAMES,
       }),
-    [pageRows, rows, signalMatrixStates],
+    [rows, signalMatrixStates],
   );
   useEffect(() => {
     if (!signalMatrixHydrationRequest) return;
@@ -1113,17 +1156,17 @@ export const OperationsSignalTable = ({
   }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
   const rowSymbols = useMemo(
     () =>
-      pageRows
+      rows
         .map(({ signal }) => String(asRecord(signal).symbol || "").toUpperCase())
         .filter(Boolean),
-    [pageRows],
+    [rows],
   );
   const rowSymbolsKey = useMemo(() => rowSymbols.join(","), [rowSymbols]);
   const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
-  const pageSignalBySymbol = useMemo(
+  const rowSignalBySymbol = useMemo(
     () =>
       Object.fromEntries(
-        pageRows
+        rows
           .map(({ signal }) => {
             const signalRecord = asRecord(signal);
             const symbol = String(signalRecord.symbol || "").toUpperCase();
@@ -1131,7 +1174,7 @@ export const OperationsSignalTable = ({
           })
           .filter(Boolean),
       ),
-    [pageRows],
+    [rows],
   );
   const rowQuoteSymbols = useMemo(
     () =>
@@ -1146,9 +1189,9 @@ export const OperationsSignalTable = ({
       rowSymbols.filter(
         (symbol) =>
           !hasUsableSparklineData(tickerSnapshotsBySymbol?.[symbol]) &&
-          !hasUsableSparklineData(pageSignalBySymbol?.[symbol]),
+          !hasUsableSparklineData(rowSignalBySymbol?.[symbol]),
       ),
-    [pageSignalBySymbol, rowSymbols, tickerSnapshotsBySymbol],
+    [rowSignalBySymbol, rowSymbols, tickerSnapshotsBySymbol],
   );
   const rowSparklineSymbolsKey = useMemo(
     () => rowSparklineSymbols.join(","),
@@ -1156,6 +1199,17 @@ export const OperationsSignalTable = ({
   );
   const signalRowHydrationQueriesEnabled = Boolean(
     (rowHydrationQueriesEnabled || backgroundQueriesEnabled) && !safeQaMode,
+  );
+  const memoryPressureSnapshot = useMemoryPressureSnapshot(
+    signalRowHydrationQueriesEnabled,
+  );
+  const rowSparklinePressurePaused = shouldPauseAlgoSignalRowSparklines(
+    memoryPressureSnapshot,
+  );
+  const rowSparklineHydrationEnabled = Boolean(
+    signalRowHydrationQueriesEnabled &&
+      rowSparklineSymbolsKey &&
+      !rowSparklinePressurePaused,
   );
   const rowQuotesQuery = useGetQuoteSnapshots(
     { symbols: rowQuoteSymbolsKey },
@@ -1196,6 +1250,7 @@ export const OperationsSignalTable = ({
               outsideRth: true,
               assetClass: "equity",
               source: "trades",
+              brokerRecentWindowMinutes: 0,
             },
             SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
           ),
@@ -1211,9 +1266,9 @@ export const OperationsSignalTable = ({
       );
     },
     ...BARS_QUERY_DEFAULTS,
-    enabled: Boolean(signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey),
+    enabled: rowSparklineHydrationEnabled,
     staleTime: 15_000,
-    refetchInterval: rowSparklineSymbolsKey
+    refetchInterval: rowSparklineHydrationEnabled
       ? SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS
       : false,
     refetchOnMount: true,
@@ -1592,21 +1647,10 @@ export const OperationsSignalTable = ({
             }}
           >
             <Search size={13} strokeWidth={1.8} aria-hidden="true" />
-            <input
+            <OperationsSignalSearchInput
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder={algoIsPhone ? "Search" : "Symbol or strategy"}
-              aria-label="Search signals by symbol or strategy"
-              style={{
-                width: "100%",
-                minWidth: 0,
-                border: 0,
-                outline: 0,
-                background: "transparent",
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-              }}
+              onCommit={setSearchQuery}
+              compact={algoIsPhone}
             />
           </label>
           {compactTools ? (
@@ -1833,7 +1877,12 @@ export const OperationsSignalTable = ({
                 const symbolKey = String(symbol || "").toUpperCase();
                 return (
                   <OperationsSignalRow
-                    key={asRecord(signal).signalKey || symbol}
+                    key={
+                      asRecord(signal).signalKey ||
+                      asRecord(candidate).id ||
+                      signalAuditRowKey(signal, candidate) ||
+                      symbol
+                    }
                     signal={signal}
                     candidate={candidate}
                     auditProgression={auditProgression}

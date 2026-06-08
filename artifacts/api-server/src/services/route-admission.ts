@@ -91,12 +91,14 @@ const normalizeFetchPriority = (value: unknown): number | null => {
 
 const activeRequestFamilies = new Set([
   "account-trade-forensics",
+  "algo-signal-sparkline",
   "chart-visible",
   "flow-visible",
   "flow-scanner-visible",
   "flow-tape-visible",
   "option-chart-visible",
   "signal-matrix",
+  "signals-row-chart",
   "signals-table-sparkline",
   "trade-visible",
 ]);
@@ -306,6 +308,12 @@ export function classifyApiRoute(input: {
   }
 
   if (
+    /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path)
+  ) {
+    return "active-screen";
+  }
+
+  if (
     path === "/bars" ||
     path === "/bars/batch" ||
     path === "/options/chart-bars" ||
@@ -335,8 +343,7 @@ export function classifyApiRoute(input: {
     (/^\/algo\/deployments\/[^/]+\/cockpit$/.test(path) &&
       query.get("view") === "full") ||
     (path === "/algo/events" && query.get("includePayload") === "true") ||
-    (path === "/algo/events" && query.get("view") === "full") ||
-    /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path)
+    (path === "/algo/events" && query.get("view") === "full")
   ) {
     return "deferred-analytics";
   }

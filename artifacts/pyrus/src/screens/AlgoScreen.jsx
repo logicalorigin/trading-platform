@@ -80,11 +80,9 @@ import {
   useShadowAccountSnapshotStream,
 } from "../features/platform/live-streams";
 import {
-  bridgeRuntimeMessage,
   bridgeRuntimeTone,
   hasGatewayLiveDataProof,
 } from "../features/platform/bridgeRuntimeModel";
-import { requestIbkrReconnect } from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import { describeUserFacingRuntimeError } from "../features/platform/userFacingRuntimeError.js";
@@ -300,6 +298,7 @@ export const AlgoScreen = ({
   selectedAccountId = null,
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
+  signalMonitorState = null,
   signalMatrixStates = [],
   isVisible = false,
   safeQaMode = false,
@@ -609,12 +608,14 @@ export const AlgoScreen = ({
     draftsQuery.data || draftsQuery.isFetched || draftsQuery.isError,
   );
   const signalOptionsStateSettled = Boolean(
-    signalOptionsStateQuery.data ||
-      signalOptionsStateQuery.isFetched ||
+    (!signalOptionsStateQuery.isPlaceholderData &&
+      (signalOptionsStateQuery.data || signalOptionsStateQuery.isFetched)) ||
       signalOptionsStateQuery.isError,
   );
   const cockpitSettled = Boolean(
-    cockpitQuery.data || cockpitQuery.isFetched || cockpitQuery.isError,
+    (!cockpitQuery.isPlaceholderData &&
+      (cockpitQuery.data || cockpitQuery.isFetched)) ||
+      cockpitQuery.isError,
   );
   const signalMonitorProfileSettled = Boolean(
     signalMonitorProfileQuery.data ||
@@ -681,6 +682,17 @@ export const AlgoScreen = ({
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const signalScanPausedReason =
+    signalMonitorProfile?.enabled === false
+      ? "Signal Monitor is paused; enable it to run fresh signal scans."
+      : null;
+  const signalScanReady = !signalScanPausedReason;
+  const signalScanProfileCheckSettled = Boolean(
+    signalMonitorProfileSettled || algoCockpitStreamFreshness.algoFullFresh,
+  );
+  const signalScanReadyForAuto = Boolean(
+    signalScanReady && signalScanProfileCheckSettled,
+  );
   const deploymentSignalOptionsBaselineAvailable = useMemo(() => {
     const config = asRecord(focusedDeployment?.config);
     const signalOptions = asRecord(config.signalOptions);
@@ -1085,8 +1097,6 @@ export const AlgoScreen = ({
     }
   };
 
-  const gatewayBridgeLaunching = false;
-
   const runShadowScanMutation = useRunSignalOptionsShadowScan({
     mutation: {
       onSuccess: (state, variables) => {
@@ -1297,34 +1307,6 @@ export const AlgoScreen = ({
     },
   });
 
-  const handleStartGatewayBridge = () => {
-    if (!brokerConfigured) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR data not configured",
-        body: "Configure the IB Gateway bridge before starting signal-options automation.",
-      });
-      return;
-    }
-    if (gatewayBridgeLaunching) {
-      return;
-    }
-    const opened = requestIbkrReconnect();
-    if (!opened) {
-      toast.push({
-        kind: "error",
-        title: "IB Gateway controls unavailable",
-        body: "Open the IB Gateway status control in the header to launch with credentials.",
-      });
-      return;
-    }
-    toast.push({
-      kind: "info",
-      title: "IB Gateway controls opened",
-      body: "Use the secure credential form to launch Gateway and attach data.",
-    });
-  };
-
   const handleCreateDeployment = () => {
     if (!selectedDraft) {
       toast.push({
@@ -1411,8 +1393,14 @@ export const AlgoScreen = ({
       });
       return;
     }
-    if (!gatewayReady) {
-      handleStartGatewayBridge();
+    if (!signalScanReady) {
+      toast.push({
+        kind: "warn",
+        title: "Signal scan unavailable",
+        body:
+          signalScanPausedReason ||
+          "Signal Monitor is not ready to run a fresh scan yet.",
+      });
       return;
     }
     runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
@@ -1657,19 +1645,33 @@ export const AlgoScreen = ({
     ],
   ];
 
+  const staActionRowsAvailable = Boolean(
+    signalOptionsSignals.length ||
+      signalOptionsCandidates.length ||
+      signalOptionsPositions.length,
+  );
+  const staActionSourcesSettled = Boolean(
+    algoCockpitStreamFreshness.algoFullFresh ||
+      signalOptionsStateSettled ||
+      cockpitSettled,
+  );
+  const includeStaSignalHistory = Boolean(
+    signalMonitorEventsLoaded &&
+      (staActionRowsAvailable || staActionSourcesSettled),
+  );
   const visibleSignalRows = useMemo(
     () =>
       buildVisibleSignalRows({
         signals: signalOptionsSignals,
         candidates: signalOptionsCandidates,
-        signalEvents: signalMonitorEventsLoaded ? signalMonitorEvents : [],
+        signalEvents: includeStaSignalHistory ? signalMonitorEvents : [],
         universeSymbols: focusedDeployment?.symbolUniverse || [],
-        includeSignalHistory: true,
+        includeSignalHistory: includeStaSignalHistory,
       }),
     [
       focusedDeployment?.symbolUniverse,
+      includeStaSignalHistory,
       signalMonitorEvents,
-      signalMonitorEventsLoaded,
       signalOptionsCandidates,
       signalOptionsSignals,
     ],
@@ -1692,13 +1694,38 @@ export const AlgoScreen = ({
           : null,
     };
   }, [signalMonitorProfile, visibleSignalRows]);
+  const signalScanFallbackDetail = signalTableScanFallback.lastSignalScanAt
+    ? signalScanPausedReason
+      ? "showing cached signals; Signal Monitor is paused"
+      : "signal stream cache current"
+    : signalScanPausedReason
+      ? signalScanPausedReason
+      : signalScanProfileCheckSettled
+        ? signalMonitorProfileQuery.isError
+          ? "Signal Monitor profile check failed; scan will retry server-side"
+          : "ready to scan from Signal Monitor data"
+        : "checking Signal Monitor profile";
+  const algoSignalMatrixStates = useMemo(
+    () => [
+      ...(
+        Array.isArray(signalMonitorState?.states)
+          ? signalMonitorState.states
+          : []
+      ),
+      ...(Array.isArray(signalMatrixStates) ? signalMatrixStates : []),
+    ],
+    [signalMatrixStates, signalMonitorState?.states],
+  );
   const cockpitStageItems = cockpitPipelineStages.length
     ? cockpitPipelineStages
     : [
         {
           id: "scan_universe",
           label: "Signal Symbols",
-          status: gatewayReady ? "waiting" : "blocked",
+          status:
+            signalScanPausedReason && !signalTableScanFallback.lastSignalScanAt
+              ? "blocked"
+              : "waiting",
           count:
             visibleSignalRows.length ||
             focusedDeployment?.symbolUniverse?.length ||
@@ -1712,12 +1739,7 @@ export const AlgoScreen = ({
           latestSignalAt: signalTableScanFallback.latestSignalAt,
           pollIntervalMs: signalTableScanFallback.pollIntervalMs,
           signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
-          detail:
-            gatewayReady && signalTableScanFallback.lastSignalScanAt
-              ? "signal stream cache current"
-              : gatewayReady
-                ? "ready to scan"
-                : bridgeRuntimeMessage(session),
+          detail: signalScanFallbackDetail,
         },
       ];
   const algoExecutionScanRunning = cockpitStageItems.some((stage) => {
@@ -1735,6 +1757,9 @@ export const AlgoScreen = ({
     focusedDeployment?.id &&
       (signalOptionsStateSettled || cockpitSettled),
   );
+  const algoSignalAutoScanSourcesSettled = Boolean(
+    algoSignalSurfaceSettled && signalMonitorEventsLoaded,
+  );
   const algoSignalSurfaceEmpty = Boolean(
     focusedDeployment?.id &&
       visibleSignalRows.length === 0 &&
@@ -1744,10 +1769,11 @@ export const AlgoScreen = ({
     const deploymentId = focusedDeployment?.id || null;
     if (
       !isVisible ||
+      safeQaMode ||
       !deploymentId ||
       !focusedDeployment?.enabled ||
-      !gatewayReady ||
-      !algoSignalSurfaceSettled ||
+      !signalScanReadyForAuto ||
+      !algoSignalAutoScanSourcesSettled ||
       !algoSignalSurfaceEmpty ||
       algoExecutionScanRunning ||
       runShadowScanMutation.isPending ||
@@ -1760,14 +1786,15 @@ export const AlgoScreen = ({
     runShadowScanMutation.mutate({ deploymentId, requestSource: "auto" });
   }, [
     algoExecutionScanRunning,
+    algoSignalAutoScanSourcesSettled,
     algoSignalSurfaceEmpty,
-    algoSignalSurfaceSettled,
     focusedDeployment?.enabled,
     focusedDeployment?.id,
-    gatewayReady,
     isVisible,
     runShadowScanMutation,
     runShadowScanMutation.isPending,
+    safeQaMode,
+    signalScanReadyForAuto,
   ]);
 
   return (
@@ -1794,7 +1821,7 @@ export const AlgoScreen = ({
         minWidth: 0,
       }}
     >
-      {brokerConfigured && !gatewayReady && (
+      {signalScanPausedReason && (
         <div
           className="ra-panel-enter ra-focus-rail"
           style={{
@@ -1820,7 +1847,7 @@ export const AlgoScreen = ({
                 letterSpacing: "0.04em",
               }}
             >
-              SHADOW SCANS WAITING FOR DATA
+              SIGNAL SCANS PAUSED
             </span>
             <span
               style={{
@@ -1830,50 +1857,8 @@ export const AlgoScreen = ({
                 lineHeight: 1.45,
               }}
             >
-              {bridgeRuntimeMessage(session)}
+              {signalScanPausedReason}
             </span>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: sp(8),
-              flexWrap: "wrap",
-              justifyContent: "flex-end",
-            }}
-          >
-            <div
-              style={{
-                fontSize: textSize("body"),
-                color: CSS_COLOR.textDim,
-                fontFamily: T.sans,
-                textAlign: "right",
-              }}
-            >
-              bridge {bridgeTone.label}
-              <br />
-              {activeAccountId || "no active account"}
-            </div>
-            <button
-              type="button"
-              onClick={handleStartGatewayBridge}
-              disabled={gatewayBridgeLaunching}
-              style={{
-                padding: sp("7px 10px"),
-                borderRadius: dim(RADII.xs),
-                border: `1px solid ${CSS_COLOR.amber}`,
-                background: CSS_COLOR.amber,
-                color: CSS_COLOR.onAccent,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.regular,
-                cursor:
-                  gatewayBridgeLaunching ? "wait" : "pointer",
-                opacity: gatewayBridgeLaunching ? 0.72 : 1,
-              }}
-            >
-              {gatewayBridgeLaunching ? "PREPARING..." : "START DATA"}
-            </button>
           </div>
         </div>
       )}
@@ -1913,11 +1898,13 @@ export const AlgoScreen = ({
             cockpitAttentionItems={cockpitAttentionItems}
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
             gatewayReady={gatewayReady}
+            signalScanReady={signalScanReady}
+            signalScanBlockedReason={signalScanPausedReason}
             transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}
             signalOptionsCandidates={signalOptionsCandidates}
             signalOptionsSourceHealth={signalOptionsSourceHealth}
-            signalMatrixStates={signalMatrixStates}
+            signalMatrixStates={algoSignalMatrixStates}
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             selectedCandidate={selectedCandidate}
             signalOptionsProfile={signalOptionsProfile}

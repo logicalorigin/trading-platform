@@ -47,6 +47,41 @@ test("Signals matrix hydration falls back to manifest order after priority is co
     { symbol: "MSFT", timeframe: "1m" },
     { symbol: "MSFT", timeframe: "5m" },
   ]);
+  assert.deepEqual(plan.timeframeHydration, [
+    { timeframe: "1m", hydrated: 1, aged: 0, missing: 2, requested: 1, total: 3 },
+    { timeframe: "5m", hydrated: 1, aged: 0, missing: 2, requested: 1, total: 3 },
+  ]);
+});
+
+test("Signals matrix hydration treats aged bars as hydrated and unavailable diagnostics as missing", () => {
+  const plan = buildSignalsMatrixHydrationPlan({
+    symbols: ["AAPL", "MSFT"],
+    currentStates: [
+      hydratedState("AAPL", "1m"),
+      {
+        ...hydratedState("AAPL", "5m"),
+        status: "stale",
+      },
+      {
+        symbol: "MSFT",
+        timeframe: "1m",
+        active: true,
+        status: "unavailable",
+        latestBarAt: null,
+        currentSignalAt: null,
+        lastEvaluatedAt: "2026-06-05T14:31:00.000Z",
+        lastError: "No broker history bars were available for this symbol.",
+      },
+    ],
+    timeframes: ["1m", "5m"],
+  });
+
+  assert.equal(plan.hydratedCellCount, 2);
+  assert.equal(plan.missingCellCount, 2);
+  assert.deepEqual(plan.timeframeHydration, [
+    { timeframe: "1m", hydrated: 1, aged: 0, missing: 1, requested: 1, total: 2 },
+    { timeframe: "5m", hydrated: 1, aged: 1, missing: 1, requested: 1, total: 2 },
+  ]);
 });
 
 test("Signals matrix hydration preserves explicit priority order without reordering scope", () => {
