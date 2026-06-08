@@ -117,6 +117,7 @@ import {
 } from "../lib/uiTokens.jsx";
 import { chartTooltipContentStyle } from "../lib/tooltipStyles";
 import { formatAppTimeForPreferences, getAppTimeZoneLabel } from "../lib/timeZone";
+import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 import {
   joinMotionClasses,
   motionRowStyle,
@@ -560,6 +561,49 @@ const FlowPlaceholderCard = ({
     ))}
   </Card>
 );
+
+const FlowTapeTickerFilterInput = ({
+  label,
+  value,
+  onCommit,
+  placeholder,
+  testId,
+}) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(3),
+        fontSize: textSize("body"),
+        color: CSS_COLOR.textDim,
+        fontFamily: T.sans,
+      }}
+    >
+      {label}
+      <input
+        data-testid={testId}
+        {...inputProps}
+        placeholder={placeholder}
+        style={{
+          width: "100%",
+          padding: sp("7px 10px"),
+          background: CSS_COLOR.bg1,
+          border: "none",
+          borderRadius: dim(RADII.md),
+          color: CSS_COLOR.text,
+          fontFamily: T.sans,
+          fontSize: fs(10),
+        }}
+      />
+    </label>
+  );
+};
 
 const premiumToKiloUsd = (value) => (isFiniteNumber(value) ? value / 1_000 : 0);
 
@@ -2802,6 +2846,14 @@ const FlowOverviewPanel = ({
       ...(clearPreset ? { activeFlowPresetId: null } : {}),
     });
   }, []);
+  const commitFlowIncludeQuery = useCallback(
+    (value) => updateFlowTapeFilters({ includeQuery: value }),
+    [updateFlowTapeFilters],
+  );
+  const commitFlowExcludeQuery = useCallback(
+    (value) => updateFlowTapeFilters({ excludeQuery: value }),
+    [updateFlowTapeFilters],
+  );
 
   const markScannerEdited = () => {
     setActiveScanId(null);
@@ -3605,67 +3657,21 @@ const FlowOverviewPanel = ({
         </button></AppTooltip>
       </div>
 
-      <label
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(3),
-          fontSize: textSize("body"),
-          color: CSS_COLOR.textDim,
-          fontFamily: T.sans,
-        }}
-      >
-        Include tickers
-        <input
-          data-testid="flow-include-input"
-          value={includeQuery}
-          onChange={(event) => {
-            updateFlowTapeFilters({ includeQuery: event.target.value });
-          }}
-          placeholder="SPY, QQQ, NVDA"
-          style={{
-            width: "100%",
-            padding: sp("7px 10px"),
-            background: CSS_COLOR.bg1,
-            border: "none",
-            borderRadius: dim(RADII.md),
-            color: CSS_COLOR.text,
-            fontFamily: T.sans,
-            fontSize: fs(10),
-          }}
-        />
-      </label>
+      <FlowTapeTickerFilterInput
+        label="Include tickers"
+        value={includeQuery}
+        onCommit={commitFlowIncludeQuery}
+        placeholder="SPY, QQQ, NVDA"
+        testId="flow-include-input"
+      />
 
-      <label
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(3),
-          fontSize: textSize("body"),
-          color: CSS_COLOR.textDim,
-          fontFamily: T.sans,
-        }}
-      >
-        Exclude tickers
-        <input
-          data-testid="flow-exclude-input"
-          value={excludeQuery}
-          onChange={(event) => {
-            updateFlowTapeFilters({ excludeQuery: event.target.value });
-          }}
-          placeholder="AAPL, TSLA"
-          style={{
-            width: "100%",
-            padding: sp("7px 10px"),
-            background: CSS_COLOR.bg1,
-            border: "none",
-            borderRadius: dim(RADII.md),
-            color: CSS_COLOR.text,
-            fontFamily: T.sans,
-            fontSize: fs(10),
-          }}
-        />
-      </label>
+      <FlowTapeTickerFilterInput
+        label="Exclude tickers"
+        value={excludeQuery}
+        onCommit={commitFlowExcludeQuery}
+        placeholder="AAPL, TSLA"
+        testId="flow-exclude-input"
+      />
 
       <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
         <span style={panelLabelStyle}>Flow</span>

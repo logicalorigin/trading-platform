@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -80,6 +81,7 @@ import {
 } from "../features/platform/semanticToneModel.js";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
+import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -104,6 +106,32 @@ const toneForNetGex = (value) =>
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
+};
+
+const GexTickerInput = ({ value, onCommit, isPhone }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+    autoCommit: false,
+    transformInput: (nextValue) => nextValue.toUpperCase(),
+  });
+
+  return (
+    <input
+      {...inputProps}
+      aria-label="GEX ticker"
+      style={{
+        width: dim(isPhone ? 68 : 82),
+        border: 0,
+        outline: 0,
+        background: "transparent",
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.emphasis,
+        fontSize: textSize("bodyStrong"),
+      }}
+    />
+  );
 };
 
 const fmtCurrency = (value) => {
@@ -1531,7 +1559,6 @@ export default function GexScreen({
 }) {
   const initialTicker = normalizeGexTicker(sym);
   const [ticker, setTicker] = useState(initialTicker);
-  const [tickerDraft, setTickerDraft] = useState(initialTicker);
   const [series, setSeries] = useState("net");
   const [view, setView] = useState("graph");
   const [expirationFilter, setExpirationFilter] = useState("all");
@@ -1545,7 +1572,6 @@ export default function GexScreen({
     if (!normalized) return;
     if (!isVisible || ticker === lastCommittedTickerRef.current) {
       setTicker(normalized);
-      setTickerDraft(normalized);
       lastCommittedTickerRef.current = normalized;
     }
   }, [isVisible, sym, ticker]);
@@ -1560,13 +1586,12 @@ export default function GexScreen({
     }
   }, [isPhone]);
 
-  const commitTicker = () => {
-    const nextTicker = normalizeGexTicker(tickerDraft);
+  const commitTicker = useCallback((nextDraft) => {
+    const nextTicker = normalizeGexTicker(nextDraft);
     setTicker(nextTicker);
-    setTickerDraft(nextTicker);
     lastCommittedTickerRef.current = nextTicker;
     onSelectSymbol?.(nextTicker);
-  };
+  }, [onSelectSymbol]);
 
   const gexQuery = useQuery({
     queryKey: ["gex-dashboard", ticker],
@@ -1730,24 +1755,10 @@ export default function GexScreen({
       }}
     >
       <Search size={14} color={CSS_COLOR.textDim} />
-      <input
-        value={tickerDraft}
-        onChange={(event) => setTickerDraft(event.target.value.toUpperCase())}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commitTicker();
-        }}
-        onBlur={commitTicker}
-        aria-label="GEX ticker"
-        style={{
-          width: dim(isPhone ? 68 : 82),
-          border: 0,
-          outline: 0,
-          background: "transparent",
-          color: CSS_COLOR.text,
-          fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.emphasis,
-          fontSize: textSize("bodyStrong"),
-        }}
+      <GexTickerInput
+        value={ticker}
+        onCommit={commitTicker}
+        isPhone={isPhone}
       />
     </div>
   );

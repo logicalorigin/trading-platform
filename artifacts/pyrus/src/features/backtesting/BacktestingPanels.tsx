@@ -111,6 +111,7 @@ import {
 } from "../../lib/timeZone";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
+import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
 import { cssColorAlpha } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
@@ -942,6 +943,31 @@ function inputStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
     fontSize: scale.fs(10),
     outline: "none",
   };
+}
+
+function BacktestTradeSearchInput({
+  value,
+  onCommit,
+  theme,
+  scale,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  theme: ThemeTokens;
+  scale: ScaleHelpers;
+}) {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      {...inputProps}
+      placeholder="Trade id, symbol, reason"
+      style={inputStyle(theme, scale)}
+    />
+  );
 }
 
 function buttonStyle(
@@ -5645,11 +5671,11 @@ export function BacktestWorkspace({
             >
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>Search</div>
-                <input
+                <BacktestTradeSearchInput
                   value={tradeSearchText}
-                  onChange={(event) => setTradeSearchText(event.target.value)}
-                  placeholder="Trade id, symbol, reason"
-                  style={inputStyle(theme, scale)}
+                  onCommit={setTradeSearchText}
+                  theme={theme}
+                  scale={scale}
                 />
               </div>
               <div>

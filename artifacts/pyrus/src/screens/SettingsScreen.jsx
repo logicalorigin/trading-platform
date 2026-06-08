@@ -93,6 +93,7 @@ import { Button } from "../components/ui/Button.jsx";
 import { SurfacePanel } from "../components/platform/primitives.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
+import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 
 const SETTINGS_TABS = [
   {
@@ -562,18 +563,40 @@ function NumberField({ label, value, onChange, min, max, step = 1 }) {
   );
 }
 
-function TextField({ label, value, onChange, placeholder = "" }) {
+function TextField({ label, value, onChange, placeholder = "", transformInput }) {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit: onChange,
+    transformInput,
+  });
+
   return (
     <label style={labelStyle()}>
       {label}
       <input
         type="text"
-        value={value ?? ""}
+        {...inputProps}
         placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
         style={inputStyle()}
       />
     </label>
+  );
+}
+
+function SettingsSearchInput({ value, onCommit }) {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      data-testid="settings-search-input"
+      type="search"
+      {...inputProps}
+      placeholder="Search settings"
+      style={inputStyle()}
+    />
   );
 }
 
@@ -2263,6 +2286,7 @@ function WorkspaceProfilePreferencesPanel({ userPreferences }) {
           value={workspace.defaultSymbol}
           placeholder="SPY"
           onChange={(value) => patchWorkspace({ defaultSymbol: value.toUpperCase() })}
+          transformInput={(value) => value.toUpperCase()}
         />
         <SelectField
           label="Market Grid"
@@ -3424,13 +3448,9 @@ export default function SettingsScreen({
             minWidth: 0,
           }}
         >
-          <input
-            data-testid="settings-search-input"
-            type="search"
+          <SettingsSearchInput
             value={settingsSearch}
-            onChange={(event) => setSettingsSearch(event.target.value)}
-            placeholder="Search settings"
-            style={inputStyle()}
+            onCommit={setSettingsSearch}
           />
           <div
             className="ra-hide-scrollbar"
