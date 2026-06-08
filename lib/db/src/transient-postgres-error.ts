@@ -19,6 +19,7 @@ const TRANSIENT_POSTGRES_CODES = new Set([
 const TRANSIENT_POSTGRES_MESSAGE_PATTERNS = [
   /connection terminated due to connection timeout/i,
   /connection terminated unexpectedly/i,
+  /pool timed out while waiting for an open connection/i,
   /timeout exceeded when trying to connect/i,
   /terminating connection/i,
   /could not connect to server/i,
