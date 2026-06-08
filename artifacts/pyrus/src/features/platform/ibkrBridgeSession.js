@@ -146,8 +146,8 @@ export const shouldUseRemoteIbkrLaunchBrowser = ({
   }
 
   // A Windows browser can launch the registered local protocol directly when
-  // no paired desktop helper is online yet. Non-Windows browsers still need the
-  // paired desktop agent to perform the Windows-side launch.
+  // no paired desktop helper is online yet. This is also the repair path for a
+  // stale home helper: queueing to an offline agent cannot restart it.
   if (isWindowsIbkrLaunchBrowser() && !desktopAgentOnline) {
     return false;
   }

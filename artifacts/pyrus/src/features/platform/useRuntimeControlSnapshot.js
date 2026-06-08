@@ -1,20 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getRuntimeDiagnostics } from "@workspace/api-client-react";
+import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot.js";
 import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
 import { useFlowScannerControlState } from "./marketFlowStore";
-import { platformJsonRequest } from "./platformJsonRequest";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
-
-const normalizeLineUsageDetail = (value) =>
-  value === "full" ? "full" : "compact";
-
-const readLineUsageSnapshot = (detail = "compact") =>
-  platformJsonRequest(
-    `/api/settings/ibkr-line-usage?detail=${encodeURIComponent(
-      normalizeLineUsageDetail(detail),
-    )}`,
-  );
 
 const readRuntimeDiagnosticsSnapshot = (signal) =>
   getRuntimeDiagnostics(signal ? { signal } : undefined);
@@ -50,95 +40,23 @@ export const useRuntimeControlSnapshot = ({
     staleTime: Math.min(2_000, runtimeDiagnosticsRefetchInterval),
   });
 
-  const [streamedLineUsage, setStreamedLineUsage] = useState(lineUsageSnapshot);
-  const [lineUsageError, setLineUsageError] = useState(null);
-  const lineUsageRequestRef = useRef(null);
-  const refreshLineUsage = useCallback(() => {
-    if (!active || !lineUsageEnabled) {
-      return Promise.resolve(null);
-    }
-    if (lineUsageRequestRef.current) {
-      return lineUsageRequestRef.current;
-    }
-    const request = readLineUsageSnapshot(lineUsageDetail)
-      .then((payload) => {
-        setStreamedLineUsage(payload);
-        setLineUsageError(null);
-        return payload;
-      })
-      .catch((error) => {
-        setLineUsageError(error);
-        throw error;
-      })
-      .finally(() => {
-        if (lineUsageRequestRef.current === request) {
-          lineUsageRequestRef.current = null;
-        }
-      });
-    lineUsageRequestRef.current = request;
-    return request;
-  }, [active, lineUsageDetail, lineUsageEnabled]);
-
-  useEffect(() => {
-    setStreamedLineUsage(lineUsageSnapshot ?? null);
-  }, [lineUsageSnapshot]);
-
-  useEffect(() => {
-    if (!active || !lineUsageEnabled || lineUsageSnapshot) {
-      return undefined;
-    }
-
-    if (
-      !lineUsageStreamEnabled ||
-      typeof window === "undefined" ||
-      typeof window.EventSource !== "function"
-    ) {
-      let cancelled = false;
-      const load = () => {
-        refreshLineUsage().catch(() => {});
-      };
-      load();
-      const interval = window.setInterval(() => {
-        if (!cancelled) load();
-      }, lineUsagePollInterval);
-      return () => {
-        cancelled = true;
-        window.clearInterval(interval);
-      };
-    }
-
-    const source = new window.EventSource(
-      `/api/settings/ibkr-line-usage/stream?detail=${encodeURIComponent(
-        normalizeLineUsageDetail(lineUsageDetail),
-      )}`,
-    );
-    source.addEventListener("ibkr-line-usage", (event) => {
-      try {
-        setStreamedLineUsage(JSON.parse(event.data));
-        setLineUsageError(null);
-      } catch (error) {
-        setLineUsageError(error);
-      }
-    });
-    source.addEventListener("error", () => {
-      setLineUsageError(new Error("IBKR line usage stream is reconnecting."));
-    });
-    return () => source.close();
-  }, [
-    active,
-    lineUsageEnabled,
-    lineUsageDetail,
-    lineUsagePollInterval,
-    lineUsageStreamEnabled,
+  const {
+    lineUsageSnapshot: effectiveLineUsage,
+    loading: lineUsageLoading,
+    error: lineUsageError,
+    reload: reloadLineUsage,
+  } = useIbkrLineUsageSnapshot({
+    enabled: active && lineUsageEnabled,
     lineUsageSnapshot,
-    refreshLineUsage,
-  ]);
+    lineUsageStreamEnabled,
+    lineUsagePollInterval,
+    lineUsageDetail,
+  });
 
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(active);
   const flowScannerControl = useFlowScannerControlState({ subscribe: active });
   const effectiveRuntimeDiagnostics =
     runtimeDiagnostics || runtimeDiagnosticsQuery.data || null;
-  const effectiveLineUsage = lineUsageSnapshot || streamedLineUsage || null;
   const snapshot = useMemo(
     () =>
       buildRuntimeControlSnapshot({
@@ -167,14 +85,14 @@ export const useRuntimeControlSnapshot = ({
       pending.push(runtimeDiagnosticsQuery.refetch());
     }
     if (active && lineUsageEnabled && !lineUsageSnapshot) {
-      pending.push(refreshLineUsage().catch(() => null));
+      pending.push(reloadLineUsage().catch(() => null));
     }
     return Promise.all(pending);
   }, [
     active,
     lineUsageEnabled,
     lineUsageSnapshot,
-    refreshLineUsage,
+    reloadLineUsage,
     runtimeDiagnosticsQuery,
     shouldFetchRuntimeDiagnostics,
   ]);
@@ -189,7 +107,7 @@ export const useRuntimeControlSnapshot = ({
     lineUsageSnapshot: effectiveLineUsage,
     loading:
       runtimeDiagnosticsQuery.isLoading ||
-      (active && lineUsageEnabled && !effectiveLineUsage && !lineUsageSnapshot),
+      lineUsageLoading,
     runtimeError: runtimeDiagnosticsQuery.error || null,
     lineUsageError,
     error: runtimeDiagnosticsQuery.error || lineUsageError,
