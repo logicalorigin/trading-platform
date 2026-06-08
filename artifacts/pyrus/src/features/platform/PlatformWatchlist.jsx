@@ -37,6 +37,7 @@ import {
   motionVars,
   useValueFlash,
 } from "../../lib/motion.jsx";
+import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
 import {
   SIGNALS_ROW_STATUS,
@@ -117,63 +118,144 @@ const cssColorMix = (color, percent) =>
 // MicroSparkline + extractSparklineValues are exported from
 // components/platform/primitives.jsx — imported above.
 
-const resolveSparklineData = (symbol, snapshot, fallback, priceValue) => {
-  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
+const WatchlistFilterInput = memo(({ value, onCommit }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      {...inputProps}
+      placeholder="Filter..."
+      style={{
+        flex: 1,
+        minWidth: 0,
+        background: "transparent",
+        border: "none",
+        outline: "none",
+        fontSize: textSize("paragraphMuted"),
+        fontFamily: T.sans,
+        color: CSS_COLOR.text,
+      }}
+    />
+  );
+});
+
+WatchlistFilterInput.displayName = "WatchlistFilterInput";
+
+const WatchlistAddSymbolInput = memo(({ value, onCommit }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      {...inputProps}
+      placeholder="Add symbol…"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        background: "transparent",
+        border: "none",
+        outline: "none",
+        fontSize: textSize("paragraphMuted"),
+        fontFamily: T.sans,
+        color: CSS_COLOR.text,
+        letterSpacing: 0,
+      }}
+    />
+  );
+});
+
+WatchlistAddSymbolInput.displayName = "WatchlistAddSymbolInput";
+
+const firstFiniteWatchlistNumber = (...values) => {
+  for (const value of values) {
+    if (isFiniteNumber(value)) return value;
+  }
+  return null;
+};
+
+const resolveGeneratedWatchlistPreviousPrice = (snapshot, current) => {
+  const previousClose = firstFiniteWatchlistNumber(
+    snapshot?.prevClose,
+    snapshot?.previousClose,
+  );
+  if (previousClose != null && previousClose > 0) {
+    return previousClose;
+  }
+
+  const change = firstFiniteWatchlistNumber(snapshot?.chg, snapshot?.change);
+  if (change != null) {
+    const derived = current - change;
+    if (isFiniteNumber(derived) && derived > 0) {
+      return derived;
+    }
+  }
+
+  const percent = firstFiniteWatchlistNumber(
+    snapshot?.pct,
+    snapshot?.changePercent,
+  );
+  if (percent != null && percent > -99) {
+    const derived = current / (1 + percent / 100);
+    if (isFiniteNumber(derived) && derived > 0) {
+      return derived;
+    }
+  }
+
+  return null;
+};
+
+const buildGeneratedWatchlistSparklineFallback = ({ symbol, snapshot, current }) =>
+  buildDetailedFallbackSparklineData({
+    symbol,
+    current,
+    previous: resolveGeneratedWatchlistPreviousPrice(snapshot, current),
+    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
+  });
+
+export const resolveWatchlistSparklineData = (
+  snapshot,
+  fallback,
+  generatedFallback,
+) => {
+  if (extractSparklinePoints(snapshot?.sparkBars).length >= 2) {
     return {
       data: snapshot.sparkBars,
       source: "snapshot-spark-bars",
     };
   }
-  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
+  if (extractSparklinePoints(snapshot?.spark).length >= 2) {
     return {
       data: snapshot.spark,
       source: "snapshot-spark",
     };
   }
-  if (Array.isArray(fallback?.sparkBars) && fallback.sparkBars.length >= 2) {
+  if (extractSparklinePoints(fallback?.sparkBars).length >= 2) {
     return {
       data: fallback.sparkBars,
       source: "fallback-spark-bars",
     };
   }
-  if (Array.isArray(fallback?.spark) && fallback.spark.length >= 2) {
+  if (extractSparklinePoints(fallback?.spark).length >= 2) {
     return {
       data: fallback.spark,
       source: "fallback-spark",
     };
   }
-
-  if (!isFiniteNumber(priceValue)) {
+  if (extractSparklinePoints(generatedFallback).length >= 2) {
     return {
-      data: [],
-      source: "empty",
+      data: generatedFallback,
+      source: "generated-price-fallback",
     };
   }
 
-  const change = isFiniteNumber(snapshot?.chg)
-    ? snapshot.chg
-    : isFiniteNumber(snapshot?.change)
-      ? snapshot.change
-      : null;
-  const percent = isFiniteNumber(snapshot?.pct)
-    ? snapshot.pct
-    : isFiniteNumber(snapshot?.changePercent)
-      ? snapshot.changePercent
-      : null;
-  const previousPrice = isFiniteNumber(change)
-    ? priceValue - change
-    : isFiniteNumber(percent) && percent !== -100
-      ? priceValue / (1 + percent / 100)
-      : priceValue * 0.997;
-
   return {
-    data: buildDetailedFallbackSparklineData({
-      symbol,
-      current: priceValue,
-      previous: previousPrice,
-      pointCount: SPARKLINE_RENDER_POINT_LIMIT,
-    }),
-    source: "synthetic",
+    data: [],
+    source: "empty",
   };
 };
 const WATCHLIST_SORT_OPTIONS = [
@@ -304,11 +386,28 @@ const WatchlistRow = memo(
           ? CSS_COLOR.bg3
           : "transparent";
     const mobileDense = density === "mobile-dense";
-    const sparklineResolved = resolveSparklineData(
-      item.sym,
+    const generatedSparklineFallback = useMemo(
+      () =>
+        buildGeneratedWatchlistSparklineFallback({
+          symbol: item.sym,
+          snapshot,
+          current: displayedPrice,
+        }),
+      [
+        displayedPrice,
+        item.sym,
+        snapshot?.change,
+        snapshot?.changePercent,
+        snapshot?.chg,
+        snapshot?.pct,
+        snapshot?.prevClose,
+        snapshot?.previousClose,
+      ],
+    );
+    const sparklineResolved = resolveWatchlistSparklineData(
       snapshot,
       fallback,
-      priceValue,
+      generatedSparklineFallback,
     );
     const sparklineData = sparklineResolved.data;
     const sparklinePoints = useMemo(
@@ -1563,20 +1662,9 @@ export const Watchlist = ({
             }}
           >
             <Search size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
-            <input
+            <WatchlistFilterInput
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Filter..."
-              style={{
-                flex: 1,
-                minWidth: 0,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                fontSize: textSize("paragraphMuted"),
-                fontFamily: T.sans,
-                color: CSS_COLOR.text,
-              }}
+              onCommit={setSearch}
             />
           </div>
           <AppTooltip content={directionEnabled ? "Toggle sort direction" : "Sort direction unavailable"}><button
@@ -1623,20 +1711,9 @@ export const Watchlist = ({
                 borderBottom: `1px solid ${CSS_COLOR.border}`,
               }}
             >
-              <input
+              <WatchlistAddSymbolInput
                 value={addQuery}
-                onChange={(event) => setAddQuery(event.target.value)}
-                placeholder="Add symbol…"
-                style={{
-                  flex: 1,
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  fontSize: textSize("paragraphMuted"),
-                  fontFamily: T.sans,
-                  color: CSS_COLOR.text,
-                  letterSpacing: 0,
-                }}
+                onCommit={setAddQuery}
               />
               <AppTooltip content="Close add symbol"><button
                 type="button"
@@ -1980,21 +2057,9 @@ export const Watchlist = ({
               }}
             >
               <Search size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
-              <input
+              <WatchlistAddSymbolInput
                 value={addQuery}
-                onChange={(event) => setAddQuery(event.target.value)}
-                placeholder="Add symbol…"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  color: CSS_COLOR.text,
-                  fontFamily: T.sans,
-                  fontSize: textSize("paragraphMuted"),
-                  letterSpacing: 0,
-                }}
+                onCommit={setAddQuery}
               />
             </div>
             <div style={{ maxHeight: dim(280), overflowY: "auto" }}>

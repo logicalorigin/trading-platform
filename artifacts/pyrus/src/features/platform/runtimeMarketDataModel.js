@@ -21,20 +21,31 @@ const rng = (seed) => {
   };
 };
 
+const sparklineBarCloseValue = (bar) => {
+  const close = Number(bar?.close ?? bar?.c ?? bar?.v);
+  return Number.isFinite(close) ? close : null;
+};
+
+const drawableSparklineBars = (bars) =>
+  (Array.isArray(bars) ? bars : []).filter(
+    (bar) => sparklineBarCloseValue(bar) != null,
+  );
+
 const buildSparklineFromHistoricalBars = (bars, fallback) => {
-  if (!Array.isArray(bars) || bars.length < 2) {
+  const validBars = drawableSparklineBars(bars);
+  if (validBars.length < 2) {
     return Array.isArray(fallback) ? fallback : [];
   }
 
-  return bars.map((bar, index) => ({
+  return validBars.map((bar, index) => ({
     i: index,
-    v: bar.close,
+    v: sparklineBarCloseValue(bar),
     timestamp: bar.timestamp ?? bar.time ?? bar.t ?? null,
   }));
 };
 
 const hasUsableSparklineBars = (bars) =>
-  Array.isArray(bars) && bars.length >= 2;
+  drawableSparklineBars(bars).length >= 2;
 
 const buildRuntimeSparklinePatch = (bars, fallbackSpark) =>
   hasUsableSparklineBars(bars)

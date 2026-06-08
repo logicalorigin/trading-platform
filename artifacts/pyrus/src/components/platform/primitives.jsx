@@ -86,6 +86,21 @@ export const extractSparklinePoints = (data = []) =>
 export const extractSparklineValues = (data = []) =>
   extractSparklinePoints(data).map((point) => point.value);
 
+const normalizeSparklinePoints = (points = []) =>
+  (Array.isArray(points) ? points : [])
+    .map((point, fallbackIndex) => {
+      const value = Number(point?.value);
+      if (!Number.isFinite(value)) {
+        return null;
+      }
+      return {
+        index: Number.isInteger(point?.index) ? point.index : fallbackIndex,
+        value,
+        ms: Number.isFinite(point?.ms) ? point.ms : null,
+      };
+    })
+    .filter(Boolean);
+
 /**
  * MicroSparkline — financial green/red line by default plus compact detail cues.
  * Used in PlatformWatchlist rows and (via RowSparkValue) any row primitive
@@ -94,6 +109,7 @@ export const extractSparklineValues = (data = []) =>
  *   data       — array of points (any of the shapes extractSparklineValues handles)
  *   positive   — financial outcome override; null infers from first-vs-last value
  *   color      — required semantic stroke/fill tone for non-financial sparklines
+ *   points     — optional pre-normalized extractSparklinePoints(data) result
  *   pointColors — optional array of per-point stroke colors for segmented lines
  *   width/height — SVG viewBox size in dim() units before scaling
  *   style      — optional SVG style overrides for responsive sizing
@@ -107,6 +123,7 @@ export const MicroSparkline = ({
   data = [],
   positive = null,
   color = null,
+  points = null,
   pointColors = null,
   width = 64,
   height = 24,
@@ -115,7 +132,13 @@ export const MicroSparkline = ({
   ariaLabel = null,
   ariaHidden,
 }) => {
-  const sparklinePoints = useMemo(() => extractSparklinePoints(data), [data]);
+  const sparklinePoints = useMemo(
+    () =>
+      Array.isArray(points)
+        ? normalizeSparklinePoints(points)
+        : extractSparklinePoints(data),
+    [data, points],
+  );
   const values = sparklinePoints.map((point) => point.value);
   const uid = useId().replace(/:/g, "");
 
