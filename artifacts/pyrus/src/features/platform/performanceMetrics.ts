@@ -1,6 +1,14 @@
 import { useEffect } from "react";
 import { getBootProgressSnapshot } from "../../app/bootProgress";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
+import {
+  getAggregateFanoutCounters,
+  getBrokerStockAggregateDebugStats,
+} from "../charting/useMassiveStockAggregateStream";
+import {
+  getOptionQuoteSnapshotCacheSize,
+  getOptionQuoteSnapshotListenerCount,
+} from "./live-streams";
 
 const API_TIMING_EVENT = "pyrus:api-request-timing";
 export const SCREEN_READY_EVENT = "pyrus:screen-ready";
@@ -76,6 +84,7 @@ const metrics = {
   screenTimings: [] as ScreenTimingSample[],
   routeDataTimings: [] as RouteDataTimingSample[],
   longTasks: [] as LongTaskSample[],
+  longTaskMsTotal: 0,
 };
 
 const pushBounded = <T>(target: T[], value: T, max: number) => {
@@ -223,6 +232,7 @@ const installLongTaskObserver = () => {
 
   const observer = new PerformanceObserver((list) => {
     list.getEntries().forEach((entry) => {
+      metrics.longTaskMsTotal += Math.round(entry.duration);
       pushBounded(
         metrics.longTasks,
         {
@@ -355,6 +365,57 @@ export const markRouteDataTiming = (
 
 export const hasPyrusFirstScreenReady = () => metrics.firstScreenReadyAt > 0;
 
+let prevLiveSnapshot = { ts: 0, longTaskMsTotal: 0, fanoutInvocations: 0 };
+
+const safeReadLiveData = <T>(fn: () => T): T | null => {
+  try {
+    return fn();
+  } catch {
+    return null;
+  }
+};
+
+// Live-data attribution: the per-tick fan-out + main-thread blocking that scales with incoming
+// IBKR data. Posted to the backend so the before/after perf capture can attribute the lag to a
+// client re-render storm vs server event-loop blocking without a browser/devtools open.
+const buildPyrusLiveDataMetrics = () => {
+  const now = nowMs();
+  const debug = safeReadLiveData(getBrokerStockAggregateDebugStats);
+  const fanout = safeReadLiveData(getAggregateFanoutCounters);
+  const invocations = fanout?.listenerInvocations ?? 0;
+  const dtSec = prevLiveSnapshot.ts > 0 ? (now - prevLiveSnapshot.ts) / 1000 : 0;
+  const notificationsPerSec =
+    dtSec > 0
+      ? Math.max(
+          0,
+          Math.round(
+            ((invocations - prevLiveSnapshot.fanoutInvocations) / dtSec) * 100,
+          ) / 100,
+        )
+      : null;
+  const longTaskMsPerWindow =
+    prevLiveSnapshot.ts > 0
+      ? Math.max(0, metrics.longTaskMsTotal - prevLiveSnapshot.longTaskMsTotal)
+      : null;
+  prevLiveSnapshot = {
+    ts: now,
+    longTaskMsTotal: metrics.longTaskMsTotal,
+    fanoutInvocations: invocations,
+  };
+  return {
+    symbolListenerCount: debug?.symbolListenerCount ?? null,
+    unionSymbolCount: debug?.unionSymbolCount ?? null,
+    activeConsumerCount: debug?.activeConsumerCount ?? null,
+    aggregateEventCount: debug?.eventCount ?? null,
+    notificationsPerSec,
+    longTaskMsPerWindow,
+    optionQuoteListenerCount:
+      safeReadLiveData(getOptionQuoteSnapshotListenerCount) ?? null,
+    optionQuoteCacheSize:
+      safeReadLiveData(getOptionQuoteSnapshotCacheSize) ?? null,
+  };
+};
+
 export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
   const apiSummary = summarizeTimings(
     metrics.apiTimings.filter(
@@ -404,6 +465,7 @@ export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
         .filter((sample) => sample.path !== "/api/diagnostics/client-metrics")
         .slice(-20),
     },
+    liveData: buildPyrusLiveDataMetrics(),
     raw: {
       pendingScreens: Array.from(metrics.pendingScreens.keys()),
       routeDataTimings: metrics.routeDataTimings.slice(-30),

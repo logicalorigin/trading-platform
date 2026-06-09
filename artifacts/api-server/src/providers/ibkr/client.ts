@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
 import type {
   AssetClass,
   BrokerAccountSnapshot,
@@ -807,6 +808,11 @@ export function parseSnapshotQuote(
     ibkrChangePct ?? (prevClose ? (change / prevClose) * 100 : 0);
   const updatedAt =
     toDate(payload["_updated"]) ?? toDate(payload["updatedAt"]) ?? new Date();
+  const marketSession = resolveUsEquityMarketSession(updatedAt).key;
+  const extendedBaselinePrice =
+    (marketSession === "pre" || marketSession === "after") && prevClose !== null
+      ? prevClose
+      : null;
 
   return {
     symbol,
@@ -821,6 +827,10 @@ export function parseSnapshotQuote(
     high,
     low,
     prevClose,
+    extendedBaselinePrice,
+    extendedBaselineAt: extendedBaselinePrice !== null ? updatedAt : null,
+    extendedBaselineSource:
+      extendedBaselinePrice !== null ? "regular_close" : null,
     volume,
     openInterest,
     impliedVolatility,
@@ -1618,6 +1628,11 @@ export class IbkrClient {
       positions.push(
         ...compact(
           page.map((position) => {
+            const providerSecurityType =
+              firstDefined(
+                asString(position["secType"]),
+                asString(position["assetClass"]),
+              ) ?? null;
             const assetClass = normalizeAssetClass(
               firstDefined(
                 asString(position["assetClass"]),
@@ -1679,6 +1694,7 @@ export class IbkrClient {
               accountId,
               symbol,
               assetClass,
+              providerSecurityType,
               quantity,
               averagePrice,
               marketPrice,
@@ -2087,6 +2103,9 @@ export class IbkrClient {
           high: null,
           low: null,
           prevClose: null,
+          extendedBaselinePrice: null,
+          extendedBaselineAt: null,
+          extendedBaselineSource: null,
           volume: null,
           openInterest: null,
           impliedVolatility: null,

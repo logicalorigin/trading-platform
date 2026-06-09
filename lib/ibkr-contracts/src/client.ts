@@ -99,6 +99,7 @@ export type BrokerPositionSnapshot = {
   accountId: string;
   symbol: string;
   assetClass: AssetClass;
+  providerSecurityType?: string | null;
   quantity: number;
   averagePrice: number;
   marketPrice: number;
@@ -233,6 +234,9 @@ export type QuoteSnapshot = {
   high: number | null;
   low: number | null;
   prevClose: number | null;
+  extendedBaselinePrice?: number | null;
+  extendedBaselineAt?: Date | null;
+  extendedBaselineSource?: "regular_close" | null;
   volume: number | null;
   openInterest: number | null;
   optionCallVolume?: number | null;

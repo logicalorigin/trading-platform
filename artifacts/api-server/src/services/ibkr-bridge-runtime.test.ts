@@ -7,7 +7,11 @@ import test, { after } from "node:test";
 import {
   cancelLegacyIbkrBridgeActivation,
   claimIbkrRemoteDesktopLaunchJob,
+  claimIbkrRemoteDesktopLaunchJobWithWait,
+  claimLegacyIbkrBridgeLoginEnvelope,
+  completeLegacyIbkrBridgeHelperUpdate,
   createIbkrRemoteBridgeLaunch,
+  getIbkrBridgeActivationDiagnostics,
   getIbkrBridgeLauncher,
   getIbkrBridgeRuntimeSessionState,
   heartbeatIbkrRemoteDesktop,
@@ -156,7 +160,63 @@ test("remote launch queues to a registered desktop even when its helper heartbea
   );
 });
 
-test("desktop idle polling does not force background helper self-update", () => {
+test("remote helper update-only launch uses an update-only protocol URL", () => {
+  const pairingLauncher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+  const desktopId = "desktop-update-only-home";
+  const desktopSecret = "desktop-update-only-home-secret-123456";
+
+  registerIbkrRemoteDesktop({
+    activationId: pairingLauncher.activationId,
+    callbackSecret: readCallbackSecret(pairingLauncher.launchUrl),
+    desktopId,
+    desktopSecret,
+    helperVersion: pairingLauncher.helperVersion,
+    label: "Home Windows",
+  });
+
+  const launch = createIbkrRemoteBridgeLaunch({
+    apiBaseUrl: "https://pyrus.test",
+    body: { autoLogin: false, desktopId, helperUpdateOnly: true },
+    bundleUrl: null,
+  });
+  const claim = claimIbkrRemoteDesktopLaunchJob({
+    desktopId,
+    desktopSecret,
+    helperVersion: pairingLauncher.helperVersion,
+  });
+
+  assert.equal(claim.ready, true);
+  assert.equal(claim.action, "launch");
+  if (claim.action !== "launch") {
+    throw new Error("expected launch job");
+  }
+  assert.equal(claim.activationId, launch.activationId);
+  assert.equal(new URL(claim.launchUrl).searchParams.get("helperUpdateOnly"), "1");
+  assert.equal(new URL(claim.launchUrl).searchParams.get("autoLogin"), null);
+});
+
+test("helper update-only completion clears the active activation", () => {
+  const launcher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+  const callbackSecret = readCallbackSecret(launcher.launchUrl);
+
+  const result = completeLegacyIbkrBridgeHelperUpdate(launcher.activationId, {
+    callbackSecret,
+  });
+  const diagnostics = getIbkrBridgeActivationDiagnostics();
+
+  assert.deepEqual(result, { completed: true, ok: true });
+  assert.equal(diagnostics.activeCount, 0);
+  assert.equal(diagnostics.latestActivation?.canceled, true);
+  assert.equal(diagnostics.latestProgress?.step, "helper_update_completed");
+});
+
+test("desktop idle polling returns helper update hints", () => {
   const pairingLauncher = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.test",
     bundleUrl: null,
@@ -198,6 +258,38 @@ test("desktop idle polling does not force background helper self-update", () => 
   assert.equal(emptyClaim.helperUpdateRequired, true);
 });
 
+test("stale desktop helper claim with wait returns update hint without long-polling", async () => {
+  const pairingLauncher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+  const desktopId = "desktop-stale-wait-home";
+  const desktopSecret = "desktop-stale-wait-home-secret-123456";
+  const oldHelperVersion = "2026-06-09.ib-async-sidecar-v15-graceful-deactivate";
+
+  registerIbkrRemoteDesktop({
+    activationId: pairingLauncher.activationId,
+    callbackSecret: readCallbackSecret(pairingLauncher.launchUrl),
+    desktopId,
+    desktopSecret,
+    helperVersion: oldHelperVersion,
+    label: "Home Windows",
+  });
+
+  const startedAt = Date.now();
+  const claim = await claimIbkrRemoteDesktopLaunchJobWithWait({
+    desktopId,
+    desktopSecret,
+    helperVersion: oldHelperVersion,
+    waitMs: 5_000,
+  });
+
+  assert.equal(claim.ready, false);
+  assert.equal(claim.helperUpdateRequired, true);
+  assert.equal(claim.targetHelperVersion, pairingLauncher.helperVersion);
+  assert.ok(Date.now() - startedAt < 500);
+});
+
 test("desktop heartbeat persists helper heartbeat evidence", () => {
   const pairingLauncher = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.test",
@@ -218,8 +310,7 @@ test("desktop heartbeat persists helper heartbeat evidence", () => {
   const heartbeat = heartbeatIbkrRemoteDesktop({
     desktopId,
     desktopSecret,
-    helperVersion:
-      "2026-06-09.ib-async-sidecar-v14-sidecar-import-stderr-not-error",
+    helperVersion: pairingLauncher.helperVersion,
     label: "Home Windows",
   });
 
@@ -291,5 +382,68 @@ test("credential handoff records key publish, key read, and envelope receipt pro
       "credential_key_read",
       "credentials_received",
     ],
+  );
+});
+
+test("credential envelope submission is idempotent after server acceptance", () => {
+  const launcher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+  const callbackSecret = readCallbackSecret(launcher.launchUrl);
+
+  submitLegacyIbkrBridgeLoginKey(launcher.activationId, {
+    algorithm: "RSA-OAEP-256-CHUNKED",
+    callbackSecret,
+    helperInstanceId: "helper-instance-idempotent",
+    publicKeyJwk: { kty: "RSA", n: "test", e: "AQAB" },
+  });
+
+  const firstSubmit = submitLegacyIbkrBridgeLoginEnvelope(launcher.activationId, {
+    algorithm: "RSA-OAEP-256-CHUNKED",
+    ciphertextChunks: ["encrypted"],
+    helperInstanceId: "helper-instance-idempotent",
+    managementToken: launcher.managementToken,
+  });
+  assert.deepEqual(firstSubmit, { ok: true });
+
+  const duplicateSubmit = submitLegacyIbkrBridgeLoginEnvelope(
+    launcher.activationId,
+    {
+      algorithm: "RSA-OAEP-256-CHUNKED",
+      ciphertextChunks: ["encrypted"],
+      helperInstanceId: "helper-instance-idempotent",
+      managementToken: launcher.managementToken,
+    },
+  );
+  assert.equal(duplicateSubmit.ok, true);
+
+  const claim = claimLegacyIbkrBridgeLoginEnvelope(launcher.activationId, {
+    callbackSecret,
+    helperInstanceId: "helper-instance-idempotent",
+  });
+  assert.equal(claim.ready, true);
+
+  const postClaimSubmit = submitLegacyIbkrBridgeLoginEnvelope(
+    launcher.activationId,
+    {
+      algorithm: "RSA-OAEP-256-CHUNKED",
+      ciphertextChunks: ["encrypted"],
+      helperInstanceId: "helper-instance-idempotent",
+      managementToken: launcher.managementToken,
+    },
+  );
+  assert.equal(postClaimSubmit.ok, true);
+
+  const diagnostics = getIbkrBridgeActivationDiagnostics();
+  assert.equal(diagnostics.latestActivation?.loginEnvelopeSubmitted, true);
+  assert.ok(diagnostics.latestActivation?.loginEnvelopeSubmittedAt);
+  assert.equal(
+    diagnostics.latestActivation?.loginEnvelopeSubmitAttemptCount,
+    3,
+  );
+  assert.equal(
+    diagnostics.latestActivation?.lastLoginEnvelopeSubmitErrorCode,
+    null,
   );
 });

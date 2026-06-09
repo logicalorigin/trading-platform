@@ -53,6 +53,17 @@ test("position equity quote snapshots bypass Massive and fetch from IBKR bridge"
   assert.doesNotMatch(body, /isMassiveStocksRealtimeConfigured/);
 });
 
+test("market-depth snapshots require fresh authenticated IBKR health before bridge fetch", () => {
+  const body = functionSource("fetchMarketDepthSnapshotPayload");
+
+  assert.match(body, /getBridgeHealthForSession\(\{\s*waitForInitialRefresh:\s*false,\s*waitForStaleRefresh:\s*false,\s*\}\)/);
+  assert.match(body, /health\.connected !== true/);
+  assert.match(body, /health\.authenticated !== true/);
+  assert.match(body, /health\.healthFresh === false/);
+  assert.match(body, /code:\s*"ibkr_market_depth_unavailable"/);
+  assert.match(body, /bridgeClient\.getMarketDepth\(input\)/);
+});
+
 test("position equity quote subscriptions bypass Massive and subscribe to IBKR bridge", () => {
   const body = functionSource("subscribePositionQuoteSnapshots");
   assert.match(body, /filterPositionQuoteSymbols\(requestedSymbols\)/);

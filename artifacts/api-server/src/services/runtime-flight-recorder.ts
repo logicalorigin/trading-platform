@@ -69,21 +69,28 @@ function findRepoRoot(): string {
   return path.resolve(process.cwd(), "../..");
 }
 
-function recorderDir(): string {
+export function recorderDir(): string {
   return process.env["PYRUS_FLIGHT_RECORDER_DIR"]
     ? path.resolve(process.env["PYRUS_FLIGHT_RECORDER_DIR"])
     : path.join(findRepoRoot(), ".pyrus-runtime", "flight-recorder");
 }
 
-function dateKey(iso = nowIso()): string {
+export function flightRecorderDateKey(iso = nowIso()): string {
   return iso.slice(0, 10);
+}
+
+function dateKey(iso = nowIso()): string {
+  return flightRecorderDateKey(iso);
 }
 
 function ensureDir(dirPath: string): void {
   mkdirSync(dirPath, { recursive: true });
 }
 
-function appendJsonLine(filePath: string, value: JsonRecord): void {
+export function appendFlightRecorderJsonLine(
+  filePath: string,
+  value: JsonRecord,
+): void {
   ensureDir(path.dirname(filePath));
   appendFileSync(filePath, `${JSON.stringify(value)}\n`, {
     encoding: "utf8",
@@ -91,12 +98,33 @@ function appendJsonLine(filePath: string, value: JsonRecord): void {
   });
 }
 
-function atomicWriteJson(filePath: string, value: unknown): void {
+function appendJsonLine(filePath: string, value: JsonRecord): void {
+  appendFlightRecorderJsonLine(filePath, value);
+}
+
+export function atomicWriteFlightRecorderJson(
+  filePath: string,
+  value: unknown,
+): void {
   ensureDir(path.dirname(filePath));
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, {
     mode: 0o600,
   });
+  renameSync(tmpPath, filePath);
+}
+
+function atomicWriteJson(filePath: string, value: unknown): void {
+  atomicWriteFlightRecorderJson(filePath, value);
+}
+
+export function atomicWriteFlightRecorderText(
+  filePath: string,
+  text: string,
+): void {
+  ensureDir(path.dirname(filePath));
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, text, { mode: 0o600 });
   renameSync(tmpPath, filePath);
 }
 

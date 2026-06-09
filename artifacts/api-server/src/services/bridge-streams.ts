@@ -8,6 +8,7 @@ import {
   isTransientBridgeWorkError,
   runBridgeWork,
 } from "./bridge-governor";
+import { getBridgeHealthForSession } from "./platform-bridge-health";
 import {
   listIbkrAccounts,
   listIbkrExecutions,
@@ -785,6 +786,23 @@ export async function fetchMarketDepthSnapshotPayload(input: {
 }): Promise<{
   depth: Awaited<ReturnType<IbkrBridgeClient["getMarketDepth"]>>;
 }> {
+  const health = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+  if (
+    !health ||
+    health.connected !== true ||
+    health.authenticated !== true ||
+    health.healthFresh === false
+  ) {
+    throw new HttpError(503, "IBKR market depth is unavailable.", {
+      code: "ibkr_market_depth_unavailable",
+      detail:
+        "Market depth requires a fresh authenticated IBKR bridge session. Massive realtime stock quotes remain available without IBKR.",
+    });
+  }
+
   return {
     depth: await bridgeClient.getMarketDepth(input),
   };

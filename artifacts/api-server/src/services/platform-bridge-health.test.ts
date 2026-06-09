@@ -12,6 +12,7 @@ import {
 import {
   __setIbkrBridgeClientFactoryForTests,
   getBridgeHealthForSession,
+  invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
 } from "./platform-bridge-health";
 
@@ -108,4 +109,91 @@ test("session bridge health can return stale cached data without awaiting refres
   });
 
   assert.equal(refreshedHealth?.updatedAt, freshUpdatedAt);
+});
+
+test("stale connected bridge health is not reported as usable", async () => {
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+
+  const staleConnectedHealth = {
+    ...bridgeHealth(new Date(Date.now() - 60_000).toISOString()),
+    accounts: ["U123"],
+    authenticated: true,
+    brokerServerConnected: true,
+    connected: true,
+    liveMarketDataAvailable: true,
+    marketDataMode: "live",
+  };
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          await delay(75);
+          return staleConnectedHealth;
+        },
+      }) as never,
+  );
+  primeBridgeHealthForSession(staleConnectedHealth);
+
+  const health = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+
+  assert(health, "expected stale cached bridge health");
+  assert.equal(health.healthFresh, false);
+  assert.equal(health.stale, true);
+  assert.equal(health.bridgeReachable, false);
+  assert.equal(health.connected, false);
+  assert.equal(health.authenticated, false);
+  assert.equal(health.socketConnected, false);
+  assert.equal(health.strictReady, false);
+  assert.equal(health.strictReason, "health_stale");
+});
+
+test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconnected immediately", async () => {
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+
+  const connectedHealth = {
+    ...bridgeHealth(new Date().toISOString()),
+    connected: true,
+    authenticated: true,
+    brokerServerConnected: true,
+  };
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          await delay(75);
+          return connectedHealth;
+        },
+      }) as never,
+  );
+  // A fresh, operational health snapshot would otherwise read as connected for
+  // ~IBKR_BRIDGE_HEALTH_FRESH_MS (30s) — the source of the deactivate lag.
+  primeBridgeHealthForSession(connectedHealth);
+
+  const before = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+  assert.equal(before?.connected, true, "primed health should read connected");
+
+  // User-initiated deactivate clears the override and invalidates the cache.
+  invalidateBridgeHealthCache();
+
+  const after = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+  assert.equal(
+    after,
+    null,
+    "after invalidation the read must be disconnected, not stale-connected",
+  );
 });

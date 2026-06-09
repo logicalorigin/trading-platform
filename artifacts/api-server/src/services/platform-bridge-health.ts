@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { HttpError, isHttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { getProviderConfiguration } from "../lib/runtime";
+import { recordConnectionLiveState } from "./ibkr-connection-audit";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import {
@@ -59,6 +60,17 @@ export function primeBridgeHealthForSession(health: unknown): void {
     snapshot.updatedAt = new Date().toISOString();
   }
   lastKnownBridgeHealth = snapshot as BridgeHealthSnapshot;
+  lastBridgeHealthRefreshPromise = null;
+}
+
+/**
+ * Drop the cached bridge health so the next status read re-probes immediately.
+ * Used on user-initiated deactivate (detach / bridge override clear): we know the
+ * bridge is going away, so the stale "operational" cache (otherwise fresh for
+ * IBKR_BRIDGE_HEALTH_FRESH_MS) must not keep reporting connected for ~30s+.
+ */
+export function invalidateBridgeHealthCache(): void {
+  lastKnownBridgeHealth = null;
   lastBridgeHealthRefreshPromise = null;
 }
 
@@ -254,7 +266,7 @@ function annotateBridgeHealth(
     options.forceStale === true
       ? false
       : healthAgeMs !== null && healthAgeMs <= bridgeHealthFreshMs();
-  const bridgeReachable = options.forceStale === true ? false : true;
+  const bridgeReachable = healthFresh && options.forceStale !== true;
   const subscriptions =
     health.diagnostics &&
     typeof health.diagnostics === "object" &&
@@ -277,8 +289,10 @@ function annotateBridgeHealth(
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
+  const socketConnected = healthFresh && Boolean(health.connected);
+  const authenticated = socketConnected && Boolean(health.authenticated);
   const brokerServerConnected =
-    health.brokerServerConnected ?? Boolean(health.connected);
+    socketConnected && (health.brokerServerConnected ?? Boolean(health.connected));
   const accountsLoaded =
     brokerServerConnected && Array.isArray(health.accounts) && health.accounts.length > 0;
   const currentBridgeDiagnostics = hasCurrentBridgeDiagnostics(health);
@@ -297,13 +311,13 @@ function annotateBridgeHealth(
     (health.marketDataMode == null && health.liveMarketDataAvailable === true);
   const sanitizedHealthLastError = sanitizeConnectedBridgeLastError(
     health.lastError,
-    Boolean(health.connected),
+    socketConnected,
   );
   const strictReason = resolveIbkrRuntimeStrictReason({
     healthFresh,
-    connected: Boolean(health.connected),
+    connected: socketConnected,
     brokerServerConnected,
-    authenticated: Boolean(health.authenticated),
+    authenticated,
     accountsLoaded,
     configuredLiveMarketDataMode,
     streamFresh,
@@ -316,9 +330,9 @@ function annotateBridgeHealth(
     configured: true,
     healthFresh,
     bridgeReachable,
-    connected: Boolean(health.connected),
+    connected: socketConnected,
     brokerServerConnected,
-    authenticated: Boolean(health.authenticated),
+    authenticated,
     accountsLoaded,
     configuredLiveMarketDataMode,
     liveMarketDataAvailable: health.liveMarketDataAvailable,
@@ -335,7 +349,7 @@ function annotateBridgeHealth(
     healthAgeMs,
     stale: !healthFresh,
     bridgeReachable,
-    socketConnected: Boolean(health.connected),
+    socketConnected,
     brokerServerConnected,
     serverConnectivity: health.serverConnectivity,
     lastServerConnectivityAt: health.lastServerConnectivityAt,
@@ -357,7 +371,7 @@ function annotateBridgeHealth(
         ...strictFields,
         lastError: sanitizeConnectedBridgeLastError(
           rawTwsConnection.lastError,
-          Boolean(rawTwsConnection.reachable || health.connected),
+          Boolean(rawTwsConnection.reachable && bridgeReachable),
         ),
         reachable: Boolean(rawTwsConnection.reachable && bridgeReachable),
       }
@@ -365,6 +379,8 @@ function annotateBridgeHealth(
 
   return {
     ...health,
+    authenticated,
+    connected: socketConnected,
     lastError: sanitizedHealthLastError,
     ...strictFields,
     connections: health.connections
@@ -440,6 +456,7 @@ export async function getBridgeHealthForSession(
 
   if (!lastKnownBridgeHealth) {
     scheduleBridgeHealthRefreshForSession("session_background");
+    recordConnectionLiveState({ connected: false, streamState: "offline" });
     return null;
   }
 
@@ -469,6 +486,10 @@ export async function getBridgeHealthForSession(
     scheduleBridgeHealthRefreshForSession("session_background");
   }
 
+  recordConnectionLiveState({
+    connected: Boolean(annotated.connected),
+    streamState: annotated.streamState,
+  });
   return annotated;
 }
 

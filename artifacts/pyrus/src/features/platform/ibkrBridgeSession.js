@@ -139,7 +139,9 @@ export const isWindowsIbkrLaunchBrowser = () => {
 };
 
 export const shouldUseRemoteIbkrLaunchBrowser = ({
+  desktopAgentCompatible = true,
   desktopAgentOnline = false,
+  desktopAgentUpgradeRequired = false,
 } = {}) => {
   if (typeof navigator === "undefined") {
     return false;
@@ -149,6 +151,12 @@ export const shouldUseRemoteIbkrLaunchBrowser = ({
   // no paired desktop helper is online yet. This is also the repair path for a
   // stale home helper: queueing to an offline agent cannot restart it.
   if (isWindowsIbkrLaunchBrowser() && !desktopAgentOnline) {
+    return false;
+  }
+  if (
+    isWindowsIbkrLaunchBrowser() &&
+    (desktopAgentUpgradeRequired || desktopAgentCompatible === false)
+  ) {
     return false;
   }
 

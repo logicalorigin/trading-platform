@@ -16493,6 +16493,23 @@ export async function getMarketDepth(input: {
   providerContractId?: string | null;
   exchange?: string | null;
 }) {
+  const health = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+  if (
+    !health ||
+    health.connected !== true ||
+    health.authenticated !== true ||
+    health.healthFresh === false
+  ) {
+    throw new HttpError(503, "IBKR market depth is unavailable.", {
+      code: "ibkr_market_depth_unavailable",
+      detail:
+        "Market depth requires a fresh authenticated IBKR bridge session. Massive realtime stock quotes remain available without IBKR.",
+    });
+  }
+
   const client = getIbkrClient();
   return {
     depth: await client.getMarketDepth({

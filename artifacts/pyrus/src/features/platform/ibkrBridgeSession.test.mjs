@@ -62,6 +62,20 @@ test("Windows browsers queue remote launch when the paired desktop agent is onli
   );
 });
 
+test("Windows browsers use direct protocol when the paired desktop agent needs an update", () => {
+  setNavigatorPlatform("Win32");
+
+  assert.equal(
+    shouldUseRemoteIbkrLaunchBrowser({
+      desktopAgentCompatible: false,
+      desktopAgentOnline: true,
+      desktopAgentRegistered: true,
+      desktopAgentUpgradeRequired: true,
+    }),
+    false,
+  );
+});
+
 test("non-Windows browsers use remote launch", () => {
   setNavigatorPlatform("MacIntel");
 

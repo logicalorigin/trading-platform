@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-09.ib-async-sidecar-v18-agent-converge'
+$HelperVersion = '2026-06-09.ib-async-sidecar-v19-update-only-exit'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -388,6 +388,21 @@ function Complete-DesktopAgentJob([string]$BaseUrl, [string]$JobId, [string]$Com
     }
 }
 
+function Complete-HelperUpdateOnlyActivation([string]$BaseUrl, [string]$ActivationId, [string]$CallbackSecret) {
+    if (-not $BaseUrl -or -not $ActivationId -or -not $CallbackSecret) {
+        return
+    }
+
+    try {
+        $body = @{
+            callbackSecret = $CallbackSecret
+        }
+        Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path "/api/ibkr/activation/$ActivationId/helper-update-complete" -Body $body -TimeoutSec 10 | Out-Null
+    } catch {
+        Write-Log "Helper update-only completion callback failed: $($_.Exception.Message)"
+    }
+}
+
 function Start-BridgeLaunchProcess([string]$LaunchUrl) {
     $target = Resolve-OwnScriptPath
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -546,9 +561,9 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
     while ($true) {
         try {
             $registration = Register-DesktopAgent -BaseUrl $baseUrl
-            Write-DesktopAgentDeferredUpdateHint -Response $registration
+            Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
             $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
-            Write-DesktopAgentDeferredUpdateHint -Response $heartbeat
+            Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $heartbeat
             $job = Claim-DesktopAgentLaunchJob -BaseUrl $baseUrl
             if ($job -and $job.ready -eq $true) {
                 $jobAction = [string]$job.action
@@ -572,7 +587,7 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
                     Write-Log "Desktop agent ignored unsupported IBKR job $($job.jobId) action '$jobAction'."
                 }
             } else {
-                Write-DesktopAgentDeferredUpdateHint -Response $job
+                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $job
             }
         } catch {
             Write-Log "Desktop agent polling failed: $($_.Exception.Message)"
@@ -854,14 +869,14 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
             Start-Process -FilePath $powershell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installed, $RawLaunchUrl) | Out-Null
             exit 0
         }
-        Write-Log "Helper self-update already attempted for $requestedVersion; continuing with local version $HelperVersion."
-        return
+        Write-Log "Helper self-update marker was set for $requestedVersion, but the installed helper is still $HelperVersion; retrying update."
+        Remove-Item Env:PYRUS_IBKR_HELPER_SELF_UPDATE -ErrorAction SilentlyContinue
     }
 
     $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
     $download = Join-Path $StateDir 'pyrus-ibkr-helper.new.ps1'
     Send-BridgeProgress -Status 'starting_bridge' -Step 'updating_helper' -Message "Updating Pyrus IBKR helper from $HelperVersion to $requestedVersion."
-    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 60
+    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 10
     if (-not (Test-Path $download) -or (Get-Item $download).Length -lt 4096) {
         throw 'Downloaded helper was empty or incomplete.'
     }
@@ -889,7 +904,7 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
     try {
         Start-Process -FilePath $powershell `
             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-Install') `
-            -WindowStyle Hidden -Wait -ErrorAction Stop | Out-Null
+            -WindowStyle Hidden -ErrorAction Stop | Out-Null
     } catch {
         Write-Log "Updated helper install step failed; continuing with relaunch: $($_.Exception.Message)"
         Send-BridgeProgress -Status 'starting_bridge' -Step 'updating_helper' -Message (Truncate-Message "Pyrus IBKR helper update: scheduled-task install step did not complete ($($_.Exception.Message)); continuing with relaunch.")
@@ -906,14 +921,34 @@ function Invoke-DesktopAgentSelfUpdateIfNeeded([string]$BaseUrl, $Response) {
         return
     }
 
-    $requestedVersion = [string]$Response.helperVersion
+    $requestedVersion = [string]$Response.targetHelperVersion
+    if (-not $requestedVersion) {
+        $requestedVersion = [string]$Response.helperVersion
+    }
     if (-not $requestedVersion -or $requestedVersion -eq $HelperVersion) {
         return
     }
 
     if ($env:PYRUS_IBKR_HELPER_SELF_UPDATE -eq $requestedVersion) {
-        Write-Log "Desktop agent self-update already attempted for $requestedVersion; continuing with local version $HelperVersion."
-        return
+        $installed = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
+        if (Test-DownloadedHelperVersion -Path $installed -ExpectedVersion $requestedVersion) {
+            Write-Log "Installed helper already at $requestedVersion; re-executing desktop agent from the updated helper."
+            Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
+            $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Start-Process -FilePath $powershell `
+                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $installed, '-InstallAgent', '-NoStartAgent', '-ApiBaseUrl', $BaseUrl) `
+                -WindowStyle Hidden `
+                | Out-Null
+            $process = Start-Process -FilePath $powershell `
+                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $installed, '-Agent', '-ApiBaseUrl', $BaseUrl) `
+                -WindowStyle Hidden `
+                -PassThru
+            Set-Content -Path $DesktopAgentPidFile -Value $process.Id
+            Write-Log "Relaunched updated Pyrus IBKR desktop agent $requestedVersion as process $($process.Id)."
+            exit 0
+        }
+        Write-Log "Desktop agent self-update marker was set for $requestedVersion, but the installed helper is still $HelperVersion; retrying update."
+        Remove-Item Env:PYRUS_IBKR_HELPER_SELF_UPDATE -ErrorAction SilentlyContinue
     }
 
     $helperUrl = [string]$Response.helperUrl
@@ -924,7 +959,7 @@ function Invoke-DesktopAgentSelfUpdateIfNeeded([string]$BaseUrl, $Response) {
     $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
     $download = Join-Path $StateDir 'pyrus-ibkr-helper.new.ps1'
     Write-Log "Desktop agent updating Pyrus IBKR helper from $HelperVersion to $requestedVersion."
-    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 60
+    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 10
     if (-not (Test-Path $download) -or (Get-Item $download).Length -lt 4096) {
         throw 'Downloaded helper was empty or incomplete.'
     }
@@ -945,9 +980,13 @@ function Invoke-DesktopAgentSelfUpdateIfNeeded([string]$BaseUrl, $Response) {
     Remove-Item -Path $download -Force -ErrorAction SilentlyContinue
     $env:PYRUS_IBKR_HELPER_SELF_UPDATE = $requestedVersion
 
+    Stop-StaleDesktopAgentProcesses -Reason "Desktop agent self-update to $requestedVersion."
     Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File $target -InstallAgent -NoStartAgent -ApiBaseUrl $BaseUrl
+    Start-Process -FilePath $powershell `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-InstallAgent', '-NoStartAgent', '-ApiBaseUrl', $BaseUrl) `
+        -WindowStyle Hidden `
+        | Out-Null
     $process = Start-Process -FilePath $powershell `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-Agent', '-ApiBaseUrl', $BaseUrl) `
         -WindowStyle Hidden `
@@ -3347,6 +3386,16 @@ try {
             Complete-DesktopAgentJob -BaseUrl $script:ApiBaseUrl -JobId $shutdownJobId -CompletionToken $shutdownCompletionToken -Ok $false -Message $_.Exception.Message
             throw
         }
+        exit 0
+    }
+    if (Test-TruthyParam $params['helperUpdateOnly']) {
+        Write-Log 'Pyrus IBKR helper update-only launch completed; Gateway startup skipped.'
+        try {
+            Register-DesktopAgent -BaseUrl $script:ApiBaseUrl -ActivationId $script:ActivationId -CallbackSecret $script:CallbackSecret | Out-Null
+        } catch {
+            Write-Log "Desktop agent registration after update-only launch failed: $($_.Exception.Message)"
+        }
+        Complete-HelperUpdateOnlyActivation -BaseUrl $script:ApiBaseUrl -ActivationId $script:ActivationId -CallbackSecret $script:CallbackSecret
         exit 0
     }
 

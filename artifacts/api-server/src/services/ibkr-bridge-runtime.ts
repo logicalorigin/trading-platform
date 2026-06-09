@@ -7,7 +7,16 @@ import {
   getIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
-import { primeBridgeHealthForSession } from "./platform-bridge-health";
+import {
+  invalidateBridgeHealthCache,
+  primeBridgeHealthForSession,
+} from "./platform-bridge-health";
+import {
+  hasActiveConnectionAttempt,
+  recordConnectionAuditEvent,
+  recordConnectionLiveState,
+  type ConnectionAuditActor,
+} from "./ibkr-connection-audit";
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
@@ -15,7 +24,7 @@ const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
 const BRIDGE_HELPER_VERSION =
-  "2026-06-09.ib-async-sidecar-v15-graceful-deactivate";
+  "2026-06-09.ib-async-sidecar-v19-update-only-exit";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
@@ -49,6 +58,7 @@ type LauncherResult = {
   helperVersion: string;
   launchUrl: string;
   managementToken: string;
+  updateOnlyLaunchUrl: string;
 };
 
 type IbkrRemoteDesktop = {
@@ -199,6 +209,7 @@ type LegacyBridgeActivation = {
   loginHandoff: LegacyBridgeLoginHandoff | null;
   loginEnvelopeSubmitAttemptCount: number;
   loginEnvelopeClaimedAt: number | null;
+  loginEnvelopeHelperInstanceId: string | null;
   loginEnvelopeReceivedAt: number | null;
   loginKeyReadCount: number;
   loginKeyPublishedAt: number | null;
@@ -604,6 +615,28 @@ function recordIbkrRemoteDesktopRequestDiagnostic(input: {
     0,
     Math.max(0, ibkrRemoteDesktopRequestDiagnostics.length - 50),
   );
+
+  const desktopId = readOptionalString(payload.desktopId, 160);
+  const helperVersion = readOptionalString(payload.helperVersion, 120);
+  recordConnectionLiveState({ desktopAgentOnline: true, helperVersion });
+  // Audit helper requests that matter for diagnosis: any failure, or register/claim while a
+  // connection attempt is actually in flight (e.g. the helper claiming a launch then going
+  // silent). Skip steady idle polling and the duplicate "raw" entries so the log stays readable.
+  const meaningfulRoute =
+    input.route !== "heartbeat" &&
+    input.route !== "raw" &&
+    hasActiveConnectionAttempt();
+  if (!input.ok || meaningfulRoute) {
+    recordConnectionAuditEvent({
+      attemptId: null,
+      actor: "helper",
+      step: `desktop_${input.route}`,
+      status: input.ok ? "ok" : "error",
+      message,
+      fields: { desktopId, helperVersion, path: input.path ?? null, method: input.method ?? null },
+      error: input.ok ? null : { code, message },
+    });
+  }
 }
 
 export function recordIbkrRemoteDesktopRouteAttempt(
@@ -1239,6 +1272,7 @@ function createLegacyBridgeActivation(input: {
     loginHandoff: null,
     loginEnvelopeSubmitAttemptCount: 0,
     loginEnvelopeClaimedAt: null,
+    loginEnvelopeHelperInstanceId: null,
     loginEnvelopeReceivedAt: null,
     loginKeyReadCount: 0,
     loginKeyPublishedAt: null,
@@ -1322,6 +1356,36 @@ function readLegacyBridgeActivationByManagementToken(
   return activation;
 }
 
+const AUDIT_PHASE_ACTOR: Record<string, ConnectionAuditActor> = {
+  request: "pyrus",
+  update: "helper",
+  credentials: "pyrus",
+  gateway: "gateway",
+  twoFactor: "ibkr",
+  bridge: "helper",
+  tunnel: "cloudflare",
+};
+
+function auditActivationProgress(
+  activationId: string,
+  status: string,
+  step: string,
+  message: string,
+  helperVersion?: string | null,
+): void {
+  const phase = IBKR_ACTIVATION_STEP_PHASE[step] ?? null;
+  const actor = (phase ? AUDIT_PHASE_ACTOR[phase] : null) ?? "pyrus";
+  recordConnectionAuditEvent({
+    attemptId: activationId,
+    actor,
+    phase,
+    step,
+    status,
+    message,
+    fields: helperVersion ? { helperVersion } : null,
+  });
+}
+
 function appendLegacyBridgeActivationProgress(input: {
   activationId: string;
   bridgeUrl?: string | null;
@@ -1341,6 +1405,13 @@ function appendLegacyBridgeActivationProgress(input: {
     updatedAt: new Date(),
   });
   legacyBridgeActivationProgress.set(input.activationId, events.slice(-20));
+  auditActivationProgress(
+    input.activationId,
+    input.status,
+    input.step,
+    input.message,
+    input.helperVersion,
+  );
 }
 
 function normalizeBridgeUrl(rawBridgeUrl: string): string {
@@ -1523,6 +1594,7 @@ function buildProtocolLaunchUrl(input: {
   callbackSecret: string;
   desktopAgentLaunch?: boolean;
   helperUrl: string;
+  helperUpdateOnly?: boolean;
   managementToken: string;
   scheme?: IbkrProtocolScheme;
 }): string {
@@ -1540,6 +1612,9 @@ function buildProtocolLaunchUrl(input: {
     params.set("autoLogin", "1");
     params.set("autoLoginMode", "ib-gateway-live");
     params.set("loginMode", "ui-onetime");
+  }
+  if (input.helperUpdateOnly) {
+    params.set("helperUpdateOnly", "1");
   }
   if (input.desktopAgentLaunch) {
     params.set("desktopAgentLaunch", "1");
@@ -1654,6 +1729,18 @@ function createIbkrBridgeLauncher(input: {
       scheme: input.scheme,
     }),
     managementToken,
+    updateOnlyLaunchUrl: buildProtocolLaunchUrl({
+      activationId: legacyActivation.activationId,
+      apiBaseUrl,
+      bridgeToken,
+      bundleUrl,
+      callbackSecret: legacyActivation.callbackSecret,
+      desktopAgentLaunch: input.desktopAgentLaunch,
+      helperUrl,
+      helperUpdateOnly: true,
+      managementToken,
+      scheme: input.scheme,
+    }),
   };
 }
 
@@ -1972,7 +2059,13 @@ export async function claimIbkrRemoteDesktopLaunchJobWithWait(
 ): Promise<RemoteDesktopLaunchJobClaimResult> {
   const initial = claimIbkrRemoteDesktopLaunchJob(body);
   const waitMs = readLongPollWaitMs(body);
-  if (initial.ready || waitMs <= 0 || !body || typeof body !== "object") {
+  if (
+    initial.ready ||
+    initial.helperUpdateRequired ||
+    waitMs <= 0 ||
+    !body ||
+    typeof body !== "object"
+  ) {
     return initial;
   }
 
@@ -1998,6 +2091,7 @@ export function createIbkrRemoteBridgeLaunch(input: {
       ? (input.body as Record<string, unknown>)
       : {};
   const useAutoLogin = payload.autoLogin === true;
+  const useHelperUpdateOnly = payload.helperUpdateOnly === true && !useAutoLogin;
   const desktop = selectIbkrRemoteDesktop(
     readOptionalString(payload.desktopId, 160),
     { allowStaleFallback: true },
@@ -2028,7 +2122,11 @@ export function createIbkrRemoteBridgeLaunch(input: {
     expiresAt: now + REMOTE_LAUNCH_JOB_TTL_MS,
     failedAt: null,
     jobId,
-    launchUrl: useAutoLogin ? launcher.autoLoginLaunchUrl : launcher.launchUrl,
+    launchUrl: useAutoLogin
+      ? launcher.autoLoginLaunchUrl
+      : useHelperUpdateOnly
+        ? launcher.updateOnlyLaunchUrl
+        : launcher.launchUrl,
     statusTokenHash: null,
   };
   ibkrRemoteLaunchJobs.set(jobId, job);
@@ -2126,6 +2224,14 @@ export function createIbkrRemoteBridgeShutdown(input: {
   };
   ibkrRemoteLaunchJobs.set(jobId, job);
   notifyWaiters(remoteDesktopJobWaiters, desktop.desktopId);
+  recordConnectionAuditEvent({
+    attemptId: null,
+    actor: "pyrus",
+    step: "shutdown_requested",
+    status: "shutdown",
+    message: "IBKR shutdown job queued for the Windows desktop.",
+    fields: { jobId, desktopId: desktop.desktopId, force },
+  });
 
   return {
     helperVersion: BRIDGE_HELPER_VERSION,
@@ -2690,21 +2796,38 @@ export function cancelLegacyIbkrBridgeActivation(
   );
   if (!activation.canceledAt) {
     activation.canceledAt = Date.now();
-    const events = legacyBridgeActivationProgress.get(activationId) ?? [];
-    events.push({
+    appendLegacyBridgeActivationProgress({
       activationId,
       status: "canceled",
       step: "cancel_requested",
       message: "IB Gateway bridge launch was canceled from PYRUS.",
-      helperVersion: BRIDGE_HELPER_VERSION,
-      bridgeUrl: null,
-      updatedAt: new Date(),
     });
-    legacyBridgeActivationProgress.set(activationId, events.slice(-20));
     notifyLegacyActivationWaiters(activationId);
   }
 
   return { ok: true, canceled: true };
+}
+
+export function completeLegacyIbkrBridgeHelperUpdate(
+  activationId: string,
+  body: unknown,
+): { completed: true; ok: true } {
+  const activation = readLegacyBridgeActivation(activationId, body, {
+    allowCanceled: true,
+  });
+  if (!activation.canceledAt) {
+    activation.canceledAt = Date.now();
+    appendLegacyBridgeActivationProgress({
+      activationId,
+      status: "completed",
+      step: "helper_update_completed",
+      message:
+        "Pyrus IBKR helper update completed without starting IB Gateway.",
+    });
+    notifyLegacyActivationWaiters(activationId);
+  }
+
+  return { completed: true, ok: true };
 }
 
 export function submitLegacyIbkrBridgeLoginKey(
@@ -2799,7 +2922,7 @@ export async function readLegacyIbkrBridgeLoginKeyWithWait(
 export function submitLegacyIbkrBridgeLoginEnvelope(
   activationId: string,
   body: unknown,
-): { ok: true } {
+): { alreadyAccepted?: true; alreadySubmitted?: true; ok: true } {
   const activation = readLegacyBridgeActivationByManagementToken(
     activationId,
     body,
@@ -2815,35 +2938,55 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
     160,
   );
   const algorithm = asString(payload.algorithm, "algorithm", 80);
-  if (algorithm !== LOGIN_HANDOFF_ALGORITHM) {
-    activation.lastLoginEnvelopeSubmitErrorCode =
-      "unsupported_ibkr_bridge_login_handoff_algorithm";
-    throw new HttpError(400, "IB Gateway login handoff algorithm is unsupported.", {
-      code: "unsupported_ibkr_bridge_login_handoff_algorithm",
+  const rejectEnvelope = (
+    status: number,
+    code: string,
+    message: string,
+  ): HttpError => {
+    activation.lastLoginEnvelopeSubmitErrorCode = code;
+    recordConnectionAuditEvent({
+      attemptId: activationId,
+      actor: "pyrus",
+      phase: "credentials",
+      step: "login_envelope_rejected",
+      status: "error",
+      message,
+      error: { code },
     });
+    return new HttpError(status, message, { code });
+  };
+  if (algorithm !== LOGIN_HANDOFF_ALGORITHM) {
+    throw rejectEnvelope(
+      400,
+      "unsupported_ibkr_bridge_login_handoff_algorithm",
+      "IB Gateway login handoff algorithm is unsupported.",
+    );
   }
 
   const handoff = activation.loginHandoff;
   if (!handoff) {
-    activation.lastLoginEnvelopeSubmitErrorCode =
-      "ibkr_bridge_login_key_not_ready";
-    throw new HttpError(409, "IB Gateway helper is not ready for credentials.", {
-      code: "ibkr_bridge_login_key_not_ready",
-    });
+    if (
+      activation.loginEnvelopeReceivedAt != null &&
+      (!activation.loginEnvelopeHelperInstanceId ||
+        safeStringEquals(activation.loginEnvelopeHelperInstanceId, helperInstanceId))
+    ) {
+      return { alreadyAccepted: true, ok: true };
+    }
+    throw rejectEnvelope(
+      409,
+      "ibkr_bridge_login_key_not_ready",
+      "IB Gateway helper is not ready for credentials.",
+    );
   }
   if (!safeStringEquals(handoff.helperInstanceId, helperInstanceId)) {
-    activation.lastLoginEnvelopeSubmitErrorCode =
-      "ibkr_bridge_login_handoff_mismatch";
-    throw new HttpError(409, "IB Gateway credential handoff helper changed.", {
-      code: "ibkr_bridge_login_handoff_mismatch",
-    });
+    throw rejectEnvelope(
+      409,
+      "ibkr_bridge_login_handoff_mismatch",
+      "IB Gateway credential handoff helper changed.",
+    );
   }
   if (handoff.envelope) {
-    activation.lastLoginEnvelopeSubmitErrorCode =
-      "ibkr_bridge_login_envelope_already_submitted";
-    throw new HttpError(409, "IB Gateway credentials were already submitted.", {
-      code: "ibkr_bridge_login_envelope_already_submitted",
-    });
+    return { alreadySubmitted: true, ok: true };
   }
 
   handoff.envelope = {
@@ -2852,20 +2995,51 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
     submittedAt: now,
   };
   activation.loginEnvelopeReceivedAt = now;
-  const events = legacyBridgeActivationProgress.get(activationId) ?? [];
-  events.push({
+  activation.loginEnvelopeHelperInstanceId = helperInstanceId;
+  appendLegacyBridgeActivationProgress({
     activationId,
     status: "waiting_gateway",
     step: "credentials_received",
     message:
       "Encrypted IBKR credentials were received by Pyrus for the Windows helper.",
-    helperVersion: BRIDGE_HELPER_VERSION,
-    bridgeUrl: null,
-    updatedAt: new Date(),
   });
-  legacyBridgeActivationProgress.set(activationId, events.slice(-20));
   notifyWaiters(legacyLoginEnvelopeWaiters, activationId);
 
+  return { ok: true };
+}
+
+/**
+ * Best-effort ingestion of browser-side connection events (the encrypt step, envelope-POST
+ * outcome, timeouts, browser errors) that are otherwise invisible to the backend. Validated by
+ * the management token the browser already holds; unknown/expired activations are ignored.
+ */
+export function recordIbkrBridgeBrowserConnectionEvent(
+  activationId: string,
+  body: unknown,
+): { ok: true } {
+  try {
+    readLegacyBridgeActivationByManagementToken(activationId, body);
+    const payload =
+      body && typeof body === "object"
+        ? (body as Record<string, unknown>)
+        : {};
+    const errorCode = readOptionalString(payload.errorCode, 120);
+    const errorMessage = readOptionalString(payload.errorMessage, 300);
+    recordConnectionAuditEvent({
+      attemptId: activationId,
+      actor: "browser",
+      phase: readOptionalString(payload.phase, 40),
+      step: readOptionalString(payload.step, 80) ?? "browser_event",
+      status: readOptionalString(payload.status, 40),
+      message: readOptionalString(payload.message, 300),
+      error:
+        errorCode || errorMessage
+          ? { code: errorCode, message: errorMessage }
+          : null,
+    });
+  } catch {
+    // best-effort: never reject the browser's fire-and-forget diagnostic post.
+  }
   return { ok: true };
 }
 
@@ -2966,6 +3140,10 @@ export function getIbkrBridgeActivationDiagnostics(): {
     ? legacyBridgeActivations.get(latestLegacyBridgeActivationId) ?? null
     : null;
   const latestLoginHandoff = latestActivation?.loginHandoff ?? null;
+  const latestLoginEnvelopeSubmittedAt =
+    latestLoginHandoff?.envelope?.submittedAt ??
+    latestActivation?.loginEnvelopeReceivedAt ??
+    null;
   const toIso = (timestamp: number | null | undefined): string | null =>
     timestamp == null ? null : new Date(timestamp).toISOString();
   const progressStepTimings: Record<string, string> = {};
@@ -3003,10 +3181,10 @@ export function getIbkrBridgeActivationDiagnostics(): {
                 ).toISOString(),
           loginEnvelopeSubmitAttemptCount:
             latestActivation.loginEnvelopeSubmitAttemptCount,
-          loginEnvelopeSubmitted: Boolean(latestLoginHandoff?.envelope),
-          loginEnvelopeSubmittedAt: latestLoginHandoff?.envelope
-            ? new Date(latestLoginHandoff.envelope.submittedAt).toISOString()
-            : null,
+          loginEnvelopeSubmitted:
+            latestActivation.loginEnvelopeReceivedAt != null ||
+            Boolean(latestLoginHandoff?.envelope),
+          loginEnvelopeSubmittedAt: toIso(latestLoginEnvelopeSubmittedAt),
           loginHandoffCreatedAt: latestLoginHandoff
             ? new Date(latestLoginHandoff.createdAt).toISOString()
             : null,
@@ -3174,6 +3352,15 @@ export async function attachIbkrBridgeRuntime(
       bridgeId,
     },
   );
+  recordConnectionAuditEvent({
+    attemptId: bridgeId ?? null,
+    actor: "pyrus",
+    phase: "tunnel",
+    step: "bridge_attached",
+    status: "connected",
+    message: "IBKR bridge runtime attached; health validated.",
+    fields: { bridgeUrl },
+  });
   if (bridgeId) {
     legacyBridgeActivations.delete(bridgeId);
     legacyBridgeActivationProgress.delete(bridgeId);
@@ -3217,6 +3404,14 @@ export function detachIbkrBridgeRuntime(body: unknown): {
   }
 
   clearIbkrBridgeRuntimeOverride();
+  invalidateBridgeHealthCache();
+  recordConnectionAuditEvent({
+    attemptId: null,
+    actor: "pyrus",
+    step: "bridge_detached",
+    status: "disconnected",
+    message: "IBKR bridge runtime detached (override cleared, health cache invalidated).",
+  });
 
   return {
     runtimeOverrideActive: false,
