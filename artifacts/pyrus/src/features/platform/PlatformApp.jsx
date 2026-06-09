@@ -113,6 +113,7 @@ import {
   WATCHLIST_QUOTE_STREAM_ROTATION_MS,
   buildWatchlistQuoteRotationBatch,
   buildWatchlistQuoteRotationDiagnostics,
+  resolveWatchlistQuoteStreamBatchSize,
 } from "./watchlistQuoteRotation.js";
 import {
   QUERY_DEFAULTS,
@@ -3604,6 +3605,10 @@ export default function PlatformApp() {
             ...watchlistMarketDataSymbols,
             ...headerSignalContextSymbols,
             ...recentSignalMarketDataSymbols,
+            // Full signal-scanning universe also rides the live quote stream so it
+            // gets tick-level quotes (~100ms snapshots), not just minute aggregates.
+            // Uncapped batching streams them all over the one shared Massive socket.
+            ...signalMonitorStateUniverseSymbols,
           ]
             .map(normalizeTickerSymbol)
             .filter(Boolean),
@@ -3613,6 +3618,7 @@ export default function PlatformApp() {
       headerSignalContextSymbols,
       recentSignalMarketDataSymbols,
       watchlistMarketDataSymbols,
+      signalMonitorStateUniverseSymbols,
     ],
   );
   const quoteStreamPinnedSymbols = useMemo(
@@ -3640,10 +3646,10 @@ export default function PlatformApp() {
   const activeVisibleQuoteSymbols = quoteStreamPinnedSymbols;
   const watchlistQuoteStreamBatchSize = useMemo(
     () =>
-      Math.max(
-        WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
-        activeVisibleQuoteSymbols.length,
-      ),
+      resolveWatchlistQuoteStreamBatchSize({
+        defaultBatchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+        activeVisibleSymbolCount: activeVisibleQuoteSymbols.length,
+      }),
     [activeVisibleQuoteSymbols.length],
   );
   const [watchlistQuoteRotationCursor, setWatchlistQuoteRotationCursor] =

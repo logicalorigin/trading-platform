@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetQuoteSnapshotsQueryKey,
@@ -6,6 +6,7 @@ import {
   useGetQuoteSnapshots,
 } from "@workspace/api-client-react";
 import {
+  getStockMinuteAggregateSymbolVersion,
   getStoredBrokerMinuteAggregates,
   useBrokerStockAggregateStream,
   useStockMinuteAggregateSymbolsVersion,
@@ -35,6 +36,10 @@ import {
   usePlatformFreshnessQueryHydration,
   usePlatformFreshnessQueryPublisher,
 } from "./platformFreshnessBus";
+import {
+  buildVisibleRealtimeCoverageDiagnostics,
+  splitRealtimeAwareRestQuoteSymbols,
+} from "./watchlistQuoteRotation";
 
 const settleWithConcurrency = async (items, concurrency, mapper) => {
   const results = new Array(items.length);
@@ -146,6 +151,7 @@ export const MarketDataSubscriptionProvider = ({
   watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
+  activeVisibleQuoteSymbols = [],
   sparklineSymbols,
   prioritySparklineSymbols = [],
   streamedQuoteSymbols,
@@ -158,6 +164,7 @@ export const MarketDataSubscriptionProvider = ({
   quoteStreamCoverageDiagnostics = null,
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
+  realtimeQuoteCoverageRequired = false,
   lowPriorityHistoryEnabled = true,
   sparklineHistoryRuntimeEnabled = true,
   sparklineConcurrency = 4,
@@ -200,21 +207,43 @@ export const MarketDataSubscriptionProvider = ({
     ],
     [lowPriorityHistoryEnabled, prioritySparklineSymbols, sparklineSymbols],
   );
+  // Per-symbol thinned-bar cache keyed on each symbol's individual store version.
+  // marketAggregateStoreVersion bumps when ANY subscribed symbol ticks, so without
+  // this cache every tick recomputed sparkline bars for the entire (now uncapped)
+  // universe. Reusing unchanged symbols makes a flush O(changed) instead of O(all).
+  const sparklineBarsCacheRef = useRef(new Map());
   const aggregateSparklineBarsBySymbol = useMemo(() => {
-    return Object.fromEntries(
-      requestedSparklineSymbols
-        .map((symbol) => {
-          const normalized = normalizeRuntimeSymbol(symbol);
-          if (!normalized) {
-            return null;
-          }
-          const bars = thinBarsForSparkline(
-            getStoredBrokerMinuteAggregates(normalized).map(aggregateToSparklineBar),
-          );
-          return hasUsableSparklineBars(bars) ? [normalized, bars] : null;
-        })
-        .filter(Boolean),
-    );
+    const cache = sparklineBarsCacheRef.current;
+    const requested = new Set();
+    const entries = [];
+    requestedSparklineSymbols.forEach((symbol) => {
+      const normalized = normalizeRuntimeSymbol(symbol);
+      if (!normalized) {
+        return;
+      }
+      requested.add(normalized);
+      const version = getStockMinuteAggregateSymbolVersion(normalized);
+      const cached = cache.get(normalized);
+      let bars;
+      if (cached && cached.version === version) {
+        bars = cached.bars;
+      } else {
+        bars = thinBarsForSparkline(
+          getStoredBrokerMinuteAggregates(normalized).map(aggregateToSparklineBar),
+        );
+        cache.set(normalized, { version, bars });
+      }
+      if (hasUsableSparklineBars(bars)) {
+        entries.push([normalized, bars]);
+      }
+    });
+    // Drop cache entries for symbols that are no longer requested.
+    cache.forEach((_value, key) => {
+      if (!requested.has(key)) {
+        cache.delete(key);
+      }
+    });
+    return Object.fromEntries(entries);
   }, [marketAggregateStoreVersion, requestedSparklineSymbols]);
   const historySparklineSymbols = useMemo(
     () =>
@@ -264,12 +293,36 @@ export const MarketDataSubscriptionProvider = ({
     quoteStreamRuntimeActive,
     streamedQuoteSymbols,
   ]);
-  const restQuoteSymbols = useMemo(
+  const restQuoteSplit = useMemo(
     () =>
-      quoteSymbols.filter(
-        (symbol) => !streamCoveredQuoteSymbols.has(normalizeRuntimeSymbol(symbol)),
-      ),
-    [quoteSymbols, streamCoveredQuoteSymbols],
+      splitRealtimeAwareRestQuoteSymbols({
+        quoteSymbols,
+        streamCoveredSymbols: Array.from(streamCoveredQuoteSymbols),
+        activeVisibleSymbols: activeVisibleQuoteSymbols,
+        realtimeRequired: realtimeQuoteCoverageRequired,
+      }),
+    [
+      activeVisibleQuoteSymbols,
+      quoteSymbols,
+      realtimeQuoteCoverageRequired,
+      streamCoveredQuoteSymbols,
+    ],
+  );
+  const restQuoteSymbols = restQuoteSplit.restQuoteSymbols;
+  const visibleRealtimeCoverageDiagnostics = useMemo(
+    () =>
+      buildVisibleRealtimeCoverageDiagnostics({
+        activeVisibleSymbols: activeVisibleQuoteSymbols,
+        streamCoveredSymbols: Array.from(streamCoveredQuoteSymbols),
+        realtimeRequired: realtimeQuoteCoverageRequired,
+        disabledReason: quoteStreamDisabledReason,
+      }),
+    [
+      activeVisibleQuoteSymbols,
+      quoteStreamDisabledReason,
+      realtimeQuoteCoverageRequired,
+      streamCoveredQuoteSymbols,
+    ],
   );
   const restQuoteSymbolsKey = useMemo(
     () => restQuoteSymbols.join(","),
@@ -291,6 +344,8 @@ export const MarketDataSubscriptionProvider = ({
         requestedSymbolCount: streamedQuoteSymbols.length,
         eventSourceAvailable,
         coverage: quoteStreamCoverageDiagnostics,
+        activeVisibleCoverage: visibleRealtimeCoverageDiagnostics,
+        restBlockedVisibleSymbols: restQuoteSplit.blockedVisibleSymbols,
       },
       positionQuoteStream: {
         active: positionQuoteStreamRuntimeActive,
@@ -320,8 +375,10 @@ export const MarketDataSubscriptionProvider = ({
     quoteStreamCoverageDiagnostics,
     quoteStreamDisabledReason,
     quoteStreamRuntimeActive,
+    restQuoteSplit.blockedVisibleSymbols,
     streamedAggregateSymbols.length,
     streamedQuoteSymbols,
+    visibleRealtimeCoverageDiagnostics,
   ]);
 
   useRuntimeWorkloadFlag(

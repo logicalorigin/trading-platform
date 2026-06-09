@@ -9,34 +9,39 @@ The picture that emerges: the app is slow for **structural** reasons, not one bu
 2. **Monolithic screens that re-render the whole world** on every poll/tick, with no virtualization.
 3. **A constrained server data path** (small DB pool, low bridge concurrency, per-tick serialization, pressure-driven throttling) that makes each request slower under load — which then triggers more retries and pressure.
 
+## Remediation Progress
+
+- 2026-06-09: Tier 1 polling-cadence pass started. Line-usage fallback polling now defaults to 10s, session polling is visible-tab-only at 20s, Account live REST fallback stale/refetch defaults moved to 15s, and flow aggregate/chart-flow refresh is 10s. Source checks and Pyrus typecheck passed; browser Network request/minute verification is still pending.
+- 2026-06-09: FlowScreen 1s parent re-render source removed. Trade-age labels now use a scoped shared second-clock subscription instead of `flowNowMs` state on `FlowOverviewPanel`, so the full Flow screen no longer rerenders only to update age text. Pyrus typecheck passed; React Profiler verification is still pending.
+- 2026-06-09: A4 remediated — decoupled Massive aggregate-stream ingestion from render rate. `useMassiveStockAggregateStream.ts` `scheduleRealtimeFlush` now coalesces store flushes per `requestAnimationFrame` instead of `queueMicrotask` (one render/frame vs one render/SSE message), and `MarketDataSubscriptionProvider.jsx` memoizes per-symbol sparkline bars by per-symbol version so one ticking symbol doesn't recompute the uncapped universe. This addresses the Chrome tab freeze that resurfaced after the watchlist quote batch was uncapped (`DEFAULT_BATCH_SIZE = null`) without re-adding a symbol cap. Pyrus typecheck + targeted tests passed; React Profiler verification under live load is pending.
+
 ---
 
 ## A. Frontend: why the UI feels laggy
 
 ### A1. Aggressive, overlapping polling (highest impact, low fix cost)
 Many independent polls run concurrently on a typical screen, each triggering network + JSON parse + React Query churn on the main thread:
-- IBKR line-usage poll **every 2s** — `artifacts/pyrus/src/features/platform/useRuntimeControlSnapshot.js:21`
-- Session poll **every 5s** — `artifacts/pyrus/src/features/platform/PlatformApp.jsx:1164`
-- AccountScreen: 5 live queries (summary/positions/orders/risk/allocation) **all at 5s** — `artifacts/pyrus/src/screens/AccountScreen.jsx:538` (`ACCOUNT_LIVE_STALE_MS = 5_000`)
-- Flow aggregate refetch as low as **2.5s** — `artifacts/pyrus/src/features/platform/useLiveMarketFlow.js:342`
+- Original observation: IBKR line-usage fallback poll was **every 2s** — `artifacts/pyrus/src/features/platform/useRuntimeControlSnapshot.js:21`. **Status: remediated in source to 10s fallback.**
+- Original observation: session poll was **every 5s** — `artifacts/pyrus/src/features/platform/PlatformApp.jsx:1164`. **Status: remediated in source to visible-tab-only 20s.**
+- Original observation: AccountScreen live REST fallback queries used a **5s** shared stale/refetch default — `artifacts/pyrus/src/screens/AccountScreen.jsx:538` (`ACCOUNT_LIVE_STALE_MS = 5_000`). **Status: remediated in source to 15s.**
+- Original observation: Flow aggregate refetch could be as low as **2.5s** — `artifacts/pyrus/src/features/platform/useLiveMarketFlow.js:342`. **Status: remediated in source to 10s.**
 
 This matches the prior `PAGE_LOAD_PERFORMANCE_AUDIT.md` finding ("AccountScreen polls every 5s, overriding the 30s global staleTime, ~50 req/min").
 
-### A2. Monolithic screens re-render on a 1s clock with no memo isolation
-- **FlowScreen.jsx is ~6,400 lines** with a `setInterval(... , 1000)` driving `flowNowMs` state → **full re-render every second**, re-running 50+ `useMemo`s — `artifacts/pyrus/src/screens/FlowScreen.jsx:1944`
+### A2. Monolithic screens re-render on recurring clocks with limited memo isolation
+- **FlowScreen.jsx is ~6,400 lines** and previously had `setInterval(... , 1000)` driving `flowNowMs` state on `FlowOverviewPanel`, causing full-screen rerenders only to update trade age labels. **Status: remediated 2026-06-09 in source; profiler verification pending.**
 - **PlatformApp.jsx is ~5,600 lines**; session/account poll updates cascade into the whole tree — `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
 - **BloombergLiveDock.jsx** runs 3+ concurrent `setInterval`s (3s watchdog etc.), each re-rendering the dock — `artifacts/pyrus/src/features/platform/BloombergLiveDock.jsx:2141`
 
-These 1s/3s/5s re-render cycles stack, so during active use the app spends a large fraction of each second in React reconciliation.
+The remaining recurring re-render cycles still stack, so during active use the app can spend a large fraction of each second in React reconciliation. FlowScreen's trade-age clock is no longer one of those parent-level cycles after the 2026-06-09 source fix.
 
-### A3. No virtualization on the big tables
-Flow events, signals, and positions render **all rows as full DOM** on every sort/filter/poll, even though a `DenseVirtualTable` exists in the codebase and is used elsewhere:
-- Flow events table — `artifacts/pyrus/src/screens/FlowScreen.jsx:1932`
+### A3. Incomplete virtualization / fixed-row caps on big tables
+Signals and positions still need review for full-row DOM rendering. The earlier Flow desktop-table claim is stale: Flow now uses `DenseVirtualTable` for desktop rows, while mobile still maps the capped visible row set.
 - Positions — `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
-- (Confirmed as an open item in `PAGE_LOAD_PERFORMANCE_AUDIT.md`: "Flow main grid is `.map()` not virtualized.")
+- Historical note: `PAGE_LOAD_PERFORMANCE_AUDIT.md` said "Flow main grid is `.map()` not virtualized"; that no longer matches the current desktop Flow table source.
 
 ### A4. Streaming ticks bypass batching at the per-symbol layer
-There is 100ms quote batching (`live-streams.ts:70`), but per-symbol store listeners fire independently per tick, so charting N symbols means N unbatched re-renders per tick — `artifacts/pyrus/src/features/charting/useMassiveStockAggregateStream.ts:124`.
+There is 100ms quote batching (`live-streams.ts:70`), but per-symbol store listeners fire independently per tick, so charting N symbols means N unbatched re-renders per tick — `artifacts/pyrus/src/features/charting/useMassiveStockAggregateStream.ts:124`. **Status: remediated 2026-06-09.** The aggregate store's `scheduleRealtimeFlush` previously used `queueMicrotask`, which drains between every SSE `aggregate` event → one React render pass per message; this is what the (correctly) uncapped symbol fanout exposed as the Chrome tab freeze. Flushes now coalesce per animation frame via `requestAnimationFrame`, and `MarketDataSubscriptionProvider.jsx` memoizes per-symbol sparkline bars by per-symbol version (new `getStockMinuteAggregateSymbolVersion`) so one ticking symbol no longer recomputes the whole universe. Cap stays `null`. Typecheck + `watchlistQuoteRotation`/`PlatformWatchlist` tests pass; React Profiler verification under live load is pending.
 
 ### A5. Heavy synchronous compute on the main thread
 Indicator math (EMA/SMA/stddev/RSI) is unmemoized O(n)–O(n·p) and runs on the render path; `computeStandardDeviation` re-slices the array each iteration — `artifacts/pyrus/src/features/charting/indicators.ts:88`. Flow event processing does repeated `.sort()`/`.reduce()` over large arrays — `artifacts/pyrus/src/features/charting/flowChartEvents.ts`.
@@ -82,9 +87,9 @@ Per the handoff docs, these were resolved and shouldn't be re-opened: RSS thresh
 ## D. Recommended remediation order (highest snappiness gain per unit effort)
 
 **Tier 1 — quick wins (hours, low risk):**
-1. Cut polling: line-usage 2s→10s, session 5s→20–30s, gate AccountScreen's 5 queries on page-visibility / raise to 15s (`useRuntimeControlSnapshot.js:21`, `PlatformApp.jsx:1164`, `AccountScreen.jsx:538`).
+1. Cut polling: line-usage 2s→10s, session 5s→20–30s, gate AccountScreen's 5 queries on page-visibility / raise to 15s (`useRuntimeControlSnapshot.js:21`, `PlatformApp.jsx:1164`, `AccountScreen.jsx:538`). **Status: source patch applied; browser Network verification pending.**
 2. Decouple the broker-connection wave from the 1s clock + memoize it (open item, `broker-connection-wave-stutter` doc).
-3. Replace FlowScreen's 1s full-screen re-render clock with a scoped/ref-based clock or 5s cadence (`FlowScreen.jsx:1944`); same for Bloomberg dock timers.
+3. Replace FlowScreen's 1s full-screen re-render clock with a scoped/ref-based clock or 5s cadence (`FlowScreen.jsx:1944`); same for Bloomberg dock timers. **FlowScreen source patch applied; React Profiler verification pending. Bloomberg dock still open.**
 4. Raise bridge `account`/`orders` concurrency and shorten the catastrophic 30–45s backoffs (`bridge-governor.ts:57`).
 
 **Tier 2 — structural (days):**

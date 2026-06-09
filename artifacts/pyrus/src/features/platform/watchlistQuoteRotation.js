@@ -1,3 +1,11 @@
+// Uncapped by design. Massive's documented WebSocket constraint is CONNECTION
+// COUNT per asset class (default 1 — contact support to raise), while symbol/ticker
+// subscriptions on a single connection are effectively unlimited for stocks (the only
+// documented per-connection cap is 1,000 Options-Quote contracts). Pyrus already uses
+// one shared Massive stocks socket, so a symbol cap here does NOTHING for the real
+// connection limit and only starves visible watchlist rows of live quotes. This was
+// deliberately set to null on 2026-06-04 ("frontend quote rotation defaults to
+// uncapped"); a 64 cap re-introduced that artificial fanout reduction. Keep null.
 const DEFAULT_BATCH_SIZE = null;
 const DEFAULT_CYCLE_WINDOW_MS = 60_000;
 
@@ -19,6 +27,73 @@ export const uniqueNormalizedSymbols = (symbols = []) => {
   });
   return result;
 };
+
+export function resolveWatchlistQuoteStreamBatchSize({
+  defaultBatchSize = DEFAULT_BATCH_SIZE,
+  activeVisibleSymbolCount = 0,
+} = {}) {
+  const requestedCap = Number(defaultBatchSize);
+  if (!Number.isFinite(requestedCap) || requestedCap <= 0) {
+    return null;
+  }
+
+  const activeVisibleCount = Number(activeVisibleSymbolCount);
+  const activeVisibleFloor =
+    Number.isFinite(activeVisibleCount) && activeVisibleCount > 0
+      ? Math.floor(activeVisibleCount)
+      : 0;
+  return Math.max(1, Math.floor(requestedCap), activeVisibleFloor);
+}
+
+export function splitRealtimeAwareRestQuoteSymbols({
+  quoteSymbols = [],
+  streamCoveredSymbols = [],
+  activeVisibleSymbols = [],
+  realtimeRequired = false,
+} = {}) {
+  const streamCoveredSet = new Set(uniqueNormalizedSymbols(streamCoveredSymbols));
+  const activeVisibleSet = new Set(uniqueNormalizedSymbols(activeVisibleSymbols));
+  const restQuoteSymbols = [];
+  const blockedVisibleSymbols = [];
+
+  uniqueNormalizedSymbols(quoteSymbols).forEach((symbol) => {
+    if (streamCoveredSet.has(symbol)) {
+      return;
+    }
+    if (realtimeRequired && activeVisibleSet.has(symbol)) {
+      blockedVisibleSymbols.push(symbol);
+      return;
+    }
+    restQuoteSymbols.push(symbol);
+  });
+
+  return {
+    restQuoteSymbols,
+    blockedVisibleSymbols,
+  };
+}
+
+export function buildVisibleRealtimeCoverageDiagnostics({
+  activeVisibleSymbols = [],
+  streamCoveredSymbols = [],
+  realtimeRequired = false,
+  disabledReason = null,
+} = {}) {
+  const activeSymbols = uniqueNormalizedSymbols(activeVisibleSymbols);
+  const streamCoveredSet = new Set(uniqueNormalizedSymbols(streamCoveredSymbols));
+  const missingSymbols = activeSymbols.filter(
+    (symbol) => !streamCoveredSet.has(symbol),
+  );
+
+  return {
+    required: Boolean(realtimeRequired),
+    complete: !realtimeRequired || missingSymbols.length === 0,
+    activeSymbolCount: activeSymbols.length,
+    coveredSymbolCount: activeSymbols.length - missingSymbols.length,
+    missingSymbols,
+    disabledReason,
+  };
+}
 
 export function buildWatchlistQuoteRotationBatch({
   watchlistSymbols = [],

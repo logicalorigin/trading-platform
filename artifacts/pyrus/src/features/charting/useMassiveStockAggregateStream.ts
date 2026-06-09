@@ -126,6 +126,11 @@ const minuteCacheBySymbol = new Map<string, Map<number, BrokerStockAggregateMess
 const storeListeners = new Set<() => void>();
 const symbolStoreListeners = new Map<string, Set<() => void>>();
 const symbolStoreVersions = new Map<string, number>();
+// Cumulative fan-out counters: each tick flush invokes every subscribed component listener for
+// the changed symbols. The before/after perf capture reads these to quantify the per-tick
+// re-render fan-out that scales with incoming IBKR data.
+let aggregateFanoutFlushCount = 0;
+let aggregateFanoutListenerInvocations = 0;
 const latencyStoreListeners = new Set<() => void>();
 const latencySamples = {
   bridgeToApiMs: [] as number[],
@@ -163,7 +168,20 @@ let latencyNotifyScheduled = false;
 let streamPaused = false;
 const pendingSymbolNotifications = new Set<string>();
 
+// Coalesce store notifications to one flush per animation frame. A microtask
+// drains between every SSE `aggregate` event, so queueMicrotask produced one
+// React render pass per incoming message; with the uncapped symbol fanout that
+// couples ingestion rate to render rate and freezes the tab. requestAnimationFrame
+// collapses a burst of messages within a frame into a single flush (and pauses on
+// hidden tabs), while pendingSymbolNotifications still dedupes the changed symbols.
 const scheduleRealtimeFlush = (callback: () => void): void => {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.requestAnimationFrame === "function"
+  ) {
+    window.requestAnimationFrame(() => callback());
+    return;
+  }
   if (typeof queueMicrotask === "function") {
     queueMicrotask(callback);
     return;
@@ -191,6 +209,8 @@ const flushSymbolStoreListeners = () => {
   const symbols = Array.from(pendingSymbolNotifications);
   pendingSymbolNotifications.clear();
 
+  aggregateFanoutFlushCount += 1;
+  let invocations = 0;
   symbols.forEach((normalizedSymbol) => {
     const listeners = symbolStoreListeners.get(normalizedSymbol);
     symbolStoreVersions.set(
@@ -200,9 +220,18 @@ const flushSymbolStoreListeners = () => {
     if (!listeners?.size) {
       return;
     }
-    Array.from(listeners).forEach((listener) => listener());
+    Array.from(listeners).forEach((listener) => {
+      invocations += 1;
+      listener();
+    });
   });
+  aggregateFanoutListenerInvocations += invocations;
 };
+
+export const getAggregateFanoutCounters = () => ({
+  flushes: aggregateFanoutFlushCount,
+  listenerInvocations: aggregateFanoutListenerInvocations,
+});
 
 const notifySymbolStoreListeners = (symbol: string) => {
   const normalizedSymbol = symbol.trim().toUpperCase();
@@ -788,6 +817,11 @@ const registerConsumer = (
     scheduleRefreshEventSource();
   };
 };
+
+// Non-hook accessor for a single symbol's store version, so callers that derive
+// per-symbol data over a large symbol set can skip recompute for unchanged symbols.
+export const getStockMinuteAggregateSymbolVersion = (symbol: string): number =>
+  getAggregateStoreSnapshotForSymbol(symbol);
 
 export const getStoredBrokerMinuteAggregates = (symbol: string): BrokerStockAggregateMessage[] => {
   const normalized = symbol?.trim?.().toUpperCase?.() || "";
