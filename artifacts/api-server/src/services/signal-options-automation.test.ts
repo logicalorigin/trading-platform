@@ -25,6 +25,55 @@ const signalState = (
     lastError: null,
   }) as never;
 
+test("Signal Options cockpit treats after-hours execution gate as info", () => {
+  const items = __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+    deployment: {
+      lastError: null,
+      lastEvaluatedAt: null,
+      updatedAt: new Date("2026-06-09T00:00:00.000Z"),
+    },
+    readiness: {
+      ready: false,
+      reason: "market_session_quiet",
+      message: "Options strategy execution is outside the regular options session.",
+      diagnostics: {},
+    },
+    candidates: [],
+    activePositions: [],
+    risk: {},
+    events: [],
+  } as never);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].id, "gateway-readiness");
+  assert.equal(items[0].severity, "info");
+  assert.equal(items[0].summary, "Options session is closed.");
+});
+
+test("Signal Options cockpit keeps real gateway failures as warnings", () => {
+  const items = __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+    deployment: {
+      lastError: null,
+      lastEvaluatedAt: null,
+      updatedAt: new Date("2026-06-09T00:00:00.000Z"),
+    },
+    readiness: {
+      ready: false,
+      reason: "gateway_login_required",
+      message: "IB Gateway is connected, but the broker session is not authenticated.",
+      diagnostics: {},
+    },
+    candidates: [],
+    activePositions: [],
+    risk: {},
+    events: [],
+  } as never);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].id, "gateway-readiness");
+  assert.equal(items[0].severity, "warning");
+});
+
 test("Signal Options MTF matrix symbols follow cursor, seen set, and worker cap", () => {
   const states = [
     signalState("SPY", "2026-06-08T14:20:00.000Z"),
@@ -48,6 +97,62 @@ test("Signal Options MTF matrix symbols follow cursor, seen set, and worker cap"
       maxSymbols: 2,
     }),
     ["MSFT", "TSLA"],
+  );
+});
+
+test("Signal Options action states stay on configured execution timeframe", () => {
+  const states = [
+    {
+      ...(signalState("SPY", "2026-06-08T18:31:00.000Z") as Record<
+        string,
+        unknown
+      >),
+      id: "SPY:2m",
+      timeframe: "2m",
+      barsSinceSignal: 1,
+    },
+    {
+      ...(signalState(
+        "SPY",
+        "2026-06-08T16:35:00.000Z",
+        "sell",
+      ) as Record<string, unknown>),
+      barsSinceSignal: 25,
+    },
+    {
+      ...(signalState("AAPL", "2026-06-08T18:30:00.000Z") as Record<
+        string,
+        unknown
+      >),
+      id: "AAPL:15m",
+      timeframe: "15m",
+      barsSinceSignal: 1,
+    },
+  ] as never[];
+
+  const ordered = __signalOptionsAutomationInternalsForTests.orderSignalOptionsActionStates({
+    states,
+    universe: new Set(["SPY", "AAPL"]),
+    timeframe: "5m",
+  });
+
+  assert.deepEqual(
+    ordered.map((state) => [
+      state.symbol,
+      state.timeframe,
+      state.currentSignalDirection,
+    ]),
+    [["SPY", "5m", "sell"]],
+  );
+
+  const unfiltered = __signalOptionsAutomationInternalsForTests.orderSignalOptionsActionStates({
+    states,
+    universe: new Set(["SPY", "AAPL"]),
+  });
+
+  assert.deepEqual(
+    unfiltered.map((state) => state.timeframe),
+    ["2m", "15m", "5m"],
   );
 });
 
@@ -123,106 +228,62 @@ test("Signal Options forced signal refresh fallback preserves cached state", () 
   assert.deepEqual(fallback["candidates"], state.candidates);
 });
 
-const pressureSnapshot = (level: "normal" | "watch" | "high") =>
-  ({
-    level,
-    observedAt: "2026-06-08T18:10:00.000Z",
-    drivers: [],
-    scannerPressure: {
-      level: "normal",
-      drivers: [],
-      activeLongScanCount: 0,
-    },
-    caps: {
-      signalOptions: {
-        maintenanceOnly: false,
-        skipDeploymentScans: false,
-        signalRefreshAllowed: true,
-        actionScansAllowed: true,
-        positionMarksAllowed: true,
-        watchlistPrewarmAllowed: true,
+test("Signal Options position mark keeps stale quote distinct from missing bid/ask", () => {
+  const resolution =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
+      quote: {
+        bid: 3.5,
+        ask: 4.4,
+        mark: 4.5,
+        last: 4.5,
+        quoteFreshness: "stale",
+        marketDataMode: "live",
       },
-    },
-    inputs: {
-      rssMb: null,
-      apiHeapUsedPercent: null,
-      apiP95LatencyMs: null,
-      dominantSlowRouteP95Ms: null,
-      clientLevel: null,
-      cacheLevel: null,
-      automationActiveLongScanCount: null,
-    },
-  }) as never;
+      profile: {
+        liquidityGate: {
+          requireBidAsk: true,
+          requireFreshQuote: true,
+          minBid: 0.01,
+          maxSpreadPctOfMid: 35,
+        },
+        liquidityHaltControls: {
+          bidAskRequiredEnabled: true,
+          freshQuoteRequiredEnabled: true,
+          spreadGateEnabled: true,
+          minBidGateEnabled: true,
+        },
+      },
+    } as never) as {
+      ok: boolean;
+      reason: string | null;
+      markPrice: number | null;
+      liquidity: {
+        bid: number | null;
+        ask: number | null;
+        reasons: string[];
+      };
+    };
 
-test("Signal Options worker live-edge refresh batches when stream-first monitor is available", () => {
-  assert.equal(
-    __signalOptionsAutomationInternalsForTests.shouldBatchSignalOptionsWorkerMonitorRefresh({
-      source: "worker",
-      pressure: pressureSnapshot("normal"),
-      streamFirstMonitorAvailable: true,
-    }),
-    true,
-  );
-  assert.equal(
-    __signalOptionsAutomationInternalsForTests.shouldBatchSignalOptionsWorkerMonitorRefresh({
-      source: "manual",
-      pressure: pressureSnapshot("high"),
-      streamFirstMonitorAvailable: true,
-    }),
-    false,
-  );
+  assert.equal(resolution.ok, false);
+  assert.equal(resolution.reason, "quote_not_fresh");
+  assert.equal(resolution.markPrice, 3.95);
+  assert.equal(resolution.liquidity.bid, 3.5);
+  assert.equal(resolution.liquidity.ask, 4.4);
+  assert.deepEqual(resolution.liquidity.reasons, ["quote_not_fresh"]);
 });
 
-test("Signal Options worker live-edge refresh batches under API pressure", () => {
+test("Signal Options stale position mark summary names stale quote", () => {
   assert.equal(
-    __signalOptionsAutomationInternalsForTests.shouldBatchSignalOptionsWorkerMonitorRefresh({
-      source: "worker",
-      pressure: pressureSnapshot("watch"),
-      streamFirstMonitorAvailable: false,
+    __signalOptionsAutomationInternalsForTests.positionMarkUnavailableSummary({
+      symbol: "CLS",
+      markReason: "quote_not_fresh",
     }),
-    true,
+    "CLS shadow mark skipped: option quote stale",
   );
-});
-
-test("Signal Options worker live-edge batch merge preserves full stored universe", () => {
-  const stored = {
-    profile: { id: "paper-profile", lastEvaluatedAt: "2026-06-08T18:00:00.000Z" },
-    evaluatedAt: "2026-06-08T18:00:00.000Z",
-    universeSymbols: ["AAPL", "MSFT", "SPY"],
-    universe: { resolvedSymbols: 3 },
-    states: [
-      { symbol: "AAPL", timeframe: "5m", currentSignalAt: "old-aapl" },
-      { symbol: "MSFT", timeframe: "5m", currentSignalAt: "old-msft" },
-      { symbol: "SPY", timeframe: "5m", currentSignalAt: "old-spy" },
-    ],
-  };
-  const evaluated = {
-    profile: { id: "paper-profile", lastEvaluatedAt: "2026-06-08T18:10:00.000Z" },
-    evaluatedAt: "2026-06-08T18:10:00.000Z",
-    universeSymbols: ["AAPL"],
-    universe: { resolvedSymbols: 1 },
-    states: [
-      { symbol: "AAPL", timeframe: "5m", currentSignalAt: "new-aapl" },
-    ],
-  };
-
-  const merged =
-    __signalOptionsAutomationInternalsForTests.mergeSignalOptionsMonitorStateBatch({
-      stored,
-      evaluated,
-    }) as Record<string, unknown>;
-
-  assert.deepEqual(merged["universeSymbols"], stored.universeSymbols);
-  assert.deepEqual(merged["universe"], stored.universe);
-  assert.deepEqual(
-    (merged["states"] as Array<Record<string, unknown>>).map((state) => [
-      state.symbol,
-      state.currentSignalAt,
-    ]),
-    [
-      ["AAPL", "new-aapl"],
-      ["MSFT", "old-msft"],
-      ["SPY", "old-spy"],
-    ],
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.positionMarkUnavailableMessage(
+      "quote_not_fresh",
+    ),
+    "The option quote was stale or unavailable for the open shadow position.",
   );
 });

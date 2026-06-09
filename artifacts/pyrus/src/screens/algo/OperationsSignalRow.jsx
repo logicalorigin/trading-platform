@@ -25,6 +25,7 @@ import {
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { formatAppTime } from "../../lib/timeZone";
 import {
+  extractSparklinePoints,
   MicroSparkline,
 } from "../../components/platform/primitives.jsx";
 import {
@@ -77,6 +78,8 @@ export const SIGNAL_TABLE_ROW_HEIGHT = 32;
 export const SIGNAL_TABLE_HEADER_HEIGHT = 22;
 
 const SIGNAL_ICON_SIZE = 12;
+export const SIGNAL_HERO_SPARKLINE_WIDTH = 40;
+export const SIGNAL_HERO_SPARKLINE_HEIGHT = 14;
 const SIGNAL_TABLE_CELL_PADDING = "0 3px";
 const SIGNAL_TABLE_ACTION_CELL_PADDING = "0 1px";
 const SIGNAL_TABLE_BORDER = () => `1px solid ${CSS_COLOR.borderLight}`;
@@ -288,7 +291,7 @@ export const signalTableMinWidth = (columns) => {
   return dim(Math.max(760, count * 92));
 };
 
-const directionMeta = (direction) => {
+export const directionMeta = (direction) => {
   const value = String(direction || "").toLowerCase();
   if (value === "buy" || value === "long" || value === "bullish") {
     return {
@@ -1062,22 +1065,15 @@ const resolveUnderlyingPrice = (signal, tickerSnapshot) =>
   finiteNumberOrNull(tickerSnapshot?.mark) ??
   finiteNumberOrNull(signal?.signalPrice);
 
-const resolveSparklineData = (tickerSnapshot, signal) => {
-  if (Array.isArray(tickerSnapshot?.sparkBars) && tickerSnapshot.sparkBars.length >= 2) {
-    return tickerSnapshot.sparkBars;
-  }
-  if (Array.isArray(tickerSnapshot?.spark) && tickerSnapshot.spark.length >= 2) {
-    return tickerSnapshot.spark;
-  }
-  if (Array.isArray(signal?.sparkBars) && signal.sparkBars.length >= 2) {
-    return signal.sparkBars;
-  }
-  if (Array.isArray(signal?.spark) && signal.spark.length >= 2) {
-    return signal.spark;
-  }
-  if (Array.isArray(signal?.bars) && signal.bars.length >= 2) {
-    return signal.bars;
-  }
+const hasDrawableSparklineData = (value) =>
+  Array.isArray(value) && extractSparklinePoints(value).length >= 2;
+
+export const resolveSparklineData = (tickerSnapshot, signal) => {
+  if (hasDrawableSparklineData(tickerSnapshot?.sparkBars)) return tickerSnapshot.sparkBars;
+  if (hasDrawableSparklineData(tickerSnapshot?.spark)) return tickerSnapshot.spark;
+  if (hasDrawableSparklineData(signal?.sparkBars)) return signal.sparkBars;
+  if (hasDrawableSparklineData(signal?.spark)) return signal.spark;
+  if (hasDrawableSparklineData(signal?.bars)) return signal.bars;
   return [];
 };
 
@@ -1481,28 +1477,30 @@ const SignalHeroCell = ({
   signalMove,
   tradeButton = null,
   showSignalMove = true,
-}) => (
-  <span
-    data-testid="algo-signal-hero-cell"
-    className="ra-signal-cell-motion"
-    style={{
-      display: "grid",
-      gridTemplateColumns: "minmax(0, 1fr)",
-      gap: 0,
-      alignItems: "center",
-      minWidth: 0,
-      overflow: "hidden",
-      lineHeight: 1.12,
-    }}
-  >
+}) => {
+  const hasSparkline = hasDrawableSparklineData(sparklineData);
+  return (
     <span
+      data-testid="algo-signal-hero-cell"
+      className="ra-signal-cell-motion"
       style={{
         display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr)",
         gap: 0,
+        alignItems: "center",
         minWidth: 0,
         overflow: "hidden",
+        lineHeight: 1.12,
       }}
     >
+      <span
+        style={{
+          display: "grid",
+          gap: 0,
+          minWidth: 0,
+          overflow: "hidden",
+        }}
+      >
       <span
         style={{
           display: "inline-flex",
@@ -1579,16 +1577,16 @@ const SignalHeroCell = ({
         >
           {price}
         </span>
-        {sparklineData.length >= 2 ? (
+        {hasSparkline ? (
           <AppTooltip content={signalChartTitle(signalRecord) || undefined}>
             <span
               data-testid="algo-signal-hero-sparkline"
               role="img"
               aria-label={signalChartTitle(signalRecord) || undefined}
               style={{
-                width: dim(40),
-                height: dim(14),
-                minWidth: dim(40),
+                width: dim(SIGNAL_HERO_SPARKLINE_WIDTH),
+                height: dim(SIGNAL_HERO_SPARKLINE_HEIGHT),
+                minWidth: dim(SIGNAL_HERO_SPARKLINE_WIDTH),
                 overflow: "hidden",
                 flex: "0 0 auto",
               }}
@@ -1596,8 +1594,10 @@ const SignalHeroCell = ({
               <MicroSparkline
                 data={sparklineData}
                 positive={direction.primitive === "buy"}
-                width={40}
-                height={14}
+                width={SIGNAL_HERO_SPARKLINE_WIDTH}
+                height={SIGNAL_HERO_SPARKLINE_HEIGHT}
+                className="ra-sparkline"
+                ariaHidden
                 style={{ width: "100%", height: "100%" }}
               />
             </span>
@@ -1615,9 +1615,10 @@ const SignalHeroCell = ({
           </span>
         ) : null}
       </span>
+      </span>
     </span>
-  </span>
-);
+  );
+};
 
 const pushDistinctLabel = (parts, value) => {
   if (!hasDisplayValue(value)) return;
@@ -2196,11 +2197,14 @@ export const OperationsSignalRow = ({
     matrixStatesByTimeframe: tfMatrix || {},
     primaryState: primaryMatrixState,
     profileTimeframe: signalRecord.timeframe || "5m",
+    includePrimaryFallback: false,
   });
   const matrixVerdict = resolveSignalMatrixVerdict({
     primaryState: primaryMatrixState,
     matrixStatesByTimeframe: resolvedTfMatrix,
     profileTimeframe: signalRecord.timeframe || "5m",
+    timeframes,
+    includePrimaryFallback: false,
   });
   const matrixDisplay = matrixVerdictDisplay(matrixVerdict);
   const candidateBlocker = candidateBlockerLabel(candidate);

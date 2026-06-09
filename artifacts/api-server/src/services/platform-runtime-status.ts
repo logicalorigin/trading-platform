@@ -104,7 +104,6 @@ export function resolveIbkrRuntimeStreamState(input: {
   streamState: IbkrRuntimeStreamState;
   streamStateReason: string;
 } {
-  const marketSessionActive = isLikelyUsEquitySession(input.now ?? new Date());
   if (!input.configured) return streamStateDetail("offline", "not_configured");
   const hasCapacityPressure =
     input.streamPressure === "capacity_limited" ||
@@ -141,9 +140,6 @@ export function resolveIbkrRuntimeStreamState(input: {
     input.liveMarketDataAvailable === false
   ) {
     return streamStateDetail("delayed", "live_market_data_not_configured");
-  }
-  if (!marketSessionActive) {
-    return streamStateDetail("quiet", "market_session_quiet");
   }
   const desiredSymbolCount =
     input.desiredSymbolCount ?? (input.streamActive ? 1 : 0);
@@ -184,7 +180,6 @@ export function resolveIbkrRuntimeStrictReason(input: {
   desiredSymbolCount?: number;
   now?: Date;
 }): string | null {
-  const marketSessionActive = isLikelyUsEquitySession(input.now ?? new Date());
   if (
     !input.healthFresh &&
     input.streamFresh &&
@@ -202,9 +197,6 @@ export function resolveIbkrRuntimeStrictReason(input: {
   if (!input.accountsLoaded) return "accounts_unavailable";
   if (!input.configuredLiveMarketDataMode) {
     return "live_market_data_not_configured";
-  }
-  if (!marketSessionActive) {
-    return input.streamFresh ? null : "market_session_quiet";
   }
   const desiredSymbolCount =
     input.desiredSymbolCount ?? (input.streamActive ? 1 : 0);

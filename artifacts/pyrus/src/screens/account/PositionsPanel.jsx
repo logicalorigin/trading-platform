@@ -91,7 +91,10 @@ import {
   positionTableColumnIdsForSurface,
 } from "../../features/account/positionTableColumns.js";
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
-import { useRegisterPositionMarketDataSymbols } from "../../features/platform/positionMarketDataStore";
+import {
+  usePositionQuoteSnapshots,
+  useRegisterPositionMarketDataSymbols,
+} from "../../features/platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
 import { collectQuoteDataIssues } from "../../features/platform/dataIssueModel.js";
 import {
@@ -105,6 +108,7 @@ import {
 import { normalizeTickerSymbol } from "../../features/platform/tickerIdentity";
 import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { _initialState, persistState } from "../../lib/workspaceState";
 
 const ASSET_FILTERS = [
@@ -118,12 +122,40 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
+  { value: "signal_options_replay", label: "Options Replay" },
   { value: "watchlist_backtest", label: "Watchlist BT" },
   { value: "mixed", label: "Mixed" },
 ];
 
 const POSITIONS_PAGE_SIZE = 50;
 const POSITION_LOCKED_COLUMN_IDS = ["symbol", "actions"];
+
+const PositionSymbolSearchInput = ({ value, onCommit, isPhone }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      aria-label="Search positions by symbol"
+      {...inputProps}
+      placeholder="Search symbol"
+      style={{
+        width: isPhone ? dim(118) : dim(138),
+        height: dim(24),
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.xs),
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        fontSize: textSize("body"),
+        outline: "none",
+        padding: sp("0 8px"),
+      }}
+    />
+  );
+};
 
 const positionColumnOrderStateKey = (surfaceId) =>
   surfaceId === POSITION_TABLE_SURFACE_ALGO
@@ -884,10 +916,33 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     unrealizedPnl != null && costBasis
       ? (unrealizedPnl / costBasis) * 100
       : row.unrealizedPnlPercent;
+  const sameDayPosition = positionOpenedOnCurrentMarketDay(row.openedAt);
+  const previousClose = firstPositiveFiniteNumber(
+    quote?.prevClose,
+    liveQuote.prevClose,
+    row.underlyingMarket?.previousClose,
+    row.previousClose,
+  );
+  const markDayChange =
+    mark != null && previousClose != null ? mark - previousClose : null;
+  const markDayChangePercent =
+    markDayChange != null && previousClose != null && previousClose > 0
+      ? (markDayChange / previousClose) * 100
+      : null;
   const dayChange =
-    perShareDayChange != null && quantity != null
+    sameDayPosition && unrealizedPnl != null
+      ? unrealizedPnl
+      : markDayChange != null && quantity != null
+      ? markDayChange * quantity
+      : perShareDayChange != null && quantity != null
       ? perShareDayChange * quantity
       : row.dayChange;
+  const rowDayChangePercent =
+    sameDayPosition && unrealizedPnlPercent != null
+      ? unrealizedPnlPercent
+      : markDayChangePercent != null
+      ? markDayChangePercent
+      : dayChangePercent;
   const underlyingMarket = {
     ...(row.underlyingMarket || {}),
     symbol: resolvePositionUnderlyingSymbol(row) || row.underlyingMarket?.symbol || row.symbol,
@@ -895,11 +950,7 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     bid: quote?.bid,
     ask: quote?.ask,
     mark,
-    previousClose: firstPositiveFiniteNumber(
-      liveQuote.prevClose,
-      row.underlyingMarket?.previousClose,
-      row.previousClose,
-    ),
+    previousClose,
     updatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, row.underlyingMarket?.updatedAt),
     dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, row.underlyingMarket?.dataUpdatedAt),
     source: firstText(liveQuote.source, row.underlyingMarket?.source, "massive"),
@@ -919,7 +970,7 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     mark,
     marketPrice: mark,
     dayChange,
-    dayChangePercent,
+    dayChangePercent: rowDayChangePercent,
     unrealizedPnl,
     unrealizedPnlPercent,
     marketValue,
@@ -1452,8 +1503,21 @@ export const useLiveOptionPositionRows = ({
   const runtimeEquitySnapshotsBySymbol = useRuntimeTickerSnapshots(
     registerMarketDataSymbols ? positionUnderlyingSymbols : [],
   );
-  const liveEquitySnapshotsBySymbol =
-    equitySnapshotsBySymbol || runtimeEquitySnapshotsBySymbol;
+  const positionQuoteSnapshotsBySymbol = usePositionQuoteSnapshots(
+    registerMarketDataSymbols ? positionUnderlyingSymbols : [],
+  );
+  const liveEquitySnapshotsBySymbol = useMemo(
+    () =>
+      equitySnapshotsBySymbol || {
+        ...runtimeEquitySnapshotsBySymbol,
+        ...positionQuoteSnapshotsBySymbol,
+      },
+    [
+      equitySnapshotsBySymbol,
+      runtimeEquitySnapshotsBySymbol,
+      positionQuoteSnapshotsBySymbol,
+    ],
+  );
   const optionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(inputRows),
     [inputRows],
@@ -3477,6 +3541,9 @@ export const PositionsPanel = ({
   onPositionSelect,
   liveOptionQuotesEnabled = true,
   streamLiveOptionQuotes = true,
+  optionQuoteStreamOwner = "account-position-option-quotes:ui",
+  optionQuoteStreamIntent = "account-monitor-live",
+  registerMarketDataSymbols = true,
   surfaceId = POSITION_TABLE_SURFACE_ACCOUNT,
 }) => {
   const [sort, setSort] = useState({ id: "exposure", dir: "desc" });
@@ -3520,6 +3587,7 @@ export const PositionsPanel = ({
     enabled: liveOptionQuotesEnabled,
     totals: query.data?.totals,
     marketDataOwner: `positions:${surfaceId}`,
+    registerMarketDataSymbols,
   });
   const sortedRows = useMemo(() => {
     if (!sort.id || !sort.dir) return rows;
@@ -3641,23 +3709,10 @@ export const PositionsPanel = ({
               onChange={onSourceFilterChange}
             />
           ) : null}
-          <input
-            aria-label="Search positions by symbol"
+          <PositionSymbolSearchInput
             value={symbolSearch}
-            onChange={(event) => setSymbolSearch(event.target.value)}
-            placeholder="Search symbol"
-            style={{
-              width: isPhone ? dim(118) : dim(138),
-              height: dim(24),
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.xs),
-              background: CSS_COLOR.bg0,
-              color: CSS_COLOR.text,
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              outline: "none",
-              padding: sp("0 8px"),
-            }}
+            onCommit={setSymbolSearch}
+            isPhone={isPhone}
           />
         </div>
       ) : null}
@@ -3666,6 +3721,8 @@ export const PositionsPanel = ({
         <PositionOptionQuoteStreams
           groups={optionQuoteGroups}
           enabled={liveOptionQuotesEnabled}
+          owner={optionQuoteStreamOwner}
+          intent={optionQuoteStreamIntent}
         />
       ) : null}
       {!rows.length ? (

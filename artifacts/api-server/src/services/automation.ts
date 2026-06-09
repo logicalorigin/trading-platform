@@ -5,7 +5,12 @@ import {
   executionEventsTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { assertAlgoGatewayReady } from "./algo-gateway";
 import { normalizeAlgoDeploymentProviderAccountId } from "./algo-deployment-account";
 import {
@@ -17,7 +22,10 @@ import {
   updateSignalMonitorProfile,
 } from "./signal-monitor";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
-import { invalidateSignalOptionsDashboardCaches } from "./signal-options-automation";
+import {
+  ensureDefaultSignalOptionsPaperDeployment,
+  invalidateSignalOptionsDashboardCaches,
+} from "./signal-options-automation";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -41,6 +49,35 @@ type ListExecutionEventsInput = {
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
 const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
+const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
+  "Pyrus Signals Options Shadow Paper";
+const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
+const deploymentListDbBackoff = createTransientPostgresBackoff({
+  backoffMs: 15_000,
+  warningCooldownMs: 60_000,
+});
+const DEPLOYMENT_LIST_ROUTE_WAIT_MS = 2_500;
+const DEPLOYMENT_LIST_TIMEOUT_WARNING_COOLDOWN_MS = 60_000;
+const DEPLOYMENT_LIST_TIMEOUT = Symbol("deployment-list-timeout");
+
+type AlgoDeploymentRow = typeof algoDeploymentsTable.$inferSelect;
+type AlgoDeploymentListResponse = {
+  deployments: ReturnType<typeof deploymentToResponse>[];
+  cacheStatus?: "hit" | "stale" | "unavailable";
+};
+
+type DeploymentListCacheEntry = {
+  response: AlgoDeploymentListResponse;
+  mode?: "paper" | "live";
+  updatedAtMs: number;
+};
+
+const deploymentListCache = new Map<string, DeploymentListCacheEntry>();
+let deploymentListTimeoutWarningUntilMs = 0;
+const deploymentListInFlight = new Map<
+  string,
+  Promise<AlgoDeploymentListResponse>
+>();
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -190,6 +227,196 @@ function isRetiredShadowEquityForwardConfig(configValue: unknown) {
   return parameters.executionMode === RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE;
 }
 
+function deploymentHasSignalOptionsProfile(
+  deployment: Pick<AlgoDeploymentRow, "config" | "name">,
+) {
+  const config = asRecord(deployment.config);
+  const parameters = asRecord(config.parameters);
+  const signalOptions = asRecord(config.signalOptions);
+  const deploymentName = normalizeLegacyAlgoBrandText(deployment.name);
+  return Boolean(
+    Object.keys(signalOptions).length > 0 ||
+      parameters.executionMode === "signal_options" ||
+      config.source === "default_signal_options_seed" ||
+      deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+      deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
+  );
+}
+
+function visibleDeploymentRows(rows: AlgoDeploymentRow[]) {
+  return rows.filter(
+    (deployment) => !isRetiredShadowEquityForwardDeployment(deployment),
+  );
+}
+
+function buildDeploymentListResponse(
+  rows: AlgoDeploymentRow[],
+): AlgoDeploymentListResponse {
+  return {
+    deployments: visibleDeploymentRows(rows).map(deploymentToResponse),
+  };
+}
+
+function readDeploymentListCache(
+  input: ListAlgoDeploymentsInput,
+): AlgoDeploymentListResponse | null {
+  const exact = deploymentListCache.get(deploymentListKey(input));
+  if (exact) {
+    return {
+      ...exact.response,
+      cacheStatus: "stale",
+    };
+  }
+
+  if (input.mode) {
+    const allDeployments = deploymentListCache.get(deploymentListKey({}));
+    if (allDeployments) {
+      return {
+        ...allDeployments.response,
+        deployments: allDeployments.response.deployments.filter(
+          (deployment) => deployment.mode === input.mode,
+        ),
+        cacheStatus: "stale",
+      };
+    }
+  }
+
+  return null;
+}
+
+function rememberDeploymentListCache(
+  input: ListAlgoDeploymentsInput,
+  response: AlgoDeploymentListResponse,
+) {
+  deploymentListCache.set(deploymentListKey(input), {
+    mode: input.mode,
+    response,
+    updatedAtMs: Date.now(),
+  });
+}
+
+function clearDeploymentListCacheForTests() {
+  deploymentListCache.clear();
+}
+
+function shouldEnsureDefaultSignalOptionsDeployment(
+  input: ListAlgoDeploymentsInput,
+  rows: AlgoDeploymentRow[],
+) {
+  if (input.mode === "live") {
+    return false;
+  }
+  return !visibleDeploymentRows(rows).some(deploymentHasSignalOptionsProfile);
+}
+
+function deploymentListKey(input: ListAlgoDeploymentsInput) {
+  return input.mode ?? "all";
+}
+
+function deploymentListFallback(
+  input: ListAlgoDeploymentsInput,
+): AlgoDeploymentListResponse {
+  return (
+    readDeploymentListCache(input) ?? {
+      deployments: [],
+      cacheStatus: "unavailable",
+    }
+  );
+}
+
+async function loadAlgoDeploymentList(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentListResponse> {
+  let rows = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(
+      input.mode
+        ? eq(algoDeploymentsTable.mode, input.mode)
+        : undefined,
+    )
+    .orderBy(desc(algoDeploymentsTable.updatedAt));
+
+  if (shouldEnsureDefaultSignalOptionsDeployment(input, rows)) {
+    await ensureDefaultSignalOptionsPaperDeployment({
+      enabled: true,
+      preserveExistingPaused: true,
+    });
+    rows = await db
+      .select()
+      .from(algoDeploymentsTable)
+      .where(
+        input.mode
+          ? eq(algoDeploymentsTable.mode, input.mode)
+          : undefined,
+      )
+      .orderBy(desc(algoDeploymentsTable.updatedAt));
+  }
+
+  const response = buildDeploymentListResponse(rows);
+  rememberDeploymentListCache(input, response);
+  deploymentListDbBackoff.clear();
+  return response;
+}
+
+function markDeploymentListError(error: unknown, nowMs: number) {
+  if (!isTransientPostgresError(error)) {
+    return false;
+  }
+  deploymentListDbBackoff.markFailure({
+    error,
+    logger,
+    message: "Algo deployment list database unavailable; serving cached deployments",
+    nowMs,
+  });
+  return true;
+}
+
+function readOrStartDeploymentListRequest(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentListResponse> {
+  const key = deploymentListKey(input);
+  const existing = deploymentListInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const request = loadAlgoDeploymentList(input)
+    .catch((error) => {
+      markDeploymentListError(error, Date.now());
+      throw error;
+    })
+    .finally(() => {
+      if (deploymentListInFlight.get(key) === request) {
+        deploymentListInFlight.delete(key);
+      }
+    });
+  deploymentListInFlight.set(key, request);
+  request.catch(() => {});
+  return request;
+}
+
+async function waitForDeploymentListRouteBudget(
+  request: Promise<AlgoDeploymentListResponse>,
+) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      request,
+      new Promise<typeof DEPLOYMENT_LIST_TIMEOUT>((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve(DEPLOYMENT_LIST_TIMEOUT),
+          DEPLOYMENT_LIST_ROUTE_WAIT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function executionEventToResponse(
   event: typeof executionEventsTable.$inferSelect,
   input: { includePayload?: boolean } = {},
@@ -210,21 +437,34 @@ function executionEventToResponse(
 }
 
 export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
-  const rows = await db
-    .select()
-    .from(algoDeploymentsTable)
-    .where(
-      input.mode
-        ? eq(algoDeploymentsTable.mode, input.mode)
-        : undefined,
-    )
-    .orderBy(desc(algoDeploymentsTable.updatedAt));
+  const nowMs = Date.now();
+  if (deploymentListDbBackoff.isActive(nowMs)) {
+    return deploymentListFallback(input);
+  }
 
-  return {
-    deployments: rows
-      .filter((deployment) => !isRetiredShadowEquityForwardDeployment(deployment))
-      .map(deploymentToResponse),
-  };
+  try {
+    const response = await waitForDeploymentListRouteBudget(
+      readOrStartDeploymentListRequest(input),
+    );
+    if (response !== DEPLOYMENT_LIST_TIMEOUT) {
+      return response;
+    }
+
+    if (nowMs >= deploymentListTimeoutWarningUntilMs) {
+      deploymentListTimeoutWarningUntilMs =
+        nowMs + DEPLOYMENT_LIST_TIMEOUT_WARNING_COOLDOWN_MS;
+      logger.warn(
+        { waitMs: DEPLOYMENT_LIST_ROUTE_WAIT_MS, mode: input.mode ?? null },
+        "Algo deployment list exceeded route budget; serving cached deployments",
+      );
+    }
+    return deploymentListFallback(input);
+  } catch (error) {
+    if (!markDeploymentListError(error, nowMs)) {
+      throw error;
+    }
+    return deploymentListFallback(input);
+  }
 }
 
 export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
@@ -453,5 +693,11 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
 }
 
 export const __algoAutomationInternalsForTests = {
+  buildDeploymentListResponse,
+  clearDeploymentListCacheForTests,
+  deploymentHasSignalOptionsProfile,
+  readDeploymentListCache,
+  rememberDeploymentListCache,
+  visibleDeploymentRows,
   readSignalTimeframe,
 };

@@ -14,7 +14,8 @@ const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
 const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
-const BRIDGE_HELPER_VERSION = "2026-06-04.ib-async-sidecar-v8-foreground-guard";
+const BRIDGE_HELPER_VERSION =
+  "2026-06-09.ib-async-sidecar-v15-graceful-deactivate";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
@@ -59,6 +60,20 @@ type IbkrRemoteDesktop = {
   lastSeenAt: number;
   registeredAt: number;
   secretHash: string;
+};
+
+type IbkrRemoteDesktopRequestDiagnostic = {
+  at: string;
+  code: string | null;
+  contentType?: string | null;
+  desktopId: string | null;
+  helperVersion: string | null;
+  method?: string | null;
+  message: string | null;
+  ok: boolean;
+  path?: string | null;
+  route: "register" | "heartbeat" | "claim" | "raw";
+  userAgent?: string | null;
 };
 
 type IbkrRemoteDesktopSummary = {
@@ -126,8 +141,10 @@ type RemoteDesktopJobStatusResult = {
 
 type RemoteDesktopLaunchJobClaimResult =
   | {
+      helperUpdateRequired: boolean;
       helperVersion: string;
       ready: false;
+      targetHelperVersion: string;
     }
   | {
       action: "launch";
@@ -153,6 +170,8 @@ type RemoteDesktopLaunchJobClaimResult =
 export type IbkrBridgeRuntimeSessionState = {
   runtimeOverrideActive: boolean;
   runtimeOverrideUpdatedAt: Date | null;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   desktopAgentOnline: boolean;
   desktopAgentCompatibility: IbkrRemoteHelperCompatibility | null;
   desktopAgentCompatible: boolean;
@@ -310,6 +329,8 @@ type IbkrBridgeHelperMetadataResult = {
     desktopAgentHelperVersion: string | null;
     desktopAgentKnownBad: boolean;
     desktopAgentOnline: boolean;
+    desktopAgentRegistered: boolean;
+    desktopAgentRegisteredCount: number;
     desktopAgentUpgradeRequired: boolean;
     reconnectAvailable: boolean;
     runtimeOverrideActive: boolean;
@@ -354,6 +375,8 @@ let ibkrRemoteDesktopsLoaded = false;
 const remoteDesktopJobWaiters = new Map<string, Set<() => void>>();
 const legacyLoginKeyWaiters = new Map<string, Set<() => void>>();
 const legacyLoginEnvelopeWaiters = new Map<string, Set<() => void>>();
+const ibkrRemoteDesktopRequestDiagnostics: IbkrRemoteDesktopRequestDiagnostic[] =
+  [];
 
 function readLongPollWaitMs(
   body: unknown,
@@ -538,6 +561,79 @@ function readOptionalString(value: unknown, maxLength = 512): string | null {
   }
 
   return value.trim().slice(0, maxLength);
+}
+
+function recordIbkrRemoteDesktopRequestDiagnostic(input: {
+  body: unknown;
+  contentType?: string | null;
+  error?: unknown;
+  method?: string | null;
+  ok: boolean;
+  path?: string | null;
+  route: IbkrRemoteDesktopRequestDiagnostic["route"];
+  userAgent?: string | null;
+}): void {
+  const payload =
+    input.body && typeof input.body === "object"
+      ? (input.body as Record<string, unknown>)
+      : {};
+  const error = input.error;
+  const code =
+    error instanceof HttpError
+      ? readOptionalString(error.code, 120)
+      : error instanceof Error
+        ? error.name || "Error"
+        : null;
+  const message =
+    error instanceof Error ? readOptionalString(error.message, 300) : null;
+
+  ibkrRemoteDesktopRequestDiagnostics.push({
+    at: new Date().toISOString(),
+    code,
+    contentType: input.contentType ?? null,
+    desktopId: readOptionalString(payload.desktopId, 160),
+    helperVersion: readOptionalString(payload.helperVersion, 120),
+    method: input.method ?? null,
+    message,
+    ok: input.ok,
+    path: input.path ?? null,
+    route: input.route,
+    userAgent: input.userAgent ?? null,
+  });
+  ibkrRemoteDesktopRequestDiagnostics.splice(
+    0,
+    Math.max(0, ibkrRemoteDesktopRequestDiagnostics.length - 50),
+  );
+}
+
+export function recordIbkrRemoteDesktopRouteAttempt(
+  route: IbkrRemoteDesktopRequestDiagnostic["route"],
+  body: unknown,
+  error?: unknown,
+): void {
+  recordIbkrRemoteDesktopRequestDiagnostic({
+    body,
+    error,
+    ok: !error,
+    route,
+  });
+}
+
+export function recordIbkrRemoteDesktopRawRequestAttempt(input: {
+  contentType?: string | null;
+  method?: string | null;
+  path?: string | null;
+  userAgent?: string | null;
+}): void {
+  recordIbkrRemoteDesktopRequestDiagnostic({
+    body: null,
+    contentType: input.contentType,
+    method: input.method,
+    ok: true,
+    path: input.path,
+    route: "raw",
+    userAgent: input.userAgent,
+  });
 }
 
 function readOptionalTimestamp(value: unknown): number | null {
@@ -914,6 +1010,24 @@ function canIbkrRemoteHelperClaimJobs(
   return !hasOnlineCompatibleIbkrRemoteHelper(desktop, now);
 }
 
+function selectIbkrDesktopPollingHelperVersion(
+  helperVersion: string | null,
+): string {
+  return helperVersion ?? BRIDGE_HELPER_VERSION;
+}
+
+function buildIbkrDesktopHelperVersionHints(helperVersion: string | null): {
+  helperUpdateRequired: boolean;
+  helperVersion: string;
+  targetHelperVersion: string;
+} {
+  return {
+    helperUpdateRequired: !isIbkrRemoteHelperCompatible(helperVersion),
+    helperVersion: selectIbkrDesktopPollingHelperVersion(helperVersion),
+    targetHelperVersion: BRIDGE_HELPER_VERSION,
+  };
+}
+
 function summarizeIbkrRemoteDesktop(
   desktop: IbkrRemoteDesktop,
   now = Date.now(),
@@ -976,6 +1090,7 @@ function assertIbkrRemoteDesktopAuthenticated(
 
 function selectIbkrRemoteDesktop(
   requestedDesktopId: string | null,
+  options: { allowStaleFallback?: boolean } = {},
 ): IbkrRemoteDesktop {
   loadIbkrRemoteDesktops();
   pruneIbkrRemoteLaunchJobs();
@@ -1000,8 +1115,21 @@ function selectIbkrRemoteDesktop(
     if (desktop) {
       return desktop;
     }
+    if (options.allowStaleFallback) {
+      const staleDesktop = ibkrRemoteDesktops.get(requestedDesktopId);
+      if (staleDesktop) {
+        return staleDesktop;
+      }
+    }
   } else if (candidates[0]) {
     return candidates[0];
+  } else if (options.allowStaleFallback) {
+    const staleDesktop = Array.from(ibkrRemoteDesktops.values()).sort(
+      (left, right) => right.lastSeenAt - left.lastSeenAt,
+    )[0];
+    if (staleDesktop) {
+      return staleDesktop;
+    }
   }
 
   throw new HttpError(
@@ -1194,6 +1322,27 @@ function readLegacyBridgeActivationByManagementToken(
   return activation;
 }
 
+function appendLegacyBridgeActivationProgress(input: {
+  activationId: string;
+  bridgeUrl?: string | null;
+  helperVersion?: string | null;
+  message: string;
+  status: string;
+  step: string;
+}): void {
+  const events = legacyBridgeActivationProgress.get(input.activationId) ?? [];
+  events.push({
+    activationId: input.activationId,
+    status: input.status,
+    step: input.step,
+    message: input.message,
+    helperVersion: input.helperVersion ?? BRIDGE_HELPER_VERSION,
+    bridgeUrl: input.bridgeUrl ?? null,
+    updatedAt: new Date(),
+  });
+  legacyBridgeActivationProgress.set(input.activationId, events.slice(-20));
+}
+
 function normalizeBridgeUrl(rawBridgeUrl: string): string {
   let url: URL;
 
@@ -1372,6 +1521,7 @@ function buildProtocolLaunchUrl(input: {
   bridgeToken: string;
   bundleUrl: string | null;
   callbackSecret: string;
+  desktopAgentLaunch?: boolean;
   helperUrl: string;
   managementToken: string;
   scheme?: IbkrProtocolScheme;
@@ -1390,6 +1540,9 @@ function buildProtocolLaunchUrl(input: {
     params.set("autoLogin", "1");
     params.set("autoLoginMode", "ib-gateway-live");
     params.set("loginMode", "ui-onetime");
+  }
+  if (input.desktopAgentLaunch) {
+    params.set("desktopAgentLaunch", "1");
   }
 
   if (input.bundleUrl) {
@@ -1444,6 +1597,7 @@ function readProtocolUrlParam(rawUrl: string | null, name: string): string | nul
 function createIbkrBridgeLauncher(input: {
   apiBaseUrl: string;
   bundleUrl?: string | null;
+  desktopAgentLaunch?: boolean;
   scheme?: IbkrProtocolScheme;
 }): LauncherResult {
   const apiBaseUrl = normalizeBaseUrl(input.apiBaseUrl);
@@ -1472,6 +1626,7 @@ function createIbkrBridgeLauncher(input: {
       bridgeToken,
       bundleUrl,
       callbackSecret: legacyActivation.callbackSecret,
+      desktopAgentLaunch: input.desktopAgentLaunch,
       helperUrl,
       managementToken,
       scheme: input.scheme,
@@ -1493,6 +1648,7 @@ function createIbkrBridgeLauncher(input: {
       bridgeToken,
       bundleUrl,
       callbackSecret: legacyActivation.callbackSecret,
+      desktopAgentLaunch: input.desktopAgentLaunch,
       helperUrl,
       managementToken,
       scheme: input.scheme,
@@ -1530,6 +1686,7 @@ export function listIbkrRemoteDesktops(): {
 export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionState {
   const runtimeOverride = getIbkrBridgeRuntimeOverride();
   const remoteDesktops = listIbkrRemoteDesktops();
+  const desktopAgentRegisteredCount = remoteDesktops.desktops.length;
   const onlineDesktop =
     remoteDesktops.desktops.find((desktop) => desktop.online) ?? null;
   const desktopAgentHelperVersion = onlineDesktop?.helperVersion ?? null;
@@ -1546,6 +1703,8 @@ export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionStat
   return {
     runtimeOverrideActive: Boolean(runtimeOverride),
     runtimeOverrideUpdatedAt: runtimeOverride?.updatedAt ?? null,
+    desktopAgentRegistered: desktopAgentRegisteredCount > 0,
+    desktopAgentRegisteredCount,
     desktopAgentOnline: Boolean(onlineDesktop),
     desktopAgentCompatibility,
     desktopAgentCompatible,
@@ -1585,8 +1744,10 @@ export function getIbkrBridgeHelperMetadata(): IbkrBridgeHelperMetadataResult {
 
 export function registerIbkrRemoteDesktop(body: unknown): {
   desktop: IbkrRemoteDesktopSummary;
+  helperUpdateRequired: boolean;
   helperVersion: string;
   ok: true;
+  targetHelperVersion: string;
 } {
   loadIbkrRemoteDesktops();
   pruneIbkrRemoteLaunchJobs();
@@ -1662,16 +1823,18 @@ export function registerIbkrRemoteDesktop(body: unknown): {
 
   return {
     desktop: summarizeIbkrRemoteDesktop(desktop, now),
-    helperVersion: BRIDGE_HELPER_VERSION,
+    ...buildIbkrDesktopHelperVersionHints(helperVersion),
     ok: true,
   };
 }
 
 export function heartbeatIbkrRemoteDesktop(body: unknown): {
   desktop: IbkrRemoteDesktopSummary;
+  helperUpdateRequired: boolean;
   helperVersion: string;
   ok: true;
   pendingJobCount: number;
+  targetHelperVersion: string;
 } {
   const desktop = assertIbkrRemoteDesktopAuthenticated(body);
   const payload = body as Record<string, unknown>;
@@ -1680,6 +1843,7 @@ export function heartbeatIbkrRemoteDesktop(body: unknown): {
   desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
   const now = Date.now();
   recordIbkrRemoteHelperHeartbeat(desktop, helperVersion, now);
+  persistIbkrRemoteDesktops();
   const canClaimJobs = canIbkrRemoteHelperClaimJobs(desktop, helperVersion, now);
   const pendingJobCount = Array.from(ibkrRemoteLaunchJobs.values()).filter(
     (job) =>
@@ -1692,7 +1856,7 @@ export function heartbeatIbkrRemoteDesktop(body: unknown): {
 
   return {
     desktop: summarizeIbkrRemoteDesktop(desktop, now),
-    helperVersion: BRIDGE_HELPER_VERSION,
+    ...buildIbkrDesktopHelperVersionHints(helperVersion),
     ok: true,
     pendingJobCount,
   };
@@ -1708,6 +1872,7 @@ export function claimIbkrRemoteDesktopLaunchJob(
   desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
   const now = Date.now();
   recordIbkrRemoteHelperHeartbeat(desktop, helperVersion, now);
+  persistIbkrRemoteDesktops();
   const canClaimLaunchJobs = canIbkrRemoteHelperClaimJobs(
     desktop,
     helperVersion,
@@ -1771,6 +1936,13 @@ export function claimIbkrRemoteDesktopLaunchJob(
     const activation = legacyBridgeActivations.get(job.activationId);
     if (activation) {
       activation.remoteLaunchJobClaimedAt = activation.remoteLaunchJobClaimedAt ?? now;
+      appendLegacyBridgeActivationProgress({
+        activationId: job.activationId,
+        status: "starting_bridge",
+        step: "helper_launch_requested",
+        message:
+          "Windows desktop agent claimed the IBKR launch request and is opening the helper.",
+      });
     }
     const launchUrl = rewriteIbkrProtocolLaunchForDesktop(
       job.launchUrl,
@@ -1790,7 +1962,7 @@ export function claimIbkrRemoteDesktopLaunchJob(
   }
 
   return {
-    helperVersion: BRIDGE_HELPER_VERSION,
+    ...buildIbkrDesktopHelperVersionHints(helperVersion),
     ready: false,
   };
 }
@@ -1828,10 +2000,12 @@ export function createIbkrRemoteBridgeLaunch(input: {
   const useAutoLogin = payload.autoLogin === true;
   const desktop = selectIbkrRemoteDesktop(
     readOptionalString(payload.desktopId, 160),
+    { allowStaleFallback: true },
   );
   const launcher = createIbkrBridgeLauncher({
     apiBaseUrl: input.apiBaseUrl,
     bundleUrl: input.bundleUrl,
+    desktopAgentLaunch: true,
     scheme: selectIbkrProtocolSchemeForDesktop(desktop),
   });
   const now = Date.now();
@@ -1861,6 +2035,12 @@ export function createIbkrRemoteBridgeLaunch(input: {
   const activation = legacyBridgeActivations.get(launcher.activationId);
   if (activation) {
     activation.remoteLaunchJobCreatedAt = now;
+    appendLegacyBridgeActivationProgress({
+      activationId: launcher.activationId,
+      status: "starting_bridge",
+      step: "queued_on_pyrus",
+      message: "IBKR launch request queued in Pyrus for the Windows desktop.",
+    });
   }
   notifyWaiters(remoteDesktopJobWaiters, desktop.desktopId);
 
@@ -2040,6 +2220,12 @@ export function recordLegacyIbkrBridgeActivationProgress(
   const activation = readLegacyBridgeActivation(activationId, body, {
     allowCanceled: true,
   });
+  if (activation.canceledAt) {
+    throw new HttpError(409, "IB Gateway bridge activation was canceled.", {
+      code: "ibkr_bridge_activation_canceled",
+    });
+  }
+
   const payload = body as Record<string, unknown>;
   const events = legacyBridgeActivationProgress.get(activationId) ?? [];
   events.push({
@@ -2052,12 +2238,6 @@ export function recordLegacyIbkrBridgeActivationProgress(
     updatedAt: new Date(),
   });
   legacyBridgeActivationProgress.set(activationId, events.slice(-20));
-
-  if (activation.canceledAt) {
-    throw new HttpError(409, "IB Gateway bridge activation was canceled.", {
-      code: "ibkr_bridge_activation_canceled",
-    });
-  }
 
   return {
     ok: true,
@@ -2168,6 +2348,8 @@ const IBKR_ACTIVATION_STEP_PHASE: Record<string, IbkrActivationTimelinePhase> = 
   building_bridge: "bridge",
   checking_gateway_socket: "request",
   cloning_repo: "bridge",
+  credential_key_published: "credentials",
+  credential_key_read: "credentials",
   credentials_delivered: "credentials",
   credentials_received: "credentials",
   credentials_sent_to_pyrus: "credentials",
@@ -2552,6 +2734,13 @@ export function submitLegacyIbkrBridgeLoginKey(
     helperInstanceId,
     publicKeyJwk: readJsonObject(payload.publicKeyJwk, "publicKeyJwk"),
   };
+  appendLegacyBridgeActivationProgress({
+    activationId,
+    status: "waiting_gateway",
+    step: "credential_key_published",
+    message:
+      "Windows helper published the one-time credential encryption key to Pyrus.",
+  });
   notifyWaiters(legacyLoginKeyWaiters, activationId);
 
   return { ok: true };
@@ -2572,7 +2761,17 @@ export function readLegacyIbkrBridgeLoginKey(
   if (!handoff) {
     return { ready: false };
   }
+  const firstReadyRead = activation.lastLoginKeyReadReadyAt === null;
   activation.lastLoginKeyReadReadyAt = now;
+  if (firstReadyRead) {
+    appendLegacyBridgeActivationProgress({
+      activationId,
+      status: "waiting_gateway",
+      step: "credential_key_read",
+      message:
+        "Pyrus read the Windows helper credential key and is preparing encrypted credentials.",
+    });
+  }
 
   return {
     algorithm: handoff.algorithm,
@@ -2751,6 +2950,7 @@ export function getIbkrBridgeActivationDiagnostics(): {
     };
   } | null;
   latestActivationId: string | null;
+  desktopAgentRequests: IbkrRemoteDesktopRequestDiagnostic[];
   insight: IbkrActivationInsight;
   latestProgress: LegacyBridgeActivationProgress | null;
   recentProgress: LegacyBridgeActivationProgress[];
@@ -2777,6 +2977,7 @@ export function getIbkrBridgeActivationDiagnostics(): {
 
   return {
     activeCount,
+    desktopAgentRequests: [...ibkrRemoteDesktopRequestDiagnostics].reverse(),
     latestActivation: latestActivation
       ? {
           canceled: Boolean(latestActivation.canceledAt),

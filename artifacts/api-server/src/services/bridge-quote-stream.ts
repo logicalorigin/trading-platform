@@ -84,8 +84,20 @@ type Subscriber = {
   id: number;
   owner: string;
   symbols: Set<string>;
+  intent: MarketDataIntent;
+  fallbackProvider: MarketDataFallbackProvider;
   onSnapshot: (payload: QuoteSnapshotPayload) => void;
 };
+
+type BridgeQuoteSubscriptionOptions = {
+  ownerPrefix?: string;
+  intent?: MarketDataIntent;
+  fallbackProvider?: MarketDataFallbackProvider;
+};
+
+type EquityProviderContractIdsBySymbol =
+  | ReadonlyMap<string, string | null | undefined>
+  | Record<string, string | null | undefined>;
 
 type BridgeQuoteClient = {
   getQuoteSnapshots(
@@ -221,13 +233,46 @@ function getRequestedSymbols(): string[] {
 function admitBridgeQuoteSubscriberLeases(subscriber: Subscriber): void {
   admitMarketDataLeases({
     owner: subscriber.owner,
-    intent: "visible-live",
+    intent: subscriber.intent,
     requests: Array.from(subscriber.symbols).map((symbol) => ({
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "massive",
+    fallbackProvider: subscriber.fallbackProvider,
   });
+}
+
+function equityProviderContractIdForSymbol(
+  providerContractIdsBySymbol: EquityProviderContractIdsBySymbol | undefined,
+  symbol: string,
+): string | null {
+  if (!providerContractIdsBySymbol) {
+    return null;
+  }
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const value =
+    typeof (
+      providerContractIdsBySymbol as ReadonlyMap<
+        string,
+        string | null | undefined
+      >
+    ).get === "function"
+      ? (
+          providerContractIdsBySymbol as ReadonlyMap<
+            string,
+            string | null | undefined
+          >
+        ).get(normalizedSymbol)
+      : (providerContractIdsBySymbol as Record<
+          string,
+          string | null | undefined
+        >)[normalizedSymbol] ??
+        (providerContractIdsBySymbol as Record<
+          string,
+          string | null | undefined
+        >)[symbol];
+  const providerContractId = String(value ?? "").trim();
+  return providerContractId || null;
 }
 
 function admitBridgeQuoteSubscriberLeasesForRuntime(): void {
@@ -360,6 +405,19 @@ function resolveCurrentStreamSignalAt(
     return startedAt;
   }
   return previousSignalAt;
+}
+
+function resolveCurrentStreamDataAt(
+  previousEventAt: Date | null,
+  startedAt: Date | null,
+): Date | null {
+  if (!startedAt) {
+    return previousEventAt;
+  }
+  if (!previousEventAt || previousEventAt.getTime() < startedAt.getTime()) {
+    return startedAt;
+  }
+  return previousEventAt;
 }
 
 function recordQuoteEvent(receivedAt: Date): void {
@@ -628,16 +686,16 @@ function startStallTimer(expectedSignature: string) {
       return;
     }
 
-    const currentSignalAt = resolveCurrentStreamSignalAt(
-      lastSignalAt,
+    const currentDataAt = resolveCurrentStreamDataAt(
+      lastEventAt,
       streamStartedAt,
     );
-    if (!currentSignalAt) {
+    if (!currentDataAt) {
       return;
     }
 
     const now = nowProvider();
-    const ageMs = Math.max(0, now.getTime() - currentSignalAt.getTime());
+    const ageMs = Math.max(0, now.getTime() - currentDataAt.getTime());
     if (ageMs < STREAM_STALL_RECONNECT_MS) {
       return;
     }
@@ -721,6 +779,11 @@ function handleStreamError(expectedSignature: string, error: unknown) {
   if (matchesActiveStream) {
     stopActiveStream();
   }
+  // The connection stays alive in all sessions: during RTH errors reconnect on the bounded
+  // 1–30s backoff; off-RTH they retry on a calm fixed cadence. The off-hours cadence is
+  // deliberately calm (not aggressive backoff) so a persistently-erroring quiet-market
+  // stream does not flip streamState/ping every few seconds — that churn restarts the
+  // connection-status sine wave (SMIL) and shows up as UI lag.
   if (marketSessionActive) {
     scheduleReconnect();
   } else {
@@ -949,6 +1012,8 @@ export async function fetchBridgeQuoteSnapshots(
     fallbackProvider?: MarketDataFallbackProvider;
     ttlMs?: number | null;
     tradingSession?: "overnight" | null;
+    hydrate?: boolean;
+    providerContractIdsBySymbol?: EquityProviderContractIdsBySymbol;
   } = {},
 ): Promise<QuoteSnapshotPayload> {
   const normalizedSymbols = normalizeSymbols(symbols);
@@ -975,6 +1040,10 @@ export async function fetchBridgeQuoteSnapshots(
     requests: normalizedSymbols.map((symbol) => ({
       assetClass: "equity" as const,
       symbol,
+      providerContractId: equityProviderContractIdForSymbol(
+        options.providerContractIdsBySymbol,
+        symbol,
+      ),
     })),
     ttlMs: options.ttlMs === undefined ? 10_000 : options.ttlMs,
     fallbackProvider,
@@ -995,7 +1064,9 @@ export async function fetchBridgeQuoteSnapshots(
     cachedQuotes.map((quote) => [normalizeSymbol(quote.symbol), quote]),
   );
   const hydrateSymbols =
-    options.tradingSession === "overnight"
+    options.hydrate === false
+      ? []
+      : options.tradingSession === "overnight"
       ? admittedSymbols
       : admittedSymbols.filter((symbol) =>
           shouldHydrateQuoteSnapshot(cachedQuotesBySymbol.get(symbol)),
@@ -1050,6 +1121,7 @@ export async function fetchBridgeQuoteSnapshots(
 export function subscribeBridgeQuoteSnapshots(
   symbols: string[],
   onSnapshot: (payload: QuoteSnapshotPayload) => void,
+  options: BridgeQuoteSubscriptionOptions = {},
 ): () => void {
   const normalizedSymbols = normalizeSymbols(symbols);
   if (!normalizedSymbols.length) {
@@ -1058,11 +1130,17 @@ export function subscribeBridgeQuoteSnapshots(
 
   const subscriberId = nextSubscriberId;
   nextSubscriberId += 1;
-  const owner = `bridge-quote-stream:${subscriberId}`;
+  const ownerPrefix =
+    typeof options.ownerPrefix === "string" && options.ownerPrefix.trim()
+      ? options.ownerPrefix.trim()
+      : "bridge-quote-stream";
+  const owner = `${ownerPrefix}:${subscriberId}`;
   const subscriber: Subscriber = {
     id: subscriberId,
     owner,
     symbols: new Set(normalizedSymbols),
+    intent: options.intent ?? "visible-live",
+    fallbackProvider: options.fallbackProvider ?? "massive",
     onSnapshot,
   };
   subscribers.set(subscriberId, subscriber);
@@ -1116,6 +1194,14 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
     hasQuoteDemand && streamUnsubscribe && streamSignature,
   );
   const transportFreshnessAgeMs = streamActive ? currentStreamSignalAgeMs : null;
+  const currentStreamDataMs = resolveCurrentStreamDataAt(
+    lastEventAt,
+    streamStartedAt,
+  )?.getTime() ?? null;
+  const streamDataFreshnessAgeMs =
+    streamActive && currentStreamDataMs !== null
+      ? Math.max(0, now - currentStreamDataMs)
+      : lastEventAgeMs;
   const dataMaxGapMs = eventCount > 1 ? maxGapMs : null;
 
   return {
@@ -1146,8 +1232,8 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
     lastEventAgeMs,
     lastSignalAt: lastSignalAt?.toISOString() ?? null,
     lastSignalAgeMs: currentStreamSignalAgeMs,
-    freshnessAgeMs: transportFreshnessAgeMs ?? lastEventAgeMs,
-    dataFreshnessAgeMs: lastEventAgeMs,
+    freshnessAgeMs: streamDataFreshnessAgeMs ?? transportFreshnessAgeMs,
+    dataFreshnessAgeMs: streamDataFreshnessAgeMs,
     transportFreshnessAgeMs,
     streamActive,
     streamSignature,
@@ -1171,8 +1257,8 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
         ? capacityPressure
       : reconnectTimer
       ? "reconnecting"
-      : currentStreamSignalAgeMs !== null &&
-          currentStreamSignalAgeMs >= STREAM_STALL_RECONNECT_MS
+      : streamDataFreshnessAgeMs !== null &&
+          streamDataFreshnessAgeMs >= STREAM_STALL_RECONNECT_MS
         ? "stale"
         : "normal",
   };
@@ -1206,6 +1292,13 @@ export function __resolveCurrentBridgeQuoteStreamSignalAtForTests(
   startedAt: Date | null,
 ): Date | null {
   return resolveCurrentStreamSignalAt(previousEventAt, startedAt);
+}
+
+export function __resolveCurrentBridgeQuoteStreamDataAtForTests(
+  previousEventAt: Date | null,
+  startedAt: Date | null,
+): Date | null {
+  return resolveCurrentStreamDataAt(previousEventAt, startedAt);
 }
 
 export function __resetBridgeQuoteStreamForTests(): void {

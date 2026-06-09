@@ -59,26 +59,38 @@ const shutdown = (signal: NodeJS.Signals) => {
   }
   shuttingDown = true;
   logger.info({ signal }, "IBKR bridge shutting down");
+
+  // Disconnect from TWS first. provider.shutdown() is synchronous and fast,
+  // so the Gateway releases our API client slot immediately. Previously this
+  // was gated behind server.close(), whose callback waits for every open
+  // connection to drain -- but the API server holds long-lived SSE streams
+  // (quotes/options/bars) that never end on their own, so the callback never
+  // fired and shutdown always fell through to the hard-exit timeout below,
+  // killing the socket WITHOUT a clean disconnect and leaving a zombie client
+  // that slows the next launch.
+  const providerShutdown = ibkrBridgeService.shutdown().catch((shutdownError) => {
+    logger.warn({ err: shutdownError }, "IBKR bridge provider shutdown failed");
+  });
+
+  // Stop accepting new connections and force-close the lingering SSE /
+  // keep-alive sockets so the HTTP server tears down promptly instead of
+  // waiting on streams that never close.
   server.close((error) => {
     if (error) {
       logger.warn({ err: error }, "IBKR bridge HTTP server shutdown failed");
     }
-    void ibkrBridgeService
-      .shutdown()
-      .catch((shutdownError) => {
-        logger.warn(
-          { err: shutdownError },
-          "IBKR bridge provider shutdown failed",
-        );
-      })
-      .finally(() => {
-        process.exit(error ? 1 : 0);
-      });
   });
+  server.closeAllConnections?.();
+
+  void providerShutdown.finally(() => {
+    // Brief grace so the TWS disconnect flushes to the Gateway before exit.
+    setTimeout(() => process.exit(0), 300).unref();
+  });
+
   setTimeout(() => {
     logger.warn({ signal }, "IBKR bridge shutdown timed out");
     process.exit(1);
-  }, 5_000).unref();
+  }, 2_000).unref();
 };
 
 process.once("SIGTERM", shutdown);

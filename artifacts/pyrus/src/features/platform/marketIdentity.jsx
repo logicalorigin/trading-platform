@@ -142,9 +142,25 @@ const MARKET_ICON_BY_KEY = {
 const logoCache = new Map();
 const logoInFlight = new Map();
 const LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const LOGO_CACHE_MAX_ENTRIES = 512;
 const LOGO_BATCH_DELAY_MS = 0;
 let logoBatchQueue = new Map();
 let logoBatchTimer = null;
+
+const touchCachedLogo = (ticker, cached) => {
+  logoCache.delete(ticker);
+  logoCache.set(ticker, cached);
+};
+
+const evictOldestCachedLogos = () => {
+  while (logoCache.size > LOGO_CACHE_MAX_ENTRIES) {
+    const oldestKey = logoCache.keys().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    logoCache.delete(oldestKey);
+  }
+};
 
 const readCachedLogo = (ticker) => {
   const cached = logoCache.get(ticker);
@@ -153,6 +169,7 @@ const readCachedLogo = (ticker) => {
     logoCache.delete(ticker);
     return null;
   }
+  touchCachedLogo(ticker, cached);
   return cached.logoUrl || null;
 };
 
@@ -163,14 +180,17 @@ const hasFreshLogoCacheEntry = (ticker) => {
     logoCache.delete(ticker);
     return false;
   }
+  touchCachedLogo(ticker, cached);
   return true;
 };
 
 const writeCachedLogo = (ticker, logoUrl) => {
+  logoCache.delete(ticker);
   logoCache.set(ticker, {
     logoUrl: logoUrl || null,
     expiresAt: Date.now() + LOGO_CACHE_TTL_MS,
   });
+  evictOldestCachedLogos();
 };
 
 const flushTickerLogoBatch = async () => {
@@ -242,7 +262,11 @@ const fetchTickerLogo = async (ticker) => {
 };
 
 export const __marketIdentityLogoTestHooks = {
+  cacheMaxEntries: () => LOGO_CACHE_MAX_ENTRIES,
+  cacheSize: () => logoCache.size,
   fetchTickerLogo,
+  hasCacheEntry: (ticker) => logoCache.has(normalizeIdentitySymbol(ticker)),
+  inFlightSize: () => logoInFlight.size,
   reset() {
     logoCache.clear();
     logoInFlight.clear();

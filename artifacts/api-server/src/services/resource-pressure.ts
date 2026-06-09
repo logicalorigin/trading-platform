@@ -64,6 +64,8 @@ const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
   watch: 3_072,
   high: 4_608,
 } as const;
+const API_ROUTE_LATENCY_WATCH_MS = 1_000;
+const API_ROUTE_LATENCY_HIGH_MS = 10_000;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 
@@ -166,8 +168,8 @@ export function resolveApiRssHardBlockMb(
 
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   if (value === null) return "normal";
-  if (value >= 5_000) return "high";
-  return value >= 1_000 ? "watch" : "normal";
+  if (value >= API_ROUTE_LATENCY_HIGH_MS) return "high";
+  return value >= API_ROUTE_LATENCY_WATCH_MS ? "watch" : "normal";
 }
 
 function driver(input: {

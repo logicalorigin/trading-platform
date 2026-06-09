@@ -468,6 +468,7 @@ const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
 const SHADOW_DERIVED_READ_CACHE_TTL_MS = 10_000;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
+const SHADOW_OPTION_QUOTE_STALE_TTL_MS = 60_000;
 const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
 const shadowReadCache = new Map<
   string,
@@ -483,6 +484,19 @@ let shadowReadCacheVersion = 0;
 let shadowReadCacheTtlMsForTests: number | null = null;
 let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
+let shadowOptionQuoteCacheTtlMsForTests: number | null = null;
+let shadowOptionQuoteCacheStaleTtlMsForTests: number | null = null;
+
+function shadowOptionQuoteCacheTtlMs() {
+  return shadowOptionQuoteCacheTtlMsForTests ?? SHADOW_OPTION_QUOTE_CACHE_TTL_MS;
+}
+
+function shadowOptionQuoteCacheStaleTtlMs() {
+  return (
+    shadowOptionQuoteCacheStaleTtlMsForTests ??
+    SHADOW_OPTION_QUOTE_STALE_TTL_MS
+  );
+}
 type ShadowReadCacheOptions = {
   allowStale?: (value: unknown) => boolean;
   staleStrategy?: "wait" | "immediate" | "never";
@@ -532,6 +546,7 @@ const shadowOptionQuoteCache = new Map<
   string,
   {
     expiresAt: number;
+    staleExpiresAt: number;
     quote: Partial<QuoteSnapshot> | Record<string, unknown>;
   }
 >();
@@ -2277,9 +2292,25 @@ function rememberShadowOptionQuote(
   if (!key || !quote) {
     return;
   }
+  const now = Date.now();
+  const existing = shadowOptionQuoteCache.get(key);
+  if (
+    existing &&
+    existing.staleExpiresAt > now &&
+    shadowOptionQuoteHasDisplayMarketData(existing.quote) &&
+    !shadowOptionQuoteHasDisplayMarketData(quote)
+  ) {
+    shadowOptionQuoteCache.set(key, {
+      quote: existing.quote,
+      expiresAt: now + shadowOptionQuoteCacheTtlMs(),
+      staleExpiresAt: now + shadowOptionQuoteCacheStaleTtlMs(),
+    });
+    return;
+  }
   shadowOptionQuoteCache.set(key, {
     quote,
-    expiresAt: Date.now() + SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+    expiresAt: now + shadowOptionQuoteCacheTtlMs(),
+    staleExpiresAt: now + shadowOptionQuoteCacheStaleTtlMs(),
   });
 }
 
@@ -2287,6 +2318,9 @@ function readCachedShadowOptionQuotes(
   positions: Array<{
     optionContract?: unknown;
   }>,
+  options: {
+    allowStale?: boolean;
+  } = {},
 ): Map<string, Partial<QuoteSnapshot> | Record<string, unknown>> {
   const now = Date.now();
   const quotes = new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
@@ -2301,8 +2335,11 @@ function readCachedShadowOptionQuotes(
     if (!cached) {
       return;
     }
-    if (cached.expiresAt <= now) {
+    if (cached.staleExpiresAt <= now) {
       shadowOptionQuoteCache.delete(providerContractId);
+      return;
+    }
+    if (cached.expiresAt <= now && !options.allowStale) {
       return;
     }
     quotes.set(providerContractId, cached.quote);
@@ -2575,13 +2612,25 @@ async function fetchVisibleShadowOptionQuotes(
         ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
       })
         .then((payload) => {
-          payload.quotes.forEach(rememberQuote);
-          if (payload.quotes.length > 0) {
+          const returnedProviderContractIds = new Set<string>();
+          payload.quotes.forEach((quote) => {
+            const providerContractId = String(
+              (quote as Record<string, unknown>).providerContractId ?? "",
+            ).trim();
+            if (providerContractId) {
+              returnedProviderContractIds.add(providerContractId);
+            }
+            rememberQuote(quote);
+          });
+          const missingProviderContractIds = providerContractIds.filter(
+            (providerContractId) => !returnedProviderContractIds.has(providerContractId),
+          );
+          if (!missingProviderContractIds.length) {
             return;
           }
           readIbkrLiveDemandState({
             underlying,
-            providerContractIds,
+            providerContractIds: missingProviderContractIds,
             owner: demandOwner,
             requiresGreeks: options.requiresGreeks ?? true,
           }).states.flatMap((state) => (state.quote ? [state.quote] : [])).forEach(rememberQuote);
@@ -7910,6 +7959,17 @@ export async function getShadowAccountPositions(input: {
               optionQuoteByProviderContractId.set(providerContractId, quote);
             });
           }
+          readCachedShadowOptionQuotes(filtered, { allowStale: true }).forEach(
+            (quote, providerContractId) => {
+              const current = optionQuoteByProviderContractId.get(providerContractId);
+              if (shadowOptionQuoteHasDisplayMarketData(current)) {
+                return;
+              }
+              if (shadowOptionQuoteHasDisplayMarketData(quote)) {
+                optionQuoteByProviderContractId.set(providerContractId, quote);
+              }
+            },
+          );
         }
         const peakMarkByPositionId =
           await readShadowPositionPeakMarkPrices(filtered);
@@ -8212,7 +8272,7 @@ export async function getShadowAccountPositions(input: {
     },
     {
       allowStale: shadowReadCacheValueHasRows,
-      staleStrategy: "never",
+      staleStrategy: "immediate",
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
@@ -13130,6 +13190,23 @@ export const __shadowWatchlistBacktestInternalsForTests = {
         ? Math.max(0, input.staleWaitMs)
         : null;
   },
+  setShadowOptionQuoteCacheWindowsForTests(input: {
+    ttlMs?: number | null;
+    staleTtlMs?: number | null;
+  }) {
+    shadowOptionQuoteCacheTtlMsForTests =
+      typeof input.ttlMs === "number" ? Math.max(0, input.ttlMs) : null;
+    shadowOptionQuoteCacheStaleTtlMsForTests =
+      typeof input.staleTtlMs === "number"
+        ? Math.max(0, input.staleTtlMs)
+        : null;
+  },
+  clearShadowOptionQuoteCachesForTests() {
+    shadowOptionQuoteCache.clear();
+    shadowOptionGreekQuoteCache.clear();
+  },
+  rememberShadowOptionQuoteForTests: rememberShadowOptionQuote,
+  readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,
   withShadowReadCache,
   getShadowAccountReadDiagnostics,
   resetShadowAccountReadDiagnosticsForTests,

@@ -507,16 +507,8 @@ const getPriorityDetailGroup = ({ issue, healthStatus, streamStateReason }) => {
   return null;
 };
 
-export const buildHeaderIbkrPopoverModel = ({
-  connection,
-  latencyStats,
-  runtimeDiagnostics,
-  runtimeError,
-  lineUsage: normalizedLineUsage,
-  lineUsageSnapshot,
-}) => {
-  const runtime = runtimeDiagnostics?.ibkr;
-  const detailConnection = runtime
+const buildHeaderIbkrDetailConnection = ({ connection, runtime }) =>
+  runtime
     ? {
         configured: runtime.configured,
         reachable: runtime.connected,
@@ -550,6 +542,170 @@ export const buildHeaderIbkrPopoverModel = ({
         lastError: runtime.lastError || runtime.healthError,
       }
     : connection;
+
+const buildHeaderIbkrIssue = ({
+  connection,
+  health,
+  runtime,
+  runtimeError,
+  recentStreamGapCount,
+  streamActive = false,
+  streamFresh,
+  streamReconnecting = false,
+}) => {
+  const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
+  const governorLastFailure = getGovernorLastFailure(runtime?.governor);
+  const healthErrorText = normalizeHeaderText(runtime?.healthError);
+  const healthBackoff =
+    /backoff|backed off/i.test(
+      `${runtime?.healthErrorCode || ""} ${healthErrorText || ""}`,
+    );
+  const bridgeReachable = headerDetailValue(
+    runtime?.bridgeReachable,
+    runtime?.reachable,
+    connection?.bridgeReachable,
+  );
+  const bridgeNotReachable = bridgeReachable === false;
+  const actionableBridgeError =
+    governorLastFailure && (bridgeNotReachable || healthBackoff)
+      ? governorLastFailure
+      : null;
+  const lastError = headerDetailValue(
+    runtime?.lastError,
+    actionableBridgeError,
+    runtime?.healthError,
+    connection?.lastError,
+  );
+  const diagnosticsErrorText = normalizeHeaderText(runtimeError);
+  let issue = {
+    key: healthyStatus ? health.status : "healthy",
+    label: canonicalizeStreamState(health.status, "offline") === "healthy"
+      ? "Gateway ready for live data."
+      : health.detail,
+    tone: healthyStatus ? CSS_COLOR.textSec : health.color,
+    iconKey: healthyStatus ? "activity" : "alert",
+    autoOpenDetails: false,
+  };
+
+  if (!healthyStatus) {
+    issue = {
+      key: health.status,
+      label: buildIssueLabel(health.detail, lastError),
+      tone: health.color,
+      iconKey: "alert",
+      autoOpenDetails: health.status === "misconfigured",
+    };
+  } else if (Number.isFinite(recentStreamGapCount) && recentStreamGapCount > 0) {
+    issue = {
+      key: "stream-gaps",
+      label: `${Math.round(recentStreamGapCount)} quote data gap${
+        Math.round(recentStreamGapCount) === 1 ? "" : "s"
+      } detected recently. Open Diagnostics for the full stream trace.`,
+      tone: CSS_COLOR.amber,
+      iconKey: "alert",
+      autoOpenDetails: false,
+    };
+  } else if (streamReconnecting && streamActive && streamFresh !== true) {
+    issue = {
+      key: "quote-stream-reconnecting",
+      label: "Gateway is connected, but the quote stream is reconnecting and has not delivered fresh quotes.",
+      tone: CSS_COLOR.amber,
+      iconKey: "alert",
+      autoOpenDetails: false,
+    };
+  } else if (runtime?.legacyIbkrEnvPresent) {
+    issue = {
+      key: "legacy-env",
+      label: "Legacy IBKR env vars are present; review details or Diagnostics.",
+      tone: CSS_COLOR.amber,
+      iconKey: "alert",
+      autoOpenDetails: true,
+    };
+  } else if (diagnosticsErrorText && !runtime) {
+    issue = {
+      key: "diagnostics-unavailable",
+      label: diagnosticsErrorText,
+      tone: CSS_COLOR.amber,
+      iconKey: "alert",
+      autoOpenDetails: false,
+    };
+  }
+
+  return {
+    ...issue,
+    severity: getIssueSeverity(issue),
+  };
+};
+
+export const buildHeaderIbkrTriggerModel = ({
+  connection,
+  runtimeDiagnostics,
+  runtimeError,
+  lineUsageSnapshot = null,
+}) => {
+  const runtime = runtimeDiagnostics?.ibkr;
+  const detailConnection = buildHeaderIbkrDetailConnection({
+    connection,
+    runtime,
+  });
+  const health = resolveIbkrGatewayHealth({
+    connection: detailConnection,
+    runtime,
+  });
+  const issue = buildHeaderIbkrIssue({
+    connection,
+    health,
+    runtime,
+    runtimeError,
+  });
+  const streamStateReason = headerDetailValue(
+    runtime?.streamStateReason,
+    connection?.streamStateReason,
+  );
+  const lineUsage = lineUsageSnapshot
+    ? buildLineUsageRows(
+        selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
+        lineUsageSnapshot,
+      )
+    : null;
+  const compactLineUsage = buildCompactLineUsage(lineUsage);
+
+  return {
+    health,
+    badges: [],
+    issue,
+    tiles: [],
+    providerRows: [],
+    lineUsage,
+    compactLineUsage,
+    // Massive provider status comes from runtimeDiagnostics (polled every ~5s
+    // regardless of popover state), not from line usage. Keep it populated in the
+    // trigger model so the always-visible footer shows live provider status
+    // instead of "No checks yet" while the popover is closed.
+    massive: normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics),
+    detailGroups: [],
+    priorityDetailGroup: getPriorityDetailGroup({
+      issue,
+      healthStatus: health.status,
+      streamStateReason,
+    }),
+    autoOpenDetails: issue.autoOpenDetails,
+  };
+};
+
+export const buildHeaderIbkrPopoverModel = ({
+  connection,
+  latencyStats,
+  runtimeDiagnostics,
+  runtimeError,
+  lineUsage: normalizedLineUsage,
+  lineUsageSnapshot,
+}) => {
+  const runtime = runtimeDiagnostics?.ibkr;
+  const detailConnection = buildHeaderIbkrDetailConnection({
+    connection,
+    runtime,
+  });
   let health = resolveIbkrGatewayHealth({
     connection: detailConnection,
     runtime,
@@ -727,56 +883,16 @@ export const buildHeaderIbkrPopoverModel = ({
     lineUsageSnapshot,
   );
 
-  const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
-  let issue = {
-    key: healthyStatus ? health.status : "healthy",
-    label: canonicalizeStreamState(health.status, "offline") === "healthy"
-      ? "Gateway ready for live data."
-      : health.detail,
-    tone: healthyStatus ? CSS_COLOR.textSec : health.color,
-    iconKey: healthyStatus ? "activity" : "alert",
-    autoOpenDetails: false,
-  };
-
-  if (!healthyStatus) {
-    issue = {
-      key: health.status,
-      label: buildIssueLabel(health.detail, lastError),
-      tone: health.color,
-      iconKey: "alert",
-      autoOpenDetails: health.status === "misconfigured",
-    };
-  } else if (Number.isFinite(recentStreamGapCount) && recentStreamGapCount > 0) {
-    issue = {
-      key: "stream-gaps",
-      label: `${Math.round(recentStreamGapCount)} quote data gap${
-        Math.round(recentStreamGapCount) === 1 ? "" : "s"
-      } detected recently. Open Diagnostics for the full stream trace.`,
-      tone: CSS_COLOR.amber,
-      iconKey: "alert",
-      autoOpenDetails: false,
-    };
-  } else if (streamReconnecting && streamActive && streamFresh !== true) {
-    issue = {
-      key: "quote-stream-reconnecting",
-      label: "Gateway is connected, but the quote stream is reconnecting and has not delivered fresh quotes.",
-      tone: CSS_COLOR.amber,
-      iconKey: "alert",
-      autoOpenDetails: false,
-    };
-  } else if (runtime?.legacyIbkrEnvPresent) {
-    issue = {
-      key: "legacy-env",
-      label: "Legacy IBKR env vars are present; review details or Diagnostics.",
-      tone: CSS_COLOR.amber,
-      iconKey: "alert",
-      autoOpenDetails: true,
-    };
-  }
-  issue = {
-    ...issue,
-    severity: getIssueSeverity(issue),
-  };
+  const issue = buildHeaderIbkrIssue({
+    connection,
+    health,
+    runtime,
+    runtimeError,
+    recentStreamGapCount,
+    streamActive,
+    streamFresh,
+    streamReconnecting,
+  });
   const priorityDetailGroup = getPriorityDetailGroup({
     issue,
     healthStatus: health.status,

@@ -1,3 +1,8 @@
+import {
+  preferSignalMatrixCellState,
+  readSignalMatrixStateActivityMs,
+  signalMatrixStateKey,
+} from "../signals/signalMatrixStateMerge.js";
 import { normalizeSignalStatus } from "../signals/signalStateFreshness.js";
 
 const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
@@ -14,19 +19,19 @@ const SIGNAL_MATRIX_PRESSURE_LEVELS = Object.freeze({
   high: true,
 });
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 480,
-  watch: 240,
-  high: 120,
+  normal: 240,
+  watch: 96,
+  high: 48,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 480,
-  watch: 240,
-  high: 120,
+  normal: 240,
+  watch: 96,
+  high: 48,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 480,
-  watch: 240,
-  high: 120,
+  normal: 240,
+  watch: 96,
+  high: 48,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
@@ -149,7 +154,12 @@ export function buildSignalMatrixSymbolSets({
   const resolvedWideLimit = signalsScreenActive ? null : wideLimit;
   const resolvedNarrowLimit = signalsScreenActive ? null : narrowLimit;
   const priorityBaseSymbols = signalsScreenActive
-    ? [...signalsScreenPriority, ...selected, ...watchlistPriority]
+    ? [
+        ...signalsScreenPriority,
+        ...selected,
+        ...watchlistPriority,
+        ...openPositions,
+      ]
     : [
         ...selected,
         ...watchlistPriority,
@@ -181,18 +191,9 @@ export function buildSignalMatrixSymbolSets({
   };
 }
 
-const readStateTimeMs = (state) =>
-  Math.max(
-    Date.parse(state?.lastEvaluatedAt || "") || 0,
-    Date.parse(state?.latestBarAt || "") || 0,
-    Date.parse(state?.currentSignalAt || "") || 0,
-  );
+const readStateTimeMs = readSignalMatrixStateActivityMs;
 
-const stateKey = (state) => {
-  const symbol = normalizeSymbol(state?.symbol);
-  const timeframe = String(state?.timeframe || "").trim();
-  return symbol && timeframe ? `${symbol}:${timeframe}` : "";
-};
+const stateKey = signalMatrixStateKey;
 
 const normalizeTimeframes = (timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES) => {
   const allowed = new Set(DEFAULT_SIGNAL_MATRIX_TIMEFRAMES);
@@ -206,9 +207,11 @@ const normalizeTimeframes = (timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES) => {
 };
 
 const cellKey = (cell) => `${cell.symbol}:${cell.timeframe}`;
-const isPendingSignalMatrixState = (state) =>
-  normalizeSignalStatus(state) === "pending";
-
+const normalizeCellKey = (cell) => {
+  const symbol = normalizeSymbol(cell?.symbol);
+  const timeframe = String(cell?.timeframe || "").trim();
+  return symbol && timeframe ? `${symbol}:${timeframe}` : "";
+};
 const buildHydrationMap = (states = []) => {
   const bySymbol = new Map();
   states.forEach((state) => {
@@ -331,6 +334,52 @@ export function buildSignalMatrixPendingStates({
       };
     })
     .filter(Boolean);
+}
+
+export function reconcileSignalMatrixPendingStates({
+  currentStates = [],
+  incomingStates = [],
+  requestCells = [],
+  pendingCells = null,
+  clearUnconfirmedPendingStates = false,
+} = {}) {
+  if (!Array.isArray(pendingCells)) {
+    return Array.isArray(currentStates) ? currentStates : [];
+  }
+  const requestedCellKeys = new Set(
+    (Array.isArray(requestCells) ? requestCells : [])
+      .map(normalizeCellKey)
+      .filter(Boolean),
+  );
+  if (!requestedCellKeys.size) {
+    return Array.isArray(currentStates) ? currentStates : [];
+  }
+  const pendingCellKeys = new Set(
+    pendingCells.map(normalizeCellKey).filter(Boolean),
+  );
+  const incomingCellKeys = new Set(
+    (Array.isArray(incomingStates) ? incomingStates : [])
+      .map(stateKey)
+      .filter(Boolean),
+  );
+
+  return (Array.isArray(currentStates) ? currentStates : []).filter((state) => {
+    const key = stateKey(state);
+    if (!key) {
+      return true;
+    }
+    const status = normalizeSignalStatus(state);
+    if (status !== "pending" && status !== "unknown") {
+      return true;
+    }
+    if (!clearUnconfirmedPendingStates && !requestedCellKeys.has(key)) {
+      return true;
+    }
+    if (incomingCellKeys.has(key)) {
+      return false;
+    }
+    return pendingCellKeys.has(key);
+  });
 }
 
 const isHydratedState = (state) =>
@@ -475,9 +524,16 @@ const uniqueCells = (cells = [], options = {}) => {
   return result;
 };
 
+const rotateItems = (items, cursor = 0) => {
+  if (!items.length) return [];
+  const start = Math.max(0, cursor || 0) % items.length;
+  return [...items.slice(start), ...items.slice(0, start)];
+};
+
 const selectExactCells = ({ cells, symbolLimit = null, cellLimit = null }) => {
   const selectedCells = [];
   const selectedSymbols = new Set();
+  let inspectedCount = 0;
   for (const cell of cells) {
     const introducesSymbol = !selectedSymbols.has(cell.symbol);
     if (
@@ -485,15 +541,17 @@ const selectExactCells = ({ cells, symbolLimit = null, cellLimit = null }) => {
       introducesSymbol &&
       selectedSymbols.size >= symbolLimit
     ) {
+      inspectedCount += 1;
       continue;
     }
     if (cellLimit != null && selectedCells.length >= cellLimit) {
       break;
     }
+    inspectedCount += 1;
     selectedSymbols.add(cell.symbol);
     selectedCells.push(cell);
   }
-  return selectedCells;
+  return { cells: selectedCells, inspectedCount };
 };
 
 const selectMissingCellsForRotatedSymbols = ({
@@ -552,6 +610,7 @@ export function buildSignalMatrixExactRequestPlan({
   pressureLevel = "normal",
   backgroundReady = false,
   startupProtectionActive = false,
+  cursor = 0,
   requestSymbolLimit = null,
   requestTaskLimit = null,
   requestExactCellLimit = null,
@@ -571,11 +630,18 @@ export function buildSignalMatrixExactRequestPlan({
   const explicitExactCellLimit = normalizeRequestLimit(requestExactCellLimit);
   const resolvedCellLimit =
     explicitExactCellLimit ?? explicitRequestTaskLimit ?? null;
-  const selectedCells = selectExactCells({
-    cells: normalizedCells,
+  const cursorStart = normalizedCells.length
+    ? Math.max(0, cursor || 0) % normalizedCells.length
+    : 0;
+  const selection = selectExactCells({
+    cells: rotateItems(normalizedCells, cursorStart),
     symbolLimit: explicitRequestLimit,
     cellLimit: resolvedCellLimit,
   });
+  const selectedCells = selection.cells;
+  const nextCursor = normalizedCells.length
+    ? (cursorStart + selection.inspectedCount) % normalizedCells.length
+    : 0;
   const requestSymbols = uniqueSymbols(selectedCells.map((cell) => cell.symbol));
   const requestedTimeframeSet = new Set(
     selectedCells.map((cell) => cell.timeframe),
@@ -605,7 +671,7 @@ export function buildSignalMatrixExactRequestPlan({
     matrixTimeframes,
     requestCells: selectedCells,
     missingCells: normalizedCells,
-    nextCursor: 0,
+    nextCursor,
     backgroundReady: Boolean(backgroundReady),
     backgroundPaused: Boolean(startupProtectionActive),
     startupProtectionActive: Boolean(startupProtectionActive),
@@ -835,13 +901,8 @@ export function mergeSignalMatrixStates({
       return;
     }
     const current = merged.get(key);
-    if (
-      !current ||
-      (isPendingSignalMatrixState(current) && !isPendingSignalMatrixState(state)) ||
-      readStateTimeMs(state) >= readStateTimeMs(current)
-    ) {
-      merged.set(key, state);
-    }
+    const preferred = preferSignalMatrixCellState(current, state);
+    if (preferred) merged.set(key, preferred);
   });
 
   return Array.from(merged.values()).sort((left, right) => {

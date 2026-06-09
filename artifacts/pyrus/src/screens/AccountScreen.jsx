@@ -1024,6 +1024,9 @@ const AccountScreenInner = ({
   const [assetFilter, setAssetFilter] = useState(() =>
     readAccountWorkspaceDefault("accountAssetFilter", "all"),
   );
+  const [sourceFilter, setSourceFilter] = useState(() =>
+    readAccountWorkspaceDefault("accountSourceFilter", "all"),
+  );
   const [orderTab, setOrderTab] = useState(() =>
     readAccountWorkspaceDefault("accountOrderTab", "working"),
   );
@@ -1057,6 +1060,10 @@ const AccountScreenInner = ({
   }, [assetFilter]);
 
   useEffect(() => {
+    writeAccountWorkspaceDefault("accountSourceFilter", sourceFilter);
+  }, [sourceFilter]);
+
+  useEffect(() => {
     writeAccountWorkspaceDefault("accountOrderTab", orderTab);
   }, [orderTab]);
 
@@ -1070,6 +1077,7 @@ const AccountScreenInner = ({
     const listener = () => {
       setRange(normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")));
       setAssetFilter(readAccountWorkspaceDefault("accountAssetFilter", "all"));
+      setSourceFilter(readAccountWorkspaceDefault("accountSourceFilter", "all"));
       setOrderTab(readAccountWorkspaceDefault("accountOrderTab", "working"));
     };
     window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
@@ -1321,7 +1329,7 @@ const AccountScreenInner = ({
           target.accountId,
           {
             ...positionsParams,
-            liveQuotes: target.accountId === "shadow" ? true : undefined,
+            liveQuotes: true,
           },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
@@ -1539,13 +1547,14 @@ const AccountScreenInner = ({
   ]);
   const accountRuntimeControl = useRuntimeControlSnapshot({
     enabled: Boolean(
-      accountPageStreamEnabled &&
+      isVisible &&
+        accountPageStreamEnabled &&
         !shadowMode &&
         accountPrimaryReady,
     ),
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: true,
-    lineUsageStreamEnabled: true,
+    lineUsageEnabled: isVisible,
+    lineUsageStreamEnabled: isVisible,
     lineUsagePollInterval: 2_000,
   });
   const accountWarmupPending = Boolean(
@@ -1632,8 +1641,11 @@ const AccountScreenInner = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
-  const primaryAccountQueriesEnabled = Boolean(
-    accountQueriesEnabled && accountPrimaryReady,
+  const primaryAccountRestQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountPrimaryFallbackReady &&
+          !accountPageStreamFreshness.accountPrimaryFresh)),
   );
   const liveAccountQueriesEnabled = Boolean(
     accountQueriesEnabled &&
@@ -1658,7 +1670,7 @@ const AccountScreenInner = ({
     accountQueriesEnabled && accountDerivedReady,
   );
   const ordersPanelQueriesEnabled = Boolean(
-    primaryAccountQueriesEnabled,
+    primaryAccountRestQueriesEnabled,
   );
   const supportPanelQueriesEnabled = Boolean(
     secondaryAccountQueriesEnabled && activatedAccountPanels.support,
@@ -1676,7 +1688,11 @@ const AccountScreenInner = ({
   useRuntimeWorkloadFlag("account:equity", Boolean(chartRefreshInterval), {
     kind: "poll",
     label: "Account equity",
-    detail: refreshPolicy.streamBacked ? "1s stream" : "60s",
+    detail: refreshPolicy.streamBacked
+      ? "stream"
+      : chartRefreshInterval
+        ? `${Math.round(chartRefreshInterval / 1000)}s`
+        : "idle",
     priority: 6,
   });
 
@@ -1689,13 +1705,13 @@ const AccountScreenInner = ({
     },
   });
   const summaryQuery = useGetAccountSummary(accountRequestId, accountDataParams, {
-    query: {
-      ...QUERY_OPTIONS.query,
-      refetchInterval: liveRefreshInterval,
-      enabled: primaryAccountQueriesEnabled,
-      placeholderData: retainPreviousData,
-      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
-    },
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: liveRefreshInterval,
+        enabled: primaryAccountRestQueriesEnabled,
+        placeholderData: retainPreviousData,
+        ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
+      },
   });
   const equityQuery = useGetAccountEquityHistory(
     accountRequestId,
@@ -1721,7 +1737,7 @@ const AccountScreenInner = ({
     {
       query: {
         ...equityHistoryQuerySettings,
-        refetchInterval: liveRefreshInterval,
+        refetchInterval: chartRefreshInterval,
         enabled: todayPanelQueriesEnabled,
         placeholderData: retainPreviousRangeData("1D"),
       },
@@ -1737,7 +1753,7 @@ const AccountScreenInner = ({
     {
       query: {
         ...equityHistoryQuerySettings,
-        refetchInterval: chartRefreshInterval,
+        refetchInterval: false,
         enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.SPY),
         placeholderData: retainPreviousRangeData(range),
       },
@@ -1753,7 +1769,7 @@ const AccountScreenInner = ({
     {
       query: {
         ...equityHistoryQuerySettings,
-        refetchInterval: chartRefreshInterval,
+        refetchInterval: false,
         enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.QQQ),
         placeholderData: retainPreviousRangeData(range),
       },
@@ -1769,33 +1785,33 @@ const AccountScreenInner = ({
     {
       query: {
         ...equityHistoryQuerySettings,
-        refetchInterval: chartRefreshInterval,
+        refetchInterval: false,
         enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.DJIA),
         placeholderData: retainPreviousRangeData(range),
       },
     },
   );
   const allocationQuery = useGetAccountAllocation(accountRequestId, modeParams, {
-    query: {
-      ...QUERY_OPTIONS.query,
-      refetchInterval: secondaryRefreshInterval,
-      enabled: primaryAccountQueriesEnabled,
-      placeholderData: retainPreviousData,
-      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
-    },
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: secondaryRefreshInterval,
+        enabled: primaryAccountRestQueriesEnabled,
+        placeholderData: retainPreviousData,
+        ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
+      },
   });
   const positionsQuery = useGetAccountPositions(
     accountRequestId,
     {
       ...accountDataParams,
       assetClass: assetFilter === "all" ? undefined : assetFilter,
-      liveQuotes: shadowMode ? true : undefined,
+      liveQuotes: true,
     },
     {
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
-        enabled: primaryAccountQueriesEnabled,
+        enabled: primaryAccountRestQueriesEnabled,
         placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.positions),
       },
@@ -1836,7 +1852,7 @@ const AccountScreenInner = ({
       {
         query: {
           ...equityHistoryQuerySettings,
-          refetchInterval: chartRefreshInterval,
+          refetchInterval: false,
           enabled: performanceCalendarQueriesEnabled,
           placeholderData: retainPreviousRangeData("1Y"),
         },
@@ -1965,13 +1981,13 @@ const AccountScreenInner = ({
     queryClient,
   ]);
   const riskQuery = useGetAccountRisk(accountRequestId, riskParams, {
-    query: {
-      ...QUERY_OPTIONS.query,
-      refetchInterval: secondaryRefreshInterval,
-      enabled: primaryAccountQueriesEnabled,
-      placeholderData: retainPreviousData,
-      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
-    },
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: secondaryRefreshInterval,
+        enabled: primaryAccountRestQueriesEnabled,
+        placeholderData: retainPreviousData,
+        ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
+      },
   });
   const sectionSwitching = Boolean(
     accountSectionPending && summaryQuery.isPlaceholderData,
@@ -2589,7 +2605,8 @@ const AccountScreenInner = ({
               currency={currency}
               assetFilter={assetFilter}
               onAssetFilterChange={setAssetFilter}
-              sourceFilter="all"
+              sourceFilter={sourceFilter}
+              onSourceFilterChange={setSourceFilter}
               onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
               rightRail={shadowMode ? "Shadow positions + marks" : undefined}
               emptyBody={

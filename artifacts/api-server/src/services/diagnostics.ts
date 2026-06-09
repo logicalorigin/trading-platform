@@ -1919,29 +1919,40 @@ function buildIbkrDiagnosticEvents(
 
 function buildIbkrMetrics(runtime: JsonRecord): JsonRecord {
   const ibkr = asJsonRecord(runtime["ibkr"]);
-  const lastTickleAt = timestampMs(ibkr["lastTickleAt"]);
+  const configured = Boolean(ibkr["configured"]);
+  const lastTickleAt = configured ? timestampMs(ibkr["lastTickleAt"]) : null;
   const heartbeatAgeMs =
     lastTickleAt === null ? null : Math.max(0, Date.now() - lastTickleAt);
   return {
-    configured: Boolean(ibkr["configured"]),
-    reachable: Boolean(ibkr["reachable"]),
-    connected: Boolean(ibkr["connected"]),
-    authenticated: Boolean(ibkr["authenticated"]),
-    competing: Boolean(ibkr["competing"]),
+    configured,
+    reachable: configured ? Boolean(ibkr["reachable"]) : false,
+    connected: configured ? Boolean(ibkr["connected"]) : false,
+    authenticated: configured ? Boolean(ibkr["authenticated"]) : false,
+    competing: configured ? Boolean(ibkr["competing"]) : false,
     heartbeatAgeMs,
-    accountCount: numeric(ibkr["accountCount"]) ?? 0,
-    marketDataMode: ibkr["marketDataMode"] ?? null,
-    liveMarketDataAvailable: ibkr["liveMarketDataAvailable"] ?? null,
-    healthFresh: ibkr["healthFresh"] ?? null,
-    healthAgeMs: numeric(ibkr["healthAgeMs"]),
-    streamFresh: ibkr["streamFresh"] ?? null,
-    streamState: ibkr["streamState"] ?? null,
-    streamStateReason: ibkr["streamStateReason"] ?? null,
-    lastStreamEventAgeMs: numeric(ibkr["lastStreamEventAgeMs"]),
-    strictReady: ibkr["strictReady"] ?? null,
-    strictReason: ibkr["strictReason"] ?? null,
-    lastRecoveryAttemptAt: ibkr["lastRecoveryAttemptAt"] ?? null,
-    lastRecoveryError: ibkr["lastRecoveryError"] ?? null,
+    accountCount: configured ? numeric(ibkr["accountCount"]) ?? 0 : 0,
+    marketDataMode: configured ? ibkr["marketDataMode"] ?? null : null,
+    liveMarketDataAvailable: configured
+      ? ibkr["liveMarketDataAvailable"] ?? null
+      : null,
+    healthFresh: configured ? ibkr["healthFresh"] ?? null : false,
+    healthAgeMs: configured ? numeric(ibkr["healthAgeMs"]) : null,
+    streamFresh: configured ? ibkr["streamFresh"] ?? null : false,
+    streamState: configured ? ibkr["streamState"] ?? null : "offline",
+    streamStateReason: configured
+      ? ibkr["streamStateReason"] ?? null
+      : "bridge_not_configured",
+    lastStreamEventAgeMs: configured
+      ? numeric(ibkr["lastStreamEventAgeMs"])
+      : null,
+    strictReady: configured ? ibkr["strictReady"] ?? null : false,
+    strictReason: configured
+      ? ibkr["strictReason"] ?? null
+      : "ibkr_bridge_not_configured",
+    lastRecoveryAttemptAt: configured
+      ? ibkr["lastRecoveryAttemptAt"] ?? null
+      : null,
+    lastRecoveryError: configured ? ibkr["lastRecoveryError"] ?? null : null,
   };
 }
 
@@ -4618,6 +4629,10 @@ export async function pruneDiagnosticStorage(input: {
 export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
   return latestPayload;
 }
+
+export const __diagnosticsInternalsForTests = {
+  buildIbkrMetrics,
+};
 
 export function __resetDiagnosticsStateForTests(): void {
   memorySnapshots.splice(0, memorySnapshots.length);

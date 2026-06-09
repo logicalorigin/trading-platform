@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import {
   EvaluateSignalMonitorBody,
   EvaluateSignalMonitorResponse,
@@ -12,20 +12,116 @@ import {
   ListSignalMonitorBreadthHistoryResponse,
   ListSignalMonitorEventsQueryParams,
   ListSignalMonitorEventsResponse,
+  StreamSignalMonitorMatrixQueryParams,
   UpdateSignalMonitorProfileBody,
   UpdateSignalMonitorProfileResponse,
 } from "@workspace/api-zod";
+import { HttpError } from "../lib/errors";
 import {
+  buildSignalMonitorMatrixStreamBootstrapEvent,
   evaluateSignalMonitor,
   evaluateSignalMonitorMatrix,
   getSignalMonitorProfile,
   getSignalMonitorState,
+  getSignalMonitorMatrixStreamStatus,
   listSignalMonitorBreadthHistory,
   listSignalMonitorEvents,
+  normalizeSignalMonitorMatrixStreamScope,
+  subscribeSignalMonitorMatrixStream,
   updateSignalMonitorProfile,
 } from "../services/signal-monitor";
 
 const router: IRouter = Router();
+
+function splitSignalMonitorMatrixStreamList(value: string | undefined): string[] {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseSignalMonitorMatrixStreamCells(value: string | undefined) {
+  return splitSignalMonitorMatrixStreamList(value).map((item) => {
+    const [symbol = "", timeframe = ""] = item.split(":");
+    return { symbol, timeframe };
+  });
+}
+
+async function startSignalMonitorMatrixSse(
+  req: Request,
+  res: Response,
+  setup: (controls: {
+    writeEvent: (event: string, payload: unknown) => Promise<void>;
+    writeComment: (comment: string) => Promise<void>;
+  }) => Promise<() => void> | (() => void),
+) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  let cleanedUp = false;
+  let nextEventId = 1;
+  let cleanup: () => void = () => {};
+  let unsubscribe: () => void = () => {};
+  const writeChunk = async (chunk: string) => {
+    if (cleanedUp || res.destroyed || res.writableEnded) {
+      return;
+    }
+    res.write(chunk);
+  };
+  const writeEvent = (event: string, payload: unknown) => {
+    const eventId = String(nextEventId);
+    nextEventId += 1;
+    return writeChunk(
+      `id: ${eventId}\n` +
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(payload)}\n\n`,
+    );
+  };
+  const writeComment = (comment: string) =>
+    writeChunk(`: ${comment.replace(/\r?\n/g, " ")}\n\n`);
+  const heartbeat = setInterval(() => {
+    void writeComment(`ping ${new Date().toISOString()}`);
+  }, 15_000);
+  heartbeat.unref?.();
+  cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+    if (!res.destroyed && !res.writableEnded) {
+      res.end();
+    }
+  };
+
+  res.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  try {
+    await writeChunk("retry: 5000\n\n");
+    const setupUnsubscribe =
+      (await setup({ writeEvent, writeComment })) ?? (() => {});
+    if (cleanedUp) {
+      setupUnsubscribe();
+      return;
+    }
+    unsubscribe = setupUnsubscribe;
+  } catch (error) {
+    await writeEvent("error", {
+      stream: "signal-matrix",
+      event: "error",
+      code: "signal_monitor_matrix_stream_setup_failed",
+      detail:
+        error instanceof Error ? error.message : "Signal Matrix stream setup failed.",
+      cooldownMs: 5000,
+    }).catch(() => {});
+    cleanup();
+  }
+}
 
 router.get("/signal-monitor/profile", async (req, res) => {
   const query = GetSignalMonitorProfileQueryParams.parse(req.query);
@@ -61,6 +157,65 @@ router.post("/signal-monitor/matrix", async (req, res) => {
   );
 
   res.json(data);
+});
+
+router.get("/signal-monitor/matrix/stream", async (req, res) => {
+  const query = StreamSignalMonitorMatrixQueryParams.parse(req.query);
+  const scope = normalizeSignalMonitorMatrixStreamScope({
+    environment: query.environment,
+    symbols: splitSignalMonitorMatrixStreamList(query.symbols),
+    timeframes: splitSignalMonitorMatrixStreamList(query.timeframes),
+    cells: parseSignalMonitorMatrixStreamCells(query.cells) as never,
+    clientRole: query.clientRole,
+    requestOrigin: query.requestOrigin,
+  });
+
+  if (!scope.symbols.length) {
+    throw new HttpError(400, "Signal Matrix stream requires symbols or cells.", {
+      code: "signal_monitor_matrix_stream_scope_required",
+      detail:
+        "Provide symbols=AAPL,MSFT or cells=AAPL:1m,MSFT:5m when opening the stream.",
+    });
+  }
+
+  await startSignalMonitorMatrixSse(req, res, async ({ writeEvent }) => {
+    const subscription = await subscribeSignalMonitorMatrixStream({
+      scope,
+      onEvent: (event) => writeEvent(event.event, event),
+    });
+    const matrix = EvaluateSignalMonitorMatrixResponse.parse(
+      await evaluateSignalMonitorMatrix({
+        environment: scope.environment,
+        symbols: scope.exactCells ? undefined : scope.symbols,
+        timeframes: scope.exactCells ? undefined : scope.timeframes,
+        cells: scope.exactCells ? scope.cells : undefined,
+        clientRole: scope.clientRole,
+        requestOrigin: scope.requestOrigin,
+      }),
+    );
+    const bootstrap = buildSignalMonitorMatrixStreamBootstrapEvent(
+      matrix,
+      subscription.scope,
+    );
+    await writeEvent(bootstrap.event, bootstrap);
+    subscription.recordSnapshot(bootstrap.states);
+    await writeEvent(
+      "stream-status",
+      getSignalMonitorMatrixStreamStatus(subscription.scope),
+    );
+    const statusTimer = setInterval(() => {
+      void writeEvent(
+        "stream-status",
+        getSignalMonitorMatrixStreamStatus(subscription.scope),
+      );
+    }, 5_000);
+    statusTimer.unref?.();
+
+    return () => {
+      clearInterval(statusTimer);
+      subscription.unsubscribe();
+    };
+  });
 });
 
 router.get("/signal-monitor/state", async (req, res) => {

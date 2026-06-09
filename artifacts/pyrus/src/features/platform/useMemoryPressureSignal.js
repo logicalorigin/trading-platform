@@ -271,7 +271,6 @@ const readQueryDiagnostics = () => {
   try {
     return (
       window.__PYRUS_MEMORY_DIAGNOSTICS__?.() ||
-      window.__PYRUS_MEMORY_DIAGNOSTICS__?.() ||
       null
     );
   } catch {

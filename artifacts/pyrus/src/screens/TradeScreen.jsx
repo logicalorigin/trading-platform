@@ -180,6 +180,8 @@ import {
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { MetricChip } from "../components/platform/primitives.jsx";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
+import { DockedSheet } from "../components/platform/DockedSheet.jsx";
+import { TradeTicketCollapsedBar } from "../features/trade/TradeTicketCollapsedBar.jsx";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
@@ -227,13 +229,13 @@ const LazyMiniChartTickerSearch = lazyWithRetry(
   { label: "TradeMiniChartTickerSearch" },
 );
 
-const LazyTradeOrderTicket = lazyWithRetry(
-  () =>
-    import("../features/trade/TradeOrderTicket.jsx").then((module) => ({
-      default: module.TradeOrderTicket,
-    })),
-  { label: "TradeOrderTicket" },
-);
+const loadTradeOrderTicket = () =>
+  import("../features/trade/TradeOrderTicket.jsx").then((module) => ({
+    default: module.TradeOrderTicket,
+  }));
+const LazyTradeOrderTicket = lazyWithRetry(loadTradeOrderTicket, {
+  label: "TradeOrderTicket",
+});
 
 const LazyTradeChainPanel = lazyWithRetry(
   () =>
@@ -265,14 +267,6 @@ const LazyTradePositionsPanel = lazyWithRetry(
       default: module.TradePositionsPanel,
     })),
   { label: "TradePositionsPanel" },
-);
-
-const LazyBottomSheet = lazyWithRetry(
-  () =>
-    import("../components/platform/BottomSheet.jsx").then((module) => ({
-      default: module.BottomSheet,
-    })),
-  { label: "TradeBottomSheet" },
 );
 
 const LazyDrawer = lazyWithRetry(
@@ -2213,7 +2207,6 @@ const TradePanelLoadBoundary = ({
 const TRADE_PHONE_PANELS = [
   { id: "chart", label: "Chart" },
   { id: "chain", label: "Chain" },
-  { id: "ticket", label: "Ticket" },
   { id: "positions", label: "Positions" },
 ];
 const TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS = 2_000;
@@ -3476,12 +3469,12 @@ const TradeScreenInner = ({
     ? "minmax(0, 1fr)"
     : tradeIsNarrow
       ? "minmax(0, 1fr) minmax(min(100%, 320px), 0.9fr)"
-      : "minmax(520px, 1.25fr) minmax(300px, 0.75fr) minmax(320px, 0.8fr)";
+      : "minmax(420px, 1.6fr) minmax(300px, 1fr) minmax(340px, 1.3fr)";
   const tradeMiddleGridTemplate = tradeIsPhone
     ? "minmax(0, 1fr)"
     : tradeIsNarrow
       ? "minmax(0, 1.15fr) minmax(min(100%, 360px), 0.85fr)"
-      : "1.55fr 0.95fr 1.2fr";
+      : "1fr 1fr";
   const tradeBottomGridTemplate = tradeIsPhone
     ? "minmax(0, 1fr)"
     : tradeIsNarrow
@@ -3558,7 +3551,10 @@ const TradeScreenInner = ({
   );
   const [visibleOptionChainRows, setVisibleOptionChainRows] = useState([]);
   const [activeTradePhonePanel, setActiveTradePhonePanel] = useState("chart");
-  const [phoneTicketSheetOpen, setPhoneTicketSheetOpen] = useState(false);
+  const [ticketExpanded, setTicketExpanded] = useState(() =>
+    Boolean(_initialState.tradeTicketExpanded),
+  );
+  const [ticketSideRequest, setTicketSideRequest] = useState(null);
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
     onReadinessChange?.({
@@ -3821,28 +3817,26 @@ const TradeScreenInner = ({
     persistState({ tradeOptionChainCoverage });
   }, [tradeOptionChainCoverage]);
   useEffect(() => {
+    persistState({ tradeTicketExpanded: ticketExpanded });
+  }, [ticketExpanded]);
+  useEffect(() => {
     setVisibleOptionChainRows([]);
   }, [activeTicker, contract.exp, tradeOptionChainCoverage]);
   useEffect(() => {
     if (!tradeIsPhone) {
-      setPhoneTicketSheetOpen(false);
       setPhoneL2DrawerOpen(false);
     }
   }, [tradeIsPhone]);
   const handleTradePhonePanelSelect = useCallback((panelId) => {
     setActiveTradePhonePanel(panelId);
-    if (panelId === "ticket") {
-      setPhoneTicketSheetOpen(false);
-    }
   }, []);
-  const openPhoneTicketSheet = useCallback(() => {
-    setActiveTradePhonePanel((current) =>
-      current === "ticket" ? "chart" : current,
-    );
-    setPhoneTicketSheetOpen(true);
+  const toggleTicket = useCallback(() => {
+    setTicketExpanded((value) => !value);
   }, []);
-  const renderInlinePhoneTicket =
-    activeTradePhonePanel === "ticket" && !phoneTicketSheetOpen;
+  const expandTicketWithSide = useCallback((side) => {
+    setTicketSideRequest({ side, nonce: Date.now() });
+    setTicketExpanded(true);
+  }, []);
   useEffect(() => {
     if (typeof activeWorkspace.chainHeatmapEnabled === "boolean") {
       setTradeChainHeatmapEnabled(activeWorkspace.chainHeatmapEnabled);
@@ -4317,6 +4311,8 @@ const TradeScreenInner = ({
           !tradeOrdersQuery.data.degraded,
       )}
       automationContext={automationContextVisible ? automationContext : null}
+      requestedSide={ticketSideRequest?.side ?? null}
+      requestedNonce={ticketSideRequest?.nonce ?? 0}
     />
   );
   const chainPanel = (
@@ -4586,7 +4582,7 @@ const TradeScreenInner = ({
               className="ra-hide-scrollbar"
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                 gap: sp(4),
                 overflowX: "auto",
                 flexShrink: 0,
@@ -4617,13 +4613,6 @@ const TradeScreenInner = ({
                   <TradeDeferredPanel title="Chart" minHeight={260} />
                 )}
                 <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={openPhoneTicketSheet}
-                    style={tradeMobileActionButtonStyle}
-                  >
-                    Ticket
-                  </button>
                   <button
                     type="button"
                     onClick={() => setPhoneL2DrawerOpen(true)}
@@ -4680,24 +4669,6 @@ const TradeScreenInner = ({
               </div>
             ) : null}
 
-            {renderInlinePhoneTicket ? (
-              <div
-                data-testid="trade-order-ticket-zone"
-                className="ra-panel-enter"
-                style={tradeMobileSectionStyle}
-              >
-                {renderTradePanels ? (
-                  orderTicketPanel
-                ) : (
-                  <TradeDeferredPanel
-                    title="Ticket"
-                    testId="trade-order-ticket"
-                    minHeight={240}
-                  />
-                )}
-              </div>
-            ) : null}
-
             {activeTradePhonePanel === "positions" ? (
               <div
                 data-testid="trade-bottom-zone"
@@ -4705,13 +4676,6 @@ const TradeScreenInner = ({
                 style={tradeMobileSectionStyle}
               >
                 <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={openPhoneTicketSheet}
-                    style={tradeMobileActionButtonStyle}
-                  >
-                    Ticket
-                  </button>
                   <button
                     type="button"
                     onClick={() => setPhoneL2DrawerOpen(true)}
@@ -4742,29 +4706,6 @@ const TradeScreenInner = ({
               </div>
             ) : null}
 
-            {phoneTicketSheetOpen ? (
-              <Suspense fallback={null}>
-                <LazyBottomSheet
-                  open={phoneTicketSheetOpen}
-                  onClose={() => setPhoneTicketSheetOpen(false)}
-                  title={`${activeTicker} Order Ticket`}
-                  maxHeight="88dvh"
-                  testId="trade-mobile-ticket-sheet"
-                >
-                  <div data-trade-layout="phone" style={{ padding: sp(6) }}>
-                    {renderTradePanels ? (
-                      orderTicketPanel
-                    ) : (
-                      <TradeDeferredPanel
-                        title="Ticket"
-                        testId="trade-order-ticket"
-                        minHeight={240}
-                      />
-                    )}
-                  </div>
-                </LazyBottomSheet>
-              </Suspense>
-            ) : null}
             {phoneL2DrawerOpen ? (
               <Suspense fallback={null}>
                 <LazyDrawer
@@ -4884,16 +4825,16 @@ const TradeScreenInner = ({
             />
           )}
           {renderTradePanels ? (
-            orderTicketPanel
+            chainPanel
           ) : (
             <TradeDeferredPanel
-              title="Ticket"
-              testId="trade-order-ticket"
+              title="Chain"
+              testId="trade-options-chain-panel"
               minHeight={340}
             />
           )}
         </div>
-        {/* Middle zone: options chain + spot flow + options flow */}
+        {/* Middle zone: spot flow + options flow */}
         <div
           data-testid="trade-middle-zone"
           className="ra-panel-enter"
@@ -4909,17 +4850,11 @@ const TradeScreenInner = ({
         >
           {renderTradePanels ? (
             <>
-              {chainPanel}
               {spotFlowPanel}
               {optionsFlowPanel}
             </>
           ) : (
             <>
-              <TradeDeferredPanel
-                title="Chain"
-                testId="trade-options-chain-panel"
-                minHeight={220}
-              />
               <TradeDeferredPanel
                 title="Spot Flow"
                 testId="trade-spot-flow-panel"
@@ -4976,6 +4911,44 @@ const TradeScreenInner = ({
           </>
         )}
       </div>
+      {/* Persistent, non-modal order ticket as an in-flow footer band, sitting
+          directly above the global pressure/status footer. Collapsed to a
+          summary bar by default; expands up over the charts on tap. The ticket
+          body only mounts after the first expand, so a cold load shows just the
+          bar (no loading container). */}
+      <DockedSheet
+        testId="trade-order-ticket-zone"
+        expanded={ticketExpanded}
+        title={`${activeTicker} Order Ticket`}
+        collapsedHeight={48}
+        maxHeight="72dvh"
+        width={tradeIsPhone ? "100%" : `max(${dim(470)}px, 43%)`}
+        align={tradeIsPhone ? "stretch" : "flex-end"}
+        collapsedBar={
+          <TradeTicketCollapsedBar
+            ticker={activeTicker}
+            contract={contract}
+            expanded={ticketExpanded}
+            onExpand={toggleTicket}
+            onPickSide={expandTicketWithSide}
+          />
+        }
+      >
+        <div
+          data-trade-layout={tradeIsPhone ? "phone" : undefined}
+          style={{ padding: sp(6) }}
+        >
+          {renderTradePanels ? (
+            orderTicketPanel
+          ) : (
+            <TradeDeferredPanel
+              title="Ticket"
+              testId="trade-order-ticket"
+              minHeight={240}
+            />
+          )}
+        </div>
+      </DockedSheet>
     </div>
   );
 };

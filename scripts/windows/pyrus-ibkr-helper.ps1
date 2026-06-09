@@ -14,6 +14,7 @@ param(
     [string]$ProtocolUrl,
     [switch]$Install,
     [switch]$InstallAgent,
+    [switch]$NoStartAgent,
     [switch]$Agent,
     [string]$ActivationUrl,
     [string]$LaunchUrl,
@@ -49,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-04.ib-async-sidecar-v8-foreground-guard'
+$HelperVersion = '2026-06-09.ib-async-sidecar-v15-graceful-deactivate'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -487,7 +488,7 @@ function Install-DesktopAgentStartupFallback([string]$BaseUrl) {
     Write-Log "Installed Pyrus IBKR desktop agent Startup fallback at $startupFile."
 }
 
-function Install-DesktopAgent([string]$BaseUrl) {
+function Install-DesktopAgent([string]$BaseUrl, [bool]$StartAgent = $true) {
     $resolvedBaseUrl = Resolve-DesktopAgentApiBaseUrl -PreferredBaseUrl $BaseUrl
     Save-DesktopAgentConfig -BaseUrl $resolvedBaseUrl
     Install-ProtocolHandler
@@ -497,22 +498,37 @@ function Install-DesktopAgent([string]$BaseUrl) {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$target`" -Agent -ApiBaseUrl `"$resolvedBaseUrl`""
         $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+        $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+        $watchdogTrigger = New-ScheduledTaskTrigger `
+            -Once `
+            -At (Get-Date).AddMinutes(1) `
+            -RepetitionInterval (New-TimeSpan -Minutes 1) `
+            -RepetitionDuration (New-TimeSpan -Days 3650)
+        $settings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries `
+            -StartWhenAvailable `
+            -MultipleInstances IgnoreNew `
+            -RestartCount 999 `
+            -RestartInterval (New-TimeSpan -Minutes 1) `
+            -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
         Register-ScheduledTask `
             -TaskName $DesktopAgentTaskName `
             -Action $action `
-            -Trigger $trigger `
+            -Trigger @($logonTrigger, $watchdogTrigger) `
             -Settings $settings `
             -Description 'Keeps Pyrus IBKR launch requests on this Windows desktop.' `
             -Force `
             | Out-Null
-        Start-ScheduledTask -TaskName $DesktopAgentTaskName -ErrorAction Stop
+        if ($StartAgent) {
+            Start-ScheduledTask -TaskName $DesktopAgentTaskName -ErrorAction Stop
+        }
         Write-Log "Installed Pyrus IBKR desktop agent scheduled task."
     } catch {
         Write-Log "Desktop agent scheduled task install failed: $($_.Exception.Message). Using current-user Startup fallback."
         Install-DesktopAgentStartupFallback -BaseUrl $resolvedBaseUrl
-        Start-DesktopAgentProcess -BaseUrl $resolvedBaseUrl
+        if ($StartAgent) {
+            Start-DesktopAgentProcess -BaseUrl $resolvedBaseUrl
+        }
     }
 }
 
@@ -524,8 +540,10 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
 
     while ($true) {
         try {
-            Register-DesktopAgent -BaseUrl $baseUrl | Out-Null
-            Send-DesktopAgentHeartbeat -BaseUrl $baseUrl | Out-Null
+            $registration = Register-DesktopAgent -BaseUrl $baseUrl
+            Write-DesktopAgentDeferredUpdateHint -Response $registration
+            $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
+            Write-DesktopAgentDeferredUpdateHint -Response $heartbeat
             $job = Claim-DesktopAgentLaunchJob -BaseUrl $baseUrl
             if ($job -and $job.ready -eq $true) {
                 $jobAction = [string]$job.action
@@ -548,6 +566,8 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
                 } else {
                     Write-Log "Desktop agent ignored unsupported IBKR job $($job.jobId) action '$jobAction'."
                 }
+            } else {
+                Write-DesktopAgentDeferredUpdateHint -Response $job
             }
         } catch {
             Write-Log "Desktop agent polling failed: $($_.Exception.Message)"
@@ -622,9 +642,22 @@ function Test-AsyncSidecarReady {
 function Ensure-LocalAsyncSidecar {
     $sidecarProject = Join-Path $RepoDir 'python\ibkr_sidecar'
     $sidecarPyproject = Join-Path $sidecarProject 'pyproject.toml'
+    $sidecarSrc = Join-Path $sidecarProject 'src'
+    $sidecarPackage = Join-Path $sidecarSrc 'pyrus_ibkr_sidecar'
+    $sidecarService = Join-Path $sidecarPackage 'service.py'
     if (-not (Test-Path $sidecarPyproject)) {
         Write-Log "Python IBKR async sidecar project was not found at $sidecarProject; bridge will continue without sidecar proxy backing."
         Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_missing' -Message 'Python IBKR async sidecar was not bundled on this desktop bridge runtime.'
+        return $false
+    }
+    if (-not (Test-Path $sidecarSrc)) {
+        Write-Log "Python IBKR async sidecar source was not found at $sidecarSrc; bridge will continue without sidecar proxy backing."
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_missing' -Message 'Python IBKR async sidecar source was not bundled on this desktop bridge runtime.'
+        return $false
+    }
+    if (-not (Test-Path $sidecarService)) {
+        Write-Log "Python IBKR async sidecar service module was not found at $sidecarService; bridge will continue without sidecar proxy backing."
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_missing' -Message 'Python IBKR async sidecar service module was not bundled on this desktop bridge runtime.'
         return $false
     }
 
@@ -655,11 +688,27 @@ function Ensure-LocalAsyncSidecar {
     $env:PYRUS_IBKR_SIDECAR_MARKET_DATA_TYPE = '1'
     $env:PYRUS_IBKR_SIDECAR_READONLY = 'true'
     $env:PYRUS_IBKR_SIDECAR_LOG_LEVEL = 'info'
+    $env:PYTHONPATH = $sidecarSrc
 
     Send-BridgeProgress -Status 'starting_bridge' -Step 'starting_sidecar' -Message 'Starting the Python IBKR async market-data sidecar.'
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $importCheck = & uv run --project $sidecarProject --python 3.11 python -c 'import pyrus_ibkr_sidecar.service' 2>&1
+        $importExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($importExitCode -ne 0) {
+        $pathDetail = "project=$sidecarProject pyproject=$(Test-Path $sidecarPyproject) src=$sidecarSrc srcExists=$(Test-Path $sidecarSrc) package=$sidecarPackage packageExists=$(Test-Path $sidecarPackage) service=$sidecarService serviceExists=$(Test-Path $sidecarService) pythonpath=$($env:PYTHONPATH)"
+        $detail = Truncate-Message (($importCheck -join "`n") + "`n" + $pathDetail)
+        Write-Log "Python IBKR async sidecar import check failed. $detail"
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_import_failed' -Message (Truncate-Message "Python IBKR async sidecar import check failed. $detail")
+        return $false
+    }
     try {
         $process = Start-Process uv `
-            -WorkingDirectory $RepoDir `
+            -WorkingDirectory $sidecarProject `
             -ArgumentList @('run', '--project', $sidecarProject, '--python', '3.11', 'python', '-m', 'pyrus_ibkr_sidecar.service') `
             -RedirectStandardOutput $out `
             -RedirectStandardError $err `
@@ -798,6 +847,73 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
         | Out-Null
     Write-Log "Relaunched updated Pyrus IBKR helper $requestedVersion."
     exit 0
+}
+
+function Invoke-DesktopAgentSelfUpdateIfNeeded([string]$BaseUrl, $Response) {
+    if (-not $BaseUrl -or -not $Response) {
+        return
+    }
+
+    $requestedVersion = [string]$Response.helperVersion
+    if (-not $requestedVersion -or $requestedVersion -eq $HelperVersion) {
+        return
+    }
+
+    if ($env:PYRUS_IBKR_HELPER_SELF_UPDATE -eq $requestedVersion) {
+        Write-Log "Desktop agent self-update already attempted for $requestedVersion; continuing with local version $HelperVersion."
+        return
+    }
+
+    $helperUrl = [string]$Response.helperUrl
+    if (-not $helperUrl) {
+        $helperUrl = "$($BaseUrl.TrimEnd('/'))/api/ibkr/bridge/helper.ps1"
+    }
+
+    $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
+    $download = Join-Path $StateDir 'pyrus-ibkr-helper.new.ps1'
+    Write-Log "Desktop agent updating Pyrus IBKR helper from $HelperVersion to $requestedVersion."
+    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download
+    if (-not (Test-Path $download) -or (Get-Item $download).Length -lt 4096) {
+        throw 'Downloaded helper was empty or incomplete.'
+    }
+    Copy-Item -Path $download -Destination $target -Force
+    $currentTarget = Resolve-OwnScriptPath
+    if ($currentTarget -and (Test-Path $currentTarget) -and ((Resolve-Path $currentTarget).Path -ne (Resolve-Path $target).Path)) {
+        try {
+            Copy-Item -Path $download -Destination $currentTarget -Force
+        } catch {
+            Write-Log "Updated installed helper, but could not refresh the running desktop agent script path: $($_.Exception.Message)"
+        }
+    }
+    Remove-Item -Path $download -Force -ErrorAction SilentlyContinue
+    $env:PYRUS_IBKR_HELPER_SELF_UPDATE = $requestedVersion
+
+    Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File $target -InstallAgent -NoStartAgent -ApiBaseUrl $BaseUrl
+    $process = Start-Process -FilePath $powershell `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-Agent', '-ApiBaseUrl', $BaseUrl) `
+        -WindowStyle Hidden `
+        -PassThru
+    Set-Content -Path $DesktopAgentPidFile -Value $process.Id
+    Write-Log "Relaunched updated Pyrus IBKR desktop agent $requestedVersion as process $($process.Id)."
+    exit 0
+}
+
+function Write-DesktopAgentDeferredUpdateHint($Response) {
+    if (-not $Response) {
+        return
+    }
+
+    $requestedVersion = [string]$Response.targetHelperVersion
+    if (-not $requestedVersion) {
+        $requestedVersion = [string]$Response.helperVersion
+    }
+    if (-not $requestedVersion -or $requestedVersion -eq $HelperVersion) {
+        return
+    }
+
+    Write-Log "Pyrus IBKR desktop agent update available from $HelperVersion to $requestedVersion; deferring update until the next bridge launch."
 }
 
 function Invoke-BridgeAttach([hashtable]$Body) {
@@ -1036,7 +1152,10 @@ function Stop-IBGatewayProcesses {
         try {
             if ($process.MainWindowHandle -and $process.MainWindowHandle -ne 0) {
                 [void]$process.CloseMainWindow()
-                if ($process.WaitForExit(5000)) {
+                # IB Gateway usually shows an exit-confirmation dialog, so
+                # CloseMainWindow often won't exit; wait briefly then force-kill
+                # rather than stalling the whole deactivate for 5s per process.
+                if ($process.WaitForExit(1500)) {
                     continue
                 }
             }
@@ -2322,11 +2441,12 @@ function Ensure-RepoAndBridgeBuild {
             $bundleDir = Join-Path $StateDir 'bridge-runtime'
             $archive = Join-Path $StateDir 'bridge-bundle.tar.gz'
             $distEntry = Join-Path $bundleDir 'artifacts\ibkr-bridge\dist\index.mjs'
+            $sidecarEntry = Join-Path $bundleDir 'python\ibkr_sidecar\src\pyrus_ibkr_sidecar\service.py'
             Send-BridgeProgress -Status 'starting_bridge' -Step 'downloading_bridge_bundle' -Message 'Downloading the Pyrus IB Gateway bridge bundle.'
             Invoke-WebRequest -UseBasicParsing -Uri $script:BridgeBundleUrl -OutFile $archive
             $currentBundleHash = Get-FileSha256 -Path $archive
             $lastBundleHash = Read-FirstLine -Path $BridgeBundleHashFile
-            $bundleChanged = (-not $currentBundleHash) -or ($currentBundleHash -ne $lastBundleHash) -or (-not (Test-Path $distEntry))
+            $bundleChanged = (-not $currentBundleHash) -or ($currentBundleHash -ne $lastBundleHash) -or (-not (Test-Path $distEntry)) -or (-not (Test-Path $sidecarEntry))
             $script:BridgeBundleChanged = $bundleChanged
             $script:BridgeBundleHash = [string]$currentBundleHash
             $script:RepoDir = $bundleDir
@@ -2344,6 +2464,9 @@ function Ensure-RepoAndBridgeBuild {
 
             if (-not (Test-Path $distEntry)) {
                 throw 'The downloaded IB Gateway bridge bundle is missing artifacts\ibkr-bridge\dist\index.mjs.'
+            }
+            if (-not (Test-Path $sidecarEntry)) {
+                throw 'The downloaded IB Gateway bridge bundle is missing python\ibkr_sidecar\src\pyrus_ibkr_sidecar\service.py.'
             }
 
             Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_bundle_ready' -Message 'IB Gateway bridge bundle is ready.'
@@ -2717,7 +2840,30 @@ function Stop-StaleBridgeNodeProcesses {
     }
 }
 
+function Request-BridgeGracefulShutdown {
+    # Ask the bridge to cleanly disconnect from TWS (release the API client /
+    # clientId) and exit before we force-kill it. Windows has no SIGTERM, so this
+    # HTTP call is how we get a clean shutdown; the Stop-Process calls below remain
+    # the fallback if the bridge is unresponsive.
+    if (-not (Test-Path $BridgeTokenFile)) {
+        return
+    }
+    $token = (Get-Content $BridgeTokenFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (-not $token) {
+        return
+    }
+    try {
+        Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$BridgePort/shutdown" `
+            -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 3 | Out-Null
+        Write-Log 'Requested graceful IBKR bridge shutdown (clean TWS disconnect).'
+        Start-Sleep -Milliseconds 400
+    } catch {
+        Write-Log "Graceful bridge shutdown request failed (will force-stop): $($_.Exception.Message)"
+    }
+}
+
 function Stop-BridgeLaunchChildProcesses {
+    Request-BridgeGracefulShutdown
     Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     Stop-ProcessFromPidFile -PidFile $BridgePidFile -AllowedProcessNames @('node', 'nodejs')
     Stop-ProcessFromPidFile -PidFile $SidecarPidFile -AllowedProcessNames @('uv', 'python', 'python3', 'py')
@@ -3007,7 +3153,7 @@ try {
     }
 
     if ($InstallAgent) {
-        Install-DesktopAgent -BaseUrl $ApiBaseUrl
+        Install-DesktopAgent -BaseUrl $ApiBaseUrl -StartAgent (-not $NoStartAgent)
         exit 0
     }
 
@@ -3043,7 +3189,9 @@ try {
     $script:ApiBaseUrl = (Get-RequiredParam -Params $params -Name 'apiBaseUrl').TrimEnd('/')
     Save-DesktopAgentConfig -BaseUrl $script:ApiBaseUrl
     Invoke-HelperSelfUpdateIfNeeded -Params $params -RawLaunchUrl $rawLaunchUrl
-    if (-not (Test-TruthyParam $params['shutdown'])) {
+    $desktopAgentLaunch = Test-TruthyParam $params['desktopAgentLaunch']
+    if (-not (Test-TruthyParam $params['shutdown']) -and -not $desktopAgentLaunch) {
+        Write-Log 'Windows bridge helper launch accepted; refreshing the desktop agent before continuing.'
         Restart-DesktopAgentProcessWithCurrentHelper -BaseUrl $script:ApiBaseUrl -Reason 'Protocol launch is using the current helper version.'
     }
     if (Test-TruthyParam $params['shutdown']) {

@@ -114,13 +114,19 @@ function createMutableDesiredLine(input: {
     assetClass === "equity"
       ? parsed.symbol
       : normalizeSymbol(input.lease.symbol ?? "") || null;
+  const lineRole = input.lease.lineRoles[input.lineKey] ?? input.lease.role;
+  const equityProviderContractId =
+    assetClass === "equity" && lineRole !== "option-underlier-support"
+      ? input.lease.providerContractId?.trim() || null
+      : null;
 
   return {
     lineKey: normalizedKey ?? input.lineKey,
     assetClass,
     contract: {
       symbol,
-      providerContractId: parsed.providerContractId,
+      providerContractId:
+        assetClass === "equity" ? equityProviderContractId : parsed.providerContractId,
     },
     priority: null,
     reason: "api-admission-live-lease",
@@ -130,6 +136,16 @@ function createMutableDesiredLine(input: {
 }
 
 function addOwner(line: MutableDesiredLine, lease: MarketDataLease): void {
+  const lineRole = lease.lineRoles[line.lineKey] ?? lease.role;
+  const providerContractId = lease.providerContractId?.trim() || null;
+  if (
+    line.assetClass === "equity" &&
+    providerContractId &&
+    lineRole !== "option-underlier-support" &&
+    !line.contract.providerContractId
+  ) {
+    line.contract.providerContractId = providerContractId;
+  }
   const owner: IbkrMarketDataLineOwner = {
     owner: lease.owner,
     ownerClass: lease.ownerClass,
@@ -179,6 +195,16 @@ function hashGeneration(lines: IbkrMarketDataDesiredLine[]): string {
   return `api-admission:${hash.digest("hex").slice(0, 16)}`;
 }
 
+function compareDesiredLinesByPriority(
+  left: IbkrMarketDataDesiredLine,
+  right: IbkrMarketDataDesiredLine,
+): number {
+  return (
+    (right.priority ?? -Infinity) - (left.priority ?? -Infinity) ||
+    left.lineKey.localeCompare(right.lineKey)
+  );
+}
+
 export function buildIbkrSidecarDesiredGeneration(input: {
   admission: AdmissionWithLeases;
   generatedAt?: string;
@@ -200,7 +226,7 @@ export function buildIbkrSidecarDesiredGeneration(input: {
 
   const desiredLines = Array.from(linesByKey.values())
     .map(finalizeDesiredLine)
-    .sort((left, right) => left.lineKey.localeCompare(right.lineKey));
+    .sort(compareDesiredLinesByPriority);
   const ownerCount = new Set(
     desiredLines.flatMap((line) => line.owners.map((owner) => owner.owner)),
   ).size;

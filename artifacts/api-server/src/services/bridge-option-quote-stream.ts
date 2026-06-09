@@ -1,4 +1,3 @@
-import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import {
@@ -27,6 +26,7 @@ import {
   type MarketDataLease,
 } from "./market-data-admission";
 import { subscribeApiResourcePressureChanges } from "./resource-pressure";
+import { isHttpError } from "../lib/errors";
 
 type OptionQuoteWithSource = QuoteSnapshot & {
   source: "ibkr";
@@ -278,6 +278,22 @@ function isCapacityPressureError(error: unknown): boolean {
   );
 }
 
+// A generic "upstream unavailable" result (HTTP 502 from the bridge proxy) means the
+// IBKR options upstream could not be reached — e.g. the options market is closed
+// off-hours. Market data legitimately runs 24/7 (quotes flow in all sessions), so this
+// is an expected data-availability condition, NOT a connection/transport fault. We keep
+// retrying but do not surface it as a hard option-stream `lastError`; real transport,
+// auth, and capacity problems are still reported.
+function isUpstreamUnavailableError(error: unknown): boolean {
+  if (isHttpError(error)) {
+    return (
+      error.code === "upstream_request_failed" ||
+      error.code === "upstream_http_error"
+    );
+  }
+  return readErrorMessage(error).toLowerCase().includes("upstream request failed");
+}
+
 function capacityPressureFromError(
   error: unknown,
 ): "backpressure" | "capacity_limited" {
@@ -308,26 +324,12 @@ function resolveLiveOptionQuotePolicy(input: {
   intent: MarketDataIntent;
   providerContractIds: string[];
 }): LiveOptionQuotePolicy {
-  const providerContractIds = normalizeProviderContractIds(
-    input.providerContractIds,
-  );
-
-  if (input.intent === "flow-scanner-live") {
-    const marketStatus = resolveUsEquityMarketStatus(nowProvider());
-    if (marketStatus.session.key !== "rth") {
-      return {
-        providerContractIds: [],
-        blockedReason: "market_session_quiet",
-        errorCode: "ibkr_live_option_quote_blocked",
-        errorMessage:
-          "IBKR live option quote request blocked because NYSE regular trading is closed.",
-      };
-    }
-
-  }
-
+  // Time-of-day no longer blocks option-quote / position-mark market data: quotes flow in
+  // all sessions (the bridge serves frozen/last-known data off-hours). Trade EXECUTION
+  // remains session-gated in signal-options-automation (entry/exit/overnight) and
+  // algo-gateway, not here. This is a market-data path.
   return {
-    providerContractIds,
+    providerContractIds: normalizeProviderContractIds(input.providerContractIds),
     blockedReason: null,
     errorCode: null,
     errorMessage: null,
@@ -891,6 +893,22 @@ function handleStreamError(expectedSignature: string, error: unknown) {
     return;
   }
 
+  if (isUpstreamUnavailableError(error)) {
+    // Options upstream unavailable (e.g. market closed off-hours). Keep reconnecting
+    // 24/7, but do not record a hard connection error — this is data availability, not
+    // a transport fault.
+    lastSignalAt = now;
+    lastError = null;
+    lastErrorAt = null;
+    logger.info(
+      { err: error, providerContractIds: expectedSignature },
+      "IBKR bridge option quote upstream unavailable; will retry",
+    );
+    stopStream();
+    scheduleReconnect();
+    return;
+  }
+
   lastError = readErrorMessage(error);
   lastErrorAt = now;
   logger.warn(
@@ -1119,14 +1137,15 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
   const normalizedOwner = owner.toLowerCase();
-  const isSignalOptionsLiveQuoteIntent =
+  const isAutomationLiveQuoteIntent =
     intent === "automation-live" &&
     (normalizedOwner.startsWith("signal-options-") ||
-      normalizedOwner.startsWith("signal-options:"));
+      normalizedOwner.startsWith("signal-options:") ||
+      isAutomationDisplayOrPositionMarkOwner(owner));
   const isLiveQuoteSnapshotIntent =
     intent === "flow-scanner-live" ||
     intent === "account-monitor-live" ||
-    isSignalOptionsLiveQuoteIntent;
+    isAutomationLiveQuoteIntent;
   const bridgeWorkCategory: BridgeWorkCategory =
     isLiveQuoteSnapshotIntent ? "quotes" : "options";
   const bridgeWorkOptions = isLiveQuoteSnapshotIntent
@@ -1295,12 +1314,28 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       quote,
     ]),
   );
+  // Read-path guard: a display/monitor read must never synchronously block on a cold
+  // bridge fetch when a (stale) cached quote already exists. Serve the cached value and
+  // let the durable demand stream refresh it in the background. Synchronous hydration is
+  // kept only when (a) there is nothing cached to serve, or (b) the intent/owner is
+  // execution-adjacent and needs a fresh quote for order sizing. This is what prevents a
+  // stale held-position read from triggering the ~20s cold getMarketDataSnapshot path.
+  const requiresFreshSynchronousQuote =
+    (intent === "execution-live" || intent === "automation-live") &&
+    !isAutomationDisplayOrPositionMarkOwner(owner);
+  const servesCachedWithoutBlocking = !requiresFreshSynchronousQuote;
   const hydrateProviderContractIds = admittedProviderContractIds.filter(
-    (providerContractId) =>
-      shouldHydrateQuoteSnapshot(
-        cachedQuotesByProviderContractId.get(providerContractId),
-        { requiresGreeks },
-      ),
+    (providerContractId) => {
+      const cachedQuote =
+        cachedQuotesByProviderContractId.get(providerContractId);
+      if (!shouldHydrateQuoteSnapshot(cachedQuote, { requiresGreeks })) {
+        return false;
+      }
+      if (cachedQuote && servesCachedWithoutBlocking) {
+        return false;
+      }
+      return true;
+    },
   );
 
   if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
@@ -1362,8 +1397,13 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     }
   } catch (error) {
     upstreamErrorMessage = readErrorMessage(error);
-    lastError = upstreamErrorMessage;
-    lastErrorAt = nowProvider();
+    // An upstream-unavailable result (e.g. options market closed off-hours) is expected
+    // data unavailability, not a connection fault: keep it in this read's debug payload
+    // but do not pollute the option-stream `lastError`. Real errors still surface.
+    if (!isUpstreamUnavailableError(error)) {
+      lastError = upstreamErrorMessage;
+      lastErrorAt = nowProvider();
+    }
   } finally {
     input.signal?.removeEventListener("abort", releaseOnAbort);
     if (
@@ -1562,6 +1602,10 @@ export function __cacheBridgeOptionQuoteForTests(
   quote: QuoteSnapshot,
 ): QuoteSnapshot | null {
   return cacheQuote(quote);
+}
+
+export function __getBridgeOptionQuoteLastErrorForTests(): string | null {
+  return lastError;
 }
 
 export function __resetBridgeOptionQuoteStreamForTests(): void {

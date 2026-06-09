@@ -4,6 +4,8 @@ use anyhow::{anyhow, Result};
 pub struct WorkerConfig {
     pub database_url: String,
     pub worker_id: String,
+    pub db_pool_max_connections: u32,
+    pub db_acquire_timeout_ms: u64,
     pub poll_interval_ms: u64,
     pub job_lease_ms: i64,
     pub option_chain_max_pages: usize,
@@ -35,6 +37,8 @@ impl WorkerConfig {
         Ok(Self {
             database_url,
             worker_id,
+            db_pool_max_connections: read_u32_env("MARKET_DATA_WORKER_DB_POOL_MAX", 2),
+            db_acquire_timeout_ms: read_u64_env("MARKET_DATA_WORKER_DB_ACQUIRE_TIMEOUT_MS", 5_000),
             poll_interval_ms: read_u64_env("MARKET_DATA_WORKER_POLL_MS", 3_000),
             job_lease_ms: read_i64_env("MARKET_DATA_JOB_LEASE_MS", 60_000),
             option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
@@ -49,6 +53,14 @@ impl WorkerConfig {
             market_data_provider: read_market_data_provider_config(),
         })
     }
+}
+
+fn read_u32_env(name: &str, fallback: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
 }
 
 fn read_u64_env(name: &str, fallback: u64) -> u64 {

@@ -61,6 +61,7 @@ export const preloadAlgoLivePageModules = () => Promise.resolve();
 const EmptyOperationsState = ({
   candidateDrafts,
   setupDataSettled,
+  deploymentListUnavailable = false,
   selectedDraft,
   setSelectedDraftId,
   deploymentName,
@@ -72,12 +73,16 @@ const EmptyOperationsState = ({
 }) => {
   const title = !setupDataSettled
     ? "Loading Signal Operations"
-    : candidateDrafts.length
+    : deploymentListUnavailable
+      ? "Signal-Options Deployment Data Unavailable"
+      : candidateDrafts.length
       ? "Create Signal-Options Deployment"
       : "Signal-Options Deployment Unavailable";
   const summary = !setupDataSettled
     ? "Fetching algo deployments and signal-options automation state."
-    : candidateDrafts.length
+    : deploymentListUnavailable
+      ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh once API pressure settles."
+      : candidateDrafts.length
       ? "Create a paper deployment from an available strategy draft."
       : "No signal-options deployments are available yet. The default paper deployment should be seeded at startup.";
 
@@ -128,6 +133,21 @@ const EmptyOperationsState = ({
             }}
           >
             Loading algo deployments and signal-options state...
+          </div>
+        ) : deploymentListUnavailable ? (
+          <div
+            data-testid="algo-deployments-unavailable"
+            style={{
+              border: `1px dashed ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.sm),
+              color: CSS_COLOR.textDim,
+              fontFamily: T.sans,
+              fontSize: fs(10),
+              lineHeight: 1.45,
+              padding: sp("14px 10px"),
+            }}
+          >
+            Waiting for a fresh deployment list...
           </div>
         ) : candidateDrafts.length ? (
           <div style={{ display: "grid", gap: sp(7) }}>
@@ -241,6 +261,14 @@ const compactDeploymentName = (deployment) => {
   return compact || normalized || "Deployment";
 };
 
+const resolveDeploymentAccountLabel = ({ deployment, accountId }) => {
+  const providerAccountId = deployment?.providerAccountId || null;
+  if (providerAccountId) {
+    return providerAccountId;
+  }
+  return accountId || null;
+};
+
 const headerChipStyle = ({ color = CSS_COLOR.textMuted, active = false } = {}) => ({
   display: "inline-flex",
   alignItems: "center",
@@ -274,9 +302,8 @@ const headerActionButtonStyle = ({ color, disabled = false, divided = false } = 
   color: disabled ? CSS_COLOR.textMuted : color,
 });
 
-const resolveAttentionSeverity = (attentionItems = []) => {
+export const resolveAttentionSeverity = (attentionItems = []) => {
   if (!attentionItems?.length) return null;
-  if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
   if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
   return "info";
 };
@@ -290,15 +317,37 @@ const resolveHeaderScanWaveMotion = (status) => {
   return "flat";
 };
 
-const resolveHeaderScanWave = ({
+export const resolveHeaderScanWave = ({
   scanRunning = false,
   refreshPending = false,
   deploymentEnabled = false,
-  gatewayReady = false,
+  signalScanReady = true,
   attentionSeverity = null,
 } = {}) => {
+  const infoOnlyScanPause = signalScanReady === false && attentionSeverity === "info";
+  if (infoOnlyScanPause) {
+    const status = scanRunning ? "healthy" : refreshPending ? "checking" : "no-subscribers";
+    const state = canonicalizeStreamState(status, "no-subscribers");
+    const badgeLabel =
+      state === "healthy"
+        ? scanRunning
+          ? "scanning"
+          : "running"
+        : state === "checking"
+          ? "syncing"
+          : "paused";
+    return {
+      status: state,
+      wave: resolveHeaderScanWaveMotion(state),
+      color: streamStateTokenVar(state),
+      label: `Signal-options ${badgeLabel}`,
+      badgeLabel,
+      active: state !== "no-subscribers",
+    };
+  }
+
   const operationsStatus = resolveOperationsStatus({
-    gatewayReady,
+    gatewayReady: signalScanReady,
     scanOn: deploymentEnabled,
     deploymentEnabled,
     attentionSeverity,
@@ -485,6 +534,7 @@ export const AlgoLivePage = ({
   deployments,
   candidateDrafts,
   setupDataSettled = true,
+  deploymentListUnavailable = false,
   selectedDraft,
   setSelectedDraftId,
   deploymentName,
@@ -509,6 +559,8 @@ export const AlgoLivePage = ({
   cockpitAttentionItems,
   signalOptionsRuleAdherence,
   gatewayReady,
+  signalScanReady = true,
+  signalScanBlockedReason = null,
   // Transitions
   transitions,
   // Signals
@@ -519,6 +571,7 @@ export const AlgoLivePage = ({
   onRequestSignalMatrixHydration = null,
   selectedCandidate,
   signalOptionsProfile,
+  staSignalTimeframes,
   onOpenCandidateInTrade,
   safeQaMode = false,
   backgroundQueriesEnabled = false,
@@ -644,6 +697,7 @@ export const AlgoLivePage = ({
       <EmptyOperationsState
         candidateDrafts={candidateDrafts}
         setupDataSettled={setupDataSettled}
+        deploymentListUnavailable={deploymentListUnavailable}
         selectedDraft={selectedDraft}
         setSelectedDraftId={setSelectedDraftId}
         deploymentName={deploymentName}
@@ -685,17 +739,20 @@ export const AlgoLivePage = ({
     scanMutationPending || Boolean(algoExecutionScanRunning);
   const scanButtonLabel = scanOperationRunning ? "Scanning" : "Scan";
   const safeQaControlsPaused = Boolean(safeQaMode);
+  const scanBlocked = !signalScanReady;
   const deploymentToggleDisabled =
     safeQaControlsPaused ||
     enableDeploymentMutation?.isPending ||
     pauseDeploymentMutation?.isPending;
   const scanButtonDisabled =
-    safeQaControlsPaused || scanOperationRunning;
+    safeQaControlsPaused || scanOperationRunning || scanBlocked;
   const deploymentToggleActionLabel = safeQaControlsPaused
     ? "Deployment controls paused in safe QA"
     : deploymentToggleLabel;
   const scanButtonActionLabel = safeQaControlsPaused
     ? "Options strategy scan paused in safe QA"
+    : scanBlocked
+      ? signalScanBlockedReason || "Signal scan unavailable"
     : scanOperationRunning
       ? "Options strategy scan already running"
       : "Scan now";
@@ -717,21 +774,30 @@ export const AlgoLivePage = ({
     scanRunning: scanOperationRunning,
     refreshPending,
     deploymentEnabled: Boolean(focusedDeployment?.enabled),
-    gatewayReady,
+    signalScanReady,
     attentionSeverity,
   });
   const deploymentMode = String(
     focusedDeployment?.mode || environment || "",
   ).toUpperCase();
   const symbolCount = focusedDeployment?.symbolUniverse?.length ?? 0;
-  const accountLabel =
-    accountId || focusedDeployment?.providerAccountId || null;
+  const accountLabel = resolveDeploymentAccountLabel({
+    deployment: focusedDeployment,
+    accountId,
+  });
   const headerStatusItems = [
     deploymentMode
       ? { label: deploymentMode, color: CSS_COLOR.textSec, active: false }
       : null,
+    signalScanReady
+      ? null
+      : {
+          label: "scan paused",
+          color: CSS_COLOR.amber,
+          active: true,
+        },
     {
-      label: gatewayReady ? "data on" : "data blocked",
+      label: gatewayReady ? "broker ready" : "broker off",
       color: gatewayReady ? CSS_COLOR.green : CSS_COLOR.amber,
       active: !gatewayReady,
     },
@@ -1227,6 +1293,7 @@ export const AlgoLivePage = ({
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+            signalTimeframes={staSignalTimeframes}
             cockpitGeneratedAt={cockpitGeneratedAt}
             cockpitStageItems={cockpitStageItems}
             events={events}

@@ -182,7 +182,7 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
   const request = (async () => {
     const [positions, workingOrders, historyOrders, closedTrades] =
       await Promise.all([
-        getShadowAccountPositions({ liveQuotes: false }),
+        getShadowAccountPositions({ liveQuotes: true }),
         getShadowAccountOrders({ tab: "working" }),
         getShadowAccountOrders({ tab: "history" }),
         getShadowAccountClosedTrades({}),

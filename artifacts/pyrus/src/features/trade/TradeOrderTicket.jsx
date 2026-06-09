@@ -145,6 +145,8 @@ export const TradeOrderTicket = ({
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   gatewayTradingBlockReason = "gateway",
   automationContext = null,
+  requestedSide = null,
+  requestedNonce = 0,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -271,7 +273,7 @@ export const TradeOrderTicket = ({
     ],
     queryFn: () =>
       platformJsonRequest(
-        "/api/accounts/shadow/positions?mode=paper&assetClass=Options",
+        "/api/accounts/shadow/positions?mode=paper&assetClass=Options&liveQuotes=false",
       ),
     enabled: Boolean(ticketIsOptions && selectedContractMeta && expInfo.actualDate),
     staleTime: 15_000,
@@ -503,6 +505,14 @@ export const TradeOrderTicket = ({
       setOrderType("LMT");
     }
   };
+  // Preselect side when the docked collapsed bar requests it (BUY/SELL pills).
+  // Keyed on requestedNonce so re-tapping the same pill re-asserts the side.
+  useEffect(() => {
+    if (requestedSide === "BUY" || requestedSide === "SELL") {
+      selectSide(requestedSide);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedNonce, requestedSide]);
   const renderTicketAssetModeControls = () => (
     <div
       data-testid="trade-ticket-asset-mode"

@@ -359,6 +359,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       ["run", "python", "-m", "pyrus_compute.service"],
       {
         cwd: this.config.cwd,
+        detached: process.platform !== "win32",
         env: {
           ...process.env,
           PYRUS_PYTHON_COMPUTE_HOST: this.config.host,
@@ -476,7 +477,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   stop(): void {
     this.stopping = true;
     if (this.child) {
-      this.child.kill("SIGTERM");
+      stopPythonComputeChildProcess(this.child);
       this.child = null;
     }
     this.diagnostics.pid = null;
@@ -569,6 +570,31 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       });
     }, backoffMs).unref();
   }
+}
+
+type StopPythonComputeChildProcessDeps = {
+  platform?: NodeJS.Platform;
+  kill?: typeof process.kill;
+};
+
+export function stopPythonComputeChildProcess(
+  child: ChildProcess,
+  deps: StopPythonComputeChildProcessDeps = {},
+): void {
+  const platform = deps.platform ?? process.platform;
+  const killProcess = deps.kill ?? process.kill;
+  if (child.pid && platform !== "win32") {
+    try {
+      killProcess(-child.pid, "SIGTERM");
+      return;
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code;
+      if (code === "ESRCH") {
+        return;
+      }
+    }
+  }
+  child.kill("SIGTERM");
 }
 
 function terminalJobStatus(status: PythonComputeJobResult["status"]): boolean {

@@ -120,3 +120,68 @@ test("keeps launch activity visible before the bridge is connected", () => {
   assert.equal(snapshot.runtimeDiagnostics.ibkr.connected, false);
   assert.equal(snapshot.runtimeDiagnostics.ibkr.activation.active, true);
 });
+
+test("suppresses stale broker proof after deactivation clears configuration", () => {
+  const snapshot = buildIbkrConnectionSnapshot({
+    session: {
+      configured: { ibkr: false },
+      environment: "paper",
+      ibkrBridge: null,
+      runtime: {
+        ibkr: {
+          runtimeOverrideActive: false,
+          runtimeOverrideUpdatedAt: null,
+          desktopAgentOnline: true,
+          desktopAgentRegistered: true,
+          desktopAgentRegisteredCount: 1,
+          desktopAgentCompatibility: "update_required",
+          desktopAgentCompatible: false,
+          desktopAgentHelperVersion:
+            "2026-06-07.ib-async-sidecar-v13-desktop-agent",
+          desktopAgentExpectedHelperVersion:
+            "2026-06-09.ib-async-sidecar-v14-sidecar-import-stderr-not-error",
+          desktopAgentUpgradeRequired: true,
+          reconnectAvailable: true,
+          activation: { active: false },
+          reachable: true,
+          connected: true,
+          authenticated: true,
+          bridgeReachable: true,
+          socketConnected: true,
+          brokerServerConnected: true,
+          accountsLoaded: true,
+          accountCount: 1,
+          selectedAccountId: "DU1234567",
+          configuredLiveMarketDataMode: true,
+          healthFresh: true,
+          streamFresh: true,
+          streamState: "live",
+          strictReady: true,
+        },
+      },
+      timestamp: "2026-06-09T03:32:46.000Z",
+    },
+    nowMs: Date.parse("2026-06-09T03:32:46.000Z"),
+  });
+
+  const ibkr = snapshot.runtimeDiagnostics.ibkr;
+
+  assert.equal(snapshot.available, true);
+  assert.equal(ibkr.configured, false);
+  assert.equal(ibkr.desktopAgentOnline, true);
+  assert.equal(ibkr.reconnectAvailable, true);
+  assert.equal(ibkr.bridgeUrlConfigured, false);
+  assert.equal(ibkr.reachable, false);
+  assert.equal(ibkr.connected, false);
+  assert.equal(ibkr.authenticated, false);
+  assert.equal(ibkr.bridgeReachable, false);
+  assert.equal(ibkr.socketConnected, false);
+  assert.equal(ibkr.brokerServerConnected, false);
+  assert.equal(ibkr.accountsLoaded, false);
+  assert.equal(ibkr.accountCount, 0);
+  assert.equal(ibkr.selectedAccountId, null);
+  assert.equal(ibkr.configuredLiveMarketDataMode, false);
+  assert.equal(ibkr.healthFresh, false);
+  assert.equal(ibkr.streamFresh, false);
+  assert.equal(ibkr.strictReady, false);
+});

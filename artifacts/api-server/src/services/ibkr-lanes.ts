@@ -231,6 +231,8 @@ const optionsFlowBounds: Partial<
   optionUpstreamBackoffMs: { min: 1_000, max: 300_000, unit: "ms" },
   optionChainBatchConcurrency: { min: 1, max: 8 },
   scannerIntervalMs: { min: 1_000, max: 300_000, unit: "ms" },
+  scannerSymbolTimeoutMs: { min: 1_000, max: 120_000, unit: "ms" },
+  scannerMetadataTimeoutMs: { min: 500, max: 45_000, unit: "ms" },
   universeSize: { min: 1, max: 2_000 },
   universeRefreshMs: { min: 60_000, max: 3_600_000, unit: "ms" },
   universeMinPrice: { min: 0.01, max: 1_000 },

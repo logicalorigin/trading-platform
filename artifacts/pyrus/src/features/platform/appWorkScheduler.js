@@ -46,7 +46,7 @@ const PRESSURE_CAPS = {
     signalDisplayPollMinMs: 0,
     signalMatrixPollMinMs: 0,
     sparklineEnabled: true,
-    sparklineConcurrency: 4,
+    sparklineConcurrency: 2,
     prioritySparklineSymbolLimit: null,
   },
   high: {
@@ -58,9 +58,9 @@ const PRESSURE_CAPS = {
     signalMatrixNarrowSymbolLimit: 500,
     signalDisplayPollMinMs: 30_000,
     signalMatrixPollMinMs: 60_000,
-    sparklineEnabled: true,
-    sparklineConcurrency: 4,
-    prioritySparklineSymbolLimit: null,
+    sparklineEnabled: false,
+    sparklineConcurrency: 0,
+    prioritySparklineSymbolLimit: 0,
   },
 };
 
@@ -69,7 +69,9 @@ export const buildPlatformPressureCaps = (level) => ({
 });
 
 const memoryHydrationPressureState = (memoryPressureLevel) => {
-  void memoryPressureLevel;
+  const level = normalizeMemoryPressureLevel(memoryPressureLevel);
+  if (level === "high") return "backoff";
+  if (level === "watch") return "degraded";
   return "normal";
 };
 

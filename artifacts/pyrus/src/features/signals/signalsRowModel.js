@@ -7,6 +7,7 @@ import {
   isStaleSignalState,
   normalizeSignalStatus,
 } from "./signalStateFreshness.js";
+import { preferSignalMatrixCellState } from "./signalMatrixStateMerge.js";
 
 export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze([
   "1m",
@@ -53,6 +54,28 @@ const SIGNAL_MATRIX_TOTAL_WEIGHT = SIGNALS_TABLE_TIMEFRAMES.reduce(
   (sum, timeframe) => sum + (SIGNAL_MATRIX_TIMEFRAME_WEIGHTS[timeframe] || 0),
   0,
 );
+
+const normalizeSignalMatrixTimeframes = (timeframes = SIGNALS_TABLE_TIMEFRAMES) => {
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(timeframes) && timeframes.length
+        ? timeframes
+        : SIGNALS_TABLE_TIMEFRAMES
+      )
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter((timeframe) => SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)),
+    ),
+  );
+  return normalized.length ? normalized : [...SIGNALS_TABLE_TIMEFRAMES];
+};
+
+const signalMatrixTotalWeight = (timeframes = SIGNALS_TABLE_TIMEFRAMES) => {
+  const total = normalizeSignalMatrixTimeframes(timeframes).reduce(
+    (sum, timeframe) => sum + (SIGNAL_MATRIX_TIMEFRAME_WEIGHTS[timeframe] || 0),
+    0,
+  );
+  return total || SIGNAL_MATRIX_TOTAL_WEIGHT;
+};
 const SIGNAL_MATRIX_LOWER_TIMEFRAMES = Object.freeze(["1m", "2m"]);
 const SIGNAL_MATRIX_HIGHER_TIMEFRAMES = Object.freeze(["15m", "1h", "1d"]);
 const SIGNAL_MATRIX_EXECUTION_TIMEFRAME = "5m";
@@ -197,7 +220,7 @@ export const buildSignalMatrixStatesBySymbol = (states = []) => {
     const timeframe = String(state?.timeframe || "").trim();
     if (!symbol || !timeframe) return;
     const current = bySymbol.get(symbol) || {};
-    current[timeframe] = preferLatestState(current[timeframe], state);
+    current[timeframe] = preferSignalMatrixCellState(current[timeframe], state);
     bySymbol.set(symbol, current);
   });
   return bySymbol;
@@ -400,7 +423,11 @@ export const hydrateSignalMatrixProfileTimeframe = ({
   matrixStatesByTimeframe,
   primaryState,
   profileTimeframe,
+  includePrimaryFallback = true,
 }) => {
+  if (!includePrimaryFallback) {
+    return matrixStatesByTimeframe || {};
+  }
   const timeframe = String(primaryState?.timeframe || profileTimeframe || "").trim();
   if (!SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)) {
     return matrixStatesByTimeframe || {};
@@ -464,13 +491,18 @@ export const resolveSignalMatrixVerdict = ({
   matrixStatesByTimeframe = {},
   dashboardSummary = null,
   profileTimeframe = null,
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+  includePrimaryFallback = true,
 } = {}) => {
+  const matrixTimeframes = normalizeSignalMatrixTimeframes(timeframes);
+  const totalWeight = signalMatrixTotalWeight(matrixTimeframes);
   const hydratedMatrixStatesByTimeframe = hydrateSignalMatrixProfileTimeframe({
     matrixStatesByTimeframe,
     primaryState,
     profileTimeframe,
+    includePrimaryFallback,
   });
-  const entries = SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => {
+  const entries = matrixTimeframes.map((timeframe) => {
     const state = hydratedMatrixStatesByTimeframe?.[timeframe] || null;
     const direction = getCurrentSignalDirection(state) || null;
     const current = isSignalStateCurrent(state);
@@ -500,10 +532,14 @@ export const resolveSignalMatrixVerdict = ({
     .filter((entry) => entry.fresh)
     .reduce((sum, entry) => sum + entry.weight, 0);
   const freshnessScore = clampScore(
-    SIGNAL_MATRIX_TOTAL_WEIGHT ? (freshWeight / SIGNAL_MATRIX_TOTAL_WEIGHT) * 100 : 0,
+    totalWeight ? (freshWeight / totalWeight) * 100 : 0,
   );
+  const requiredCurrentEntryCount = Math.min(2, matrixTimeframes.length);
 
-  if (currentComputedEntries.length < 2 || activeEntries.length === 0) {
+  if (
+    currentComputedEntries.length < requiredCurrentEntryCount ||
+    activeEntries.length === 0
+  ) {
     const verdict = {
       direction: null,
       regime: "no_data",
@@ -544,8 +580,8 @@ export const resolveSignalMatrixVerdict = ({
     ? weightedDirection(activeEntries, opposingDirection)
     : 0;
   const alignmentScore = clampScore(
-    SIGNAL_MATRIX_TOTAL_WEIGHT
-      ? (dominantWeight / SIGNAL_MATRIX_TOTAL_WEIGHT) * 100
+    totalWeight
+      ? (dominantWeight / totalWeight) * 100
       : 0,
   );
   const lowerEntries = activeEntries.filter((entry) =>
@@ -575,6 +611,8 @@ export const resolveSignalMatrixVerdict = ({
   const dashboardMtfBlocked = (dashboardSummary?.mtf || []).some(
     (entry) => entry?.required && entry.pass === false,
   );
+  const confirmationEntryCount = Math.min(4, matrixTimeframes.length);
+  const higherConfirmationCount = Math.min(2, higherEntries.length);
 
   let regime = "mixed";
   if (!direction || buyWeight === sellWeight) {
@@ -607,7 +645,10 @@ export const resolveSignalMatrixVerdict = ({
       regime !== "mixed" &&
       regime !== "reversal_attempt" &&
       opposingWeight === 0 &&
-      (activeEntries.length >= 4 || (fiveMinuteAligned && higherAlignedCount >= 2)),
+      (activeEntries.length >= confirmationEntryCount ||
+        (fiveMinuteAligned &&
+          higherConfirmationCount > 0 &&
+          higherAlignedCount >= higherConfirmationCount)),
   );
   let transition = "building";
   if (regime === "mixed") {
@@ -1005,6 +1046,12 @@ export const sortSignalsRows = (
   sorted.sort((left, right) => {
     if (sortKey === "symbol") {
       return multiplier * left.symbol.localeCompare(right.symbol);
+    }
+    if (sortKey === "rank") {
+      return (
+        compareNumberAsc(left.universeRank, right.universeRank, multiplier) ||
+        fallbackCompare(left, right)
+      );
     }
     if (sortKey === "signal" || sortKey === "priority") {
       return fallbackCompare(left, right);

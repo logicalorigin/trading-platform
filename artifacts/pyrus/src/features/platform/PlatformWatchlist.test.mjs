@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { resolveWatchlistSparklineData } from "./PlatformWatchlist.jsx";
+
+const readLocalSource = (filename) =>
+  readFileSync(new URL(filename, import.meta.url), "utf8");
 
 test("watchlist sparkline resolver uses live snapshot spark bars first", () => {
   const snapshotSparkBars = [{ close: 100 }, { close: 101 }];
@@ -104,5 +108,47 @@ test("watchlist sparkline resolver does not let non-drawable live data mask gene
       data: generatedSparkline,
       source: "generated-price-fallback",
     },
+  );
+});
+
+test("watchlist signal display does not read the one-state monitor store or signal price", () => {
+  const source = readLocalSource("./PlatformWatchlist.jsx");
+
+  assert.equal(source.includes("useSignalMonitorStateForSymbol"), false);
+  assert.equal(source.includes("useSignalMonitorSnapshot"), false);
+  assert.equal(source.includes("currentSignalPrice"), false);
+});
+
+test("watchlist sparklines stay on sparkline data paths, not chart hydration", () => {
+  const watchlistSource = readLocalSource("./PlatformWatchlist.jsx");
+  const marketDataSource = readLocalSource("./MarketDataSubscriptionProvider.jsx");
+
+  assert.equal(watchlistSource.includes("ResearchChartSurface"), false);
+  assert.match(marketDataSource, /"market-sparklines"/);
+  assert.match(
+    marketDataSource,
+    /buildBarsRequestOptions\(\s*BARS_REQUEST_PRIORITY\.background,\s*"sparkline",?\s*\)/s,
+  );
+});
+
+test("platform bubble surfaces receive broad monitor states with matrix overlay", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+
+  assert.equal(source.includes("signalMatrixStates={signalMatrixSnapshot.states}"), false);
+  assert.match(
+    source,
+    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalMatrixStates\(\{/s,
+  );
+  assert.match(
+    source,
+    /currentStates:\s*signalMonitorStates,\s*incomingStates:\s*signalMatrixSnapshot\.states/s,
+  );
+  assert.equal(
+    source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)?.length,
+    2,
+  );
+  assert.match(
+    source,
+    /const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;/,
   );
 });

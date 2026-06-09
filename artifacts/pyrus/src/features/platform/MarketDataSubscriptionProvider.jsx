@@ -15,7 +15,10 @@ import {
   useIbkrQuoteSnapshotStream,
   usePositionQuoteSnapshotStream,
 } from "./live-streams";
-import { usePositionMarketDataSymbols } from "./positionMarketDataStore";
+import {
+  applyPositionQuoteSnapshots,
+  usePositionMarketDataSymbols,
+} from "./positionMarketDataStore";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
   BARS_QUERY_DEFAULTS,
@@ -116,7 +119,15 @@ const thinBarsForSparkline = (bars, limit = SPARKLINE_RENDER_POINT_LIMIT) => {
   });
 };
 
-const hasUsableSparklineBars = (bars) => Array.isArray(bars) && bars.length >= 2;
+const sparklineBarCloseValue = (bar) => {
+  const close = Number(bar?.close ?? bar?.c ?? bar?.v);
+  return Number.isFinite(close) ? close : null;
+};
+
+const hasUsableSparklineBars = (bars) =>
+  (Array.isArray(bars) ? bars : []).filter(
+    (bar) => sparklineBarCloseValue(bar) != null,
+  ).length >= 2;
 
 const aggregateToSparklineBar = (aggregate) => ({
   timestamp:
@@ -499,6 +510,13 @@ export const MarketDataSubscriptionProvider = ({
     },
     [activeWatchlistItems],
   );
+  const handlePositionStreamQuotes = useCallback(
+    (quotes) => {
+      applyPositionQuoteSnapshots(quotes);
+      applyRuntimeQuoteSnapshots(quotes, activeWatchlistItems);
+    },
+    [activeWatchlistItems],
+  );
 
   useIbkrQuoteSnapshotStream({
     symbols: streamedQuoteSymbols,
@@ -508,7 +526,7 @@ export const MarketDataSubscriptionProvider = ({
   usePositionQuoteSnapshotStream({
     symbols: positionQuoteSymbols,
     enabled: positionQuoteStreamRuntimeActive,
-    onQuotes: handleStreamQuotes,
+    onQuotes: handlePositionStreamQuotes,
   });
   useBrokerStockAggregateStream({
     symbols: streamedAggregateSymbols,

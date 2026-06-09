@@ -17,6 +17,7 @@ import {
 
 const router: IRouter = Router();
 const IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS = 2_000;
+const IBKR_LINE_USAGE_ROUTE_STALE_TTL_MS = 30_000;
 const IBKR_LINE_USAGE_COMPACT_DETAIL = "compact";
 const IBKR_LINE_USAGE_FULL_DETAIL = "full";
 
@@ -27,6 +28,7 @@ type IbkrLineUsageRouteSnapshot = Awaited<
 let ibkrLineUsageRouteCache: {
   snapshot: IbkrLineUsageRouteSnapshot;
   expiresAt: number;
+  staleUntil: number;
 } | null = null;
 let ibkrLineUsageRouteInFlight: Promise<IbkrLineUsageRouteSnapshot> | null = null;
 
@@ -344,6 +346,8 @@ function compactLineUsageSnapshot(
       "applyGenerationId",
       "applyStartedAt",
       "applyCompletedAt",
+      "lastError",
+      "health",
       "comparison",
     ]),
   };
@@ -370,19 +374,14 @@ function formatIbkrLineUsageRouteSnapshot(
     : compactLineUsageSnapshot(snapshot);
 }
 
-async function getCachedIbkrLineUsageSnapshot(): Promise<IbkrLineUsageRouteSnapshot> {
-  const now = Date.now();
-  if (ibkrLineUsageRouteCache && ibkrLineUsageRouteCache.expiresAt > now) {
-    return ibkrLineUsageRouteCache.snapshot;
-  }
-  if (ibkrLineUsageRouteInFlight) {
-    return ibkrLineUsageRouteInFlight;
-  }
+function refreshIbkrLineUsageRouteCache(): Promise<IbkrLineUsageRouteSnapshot> {
   const request = getIbkrLineUsageSnapshot()
     .then((snapshot) => {
+      const refreshedAt = Date.now();
       ibkrLineUsageRouteCache = {
         snapshot,
-        expiresAt: Date.now() + IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS,
+        expiresAt: refreshedAt + IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS,
+        staleUntil: refreshedAt + IBKR_LINE_USAGE_ROUTE_STALE_TTL_MS,
       };
       return snapshot;
     })
@@ -393,6 +392,26 @@ async function getCachedIbkrLineUsageSnapshot(): Promise<IbkrLineUsageRouteSnaps
     });
   ibkrLineUsageRouteInFlight = request;
   return request;
+}
+
+async function getCachedIbkrLineUsageSnapshot(): Promise<IbkrLineUsageRouteSnapshot> {
+  const now = Date.now();
+  if (ibkrLineUsageRouteCache && ibkrLineUsageRouteCache.expiresAt > now) {
+    return ibkrLineUsageRouteCache.snapshot;
+  }
+  if (
+    ibkrLineUsageRouteCache &&
+    ibkrLineUsageRouteCache.staleUntil > now
+  ) {
+    if (!ibkrLineUsageRouteInFlight) {
+      void refreshIbkrLineUsageRouteCache().catch(() => {});
+    }
+    return ibkrLineUsageRouteCache.snapshot;
+  }
+  if (ibkrLineUsageRouteInFlight) {
+    return ibkrLineUsageRouteInFlight;
+  }
+  return refreshIbkrLineUsageRouteCache();
 }
 
 router.get("/settings/backend", async (_req, res) => {

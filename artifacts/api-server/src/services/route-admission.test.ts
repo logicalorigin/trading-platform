@@ -35,6 +35,41 @@ test("algo signal sparklines stay active-screen at near priority", () => {
   );
 });
 
+test("api-prefixed algo signal sparklines stay active-screen at near priority", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      requestFamily: "algo-signal-sparkline",
+      fetchPriority: 4,
+    }),
+    "active-screen",
+  );
+});
+
+test("api-prefixed high-priority bars requests stay active-screen", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      fetchPriority: 8,
+    }),
+    "active-screen",
+  );
+});
+
+test("high-priority passive sparklines are not grouped with charts", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      requestFamily: "sparkline",
+      fetchPriority: 8,
+    }),
+    "deferred-analytics",
+  );
+});
+
 test("visible signal row chart bars stay active-screen at visible priority", () => {
   assert.equal(
     classifyApiRoute({
@@ -44,6 +79,59 @@ test("visible signal row chart bars stay active-screen at visible priority", () 
       fetchPriority: 6,
     }),
     "active-screen",
+  );
+});
+
+test("signal-table sparklines stay separate from chart-family priority rules", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      requestFamily: "signals-table-sparkline",
+      fetchPriority: 4,
+    }),
+    "active-screen",
+  );
+});
+
+test("visible trade chart warmups stay active-screen", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      requestFamily: "chart-warmup",
+      fetchPriority: 6,
+    }),
+    "active-screen",
+  );
+});
+
+test("visible trade chart warmups are allowed under high pressure", () => {
+  const routeClass = classifyApiRoute({
+    method: "GET",
+    path: "/api/bars?symbol=SPY&timeframe=1m",
+    requestFamily: "chart-warmup",
+    fetchPriority: 6,
+  });
+
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "allow",
+  );
+});
+
+test("near-priority trade chart warmups remain deferrable", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=1m",
+      requestFamily: "chart-warmup",
+      fetchPriority: 4,
+    }),
+    "deferred-analytics",
   );
 });
 

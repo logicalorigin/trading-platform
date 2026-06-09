@@ -1996,7 +1996,6 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
     patchSection("appearance", { accentPreset: value });
     if (typeof document !== "undefined") {
       document.documentElement.setAttribute("data-pyrus-accent-preset", value);
-      document.documentElement.setAttribute("data-pyrus-accent-preset", value);
     }
   };
 

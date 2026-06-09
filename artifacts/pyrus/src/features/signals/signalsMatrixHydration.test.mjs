@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   buildSignalsHydrationManifest,
   buildSignalsMatrixHydrationPlan,
+  buildSignalsPriorityHydrationSymbols,
+  prioritizeSignalMatrixTimeframes,
 } from "./signalsMatrixHydration.js";
 
 const hydratedState = (symbol, timeframe) => ({
@@ -84,6 +86,45 @@ test("Signals matrix hydration treats aged bars as hydrated and unavailable diag
   ]);
 });
 
+test("Signals matrix hydration can refresh stale cells for active algo surfaces", () => {
+  const plan = buildSignalsMatrixHydrationPlan({
+    symbols: ["MRVL"],
+    currentStates: [
+      {
+        ...hydratedState("MRVL", "2m"),
+        status: "stale",
+      },
+      {
+        ...hydratedState("MRVL", "5m"),
+        status: "ok",
+      },
+      {
+        ...hydratedState("MRVL", "15m"),
+        status: "stale",
+      },
+    ],
+    timeframes: ["2m", "5m", "15m"],
+    refreshStale: true,
+  });
+
+  assert.deepEqual(plan.requestCells, [
+    { symbol: "MRVL", timeframe: "2m" },
+    { symbol: "MRVL", timeframe: "15m" },
+  ]);
+  assert.deepEqual(plan.requestTimeframes, ["2m", "15m"]);
+});
+
+test("Signals matrix hydration can prioritize the execution timeframe", () => {
+  assert.deepEqual(
+    prioritizeSignalMatrixTimeframes(["2m", "5m", "15m"], ["5m"]),
+    ["5m", "2m", "15m"],
+  );
+  assert.deepEqual(
+    prioritizeSignalMatrixTimeframes(["2m", "5m", "15m"], ["2m"]),
+    ["2m", "5m", "15m"],
+  );
+});
+
 test("Signals matrix hydration preserves explicit priority order without reordering scope", () => {
   const plan = buildSignalsMatrixHydrationPlan({
     symbols: ["MSFT", "AAPL", "NVDA"],
@@ -115,4 +156,15 @@ test("Signals hydration manifest resets for a new scope", () => {
   });
 
   assert.deepEqual(manifest, ["MSFT", "AAPL"]);
+});
+
+test("Signals priority hydration follows current rows within the broad universe", () => {
+  const symbols = buildSignalsPriorityHydrationSymbols({
+    selectedSymbol: "arm",
+    expandedSymbol: "spy",
+    candidateSymbols: ["OUST", "ARM", "BLUESTARC", "QQQ"],
+    scopeSymbols: ["OUST", "ARM", "SPY", "QQQ"],
+  });
+
+  assert.deepEqual(symbols, ["ARM", "SPY", "OUST", "QQQ"]);
 });

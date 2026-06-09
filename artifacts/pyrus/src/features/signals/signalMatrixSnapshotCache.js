@@ -9,7 +9,8 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
 const DEFAULT_MAX_STATES = null;
 
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v1";
-export const SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS = 15 * 60_000;
+export const SIGNAL_MATRIX_SNAPSHOT_CACHE_FRESH_MS = 15 * 60_000;
+export const SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS = 72 * 60 * 60_000;
 
 const browserStorage = () => {
   try {
@@ -37,6 +38,9 @@ const normalizeDirection = (value) => {
   return normalized === "buy" || normalized === "sell" ? normalized : null;
 };
 
+const normalizeStatus = (value) =>
+  String(value || "ok").trim().toLowerCase() || "ok";
+
 const finiteNumberOrNull = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
@@ -55,18 +59,21 @@ const sanitizeState = (state, allowedTimeframes) => {
   if (!symbol || !allowedTimeframes.has(timeframe)) return null;
   const barsSinceSignal = finiteNumberOrNull(state.barsSinceSignal);
   const currentSignalPrice = finiteNumberOrNull(state.currentSignalPrice);
+  const currentSignalAt = readTimestamp(state.currentSignalAt);
+  const latestBarAt = readTimestamp(state.latestBarAt);
+  if (!currentSignalAt && !latestBarAt) return null;
   return {
     id: state.id || `cached-${symbol}-${timeframe}`,
     profileId: state.profileId || null,
     symbol,
     timeframe,
     currentSignalDirection: normalizeDirection(state.currentSignalDirection),
-    currentSignalAt: readTimestamp(state.currentSignalAt),
+    currentSignalAt,
     currentSignalPrice,
-    latestBarAt: readTimestamp(state.latestBarAt),
+    latestBarAt,
     barsSinceSignal,
     fresh: Boolean(state.fresh),
-    status: String(state.status || "ok").trim().toLowerCase() || "ok",
+    status: normalizeStatus(state.status),
     active: state.active === false ? false : true,
     lastEvaluatedAt: readTimestamp(state.lastEvaluatedAt),
     lastError: state.lastError ? String(state.lastError) : null,
@@ -107,6 +114,7 @@ export const readSignalMatrixSnapshotCache = ({
   storage = browserStorage(),
   nowMs = Date.now(),
   maxAgeMs = SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS,
+  freshAgeMs = SIGNAL_MATRIX_SNAPSHOT_CACHE_FRESH_MS,
   timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES,
 } = {}) => {
   if (!storage) return null;
@@ -116,19 +124,24 @@ export const readSignalMatrixSnapshotCache = ({
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.version !== 1) return null;
     const savedAt = Number(parsed.savedAt);
-    if (!Number.isFinite(savedAt) || nowMs - savedAt > maxAgeMs) {
+    const cacheAgeMs = nowMs - savedAt;
+    if (!Number.isFinite(savedAt) || cacheAgeMs > maxAgeMs) {
       storage.removeItem(SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY);
       return null;
     }
     const resolvedTimeframes = normalizeTimeframes(parsed.timeframes || timeframes);
     const states = sanitizeStates(parsed.states, resolvedTimeframes);
     if (!states.length) return null;
+    const warmStartStale =
+      Number.isFinite(cacheAgeMs) &&
+      Number.isFinite(Number(freshAgeMs)) &&
+      cacheAgeMs > Number(freshAgeMs);
     return {
       states,
       timeframes: resolvedTimeframes,
       evaluatedAt: readTimestamp(parsed.evaluatedAt),
       cachedAt: savedAt,
-      cacheStatus: "warm-start",
+      cacheStatus: warmStartStale ? "warm-start-stale" : "warm-start",
     };
   } catch (_error) {
     try {

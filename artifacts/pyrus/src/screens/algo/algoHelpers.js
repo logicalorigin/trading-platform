@@ -609,15 +609,6 @@ const signalRowsHaveCompatibleSignalAt = (
   return !signalMs || !candidateMs || signalMs === candidateMs;
 };
 
-const STA_SIGNAL_HISTORY_TIME_ZONE = "America/New_York";
-
-const staSignalHistoryDateFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: STA_SIGNAL_HISTORY_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
 const staFiniteNumberOrNull = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
@@ -628,21 +619,6 @@ const staIsoStringOrNull = (value) => {
   const text = String(value).trim();
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? text : null;
-};
-
-const staMarketDateKey = (value) => {
-  const parsed = value instanceof Date ? value : new Date(value || Date.now());
-  if (Number.isNaN(parsed.getTime())) return "";
-  try {
-    const parts = Object.fromEntries(
-      staSignalHistoryDateFormatter
-        .formatToParts(parsed)
-        .map((part) => [part.type, part.value]),
-    );
-    return [parts.year, parts.month, parts.day].filter(Boolean).join("-");
-  } catch {
-    return parsed.toISOString().slice(0, 10);
-  }
 };
 
 const signalMonitorEventSignalKey = (event, signalAt) => {
@@ -660,10 +636,7 @@ const signalMonitorEventSignalKey = (event, signalAt) => {
 export const buildStaSignalHistoryRows = ({
   signalEvents,
   universeSymbols,
-  now = Date.now(),
 } = {}) => {
-  const historyDayKey = staMarketDateKey(now);
-  if (!historyDayKey) return [];
   const universe = new Set(
     (Array.isArray(universeSymbols) ? universeSymbols : [])
       .map((symbol) => normalizeMatchToken(symbol))
@@ -675,7 +648,7 @@ export const buildStaSignalHistoryRows = ({
       const eventRecord = asRecord(event);
       const signalAt = staIsoStringOrNull(eventRecord.signalAt);
       const symbol = normalizeMatchToken(eventRecord.symbol);
-      if (!signalAt || !symbol || staMarketDateKey(signalAt) !== historyDayKey) {
+      if (!signalAt || !symbol) {
         return null;
       }
       if (universe.size && !universe.has(symbol)) {
@@ -1050,7 +1023,13 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
   const candidateRecord = asRecord(candidate);
   const signalPrice = firstPositivePresentMetric(
     record.signalPrice,
+    record.currentSignalPrice,
+    record.entryPrice,
+    record.basisPrice,
     candidateRecord.signalPrice,
+    candidateRecord.currentSignalPrice,
+    candidateRecord.entryPrice,
+    candidateRecord.basisPrice,
   );
   const currentPrice = firstPresentFiniteMetric(
     snapshot.price,

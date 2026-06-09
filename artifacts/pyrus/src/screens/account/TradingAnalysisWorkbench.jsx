@@ -1853,9 +1853,7 @@ export const TradingAnalysisWorkbench = ({
 }) => {
   const [activeView, setActiveView] = useState(() => {
     try {
-      const raw =
-        window.localStorage.getItem(PYRUS_STORAGE_KEY) ??
-        window.localStorage.getItem(PYRUS_STORAGE_KEY);
+      const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : {};
       return parsed.accountAnalysisView === "trades" ? "trades" : "patterns";
     } catch {
@@ -1892,9 +1890,7 @@ export const TradingAnalysisWorkbench = ({
 
   useEffect(() => {
     try {
-      const raw =
-        window.localStorage.getItem(PYRUS_STORAGE_KEY) ??
-        window.localStorage.getItem(PYRUS_STORAGE_KEY);
+      const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : {};
       window.localStorage.setItem(
         PYRUS_STORAGE_KEY,

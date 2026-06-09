@@ -3190,6 +3190,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalMonitorMatrixResponse"
 
+  /signal-monitor/matrix/stream:
+    get:
+      operationId: streamSignalMonitorMatrix
+      tags: [signal-monitor]
+      summary: Stream Pyrus Signals signal matrix state deltas
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: symbols
+          in: query
+          required: false
+          description: Comma-separated ticker symbols to stream when exact cells are not supplied.
+          schema:
+            type: string
+        - name: timeframes
+          in: query
+          required: false
+          description: Comma-separated Signal Matrix timeframes to stream.
+          schema:
+            type: string
+        - name: cells
+          in: query
+          required: false
+          description: Comma-separated exact cells in SYMBOL:timeframe form. When non-empty, cells are authoritative over symbols/timeframes.
+          schema:
+            type: string
+        - name: clientRole
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [leader, follower, manual, test]
+        - name: requestOrigin
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [startup, poll, manual, test]
+      responses:
+        "200":
+          description: Signal Matrix state SSE stream. Emits payloads matching SignalMonitorMatrixStreamEvent variants.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
   /signal-monitor/state:
     get:
       operationId: getSignalMonitorState
@@ -4669,6 +4718,10 @@ components:
           type: boolean
         desktopAgentOnline:
           type: boolean
+        desktopAgentRegistered:
+          type: boolean
+        desktopAgentRegisteredCount:
+          type: integer
         desktopAgentUpgradeRequired:
           type: boolean
         reconnectAvailable:
@@ -4685,6 +4738,8 @@ components:
         - desktopAgentHelperVersion
         - desktopAgentKnownBad
         - desktopAgentOnline
+        - desktopAgentRegistered
+        - desktopAgentRegisteredCount
         - desktopAgentUpgradeRequired
         - reconnectAvailable
         - runtimeOverrideActive
@@ -5124,6 +5179,10 @@ components:
       properties:
         activeCount:
           type: integer
+        desktopAgentRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/IbkrRemoteDesktopRequestDiagnostic"
         latestActivation:
           oneOf:
             - $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsLatestActivation"
@@ -5142,11 +5201,48 @@ components:
             $ref: "#/components/schemas/IbkrBridgeActivationProgress"
       required:
         - activeCount
+        - desktopAgentRequests
         - latestActivation
         - latestActivationId
         - insight
         - latestProgress
         - recentProgress
+
+    IbkrRemoteDesktopRequestDiagnostic:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        code:
+          type: [string, "null"]
+        contentType:
+          type: [string, "null"]
+        desktopId:
+          type: [string, "null"]
+        helperVersion:
+          type: [string, "null"]
+        method:
+          type: [string, "null"]
+        message:
+          type: [string, "null"]
+        ok:
+          type: boolean
+        path:
+          type: [string, "null"]
+        route:
+          type: string
+          enum: [register, heartbeat, claim, raw]
+        userAgent:
+          type: [string, "null"]
+      required:
+        - at
+        - code
+        - desktopId
+        - helperVersion
+        - message
+        - ok
+        - route
 
     IbkrBridgeActivationCancelResponse:
       type: object
@@ -5260,6 +5356,10 @@ components:
           format: date-time
         desktopAgentOnline:
           type: boolean
+        desktopAgentRegistered:
+          type: boolean
+        desktopAgentRegisteredCount:
+          type: integer
         desktopAgentCompatibility:
           type: [string, "null"]
           enum: [compatible, known_bad, update_required, null]
@@ -5275,10 +5375,14 @@ components:
           type: boolean
         reconnectAvailable:
           type: boolean
+        activation:
+          $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsResponse"
       required:
         - runtimeOverrideActive
         - runtimeOverrideUpdatedAt
         - desktopAgentOnline
+        - desktopAgentRegistered
+        - desktopAgentRegisteredCount
         - desktopAgentCompatibility
         - desktopAgentCompatible
         - desktopAgentHelperVersion
@@ -5286,6 +5390,7 @@ components:
         - desktopAgentExpectedHelperVersion
         - desktopAgentUpgradeRequired
         - reconnectAvailable
+        - activation
 
     IbkrBridgeConnectionHealth:
       type: object
@@ -5605,6 +5710,10 @@ components:
           format: date-time
         desktopAgentOnline:
           type: boolean
+        desktopAgentRegistered:
+          type: boolean
+        desktopAgentRegisteredCount:
+          type: integer
         desktopAgentCompatibility:
           type: [string, "null"]
           enum: [compatible, known_bad, update_required, null]
@@ -5702,6 +5811,8 @@ components:
         - runtimeOverrideActive
         - runtimeOverrideUpdatedAt
         - desktopAgentOnline
+        - desktopAgentRegistered
+        - desktopAgentRegisteredCount
         - desktopAgentCompatibility
         - desktopAgentCompatible
         - desktopAgentHelperVersion
@@ -12082,10 +12193,10 @@ components:
             $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
         clientRole:
           type: string
-          enum: [leader, follower, manual, test, algo-sta]
+          enum: [leader, follower, manual, test]
         requestOrigin:
           type: string
-          enum: [startup, poll, manual, test, sta-visible-page]
+          enum: [startup, poll, manual, test]
 
     EvaluateSignalMonitorMatrixCellRequest:
       type: object
@@ -12445,6 +12556,12 @@ components:
           enum: [hit, stale, inflight, miss]
         refreshing:
           type: boolean
+        warming:
+          type: boolean
+        pendingCells:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvaluateSignalMonitorMatrixCellRequest"
         coverage:
           type: object
           properties:
@@ -12468,6 +12585,8 @@ components:
             hydratedSymbols:
               type: integer
             missingSymbols:
+              type: integer
+            pendingCellCount:
               type: integer
             estimatedFullCycleMs:
               type: [integer, "null"]
@@ -12502,6 +12621,201 @@ components:
         - timeframes
         - truncated
         - skippedSymbols
+
+    SignalMonitorMatrixStreamSource:
+      type: string
+      enum: [massive-websocket, massive-delayed-websocket, ibkr-websocket-derived, none]
+
+    SignalMonitorMatrixStreamCoverage:
+      type: object
+      properties:
+        requestedSymbols:
+          type: integer
+        activeScopeSymbols:
+          type: integer
+        timeframes:
+          type: integer
+        taskCount:
+          type: integer
+        source:
+          $ref: "#/components/schemas/SignalMonitorMatrixStreamSource"
+        delayed:
+          type: boolean
+        eventCount:
+          type: integer
+        stateCount:
+          type: integer
+        skippedSymbols:
+          type: integer
+        truncated:
+          type: boolean
+        lastEventAt:
+          type: [string, "null"]
+          format: date-time
+        lastEventAgeMs:
+          type: [integer, "null"]
+      required:
+        - requestedSymbols
+        - activeScopeSymbols
+        - timeframes
+        - taskCount
+        - source
+        - delayed
+        - eventCount
+        - stateCount
+        - skippedSymbols
+        - truncated
+        - lastEventAt
+        - lastEventAgeMs
+
+    SignalMonitorMatrixStreamBootstrapEvent:
+      type: object
+      properties:
+        stream:
+          type: string
+          enum: [signal-matrix]
+        event:
+          type: string
+          enum: [bootstrap]
+        profile:
+          $ref: "#/components/schemas/SignalMonitorProfile"
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixState"
+        evaluatedAt:
+          type: string
+          format: date-time
+        timeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+        coverage:
+          $ref: "#/components/schemas/SignalMonitorMatrixStreamCoverage"
+      required:
+        - stream
+        - event
+        - profile
+        - states
+        - evaluatedAt
+        - timeframes
+        - coverage
+
+    SignalMonitorMatrixStreamStateDeltaEvent:
+      type: object
+      properties:
+        stream:
+          type: string
+          enum: [signal-matrix]
+        event:
+          type: string
+          enum: [state-delta]
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixState"
+        evaluatedAt:
+          type: string
+          format: date-time
+        timeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+        coverage:
+          $ref: "#/components/schemas/SignalMonitorMatrixStreamCoverage"
+      required:
+        - stream
+        - event
+        - states
+        - evaluatedAt
+        - timeframes
+        - coverage
+
+    SignalMonitorMatrixStreamStatusEvent:
+      type: object
+      properties:
+        stream:
+          type: string
+          enum: [signal-matrix]
+        event:
+          type: string
+          enum: [stream-status]
+        state:
+          type: string
+          enum: [open, degraded, unavailable]
+        source:
+          $ref: "#/components/schemas/SignalMonitorMatrixStreamSource"
+        provider:
+          $ref: "#/components/schemas/SignalMonitorMatrixStreamSource"
+        activeProvider:
+          anyOf:
+            - $ref: "#/components/schemas/SignalMonitorMatrixStreamSource"
+            - type: "null"
+        delayed:
+          type: boolean
+        activeScopeSymbols:
+          type: integer
+        activeScopeCells:
+          type: integer
+        skippedSymbols:
+          type: integer
+        truncated:
+          type: boolean
+        eventCount:
+          type: integer
+        lastEventAt:
+          type: [string, "null"]
+          format: date-time
+        lastEventAgeMs:
+          type: [integer, "null"]
+        fallbackState:
+          type: string
+          enum: [streaming, bootstrap-fallback, unavailable]
+      required:
+        - stream
+        - event
+        - state
+        - source
+        - provider
+        - activeProvider
+        - delayed
+        - activeScopeSymbols
+        - activeScopeCells
+        - skippedSymbols
+        - truncated
+        - eventCount
+        - lastEventAt
+        - lastEventAgeMs
+        - fallbackState
+
+    SignalMonitorMatrixStreamErrorEvent:
+      type: object
+      properties:
+        stream:
+          type: string
+          enum: [signal-matrix]
+        event:
+          type: string
+          enum: [error]
+        code:
+          type: string
+        detail:
+          type: string
+        cooldownMs:
+          type: [integer, "null"]
+      required:
+        - stream
+        - event
+        - code
+        - detail
+        - cooldownMs
+
+    SignalMonitorMatrixStreamEvent:
+      oneOf:
+        - $ref: "#/components/schemas/SignalMonitorMatrixStreamBootstrapEvent"
+        - $ref: "#/components/schemas/SignalMonitorMatrixStreamStateDeltaEvent"
+        - $ref: "#/components/schemas/SignalMonitorMatrixStreamStatusEvent"
+        - $ref: "#/components/schemas/SignalMonitorMatrixStreamErrorEvent"
 
     SignalMonitorEventsResponse:
       type: object

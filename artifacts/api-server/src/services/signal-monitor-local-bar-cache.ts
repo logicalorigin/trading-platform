@@ -51,9 +51,10 @@ const TIMEFRAME_MS: Record<SignalMonitorLocalBarCacheTimeframe, number> = {
 const DEFAULT_MEMORY_RETENTION_MS = 72 * 60 * 60_000;
 const DEFAULT_PERSIST_FLUSH_MS = 1_000;
 function storeSourceNames(): string[] {
-  return isMassiveStocksRealtimeConfigured()
-    ? ["massive-websocket"]
-    : ["massive-delayed-websocket"];
+  const streamSourceName = isMassiveStocksRealtimeConfigured()
+    ? "massive-websocket"
+    : "massive-delayed-websocket";
+  return [streamSourceName, "massive-history"];
 }
 
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
@@ -677,5 +678,6 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
   ingest(aggregate: MassiveDelayedStockAggregate): void {
     handleMassiveAggregate(aggregate);
   },
+  storeSourceNames,
   readMemoryBars,
 };

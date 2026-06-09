@@ -1,3 +1,4 @@
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { HttpError } from "../lib/errors";
 import { getRuntimeDiagnostics } from "./platform";
 
@@ -37,6 +38,7 @@ function hasLiveStreamReadinessProof(ibkr: Record<string, unknown>): boolean {
 
 export function resolveAlgoGatewayReadiness(
   ibkrDiagnostics: unknown,
+  now: Date = new Date(),
 ): AlgoGatewayReadiness {
   const ibkr = asRecord(ibkrDiagnostics);
   const configured = ibkr.configured === true;
@@ -52,7 +54,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "ibkr_not_configured",
-      message: "IB Gateway bridge is not configured for algorithm execution.",
+      message: "IB Gateway bridge is not configured for options strategy execution.",
       diagnostics: ibkr,
     };
   }
@@ -102,14 +104,17 @@ export function resolveAlgoGatewayReadiness(
     };
   }
 
-  if (
-    ibkr.strictReason === "market_session_quiet" ||
-    ibkr.streamStateReason === "market_session_quiet"
-  ) {
+  // Execution gate: signal-options strategies only EXECUTE during the regular
+  // options session. This is an
+  // independent, time-based check (not derived from the runtime stream/strict status,
+  // which no longer carries a market_session_quiet reason — time-of-day gates only
+  // options execution, never equities, market data, or display). Equity after-hours
+  // workflows use their own execution checks.
+  if (resolveUsEquityMarketStatus(now).session.key !== "rth") {
     return {
       ready: false,
       reason: "market_session_quiet",
-      message: "The market session is closed for algorithm execution.",
+      message: "Options strategy execution is outside the regular options session.",
       diagnostics: ibkr,
     };
   }
@@ -117,7 +122,7 @@ export function resolveAlgoGatewayReadiness(
   return {
     ready: true,
     reason: null,
-    message: "IB Gateway is ready for algorithm execution.",
+    message: "IB Gateway is ready for options strategy execution.",
     diagnostics: ibkr,
   };
 }
@@ -130,7 +135,7 @@ export async function getAlgoGatewayReadiness(): Promise<AlgoGatewayReadiness> {
 export function throwAlgoGatewayNotReady(
   readiness: AlgoGatewayReadiness,
 ): never {
-  throw new HttpError(503, "IB Gateway is required for algorithm execution.", {
+  throw new HttpError(503, "IB Gateway is required for options strategy execution.", {
     code: "algo_gateway_not_ready",
     detail: readiness.message,
     data: {

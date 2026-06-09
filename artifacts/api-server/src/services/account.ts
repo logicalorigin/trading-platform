@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  isNotNull,
   lt,
   lte,
   sql,
@@ -13,6 +14,7 @@ import {
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  executionEventsTable,
   flexCashActivityTable,
   flexDividendsTable,
   flexNavHistoryTable,
@@ -154,10 +156,9 @@ import {
   releaseIbkrLiveDemand,
 } from "./ibkr-live-demand-coordinator";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
-import {
-  admitMarketDataLeases,
-  releaseMarketDataLeases,
-} from "./market-data-admission";
+import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
+import { recordRecentAccountPositionQuoteSymbols } from "./account-position-quote-symbols";
+import { releaseMarketDataLeases } from "./market-data-admission";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -172,8 +173,11 @@ const COMBINED_ACCOUNT_ID = "combined";
 const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
 const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
-const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 5_000;
-const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
+const ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS = 5_000;
+const ACCOUNT_LIST_RESPONSE_STALE_TTL_MS = 60_000;
+const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 30_000;
+const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 60_000;
+const ACCOUNT_ROUTE_RESPONSE_STALE_TTL_MS = 5 * 60_000;
 const ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS =
   ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
 export const ACCOUNT_FULL_RISK_CACHE_TTL_MS = 30_000;
@@ -190,7 +194,6 @@ const FLEX_RETRYABLE_ERROR_CODES = new Set(["1001", "1002", "1018"]);
 const OPTION_GREEK_CACHE_TTL_MS = 15_000;
 const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
-const ACCOUNT_OPTION_QUOTE_SNAPSHOT_TASK_MAX_WAIT_MS = 3_000;
 const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
 
 type AccountMetric = {
@@ -226,6 +229,14 @@ type ShortLivedAccountCacheEntry<T> = {
   promise: Promise<T>;
   expiresAt: number;
   settled: boolean;
+};
+
+type AccountRouteResponseCacheEntry<T> = {
+  promise: Promise<T> | null;
+  value: T | null;
+  hasValue: boolean;
+  expiresAt: number;
+  staleExpiresAt: number;
 };
 
 type AccountPositionTotalsInput = {
@@ -271,7 +282,7 @@ const positionMarketHydrationReadCache = new Map<
 >();
 const accountRouteResponseCache = new Map<
   string,
-  ShortLivedAccountCacheEntry<unknown>
+  AccountRouteResponseCacheEntry<unknown>
 >();
 const accountFullRiskCache = new Map<
   string,
@@ -343,13 +354,72 @@ function readAccountRouteResponseCache<T>(
   input: Record<string, unknown>,
   factory: () => Promise<T>,
   ttlMs: number,
+  staleTtlMs = ACCOUNT_ROUTE_RESPONSE_STALE_TTL_MS,
 ): Promise<T> {
-  return readShortLivedAccountCache(
-    accountRouteResponseCache as Map<string, ShortLivedAccountCacheEntry<T>>,
-    stableAccountReadCacheKey(route, input),
-    factory,
-    ttlMs,
+  const now = Date.now();
+  for (const [entryKey, entry] of accountRouteResponseCache.entries()) {
+    if (!entry.promise && entry.staleExpiresAt <= now) {
+      accountRouteResponseCache.delete(entryKey);
+    }
+  }
+
+  const cacheKey = stableAccountReadCacheKey(route, input);
+  const cached = accountRouteResponseCache.get(
+    cacheKey,
+  ) as AccountRouteResponseCacheEntry<T> | undefined;
+  if (cached?.hasValue && cached.expiresAt > now) {
+    return Promise.resolve(cached.value as T);
+  }
+  if (cached?.promise) {
+    if (cached.hasValue && cached.staleExpiresAt > now) {
+      return Promise.resolve(cached.value as T);
+    }
+    return cached.promise;
+  }
+
+  const entry: AccountRouteResponseCacheEntry<T> = cached ?? {
+    promise: null,
+    value: null,
+    hasValue: false,
+    expiresAt: 0,
+    staleExpiresAt: 0,
+  };
+  const request = Promise.resolve().then(factory).then(
+    (value) => {
+      entry.promise = null;
+      entry.value = value;
+      entry.hasValue = true;
+      const cachedAt = Date.now();
+      entry.expiresAt = cachedAt + ttlMs;
+      entry.staleExpiresAt = cachedAt + Math.max(ttlMs, staleTtlMs);
+      accountRouteResponseCache.set(cacheKey, entry);
+      return value;
+    },
+    (error) => {
+      entry.promise = null;
+      if (entry.hasValue && entry.staleExpiresAt > Date.now()) {
+        logger.debug?.(
+          { err: error, route, cacheKey },
+          "Account route background refresh failed; serving stale cached response",
+        );
+        return entry.value as T;
+      }
+      if (accountRouteResponseCache.get(cacheKey) === entry) {
+        accountRouteResponseCache.delete(cacheKey);
+      }
+      throw error;
+    },
   );
+  entry.promise = request;
+  accountRouteResponseCache.set(cacheKey, entry);
+  if (entry.hasValue && entry.staleExpiresAt > now) {
+    void request.catch(() => {
+      // The refresh is observed above; this catch prevents background refresh
+      // failures from surfacing as unhandled rejections when serving stale.
+    });
+    return Promise.resolve(entry.value as T);
+  }
+  return request;
 }
 const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
 const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
@@ -1395,26 +1465,26 @@ async function fetchEquityQuoteSnapshotsForPositions(
         .filter(Boolean),
     ),
   );
+  const providerContractIdsBySymbol = new Map<string, string>();
+  positions
+    .filter(canHydratePositionFromEquityQuote)
+    .forEach((position) => {
+      const symbol = normalizeSymbol(positionReferenceSymbol(position));
+      const providerContractId = equityProviderContractIdFromPosition(position);
+      if (symbol && providerContractId) {
+        providerContractIdsBySymbol.set(symbol, providerContractId);
+      }
+    });
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
+  recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
 
   if (symbols.length) {
-    admitMarketDataLeases({
+    const payload = await fetchBridgeQuoteSnapshots(symbols, {
       owner: admissionOwner,
       intent: "account-monitor-live",
-      requests: symbols.map((symbol) => ({
-        assetClass: "equity" as const,
-        symbol,
-      })),
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-      fallbackProvider: "massive",
-    });
-    const payload = await getQuoteSnapshots({
-      symbols: symbols.join(","),
-      allowMassiveFallback: true,
-      admissionOwner,
-      admissionIntent: "account-monitor-live",
-      admissionFallbackProvider: "massive",
-      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
+      fallbackProvider: "none",
+      providerContractIdsBySymbol,
     }).catch(() => ({
       quotes: [],
     }));
@@ -1426,6 +1496,16 @@ async function fetchEquityQuoteSnapshotsForPositions(
   }
 
   return quotesBySymbol;
+}
+
+function equityProviderContractIdFromPosition(
+  position: BrokerPositionSnapshot,
+): string | null {
+  if (position.optionContract) {
+    return null;
+  }
+  const idTail = String(position.id ?? "").split(":").at(-1)?.trim() ?? "";
+  return /^[1-9]\d+$/.test(idTail) ? idTail : null;
 }
 
 type AccountPositionOptionQuoteDemandState = IbkrLiveDemandQuoteState;
@@ -1693,7 +1773,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, AccountPositionOptionQuoteDemandState>> {
   const providerContractIds = positions.flatMap((position) => {
-    return optionQuoteProviderContractIdsForPosition(position);
+    return optionQuoteDemandProviderContractIdsForPosition(position);
   });
   const uniqueProviderContractIds = Array.from(new Set(providerContractIds));
 
@@ -1706,46 +1786,66 @@ async function fetchOptionQuoteSnapshotsForPositions(
   try {
     const positionsByUnderlying = positions.reduce((map, position) => {
       const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
-      const providerContractIdsForPosition =
-        optionQuoteProviderContractIdsForPosition(position);
-      if (!providerContractIdsForPosition.length || !underlying) {
+      const demandProviderContractIdsForPosition =
+        optionQuoteDemandProviderContractIdsForPosition(position);
+      if (!demandProviderContractIdsForPosition.length || !underlying) {
         return map;
       }
-      map.set(underlying, [
-        ...(map.get(underlying) ?? []),
-        ...providerContractIdsForPosition,
-      ]);
+      const current = map.get(underlying) ?? {
+        demandProviderContractIds: [] as string[],
+        readProviderContractIds: [] as string[],
+      };
+      current.demandProviderContractIds.push(
+        ...demandProviderContractIdsForPosition,
+      );
+      current.readProviderContractIds.push(
+        ...optionQuoteProviderContractIdsForPosition(position),
+      );
+      map.set(underlying, current);
       return map;
-    }, new Map<string, string[]>());
+    }, new Map<string, { demandProviderContractIds: string[]; readProviderContractIds: string[] }>());
+
+    void Promise.allSettled(
+      Array.from(positionsByUnderlying.entries()).map(
+        async ([underlying, underlyingProviderContractIds]) => {
+          const ownerForUnderlying = `${owner}:${underlying}`;
+          const demandProviderContractIdsForUnderlying = Array.from(
+            new Set(underlyingProviderContractIds.demandProviderContractIds),
+          );
+          await fetchBridgeOptionQuoteSnapshots({
+            underlying,
+            providerContractIds: demandProviderContractIdsForUnderlying,
+            owner: `${ownerForUnderlying}:snapshot`,
+            intent: "account-monitor-live",
+            fallbackProvider: "cache",
+            requiresGreeks: true,
+          });
+        },
+      ),
+    ).then((results) => {
+      results.forEach((result, index) => {
+        if (result.status !== "rejected") {
+          return;
+        }
+        const underlying = Array.from(positionsByUnderlying.keys())[index];
+        logger.debug?.(
+          { err: result.reason, owner: `${owner}:${underlying}`, underlying },
+          "Account position option quote background snapshot failed",
+        );
+      });
+    });
 
     const demandStateResults = await Promise.allSettled(
       Array.from(positionsByUnderlying.entries()).map(
         async ([underlying, underlyingProviderContractIds]) => {
           const ownerForUnderlying = `${owner}:${underlying}`;
-          const providerContractIdsForUnderlying = Array.from(
-            new Set(underlyingProviderContractIds),
+          const readProviderContractIdsForUnderlying = Array.from(
+            new Set(underlyingProviderContractIds.readProviderContractIds),
           );
-          const snapshotRequest = fetchBridgeOptionQuoteSnapshots({
-            underlying,
-            providerContractIds: providerContractIdsForUnderlying,
-            owner: `${ownerForUnderlying}:snapshot`,
-            intent: "account-monitor-live",
-            fallbackProvider: "cache",
-            requiresGreeks: true,
-          }).catch((error) => {
-            logger.debug?.(
-              { err: error, owner: ownerForUnderlying, underlying },
-              "Account position option quote snapshot failed",
-            );
-          });
-          await Promise.race([
-            snapshotRequest,
-            sleep(ACCOUNT_OPTION_QUOTE_SNAPSHOT_TASK_MAX_WAIT_MS),
-          ]);
           return readIbkrLiveDemandState({
             owner: ownerForUnderlying,
             underlying,
-            providerContractIds: providerContractIdsForUnderlying,
+            providerContractIds: readProviderContractIdsForUnderlying,
             requiresGreeks: true,
           }).states;
         },
@@ -1882,16 +1982,45 @@ function primaryOptionProviderContractIdForRow(
   return text || null;
 }
 
+function uniqueOptionProviderContractIds(
+  providerContractIds: Array<string | null | undefined>,
+): string[] {
+  return Array.from(
+    new Set(
+      providerContractIds
+        .map((providerContractId) => String(providerContractId ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function optionQuoteDemandProviderContractIdsForPosition(
+  row: AccountPositionOptionQuoteDemandRow,
+): string[] {
+  const structuredProviderContractId =
+    structuredOptionProviderContractIdForRow(row);
+  if (structuredProviderContractId) {
+    return [structuredProviderContractId];
+  }
+
+  const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
+  return primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)
+    ? [primaryProviderContractId]
+    : [];
+}
+
 function optionQuoteProviderContractIdsForPosition(
   row: AccountPositionOptionQuoteDemandRow,
 ): string[] {
+  const demandProviderContractIds =
+    optionQuoteDemandProviderContractIdsForPosition(row);
   const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
-  if (primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)) {
-    return [primaryProviderContractId];
-  }
-  const structuredProviderContractId =
-    structuredOptionProviderContractIdForRow(row);
-  return structuredProviderContractId ? [structuredProviderContractId] : [];
+  return uniqueOptionProviderContractIds([
+    ...demandProviderContractIds,
+    primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)
+      ? primaryProviderContractId
+      : null,
+  ]);
 }
 
 const accountPositionOptionDemandOwnersByAccountKey = new Map<string, Set<string>>();
@@ -1921,10 +2050,19 @@ function declareAccountPositionOptionQuoteDemands(
   const accountKey = accountPositionOptionQuoteOwnerKey(rows, fallbackAccountKey);
   const owner = `account-position-option-quotes:${accountKey}`;
   const nextOwners = new Set<string>();
+  let droppedOptionPositions = 0;
   const positionsByUnderlying = rows.reduce((map, row) => {
     const underlying = normalizeSymbol(row.optionContract?.underlying ?? "");
-    const providerContractIds = optionQuoteProviderContractIdsForPosition(row);
+    const providerContractIds =
+      optionQuoteDemandProviderContractIdsForPosition(row);
     if (!providerContractIds.length || !underlying) {
+      // An option position that can't be keyed to a provider contract id /
+      // underlying is silently excluded from the account-monitor-live lease and
+      // (correctly) can't use equity quotes either, so it gets no live market
+      // data. Surface it rather than dropping it invisibly.
+      if (row.optionContract) {
+        droppedOptionPositions += 1;
+      }
       return map;
     }
     map.set(underlying, [
@@ -1933,6 +2071,21 @@ function declareAccountPositionOptionQuoteDemands(
     ]);
     return map;
   }, new Map<string, string[]>());
+  if (droppedOptionPositions > 0) {
+    logger.warn(
+      {
+        code: "account_position_option_quote_unleased",
+        accountKey,
+        droppedOptionPositions,
+        leasedUnderlyings: positionsByUnderlying.size,
+      },
+      "Option positions excluded from account-monitor live quote lease (missing provider contract id / underlying)",
+    );
+  }
+  recordRecentAccountPositionQuoteSymbols(
+    owner,
+    Array.from(positionsByUnderlying.keys()),
+  );
 
   Array.from(positionsByUnderlying.entries()).forEach(
     ([underlying, underlyingProviderContractIds]) => {
@@ -2294,6 +2447,101 @@ async function fetchFlexOpenDatesForPositions(
     positions.flatMap((position) => {
       const opened = matchFlexOpenPositionCandidate(position, candidates);
       return opened ? [[position.id, opened] as const] : [];
+    }),
+  );
+}
+
+type ExecutionOpenLot = {
+  signedQuantity: number;
+  openedAt: Date;
+};
+
+function executionPositionGroupKey(execution: BrokerExecutionSnapshot): string {
+  const contract = executionOptionContract(execution);
+  if (contract) {
+    return [
+      "option",
+      contract.underlying,
+      formatDateOnly(contract.expirationDate),
+      contract.strike,
+      contract.right,
+    ].join(":");
+  }
+  return `equity:${normalizeSymbol(execution.symbol).toUpperCase()}`;
+}
+
+function buildExecutionOpenDatesForPositions(
+  positions: BrokerPositionSnapshot[],
+  executions: BrokerExecutionSnapshot[],
+): Map<string, PositionOpenDate> {
+  const lotsByKey = new Map<string, ExecutionOpenLot[]>();
+  const sortedExecutions = [...executions].sort(
+    (left, right) => left.executedAt.getTime() - right.executedAt.getTime(),
+  );
+
+  for (const execution of sortedExecutions) {
+    const quantity = Math.abs(toNumber(execution.quantity) ?? 0);
+    if (
+      quantity <= POSITION_QUANTITY_EPSILON ||
+      Number.isNaN(execution.executedAt.getTime())
+    ) {
+      continue;
+    }
+
+    const side = execution.side === "sell" ? -1 : 1;
+    let remaining = quantity * side;
+    const key = `${execution.accountId}:${executionPositionGroupKey(execution)}`;
+    const lots = lotsByKey.get(key) ?? [];
+    lotsByKey.set(key, lots);
+
+    while (
+      Math.abs(remaining) > POSITION_QUANTITY_EPSILON &&
+      lots.length &&
+      lots[0]!.signedQuantity * remaining < 0
+    ) {
+      const lot = lots[0]!;
+      const closeQuantity = Math.min(
+        Math.abs(remaining),
+        Math.abs(lot.signedQuantity),
+      );
+      lot.signedQuantity += closeQuantity * Math.sign(remaining);
+      remaining -= closeQuantity * Math.sign(remaining);
+      if (Math.abs(lot.signedQuantity) <= POSITION_QUANTITY_EPSILON) {
+        lots.shift();
+      }
+    }
+
+    if (Math.abs(remaining) > POSITION_QUANTITY_EPSILON) {
+      lots.push({
+        signedQuantity: remaining,
+        openedAt: execution.executedAt,
+      });
+    }
+  }
+
+  return new Map(
+    positions.flatMap((position) => {
+      const quantity = toNumber(position.quantity) ?? 0;
+      if (Math.abs(quantity) <= POSITION_QUANTITY_EPSILON) {
+        return [];
+      }
+
+      const key = `${position.accountId}:${positionGroupKey(position)}`;
+      const side = Math.sign(quantity);
+      const lot = (lotsByKey.get(key) ?? [])
+        .filter((candidate) => candidate.signedQuantity * side > 0)
+        .sort((left, right) => left.openedAt.getTime() - right.openedAt.getTime())[0];
+      return lot
+        ? [
+            [
+              position.id,
+              {
+                openedAt: lot.openedAt,
+                openedAtSource: "execution" as const,
+              },
+            ] as const,
+          ]
+        : [];
     }),
   );
 }
@@ -3576,6 +3824,23 @@ export async function listAccounts(
   options: ListAccountsOptions = {},
 ) {
   const mode = input.mode ?? getRuntimeMode();
+  if (Object.keys(options).length === 0) {
+    return readAccountRouteResponseCache(
+      "accounts",
+      { mode },
+      () => listAccountsUncached({ mode }, options),
+      ACCOUNT_LIST_RESPONSE_CACHE_TTL_MS,
+      ACCOUNT_LIST_RESPONSE_STALE_TTL_MS,
+    );
+  }
+  return listAccountsUncached({ mode }, options);
+}
+
+async function listAccountsUncached(
+  input: { mode: RuntimeMode },
+  options: ListAccountsOptions,
+) {
+  const mode = input.mode;
   const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
   const getPersistedAccounts =
     options.getPersistedAccounts ?? getPersistedBackedAccounts;
@@ -3625,7 +3890,16 @@ export async function getAccountSummary(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return getAccountSummaryUncached({ ...input, mode });
+  return readAccountRouteResponseCache(
+    "summary",
+    {
+      accountId: input.accountId,
+      mode,
+      source: input.source ?? null,
+    },
+    () => getAccountSummaryUncached({ ...input, mode }),
+    ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
+  );
 }
 
 async function getAccountSummaryUncached(input: {
@@ -4396,6 +4670,135 @@ export async function getAccountPositions(input: {
   return response;
 }
 
+type RealPositionAttributionSourceType =
+  | "manual"
+  | "automation"
+  | "watchlist_backtest"
+  | "signal_options_replay"
+  | "mixed";
+
+type RealPositionAttribution = {
+  sourceType: RealPositionAttributionSourceType;
+  strategyLabel: string | null;
+  attributionStatus: "unknown" | "attributed" | "mixed";
+  sourceAttribution: Array<{
+    sourceType: RealPositionAttributionSourceType;
+    deploymentId: string | null;
+    deploymentName: string | null;
+  }>;
+};
+
+const MANUAL_REAL_POSITION_ATTRIBUTION: RealPositionAttribution = {
+  sourceType: "manual",
+  strategyLabel: "Manual",
+  attributionStatus: "unknown",
+  sourceAttribution: [],
+};
+
+// Stable join key shared by real positions and the automation execution-event
+// ledger. Options key on the structurally-derived providerContractId (identical
+// on both sides and JSON-round-trip safe); everything else keys on symbol.
+function realAttributionPositionKey(input: {
+  symbol: string;
+  optionContract?: { providerContractId?: string | null; ticker?: string | null } | null;
+}): string {
+  const optionContract = input.optionContract;
+  if (optionContract) {
+    const id = optionContract.providerContractId || optionContract.ticker;
+    if (id) {
+      return `option:${id}`;
+    }
+  }
+  return `equity:${normalizeSymbol(input.symbol).toUpperCase()}`;
+}
+
+// Attribute real broker positions to their automation source by joining to the
+// execution-events ledger (overnight-spot real orders record deploymentId +
+// brokerOrder). Real fills carry no recoverable source tag from IBKR, so this
+// local ledger join is the source of truth. Positions with no matching
+// automation event stay "manual" (the prior hardcoded default).
+async function buildRealPositionAttribution(input: {
+  accountIds: string[];
+  positions: BrokerPositionSnapshot[];
+}): Promise<Map<string, RealPositionAttribution>> {
+  const attribution = new Map<string, RealPositionAttribution>();
+  const symbols = Array.from(
+    new Set(
+      input.positions
+        .map((position) => normalizeSymbol(position.symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+  if (!symbols.length) {
+    return attribution;
+  }
+
+  let events: Array<{ deploymentId: string | null; payload: Record<string, unknown> }> = [];
+  try {
+    events = await db
+      .select({
+        deploymentId: executionEventsTable.deploymentId,
+        payload: executionEventsTable.payload,
+      })
+      .from(executionEventsTable)
+      .where(
+        and(
+          isNotNull(executionEventsTable.deploymentId),
+          inArray(executionEventsTable.symbol, symbols),
+        ),
+      )
+      .orderBy(desc(executionEventsTable.occurredAt))
+      .limit(1000);
+  } catch (error) {
+    logger.warn(
+      { err: error, code: "real_position_attribution_query_failed" },
+      "Real position source attribution query failed; falling back to manual",
+    );
+    return attribution;
+  }
+
+  const deploymentsByKey = new Map<string, Set<string>>();
+  for (const event of events) {
+    const deploymentId = event.deploymentId;
+    if (!deploymentId) {
+      continue;
+    }
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const brokerOrder = payload.brokerOrder as
+      | { symbol?: string | null; optionContract?: RealPositionAttribution["sourceAttribution"][number] | unknown }
+      | undefined;
+    if (!brokerOrder || typeof brokerOrder.symbol !== "string") {
+      continue;
+    }
+    const key = realAttributionPositionKey({
+      symbol: brokerOrder.symbol,
+      optionContract: (brokerOrder.optionContract ?? null) as {
+        providerContractId?: string | null;
+        ticker?: string | null;
+      } | null,
+    });
+    const set = deploymentsByKey.get(key) ?? new Set<string>();
+    set.add(deploymentId);
+    deploymentsByKey.set(key, set);
+  }
+
+  for (const [key, deploymentIds] of deploymentsByKey) {
+    const isMixed = deploymentIds.size > 1;
+    attribution.set(key, {
+      sourceType: isMixed ? "mixed" : "automation",
+      strategyLabel: isMixed ? "Mixed" : "Automation",
+      attributionStatus: isMixed ? "mixed" : "attributed",
+      sourceAttribution: Array.from(deploymentIds).map((deploymentId) => ({
+        sourceType: "automation",
+        deploymentId,
+        deploymentName: null,
+      })),
+    });
+  }
+
+  return attribution;
+}
+
 async function getAccountPositionsUncached(input: {
   accountId: string;
   assetClass?: string | null;
@@ -4414,6 +4817,7 @@ async function getAccountPositionsUncached(input: {
     equityQuoteSnapshots,
     optionQuoteSnapshots,
     flexOpenDates,
+    executionOpenDates,
   ] = await Promise.all([
     positionsPromise,
     listOrdersForUniverse(universe, mode),
@@ -4430,12 +4834,30 @@ async function getAccountPositionsUncached(input: {
     positionsPromise.then((result) =>
       fetchFlexOpenDatesForPositions(universe.accountIds, result),
     ),
+    positionsPromise.then((result) =>
+      result.some((position) => !position.openedAt)
+        ? listExecutionsForUniverse(universe, mode, {}).then((executions) =>
+            buildExecutionOpenDatesForPositions(result, executions),
+          )
+        : new Map<string, PositionOpenDate>(),
+    ),
   ]);
+  const openDates = new Map(flexOpenDates);
+  executionOpenDates.forEach((executionOpenDate, positionId) => {
+    const current = openDates.get(positionId);
+    if (!current || current.openedAtSource === "flex_snapshot") {
+      openDates.set(positionId, executionOpenDate);
+    }
+  });
+  const realAttribution = await buildRealPositionAttribution({
+    accountIds: universe.accountIds,
+    positions,
+  });
   const marketHydration = await hydratePositionMarkets(
     positions,
     equityQuoteSnapshots,
     optionQuoteSnapshots,
-    flexOpenDates,
+    openDates,
   );
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
@@ -4526,7 +4948,7 @@ async function getAccountPositionsUncached(input: {
           const hydratedMarket = marketHydration.get(position.id);
           const openedAt = bestOpenedAtForPosition(
             position,
-            flexOpenDates.get(position.id),
+            openDates.get(position.id),
           );
           const positionValue =
             hydratedMarket?.marketValue ?? positionSignedNotional(position);
@@ -4633,10 +5055,8 @@ async function getAccountPositionsUncached(input: {
           .map(([, order]) => order)
           .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()),
         source: row.source,
-        sourceType: "manual" as const,
-        strategyLabel: "Manual",
-        attributionStatus: "unknown" as const,
-        sourceAttribution: [],
+        ...(realAttribution.get(realAttributionPositionKey(row)) ??
+          MANUAL_REAL_POSITION_ATTRIBUTION),
         openedAt: row.openedAt,
         openedAtSource: row.openedAtSource,
         optionQuote: row.optionContract
@@ -4676,7 +5096,7 @@ async function getAccountPositionsUncached(input: {
         const referenceSymbol = positionReferenceSymbol(position);
         const openedAt = bestOpenedAtForPosition(
           position,
-          flexOpenDates.get(position.id),
+          openDates.get(position.id),
         );
         return {
           id: position.id,
@@ -4707,10 +5127,8 @@ async function getAccountPositionsUncached(input: {
               (order) => orderGroupKey(order) === positionGroupKey(position),
             ),
           source: "IBKR_POSITIONS",
-          sourceType: "manual" as const,
-          strategyLabel: "Manual",
-          attributionStatus: "unknown" as const,
-          sourceAttribution: [],
+          ...(realAttribution.get(realAttributionPositionKey(position)) ??
+            MANUAL_REAL_POSITION_ATTRIBUTION),
           openedAt: openedAt.openedAt,
           openedAtSource: openedAt.openedAtSource,
           optionQuote: position.optionContract
@@ -7184,6 +7602,7 @@ export async function testFlexToken() {
 export const __accountEquityHistoryInternalsForTests = {
   calculateTransferAdjustedReturnPoints,
   classifyExternalCashTransfer,
+  clearAccountRouteResponseCache: () => accountRouteResponseCache.clear(),
   aggregateCombinedEquitySnapshotRows,
   compactEquitySnapshotRows,
   dedupeEquitySnapshotRows,
@@ -7192,12 +7611,14 @@ export const __accountEquityHistoryInternalsForTests = {
   filterSnapshotsOnFlexTransferDates,
   isPlaceholderZeroAccountSnapshot,
   persistedAccountRowsToSnapshots,
+  readAccountRouteResponseCache,
 };
 
 export const __accountPositionInternalsForTests = {
   aggregateBalanceRows,
   accountPositionMarketDataSymbol,
   buildAccountPositionTotals,
+  buildExecutionOpenDatesForPositions,
   buildPositionMarketHydration,
   buildPositionQuoteFromSnapshot,
   choosePositionQuote,
@@ -7206,6 +7627,7 @@ export const __accountPositionInternalsForTests = {
   isOpenBrokerPosition,
   normalizeMarketDataSymbol,
   optionQuoteForPosition,
+  optionQuoteDemandProviderContractIdsForPosition,
   optionQuoteProviderContractIdsForPosition,
   structuredOptionProviderContractIdForRow,
   selectFlexOpenPositionCandidate,

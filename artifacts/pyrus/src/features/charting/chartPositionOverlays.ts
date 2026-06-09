@@ -180,6 +180,7 @@ export type ChartPositionOverlayAccountRequest = {
   params?: {
     mode: "paper";
     assetClass: "Options" | "Stocks";
+    liveQuotes: false;
   };
 };
 
@@ -209,6 +210,7 @@ export const resolveChartPositionOverlayAccountRequest = ({
         chartContext?.surfaceKind === "option" || chartContext?.optionContract
           ? "Options"
           : "Stocks",
+      liveQuotes: false,
     },
   };
 };

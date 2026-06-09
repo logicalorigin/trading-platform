@@ -74,10 +74,12 @@ import {
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
+  getStockAggregateStreamDiagnostics,
   isBackgroundStockAggregateStreamingEnabled,
   isForegroundSignalMatrixStockAggregateStreamingEnabled,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
+  type StockMinuteAggregateSource,
   type StockMinuteAggregateSubscription,
   type StockMinuteAggregateMessage,
 } from "./stock-aggregate-stream";
@@ -105,6 +107,114 @@ type SignalMonitorMatrixRequestOrigin =
 type SignalMonitorMatrixCellRequest = {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
+};
+export type SignalMonitorMatrixStreamSource =
+  | StockMinuteAggregateSource
+  | "none";
+type SignalMonitorMatrixStreamFallbackState =
+  | "streaming"
+  | "bootstrap-fallback"
+  | "unavailable";
+export type SignalMonitorMatrixStreamScope = {
+  environment: RuntimeMode;
+  symbols: string[];
+  timeframes: SignalMonitorMatrixTimeframe[];
+  cells: SignalMonitorMatrixCellRequest[];
+  exactCells: boolean;
+  requestedSymbolCount: number;
+  skippedSymbols: string[];
+  truncated: boolean;
+  clientRole?: SignalMonitorMatrixClientRole;
+  requestOrigin?: SignalMonitorMatrixRequestOrigin;
+};
+export type SignalMonitorMatrixStreamCoverage = {
+  requestedSymbols: number;
+  activeScopeSymbols: number;
+  timeframes: number;
+  taskCount: number;
+  source: SignalMonitorMatrixStreamSource;
+  delayed: boolean;
+  eventCount: number;
+  stateCount: number;
+  skippedSymbols: number;
+  truncated: boolean;
+  lastEventAt: string | null;
+  lastEventAgeMs: number | null;
+};
+export type SignalMonitorMatrixStreamState = {
+  id: string;
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  currentSignalDirection: SignalMonitorDirection | null;
+  currentSignalAt: Date | null;
+  currentSignalPrice: number | null;
+  latestBarAt: Date | null;
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  status: SignalMonitorStatus;
+  active: boolean;
+  lastEvaluatedAt: Date | null;
+  lastError: string | null;
+  indicatorSnapshot?: unknown;
+};
+export type SignalMonitorMatrixStreamStatusEvent = {
+  stream: "signal-matrix";
+  event: "stream-status";
+  state: "open" | "degraded" | "unavailable";
+  source: SignalMonitorMatrixStreamSource;
+  provider: SignalMonitorMatrixStreamSource;
+  activeProvider: SignalMonitorMatrixStreamSource | null;
+  delayed: boolean;
+  activeScopeSymbols: number;
+  activeScopeCells: number;
+  skippedSymbols: number;
+  truncated: boolean;
+  eventCount: number;
+  lastEventAt: string | null;
+  lastEventAgeMs: number | null;
+  fallbackState: SignalMonitorMatrixStreamFallbackState;
+};
+export type SignalMonitorMatrixStreamBootstrapEvent = {
+  stream: "signal-matrix";
+  event: "bootstrap";
+  profile: ReturnType<typeof profileToResponse>;
+  states: SignalMonitorMatrixStreamState[];
+  evaluatedAt: Date;
+  timeframes: SignalMonitorMatrixTimeframe[];
+  coverage: SignalMonitorMatrixStreamCoverage;
+};
+export type SignalMonitorMatrixStreamStateDeltaEvent = {
+  stream: "signal-matrix";
+  event: "state-delta";
+  states: SignalMonitorMatrixStreamState[];
+  evaluatedAt: Date;
+  timeframes: SignalMonitorMatrixTimeframe[];
+  coverage: SignalMonitorMatrixStreamCoverage;
+};
+export type SignalMonitorMatrixStreamErrorEvent = {
+  stream: "signal-matrix";
+  event: "error";
+  code: string;
+  detail: string;
+  cooldownMs: number | null;
+};
+export type SignalMonitorMatrixStreamEvent =
+  | SignalMonitorMatrixStreamBootstrapEvent
+  | SignalMonitorMatrixStreamStateDeltaEvent
+  | SignalMonitorMatrixStreamStatusEvent
+  | SignalMonitorMatrixStreamErrorEvent;
+export type SignalMonitorMatrixStreamSubscription = {
+  scope: SignalMonitorMatrixStreamScope;
+  recordSnapshot(states: SignalMonitorMatrixStreamState[]): void;
+  unsubscribe(): void;
+};
+type SignalMonitorMatrixStreamSubscriber = {
+  id: number;
+  scope: SignalMonitorMatrixStreamScope;
+  profile: DbSignalMonitorProfile;
+  onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
+  lastStateSignatures: Map<string, string>;
 };
 type SignalMonitorBarSourcePolicy = "mixed" | "ibkr-only";
 type SignalMonitorSignalStabilityPolicy =
@@ -192,7 +302,8 @@ const SIGNAL_MONITOR_MATRIX_AUTOMATIC_DEBOUNCE_MS = 2_000;
 const SIGNAL_MONITOR_STATE_CACHE_TTL_MS = 15_000;
 const SIGNAL_MONITOR_STATE_STALE_TTL_MS = 30 * 60_000;
 const SIGNAL_MONITOR_STATE_IN_FLIGHT_MAX_AGE_MS = 60_000;
-const SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS = 45_000;
+const SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS = 2_500;
+const SIGNAL_MONITOR_STATE_REFRESH_TIMEOUT_WARNING_COOLDOWN_MS = 60_000;
 const SIGNAL_MONITOR_STATE_CACHE_WARMING_MESSAGE =
   "Signal monitor state cache is warming; returning fallback unavailable coverage while the stored state refresh runs in the background.";
 const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_TTL_MS = 30_000;
@@ -206,6 +317,7 @@ const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
   "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
+const SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS = 150;
 const SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS = 60_000;
 const SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
@@ -230,16 +342,16 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   { maxSymbols: number; concurrency: number }
 > = {
   normal: {
-    maxSymbols: 80,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+    maxSymbols: 40,
+    concurrency: 8,
   },
   watch: {
-    maxSymbols: 40,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+    maxSymbols: 16,
+    concurrency: 4,
   },
   high: {
-    maxSymbols: 20,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+    maxSymbols: 8,
+    concurrency: 2,
   },
 };
 const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
@@ -264,17 +376,17 @@ const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number | null
 > = {
-  normal: 480,
-  watch: 240,
-  high: 120,
+  normal: 240,
+  watch: 96,
+  high: 48,
 };
 const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number | null
 > = {
-  normal: 480,
-  watch: 240,
-  high: 120,
+  normal: 240,
+  watch: 96,
+  high: 48,
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -559,6 +671,64 @@ function normalizeSignalMonitorMatrixCells(
         SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(right.timeframe)
       : left.symbol.localeCompare(right.symbol),
   );
+}
+
+function normalizeSignalMonitorMatrixSymbols(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .map((symbol) => normalizeSymbol(symbol as string).toUpperCase())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+export function normalizeSignalMonitorMatrixStreamScope(input: {
+  environment?: RuntimeMode;
+  symbols?: string[];
+  timeframes?: string[];
+  cells?: SignalMonitorMatrixCellRequest[];
+  clientRole?: SignalMonitorMatrixClientRole;
+  requestOrigin?: SignalMonitorMatrixRequestOrigin;
+}): SignalMonitorMatrixStreamScope {
+  const environment = resolveEnvironment(input.environment);
+  const cells = normalizeSignalMonitorMatrixCells(input.cells);
+  const exactCells = cells.length > 0;
+  const requestedSymbols = exactCells
+    ? Array.from(new Set(cells.map((cell) => cell.symbol))).sort((left, right) =>
+        left.localeCompare(right),
+      )
+    : normalizeSignalMonitorMatrixSymbols(input.symbols);
+  const truncated = requestedSymbols.length > SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
+  const symbols = requestedSymbols.slice(0, SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT);
+  const allowedSymbols = new Set(symbols);
+  const scopedCells = exactCells
+    ? cells.filter((cell) => allowedSymbols.has(cell.symbol))
+    : [];
+  const skippedSymbols = requestedSymbols.slice(symbols.length);
+  const timeframes = exactCells
+    ? Array.from(new Set(scopedCells.map((cell) => cell.timeframe))).sort(
+        (left, right) =>
+          SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(left) -
+          SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(right),
+      )
+    : parseSignalMatrixTimeframes(input.timeframes);
+
+  return {
+    environment,
+    symbols,
+    timeframes,
+    cells: scopedCells,
+    exactCells,
+    requestedSymbolCount: requestedSymbols.length,
+    skippedSymbols,
+    truncated,
+    clientRole: input.clientRole,
+    requestOrigin: input.requestOrigin,
+  };
 }
 
 function signalMonitorMatrixCellsBySymbol(
@@ -1485,6 +1655,20 @@ let signalMonitorMatrixStockAggregateSubscription: StockMinuteAggregateSubscript
 let signalMonitorMatrixStockAggregateReleaseTimer: ReturnType<
   typeof setTimeout
 > | null = null;
+const signalMonitorMatrixStreamSubscribers = new Map<
+  number,
+  SignalMonitorMatrixStreamSubscriber
+>();
+let nextSignalMonitorMatrixStreamSubscriberId = 1;
+const pendingSignalMonitorMatrixStreamSymbolsByEnvironment = new Map<
+  RuntimeMode,
+  Set<string>
+>();
+let signalMonitorMatrixStreamFlushTimer: ReturnType<typeof setTimeout> | null =
+  null;
+let signalMonitorMatrixStreamFlushInFlight = false;
+let signalMonitorMatrixStreamAggregateEventCount = 0;
+let signalMonitorMatrixStreamLastAggregateAt: Date | null = null;
 let signalMonitorLocalBarCacheWarmupStarted = false;
 let signalMonitorLocalBarCacheWarmupTimer: ReturnType<typeof setInterval> | null =
   null;
@@ -1695,10 +1879,12 @@ function shouldServeSignalMonitorMatrixFromStoredStateFast(input: {
   );
 }
 
-function shouldRefreshSignalMonitorMatrixStoredCoverageInBackground(input: {
+function shouldRefreshSignalMonitorMatrixStoredCoverageInBackground(_input: {
   evaluatedAt: Date;
 }): boolean {
-  return !isSignalMonitorQuietMarketSession(input.evaluatedAt);
+  // Background signal-matrix coverage refresh runs in ALL sessions: keeping stored
+  // coverage fresh is market data, and time-of-day gates only execution, not data.
+  return true;
 }
 
 function markAutomaticSignalMonitorMatrixRequest(
@@ -2190,11 +2376,16 @@ export function resolveSignalMonitorEvaluationBatch(input: {
   sourceSymbols: string[];
   maxSymbols: number;
   cursor?: number;
+  prioritySymbols?: string[];
 }): SignalMonitorEvaluationBatch {
   const allSymbols = resolveSymbolUniverse(
     input.sourceSymbols,
     Number.MAX_SAFE_INTEGER,
   ).symbols;
+  const prioritySymbols = resolveSymbolUniverse(
+    input.prioritySymbols ?? [],
+    Number.MAX_SAFE_INTEGER,
+  ).symbols.filter((symbol) => allSymbols.includes(symbol));
   const maxSymbols = Math.max(0, Math.floor(Number(input.maxSymbols) || 0));
   if (!allSymbols.length) {
     return {
@@ -2219,6 +2410,56 @@ export function resolveSignalMonitorEvaluationBatch(input: {
       skippedSymbols: [],
       truncated: false,
       nextCursor: 0,
+    };
+  }
+  if (prioritySymbols.length) {
+    const cursor = Math.max(0, Math.floor(Number(input.cursor) || 0));
+    if (prioritySymbols.length > maxSymbols) {
+      const startIndex = cursor % prioritySymbols.length;
+      const symbols: string[] = [];
+      for (let offset = 0; offset < maxSymbols; offset += 1) {
+        const symbol =
+          prioritySymbols[(startIndex + offset) % prioritySymbols.length];
+        if (symbol) {
+          symbols.push(symbol);
+        }
+      }
+      const selected = new Set(symbols);
+      return {
+        symbols,
+        skippedSymbols: allSymbols.filter((symbol) => !selected.has(symbol)),
+        truncated: true,
+        nextCursor: (startIndex + symbols.length) % prioritySymbols.length,
+      };
+    }
+    const priorityBatch = prioritySymbols;
+    const prioritySet = new Set(priorityBatch);
+    const remainingLimit = Math.max(0, maxSymbols - priorityBatch.length);
+    const backgroundSymbols = allSymbols.filter((symbol) => !prioritySet.has(symbol));
+    const startIndex = backgroundSymbols.length
+      ? cursor % backgroundSymbols.length
+      : 0;
+    const rotatedBackground: string[] = [];
+    for (
+      let offset = 0;
+      offset < remainingLimit && offset < backgroundSymbols.length;
+      offset += 1
+    ) {
+      const symbol =
+        backgroundSymbols[(startIndex + offset) % backgroundSymbols.length];
+      if (symbol) {
+        rotatedBackground.push(symbol);
+      }
+    }
+    const symbols = [...priorityBatch, ...rotatedBackground];
+    const selected = new Set(symbols);
+    return {
+      symbols,
+      skippedSymbols: allSymbols.filter((symbol) => !selected.has(symbol)),
+      truncated: symbols.length < allSymbols.length,
+      nextCursor: backgroundSymbols.length
+        ? (startIndex + rotatedBackground.length) % backgroundSymbols.length
+        : cursor % allSymbols.length,
     };
   }
 
@@ -3077,10 +3318,20 @@ export function startSignalMonitorLocalBarCacheWarmup(): void {
   signalMonitorLocalBarCacheWarmupTimer.unref?.();
 }
 
-function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
-  const normalizedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+function signalMonitorMatrixStockAggregateSymbols(symbols: string[]): string[] {
+  const normalizedSymbols = new Set(
+    symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
   );
+  signalMonitorMatrixStreamSubscribers.forEach((subscriber) => {
+    subscriber.scope.symbols.forEach((symbol) => normalizedSymbols.add(symbol));
+  });
+  return Array.from(normalizedSymbols).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
+  const normalizedSymbols = signalMonitorMatrixStockAggregateSymbols(symbols);
   if (!normalizedSymbols.length) {
     return;
   }
@@ -3101,7 +3352,10 @@ function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
     signalMonitorMatrixStockAggregateSubscription.setSymbols(normalizedSymbols);
   } else {
     signalMonitorMatrixStockAggregateSubscription =
-      subscribeMutableStockMinuteAggregates(normalizedSymbols, () => {});
+      subscribeMutableStockMinuteAggregates(
+        normalizedSymbols,
+        queueSignalMonitorMatrixStreamAggregate,
+      );
   }
   signalMonitorMatrixStockAggregateReleaseTimer = setTimeout(() => {
     signalMonitorMatrixStockAggregateReleaseTimer = null;
@@ -4610,7 +4864,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     const evaluation = evaluatePyrusSignalsSignals({
       chartBars,
       settings,
-      includeProvisionalSignals: true,
+      includeProvisionalSignals: !settings.waitForBarClose,
     });
     const signal = selectSignalMonitorSignalEvent(
       evaluation.signalEvents,
@@ -4824,7 +5078,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   const evaluation = evaluatePyrusSignalsSignals({
     chartBars,
     settings,
-    includeProvisionalSignals: true,
+    includeProvisionalSignals: !settings.waitForBarClose,
   });
   const signal = selectStableSignalMonitorSignalEvent(
     evaluation.signalEvents,
@@ -5446,6 +5700,530 @@ function isFreshSignalMonitorMatrixStreamState(
   );
 }
 
+type SignalMonitorMatrixStreamEvaluateState = (input: {
+  profile: DbSignalMonitorProfile;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}) => SignalMonitorMatrixStateResult | null;
+
+function signalMonitorMatrixStreamLastEventAgeMs(nowMs = Date.now()) {
+  return signalMonitorMatrixStreamLastAggregateAt
+    ? Math.max(0, nowMs - signalMonitorMatrixStreamLastAggregateAt.getTime())
+    : null;
+}
+
+function signalMonitorMatrixStreamSourceFromDiagnostics(
+  value: unknown,
+): SignalMonitorMatrixStreamSource {
+  if (
+    value === "massive-websocket" ||
+    value === "massive-delayed-websocket" ||
+    value === "ibkr-websocket-derived"
+  ) {
+    return value;
+  }
+  return "none";
+}
+
+function signalMonitorMatrixStreamTimeframesForSymbol(
+  scope: SignalMonitorMatrixStreamScope,
+  symbol: string,
+): SignalMonitorMatrixTimeframe[] {
+  const normalizedSymbol = normalizeSymbol(symbol).toUpperCase();
+  if (!normalizedSymbol || !scope.symbols.includes(normalizedSymbol)) {
+    return [];
+  }
+  if (!scope.exactCells) {
+    return scope.timeframes;
+  }
+  return scope.cells
+    .filter((cell) => cell.symbol === normalizedSymbol)
+    .map((cell) => cell.timeframe);
+}
+
+function signalMonitorMatrixStreamCellCount(
+  scope: SignalMonitorMatrixStreamScope,
+) {
+  return scope.exactCells
+    ? scope.cells.length
+    : scope.symbols.length * scope.timeframes.length;
+}
+
+function signalMonitorMatrixStreamStateKey(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+}) {
+  return `${normalizeSymbol(input.symbol).toUpperCase()}:${input.timeframe}`;
+}
+
+function signalMonitorMatrixStreamStateSignature(
+  state: SignalMonitorMatrixStreamState,
+) {
+  return JSON.stringify({
+    symbol: normalizeSymbol(state.symbol).toUpperCase(),
+    timeframe: state.timeframe,
+    currentSignalDirection: state.currentSignalDirection ?? null,
+    currentSignalAt: dateOrNull(state.currentSignalAt)?.toISOString() ?? null,
+    currentSignalPrice: state.currentSignalPrice ?? null,
+    latestBarAt: dateOrNull(state.latestBarAt)?.toISOString() ?? null,
+    barsSinceSignal: state.barsSinceSignal ?? null,
+    fresh: Boolean(state.fresh),
+    status: state.status,
+    lastError: state.lastError ?? null,
+  });
+}
+
+function recordSignalMonitorMatrixStreamSnapshot(
+  subscriber: SignalMonitorMatrixStreamSubscriber,
+  states: SignalMonitorMatrixStreamState[],
+) {
+  states.forEach((state) => {
+    subscriber.lastStateSignatures.set(
+      signalMonitorMatrixStreamStateKey(state),
+      signalMonitorMatrixStreamStateSignature(state),
+    );
+  });
+}
+
+function changedSignalMonitorMatrixStreamStates<
+  T extends SignalMonitorMatrixStreamState,
+>(
+  subscriber: SignalMonitorMatrixStreamSubscriber,
+  states: T[],
+) {
+  return states.filter((state) => {
+    const key = signalMonitorMatrixStreamStateKey(state);
+    const signature = signalMonitorMatrixStreamStateSignature(state);
+    if (subscriber.lastStateSignatures.get(key) === signature) {
+      return false;
+    }
+    subscriber.lastStateSignatures.set(key, signature);
+    return true;
+  });
+}
+
+function signalMonitorMatrixStreamActiveScope() {
+  const symbols = new Set<string>();
+  let cells = 0;
+  signalMonitorMatrixStreamSubscribers.forEach((subscriber) => {
+    subscriber.scope.symbols.forEach((symbol) => symbols.add(symbol));
+    cells += signalMonitorMatrixStreamCellCount(subscriber.scope);
+  });
+  return {
+    symbols: symbols.size,
+    cells,
+  };
+}
+
+export function getSignalMonitorMatrixStreamStatus(
+  scope?: SignalMonitorMatrixStreamScope,
+): SignalMonitorMatrixStreamStatusEvent {
+  const diagnostics = getStockAggregateStreamDiagnostics();
+  const source = signalMonitorMatrixStreamSourceFromDiagnostics(
+    diagnostics.provider,
+  );
+  const activeProvider = diagnostics.activeProvider
+    ? signalMonitorMatrixStreamSourceFromDiagnostics(diagnostics.activeProvider)
+    : null;
+  const activeScope = scope
+    ? {
+        symbols: scope.symbols.length,
+        cells: signalMonitorMatrixStreamCellCount(scope),
+      }
+    : signalMonitorMatrixStreamActiveScope();
+  const available = source !== "none" && isStockAggregateStreamingAvailable();
+  const streaming = Boolean(diagnostics.quoteSubscriptionActive);
+  const state = !available ? "unavailable" : streaming ? "open" : "degraded";
+  const fallbackState: SignalMonitorMatrixStreamFallbackState = !available
+    ? "unavailable"
+    : streaming
+      ? "streaming"
+      : "bootstrap-fallback";
+
+  return {
+    stream: "signal-matrix",
+    event: "stream-status",
+    state,
+    source,
+    provider: source,
+    activeProvider,
+    delayed:
+      source === "massive-delayed-websocket" ||
+      activeProvider === "massive-delayed-websocket",
+    activeScopeSymbols: activeScope.symbols,
+    activeScopeCells: activeScope.cells,
+    skippedSymbols: scope?.skippedSymbols.length ?? 0,
+    truncated: Boolean(scope?.truncated),
+    eventCount: signalMonitorMatrixStreamAggregateEventCount,
+    lastEventAt: signalMonitorMatrixStreamLastAggregateAt?.toISOString() ?? null,
+    lastEventAgeMs: signalMonitorMatrixStreamLastEventAgeMs(),
+    fallbackState,
+  };
+}
+
+export function buildSignalMonitorMatrixStreamCoverage(input: {
+  scope: SignalMonitorMatrixStreamScope;
+  states: SignalMonitorMatrixStreamState[];
+}): SignalMonitorMatrixStreamCoverage {
+  const status = getSignalMonitorMatrixStreamStatus(input.scope);
+  return {
+    requestedSymbols: input.scope.requestedSymbolCount,
+    activeScopeSymbols: input.scope.symbols.length,
+    timeframes: input.scope.timeframes.length,
+    taskCount: signalMonitorMatrixStreamCellCount(input.scope),
+    source: status.source,
+    delayed: status.delayed,
+    eventCount: status.eventCount,
+    stateCount: input.states.length,
+    skippedSymbols: input.scope.skippedSymbols.length,
+    truncated: input.scope.truncated,
+    lastEventAt: status.lastEventAt,
+    lastEventAgeMs: status.lastEventAgeMs,
+  };
+}
+
+export function buildSignalMonitorMatrixStreamBootstrapEvent(
+  response: {
+    profile: ReturnType<typeof profileToResponse>;
+    states: SignalMonitorMatrixStreamState[];
+    evaluatedAt: Date;
+    timeframes: SignalMonitorMatrixTimeframe[];
+  },
+  scope: SignalMonitorMatrixStreamScope,
+): SignalMonitorMatrixStreamBootstrapEvent {
+  return {
+    stream: "signal-matrix",
+    event: "bootstrap",
+    profile: response.profile,
+    states: response.states,
+    evaluatedAt: response.evaluatedAt,
+    timeframes: response.timeframes,
+    coverage: buildSignalMonitorMatrixStreamCoverage({
+      scope,
+      states: response.states,
+    }),
+  };
+}
+
+function buildSignalMonitorMatrixStreamDeltaEvent(input: {
+  scope: SignalMonitorMatrixStreamScope;
+  states: SignalMonitorMatrixStreamState[];
+  evaluatedAt: Date;
+}): SignalMonitorMatrixStreamStateDeltaEvent {
+  return {
+    stream: "signal-matrix",
+    event: "state-delta",
+    states: input.states,
+    evaluatedAt: input.evaluatedAt,
+    timeframes: Array.from(
+      new Set(input.states.map((state) => state.timeframe)),
+    ).sort(
+      (left, right) =>
+        SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(left) -
+        SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(right),
+    ),
+    coverage: buildSignalMonitorMatrixStreamCoverage({
+      scope: input.scope,
+      states: input.states,
+    }),
+  };
+}
+
+function emitSignalMonitorMatrixStreamError(input: {
+  subscriber: SignalMonitorMatrixStreamSubscriber;
+  code: string;
+  detail: string;
+  cooldownMs?: number | null;
+}) {
+  void input.subscriber.onEvent({
+    stream: "signal-matrix",
+    event: "error",
+    code: input.code,
+    detail: input.detail,
+    cooldownMs: input.cooldownMs ?? null,
+  });
+}
+
+export function evaluateSignalMonitorMatrixStreamScopeDelta(input: {
+  scope: SignalMonitorMatrixStreamScope;
+  profile: DbSignalMonitorProfile;
+  symbol: string;
+  evaluatedAt: Date;
+  evaluateState?: SignalMonitorMatrixStreamEvaluateState;
+}): SignalMonitorMatrixStateResult[] {
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  const timeframes = signalMonitorMatrixStreamTimeframesForSymbol(
+    input.scope,
+    symbol,
+  );
+  if (!symbol || !timeframes.length) {
+    return [];
+  }
+
+  const evaluateState =
+    input.evaluateState ?? evaluateSignalMonitorMatrixStateFromStreamBars;
+  return timeframes
+    .map((timeframe) =>
+      evaluateState({
+        profile: input.profile,
+        symbol,
+        timeframe,
+        evaluatedAt: input.evaluatedAt,
+      }),
+    )
+    .filter((state): state is SignalMonitorMatrixStateResult =>
+      Boolean(state),
+    );
+}
+
+export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
+  message: Pick<StockMinuteAggregateMessage, "symbol">;
+  environment?: RuntimeMode;
+  evaluatedAt?: Date;
+  evaluateState?: SignalMonitorMatrixStreamEvaluateState;
+}) {
+  const symbol = normalizeSymbol(input.message.symbol).toUpperCase();
+  if (!symbol || !signalMonitorMatrixStreamSubscribers.size) {
+    return;
+  }
+  const evaluatedAt = input.evaluatedAt ?? new Date();
+  const persistByProfile = new Map<
+    string,
+    { profile: DbSignalMonitorProfile; states: SignalMonitorMatrixStateResult[] }
+  >();
+
+  for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
+    if (
+      input.environment &&
+      subscriber.scope.environment !== input.environment
+    ) {
+      continue;
+    }
+    let states: SignalMonitorMatrixStateResult[];
+    try {
+      states = evaluateSignalMonitorMatrixStreamScopeDelta({
+        scope: subscriber.scope,
+        profile: subscriber.profile,
+        symbol,
+        evaluatedAt,
+        evaluateState: input.evaluateState,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Signal Matrix stream evaluation failed.";
+      logger.warn(
+        { err: error, symbol, subscriberId: subscriber.id },
+        "Signal Matrix stream evaluation failed",
+      );
+      emitSignalMonitorMatrixStreamError({
+        subscriber,
+        code: "signal_monitor_matrix_stream_evaluation_failed",
+        detail: message,
+      });
+      continue;
+    }
+    if (!states.length) {
+      continue;
+    }
+    const changedStates = changedSignalMonitorMatrixStreamStates(
+      subscriber,
+      states,
+    );
+    if (!changedStates.length) {
+      continue;
+    }
+
+    const persisted = persistByProfile.get(subscriber.profile.id) ?? {
+      profile: subscriber.profile,
+      states: [],
+    };
+    persisted.states.push(...changedStates);
+    persistByProfile.set(subscriber.profile.id, persisted);
+    void subscriber.onEvent(
+      buildSignalMonitorMatrixStreamDeltaEvent({
+        scope: subscriber.scope,
+        states: changedStates,
+        evaluatedAt,
+      }),
+    );
+  }
+
+  persistByProfile.forEach((entry) => {
+    void persistSignalMonitorMatrixStatesBestEffort({
+      profile: entry.profile,
+      states: entry.states,
+      evaluatedAt,
+    });
+  });
+}
+
+function flushSignalMonitorMatrixStreamAggregates() {
+  if (signalMonitorMatrixStreamFlushInFlight) {
+    return;
+  }
+  const pending = new Map<RuntimeMode, Set<string>>();
+  pendingSignalMonitorMatrixStreamSymbolsByEnvironment.forEach(
+    (symbols, environment) => {
+      pending.set(environment, new Set(symbols));
+    },
+  );
+  pendingSignalMonitorMatrixStreamSymbolsByEnvironment.clear();
+  if (!pending.size) {
+    return;
+  }
+
+  signalMonitorMatrixStreamFlushInFlight = true;
+  try {
+    const evaluatedAt = new Date();
+    pending.forEach((symbols, environment) => {
+      symbols.forEach((symbol) => {
+        emitSignalMonitorMatrixStreamAggregateDelta({
+          message: {
+            symbol,
+          },
+          environment,
+          evaluatedAt,
+        });
+      });
+    });
+  } finally {
+    signalMonitorMatrixStreamFlushInFlight = false;
+    if (pendingSignalMonitorMatrixStreamSymbolsByEnvironment.size) {
+      scheduleSignalMonitorMatrixStreamFlush();
+    }
+  }
+}
+
+function scheduleSignalMonitorMatrixStreamFlush() {
+  if (signalMonitorMatrixStreamFlushTimer) {
+    return;
+  }
+  signalMonitorMatrixStreamFlushTimer = setTimeout(() => {
+    signalMonitorMatrixStreamFlushTimer = null;
+    flushSignalMonitorMatrixStreamAggregates();
+  }, SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS);
+  signalMonitorMatrixStreamFlushTimer.unref?.();
+}
+
+function queueSignalMonitorMatrixStreamAggregate(
+  message: StockMinuteAggregateMessage,
+) {
+  const symbol = normalizeSymbol(message.symbol).toUpperCase();
+  if (!symbol || !signalMonitorMatrixStreamSubscribers.size) {
+    return;
+  }
+
+  signalMonitorMatrixStreamAggregateEventCount += 1;
+  signalMonitorMatrixStreamLastAggregateAt = new Date();
+  for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
+    if (
+      subscriber.scope.symbols.includes(symbol) &&
+      signalMonitorMatrixStreamTimeframesForSymbol(subscriber.scope, symbol)
+        .length
+    ) {
+      const pending =
+        pendingSignalMonitorMatrixStreamSymbolsByEnvironment.get(
+          subscriber.scope.environment,
+        ) ?? new Set<string>();
+      pending.add(symbol);
+      pendingSignalMonitorMatrixStreamSymbolsByEnvironment.set(
+        subscriber.scope.environment,
+        pending,
+      );
+    }
+  }
+  scheduleSignalMonitorMatrixStreamFlush();
+}
+
+async function resolveSignalMonitorMatrixStreamProfile(
+  environment: RuntimeMode,
+): Promise<DbSignalMonitorProfile> {
+  if (isSignalMonitorDbBackoffActive()) {
+    return getRuntimeSignalMonitorProfile(environment);
+  }
+  try {
+    return await getOrCreateProfile(environment);
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      warnSignalMonitorDbUnavailable(error);
+      return getRuntimeSignalMonitorProfile(environment);
+    }
+    throw error;
+  }
+}
+
+function refreshSignalMonitorMatrixStockAggregateStreamScope() {
+  if (!signalMonitorMatrixStockAggregateSubscription) {
+    return;
+  }
+  const symbols = signalMonitorMatrixStockAggregateSymbols([]);
+  if (symbols.length) {
+    signalMonitorMatrixStockAggregateSubscription.setSymbols(symbols);
+  }
+}
+
+function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
+  scope: SignalMonitorMatrixStreamScope;
+  profile: DbSignalMonitorProfile;
+  onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
+  prime?: boolean;
+}): SignalMonitorMatrixStreamSubscription {
+  const subscriberId = nextSignalMonitorMatrixStreamSubscriberId;
+  nextSignalMonitorMatrixStreamSubscriberId += 1;
+  const subscriber: SignalMonitorMatrixStreamSubscriber = {
+    id: subscriberId,
+    scope: input.scope,
+    profile: input.profile,
+    onEvent: input.onEvent,
+    lastStateSignatures: new Map(),
+  };
+  signalMonitorMatrixStreamSubscribers.set(subscriberId, subscriber);
+  if (input.prime !== false) {
+    primeSignalMonitorMatrixStockAggregateStream(input.scope.symbols);
+  }
+
+  return {
+    scope: input.scope,
+    recordSnapshot(states: SignalMonitorMatrixStreamState[]) {
+      recordSignalMonitorMatrixStreamSnapshot(subscriber, states);
+    },
+    unsubscribe() {
+      signalMonitorMatrixStreamSubscribers.delete(subscriberId);
+      refreshSignalMonitorMatrixStockAggregateStreamScope();
+    },
+  };
+}
+
+export async function subscribeSignalMonitorMatrixStream(input: {
+  scope: SignalMonitorMatrixStreamScope;
+  onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
+}): Promise<SignalMonitorMatrixStreamSubscription> {
+  const profile = await resolveSignalMonitorMatrixStreamProfile(
+    input.scope.environment,
+  );
+  return createSignalMonitorMatrixStreamSubscriptionForTests({
+    scope: input.scope,
+    profile,
+    onEvent: input.onEvent,
+  });
+}
+
+function resetSignalMonitorMatrixStreamForTests() {
+  signalMonitorMatrixStreamSubscribers.clear();
+  pendingSignalMonitorMatrixStreamSymbolsByEnvironment.clear();
+  if (signalMonitorMatrixStreamFlushTimer) {
+    clearTimeout(signalMonitorMatrixStreamFlushTimer);
+    signalMonitorMatrixStreamFlushTimer = null;
+  }
+  signalMonitorMatrixStreamFlushInFlight = false;
+  signalMonitorMatrixStreamAggregateEventCount = 0;
+  signalMonitorMatrixStreamLastAggregateAt = null;
+  nextSignalMonitorMatrixStreamSubscriberId = 1;
+}
+
 async function evaluateSymbolsInBatches(input: {
   profile: DbSignalMonitorProfile;
   symbols: string[];
@@ -5557,6 +6335,16 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
       ensureWatchlist: input.ensureWatchlist,
     },
   );
+  if (!evaluationSettings.profile.enabled) {
+    return disabledSignalMonitorProfileEvaluationResponse({
+      profile: universe.profile,
+      evaluatedAt,
+      universeSymbols: resolveSignalMonitorUniverseSymbols(universe),
+      universe: universe.universe,
+      skippedSymbols: universe.skippedSymbols,
+      truncated: universe.truncated,
+    });
+  }
   const requestedSymbols = input.symbols
     ? new Set(
         input.symbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()),
@@ -5580,6 +6368,10 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
             profile: universe.profile,
             timeframe: rotationTimeframe,
           }),
+        ),
+        prioritySymbols: universe.symbols.slice(
+          0,
+          Math.max(0, universe.universe.pinnedSymbols),
         ),
       });
   if (!requestedSymbols) {
@@ -5758,6 +6550,27 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
     symbols: input.symbols,
     maxSymbols: evaluationProfile.maxSymbols,
   });
+  if (!evaluationProfile.enabled) {
+    return disabledSignalMonitorProfileEvaluationResponse({
+      profile: evaluationProfile,
+      evaluatedAt,
+      universeSymbols: resolveSignalMonitorUniverseSymbols(resolved),
+      universe: {
+        mode: "selected_watchlist",
+        configuredMaxSymbols: evaluationProfile.maxSymbols,
+        resolvedSymbols: resolved.symbols.length,
+        pinnedSymbols: resolved.symbols.length,
+        expansionSymbols: 0,
+        shortfall: 0,
+        source: "selected_watchlist",
+        fallbackUsed: false,
+        degradedReason: "Signal monitor profile is disabled.",
+        rankedAt: null,
+      },
+      skippedSymbols: resolved.skippedSymbols,
+      truncated: resolved.truncated,
+    });
+  }
   primeSignalMonitorMatrixStockAggregateStream(resolved.symbols);
 
   const evaluatedStates = await evaluateSymbolsInBatches({
@@ -6071,6 +6884,54 @@ function hasCompleteSignalMonitorMatrixCoverage(input: {
   return Array.from(requestedCellKeys).every((key) => hydratedCellKeys.has(key));
 }
 
+function buildSignalMonitorMatrixPendingCells(input: {
+  states: unknown[];
+  timeframes: readonly SignalMonitorMatrixTimeframe[];
+  requestedSymbols: string[];
+  requestedCells?: SignalMonitorMatrixCellRequest[];
+}): SignalMonitorMatrixCellRequest[] {
+  if (!input.requestedCells?.length) {
+    return [];
+  }
+  const requestedCells = new Map<string, SignalMonitorMatrixCellRequest>();
+  const appendCell = (rawSymbol: string, timeframe: SignalMonitorMatrixTimeframe) => {
+    const symbol = normalizeSymbol(rawSymbol).toUpperCase();
+    if (!symbol || !input.timeframes.includes(timeframe)) {
+      return;
+    }
+    const key = `${symbol}:${timeframe}`;
+    if (!requestedCells.has(key)) {
+      requestedCells.set(key, { symbol, timeframe });
+    }
+  };
+
+  input.requestedCells.forEach((cell) => appendCell(cell.symbol, cell.timeframe));
+
+  if (!requestedCells.size) {
+    return [];
+  }
+
+  const hydratedCellKeys = new Set<string>();
+  input.states.forEach((state) => {
+    if (!isHydratedSignalMonitorMatrixStateForCoverage(state, input.timeframes)) {
+      return;
+    }
+    const record = state as { symbol?: unknown; timeframe?: unknown };
+    const symbol = normalizeSymbol(record.symbol as string).toUpperCase();
+    const timeframe = String(
+      record.timeframe || "",
+    ) as SignalMonitorMatrixTimeframe;
+    const key = `${symbol}:${timeframe}`;
+    if (requestedCells.has(key)) {
+      hydratedCellKeys.add(key);
+    }
+  });
+
+  return Array.from(requestedCells.entries())
+    .filter(([key]) => !hydratedCellKeys.has(key))
+    .map(([, cell]) => cell);
+}
+
 function storedSignalStateToMatrixState(
   state: ReturnType<typeof stateToResponseForSnapshot>,
 ): SignalMonitorMatrixStateResult {
@@ -6247,12 +7108,25 @@ function withSignalMonitorMatrixMetadata<
         : value.timeframes;
     return requiredTimeframes.every((timeframe) => hydratedTimeframes?.has(timeframe));
   }).length;
+  const pendingCells = buildSignalMonitorMatrixPendingCells({
+    states: value.states,
+    timeframes: value.timeframes,
+    requestedSymbols,
+    requestedCells: input.requestedCells,
+  });
+  const warming = Boolean(
+    pendingCells.length ||
+      input.cacheStatus === "stale" ||
+      input.cacheStatus === "inflight",
+  );
 
   return {
     ...value,
     cacheStatus: input.cacheStatus,
     refreshing:
       input.cacheStatus === "stale" || input.cacheStatus === "inflight",
+    warming,
+    pendingCells,
     coverage: {
       requestedSymbols: requestedSymbols.length,
       evaluatedSymbols: evaluatedSymbols.size,
@@ -6264,6 +7138,7 @@ function withSignalMonitorMatrixMetadata<
       sourceRequestCount: value.sourceRequestCount ?? input.taskCount,
       hydratedSymbols,
       missingSymbols: Math.max(0, input.totalSymbols - hydratedSymbols),
+      pendingCellCount: pendingCells.length,
       estimatedFullCycleMs: null as number | null,
       cacheStatus: input.cacheStatus,
       durationMs: Math.max(0, Date.now() - input.startedAt),
@@ -6309,6 +7184,25 @@ function signalMonitorMatrixDisabled(input: {
   return !input.profile.enabled
     ? disabledSignalMonitorMatrixResponse(input)
     : null;
+}
+
+function disabledSignalMonitorProfileEvaluationResponse(input: {
+  profile: DbSignalMonitorProfile;
+  evaluatedAt: Date;
+  universeSymbols: string[];
+  universe: SignalMonitorUniverseSummary;
+  skippedSymbols?: string[];
+  truncated?: boolean;
+}) {
+  return {
+    profile: profileToResponse(input.profile),
+    states: [] as ReturnType<typeof stateToResponse>[],
+    evaluatedAt: input.evaluatedAt,
+    truncated: input.truncated ?? false,
+    skippedSymbols: input.skippedSymbols ?? [],
+    universeSymbols: input.universeSymbols,
+    universe: input.universe,
+  };
 }
 
 function scheduleSignalMonitorMatrixBackgroundRefresh(callback: () => void): void {
@@ -6635,6 +7529,10 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       sourceSymbols: universe.symbols,
       maxSymbols: evaluationProfile.maxSymbols,
       cursor: signalMonitorEvaluationRotationCursors.get(rotationKey),
+      prioritySymbols: universe.symbols.slice(
+        0,
+        Math.max(0, universe.universe.pinnedSymbols),
+      ),
     });
     signalMonitorEvaluationRotationCursors.set(
       rotationKey,
@@ -7389,6 +8287,7 @@ export const __signalMonitorInternalsForTests = {
   mergeSignalMonitorStockMinuteAggregates,
   hydrateSignalMonitorMatrixStatesFromStoredStates,
   hasCompleteSignalMonitorMatrixCoverage,
+  buildSignalMonitorMatrixPendingCells,
   completeSignalMonitorStateSnapshotCoverage,
   buildSignalMonitorStateCacheWarmingResult,
   shouldPersistSignalMonitorMatrixState,
@@ -7401,6 +8300,13 @@ export const __signalMonitorInternalsForTests = {
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
+  normalizeSignalMonitorMatrixStreamScope,
+  evaluateSignalMonitorMatrixStreamScopeDelta,
+  emitSignalMonitorMatrixStreamAggregateDelta,
+  createSignalMonitorMatrixStreamSubscriptionForTests,
+  buildSignalMonitorMatrixStreamBootstrapEvent,
+  getSignalMonitorMatrixStreamStatus,
+  resetSignalMonitorMatrixStreamForTests,
   resolveSignalMonitorBrokerRecentWindowMinutes,
   isSignalMonitorStateCurrentForLane,
   stateToResponseForSnapshot,
@@ -7603,6 +8509,7 @@ const signalMonitorStateInFlight = new Map<
   string,
   SignalMonitorStateInFlightEntry
 >();
+let signalMonitorStateRefreshTimeoutWarningUntilMs = 0;
 
 function signalMonitorStateCacheKey(environment: RuntimeMode): string {
   return environment;
@@ -7681,24 +8588,35 @@ function getSignalMonitorStateInFlight(
 
 async function waitForSignalMonitorStateRefresh(
   entry: SignalMonitorStateInFlightEntry,
-): Promise<SignalMonitorStateReadResult> {
+  input: { cacheKey: string; environment: RuntimeMode; startedAt: number },
+): Promise<SignalMonitorStateReadResult | null> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+  const timeoutPromise = new Promise<null>((resolve) => {
     timeout = setTimeout(() => {
-      reject(
-        new HttpError(504, "Signal monitor state refresh timed out.", {
-          code: "signal_monitor_state_refresh_timeout",
-          detail:
-            "Signal monitor state did not finish loading before the response budget. A background refresh is still running.",
-          expose: true,
-        }),
-      );
+      resolve(null);
     }, SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS);
     timeout.unref?.();
   });
 
   try {
-    return await Promise.race([entry.promise, timeoutPromise]);
+    const result = await Promise.race([entry.promise, timeoutPromise]);
+    if (result === null) {
+      const nowMs = Date.now();
+      if (nowMs >= signalMonitorStateRefreshTimeoutWarningUntilMs) {
+        signalMonitorStateRefreshTimeoutWarningUntilMs =
+          nowMs + SIGNAL_MONITOR_STATE_REFRESH_TIMEOUT_WARNING_COOLDOWN_MS;
+        logger.warn(
+          {
+            cacheKey: input.cacheKey,
+            environment: input.environment,
+            waitMs: SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS,
+            refreshAgeMs: nowMs - input.startedAt,
+          },
+          "Signal monitor state refresh exceeded route budget; serving warming fallback",
+        );
+      }
+    }
+    return result;
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -7821,6 +8739,19 @@ export async function getSignalMonitorState(input: {
   }
 
   const refresh = startOrReuseRefresh();
+  if (inFlight) {
+    const warming = buildSignalMonitorStateCacheWarmingResult(
+      environment,
+      new Date(current),
+    );
+    return attachSignalMonitorStateCacheMetadata(warming.value, {
+      cacheStatus: "inflight",
+      refreshing: true,
+      servedAt: current,
+      stateSource: warming.stateSource,
+    });
+  }
+
   if (cached) {
     return attachSignalMonitorStateCacheMetadata(cached.value, {
       cacheStatus: "stale",
@@ -7830,7 +8761,24 @@ export async function getSignalMonitorState(input: {
     });
   }
 
-  const fresh = await waitForSignalMonitorStateRefresh(refresh);
+  const fresh = await waitForSignalMonitorStateRefresh(refresh, {
+    cacheKey,
+    environment,
+    startedAt: refresh.startedAt,
+  });
+  if (!fresh) {
+    const warming = buildSignalMonitorStateCacheWarmingResult(
+      environment,
+      new Date(current),
+    );
+    return attachSignalMonitorStateCacheMetadata(warming.value, {
+      cacheStatus: "miss",
+      refreshing: true,
+      servedAt: current,
+      stateSource: warming.stateSource,
+    });
+  }
+
   return attachSignalMonitorStateCacheMetadata(fresh.value, {
     cacheStatus: inFlight ? "inflight" : "miss",
     refreshing: false,

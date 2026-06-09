@@ -187,6 +187,39 @@ type AlgoCockpitStreamPayload = {
   signalMonitorProfile: SignalMonitorProfile | null;
 };
 
+type AlgoDeploymentsResponseWithCacheStatus = AlgoDeploymentsResponse & {
+  cacheStatus?: "hit" | "stale" | "unavailable" | string;
+};
+
+const hasAlgoDeployments = (
+  value: AlgoDeploymentsResponse | undefined,
+): value is AlgoDeploymentsResponse =>
+  Boolean(value && Array.isArray(value.deployments) && value.deployments.length);
+
+const isUnavailableEmptyAlgoDeploymentsResponse = (
+  value: AlgoDeploymentsResponse | undefined,
+) => {
+  const cacheStatus = (value as AlgoDeploymentsResponseWithCacheStatus | undefined)
+    ?.cacheStatus;
+  return (
+    cacheStatus === "unavailable" &&
+    (!Array.isArray(value?.deployments) || value.deployments.length === 0)
+  );
+};
+
+export const resolveAlgoDeploymentsStreamCacheUpdate = (
+  current: AlgoDeploymentsResponse | undefined,
+  incoming: AlgoDeploymentsResponse,
+) => {
+  if (
+    hasAlgoDeployments(current) &&
+    isUnavailableEmptyAlgoDeploymentsResponse(incoming)
+  ) {
+    return current;
+  }
+  return incoming;
+};
+
 type OrderStreamPayload = {
   orders: OrdersResponse["orders"];
 };
@@ -665,6 +698,17 @@ const normalizeIbkrProviderContractId = (
   return normalized && !isOpraOptionTicker(normalized) ? normalized : "";
 };
 
+const uniqueOptionProviderContractIds = (
+  providerContractIds: Array<string | null | undefined>,
+): string[] =>
+  Array.from(
+    new Set(
+      providerContractIds
+        .map((providerContractId) => providerContractId?.trim?.() || "")
+        .filter(Boolean),
+    ),
+  );
+
 const subscribeToOptionQuoteSnapshot = (
   providerContractId: string,
   listener: () => void,
@@ -885,11 +929,10 @@ const optionPositionProviderContractIds = (
         ? contract.conid
         : null,
     );
-  return [
-    primaryProviderContractId ||
-      structuredOptionProviderContractId(row.optionContract) ||
-      "",
-  ].filter(Boolean);
+  return uniqueOptionProviderContractIds([
+    structuredOptionProviderContractId(row.optionContract),
+    primaryProviderContractId,
+  ]);
 };
 
 const optionQuoteStatusRank = (status: unknown): number => {
@@ -1078,6 +1121,83 @@ const optionPriceLooksContractScaled = (
   return price >= multiplier * 0.5;
 };
 
+const ACCOUNT_POSITION_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const accountPositionDateOrNull = (value: unknown): Date | null => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const raw = value.trim();
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return new Date(
+      Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), 12),
+    );
+  }
+  const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dashed) {
+    return new Date(
+      Date.UTC(Number(dashed[1]), Number(dashed[2]) - 1, Number(dashed[3]), 12),
+    );
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const accountPositionDateOnlyMarketDateKey = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    const raw = value.trim();
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dashed) return `${dashed[1]}-${dashed[2]}-${dashed[3]}`;
+  }
+  if (
+    value instanceof Date &&
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0
+  ) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+};
+
+const accountPositionMarketDateKey = (value: unknown): string | null => {
+  const dateOnlyKey = accountPositionDateOnlyMarketDateKey(value);
+  if (dateOnlyKey) return dateOnlyKey;
+  const date = accountPositionDateOrNull(value);
+  if (!date) return null;
+  const parts = ACCOUNT_POSITION_MARKET_DATE_FORMATTER.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+};
+
+const accountPositionOpenedOnCurrentMarketDay = (
+  openedAt: unknown,
+  now: Date = new Date(),
+): boolean => {
+  const opened = accountPositionDateOrNull(openedAt);
+  const observedAt = accountPositionDateOrNull(now);
+  if (!opened || !observedAt || opened.getTime() > observedAt.getTime()) {
+    return false;
+  }
+  const openedKey = accountPositionMarketDateKey(openedAt);
+  const nowKey = accountPositionMarketDateKey(observedAt);
+  return Boolean(openedKey && nowKey && openedKey === nowKey);
+};
+
 const normalizeOptionPremiumPrice = (
   position: OptionPricedPosition,
   value: unknown,
@@ -1111,8 +1231,7 @@ const patchAccountPositionRowFromOptionQuote = (
   const mark = optionQuoteDisplayMark(quote, row.mark);
   const quantity = finiteOptionNumber(row.quantity);
   const averageCost = normalizeOptionPremiumPrice(row, row.averageCost);
-  const multiplier =
-    optionPositionMultiplier(row);
+  const multiplier = optionPositionMultiplier(row);
   const marketValue =
     mark !== null && quantity !== null ? mark * quantity * multiplier : row.marketValue;
   const unrealizedPnl =
@@ -1131,16 +1250,23 @@ const patchAccountPositionRowFromOptionQuote = (
     (quote as LiveOptionQuoteSnapshot & { dayChange?: unknown }).dayChange,
     quote.change,
   );
+  const sameDayPosition = accountPositionOpenedOnCurrentMarketDay(row.openedAt);
+  const sameDayUnrealizedPnl = finiteOptionNumber(unrealizedPnl);
+  const sameDayUnrealizedPnlPercent = finiteOptionNumber(unrealizedPnlPercent);
   const dayChange =
-    perContractDayChange !== null && quantity !== null
-      ? perContractDayChange * quantity * multiplier
-      : row.dayChange;
+    sameDayPosition && sameDayUnrealizedPnl !== null
+      ? sameDayUnrealizedPnl
+      : perContractDayChange !== null && quantity !== null
+        ? perContractDayChange * quantity * multiplier
+        : row.dayChange;
   const dayChangePercent =
-    finiteOptionNumber(
-      (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown }).dayChangePercent,
-      quote.changePercent,
-      row.dayChangePercent,
-    );
+    sameDayPosition && sameDayUnrealizedPnlPercent !== null
+      ? sameDayUnrealizedPnlPercent
+      : finiteOptionNumber(
+          (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown }).dayChangePercent,
+          quote.changePercent,
+          row.dayChangePercent,
+        );
   const bid = finiteOptionNumber(quote.bid);
   const ask = finiteOptionNumber(quote.ask);
   const mid = optionQuoteMidpoint(bid, ask);
@@ -2582,12 +2708,35 @@ const preserveHydratedOptionDayChangeFields = (
   } as AccountPositionRow;
 };
 
+const preserveAccountPositionOpenDateFields = (
+  current: AccountPositionRow,
+  next: AccountPositionRow,
+): AccountPositionRow => {
+  const currentOpenedAt = current.openedAt ?? null;
+  const nextOpenedAt = next.openedAt ?? null;
+  const openedAt = nextOpenedAt ?? currentOpenedAt;
+  const openedAtSource =
+    next.openedAtSource ??
+    (openedAt === currentOpenedAt ? current.openedAtSource ?? null : null);
+
+  if (openedAt === nextOpenedAt && openedAtSource === next.openedAtSource) {
+    return next;
+  }
+
+  return {
+    ...next,
+    openedAt,
+    openedAtSource,
+  };
+};
+
 const mergeLiveOptionQuoteFields = (
   current: AccountPositionRow,
   next: AccountPositionRow,
 ): AccountPositionRow => {
+  const nextWithOpenDate = preserveAccountPositionOpenDateFields(current, next);
   const currentProviderContractId = optionPositionProviderContractId(current);
-  const nextProviderContractId = optionPositionProviderContractId(next);
+  const nextProviderContractId = optionPositionProviderContractId(nextWithOpenDate);
   const providerContractId = nextProviderContractId || currentProviderContractId;
   if (
     !providerContractId ||
@@ -2595,15 +2744,19 @@ const mergeLiveOptionQuoteFields = (
       nextProviderContractId &&
       currentProviderContractId !== nextProviderContractId)
   ) {
-    return next;
+    return nextWithOpenDate;
   }
 
   const currentQuote = quotePatchForPositionRow(current);
   if (!quotePatchHasUsableOptionData(currentQuote)) {
-    return preserveHydratedOptionDayChangeFields(current, next, next);
+    return preserveHydratedOptionDayChangeFields(
+      current,
+      nextWithOpenDate,
+      nextWithOpenDate,
+    );
   }
 
-  const nextQuote = quotePatchForPositionRow(next);
+  const nextQuote = quotePatchForPositionRow(nextWithOpenDate);
   const currentTimestamp = quotePatchTimestampMs(currentQuote);
   const nextTimestamp = quotePatchTimestampMs(nextQuote);
   const currentIsNewer =
@@ -2621,7 +2774,7 @@ const mergeLiveOptionQuoteFields = (
       : primary ?? secondary;
   const supportedProviderContractIds = new Set([
     ...optionPositionProviderContractIds(current),
-    ...optionPositionProviderContractIds(next),
+    ...optionPositionProviderContractIds(nextWithOpenDate),
   ]);
   const mergedProviderContractId =
     [
@@ -2711,62 +2864,92 @@ const mergeLiveOptionQuoteFields = (
     dataUpdatedAt,
   } as unknown as LiveOptionQuotePatchSnapshot;
 
-  const patched = patchAccountPositionRowFromOptionQuote(next, mergedQuote);
-  if (patched !== next || !valuesEqualJson(patched, next)) {
-    return preserveHydratedOptionDayChangeFields(current, next, patched);
+  const patched = patchAccountPositionRowFromOptionQuote(
+    nextWithOpenDate,
+    mergedQuote,
+  );
+  if (patched !== nextWithOpenDate || !valuesEqualJson(patched, nextWithOpenDate)) {
+    return preserveHydratedOptionDayChangeFields(
+      current,
+      nextWithOpenDate,
+      patched,
+    );
   }
 
-  const nextPositionQuote = next.quote as AccountOptionQuotePatch | null | undefined;
+  const nextPositionQuote =
+    nextWithOpenDate.quote as AccountOptionQuotePatch | null | undefined;
   const fallbackRow = {
-    ...next,
+    ...nextWithOpenDate,
     optionQuote: mergedQuote,
     quote: {
-      ...(next.quote || {}),
-      bid: mergedQuote.bid ?? next.quote?.bid ?? null,
-      ask: mergedQuote.ask ?? next.quote?.ask ?? null,
-      mid: mergedQuote.mid ?? next.quote?.mid ?? null,
-      mark: mergedQuote.mark ?? next.quote?.mark ?? null,
-      last: mergedQuote.last ?? next.quote?.last ?? null,
-      spread: mergedQuote.spread ?? next.quote?.spread ?? null,
-      spreadPercent: mergedQuote.spreadPercent ?? next.quote?.spreadPercent ?? null,
-      bidSize: mergedQuote.bidSize ?? next.quote?.bidSize ?? null,
-      askSize: mergedQuote.askSize ?? next.quote?.askSize ?? null,
-      freshness: mergedQuote.freshness ?? next.quote?.freshness ?? null,
-      status: mergedQuote.status ?? mergedQuote.quoteStatus ?? next.quote?.status ?? null,
-      reason: mergedQuote.reason ?? mergedQuote.quoteReason ?? next.quote?.reason ?? null,
+      ...(nextWithOpenDate.quote || {}),
+      bid: mergedQuote.bid ?? nextWithOpenDate.quote?.bid ?? null,
+      ask: mergedQuote.ask ?? nextWithOpenDate.quote?.ask ?? null,
+      mid: mergedQuote.mid ?? nextWithOpenDate.quote?.mid ?? null,
+      mark: mergedQuote.mark ?? nextWithOpenDate.quote?.mark ?? null,
+      last: mergedQuote.last ?? nextWithOpenDate.quote?.last ?? null,
+      spread: mergedQuote.spread ?? nextWithOpenDate.quote?.spread ?? null,
+      spreadPercent:
+        mergedQuote.spreadPercent ?? nextWithOpenDate.quote?.spreadPercent ?? null,
+      bidSize: mergedQuote.bidSize ?? nextWithOpenDate.quote?.bidSize ?? null,
+      askSize: mergedQuote.askSize ?? nextWithOpenDate.quote?.askSize ?? null,
+      freshness: mergedQuote.freshness ?? nextWithOpenDate.quote?.freshness ?? null,
+      status:
+        mergedQuote.status ??
+        mergedQuote.quoteStatus ??
+        nextWithOpenDate.quote?.status ??
+        null,
+      reason:
+        mergedQuote.reason ??
+        mergedQuote.quoteReason ??
+        nextWithOpenDate.quote?.reason ??
+        null,
       quoteStatus:
-        mergedQuote.quoteStatus ?? mergedQuote.status ?? next.quote?.quoteStatus ?? null,
-      quoteReason: mergedQuote.quoteReason ?? next.quote?.quoteReason ?? null,
-      greeksStatus: mergedQuote.greeksStatus ?? next.quote?.greeksStatus ?? null,
-      greeksReason: mergedQuote.greeksReason ?? next.quote?.greeksReason ?? null,
-      demandStatus: mergedQuote.demandStatus ?? next.quote?.demandStatus ?? null,
-      demandReason: mergedQuote.demandReason ?? next.quote?.demandReason ?? null,
+        mergedQuote.quoteStatus ??
+        mergedQuote.status ??
+        nextWithOpenDate.quote?.quoteStatus ??
+        null,
+      quoteReason:
+        mergedQuote.quoteReason ?? nextWithOpenDate.quote?.quoteReason ?? null,
+      greeksStatus:
+        mergedQuote.greeksStatus ?? nextWithOpenDate.quote?.greeksStatus ?? null,
+      greeksReason:
+        mergedQuote.greeksReason ?? nextWithOpenDate.quote?.greeksReason ?? null,
+      demandStatus:
+        mergedQuote.demandStatus ?? nextWithOpenDate.quote?.demandStatus ?? null,
+      demandReason:
+        mergedQuote.demandReason ?? nextWithOpenDate.quote?.demandReason ?? null,
       quoteFreshness:
         mergedQuote.quoteFreshness ??
         mergedQuote.freshness ??
-        next.quote?.quoteFreshness ??
+        nextWithOpenDate.quote?.quoteFreshness ??
         null,
-      greeksFreshness: mergedQuote.greeksFreshness ?? next.quote?.greeksFreshness ?? null,
+      greeksFreshness:
+        mergedQuote.greeksFreshness ??
+        nextWithOpenDate.quote?.greeksFreshness ??
+        null,
       unavailableDetail:
         mergedQuote.unavailableDetail ??
         mergedQuote.quoteReason ??
         mergedQuote.reason ??
-        next.quote?.unavailableDetail ??
+        nextWithOpenDate.quote?.unavailableDetail ??
         null,
       marketDataMode:
-        mergedQuote.marketDataMode ?? next.quote?.marketDataMode ?? null,
+        mergedQuote.marketDataMode ?? nextWithOpenDate.quote?.marketDataMode ?? null,
       source: optionQuotePositionSource(mergedQuote.source),
-      updatedAt: mergedQuote.updatedAt ?? next.quote?.updatedAt ?? null,
-      dataUpdatedAt: mergedQuote.dataUpdatedAt ?? next.quote?.dataUpdatedAt ?? null,
-      ageMs: mergedQuote.ageMs ?? next.quote?.ageMs ?? null,
-      cacheAgeMs: mergedQuote.cacheAgeMs ?? next.quote?.cacheAgeMs ?? null,
+      updatedAt: mergedQuote.updatedAt ?? nextWithOpenDate.quote?.updatedAt ?? null,
+      dataUpdatedAt:
+        mergedQuote.dataUpdatedAt ?? nextWithOpenDate.quote?.dataUpdatedAt ?? null,
+      ageMs: mergedQuote.ageMs ?? nextWithOpenDate.quote?.ageMs ?? null,
+      cacheAgeMs:
+        mergedQuote.cacheAgeMs ?? nextWithOpenDate.quote?.cacheAgeMs ?? null,
       underlyingPrice:
         mergedQuote.underlyingPrice ?? nextPositionQuote?.underlyingPrice ?? null,
     },
   };
   return preserveHydratedOptionDayChangeFields(
     current,
-    next,
+    nextWithOpenDate,
     fallbackRow as AccountPositionRow,
   );
 };
@@ -3200,6 +3383,65 @@ const streamPositionUnrealizedPnlPercent = (
     : position.unrealizedPnlPercent;
 };
 
+const streamPositionOpenedAt = (
+  position: StreamPosition,
+  current?: AccountPositionRow,
+): string | null => position.openedAt ?? current?.openedAt ?? null;
+
+const streamPositionOpenedAtSource = (
+  position: StreamPosition,
+  current?: AccountPositionRow,
+): AccountPositionRow["openedAtSource"] | null =>
+  position.openedAtSource ?? current?.openedAtSource ?? null;
+
+const streamPositionQuoteDayChange = (position: StreamPosition): number | null => {
+  const perUnitDayChange = finiteOptionNumber(position.quote?.dayChange);
+  const quantity = finiteOptionNumber(position.quantity);
+  const multiplier = optionPositionMultiplier(position);
+  return perUnitDayChange !== null && quantity !== null
+    ? perUnitDayChange * quantity * multiplier
+    : null;
+};
+
+const streamPositionDayChange = (
+  position: StreamPosition,
+  current: AccountPositionRow | undefined,
+  unrealizedPnl: number,
+): number | null => {
+  const openedAt = streamPositionOpenedAt(position, current);
+  const sameDayPosition = accountPositionOpenedOnCurrentMarketDay(openedAt);
+  const sameDayUnrealizedPnl = finiteOptionNumber(unrealizedPnl);
+  if (sameDayPosition && sameDayUnrealizedPnl !== null) {
+    return sameDayUnrealizedPnl;
+  }
+  return streamPositionQuoteDayChange(position) ?? current?.dayChange ?? null;
+};
+
+const streamPositionDayChangePercent = (
+  position: StreamPosition,
+  current: AccountPositionRow | undefined,
+  unrealizedPnlPercent: number,
+): number | null => {
+  const openedAt = streamPositionOpenedAt(position, current);
+  const sameDayPosition = accountPositionOpenedOnCurrentMarketDay(openedAt);
+  const sameDayUnrealizedPnlPercent = finiteOptionNumber(unrealizedPnlPercent);
+  if (sameDayPosition && sameDayUnrealizedPnlPercent !== null) {
+    return sameDayUnrealizedPnlPercent;
+  }
+  return finiteOptionNumber(position.quote?.dayChangePercent, current?.dayChangePercent);
+};
+
+const addNullableStreamTotal = (
+  current: number | null,
+  next: unknown,
+): number | null => {
+  const value = finiteOptionNumber(next);
+  if (value === null) {
+    return current;
+  }
+  return (current ?? 0) + value;
+};
+
 const streamPositionIsFlatCostBasisFallback = (
   position: StreamPosition,
 ): boolean => {
@@ -3377,6 +3619,12 @@ const accountPositionRowFromStream = (
     : current?.marketValue ?? position.marketValue;
   const unrealizedPnl = streamPositionUnrealizedPnl(position);
   const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
+  const dayChange = streamPositionDayChange(position, current, unrealizedPnl);
+  const dayChangePercent = streamPositionDayChangePercent(
+    position,
+    current,
+    unrealizedPnlPercent,
+  );
 
   return {
     ...(current || {}),
@@ -3391,8 +3639,8 @@ const accountPositionRowFromStream = (
     quantity: position.quantity,
     averageCost,
     mark,
-    dayChange: current?.dayChange ?? null,
-    dayChangePercent: current?.dayChangePercent ?? null,
+    dayChange,
+    dayChangePercent,
     unrealizedPnl: hasMarketMark
       ? unrealizedPnl
       : current?.unrealizedPnl ?? position.unrealizedPnl,
@@ -3411,6 +3659,8 @@ const accountPositionRowFromStream = (
     strategyLabel: current?.strategyLabel ?? "Manual",
     attributionStatus: current?.attributionStatus ?? "unknown",
     sourceAttribution: current?.sourceAttribution ?? [],
+    openedAt: streamPositionOpenedAt(position, current),
+    openedAtSource: streamPositionOpenedAtSource(position, current),
   };
 };
 
@@ -3436,6 +3686,9 @@ const patchCombinedAccountPositions = (
       unrealizedPnl: number;
       unrealizedPnlPercentAccumulator: number;
       unrealizedWeight: number;
+      dayChange: number | null;
+      dayChangePercentAccumulator: number;
+      dayChangeWeight: number;
     }
   >();
 
@@ -3451,6 +3704,12 @@ const patchCombinedAccountPositions = (
     const marketValue = streamPositionMarketValue(position);
     const unrealizedPnl = streamPositionUnrealizedPnl(position);
     const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
+    const dayChange = streamPositionDayChange(position, currentRow, unrealizedPnl);
+    const dayChangePercent = streamPositionDayChangePercent(
+      position,
+      currentRow,
+      unrealizedPnlPercent,
+    );
     const quantityWeight = Math.abs(position.quantity);
     const valueWeight = Math.abs(marketValue);
     const currentGroup = groups.get(key) ?? {
@@ -3466,6 +3725,9 @@ const patchCombinedAccountPositions = (
       unrealizedPnl: 0,
       unrealizedPnlPercentAccumulator: 0,
       unrealizedWeight: 0,
+      dayChange: null,
+      dayChangePercentAccumulator: 0,
+      dayChangeWeight: 0,
     };
 
     currentGroup.accounts.add(position.accountId);
@@ -3479,6 +3741,14 @@ const patchCombinedAccountPositions = (
     currentGroup.unrealizedPnlPercentAccumulator +=
       (unrealizedPnlPercent ?? 0) * valueWeight;
     currentGroup.unrealizedWeight += valueWeight;
+    currentGroup.dayChange = addNullableStreamTotal(
+      currentGroup.dayChange,
+      dayChange,
+    );
+    if (dayChangePercent !== null && valueWeight > 0) {
+      currentGroup.dayChangePercentAccumulator += dayChangePercent * valueWeight;
+      currentGroup.dayChangeWeight += valueWeight;
+    }
     groups.set(key, currentGroup);
   });
 
@@ -3515,8 +3785,11 @@ const patchCombinedAccountPositions = (
               ? group.averageCostAccumulator / group.averageWeight
               : 0,
           mark: resolvedMark,
-          dayChange: currentRow?.dayChange ?? null,
-          dayChangePercent: currentRow?.dayChangePercent ?? null,
+          dayChange: group.dayChange,
+          dayChangePercent:
+            group.dayChangeWeight > 0
+              ? group.dayChangePercentAccumulator / group.dayChangeWeight
+              : currentRow?.dayChangePercent ?? null,
           unrealizedPnl: group.hasMarketMark || !currentRow
             ? group.unrealizedPnl
             : currentRow.unrealizedPnl,
@@ -3538,6 +3811,8 @@ const patchCombinedAccountPositions = (
           strategyLabel: currentRow?.strategyLabel ?? "Manual",
           attributionStatus: currentRow?.attributionStatus ?? "unknown",
           sourceAttribution: currentRow?.sourceAttribution ?? [],
+          openedAt: streamPositionOpenedAt(group.first, currentRow),
+          openedAtSource: streamPositionOpenedAtSource(group.first, currentRow),
         };
         return row;
       })
@@ -3783,8 +4058,8 @@ const shouldApplyPrimaryAccountPositions = (
 ): boolean => Boolean(payload.accountId);
 
 const primaryAccountPositionsUseLiveQuotes = (
-  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
-): boolean => payload.accountId === "shadow";
+  _payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
+): boolean => true;
 
 const orderTabParamMatches = (
   params: Record<string, unknown> | null,
@@ -3857,7 +4132,7 @@ const accountPositionsParams = (
 ) => ({
   mode: payload.mode,
   assetClass: payload.assetClass ?? undefined,
-  liveQuotes: options.positionsLiveQuotes ? true : undefined,
+  liveQuotes: options.positionsLiveQuotes !== false,
 });
 
 const accountClosedTradeParams = (
@@ -3935,7 +4210,7 @@ const seedAccountPageLiveQueryKeys = (
   payload: AccountPageLivePayload,
 ) => {
   seedAccountPagePrimaryQueryKeys(queryClient, payload, {
-    positionsLiveQuotes: payload.accountId === "shadow",
+    positionsLiveQuotes: true,
   });
   setAccountPageQueryData(
     queryClient,
@@ -4902,6 +5177,7 @@ const useQuoteSnapshotStream = ({
   onQuotes?: (quotes: QuoteSnapshot[]) => void;
 }) => {
   const queryClient = useQueryClient();
+  const onQuotesRef = useRef(onQuotes);
   const pendingQuoteStreamSnapshotsRef = useRef(new Map<string, QuoteSnapshot>());
   const quoteStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -4914,6 +5190,10 @@ const useQuoteSnapshotStream = ({
       }),
     [normalizedSymbols, streamPath],
   );
+
+  useEffect(() => {
+    onQuotesRef.current = onQuotes;
+  }, [onQuotes]);
 
   useEffect(() => {
     const flushQuoteStreamSnapshots = () => {
@@ -4930,7 +5210,7 @@ const useQuoteSnapshotStream = ({
         return;
       }
 
-      onQuotes?.(acceptedQuotes);
+      onQuotesRef.current?.(acceptedQuotes);
 
       queryClient
         .getQueryCache()
@@ -5004,7 +5284,7 @@ const useQuoteSnapshotStream = ({
       source.close();
       flushQuoteStreamSnapshots();
     };
-  }, [enabled, onQuotes, queryClient, streamUrl]);
+  }, [enabled, queryClient, streamUrl]);
 };
 
 export const useIbkrQuoteSnapshotStream = ({
@@ -5359,7 +5639,11 @@ export const applyAlgoCockpitPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AlgoCockpitStreamPayload,
 ) => {
-  queryClient.setQueryData(getListAlgoDeploymentsQueryKey(), payload.deployments);
+  queryClient.setQueryData(
+    getListAlgoDeploymentsQueryKey(),
+    (current: AlgoDeploymentsResponse | undefined) =>
+      resolveAlgoDeploymentsStreamCacheUpdate(current, payload.deployments),
+  );
 
   const deploymentId = payload.deploymentId;
   const eventLimit = 20;
@@ -5370,25 +5654,27 @@ export const applyAlgoCockpitPayloadToCache = (
     payload.events,
   );
 
-  if (deploymentId && payload.signalOptionsState) {
+  const canonicalPayload = payload.phase === "full";
+
+  if (canonicalPayload && deploymentId && payload.signalOptionsState) {
     queryClient.setQueryData(
       getGetSignalOptionsAutomationStateQueryKey(deploymentId),
       payload.signalOptionsState,
     );
   }
-  if (deploymentId && payload.cockpit) {
+  if (canonicalPayload && deploymentId && payload.cockpit) {
     queryClient.setQueryData(
       getGetAlgoDeploymentCockpitQueryKey(deploymentId),
       payload.cockpit,
     );
   }
-  if (deploymentId && payload.performance) {
+  if (canonicalPayload && deploymentId && payload.performance) {
     queryClient.setQueryData(
       getGetSignalOptionsPerformanceQueryKey(deploymentId),
       payload.performance,
     );
   }
-  if (payload.signalMonitorProfile) {
+  if (canonicalPayload && payload.signalMonitorProfile) {
     queryClient.setQueryData(
       getGetSignalMonitorProfileQueryKey({ environment: payload.mode }),
       payload.signalMonitorProfile,
@@ -5527,6 +5813,8 @@ export const useAlgoCockpitStream = ({
   }, [enabled, queryClient, streamUrl]);
 
   return {
+    deploymentId: deploymentId ?? null,
+    deploymentScoped: Boolean(deploymentId),
     algoLastEventAt: lastEventAt,
     algoFresh:
       lastEventAt != null && now - lastEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
@@ -6155,4 +6443,15 @@ export const useIbkrOptionQuoteStream = ({
     requiresGreeks,
     webSocketUrl,
   ]);
+};
+
+export const __liveStreamsInternalsForTests = {
+  accountPositionsParams,
+  applyAlgoCockpitPayloadToCache,
+  mergeAccountPositionRowsById,
+  optionPositionProviderContractIds,
+  patchAccountPositionsFromStream,
+  patchAccountPositionRowFromOptionQuote,
+  primaryAccountPositionsUseLiveQuotes,
+  resolveAlgoDeploymentsStreamCacheUpdate,
 };

@@ -648,14 +648,14 @@ export function resolvePreferredStockAggregateStreamSource({
   massiveDelayedConfigured: boolean;
   massiveRealtimeConfigured?: boolean;
 }): StockMinuteAggregateSource | "none" {
-  if (massiveRealtimeConfigured && massiveDelayedConfigured) {
+  if (massiveRealtimeConfigured) {
     return "massive-websocket";
-  }
-  if (ibkrConfigured) {
-    return "ibkr-websocket-derived";
   }
   if (massiveDelayedConfigured) {
     return "massive-delayed-websocket";
+  }
+  if (ibkrConfigured) {
+    return "ibkr-websocket-derived";
   }
   return "none";
 }

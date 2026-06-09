@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   BarSizeSetting,
   ConnectionState,
+  EventName,
   IBApiNext,
   IBApiTickType as TickType,
   IBApiNextTickType as NextTickType,
@@ -1382,6 +1383,21 @@ function getPositiveTick(
   return null;
 }
 
+function getFiniteTick(
+  ticks: MarketDataTicks,
+  ...candidates: number[]
+) {
+  for (const candidate of candidates) {
+    const tick = ticks.get(candidate);
+    const value = tick?.value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return tick;
+    }
+  }
+
+  return null;
+}
+
 function getPositiveTickValue(
   ticks: MarketDataTicks,
   ...candidates: number[]
@@ -1397,6 +1413,18 @@ function getTickIngressDate(
     return null;
   }
   return new Date(timestamp);
+}
+
+function latestTickIngressDate(
+  ...ticks: Array<ReturnType<typeof getFiniteTick> | null | undefined>
+): Date | null {
+  return ticks.reduce<Date | null>((latest, tick) => {
+    const date = getTickIngressDate(tick);
+    if (!date) {
+      return latest;
+    }
+    return !latest || date.getTime() > latest.getTime() ? date : latest;
+  }, null);
 }
 
 function resolveMarketDataFreshness(
@@ -1783,6 +1811,33 @@ export function toQuoteSnapshot(
       TickType.CREDITMAN_MARK_PRICE,
       TickType.CREDITMAN_SLOW_MARK_PRICE,
     );
+  const lastTick = getFiniteTick(ticks, TickType.LAST, TickType.DELAYED_LAST);
+  const bidTick = getFiniteTick(ticks, TickType.BID, TickType.DELAYED_BID);
+  const askTick = getFiniteTick(ticks, TickType.ASK, TickType.DELAYED_ASK);
+  const bidSizeTick = getFiniteTick(
+    ticks,
+    TickType.BID_SIZE,
+    TickType.DELAYED_BID_SIZE,
+  );
+  const askSizeTick = getFiniteTick(
+    ticks,
+    TickType.ASK_SIZE,
+    TickType.DELAYED_ASK_SIZE,
+  );
+  const modelPriceTick = getFiniteTick(
+    ticks,
+    NextTickType.MODEL_OPTION_PRICE,
+    NextTickType.DELAYED_MODEL_OPTION_PRICE,
+    NextTickType.LAST_OPTION_PRICE,
+    NextTickType.DELAYED_LAST_OPTION_PRICE,
+    NextTickType.BID_OPTION_PRICE,
+    NextTickType.DELAYED_BID_OPTION_PRICE,
+    NextTickType.ASK_OPTION_PRICE,
+    NextTickType.DELAYED_ASK_OPTION_PRICE,
+    TickType.MARK_PRICE,
+    TickType.CREDITMAN_MARK_PRICE,
+    TickType.CREDITMAN_SLOW_MARK_PRICE,
+  );
   const optionModelPrice = getOptionComputationValue(ticks, "price");
   const markPrice = getPositiveTickValue(
     ticks,
@@ -1840,7 +1895,16 @@ export function toQuoteSnapshot(
   const gamma = getOptionComputationValue(ticks, "gamma");
   const theta = getOptionComputationValue(ticks, "theta");
   const vega = getOptionComputationValue(ticks, "vega");
-  const dataUpdatedAt = getTickIngressDate(priceTick) ?? new Date();
+  const dataUpdatedAt =
+    latestTickIngressDate(
+      lastTick,
+      bidTick,
+      askTick,
+      bidSizeTick,
+      askSizeTick,
+      modelPriceTick,
+      priceTick,
+    ) ?? new Date();
   const updatedAt = dataUpdatedAt;
   const change = prevClose !== null ? price - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
@@ -1986,6 +2050,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   >();
   private readonly liveOrdersById = new Map<string, BrokerOrderSnapshot>();
   private readonly baseSubscriptionStops: Array<() => void> = [];
+  // Coalesced quote-emit fan-out: keys (providerContractId/symbol) marked dirty
+  // by per-tick cache writes, flushed once per quoteEmitCoalesceMs window so heavy
+  // option-greek ticks don't block the libuv loop that drains the TWS socket.
+  private readonly pendingQuoteEmitKeys = new Set<string>();
+  private quoteEmitFlushTimer: NodeJS.Timeout | null = null;
   private connectPromise: Promise<void> | null = null;
   private reconnectPromise: Promise<void> | null = null;
   private tickleTimer: NodeJS.Timeout | null = null;
@@ -2055,6 +2124,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
   private get genericTickSampleMs(): number {
     return getBridgeRuntimeLimit("genericTickSampleMs");
+  }
+
+  private get quoteEmitCoalesceMs(): number {
+    return getBridgeRuntimeLimit("quoteEmitCoalesceMs");
   }
 
   private get connectTimeoutMs(): number {
@@ -2189,6 +2262,12 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       clearInterval(this.tickleTimer);
       this.tickleTimer = null;
     }
+
+    if (this.quoteEmitFlushTimer) {
+      clearTimeout(this.quoteEmitFlushTimer);
+      this.quoteEmitFlushTimer = null;
+    }
+    this.pendingQuoteEmitKeys.clear();
 
     this.baseSubscriptionStops.splice(0).forEach((stop) => {
       try {
@@ -2493,7 +2572,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       }
     }
 
-    const emittedQuote = this.decorateQuoteForEmit(quote);
+    // Counters stay per-tick accurate regardless of coalescing.
     const subscription = providerContractId
       ? this.quoteSubscriptions.get(providerContractId)
       : null;
@@ -2505,6 +2584,31 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     } else {
       this.lastAggregateSourceEventAt = now;
     }
+
+    // Coalesce fan-out by cache key so a burst of (heavy, greek-bearing) option
+    // ticks collapses to one emit per key per window. The subscription `next`
+    // callbacks already wrote the freshest quote into quotesByProviderContractId
+    // before calling emitQuote, so draining reads the latest value per key.
+    const coalesceMs = this.quoteEmitCoalesceMs;
+    if (coalesceMs > 0 && providerContractId) {
+      this.pendingQuoteEmitKeys.add(providerContractId);
+      if (!this.quoteEmitFlushTimer) {
+        this.quoteEmitFlushTimer = setTimeout(
+          () => this.drainQuoteEmits(),
+          coalesceMs,
+        );
+        this.quoteEmitFlushTimer.unref?.();
+      }
+      return;
+    }
+
+    this.flushQuoteEmit(quote);
+  }
+
+  private flushQuoteEmit(quote: QuoteSnapshot) {
+    const normalizedSymbol = normalizeSymbol(quote.symbol);
+    const providerContractId = asString(quote.providerContractId);
+    const emittedQuote = this.decorateQuoteForEmit(quote);
     this.quoteStreamListeners.forEach((listener) => {
       if (
         (normalizedSymbol && listener.symbols.has(normalizedSymbol)) ||
@@ -2514,6 +2618,26 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         listener.onQuote(emittedQuote);
       }
     });
+  }
+
+  private drainQuoteEmits() {
+    this.quoteEmitFlushTimer = null;
+    if (this.pendingQuoteEmitKeys.size === 0) {
+      return;
+    }
+    const keys = Array.from(this.pendingQuoteEmitKeys);
+    this.pendingQuoteEmitKeys.clear();
+    for (const key of keys) {
+      const quote = this.quotesByProviderContractId.get(key);
+      if (!quote) {
+        continue;
+      }
+      try {
+        this.flushQuoteEmit(quote);
+      } catch (error) {
+        this.recordError(error);
+      }
+    }
   }
 
   private getDesiredQuoteSymbols(extraSymbols: string[] = []): Set<string> {
@@ -3437,6 +3561,57 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
     this.stockContracts.set(normalizedSymbol, resolved);
     return resolved;
+  }
+
+  private stockContractFromProviderContractId(
+    symbol: string,
+    providerContractId: string | null | undefined,
+  ): CachedStockContract | null {
+    const normalizedSymbol = normalizeSymbol(symbol);
+    const rawProviderContractId = String(providerContractId ?? "").trim();
+    if (!normalizedSymbol || !/^[1-9]\d+$/.test(rawProviderContractId)) {
+      return null;
+    }
+
+    const conId = Number(rawProviderContractId);
+    if (!Number.isSafeInteger(conId) || conId <= 0) {
+      return null;
+    }
+
+    const cached = this.stockContracts.get(normalizedSymbol);
+    if (
+      cached &&
+      cached.resolved.providerContractId === rawProviderContractId &&
+      Date.now() - cached.cachedAt < CONTRACT_CACHE_TTL_MS
+    ) {
+      return cached;
+    }
+
+    const contract = {
+      ...new Stock(normalizedSymbol, "SMART", "USD"),
+      conId,
+      symbol: normalizedSymbol,
+      secType: SecType.STK,
+      exchange: "SMART",
+      currency: "USD",
+    } as Contract;
+    const resolved = toCachedStockContract(contract, normalizedSymbol);
+    if (resolved) {
+      this.stockContracts.set(normalizedSymbol, resolved);
+    }
+    return resolved;
+  }
+
+  private async resolveStockContractForDesiredLine(input: {
+    symbol: string;
+    providerContractId?: string | null;
+  }): Promise<CachedStockContract> {
+    return (
+      this.stockContractFromProviderContractId(
+        input.symbol,
+        input.providerContractId,
+      ) ?? (await this.resolveStockContract(input.symbol))
+    );
   }
 
   private async findOptionableStockContract(
@@ -4539,6 +4714,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   ): Promise<IbkrMarketDataGenerationStatus> {
     this.appliedMarketDataGeneration = generation;
     const desiredSymbols: string[] = [];
+    const desiredSymbolProviderContractIds = new Map<string, string>();
     const desiredProviderContractIds: string[] = [];
 
     generation.desiredLines.forEach((line) => {
@@ -4546,6 +4722,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         const symbol = normalizeSymbol(line.contract.symbol);
         if (symbol && !desiredSymbols.includes(symbol)) {
           desiredSymbols.push(symbol);
+        }
+        const providerContractId = line.contract.providerContractId?.trim();
+        if (symbol && providerContractId) {
+          desiredSymbolProviderContractIds.set(symbol, providerContractId);
         }
       } else if (
         line.assetClass === "option" &&
@@ -4573,7 +4753,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             continue;
           }
           try {
-            const resolved = await this.resolveStockContract(symbol);
+            const resolved = await this.resolveStockContractForDesiredLine({
+              symbol,
+              providerContractId: desiredSymbolProviderContractIds.get(symbol),
+            });
             await this.ensureQuoteSubscription(resolved);
           } catch (error) {
             this.recordError(error);
@@ -4981,13 +5164,6 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       });
 
       await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
-
-      const bootstrapQuotes = await this.getQuoteSnapshots(normalizedSymbols);
-      bootstrapQuotes.forEach((quote) => {
-        if (hasUsableQuotePrice(quote)) {
-          onQuote(this.decorateQuoteForEmit(quote));
-        }
-      });
     } catch (error) {
       this.quoteStreamListeners.delete(listenerId);
       this.trimUnusedQuoteSubscriptions();
@@ -5368,6 +5544,158 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     };
   }
 
+  // IBApiNext.getHistoricalData() registers its request with NO cancel
+  // function, so abandoning the promise (e.g. when the work-scheduler lane
+  // times out) leaves the reqId open on both the IBApiNext registry and the
+  // TWS side. Those orphaned requests accumulate against IBKR's simultaneous
+  // historical-request limit and eventually wedge the historical lane while
+  // live quotes stay healthy. This helper issues the SAME request via the
+  // registry but supplies the cancel function the public method omits, and
+  // wires the lane's AbortSignal so a lane timeout actually sends
+  // cancelHistoricalData(reqId). If the IBApiNext internals are not shaped as
+  // expected (version drift), it falls back to the public, non-cancellable
+  // call -- i.e. it can only improve on today's behavior, never regress.
+  private requestHistoricalBars(
+    params: {
+      contract: Contract;
+      endDateTime: string;
+      durationStr: string;
+      barSize: BarSizeSetting;
+      whatToShow: WhatToShow;
+      useRTH: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<Awaited<ReturnType<IBApiNext["getHistoricalData"]>>> {
+    const fallback = () =>
+      this.api.getHistoricalData(
+        params.contract,
+        params.endDateTime,
+        params.durationStr,
+        params.barSize,
+        params.whatToShow,
+        params.useRTH,
+        2,
+      );
+
+    const internals = this.api as unknown as {
+      subscriptions?: {
+        register: (
+          instance: (reqId: number) => void,
+          cancel: ((reqId: number) => void) | undefined,
+          eventHandlers: Array<[unknown, unknown]>,
+        ) => {
+          subscribe: (observer: {
+            next?: (value: { all?: unknown[] }) => void;
+            error?: (error: unknown) => void;
+            complete?: () => void;
+          }) => { unsubscribe: () => void };
+        };
+      };
+      api?: {
+        reqHistoricalData: (...args: unknown[]) => unknown;
+        cancelHistoricalData: (reqId: number) => unknown;
+      };
+      onHistoricalData?: unknown;
+    };
+
+    const register = internals.subscriptions?.register;
+    const rawApi = internals.api;
+    const onHistoricalData = internals.onHistoricalData;
+    if (
+      typeof register !== "function" ||
+      !rawApi ||
+      typeof rawApi.reqHistoricalData !== "function" ||
+      typeof rawApi.cancelHistoricalData !== "function" ||
+      !onHistoricalData
+    ) {
+      return fallback();
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let completedNaturally = false;
+      let subscription: { unsubscribe: () => void } | null = null;
+      let latest: unknown[] = [];
+
+      const finish = (run: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        // Tearing down the subscription triggers the cancel function below,
+        // which sends cancelHistoricalData(reqId) unless we already finished
+        // naturally (the request ended on its own, nothing to cancel).
+        subscription?.unsubscribe();
+        run();
+      };
+
+      const onAbort = () =>
+        finish(() =>
+          reject(
+            new HttpError(
+              504,
+              "Historical data request cancelled after lane timeout.",
+              { code: "ibkr_historical_request_cancelled" },
+            ),
+          ),
+        );
+
+      subscription = register
+        .call(
+          internals.subscriptions,
+          (reqId: number) =>
+            rawApi.reqHistoricalData(
+              reqId,
+              params.contract,
+              params.endDateTime,
+              params.durationStr,
+              params.barSize,
+              params.whatToShow,
+              params.useRTH,
+              2,
+              false,
+            ),
+          (reqId: number) => {
+            if (!completedNaturally) {
+              try {
+                rawApi.cancelHistoricalData(reqId);
+              } catch {
+                // The request may have already ended; cancelling is best-effort.
+              }
+            }
+          },
+          [[EventName.historicalData, onHistoricalData]],
+        )
+        .subscribe({
+          next: (value) => {
+            if (Array.isArray(value?.all)) {
+              latest = value.all;
+            }
+          },
+          error: (error) => finish(() => reject(error)),
+          complete: () => {
+            completedNaturally = true;
+            finish(() =>
+              resolve(
+                latest as Awaited<
+                  ReturnType<IBApiNext["getHistoricalData"]>
+                >,
+              ),
+            );
+          },
+        });
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+
   async getHistoricalBars(input: {
     symbol: string;
     timeframe: HistoryBarTimeframe;
@@ -5383,7 +5711,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   }): Promise<BrokerBarSnapshot[]> {
     return runBridgeLane(
       "historical",
-      async () => {
+      async (signal) => {
         await this.refreshSession();
         const outsideRth = input.outsideRth !== false;
 
@@ -5401,18 +5729,20 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             exchange: input.exchange,
           },
           () =>
-            this.api.getHistoricalData(
-              contract,
-              formatHistoryEndDate(input.to ?? new Date()),
-              buildHistoryDuration(
-                input.timeframe,
-                requestedBars,
-                outsideRth,
-              ),
-              HISTORY_BAR_SIZE[input.timeframe],
-              HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
-              outsideRth ? 0 : 1,
-              2,
+            this.requestHistoricalBars(
+              {
+                contract,
+                endDateTime: formatHistoryEndDate(input.to ?? new Date()),
+                durationStr: buildHistoryDuration(
+                  input.timeframe,
+                  requestedBars,
+                  outsideRth,
+                ),
+                barSize: HISTORY_BAR_SIZE[input.timeframe],
+                whatToShow: HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
+                useRTH: outsideRth ? 0 : 1,
+              },
+              signal,
             ),
         );
 
@@ -5457,6 +5787,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<OptionChainContract[]> {
     const providedSpotPrice =
       typeof input.underlyingSpotPrice === "number" &&
@@ -5689,7 +6020,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             left.contract.right.localeCompare(right.contract.right)
           );
         });
-      }),
+      }, { timeoutMs: input.timeoutMs }),
     );
   }
 
@@ -5697,6 +6028,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     underlying: string;
     maxExpirations?: number;
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<Date[]> {
     const normalizedUnderlying = normalizeSymbol(input.underlying);
     const singleFlightKey = JSON.stringify({
@@ -5726,7 +6058,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           optionResolution.optionParams,
           input.maxExpirations,
         ).expirations;
-      }),
+      }, { timeoutMs: input.timeoutMs }),
     );
   }
 

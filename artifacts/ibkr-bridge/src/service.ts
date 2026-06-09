@@ -389,6 +389,7 @@ export class IbkrBridgeService {
     underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<OptionChainContract[]> {
     return this.ensureProvider().getOptionChain(input);
   }
@@ -397,6 +398,7 @@ export class IbkrBridgeService {
     underlying: string;
     maxExpirations?: number;
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<Date[]> {
     return this.ensureProvider().getOptionExpirations(input);
   }

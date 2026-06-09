@@ -19,6 +19,7 @@ export type SignalMonitorMatrixResponseCoverage = {
   sourceRequestCount?: number;
   hydratedSymbols?: number;
   missingSymbols?: number;
+  pendingCellCount?: number;
   /** @nullable */
   estimatedFullCycleMs?: number | null;
   cacheStatus: SignalMonitorMatrixResponseCoverageCacheStatus;

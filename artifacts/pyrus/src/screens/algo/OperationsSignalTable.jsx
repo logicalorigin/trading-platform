@@ -54,7 +54,10 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
-import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import {
+  DataUnavailableState,
+  extractSparklinePoints,
+} from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
 import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
@@ -72,7 +75,10 @@ import {
 import { useMemoryPressureSnapshot } from "../../features/platform/memoryPressureStore";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
-import { buildSignalsMatrixHydrationPlan } from "../../features/signals/signalsMatrixHydration.js";
+import {
+  buildSignalsMatrixHydrationPlan,
+  prioritizeSignalMatrixTimeframes,
+} from "../../features/signals/signalsMatrixHydration.js";
 import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
@@ -326,30 +332,77 @@ const thinBarsForSignalSparkline = (bars) => {
   });
 };
 
-const hasUsableSparklineData = (value) =>
-  Array.isArray(value?.sparkBars) && value.sparkBars.length >= 2 ||
-  Array.isArray(value?.spark) && value.spark.length >= 2 ||
-  Array.isArray(value?.bars) && value.bars.length >= 2;
+export const hasUsableSparklineData = (value) =>
+  extractSparklinePoints(value?.sparkBars).length >= 2 ||
+  extractSparklinePoints(value?.spark).length >= 2 ||
+  extractSparklinePoints(value?.bars).length >= 2;
 
 const hasUsableQuoteSnapshot = (value) => {
   const price = Number(value?.price ?? value?.last ?? value?.mark);
   return Number.isFinite(price);
 };
 
-const resolveRowTickerSnapshot = (runtimeSnapshot, quoteSnapshot) => {
-  if (!runtimeSnapshot) return quoteSnapshot || null;
-  if (!quoteSnapshot || hasUsableQuoteSnapshot(runtimeSnapshot)) {
-    return runtimeSnapshot;
+const firstPresent = (...values) => {
+  for (const value of values) {
+    if (value !== undefined && value !== null) return value;
   }
+  return null;
+};
+
+const sparkBarsFromSnapshot = (...snapshots) => {
+  for (const snapshot of snapshots) {
+    if (extractSparklinePoints(snapshot?.sparkBars).length >= 2) {
+      return snapshot.sparkBars;
+    }
+  }
+  return null;
+};
+
+const sparkFromSnapshot = (...snapshots) => {
+  for (const snapshot of snapshots) {
+    if (extractSparklinePoints(snapshot?.spark).length >= 2) {
+      return snapshot.spark;
+    }
+  }
+  return null;
+};
+
+export const resolveRowTickerSnapshot = (
+  runtimeSnapshot,
+  quoteSnapshot,
+  sparklineSnapshot = null,
+) => {
+  if (!runtimeSnapshot && !quoteSnapshot && !sparklineSnapshot) return null;
+  const runtimeRecord = asRecord(runtimeSnapshot);
+  const quoteRecord = asRecord(quoteSnapshot);
+  const sparklineRecord = asRecord(sparklineSnapshot);
+  const sparkBars = sparkBarsFromSnapshot(
+    runtimeRecord,
+    sparklineRecord,
+    quoteRecord,
+  );
+  const spark = sparkFromSnapshot(runtimeRecord, sparklineRecord, quoteRecord);
   return {
-    ...quoteSnapshot,
-    ...runtimeSnapshot,
-    price: runtimeSnapshot.price ?? quoteSnapshot.price ?? null,
-    last: runtimeSnapshot.last ?? quoteSnapshot.last ?? null,
-    mark: runtimeSnapshot.mark ?? quoteSnapshot.mark ?? null,
-    updatedAt: runtimeSnapshot.updatedAt ?? quoteSnapshot.updatedAt ?? null,
+    ...quoteRecord,
+    ...sparklineRecord,
+    ...runtimeRecord,
+    price: firstPresent(runtimeRecord.price, quoteRecord.price, sparklineRecord.price),
+    last: firstPresent(runtimeRecord.last, quoteRecord.last, sparklineRecord.last),
+    mark: firstPresent(runtimeRecord.mark, quoteRecord.mark, sparklineRecord.mark),
+    bid: firstPresent(runtimeRecord.bid, quoteRecord.bid, sparklineRecord.bid),
+    ask: firstPresent(runtimeRecord.ask, quoteRecord.ask, sparklineRecord.ask),
+    sparkBars,
+    spark,
+    updatedAt:
+      runtimeRecord.updatedAt ??
+      quoteRecord.updatedAt ??
+      sparklineRecord.updatedAt ??
+      null,
     dataUpdatedAt:
-      runtimeSnapshot.dataUpdatedAt ?? quoteSnapshot.dataUpdatedAt ?? null,
+      runtimeRecord.dataUpdatedAt ??
+      quoteRecord.dataUpdatedAt ??
+      sparklineRecord.dataUpdatedAt ??
+      null,
   };
 };
 
@@ -635,6 +688,131 @@ const rowMatrixSymbols = (rows = []) => {
   return symbols;
 };
 
+const rowSignalTimeframes = (rows = []) => {
+  const seen = new Set();
+  const timeframes = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const timeframe = String(asRecord(asRecord(row).signal).timeframe || "")
+      .trim();
+    if (!timeframe || seen.has(timeframe)) return;
+    seen.add(timeframe);
+    timeframes.push(timeframe);
+  });
+  return timeframes;
+};
+
+const normalizeStaSignalMatrixTimeframes = (
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+) => {
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(timeframes) && timeframes.length
+        ? timeframes
+        : SIGNALS_TABLE_TIMEFRAMES
+      )
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter((timeframe) => SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)),
+    ),
+  );
+  return normalized.length ? normalized : [...SIGNALS_TABLE_TIMEFRAMES];
+};
+
+const rowSignalSymbol = (row) =>
+  String(asRecord(asRecord(row).signal).symbol || "")
+    .trim()
+    .toUpperCase();
+
+const NON_HYDRATED_STA_MATRIX_STATUSES = new Set(["pending", "unknown"]);
+
+const isStaSignalMatrixCellHydrated = (state) => {
+  const record = asRecord(state);
+  if (!Object.keys(record).length) return false;
+  const status = String(record.status || "ok").trim().toLowerCase();
+  return Boolean(
+    record.active !== false &&
+      !NON_HYDRATED_STA_MATRIX_STATUSES.has(status) &&
+      (
+        record.latestBarAt ||
+        record.currentSignalAt ||
+        record.lastEvaluatedAt ||
+        record.lastError
+      ),
+  );
+};
+
+export const resolveStaSignalMatrixHydration = ({
+  row,
+  signalMatrixBySymbol = {},
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+} = {}) => {
+  const symbol = rowSignalSymbol(row);
+  const selectedTimeframes = normalizeStaSignalMatrixTimeframes(timeframes);
+  const statesByTimeframe = asRecord(signalMatrixBySymbol?.[symbol]);
+  const missingTimeframes = [];
+  const pendingTimeframes = [];
+  const problemTimeframes = [];
+
+  selectedTimeframes.forEach((timeframe) => {
+    const state = statesByTimeframe[timeframe];
+    if (!state) {
+      missingTimeframes.push(timeframe);
+      return;
+    }
+    const status = String(asRecord(state).status || "ok").trim().toLowerCase();
+    if (status === "pending") {
+      pendingTimeframes.push(timeframe);
+      return;
+    }
+    if (!isStaSignalMatrixCellHydrated(state)) {
+      problemTimeframes.push(timeframe);
+    }
+  });
+
+  return {
+    hydrated: Boolean(
+      symbol &&
+        selectedTimeframes.length &&
+        missingTimeframes.length === 0 &&
+        pendingTimeframes.length === 0 &&
+        problemTimeframes.length === 0,
+    ),
+    symbol,
+    timeframes: selectedTimeframes,
+    missingTimeframes,
+    pendingTimeframes,
+    problemTimeframes,
+  };
+};
+
+export const splitStaRowsBySignalMatrixHydration = ({
+  rows = [],
+  signalMatrixBySymbol = {},
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+} = {}) => {
+  const hydratedRows = [];
+  const pendingRows = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const matrixHydration = resolveStaSignalMatrixHydration({
+      row,
+      signalMatrixBySymbol,
+      timeframes,
+    });
+    const rowWithHydration = {
+      ...row,
+      matrixHydration,
+    };
+    if (matrixHydration.hydrated) {
+      hydratedRows.push(rowWithHydration);
+    } else {
+      pendingRows.push(rowWithHydration);
+    }
+  });
+  return {
+    hydratedRows,
+    pendingRows,
+  };
+};
+
 export const buildAlgoSignalMatrixHydrationRequest = ({
   rows = [],
   currentStates = [],
@@ -642,12 +820,17 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
 } = {}) => {
   const symbols = rowMatrixSymbols(rows);
   if (!symbols.length) return null;
+  const requestTimeframes = prioritizeSignalMatrixTimeframes(
+    timeframes,
+    rowSignalTimeframes(rows),
+  );
 
   const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
     symbols,
     prioritySymbols: symbols,
     currentStates,
-    timeframes,
+    timeframes: requestTimeframes,
+    refreshStale: true,
   });
 
   if (
@@ -1039,6 +1222,7 @@ export const OperationsSignalTable = ({
   candidates = [],
   signalOptionsSourceHealth = null,
   signalMatrixStates = [],
+  signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
   cockpitGeneratedAt = null,
   cockpitStageItems = [],
   events = [],
@@ -1096,11 +1280,27 @@ export const OperationsSignalTable = ({
     [candidates, signals],
   );
   useStoredOptionQuoteSnapshotVersion(providerContractIds);
-  const signalMatrixBySymbol = useMemo(
-    () => buildSignalMatrixBySymbol(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES),
-    [signalMatrixStates],
+  const displaySignalTimeframes = useMemo(
+    () => {
+      const normalized = Array.from(
+        new Set(
+          (Array.isArray(signalTimeframes) && signalTimeframes.length
+            ? signalTimeframes
+            : SIGNALS_TABLE_TIMEFRAMES
+          )
+            .map((timeframe) => String(timeframe || "").trim())
+            .filter((timeframe) => SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)),
+        ),
+      );
+      return normalized.length ? normalized : [...SIGNALS_TABLE_TIMEFRAMES];
+    },
+    [signalTimeframes],
   );
-  const rows = useMemo(() => {
+  const signalMatrixBySymbol = useMemo(
+    () => buildSignalMatrixBySymbol(signalMatrixStates, displaySignalTimeframes),
+    [displaySignalTimeframes, signalMatrixStates],
+  );
+  const sourceRows = useMemo(() => {
     const augmented = (signals || []).map((signal) => {
       const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
       return {
@@ -1119,7 +1319,25 @@ export const OperationsSignalTable = ({
       ...row,
       auditProgression: auditProgressions.get(row.auditKey) || null,
     }));
-    const filteredByStatus = withProgression.filter((row) =>
+    return withProgression;
+  }, [
+    candidates,
+    events,
+    signals,
+  ]);
+  const signalMatrixHydrationSplit = useMemo(
+    () =>
+      splitStaRowsBySignalMatrixHydration({
+        rows: sourceRows,
+        signalMatrixBySymbol,
+        timeframes: displaySignalTimeframes,
+      }),
+    [displaySignalTimeframes, signalMatrixBySymbol, sourceRows],
+  );
+  const matrixPendingRows = signalMatrixHydrationSplit.pendingRows;
+  const matrixHydratedRows = signalMatrixHydrationSplit.hydratedRows;
+  const rows = useMemo(() => {
+    const filteredByStatus = matrixHydratedRows.filter((row) =>
       signalTableFilterMatches(row, filter),
     );
     const normalizedQuery = normalizeSearchText(searchQuery);
@@ -1128,11 +1346,9 @@ export const OperationsSignalTable = ({
       : filteredByStatus;
     return sortRows(filtered, sortKey, null, sortDirection);
   }, [
-    candidates,
-    events,
     filter,
+    matrixHydratedRows,
     searchQuery,
-    signals,
     sortDirection,
     sortKey,
   ]);
@@ -1144,11 +1360,11 @@ export const OperationsSignalTable = ({
   const signalMatrixHydrationRequest = useMemo(
     () =>
       buildAlgoSignalMatrixHydrationRequest({
-        rows,
+        rows: sourceRows,
         currentStates: signalMatrixStates,
-        timeframes: SIGNALS_TABLE_TIMEFRAMES,
+        timeframes: displaySignalTimeframes,
       }),
-    [rows, signalMatrixStates],
+    [displaySignalTimeframes, signalMatrixStates, sourceRows],
   );
   useEffect(() => {
     if (!signalMatrixHydrationRequest) return;
@@ -1275,6 +1491,20 @@ export const OperationsSignalTable = ({
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
+  const rowSparklineSnapshotsBySymbol = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(rowSparklineQuery.data || {})
+          .map(([symbol, sparkBars]) => {
+            const normalized = String(symbol || "").toUpperCase();
+            return normalized && extractSparklinePoints(sparkBars).length >= 2
+              ? [normalized, { symbol: normalized, sparkBars }]
+              : null;
+          })
+          .filter(Boolean),
+      ),
+    [rowSparklineQuery.data],
+  );
   useEffect(() => {
     applyRuntimeQuoteSnapshots(rowQuotesQuery.data?.quotes || []);
   }, [rowQuotesQuery.dataUpdatedAt, rowQuotesQuery.data]);
@@ -1304,22 +1534,17 @@ export const OperationsSignalTable = ({
   }, [algoIsPhone]);
 
   const counts = useMemo(() => {
-    const augmented = (signals || []).map((signal) => {
-      const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
-      return {
-        signal,
-        classification: classifySignal(signal, candidate),
-      };
-    });
     return {
-      all: augmented.length,
-      current: augmented.filter((row) => !isHistoricalSignalRow(row)).length,
-      history: augmented.filter((row) => isHistoricalSignalRow(row)).length,
-      ready: augmented.filter((row) => row.classification === "ready").length,
-      blocked: augmented.filter((row) => row.classification === "blocked").length,
-      unavailable: augmented.filter((row) => row.classification === "unavailable").length,
+      all: matrixHydratedRows.length,
+      current: matrixHydratedRows.filter((row) => !isHistoricalSignalRow(row)).length,
+      history: matrixHydratedRows.filter((row) => isHistoricalSignalRow(row)).length,
+      ready: matrixHydratedRows.filter((row) => row.classification === "ready").length,
+      blocked: matrixHydratedRows.filter((row) => row.classification === "blocked").length,
+      unavailable: matrixHydratedRows.filter(
+        (row) => row.classification === "unavailable",
+      ).length,
     };
-  }, [candidates, signals]);
+  }, [matrixHydratedRows]);
 
   const freshness = useMemo(() => {
     const latestSignalMs = (signals || []).reduce(
@@ -1417,6 +1642,7 @@ export const OperationsSignalTable = ({
       : "Source --",
     sourceHealthLabel,
     freshness.pressureLevel ? "Action scan queued" : null,
+    matrixPendingRows.length ? `${matrixPendingRows.length} matrix pending` : null,
   ];
   const staleScanBanner =
     freshness.pressureLevel || freshness.staleScan
@@ -1450,12 +1676,21 @@ export const OperationsSignalTable = ({
           .filter(Boolean)
           .join(" ")
       : null;
+  const matrixHydrationBanner = matrixPendingRows.length
+    ? [
+        `${matrixPendingRows.length} STA signal ${
+          matrixPendingRows.length === 1 ? "row is" : "rows are"
+        } waiting for selected signal bubbles.`,
+        `Selected timeframes ${displaySignalTimeframes.join(", ")}.`,
+      ].join(" ")
+    : null;
   const activeFilter = FILTER_OPTIONS.find((option) => option.id === filter) || FILTER_OPTIONS[0];
   const compactTools = algoIsPhone || algoIsNarrow;
   const signalTableCompact = false;
   const freshnessLine = freshnessItems.filter(Boolean).join(" · ");
-  const statusLine = `${activeFilter.label} ${rows.length} of ${counts.all} signals · ${freshnessLine}`;
-  const mobileStatusLine = `${activeFilter.label} ${rows.length}/${counts.all} · ${freshnessLine}`;
+  const sourceSignalCount = sourceRows.length;
+  const statusLine = `${activeFilter.label} ${rows.length} of ${sourceSignalCount} signals · ${freshnessLine}`;
+  const mobileStatusLine = `${activeFilter.label} ${rows.length}/${sourceSignalCount} · ${freshnessLine}`;
   const signalScanWave = resolveSignalScanWave(freshness);
   const sortSummary = `Sorted by ${SORT_LABELS[sortKey] || "Newest"} ${
     SORT_DIRECTION_LABELS[sortDirection] || "descending"
@@ -1769,7 +2004,7 @@ export const OperationsSignalTable = ({
             </span>
           ) : null}
         </div>
-        {staleScanBanner || sourceHealthBanner ? (
+        {staleScanBanner || sourceHealthBanner || matrixHydrationBanner ? (
           <div
             role="status"
             style={{
@@ -1801,7 +2036,9 @@ export const OperationsSignalTable = ({
                 whiteSpace: algoIsPhone ? "normal" : "nowrap",
               }}
             >
-              {[staleScanBanner, sourceHealthBanner].filter(Boolean).join(" ")}
+              {[staleScanBanner, sourceHealthBanner, matrixHydrationBanner]
+                .filter(Boolean)
+                .join(" ")}
             </span>
           </div>
         ) : null}
@@ -1855,6 +2092,8 @@ export const OperationsSignalTable = ({
                   title={
                     searchQuery.trim()
                       ? "No signals match this search"
+                      : filter === "all" && sourceRows.length && matrixPendingRows.length
+                      ? "Hydrating signal matrix"
                       : filter === "all"
                       ? "Awaiting next scan"
                       : "No signals match this filter"
@@ -1862,13 +2101,21 @@ export const OperationsSignalTable = ({
                   detail={
                     searchQuery.trim()
                       ? "Clear search to return to the current signal list."
+                      : filter === "all" && sourceRows.length && matrixPendingRows.length
+                      ? `${matrixPendingRows.length} signal ${
+                          matrixPendingRows.length === 1 ? "row is" : "rows are"
+                        } waiting for ${displaySignalTimeframes.join(", ")} bubbles.`
                       : filter === "all"
                       ? "Signals appear as soon as the monitor finishes its next pass."
                       : "Switch filter to All to see signals in other states."
                   }
                   icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}
                   minHeight={56}
-                  loading={filter === "all" && !searchQuery.trim()}
+                  loading={
+                    filter === "all" &&
+                    !searchQuery.trim() &&
+                    (!sourceRows.length || matrixPendingRows.length > 0)
+                  }
                 />
               </div>
             ) : (
@@ -1888,11 +2135,12 @@ export const OperationsSignalTable = ({
                     auditProgression={auditProgression}
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
-                    timeframes={SIGNALS_TABLE_TIMEFRAMES}
+                    timeframes={displaySignalTimeframes}
                     tickerSnapshot={
                       resolveRowTickerSnapshot(
                         tickerSnapshotsBySymbol?.[symbolKey] || null,
                         rowQuoteSnapshotsBySymbol?.[symbolKey] || null,
+                        rowSparklineSnapshotsBySymbol?.[symbolKey] || null,
                       )
                     }
                     alt={rowIndex % 2 === 1}

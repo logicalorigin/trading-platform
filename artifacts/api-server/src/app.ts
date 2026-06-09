@@ -13,6 +13,7 @@ import {
   getApiRouteAdmission,
   readApiRouteRequestContext,
 } from "./services/route-admission";
+import { recordIbkrRemoteDesktopRawRequestAttempt } from "./services/ibkr-bridge-runtime";
 
 const app: Express = express();
 
@@ -110,6 +111,24 @@ app.use(
     },
   }),
 );
+app.use((req, _res, next) => {
+  const path = req.originalUrl?.split("?")[0] || req.url?.split("?")[0] || "/";
+  const normalized = path.toLowerCase();
+  if (
+    normalized.includes("ibkr") &&
+    (normalized.includes("desktop") ||
+      normalized.includes("agent") ||
+      normalized.includes("job"))
+  ) {
+    recordIbkrRemoteDesktopRawRequestAttempt({
+      contentType: req.get("content-type") ?? null,
+      method: req.method,
+      path,
+      userAgent: req.get("user-agent") ?? null,
+    });
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));

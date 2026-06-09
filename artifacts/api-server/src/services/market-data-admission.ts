@@ -645,11 +645,14 @@ function normalizeRequest(input: MarketDataLineRequest): {
     }
     const role = normalizeMarketDataLineRole(input.role, "stock");
     const equityLineId = lineId("equity", symbol);
+    const providerContractId = normalizeProviderContractId(
+      input.providerContractId,
+    );
     return {
       assetClass: "equity",
       instrumentKey: equityLineId,
       symbol,
-      providerContractId: null,
+      providerContractId: providerContractId || null,
       role,
       lineIds: [equityLineId],
       lineRoles: { [equityLineId]: role },
@@ -1995,14 +1998,20 @@ export function admitMarketDataLeases(input: {
         const normalizedByInstrument = new Map(
           normalizedRequests.map((request) => [request.instrumentKey, request]),
         );
-        const refreshedLeases = existingOwnerLeases.map((lease) => ({
-          ...lease,
-          ownerClass,
-          priority:
-            basePriority +
-            (normalizedByInstrument.get(lease.instrumentKey)?.priorityOffset ?? 0),
-          expiresAt,
-        }));
+        const refreshedLeases = existingOwnerLeases.map((lease) => {
+          const normalized = normalizedByInstrument.get(lease.instrumentKey);
+          return {
+            ...lease,
+            ownerClass,
+            priority: basePriority + (normalized?.priorityOffset ?? 0),
+            providerContractId:
+              normalized?.providerContractId ?? lease.providerContractId,
+            role: normalized?.role ?? lease.role,
+            lineIds: normalized?.lineIds ?? lease.lineIds,
+            lineRoles: normalized?.lineRoles ?? lease.lineRoles,
+            expiresAt,
+          };
+        });
         refreshedLeases.forEach((lease) => leases.set(lease.id, lease));
         return {
           admitted: refreshedLeases,

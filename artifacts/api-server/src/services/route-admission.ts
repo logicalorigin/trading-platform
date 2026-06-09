@@ -91,7 +91,6 @@ const normalizeFetchPriority = (value: unknown): number | null => {
 
 const activeRequestFamilies = new Set([
   "account-trade-forensics",
-  "algo-signal-sparkline",
   "chart-visible",
   "flow-visible",
   "flow-scanner-visible",
@@ -99,12 +98,19 @@ const activeRequestFamilies = new Set([
   "option-chart-visible",
   "signal-matrix",
   "signals-row-chart",
-  "signals-table-sparkline",
   "trade-visible",
+]);
+const activeSparklineRequestFamilies = new Set([
+  "algo-signal-sparkline",
+  "signals-table-sparkline",
 ]);
 const chartRequestFamilies = new Set([
   "chart-bars",
+  "chart-warmup",
   "option-chart-bars",
+]);
+const passiveSparklineRequestFamilies = new Set([
+  "sparkline",
 ]);
 const deferredRequestFamilies = new Set([
   "chart-backfill",
@@ -132,11 +138,17 @@ function isVisibleRouteRequestContext(
   if (activeRequestFamilies.has(context.requestFamily)) {
     return true;
   }
+  if (activeSparklineRequestFamilies.has(context.requestFamily)) {
+    return true;
+  }
   if (
     chartRequestFamilies.has(context.requestFamily) &&
     (context.fetchPriority ?? 0) >= 6
   ) {
     return true;
+  }
+  if (passiveSparklineRequestFamilies.has(context.requestFamily)) {
+    return false;
   }
   return (context.fetchPriority ?? 0) >= 8;
 }

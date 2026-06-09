@@ -1848,12 +1848,13 @@ export class IbkrBridgeClient {
     underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<OptionChainContract[]> {
     const payload = await this.request<{ contracts: OptionChainContract[] }>(
       "/options/chains",
       {
         signal: input.signal,
-        timeoutMs: this.optionMetadataRequestTimeoutMs,
+        timeoutMs: input.timeoutMs ?? this.optionMetadataRequestTimeoutMs,
       },
       {
         underlying: input.underlying,
@@ -1864,6 +1865,7 @@ export class IbkrBridgeClient {
         strikeCoverage: input.strikeCoverage,
         underlyingSpotPrice: input.underlyingSpotPrice ?? undefined,
         quoteHydration: input.quoteHydration ?? "metadata",
+        timeoutMs: input.timeoutMs,
       },
     );
     return payload.contracts.map(hydrateOptionChainContract);
@@ -1873,16 +1875,18 @@ export class IbkrBridgeClient {
     underlying: string;
     maxExpirations?: number;
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<Date[]> {
     const payload = await this.request<OptionExpirationsPayload>(
       "/options/expirations",
       {
         signal: input.signal,
-        timeoutMs: this.optionMetadataRequestTimeoutMs,
+        timeoutMs: input.timeoutMs ?? this.optionMetadataRequestTimeoutMs,
       },
       {
         underlying: input.underlying,
         maxExpirations: input.maxExpirations,
+        timeoutMs: input.timeoutMs,
       },
     ).catch(async (error: unknown) => {
       if (error instanceof HttpError && error.statusCode === 404) {
@@ -1893,6 +1897,7 @@ export class IbkrBridgeClient {
           strikesAroundMoney: 1,
           quoteHydration: "metadata",
           signal: input.signal,
+          timeoutMs: input.timeoutMs,
         });
 
         return {

@@ -60,9 +60,10 @@ const findSnapshot = (
 
 function buildBrokerReadiness(
   diagnostics: DiagnosticsLatestPayload | null,
+  brokerRuntime?: unknown,
 ): ApiReadinessPayload["brokerTradingReadiness"] {
   const ibkr = findSnapshot(diagnostics, "ibkr");
-  if (!ibkr) {
+  if (!ibkr && brokerRuntime === undefined) {
     return {
       status: "unknown",
       ready: false,
@@ -80,18 +81,64 @@ function buildBrokerReadiness(
     };
   }
 
-  const metrics = asRecord(ibkr.metrics);
-  const checks = {
-    configured: boolOrNull(metrics["configured"]),
-    reachable: boolOrNull(metrics["reachable"]),
-    connected: boolOrNull(metrics["connected"]),
-    authenticated: boolOrNull(metrics["authenticated"]),
-    competing: boolOrNull(metrics["competing"]),
-    healthFresh: boolOrNull(metrics["healthFresh"]),
-    streamFresh: boolOrNull(metrics["streamFresh"]),
-    strictReady: boolOrNull(metrics["strictReady"]),
+  const metrics = asRecord(ibkr?.metrics);
+  const runtimeMetrics =
+    brokerRuntime === undefined
+      ? null
+      : brokerRuntime === null
+        ? {
+            configured: false,
+            reachable: false,
+            connected: false,
+            authenticated: false,
+            competing: false,
+            healthFresh: false,
+            streamFresh: false,
+            strictReady: false,
+          }
+        : asRecord(brokerRuntime);
+  const rawChecks = {
+    configured:
+      boolOrNull(runtimeMetrics?.["configured"]) ??
+      boolOrNull(metrics["configured"]),
+    reachable:
+      boolOrNull(runtimeMetrics?.["reachable"]) ??
+      boolOrNull(metrics["reachable"]),
+    connected:
+      boolOrNull(runtimeMetrics?.["connected"]) ??
+      boolOrNull(metrics["connected"]),
+    authenticated:
+      boolOrNull(runtimeMetrics?.["authenticated"]) ??
+      boolOrNull(metrics["authenticated"]),
+    competing:
+      boolOrNull(runtimeMetrics?.["competing"]) ??
+      boolOrNull(metrics["competing"]),
+    healthFresh:
+      boolOrNull(runtimeMetrics?.["healthFresh"]) ??
+      boolOrNull(metrics["healthFresh"]),
+    streamFresh:
+      boolOrNull(runtimeMetrics?.["streamFresh"]) ??
+      boolOrNull(metrics["streamFresh"]),
+    strictReady:
+      boolOrNull(runtimeMetrics?.["strictReady"]) ??
+      boolOrNull(metrics["strictReady"]),
   };
-  const strictReason = textOrNull(metrics["strictReason"]);
+  const checks =
+    rawChecks.configured === false
+      ? {
+          configured: false,
+          reachable: false,
+          connected: false,
+          authenticated: false,
+          competing: false,
+          healthFresh: false,
+          streamFresh: false,
+          strictReady: false,
+        }
+      : rawChecks;
+  const strictReason =
+    textOrNull(runtimeMetrics?.["strictReason"]) ??
+    textOrNull(metrics["strictReason"]);
   const reason =
     checks.configured === false
       ? "broker_not_configured"
@@ -185,6 +232,7 @@ function degradedReasons(input: {
 }
 
 export function buildApiReadinessPayload(input: {
+  brokerRuntime?: unknown;
   diagnostics: DiagnosticsLatestPayload | null;
   pressure?: ApiResourcePressureSnapshot;
   now?: Date;
@@ -194,7 +242,10 @@ export function buildApiReadinessPayload(input: {
     diagnostics: input.diagnostics,
     pressure,
   });
-  const brokerReadiness = buildBrokerReadiness(input.diagnostics);
+  const brokerReadiness = buildBrokerReadiness(
+    input.diagnostics,
+    input.brokerRuntime,
+  );
 
   return {
     generatedAt: (input.now ?? new Date()).toISOString(),

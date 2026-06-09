@@ -11,20 +11,48 @@ import {
   isTransientBridgeWorkError,
   runBridgeWork,
 } from "./bridge-governor";
-import { getBridgeHealthForSession } from "./platform-bridge-health";
+import {
+  getBridgeHealthForSession,
+  type AnnotatedBridgeHealth,
+} from "./platform-bridge-health";
 
 type CacheEntry<T> = {
   payload: T;
   cachedAt: number;
 };
 
-const bridgeClient = new IbkrBridgeClient();
+type AccountBridgeHealthReader = typeof getBridgeHealthForSession;
+type AccountBridgeClient = Pick<
+  IbkrBridgeClient,
+  "listAccounts" | "listPositions" | "listExecutions"
+>;
+
+let bridgeClient: AccountBridgeClient = new IbkrBridgeClient();
+let readBridgeHealthForAccountRead: AccountBridgeHealthReader =
+  getBridgeHealthForSession;
 const accountListCache = new Map<string, CacheEntry<BrokerAccountSnapshot[]>>();
 const accountListInflight = new Map<string, Promise<BrokerAccountSnapshot[]>>();
 const positionCache = new Map<string, CacheEntry<BrokerPositionSnapshot[]>>();
 const positionInflight = new Map<string, Promise<BrokerPositionSnapshot[]>>();
 const executionCache = new Map<string, CacheEntry<BrokerExecutionSnapshot[]>>();
 const executionInflight = new Map<string, Promise<BrokerExecutionSnapshot[]>>();
+
+export function __setIbkrAccountBridgeDependenciesForTests(
+  input: {
+    bridgeClient?: AccountBridgeClient | null;
+    getBridgeHealthForSession?: AccountBridgeHealthReader | null;
+  } | null,
+): void {
+  bridgeClient = input?.bridgeClient ?? new IbkrBridgeClient();
+  readBridgeHealthForAccountRead =
+    input?.getBridgeHealthForSession ?? getBridgeHealthForSession;
+  accountListCache.clear();
+  accountListInflight.clear();
+  positionCache.clear();
+  positionInflight.clear();
+  executionCache.clear();
+  executionInflight.clear();
+}
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const value = Number.parseInt(process.env[name] ?? "", 10);
@@ -129,7 +157,10 @@ async function runCachedAccountRead<T extends unknown[]>({
     return staleCached.payload;
   }
 
-  const health = await getBridgeHealthForSession().catch(() => null);
+  const health = await readBridgeHealthForAccountRead({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  }).catch((): AnnotatedBridgeHealth | null => null);
   const accountBridgeReady = Boolean(
     health?.bridgeReachable &&
       health.socketConnected &&

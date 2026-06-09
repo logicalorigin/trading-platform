@@ -348,11 +348,16 @@ function requestSummary(): JsonRecord {
       .sort((left, right) => right.samples - left.samples)
       .slice(0, 8),
     recentFailures: samples
-      .filter((sample) => sample.statusCode >= 429)
+      .filter((sample) => sample.statusCode >= 400)
       .slice(-8)
       .map((sample) => ({
         method: sample.method,
         path: sample.path,
+        routeClass: sample.routeClass ?? null,
+        requestFamily: sample.requestFamily ?? null,
+        fetchPriority: sample.fetchPriority ?? null,
+        requestOrigin: sample.requestOrigin ?? null,
+        clientRole: sample.clientRole ?? null,
         statusCode: sample.statusCode,
         durationMs: sample.durationMs,
         recordedAt: new Date(sample.recordedAt).toISOString(),

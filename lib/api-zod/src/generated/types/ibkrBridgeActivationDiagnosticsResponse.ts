@@ -8,9 +8,11 @@
 import type { IbkrBridgeActivationDiagnosticsLatestActivation } from './ibkrBridgeActivationDiagnosticsLatestActivation';
 import type { IbkrBridgeActivationInsight } from './ibkrBridgeActivationInsight';
 import type { IbkrBridgeActivationProgress } from './ibkrBridgeActivationProgress';
+import type { IbkrRemoteDesktopRequestDiagnostic } from './ibkrRemoteDesktopRequestDiagnostic';
 
 export interface IbkrBridgeActivationDiagnosticsResponse {
   activeCount: number;
+  desktopAgentRequests: IbkrRemoteDesktopRequestDiagnostic[];
   latestActivation: IbkrBridgeActivationDiagnosticsLatestActivation | null;
   /** @nullable */
   latestActivationId: string | null;

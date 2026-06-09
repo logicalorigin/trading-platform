@@ -27,6 +27,7 @@ import {
   fetchBridgeQuoteSnapshots,
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
+import { readRecentAccountPositionQuoteSymbols } from "./account-position-quote-symbols";
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
@@ -43,7 +44,9 @@ import type {
 } from "./market-data-admission";
 import {
   admitMarketDataLeases,
+  getMarketDataLeasesSnapshot,
   releaseMarketDataLeases,
+  subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
 import { getOptionChain, getQuoteSnapshots } from "./platform";
@@ -53,6 +56,7 @@ const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const STREAM_RECONNECT_MIN_MS = 1_000;
 const STREAM_RECONNECT_MAX_MS = 30_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
+const POSITION_QUOTE_SUBSCRIPTION_RECONCILE_MS = 1_000;
 let nextOptionQuoteDemandStreamId = 1;
 
 type Unsubscribe = () => void;
@@ -447,10 +451,82 @@ export async function fetchQuoteSnapshotPayload(
   return fetchBridgeQuoteSnapshots(symbols);
 }
 
+export function resolveQuoteStreamSource(): "massive" | "ibkr-bridge" {
+  return isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge";
+}
+
+export function resolvePositionQuoteStreamSource(): "ibkr-bridge" {
+  return "ibkr-bridge";
+}
+
+const POSITION_QUOTE_ELIGIBLE_OWNER_PREFIXES = [
+  "account-monitor:",
+  "account-position-equity-quotes:",
+  "account-position-option-quotes:",
+  "shadow-position:",
+];
+
+function positionQuoteLeaseOwnerIsEligible(owner: unknown): boolean {
+  const normalizedOwner = String(owner || "").trim();
+  if (
+    normalizedOwner === "account-position-option-quotes:ui" ||
+    normalizedOwner.startsWith("account-position-option-quotes:ui:")
+  ) {
+    return false;
+  }
+  return POSITION_QUOTE_ELIGIBLE_OWNER_PREFIXES.some((prefix) =>
+    normalizedOwner.startsWith(prefix),
+  );
+}
+
+function currentAccountPositionQuoteSymbols(): Set<string> {
+  const symbols = readRecentAccountPositionQuoteSymbols();
+  getMarketDataLeasesSnapshot().forEach((lease) => {
+    if (
+      lease.intent !== "account-monitor-live" ||
+      !positionQuoteLeaseOwnerIsEligible(lease.owner)
+    ) {
+      return;
+    }
+    lease.lineIds.forEach((lineId) => {
+      if (!lineId.startsWith("equity:")) {
+        return;
+      }
+      const symbol = normalizeSymbol(lineId.slice("equity:".length));
+      if (symbol) {
+        symbols.add(symbol);
+      }
+    });
+  });
+  return symbols;
+}
+
+function filterPositionQuoteSymbols(symbols: string[]): string[] {
+  const eligibleSymbols = currentAccountPositionQuoteSymbols();
+  if (!eligibleSymbols.size) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      symbols
+        .map((symbol) => normalizeSymbol(symbol))
+        .filter((symbol) => symbol && eligibleSymbols.has(symbol)),
+    ),
+  );
+}
+
 export async function fetchPositionQuoteSnapshotPayload(
   symbols: string[],
 ): Promise<QuoteStreamPayload> {
-  return fetchQuoteSnapshotPayload(symbols);
+  const positionSymbols = filterPositionQuoteSymbols(symbols);
+  if (!positionSymbols.length) {
+    return { quotes: [] };
+  }
+  return fetchBridgeQuoteSnapshots(positionSymbols, {
+    intent: "account-monitor-live",
+    fallbackProvider: "none",
+    hydrate: false,
+  });
 }
 
 export async function fetchOptionChainSnapshotPayload(
@@ -733,16 +809,99 @@ export function subscribePositionQuoteSnapshots(
   symbols: string[],
   onSnapshot: (payload: QuoteStreamPayload) => void,
 ): Unsubscribe {
-  const normalizedSymbols = Array.from(
+  const requestedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
-
-  if (isMassiveStocksRealtimeConfigured()) {
-    return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
+  if (!requestedSymbols.length) {
+    return () => {};
   }
 
-  return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
+  let active = true;
+  let reconcileTimer: NodeJS.Timeout | null = null;
+  let bridgeUnsubscribe: Unsubscribe = () => {};
+  let subscribedSignature = "";
+
+  const clearReconcileTimer = () => {
+    if (!reconcileTimer) {
+      return;
+    }
+    clearTimeout(reconcileTimer);
+    reconcileTimer = null;
+  };
+
+  const reconcile = () => {
+    if (!active) {
+      return;
+    }
+
+    const normalizedSymbols = filterPositionQuoteSymbols(requestedSymbols);
+    const signature = normalizedSymbols.join(",");
+    if (signature === subscribedSignature) {
+      return;
+    }
+
+    bridgeUnsubscribe();
+    bridgeUnsubscribe = () => {};
+    subscribedSignature = signature;
+
+    if (!normalizedSymbols.length) {
+      return;
+    }
+
+    bridgeUnsubscribe = subscribeBridgeQuoteSnapshots(
+      normalizedSymbols,
+      onSnapshot,
+      {
+        ownerPrefix: "account-position-quote-stream",
+        intent: "account-monitor-live",
+        fallbackProvider: "none",
+      },
+    );
+
+  };
+
+  const scheduleReconcile = (delayMs = 0) => {
+    if (!active) {
+      return;
+    }
+    if (delayMs <= 0) {
+      clearReconcileTimer();
+      reconcile();
+      return;
+    }
+    if (reconcileTimer) {
+      return;
+    }
+    reconcileTimer = setTimeout(() => {
+      reconcileTimer = null;
+      reconcile();
+    }, delayMs);
+    reconcileTimer.unref?.();
+  };
+
+  const steadyTimer = setInterval(() => {
+    scheduleReconcile(0);
+  }, POSITION_QUOTE_SUBSCRIPTION_RECONCILE_MS);
+  steadyTimer.unref?.();
+  const unsubscribeLeaseChanges = subscribeMarketDataLeaseChanges((event) => {
+    if (event.intent === "account-monitor-live") {
+      scheduleReconcile(0);
+    }
+  });
+  reconcile();
+
+  return () => {
+    active = false;
+    clearReconcileTimer();
+    clearInterval(steadyTimer);
+    unsubscribeLeaseChanges();
+    bridgeUnsubscribe();
+  };
 }
+
+export const __bridgeStreamsInternalsForTests = {
+  filterPositionQuoteSymbols,
+};
 
 export function subscribeOptionChains(
   underlyings: string[],

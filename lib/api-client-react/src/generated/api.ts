@@ -208,6 +208,7 @@ import type {
   StreamOptionQuoteSnapshotsParams,
   StreamOrdersParams,
   StreamQuoteSnapshotsParams,
+  StreamSignalMonitorMatrixParams,
   StreamStockAggregatesParams,
   SubmitIbkrOrdersRequest,
   SubmitIbkrOrdersResponse,
@@ -9181,6 +9182,88 @@ export const useEvaluateSignalMonitorMatrix = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getEvaluateSignalMonitorMatrixMutationOptions(options));
     }
+
+/**
+ * @summary Stream Pyrus Signals signal matrix state deltas
+ */
+export const getStreamSignalMonitorMatrixUrl = (params?: StreamSignalMonitorMatrixParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/signal-monitor/matrix/stream?${stringifiedParams}` : `/api/signal-monitor/matrix/stream`
+}
+
+export const streamSignalMonitorMatrix = async (params?: StreamSignalMonitorMatrixParams, options?: RequestInit): Promise<SseStream> => {
+
+  return customFetch<SseStream>(getStreamSignalMonitorMatrixUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStreamSignalMonitorMatrixQueryKey = (params?: StreamSignalMonitorMatrixParams,) => {
+    return [
+    `/api/signal-monitor/matrix/stream`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getStreamSignalMonitorMatrixQueryOptions = <TData = Awaited<ReturnType<typeof streamSignalMonitorMatrix>>, TError = ErrorType<unknown>>(params?: StreamSignalMonitorMatrixParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamSignalMonitorMatrix>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStreamSignalMonitorMatrixQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamSignalMonitorMatrix>>> = ({ signal }) => streamSignalMonitorMatrix(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamSignalMonitorMatrix>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type StreamSignalMonitorMatrixQueryResult = NonNullable<Awaited<ReturnType<typeof streamSignalMonitorMatrix>>>
+export type StreamSignalMonitorMatrixQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Stream Pyrus Signals signal matrix state deltas
+ */
+
+export function useStreamSignalMonitorMatrix<TData = Awaited<ReturnType<typeof streamSignalMonitorMatrix>>, TError = ErrorType<unknown>>(
+ params?: StreamSignalMonitorMatrixParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamSignalMonitorMatrix>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getStreamSignalMonitorMatrixQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
 
 /**
  * @summary List current Pyrus Signals signal states

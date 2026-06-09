@@ -18,6 +18,13 @@
 - Reasoning Effort: `xhigh`
 - Tokens Used: `9002858`
 
+## Latest Update — 2026-06-08 15:12:28 MDT
+
+- Saved the strict STA Signals-derived execution-view plan at `docs/plans/sta-strict-signals-derived-execution-view.md`.
+- Plan source of truth: STA table and algo monitor should only display canonical candidates derived from the Signals matrix/table/page; Signal Options must consume those candidates rather than create normal display rows.
+- Invariants captured: selected algo execution timeframes control normal row eligibility, visible bubbles, and alignment semantics; missing selected-timeframe bubble hydration is a fever diagnostic and should quarantine the row instead of rendering it normally.
+- Validation: `git diff --check -- docs/plans/sta-strict-signals-derived-execution-view.md` passed.
+
 ## Current User Request
 
 i want users to be able to select whoch tike frsmes the slgo is using for its strategy from within the algo control rail. lets ise our planning skills and deisgn skills to do this
@@ -519,3 +526,228 @@ i want users to be able to select whoch tike frsmes the slgo is using for its st
 - Current scope is safe-QA audit first due broad pre-existing dirty tree and another live workstream owning `SESSION_HANDOFF_CURRENT.md`.
 - Source context gathered around `OperationsSignalTable.jsx`, `OperationsSignalRow.jsx`, and `components/platform/signal-language/SignalDots.jsx`.
 - App responds at `http://127.0.0.1:18747/?pyrusQa=safe`; browser audit is next.
+
+## Follow-Up Fever Audit Results
+
+- Safe-QA browser audit loaded the Algo screen by initializing persisted workspace state `pyrus:state:v1` with `{ screen: "algo", sym: "SPY" }`, matching `resolveInitialPlatformScreen`.
+- Observed `/api/algo/deployments`, `/api/signal-monitor/profile`, `/api/signal-monitor/state`, `/api/signal-monitor/events`, `/api/algo/deployments/:id/signal-options/state`, `/api/algo/deployments/:id/cockpit`, and `/api/signal-monitor/matrix` returning 200 during the settled audit.
+- Observed the settled signal table with 20 visible rows, 15 headers/cells per row in the earlier scan, row height `33`, and no row overlaps.
+- Observed no console errors and no failed HTTP responses in the final post-fix browser checks.
+- Observed no empty-labeled Algo signal bubbles: `dotGroupsWithEmptyLabels: 0`. Also observed `dotGroupsAllInert: 0` in the final row-table scan.
+- Found one true surface fever symptom: the `Act` column rendered an aria-hidden empty spacer when a row had no action. `OperationsSignalRow.jsx` now renders a small disabled-style `MinusCircle` placeholder with `data-testid="algo-signal-row-action-none"` and `aria-label="No row action available"`.
+- Final right-edge table capture confirmed 20 action placeholders, all labeled `No row action available`.
+- Remaining observed symptom not patched: the `Move` column is still `-` for all visible rows in the settled audit. Source suggests `resolveSignalMove` is missing a signal-price basis even though current price exists in the hero cell. This needs product/data-contract confirmation before changing display semantics.
+- Generated QA artifacts:
+  - `.gstack/qa-reports/algo-fever-audit-2026-06-08.json`
+  - `.gstack/qa-reports/algo-fever-audit-settled-2026-06-08.json`
+  - `.gstack/qa-reports/algo-fever-audit-action-column-after-2026-06-08.json`
+  - `.gstack/qa-reports/screenshots/algo-fever-audit-desktop.png`
+  - `.gstack/qa-reports/screenshots/algo-fever-audit-settled-desktop.png`
+  - `.gstack/qa-reports/screenshots/algo-fever-audit-action-column-after.png`
+  - `artifacts/pyrus/.gstack/qa-reports/algo-fever-audit-action-none-after-2026-06-08.json`
+  - `artifacts/pyrus/.gstack/qa-reports/screenshots/algo-fever-audit-action-none-after.png`
+
+## Follow-Up Fever Audit Validation
+
+- `pnpm --filter @workspace/pyrus run typecheck` passed.
+- `git diff --check -- artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx` passed.
+- At final check, `OperationsSignalRow.jsx` contained the no-action placeholder but no longer appeared as a local diff; HEAD changed during the session due another live workstream. Do not assume this audit owns unrelated row-file changes.
+
+## Follow-Up: STA / Watchlist Bubble Hydration And SPY Timeframe Mismatch
+
+- Timestamp: 2026-06-08 18:45:58Z.
+- User-reported symptom: SPY appeared in the STA table, then disappeared; row bubbles showed `1m`/`2m` buy and sell elsewhere; STA was expected to be using `5m` signals.
+- Observed runtime facts:
+  - `/api/signal-monitor/profile?environment=paper` reported `timeframe: "5m"`.
+  - The active deployment config reported `parameters.signalTimeframe: "5m"`.
+  - Signal Options MTF alignment included `["2m","5m","15m"]`, `requiredCount: 1`.
+  - Runtime state contained a SPY Signal Options candidate/signal with `timeframe: "2m"`, `direction: "buy"`, `signalAt: "2026-06-08T18:31:00.000Z"`.
+  - Signal monitor state for SPY contained `1m BUY`, `2m BUY`, `5m SELL`, `15m SELL`, `1h SELL`, `1d BUY`.
+- Source facts:
+  - STA rows use `SIGNALS_TABLE_TIMEFRAMES = ["1m","2m","5m","15m","1h","1d"]`.
+  - Watchlist rows use `WATCHLIST_SIGNAL_TIMEFRAMES = ["1m","2m","5m","15m","1h"]`; this explains one visible hydration mismatch: STA has a sixth `1d` bubble while watchlist does not.
+  - Both surfaces hydrate bubbles from `buildSignalMatrixBySymbol`.
+  - Signal Options action ordering consumed all evaluated monitor states without filtering to the Signal Monitor profile timeframe.
+  - The stored-state snapshot path could also pass through states outside the active profile timeframe.
+- Inferred root cause: the table's bubble matrix is intentionally multi-timeframe context, but the primary Signal Options row eligibility was also multi-timeframe. That let a fresh `2m` SPY buy become an STA row even though the active Signal Monitor execution timeframe was `5m`.
+- Fix applied:
+  - `artifacts/api-server/src/services/signal-options-automation.ts` now carries the resolved monitor timeframe through Signal Options signal snapshot loading and filters visible snapshot states to that timeframe.
+  - `orderSignalOptionsActionStates` now accepts an optional `timeframe` and filters action candidates before ordering.
+  - `runSignalOptionsShadowScanUnlocked` resolves the evaluated profile timeframe and passes it into action ordering.
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts` now includes a regression with fresh SPY `2m` buy plus older SPY `5m` sell; when timeframe is `5m`, only the `5m` state is eligible.
+- Validation:
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts` passed, 6 tests.
+  - `git diff --check -- artifacts/api-server/src/services/signal-options-automation.ts artifacts/api-server/src/services/signal-options-automation.test.ts` passed.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
+- Note: The API server files were already dirty from another workstream. Do not attribute broad unrelated removals/rewrites in those files to this fix.
+
+## Follow-Up: STA Bubbles Limited To Trading Timeframes
+
+- Timestamp: 2026-06-08 18:53:41Z.
+- User request: remove STA table signal bubbles that are not considered for trading by the Algo control side rail. Other areas should continue showing their existing timeframe sets.
+- Startup-specific note from user: at startup the STA table appeared to pick up all signals, then filter to `5m`.
+- Fix applied:
+  - `AlgoScreen.jsx` now derives `staSignalTimeframes` from `profileDraft.entryGate.mtfAlignment.timeframes` via `normalizeSignalOptionsMtfTimeframes`.
+  - `AlgoLivePage.jsx` passes `staSignalTimeframes` into `OperationsSignalTable`.
+  - `OperationsSignalTable.jsx` now uses that timeframe list for STA-only matrix construction, matrix hydration requests, and `SignalDots` rendering.
+  - The table normalization falls back to full `SIGNALS_TABLE_TIMEFRAMES` only if an invalid/empty list is supplied.
+  - Added `OperationsSignalTable.test.mjs` to prove STA hydration requests only selected trading frames, e.g. `1m/2m/5m`, and does not request unselected frames like `15m`.
+- Validation:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/algo/OperationsSignalTable.test.mjs src/screens/algo/algoTimeframeControls.test.mjs src/screens/algo/algoHelpers.test.mjs` passed, 9 tests.
+  - `git diff --check -- artifacts/pyrus/src/screens/AlgoScreen.jsx artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs` passed.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - Safe browser settled check against `http://127.0.0.1:18747/?pyrusQa=safe` observed rail summary `5m | 1/3`, selected MTF `["2m","5m","15m"]`, 20 STA dot groups, and no mismatched groups.
+  - Safe browser startup mutation probe observed first non-empty STA dot sample at 3 dots, max dot count 3, no samples with six dots, no console warnings/errors, and no failed HTTP responses.
+- QA artifacts:
+  - `.gstack/qa-reports/algo-sta-selected-mtf-bubbles-2026-06-08.json`
+  - `.gstack/qa-reports/algo-sta-selected-mtf-startup-2026-06-08.json`
+  - `.gstack/qa-reports/screenshots/algo-sta-selected-mtf-bubbles-2026-06-08.png`
+- Note: `AlgoLivePage.jsx` was already dirty with unrelated scan-status changes. This follow-up only owns the `staSignalTimeframes` pass-through in that file.
+
+## Follow-Up: Algo Surface Hydration Priority, Sidebar Scope, And Long-Only Copy
+
+- Timestamp: 2026-06-08 19:22Z.
+- User follow-ups:
+  - Algo monitor sidebar should show the same selected trading-frame bubbles as the STA table.
+  - All relevant STA table parts, including matrix scoring/columns, should respond to Algo control timeframe changes.
+  - Missing selected bubbles such as AMYY `2m`, MRVL `2m/15m`, MU `2m/15m`, and VST `2m` should be diagnosed.
+  - Hydration should prioritize whichever signal frame the algo is set to execute on.
+  - Options are long-only: bearish signals should map to long puts, not selling/shorting options.
+- Observed runtime facts:
+  - Active paper deployment config had `parameters.signalTimeframe: "5m"` and Signal Options MTF frames `["2m","5m","15m"]`.
+  - Direct `POST /api/signal-monitor/matrix` with exact cells for AMYY/MRVL/MU/VST on `2m/5m/15m` returned all 12 requested states.
+  - MRVL, MU, and VST returned hydrated selected-frame states. AMYY returned stale/no-direction on `2m` and `5m`, and `15m` `sell`; so the current AMYY blank is an upstream stale selected cell after refresh, not lack of a UI request.
+  - Backend Signal Options action mapping is long-only: bearish signal direction maps to `optionAction: "buy_put"`, `orderSide: "buy"`, `orderIntent: "open_long_option"`.
+- Inferred root cause for intermittent blank selected bubbles:
+  - Surface exact hydration requests could wait behind broad stored-state bootstrap/poll work.
+  - Exact request planning used broad universe/timeframes instead of the visible Algo surface symbol/timeframe scope.
+  - Active Algo surfaces treated stale matrix cells as hydrated, so stale selected bubbles were not force-refreshed.
+- Fixes applied:
+  - `signalsMatrixHydration.js` now supports `refreshStale` and `prioritizeSignalMatrixTimeframes`.
+  - STA table hydration now limits requests to selected Algo control MTF frames, refreshes stale selected cells, and orders request cells with each row's execution timeframe first.
+  - Algo monitor sidebar now uses the same selected Algo control MTF frames for rendered bubbles, matrix construction, and hydration requests.
+  - Platform exact matrix scheduling now plans exact visible-surface requests before stored-state bootstrap and scopes them to surface symbols/timeframes.
+  - `resolveSignalMatrixVerdict` now scores only the supplied selected timeframes, so hidden non-trading frames do not affect STA matrix verdict/readiness.
+  - STA direction badges now use `BULL`/`BEAR` copy while action labels remain `BUY CALL`/`BUY PUT`, preserving long-options semantics.
+- Validation:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/features/signals/signalsRowModel.test.mjs src/features/signals/signalsMatrixHydration.test.mjs src/features/platform/signalMatrixScheduler.test.mjs src/screens/algo/OperationsSignalTable.test.mjs src/features/platform/PlatformAlgoMonitorSidebar.test.mjs src/screens/algo/algoTimeframeControls.test.mjs src/screens/algo/algoHelpers.test.mjs` passed, 29 tests.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `git diff --check --` passed for the touched Pyrus signal/Algo files.
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts` passed, 6 tests.
+  - `pnpm --filter @workspace/api-server run typecheck` did not pass in the resumed environment due existing `bridge-quote-stream.ts` index-signature errors at lines 256-257, outside this STA/signal-frame change set.
+  - Browser CLI QA could not be rerun after restart because Playwright's CLI looked for Chrome at `/opt/google/chrome/chrome` and no Chrome/Chromium binary was available on PATH. A prior safe browser probe in this session had observed selected MTF `["2m","5m","15m"]` and hydrated target groups after the scheduler changes.
+
+## Post-Restart QA Pass
+
+- Timestamp: 2026-06-08 19:31Z.
+- User asked to re-check after restart.
+- Startup config:
+  - Observed `.replit` had restart-generated stale ports `19080 -> 3002`, `19081 -> 80`, and `19283 -> 3001`.
+  - `pnpm run audit:replit-startup` initially failed on those stale/generated ports.
+  - Opened a minimal startup-config maintenance window with `pnpm run replit:config:unlock`, removed only those extra port entries, then relocked with `pnpm run replit:config:lock`.
+  - `pnpm run audit:replit-startup` now passes and `.replit` has no diff.
+- Validation now passing after restart:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/features/signals/signalsRowModel.test.mjs src/features/signals/signalsMatrixHydration.test.mjs src/features/platform/signalMatrixScheduler.test.mjs src/screens/algo/OperationsSignalTable.test.mjs src/features/platform/PlatformAlgoMonitorSidebar.test.mjs src/screens/algo/algoTimeframeControls.test.mjs src/screens/algo/algoHelpers.test.mjs` passed, 29 tests.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts` passed, 6 tests.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
+  - `git diff --check --` passed for `.replit` and the touched Algo/signal/API files.
+- Runtime API observations after restart:
+  - `GET /api/healthz` returned `{"status":"ok"}`.
+  - Active paper deployment `Pyrus Signals Options Shadow Paper` is enabled with `parameters.signalTimeframe: "5m"` and MTF frames `["2m","5m","15m"]`.
+  - `GET /api/signal-monitor/profile?environment=paper` reported profile `timeframe: "5m"`.
+  - Exact selected-frame matrix request for AMYY/MRVL/MU/VST on `2m/5m/15m` returned all 12 requested states.
+  - AMYY `2m` is now hydrated `ok buy`; AMYY `5m` remains `stale`/no direction from the backend; MRVL, MU, and VST selected cells returned `ok` with directions.
+  - Signal Options state and cockpit both report only `5m` signals/candidates after restart.
+  - Bearish Signal Options candidates still map to long puts: `optionAction: "buy_put"`, `orderSide: "buy"`, `orderIntent: "open_long_option"`.
+- Browser QA status:
+  - `npx` is available, but no Chrome/Chromium binary is on PATH and no Playwright browser exists in `/home/runner/.cache/ms-playwright`.
+  - `npx --yes --package @playwright/test playwright install chromium` returned 0 but did not populate a browser binary in this environment.
+  - Playwright CLI still failed looking for `/opt/google/chrome/chrome`.
+  - `npx --yes --package @playwright/test playwright install chrome` failed because Replit blocks direct `apt-get` system dependency installation.
+  - Therefore live DOM/screenshot QA remains blocked in this container; source tests plus runtime API checks are clean.
+
+## Follow-Up: STA Move Column And Sparklines Recurrence
+
+- Timestamp: 2026-06-08 19:38Z.
+- User reported all STA `Move` cells empty and row sparklines missing; noted this had been solved before.
+- Observed source facts:
+  - `resolveSignalMove` required `signal.signalPrice` or `candidate.signalPrice` plus a current quote snapshot.
+  - `OperationsSignalTable` fetched direct row quote snapshots and direct row sparkline bars, but `resolveRowTickerSnapshot` picked runtime snapshot when runtime had a quote and could drop direct sparkline data.
+  - Row sparkline query data was only published into the runtime ticker store asynchronously; it was not passed directly to the row render snapshot.
+- Observed runtime facts:
+  - Signal Options state rows currently include `signalPrice`.
+  - `/api/quotes/snapshot` returned current quotes for sampled STA symbols `ABBV,AIPI,AMD,AMDL,APLD,USO`.
+  - `/api/bars` returned 8 5m bars for sampled symbol `ABBV`.
+- Fix applied:
+  - `algoHelpers.js` `resolveSignalMove` now accepts basis aliases `currentSignalPrice`, `entryPrice`, and `basisPrice` from both signal and candidate records.
+  - `OperationsSignalTable.jsx` now exports/uses a robust `resolveRowTickerSnapshot` that merges runtime quote, direct quote, and direct sparkline snapshots, preserving bid/ask/current price and sparkline bars together.
+  - Direct row sparkline query results are now passed into `resolveRowTickerSnapshot` for immediate render use instead of relying only on runtime store publication order.
+- Validation:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/algo/OperationsSignalTable.test.mjs src/screens/algo/algoHelpers.test.mjs src/screens/algo/algoSignalSparklinePressure.test.mjs` passed, 14 tests.
+  - Wider focused Pyrus suite passed, 34 tests.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `git diff --check -- artifacts/pyrus/src/screens/algo/algoHelpers.js artifacts/pyrus/src/screens/algo/algoHelpers.test.mjs artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs` passed.
+- Browser note: live DOM screenshot QA is still blocked by missing Chrome/Chromium in this Replit container, but runtime APIs and focused render/data-boundary tests now cover the recurrence.
+
+## Follow-Up: STA Sparkline Visibility And USO Cell Audit
+
+- Timestamp: 2026-06-08 19:52Z.
+- User follow-up:
+  - Move column looked better, but STA row sparklines were still not visible.
+  - Audit each STA table cell, starting with USO, and explain why metadata said `91h old`.
+- Observed source facts:
+  - The row SVG/render path was already normalized to `extractSparklinePoints`, but `OperationsSignalTable` disabled row sparkline hydration whenever `shouldPauseAlgoSignalRowSparklines()` saw server/API pressure `high`.
+  - `/api/bars` classifies `algo-signal-sparkline` requests with `x-pyrus-request-family: algo-signal-sparkline` as `active-screen`, so visible STA sparkline requests are allowed even under API-latency pressure.
+  - The overly broad pause was frontend-side: API latency pressure alone prevented the row sparkline query from asking for cached/active bars.
+- Runtime observations:
+  - Active deployment remains `7e2e4e6f-749f-4e65-a011-87d3559a23b0`, enabled paper, MTF frames `["2m","5m","15m"]`.
+  - API pressure was temporarily `high` due latency, not memory/RSS/heap exhaustion.
+  - With the STA sparkline request headers, `/api/bars` returned 8 bars for USO/QCOM/ABBV/ADUR even under pressure.
+  - Normal Signal Options state later returned 8 current rows: BLDR, ZBRA, AAL, MSFT, QCOM, ADUR, USO, ABBV.
+  - USO audit from live state/quotes/bars: `BULL`, price about `$135.44`, 8 spark bars, age `17m`, `1/8 bars`, move about `+0.4% / +0.60`, plan `BUY CALL`, gate clear, matrix limited to `2m/5m/15m`, contract/option quote/spread/greeks not available yet because no selected option contract.
+  - Recursive scan of the current normal state payload found `near91HourTimestampCount: 0`; no current field in Signal Options state was about 91 hours old.
+- Inference:
+  - The missing sparkline symptom was caused by frontend pause policy, not missing bar data or broken SVG rendering.
+  - The observed `91h old` metadata was not present in the current server payload after the scan settled; likely stale retained client/query state from before the latest successful state/cockpit refresh. Current header/deployment metadata is fresh (`lastEvaluatedAt` and cockpit scan stage within minutes).
+- Fix applied:
+  - `algoSignalSparklinePressure.js` now pauses visible STA row sparklines for direct client high pressure or high memory/RSS/heap drivers only.
+  - API-latency-only pressure no longer blanks visible STA row sparklines.
+  - Regression tests updated to prove latency-only server pressure stays enabled while high `api-rss` memory pressure still pauses.
+- Validation:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/algo/algoSignalSparklinePressure.test.mjs src/screens/algo/OperationsSignalTable.test.mjs src/screens/algo/algoHelpers.test.mjs` passed, 15 tests.
+  - Wider focused Pyrus suite passed, 35 tests.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `git diff --check -- artifacts/pyrus/src/screens/algo/algoSignalSparklinePressure.js artifacts/pyrus/src/screens/algo/algoSignalSparklinePressure.test.mjs artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs artifacts/pyrus/src/screens/algo/algoHelpers.js artifacts/pyrus/src/screens/algo/algoHelpers.test.mjs` passed.
+
+## Follow-Up: UWO/BLDR No-Trade Audit And Strict STA Bubbles
+
+- Timestamp: 2026-06-08 20:04Z.
+- User follow-up:
+  - Audit the UWO row and explain why no trade was taken.
+  - Include BLDR.
+  - User observed BLDR `2m/5m/15m` looked aligned and asked why the backend said `mtf_not_aligned`.
+  - User then asked why BLDR `5m` showed as a buy in the signal bubble.
+- Observed runtime facts:
+  - Active paper deployment remains `7e2e4e6f-749f-4e65-a011-87d3559a23b0`, enabled, mode `paper`, selected MTF frames `["2m","5m","15m"]`, signal timeframe `5m`.
+  - No `UWO` symbol appeared in the last checked Signal Options state or in the last 500 algo execution events. Do not treat `UWO` as `USO` without user confirmation.
+  - BLDR repeatedly emitted `signal_options_candidate_skipped` events from 19:51Z through 19:59Z with reason `mtf_not_aligned`.
+  - Latest BLDR skip payload inspected: `signal.direction: "buy"`, `signal.timeframe: "5m"`, `signalAt: "2026-06-08T19:50:33.889Z"`, `fresh: true`, `actionEligible: true`, but `signal.filterState: null`.
+  - BLDR entry gate payload: `ok: false`, `reason: "mtf_not_aligned"`, `requiredMtfCount: 1`, `mtfMatches: 0`, `mtfDirections: []`, `mtfTimeframes: []`, `missingMtfTimeframes: []`.
+  - Because the gate failed, BLDR had no selected contract, option quote, liquidity, order plan, or chain attempts; action mapping was long-only (`optionAction: "buy_call"`, `orderSide: "buy"`, `orderIntent: "open_long_option"`, `brokerSubmission: false`).
+  - Direct `POST /api/signal-monitor/matrix` for BLDR selected frames returned hydrated matrix cells, but they were not the same object as the candidate signal:
+    - Around 19:58Z: `2m buy`, `5m sell`, `15m buy`.
+    - Around 20:00Z: `2m sell`, `5m sell`, `15m buy`.
+  - Cockpit payload at 20:00Z still contained BLDR as a primary row signal/candidate: `5m buy` at `2026-06-08T19:50:33.889Z`, `filterState: null`, candidate `reason: "mtf_not_aligned"`.
+- Inference:
+  - BLDR was not skipped because the visible matrix cells were bearish; it was skipped because the execution candidate reached the entry gate without any MTF filter/matrix directions attached.
+  - The BLDR `5m buy` bubble the user saw was a UI fallback artifact: `hydrateSignalMatrixProfileTimeframe` could synthesize the profile-timeframe bubble from the row's primary signal when matrix state was missing/less preferred. For STA/algo monitor this made a candidate signal look like a hydrated matrix bubble.
+- Fix applied:
+  - `signalsRowModel.js` now allows strict matrix rendering via `includePrimaryFallback: false`.
+  - `OperationsSignalRow.jsx` uses strict matrix rendering for the STA table bubbles and matrix verdict, so candidate primary signals no longer backfill missing/competing timeframe bubbles.
+  - `PlatformAlgoMonitorSidebar.jsx` uses the same strict matrix rendering for algo monitor signal dots.
+  - `signalsRowModel.test.mjs` includes a regression test proving a fresh primary `5m buy` cannot synthesize a `5m` matrix bubble in strict mode.
+- Validation:
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/features/signals/signalsRowModel.test.mjs src/screens/algo/OperationsSignalTable.test.mjs src/features/platform/PlatformAlgoMonitorSidebar.test.mjs` passed, 8 tests.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `git diff --check -- artifacts/pyrus/src/features/signals/signalsRowModel.js artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx` passed.

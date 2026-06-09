@@ -73,6 +73,7 @@ const DEFAULT_BRIDGE_LANE_USAGE_TIMEOUT_MS = 1_500;
 const PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT = 2;
 const PERSISTENT_BRIDGE_ONLY_GRACE_MS = 10_000;
 const DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS = 30_000;
+const DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS = 2_500;
 const MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS = 30_000;
 const DEFAULT_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS = 2_000;
 type PersistentLineObservation = {
@@ -108,7 +109,9 @@ const apiOnlyLineObservations = new Map<string, PersistentLineObservation>();
 let bridgeLaneDiagnosticsClientFactory: () => BridgeLaneDiagnosticsClient = () =>
   new IbkrBridgeClient();
 let asyncSidecarClientFactory: () => AsyncSidecarGenerationApplyClient = () =>
-  new IbkrAsyncSidecarClient();
+  new IbkrAsyncSidecarClient({
+    requestTimeoutMs: asyncSidecarGenerationApplyTimeoutMs(),
+  });
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -148,6 +151,13 @@ function marketDataGenerationApplyTimeoutMs(): number {
   return readPositiveIntegerEnv(
     "IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS",
     DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS,
+  );
+}
+
+function asyncSidecarGenerationApplyTimeoutMs(): number {
+  return readPositiveIntegerEnv(
+    "IBKR_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS",
+    DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS,
   );
 }
 
@@ -876,13 +886,14 @@ async function applyAsyncSidecarMarketDataGeneration(input: {
   error: string | null;
   target: GenerationApplyTarget;
 }> {
+  const timeoutMs = asyncSidecarGenerationApplyTimeoutMs();
   try {
     return {
       status: await resolveMarketDataGenerationApplyWithin(
         asyncSidecarClientFactory().applyMarketDataGeneration(
           input.desiredGeneration,
         ),
-        marketDataGenerationApplyTimeoutMs(),
+        timeoutMs,
         "ib-async-sidecar",
       ),
       error: null,
@@ -946,21 +957,6 @@ async function applyMarketDataGeneration(input: {
   const result = input.routeToAsyncSidecar
     ? await applyAsyncSidecarMarketDataGeneration(input)
     : await applyBridgeMarketDataGeneration(input);
-  if (input.routeToAsyncSidecar && result.error) {
-    const fallback = await applyBridgeMarketDataGeneration(input);
-    return {
-      ...fallback,
-      error:
-        fallback.error && result.error
-          ? `Async sidecar apply failed: ${result.error}; bridge fallback failed: ${fallback.error}`
-          : fallback.error,
-      enabled: true,
-      pending: false,
-      generationId,
-      startedAt,
-      completedAt: new Date().toISOString(),
-    };
-  }
   return {
     ...result,
     enabled: true,
@@ -1530,6 +1526,15 @@ async function buildIbkrLineUsageSnapshot(options: {
     generationApply.status ??
     bridge.value?.marketDataGeneration ??
     null;
+  const sidecarHealthStatus = !routeToAsyncSidecar
+    ? "disabled"
+    : generationApply.pending
+      ? "checking"
+      : generationApply.error
+        ? "unhealthy"
+        : generationApply.status
+          ? "ok"
+          : "unknown";
   if (bridgeGenerationStatus) {
     subscriptions = buildSubscriptionsFromGenerationStatus({
       status: bridgeGenerationStatus,
@@ -1643,6 +1648,12 @@ async function buildIbkrLineUsageSnapshot(options: {
       applyGenerationId: generationApply.generationId,
       applyStartedAt: generationApply.startedAt,
       applyCompletedAt: generationApply.completedAt,
+      lastError: generationApply.error,
+      health: {
+        status: sidecarHealthStatus,
+        lastError: generationApply.error,
+        checkedAt: generationApply.completedAt ?? generationApply.startedAt,
+      },
       desiredGeneration: sidecarDesiredGeneration,
       bridgeGenerationStatus,
       comparison: buildSidecarGenerationComparison({

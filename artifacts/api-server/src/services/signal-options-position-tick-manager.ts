@@ -10,7 +10,6 @@ import {
 } from "./ibkr-live-demand-coordinator";
 import { getSignalMonitorProfileRow } from "./signal-monitor";
 import {
-  isSignalOptionsPositionInLiveOptionSession,
   listEnabledSignalOptionsDeployments,
   listSignalOptionsActivePositionsForDeployment,
   manageSignalOptionsActivePositionQuote,
@@ -54,10 +53,6 @@ export type SignalOptionsPositionTickManagerDependencies = {
   }) => Promise<ActivePositionSnapshot>;
   subscribeDemand?: SubscribeDemand;
   manageQuote?: ManageQuote;
-  isLiveSession?: (input: {
-    position: SignalOptionsPosition;
-    now: Date;
-  }) => boolean;
   resolveProfile?: (deployment: AlgoDeployment) => SignalOptionsExecutionProfile;
   loadPyrusSignalsSettings?: (
     deployment: AlgoDeployment,
@@ -163,10 +158,6 @@ export class SignalOptionsPositionTickManager {
   }) => Promise<ActivePositionSnapshot>;
   private readonly subscribeDemand: SubscribeDemand;
   private readonly manageQuote: ManageQuote;
-  private readonly isLiveSession: (input: {
-    position: SignalOptionsPosition;
-    now: Date;
-  }) => boolean;
   private readonly resolveProfile: (
     deployment: AlgoDeployment,
   ) => SignalOptionsExecutionProfile;
@@ -194,13 +185,6 @@ export class SignalOptionsPositionTickManager {
     this.subscribeDemand = dependencies.subscribeDemand ?? subscribeIbkrLiveDemand;
     this.manageQuote =
       dependencies.manageQuote ?? manageSignalOptionsActivePositionQuote;
-    this.isLiveSession =
-      dependencies.isLiveSession ??
-      ((input) =>
-        isSignalOptionsPositionInLiveOptionSession({
-          position: input.position,
-          now: input.now,
-        }));
     this.resolveProfile =
       dependencies.resolveProfile ?? resolveSignalOptionsExecutionProfile;
     this.loadPyrusSignalsSettings =
@@ -262,7 +246,6 @@ export class SignalOptionsPositionTickManager {
   private async reconcile(): Promise<void> {
     const deployments = await this.listDeployments();
     const desiredKeys = new Set<string>();
-    const now = this.now();
 
     for (const deployment of deployments) {
       const profile = this.resolveProfile(deployment);
@@ -278,9 +261,11 @@ export class SignalOptionsPositionTickManager {
         if (!providerContractId) {
           continue;
         }
-        if (!this.isLiveSession({ position, now })) {
-          continue;
-        }
+        // Position marks are kept warm in ALL sessions (time-of-day gates only
+        // execution, never market data). Renewing the live-demand lease here keeps the
+        // held-position quote subscription alive 24/7 so reads never hit the cold path.
+        // Actual exits/orders remain gated by the execution session checks in
+        // signal-options-automation (entry/exit/overnight-window).
         const key = positionKey({
           deployment,
           position,

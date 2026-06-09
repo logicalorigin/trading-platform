@@ -21,6 +21,8 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   runtimeOverrideUpdatedAt: Date | null;
   desktopAgentOnline: boolean;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   /** @nullable */
   desktopAgentCompatibility: RuntimeIbkrDiagnosticsDesktopAgentCompatibility;
   desktopAgentCompatible: boolean;

@@ -27,8 +27,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { listAggregateFlowEvents as listAggregateFlowEventsRequest } from "@workspace/api-client-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
@@ -49,6 +47,7 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import { joinMotionClasses, motionRowStyle, motionVars } from "../../lib/motion.jsx";
+import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   FLOW_BUILT_IN_PRESETS,
@@ -86,13 +85,10 @@ import {
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
-  FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_SCOPE,
-  filterFlowScannerEvents,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
-import { mapFlowEventToUi } from "../flow/flowEventMapper";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
 import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
@@ -139,21 +135,7 @@ const CSS_COLOR = Object.freeze({
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
-const HEADER_FLOW_VISIBLE_REQUEST_HEADERS = Object.freeze({
-  "x-pyrus-request-family": "flow-scanner-visible",
-  "x-pyrus-fetch-priority": "8",
-});
-
-const headerFlowVisibleRequestOptions = (options = {}) => ({
-  ...options,
-  headers: (() => {
-    const headers = new Headers(HEADER_FLOW_VISIBLE_REQUEST_HEADERS);
-    new Headers(options.headers || {}).forEach((value, key) => {
-      headers.set(key, value);
-    });
-    return headers;
-  })(),
-});
+const HEADER_FLOW_LANE_ITEM_LIMIT = 32;
 
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
@@ -1211,18 +1193,24 @@ const HeaderLaneSelectControl = ({ label, value, onChange, options, testId }) =>
   </HeaderLaneControlRow>
 );
 
-const HeaderLaneTextControl = ({ label, value, onChange, testId, placeholder }) => (
-  <HeaderLaneControlRow label={label}>
-    <input
-      data-testid={testId}
-      type="text"
-      value={value ?? ""}
-      placeholder={placeholder}
-      onChange={(event) => onChange(event.target.value)}
-      style={headerLaneControlInputStyle}
-    />
-  </HeaderLaneControlRow>
-);
+const HeaderLaneTextControl = ({ label, value, onChange, testId, placeholder }) => {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit: onChange,
+  });
+
+  return (
+    <HeaderLaneControlRow label={label}>
+      <input
+        data-testid={testId}
+        type="text"
+        {...inputProps}
+        placeholder={placeholder}
+        style={headerLaneControlInputStyle}
+      />
+    </HeaderLaneControlRow>
+  );
+};
 
 const HeaderLaneNumberControl = ({
   label,
@@ -1254,6 +1242,33 @@ const buildHeaderFlowTapeFilters = (filters) => ({
   symbol: null,
 });
 
+const buildHeaderBroadcastLaneMeasureKey = (items = []) =>
+  (items || [])
+    .map((item) =>
+      [
+        item?.id,
+        item?.symbol,
+        item?.directionLabel,
+        item?.actionLabel,
+        item?.contract,
+        item?.optionTicker,
+        item?.premium,
+        item?.score,
+        item?.price,
+        item?.time,
+        item?.ageLabel,
+        item?.fresh,
+        item?.timeframe,
+        ...(item?.contextIcons || []).map(
+          (context) =>
+            `${context?.kind || ""}:${context?.label || ""}:${
+              context?.valueLabel || ""
+            }`,
+        ),
+      ].join(":"),
+    )
+    .join("|");
+
 const HeaderBroadcastLane = ({
   label,
   items,
@@ -1270,6 +1285,10 @@ const HeaderBroadcastLane = ({
 }) => {
   const shouldScroll = items.length >= 4;
   const renderedItems = shouldScroll ? [...items, ...items] : items;
+  const measureKey = useMemo(
+    () => buildHeaderBroadcastLaneMeasureKey(items),
+    [items],
+  );
   const trackRef = useRef(null);
   const [scrollDistancePx, setScrollDistancePx] = useState(0);
   const durationSeconds = useMemo(
@@ -1326,7 +1345,7 @@ const HeaderBroadcastLane = ({
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [compactSettings, items, shouldScroll]);
+  }, [compactSettings, measureKey, shouldScroll]);
 
   const defaultTrigger = (
     <button
@@ -1521,7 +1540,7 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowRuntimeControl = useRuntimeControlSnapshot({
     enabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
+    lineUsageEnabled: false,
     lineUsageStreamEnabled: false,
     lineUsagePollInterval: 5_000,
   });
@@ -1531,60 +1550,6 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowRuntimeLoading = Boolean(flowRuntimeControl.loading);
   const flowRuntimeErrored = Boolean(flowRuntimeControl.error);
   const flowScannerConfig = flowScannerControl.config;
-  const headerAggregateFlowQuery = useQuery({
-    queryKey: [
-      "/api/flow/events/aggregate",
-      "header-visible",
-      FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
-      flowScannerConfig.scope,
-      flowScannerConfig.unusualThreshold,
-      flowScannerConfig.minPremium,
-      flowScannerConfig.maxDte,
-    ],
-    queryFn: ({ signal }) =>
-      listAggregateFlowEventsRequest({
-        limit: FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
-        scope: flowScannerConfig.scope,
-        unusualThreshold: flowScannerConfig.unusualThreshold,
-        minPremium:
-          Number.isFinite(flowScannerConfig.minPremium) &&
-          flowScannerConfig.minPremium > 0
-            ? flowScannerConfig.minPremium
-            : undefined,
-        maxDte:
-          Number.isFinite(flowScannerConfig.maxDte) &&
-          flowScannerConfig.maxDte !== null
-            ? flowScannerConfig.maxDte
-            : undefined,
-      }, headerFlowVisibleRequestOptions({ signal })),
-    enabled: Boolean(
-      enabled &&
-        !safeQaMode &&
-        broadScanEnabled &&
-        !broadFlowSnapshot.flowEvents?.length &&
-        !broadFlowSnapshot.staleFlowEvents,
-    ),
-    staleTime: 2_500,
-    refetchInterval: 10_000,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
-  const headerAggregateFlowEvents = useMemo(() => {
-    const events = headerAggregateFlowQuery.data?.events || [];
-    if (!events.length) return [];
-    return filterFlowScannerEvents(
-      events
-        .map((event) => mapFlowEventToUi(event, {}))
-        .sort((left, right) => {
-          const leftTime = Date.parse(left.occurredAt || left.time || "");
-          const rightTime = Date.parse(right.occurredAt || right.time || "");
-          const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
-          const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
-          return normalizedRight - normalizedLeft;
-        }),
-      flowScannerConfig,
-    );
-  }, [flowScannerConfig, headerAggregateFlowQuery.data?.events]);
   const flowTapeFilters = useFlowTapeFilterState({
     subscribe: enabled,
   });
@@ -1725,15 +1690,12 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalStateSummary = signalStatusSnapshot.stateSummary;
   const rawUnusualEvents = useMemo(
     () =>
-      broadScanSnapshotVisible
-        ? broadFlowSnapshot.flowEvents?.length
-          ? broadFlowSnapshot.flowEvents
-          : headerAggregateFlowEvents
-        : headerAggregateFlowEvents,
+      broadScanSnapshotVisible && broadFlowSnapshot.flowEvents?.length
+        ? broadFlowSnapshot.flowEvents
+        : [],
     [
       broadFlowSnapshot.flowEvents,
       broadScanSnapshotVisible,
-      headerAggregateFlowEvents,
     ],
   );
   const unusualEvents = useMemo(
@@ -1750,7 +1712,10 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const flowHasRetainedEvents = rawUnusualEvents.length > 0;
   const unusualItems = useMemo(
-    () => buildHeaderUnusualTapeItems(unusualEvents),
+    () =>
+      buildHeaderUnusualTapeItems(unusualEvents, {
+        maxItems: HEADER_FLOW_LANE_ITEM_LIMIT,
+      }),
     [unusualEvents],
   );
   const algoItems = useMemo(
@@ -2097,7 +2062,9 @@ export const HeaderBroadcastScrollerStack = memo(({
     : MISSING_VALUE;
   const unusualEventsLabel = flowEventsFilteredOut
     ? `${unusualItems.length}/${rawUnusualEvents.length}`
-    : `${unusualItems.length}`;
+    : unusualEvents.length > unusualItems.length
+      ? `${unusualItems.length}/${unusualEvents.length}`
+      : `${unusualItems.length}`;
   const unusualScanningNow = unusualCurrentBatch.length
     ? unusualCurrentBatch.slice(0, 4).join(" ")
     : MISSING_VALUE;

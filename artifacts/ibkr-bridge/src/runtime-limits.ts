@@ -11,6 +11,7 @@ export type BridgeRuntimeLimitKey =
   | "maxMarketDataLines"
   | "optionQuoteVisibleContractLimit"
   | "genericTickSampleMs"
+  | "quoteEmitCoalesceMs"
   | "connectTimeoutMs"
   | "openOrdersRequestTimeoutMs";
 
@@ -86,6 +87,14 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
     min: 100,
     max: 10_000,
     description: "Generic tick quote sampling window.",
+  },
+  quoteEmitCoalesceMs: {
+    envName: "IBKR_QUOTE_EMIT_COALESCE_MS",
+    defaultValue: 20,
+    min: 0,
+    max: 250,
+    description:
+      "Coalesce window (ms) for outbound quote emits so heavy option ticks do not block the TWS socket-drain loop. 0 emits synchronously per tick (disabled).",
   },
   connectTimeoutMs: {
     envName: "IBKR_TWS_CONNECT_TIMEOUT_MS",

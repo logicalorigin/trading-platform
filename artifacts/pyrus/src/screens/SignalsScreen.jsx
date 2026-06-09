@@ -26,7 +26,6 @@ import {
   ScanLine,
   Search,
   SlidersHorizontal,
-  Star,
 } from "lucide-react";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import {
@@ -82,6 +81,7 @@ import {
   formatRelativeTimeShort,
 } from "../lib/formatters";
 import { formatAppTime } from "../lib/timeZone";
+import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 import { useViewport } from "../lib/responsive";
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
@@ -100,6 +100,7 @@ import {
 import {
   buildSignalsHydrationManifest,
   buildSignalsMatrixHydrationPlan,
+  buildSignalsPriorityHydrationSymbols,
 } from "../features/signals/signalsMatrixHydration.js";
 import {
   EMPTY_SIGNAL_EVENTS,
@@ -111,7 +112,6 @@ import {
 import {
   getCurrentSignalDirection,
   isProblemSignalState,
-  isSignalStateCurrent,
   normalizeSignalStatus,
 } from "../features/signals/signalStateFreshness.js";
 
@@ -132,6 +132,7 @@ const DIRECTION_FILTERS = [
 ];
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority" },
+  { value: "rank", label: "Rank" },
   { value: "latest", label: "Latest" },
   { value: "bars", label: "Bars" },
   { value: "symbol", label: "Symbol" },
@@ -142,16 +143,16 @@ const SIGNALS_BREADTH_HISTORY_RANGE_OPTIONS = Object.freeze([
 ]);
 
 const isHydratedSignalMatrixState = (state) =>
-  Boolean(
-    state &&
-      !["error", "unknown"].includes(
-        normalizeSignalStatus(state),
-      ) &&
-      (state.latestBarAt ||
-        state.currentSignalAt ||
-        (normalizeSignalStatus(state) === "unavailable" &&
-          (state.lastEvaluatedAt || state.lastError))),
+  Boolean(state && isRenderableSignalMatrixState(state));
+const isRenderableSignalMatrixState = (state) => {
+  const status = normalizeSignalStatus(state);
+  return Boolean(
+    state?.active !== false &&
+      (status === "ok" || status === "stale") &&
+      !state?.lastError &&
+      (state?.latestBarAt || state?.currentSignalAt),
   );
+};
 const toHydrationCount = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0;
@@ -160,9 +161,9 @@ const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
-  { value: "selected_watchlist", label: "Selected Watchlist" },
-  { value: "all_watchlists", label: "All Watchlists" },
-  { value: "all_watchlists_plus_universe", label: "Watchlists + Ranked" },
+  { value: "selected_watchlist", label: "Selected Source" },
+  { value: "all_watchlists", label: "Saved Sources" },
+  { value: "all_watchlists_plus_universe", label: "Universe" },
   { value: "high_beta_500", label: "High Beta 500" },
 ]);
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES = new Set(
@@ -209,6 +210,7 @@ const resolveSignalMonitorSettingsDraft = (settings) => ({
 });
 const SIGNALS_COLUMN_IDS = [
   "symbol",
+  "rank",
   "signal",
   "stack",
   "verdict",
@@ -225,6 +227,21 @@ const SIGNALS_COLUMN_IDS = [
   "action",
 ];
 const SIGNALS_LOCKED_COLUMN_IDS = ["symbol", "action"];
+const normalizeSignalsColumnOrder = (value) => {
+  const normalized = normalizeColumnOrder(value, SIGNALS_COLUMN_IDS);
+  const requested = Array.isArray(value) ? value : [];
+  if (requested.includes("rank")) {
+    return normalized;
+  }
+  const withoutRank = normalized.filter((columnId) => columnId !== "rank");
+  const symbolIndex = withoutRank.indexOf("symbol");
+  const insertIndex = symbolIndex >= 0 ? symbolIndex + 1 : 0;
+  return [
+    ...withoutRank.slice(0, insertIndex),
+    "rank",
+    ...withoutRank.slice(insertIndex),
+  ];
+};
 const SIGNALS_SORT_KEYS_BY_COLUMN_ID = {
   age: "age",
   bars: "bars",
@@ -232,6 +249,7 @@ const SIGNALS_SORT_KEYS_BY_COLUMN_ID = {
   latest: "latest",
   mtf: "mtf",
   price: "price",
+  rank: "rank",
   signal: "signal",
   stack: "stack",
   strength: "strength",
@@ -258,16 +276,18 @@ const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
   "1d",
 ]);
 const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
+const EMPTY_SIGNAL_SPARKLINE_POINTS = Object.freeze({});
 const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
 const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
-const SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT = 12;
+const SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT = 64;
 const SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT = 32;
 const SIGNALS_MATRIX_FULL_HYDRATION_IDLE_TIMEOUT_MS = 1_500;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
-const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 560;
-const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 520;
+const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 680;
+const SIGNALS_TABLE_MIN_HEIGHT_COMPACT = 620;
+const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 560;
 const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "signals-table-sparkline",
@@ -343,6 +363,9 @@ const fetchSignalSparklineBarsBatch = async (rows, signal) => {
         limit: SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT,
         outsideRth: true,
         source: "trades",
+        brokerRecentWindowMinutes: 0,
+        responseShape: "sparkline",
+        sparklinePointLimit: SPARKLINE_RENDER_POINT_LIMIT,
       })),
     }),
   });
@@ -621,9 +644,6 @@ const resolveActionabilityLabel = (row) => {
   return `${String(row.direction).toUpperCase()} is aged`;
 };
 
-const getActiveWatchlistId = (profile, defaultWatchlist) =>
-  profile?.watchlistId || defaultWatchlist?.id || "";
-
 const getSignalDrilldownId = (symbol) =>
   `signals-row-drilldown-${String(symbol || "ticker").replace(/[^A-Za-z0-9_-]/g, "-")}`;
 
@@ -720,6 +740,25 @@ function NumberField({ label, value, min, max, step = 1, round = true, onCommit 
   );
 }
 
+function SignalsTickerSearchInput({ value, onCommit, style }) {
+  const { inputProps } = useDebouncedTextCommit({
+    value,
+    onCommit,
+  });
+
+  return (
+    <input
+      {...inputProps}
+      placeholder="Ticker"
+      style={{
+        ...style,
+        width: "100%",
+        paddingLeft: dim(30),
+      }}
+    />
+  );
+}
+
 function DirectionBadge({ direction }) {
   const tone = toneForDirection(direction);
   const Icon = direction === "sell" ? ArrowDown : direction === "buy" ? ArrowUp : Clock3;
@@ -742,96 +781,65 @@ function DirectionBadge({ direction }) {
   );
 }
 
-function MetricTile({
+function SignalsOverviewMetric({
+  detail = "",
   label,
-  value,
   tone = CSS_COLOR.text,
-  subtitle = "",
-  ratio = null,
+  value,
 }) {
-  const ratioValue = Number(ratio);
-  const hasRatio = Number.isFinite(ratioValue);
-  const boundedRatio = hasRatio ? Math.max(0, Math.min(1, ratioValue)) : 0;
   return (
     <div
       style={{
         display: "grid",
-        alignContent: "space-between",
-        gap: sp(6),
-        minWidth: dim(104),
-        minHeight: dim(58),
-        padding: sp("8px 10px"),
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
-        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 9)}`,
+        gap: sp(3),
+        minWidth: 0,
+        padding: sp("5px 7px"),
+        borderRadius: dim(RADII.xs),
+        background: CSS_COLOR.bg2,
+        boxShadow: `inset 0 0 0 1px ${CSS_COLOR.borderLight}`,
       }}
     >
-      <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
-        <span
-          style={{
-            color: CSS_COLOR.textMuted,
-            fontSize: fs(10),
-            fontWeight: FONT_WEIGHTS.label,
-            letterSpacing: 0,
-            textTransform: "uppercase",
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            color: tone,
-            fontSize: fs(19),
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {value}
-        </span>
-      </div>
-      {subtitle || hasRatio ? (
-        <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
-          {hasRatio ? (
-            <span
-              aria-hidden="true"
-              style={{
-                height: dim(3),
-                borderRadius: dim(RADII.pill),
-                background: CSS_COLOR.bg3,
-                overflow: "hidden",
-              }}
-            >
-              <span
-                style={{
-                  display: "block",
-                  width: `${Math.round(boundedRatio * 100)}%`,
-                  height: "100%",
-                  borderRadius: dim(RADII.pill),
-                  background: tone,
-                }}
-              />
-            </span>
-          ) : null}
-          {subtitle ? (
-            <span
-              style={{
-                ...cellTextStyle,
-                color: CSS_COLOR.textDim,
-                fontSize: textSize("caption"),
-              }}
-            >
-              {subtitle}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: fs(9),
+          fontWeight: FONT_WEIGHTS.label,
+          letterSpacing: 0,
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          color: tone,
+          fontSize: fs(15),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </span>
+      <span
+        style={{
+          ...cellTextStyle,
+          color: CSS_COLOR.textDim,
+          fontSize: fs(9),
+        }}
+      >
+        {detail || MISSING_VALUE}
+      </span>
     </div>
   );
 }
 
-function TimeframeSignalKpiStrip({
+function TimeframeSignalGroupedBars({
   summaries = [],
   phone = false,
   compact = false,
@@ -840,11 +848,18 @@ function TimeframeSignalKpiStrip({
   if (!items.length) {
     return null;
   }
+  const maxCount = Math.max(
+    1,
+    ...items.flatMap((item) => [
+      Math.max(0, Number(item.buy) || 0),
+      Math.max(0, Number(item.sell) || 0),
+    ]),
+  );
   const gridTemplateColumns = phone
-    ? "repeat(2, minmax(0, 1fr))"
+    ? "1fr"
     : compact
-      ? "repeat(3, minmax(0, 1fr))"
-      : `repeat(${items.length}, minmax(0, 1fr))`;
+      ? "repeat(2, minmax(0, 1fr))"
+      : "repeat(3, minmax(0, 1fr))";
 
   return (
     <div
@@ -853,19 +868,15 @@ function TimeframeSignalKpiStrip({
       style={{
         display: "grid",
         gridTemplateColumns,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
-        overflow: "hidden",
-        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 8)}`,
+        gap: sp(6),
+        minWidth: 0,
       }}
     >
       {items.map((item) => {
         const buy = Math.max(0, Number(item.buy) || 0);
         const sell = Math.max(0, Number(item.sell) || 0);
-        const total = Math.max(0, Number(item.total) || buy + sell);
-        const buyRatio = total ? buy / total : 0;
-        const sellRatio = total ? sell / total : 0;
+        const buyRatio = buy / maxCount;
+        const sellRatio = sell / maxCount;
         const tone =
           item.direction === "buy"
             ? CSS_COLOR.blue
@@ -883,11 +894,13 @@ function TimeframeSignalKpiStrip({
               data-sell-count={sell}
               style={{
                 display: "grid",
-                gap: sp(5),
+                gap: sp(4),
                 minWidth: 0,
-                minHeight: dim(44),
-                padding: sp("7px 9px"),
-                borderRight: `1px solid ${CSS_COLOR.borderLight}`,
+                minHeight: dim(48),
+                padding: sp("6px 8px"),
+                border: `1px solid ${CSS_COLOR.borderLight}`,
+                borderRadius: dim(RADII.xs),
+                background: CSS_COLOR.bg2,
               }}
             >
               <span
@@ -902,7 +915,7 @@ function TimeframeSignalKpiStrip({
                 <span
                   style={{
                     color: CSS_COLOR.textMuted,
-                    fontSize: fs(10),
+                    fontSize: fs(9),
                     fontWeight: FONT_WEIGHTS.label,
                     letterSpacing: 0,
                     textTransform: "uppercase",
@@ -913,7 +926,7 @@ function TimeframeSignalKpiStrip({
                 <span
                   style={{
                     color: tone,
-                    fontSize: fs(12),
+                    fontSize: fs(11),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontVariantNumeric: "tabular-nums",
                     whiteSpace: "nowrap",
@@ -922,51 +935,60 @@ function TimeframeSignalKpiStrip({
                   {formatCount(buy)}/{formatCount(sell)}
                 </span>
               </span>
-              <span
-                aria-hidden="true"
+              <div
                 style={{
-                  display: "flex",
-                  height: dim(4),
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: sp(5),
                   minWidth: 0,
-                  borderRadius: dim(RADII.pill),
-                  background: CSS_COLOR.bg3,
-                  overflow: "hidden",
                 }}
               >
-                <span
-                  style={{
-                    display: "block",
-                    width: `${Math.round(buyRatio * 100)}%`,
-                    minWidth: buy ? dim(2) : 0,
-                    height: "100%",
-                    background: CSS_COLOR.blue,
-                  }}
-                />
-                <span
-                  style={{
-                    display: "block",
-                    width: `${Math.round(sellRatio * 100)}%`,
-                    minWidth: sell ? dim(2) : 0,
-                    height: "100%",
-                    background: CSS_COLOR.red,
-                  }}
-                />
-              </span>
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: sp(6),
-                  color: CSS_COLOR.textDim,
-                  fontSize: fs(10),
-                  fontVariantNumeric: "tabular-nums",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span style={{ color: CSS_COLOR.blue }}>B {formatCount(buy)}</span>
-                <span style={{ color: CSS_COLOR.red }}>S {formatCount(sell)}</span>
-              </span>
+                {[
+                  ["B", buy, buyRatio, CSS_COLOR.blue],
+                  ["S", sell, sellRatio, CSS_COLOR.red],
+                ].map(([label, count, ratio, color]) => (
+                  <span
+                    key={label}
+                    style={{
+                      display: "grid",
+                      gap: sp(3),
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        height: dim(5),
+                        borderRadius: dim(RADII.pill),
+                        background: CSS_COLOR.bg3,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: "block",
+                          width: `${Math.round(ratio * 100)}%`,
+                          minWidth: count ? dim(2) : 0,
+                          height: "100%",
+                          borderRadius: dim(RADII.pill),
+                          background: color,
+                        }}
+                      />
+                    </span>
+                    <span
+                      style={{
+                        color,
+                        fontSize: fs(9),
+                        fontVariantNumeric: "tabular-nums",
+                        fontWeight: FONT_WEIGHTS.label,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {label} {formatCount(count)}
+                    </span>
+                  </span>
+                ))}
+              </div>
             </div>
           </AppTooltip>
         );
@@ -975,7 +997,7 @@ function TimeframeSignalKpiStrip({
   );
 }
 
-function SignalBreadthHistoryStrip({
+function CompactSignalBreadthPanel({
   history,
   range,
   onRangeChange,
@@ -984,11 +1006,11 @@ function SignalBreadthHistoryStrip({
   phone = false,
 }) {
   const chartWidth = 240;
-  const chartHeight = 64;
+  const chartHeight = 44;
   const centerY = Math.round(chartHeight / 2);
   const points = Array.isArray(history?.points) ? history.points : [];
   const maxMagnitude = Math.max(1, history?.maxTotal || history?.maxAbsNet || 0);
-  const usableHeight = centerY - 7;
+  const usableHeight = centerY - 5;
   const step = points.length > 1 ? chartWidth / (points.length - 1) : chartWidth;
   const barWidth = Math.max(1, Math.min(5, step * 0.5));
   const statusLabel = error
@@ -1014,33 +1036,31 @@ function SignalBreadthHistoryStrip({
       aria-label="Aggregate buy and sell signal breadth history"
       style={{
         display: "grid",
-        gridTemplateColumns: phone ? "1fr" : "minmax(180px, 0.72fr) minmax(0, 1.8fr)",
-        gap: sp(10),
-        alignItems: "stretch",
+        gap: sp(6),
+        alignContent: "stretch",
         minWidth: 0,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
+        height: "100%",
+        padding: sp(8),
+        border: `1px solid ${CSS_COLOR.borderLight}`,
+        borderRadius: dim(RADII.xs),
+        background: CSS_COLOR.bg2,
         overflow: "hidden",
-        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 7)}`,
       }}
     >
       <div
         style={{
-          display: "grid",
-          alignContent: "center",
-          gap: sp(8),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(6),
           minWidth: 0,
-          padding: sp("10px 12px"),
-          borderRight: phone ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
-          borderBottom: phone ? `1px solid ${CSS_COLOR.borderLight}` : "none",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8), minWidth: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
           <span
             style={{
               color: CSS_COLOR.textMuted,
-              fontSize: fs(10),
+              fontSize: fs(9),
               fontWeight: FONT_WEIGHTS.label,
               letterSpacing: 0,
               textTransform: "uppercase",
@@ -1060,14 +1080,15 @@ function SignalBreadthHistoryStrip({
           >
             {netLabel}
           </span>
-        </div>
+        </span>
         <div
           role="group"
           aria-label="Signals breadth history range"
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-            gap: sp(4),
+            display: "inline-grid",
+            gridTemplateColumns: "repeat(2, minmax(42px, 1fr))",
+            alignItems: "center",
+            gap: sp(3),
             minWidth: 0,
           }}
         >
@@ -1085,12 +1106,12 @@ function SignalBreadthHistoryStrip({
                 aria-pressed={selected ? "true" : "false"}
                 onClick={() => onRangeChange?.(option.value)}
                 style={{
-                  minHeight: dim(44),
+                  minHeight: dim(24),
                   border: `1px solid ${selected ? CSS_COLOR.accent : CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.xs),
-                  background: selected ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg2,
+                  background: selected ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg1,
                   color: selected ? CSS_COLOR.text : CSS_COLOR.textSec,
-                  fontSize: fs(11),
+                  fontSize: fs(10),
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
                   cursor: "pointer",
@@ -1104,87 +1125,189 @@ function SignalBreadthHistoryStrip({
       </div>
       <div
         style={{
-          display: "grid",
-          gridTemplateRows: "auto minmax(64px, 1fr)",
-          gap: sp(6),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(8),
           minWidth: 0,
-          padding: sp("9px 12px 10px"),
+          color: CSS_COLOR.textDim,
+          fontSize: fs(10),
+          fontVariantNumeric: "tabular-nums",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(8),
-            minWidth: 0,
-            color: CSS_COLOR.textDim,
-            fontSize: fs(10),
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          <span style={{ color: CSS_COLOR.blue }}>B {formatCount(history?.buyTotal || 0)}</span>
-          <span style={{ color: CSS_COLOR.textDim }}>{statusLabel}</span>
-          <span style={{ color: CSS_COLOR.red }}>S {formatCount(history?.sellTotal || 0)}</span>
-        </div>
-        <svg
-          data-testid="signals-breadth-history-chart"
-          role="img"
-          aria-label={`Signals breadth history ${statusLabel}`}
-          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-          preserveAspectRatio="none"
-          style={{
-            width: "100%",
-            height: dim(70),
-            display: "block",
-            overflow: "visible",
-          }}
-        >
-          <line
-            x1="0"
-            x2={chartWidth}
-            y1={centerY}
-            y2={centerY}
-            stroke={CSS_COLOR.border}
-            strokeWidth="1"
-          />
-          {points.map((point, index) => {
-            const x = points.length > 1 ? index * step : chartWidth / 2;
-            const buyHeight = Math.round((point.buy / maxMagnitude) * usableHeight);
-            const sellHeight = Math.round((point.sell / maxMagnitude) * usableHeight);
-            return (
-              <g key={`${point.at}-${index}`}>
-                {buyHeight ? (
-                  <rect
-                    x={x - barWidth / 2}
-                    y={centerY - buyHeight}
-                    width={barWidth}
-                    height={buyHeight}
-                    rx="0.8"
-                    fill={CSS_COLOR.blue}
-                    opacity="0.8"
-                  />
-                ) : null}
-                {sellHeight ? (
-                  <rect
-                    x={x - barWidth / 2}
-                    y={centerY}
-                    width={barWidth}
-                    height={sellHeight}
-                    rx="0.8"
-                    fill={CSS_COLOR.red}
-                    opacity="0.8"
-                  />
-                ) : null}
-              </g>
-            );
-          })}
-        </svg>
+        <span style={{ color: CSS_COLOR.blue }}>B {formatCount(history?.buyTotal || 0)}</span>
+        <span style={{ ...cellTextStyle, color: CSS_COLOR.textDim, textAlign: "center" }}>
+          {statusLabel}
+        </span>
+        <span style={{ color: CSS_COLOR.red }}>S {formatCount(history?.sellTotal || 0)}</span>
       </div>
+      <svg
+        data-testid="signals-breadth-history-chart"
+        role="img"
+        aria-label={`Signals breadth history ${statusLabel}`}
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        preserveAspectRatio="none"
+        style={{
+          width: "100%",
+          height: dim(phone ? 44 : 50),
+          display: "block",
+          overflow: "visible",
+        }}
+      >
+        <line
+          x1="0"
+          x2={chartWidth}
+          y1={centerY}
+          y2={centerY}
+          stroke={CSS_COLOR.border}
+          strokeWidth="1"
+        />
+        {points.map((point, index) => {
+          const x = points.length > 1 ? index * step : chartWidth / 2;
+          const buyHeight = Math.round((point.buy / maxMagnitude) * usableHeight);
+          const sellHeight = Math.round((point.sell / maxMagnitude) * usableHeight);
+          return (
+            <g key={`${point.at}-${index}`}>
+              {buyHeight ? (
+                <rect
+                  x={x - barWidth / 2}
+                  y={centerY - buyHeight}
+                  width={barWidth}
+                  height={buyHeight}
+                  rx="0.8"
+                  fill={CSS_COLOR.blue}
+                  opacity="0.8"
+                />
+              ) : null}
+              {sellHeight ? (
+                <rect
+                  x={x - barWidth / 2}
+                  y={centerY}
+                  width={barWidth}
+                  height={sellHeight}
+                  rx="0.8"
+                  fill={CSS_COLOR.red}
+                  opacity="0.8"
+                />
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
 
+function SignalsOverviewPanel({
+  breadthHistory,
+  breadthHistoryError,
+  breadthHistoryLoading,
+  breadthHistoryRange,
+  compact = false,
+  netBias,
+  onBreadthHistoryRangeChange,
+  phone = false,
+  summary,
+  timeframeSummaries,
+}) {
+  const active = Math.max(0, summary?.active || 0);
+  const total = Math.max(0, summary?.total || 0);
+  const fresh = Math.max(0, summary?.fresh || 0);
+  const aged = Math.max(0, active - fresh);
+  const metrics = [
+    {
+      label: "Tracked",
+      value: formatCount(total),
+      detail: `${formatCount(active)} active`,
+      tone: CSS_COLOR.text,
+    },
+    {
+      label: "Fresh",
+      value: formatCount(fresh),
+      detail: `${formatCount(aged)} aged`,
+      tone: CSS_COLOR.green,
+    },
+    {
+      label: "Buy",
+      value: formatCount(summary?.buy || 0),
+      detail: "long bias",
+      tone: CSS_COLOR.blue,
+    },
+    {
+      label: "Sell",
+      value: formatCount(summary?.sell || 0),
+      detail: "short bias",
+      tone: CSS_COLOR.red,
+    },
+    {
+      label: "Net",
+      value: netBias?.label || "No signals",
+      detail: `B ${formatCount(netBias?.buy || 0)} / S ${formatCount(netBias?.sell || 0)}`,
+      tone: toneForDirection(netBias?.direction),
+    },
+    {
+      label: "Attention",
+      value: formatCount(summary?.problem || 0),
+      detail: `${formatCount(summary?.skipped || 0)} pending`,
+      tone: CSS_COLOR.amber,
+    },
+  ];
+  return (
+    <div
+      data-testid="signals-overview-panel"
+      style={{
+        display: "grid",
+        gap: sp(8),
+        minWidth: 0,
+        padding: sp(10),
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 8)}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: phone
+            ? "repeat(2, minmax(0, 1fr))"
+            : "repeat(6, minmax(0, 1fr))",
+          gap: sp(6),
+          minWidth: 0,
+        }}
+      >
+        {metrics.map((metric) => (
+          <SignalsOverviewMetric key={metric.label} {...metric} />
+        ))}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: phone || compact
+            ? "1fr"
+            : "minmax(0, 1.55fr) minmax(260px, 0.72fr)",
+          gap: sp(8),
+          minWidth: 0,
+          alignItems: "stretch",
+        }}
+      >
+        <TimeframeSignalGroupedBars
+          summaries={timeframeSummaries}
+          phone={phone}
+          compact={compact}
+        />
+        <CompactSignalBreadthPanel
+          history={breadthHistory}
+          range={breadthHistoryRange}
+          onRangeChange={onBreadthHistoryRangeChange}
+          loading={breadthHistoryLoading}
+          error={breadthHistoryError}
+          phone={phone}
+        />
+      </div>
+    </div>
+  );
+}
 function StatusCell({ row }) {
   const tone = toneForStatus(row.status);
   const issues = collectDataIssuesFromRecord(
@@ -1274,12 +1397,17 @@ function CompactIntervalCell({
   rowDirection = "",
   fallbackPrice = null,
   sparklineData = [],
+  sparklinePoints: sourceSparklinePoints = null,
   signalEvents = EMPTY_SIGNAL_EVENTS,
 }) {
   const status = normalizeSignalStatus(state);
   const pending = status === "pending";
+  const stale = status === "stale";
   const hydrated = isHydratedSignalMatrixState(state);
-  const problem = !pending && isProblemSignalState(state);
+  const hasSignalTiming = Boolean(
+    state?.currentSignalAt || state?.latestBarAt || state?.lastEvaluatedAt,
+  );
+  const problem = !pending && !stale && isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const sparklineFallbackDirection = signalSparklineDirectionOrFallback(
     direction,
@@ -1301,15 +1429,20 @@ function CompactIntervalCell({
     Array.isArray(sparklineData) && sparklineData.length >= 2
       ? sparklineData
       : fallbackSparklineData;
+  const usesFetchedSparklineData =
+    Array.isArray(sparklineData) && sparklineData.length >= 2;
   const sparklineSource =
-    Array.isArray(sparklineData) && sparklineData.length >= 2
+    usesFetchedSparklineData
       ? "bars"
       : fallbackSparklineData.length >= 2
         ? "fallback"
         : "empty";
   const sparklinePoints = useMemo(
-    () => extractSparklinePoints(displaySparklineData),
-    [displaySparklineData],
+    () =>
+      usesFetchedSparklineData && Array.isArray(sourceSparklinePoints)
+        ? sourceSparklinePoints
+        : extractSparklinePoints(displaySparklineData),
+    [displaySparklineData, sourceSparklinePoints, usesFetchedSparklineData],
   );
   const sparklinePointColors = useMemo(
     () =>
@@ -1360,7 +1493,7 @@ function CompactIntervalCell({
         : normalizeSignalStatus(state) === "stale"
           ? "stale"
           : status,
-      lastError: state?.lastError,
+      lastError: stale ? null : state?.lastError,
       lastEvaluatedAt: state?.lastEvaluatedAt,
       latestBarAt: state?.latestBarAt,
     },
@@ -1371,7 +1504,7 @@ function CompactIntervalCell({
         "Open the signal drilldown before trusting this interval's direction.",
     },
   );
-  const intervalAge = hydrated
+  const intervalAge = hasSignalTiming
     ? formatTime(state.currentSignalAt || state.latestBarAt || state.lastEvaluatedAt)
     : MISSING_VALUE;
   const Icon = problem
@@ -1385,9 +1518,11 @@ function CompactIntervalCell({
     ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
     : pending
       ? `${timeframe} pending`
-      : hydrated
-        ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
-        : `${timeframe} not hydrated`;
+      : stale
+        ? `${timeframe} aged · ${intervalAge} · ${sparklinePoints.length || 0} bars`
+        : hydrated
+          ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
+          : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
       <span
@@ -1419,6 +1554,7 @@ function CompactIntervalCell({
           {sparklinePoints.length >= 2 ? (
             <MicroSparkline
               data={displaySparklineData}
+              points={sparklinePoints}
               color={sparklineColor}
               pointColors={sparklinePointColors}
               width={TABLE_SPARKLINE_WIDTH}
@@ -1437,7 +1573,7 @@ function CompactIntervalCell({
                 borderRadius: dim(RADII.xs),
                 boxShadow: `inset 0 -1px 0 ${cssColorMix(CSS_COLOR.textMuted, 24)}`,
                 background: cssColorMix(CSS_COLOR.textMuted, 7),
-                opacity: hydrated ? 0.75 : 0.35,
+                opacity: hydrated || stale ? 0.75 : 0.35,
               }}
             />
           )}
@@ -1478,9 +1614,11 @@ function CompactIntervalCell({
                 ? "Err"
                 : pending
                   ? "Wait"
-                  : hydrated
-                    ? formatCompactBars(state.barsSinceSignal)
-                    : MISSING_VALUE}
+                  : stale
+                    ? "Aged"
+                    : hydrated
+                      ? formatCompactBars(state.barsSinceSignal)
+                      : MISSING_VALUE}
             </span>
             <span
               data-testid={`signals-${timeframe}-age`}
@@ -1490,7 +1628,7 @@ function CompactIntervalCell({
                 fontSize: fs(9),
               }}
             >
-              {hydrated ? intervalAge : pending ? "queued" : ""}
+              {hasSignalTiming ? intervalAge : pending ? "queued" : ""}
             </span>
           </span>
         </span>
@@ -2524,7 +2662,6 @@ function SignalGateMatrix({ row }) {
 
 function SignalProvenanceStrip({ row, onJumpToTrade, phone }) {
   const statusTone = toneForStatus(row.status);
-  const watchlists = row.watchlistLabels || [];
 
   return (
     <div
@@ -2554,17 +2691,9 @@ function SignalProvenanceStrip({ row, onJumpToTrade, phone }) {
           <Badge color={CSS_COLOR.textDim} variant="outline">
             {resolveSignalSourceLabel(row)}
           </Badge>
-          {watchlists.length ? (
-            watchlists.map((label) => (
-              <Badge key={label} color={CSS_COLOR.textDim} variant="outline">
-                {label}
-              </Badge>
-            ))
-          ) : (
-            <Badge color={CSS_COLOR.textDim} variant="outline">
-              No watchlist
-            </Badge>
-          )}
+          <Badge color={CSS_COLOR.textDim} variant="outline">
+            Rank {formatCount(row.universeRank)}
+          </Badge>
         </div>
         {row.lastError ? (
           <div
@@ -2608,15 +2737,19 @@ function SignalsHydrationStrip({
   missing,
   phone,
   priorityCount,
+  timeframeHydration = [],
   total,
 }) {
   const hasUniverse = total > 0;
   const ratio = hasUniverse ? hydrated / total : 0;
   const boundedRatio = Math.max(0, Math.min(1, ratio));
   const activeCount = hasUniverse ? Math.min(missing, toHydrationCount(active)) : 0;
-  const activeRatio = hasUniverse ? (hydrated + activeCount) / total : 0;
-  const boundedActiveRatio = Math.max(boundedRatio, Math.min(1, activeRatio));
   const complete = hasUniverse && missing === 0;
+  const hydratedPercent = !hasUniverse
+    ? 0
+    : complete
+      ? 100
+      : Math.min(99, Math.floor(boundedRatio * 100));
   const tone = !hasUniverse ? CSS_COLOR.textDim : complete ? CSS_COLOR.green : CSS_COLOR.amber;
   const status = !hasUniverse
     ? "Hydration idle"
@@ -2625,98 +2758,170 @@ function SignalsHydrationStrip({
       : activeCount
         ? `Hydrating ${activeCount} active, ${missing} remaining`
         : `Hydrating ${missing} cells remaining`;
+  const inlineStatus = !hasUniverse
+    ? "Hydration idle"
+    : complete
+      ? "Fully hydrated"
+      : activeCount
+        ? `Hydrating ${missing} remaining · ${activeCount} active`
+        : `Hydrating ${missing} remaining`;
+  const timeframeRows = Array.isArray(timeframeHydration)
+    ? timeframeHydration.filter((item) => item?.timeframe)
+    : [];
 
   return (
     <div
       data-testid="signals-hydration-strip"
       style={{
         display: "grid",
-        gridTemplateColumns: phone ? "1fr" : "minmax(170px, auto) minmax(160px, 1fr) auto",
-        gap: phone ? sp(6) : sp(10),
-        alignItems: "center",
+        gap: sp(6),
         minWidth: 0,
         padding: sp("8px 10px"),
         borderBottom: `1px solid ${CSS_COLOR.border}`,
         background: CSS_COLOR.bg1,
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "grid", gap: sp(2), minWidth: 0 }}>
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "baseline",
+          gap: sp(7),
+          flexWrap: "wrap",
+          minWidth: 0,
+        }}
+      >
         <span
           style={{
             ...cellTextStyle,
             color: tone,
             fontSize: textSize("bodyStrong"),
             fontWeight: FONT_WEIGHTS.medium,
+            maxWidth: phone ? "none" : dim(240),
+            whiteSpace: "nowrap",
           }}
         >
-          {status}
+          {inlineStatus}
         </span>
         <span
           style={{
             ...cellTextStyle,
             color: CSS_COLOR.textDim,
             fontSize: textSize("caption"),
+            whiteSpace: "nowrap",
           }}
         >
           {hasUniverse
-            ? `${hydrated}/${total} cells · ${priorityCount} manifest prioritized`
+            ? `${hydrated}/${total} cells · ${priorityCount} priority symbols`
             : "Waiting for monitor universe"}
         </span>
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontSize: textSize("captionStrong"),
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.label,
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {hasUniverse ? `${hydratedPercent}%` : "idle"}
+        </span>
       </div>
-      <span
-        aria-label={hasUniverse ? `${Math.round(boundedRatio * 100)} percent hydrated` : "No hydration progress"}
-        role="meter"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(boundedRatio * 100)}
+      <div
         style={{
-          position: "relative",
-          height: dim(7),
-          borderRadius: dim(RADII.pill),
-          background: CSS_COLOR.bg3,
-          overflow: "hidden",
-          boxShadow: `inset 0 0 0 1px ${CSS_COLOR.border}`,
+          display: "flex",
+          alignItems: "center",
+          gap: sp(6),
+          flexWrap: "wrap",
+          minWidth: 0,
         }}
       >
-        <span
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            display: "block",
-            width: `${Math.round(boundedActiveRatio * 100)}%`,
-            height: "100%",
-            borderRadius: dim(RADII.pill),
-            background: activeCount ? cssColorMix(tone, 45) : tone,
-            transition: "width 320ms ease-out, background-color 180ms ease-out",
-          }}
-        />
-        <span
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            display: "block",
-            width: `${Math.round(boundedRatio * 100)}%`,
-            height: "100%",
-            borderRadius: dim(RADII.pill),
-            background: tone,
-            transition: "width 320ms ease-out, background-color 180ms ease-out",
-          }}
-        />
-      </span>
-      <span
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontSize: textSize("captionStrong"),
-          fontVariantNumeric: "tabular-nums",
-          fontWeight: FONT_WEIGHTS.label,
-          textTransform: "uppercase",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {hasUniverse ? `${Math.round(boundedRatio * 100)}%` : "idle"}
-      </span>
+        {(timeframeRows.length
+          ? timeframeRows
+          : SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
+              timeframe,
+              hydrated: 0,
+              missing: 0,
+              requested: 0,
+              aged: 0,
+              total: 0,
+            }))
+        ).map((item) => {
+          const frameTotal = toHydrationCount(item.total);
+          const frameHydrated = Math.min(frameTotal, toHydrationCount(item.hydrated));
+          const frameAged = Math.min(frameHydrated, toHydrationCount(item.aged));
+          const frameMissing = Math.max(0, frameTotal - frameHydrated);
+          const frameComplete = frameTotal > 0 && frameHydrated >= frameTotal;
+          const framePercent = frameTotal
+            ? frameComplete
+              ? 100
+              : Math.min(99, Math.floor((frameHydrated / frameTotal) * 100))
+            : 0;
+          const frameTone = !frameTotal
+            ? CSS_COLOR.textDim
+            : frameComplete
+              ? CSS_COLOR.green
+              : CSS_COLOR.amber;
+          const frameSubLabel = [
+            frameMissing ? `${frameMissing} missing` : "",
+            frameAged ? `${frameAged} aged` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <span
+              key={item.timeframe}
+              data-testid={`signals-hydration-${item.timeframe}`}
+              role="meter"
+              aria-label={`${item.timeframe} ${framePercent} percent hydrated; ${frameHydrated} of ${frameTotal || 0} cells; ${frameMissing} missing; ${frameAged} aged`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={framePercent}
+              title={`${item.timeframe}: ${frameHydrated}/${frameTotal || 0} hydrated, ${frameMissing} missing, ${frameAged} aged`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(4),
+                minWidth: 0,
+                color: CSS_COLOR.textDim,
+                fontSize: fs(9),
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontWeight: FONT_WEIGHTS.label,
+                  textTransform: "uppercase",
+                }}
+              >
+                {String(item.timeframe).toUpperCase()}
+              </span>
+              <span
+                style={{
+                  color: frameTone,
+                  fontWeight: FONT_WEIGHTS.label,
+                }}
+              >
+                {frameTotal ? `${frameHydrated}/${frameTotal}` : "idle"}
+              </span>
+              {frameSubLabel ? (
+                <span
+                  style={{
+                    ...cellTextStyle,
+                    color: frameMissing ? CSS_COLOR.amber : CSS_COLOR.textDim,
+                    fontSize: fs(9),
+                  }}
+                >
+                  {frameSubLabel}
+                </span>
+              ) : null}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2886,8 +3091,15 @@ function SectionLabel({ children }) {
 export default function SignalsScreen({
   environment = "paper",
   watchlists = [],
-  defaultWatchlist = null,
   signalMonitorSymbols = [],
+  signalMonitorProfile = null,
+  signalMonitorProfileLoading = false,
+  signalMonitorProfileError = null,
+  signalMonitorState = null,
+  signalMonitorStateLoaded = false,
+  signalMonitorStateLoading = false,
+  signalMonitorStateError = null,
+  signalMonitorDataManagedByPlatform = false,
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
@@ -2900,7 +3112,6 @@ export default function SignalsScreen({
   onScanNow,
   onToggleMonitor,
   onChangeMonitorTimeframe,
-  onChangeMonitorWatchlist,
   onChangeMonitorFreshWindowBars,
   onChangeMonitorMaxSymbols,
   onApplyPyrusSignalsSettings,
@@ -2916,17 +3127,17 @@ export default function SignalsScreen({
   const [sortKey, setSortKey] = useState("priority");
   const [sortDirection, setSortDirection] = useState("asc");
   const [columnOrder, setColumnOrder] = useState(() =>
-    normalizeColumnOrder(_initialState.signalsColumnOrder, SIGNALS_COLUMN_IDS),
+    normalizeSignalsColumnOrder(_initialState.signalsColumnOrder),
   );
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [visibleHydrationSymbols, setVisibleHydrationSymbols] = useState([]);
   const [matrixHydrationFullRequestReady, setMatrixHydrationFullRequestReady] =
     useState(false);
   const [signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol] = useState(
     EMPTY_SIGNAL_SPARKLINE_BARS,
   );
+  const signalSparklineBarsBySymbolRef = useRef(EMPTY_SIGNAL_SPARKLINE_BARS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState(() =>
     resolveSignalMonitorSettingsDraft(DEFAULT_PYRUS_SIGNALS_SETTINGS),
@@ -2978,22 +3189,25 @@ export default function SignalsScreen({
     () => (Array.isArray(signalMonitorEvents) ? signalMonitorEvents : []),
     [signalMonitorEvents],
   );
+  const platformManagedSignalData = Boolean(signalMonitorDataManagedByPlatform);
   const hasProvidedSignalMonitorEvents = Boolean(
-    signalMonitorEventsLoaded || providedSignalMonitorEvents.length,
+    platformManagedSignalData ||
+      signalMonitorEventsLoaded ||
+      providedSignalMonitorEvents.length,
   );
   const eventsQueryEnabled = Boolean(active && !hasProvidedSignalMonitorEvents);
   const profileQuery = useGetSignalMonitorProfile(signalMonitorParams, {
     query: {
-      enabled: active,
+      enabled: active && !platformManagedSignalData,
       staleTime: 15_000,
       retry: false,
     },
   });
   const stateQuery = useGetSignalMonitorState(signalMonitorParams, {
     query: {
-      enabled: active,
+      enabled: active && !platformManagedSignalData,
       staleTime: 10_000,
-      refetchInterval: active ? 15_000 : false,
+      refetchInterval: active && !platformManagedSignalData ? 15_000 : false,
       retry: false,
     },
   });
@@ -3023,7 +3237,34 @@ export default function SignalsScreen({
       retry: false,
     },
   });
-  const profile = stateQuery.data?.profile || profileQuery.data || null;
+  const effectiveStateData = platformManagedSignalData
+    ? signalMonitorState
+    : stateQuery.data;
+  const effectiveStateFetched = platformManagedSignalData
+    ? signalMonitorStateLoaded
+    : stateQuery.isFetched;
+  const effectiveStateLoading = platformManagedSignalData
+    ? signalMonitorStateLoading
+    : stateQuery.isLoading;
+  const effectiveStateError = platformManagedSignalData
+    ? signalMonitorStateError
+    : stateQuery.error;
+  const effectiveStateIsError = Boolean(effectiveStateError) || (
+    !platformManagedSignalData && stateQuery.isError
+  );
+  const effectiveProfileData = platformManagedSignalData
+    ? signalMonitorProfile
+    : profileQuery.data;
+  const effectiveProfileLoading = platformManagedSignalData
+    ? signalMonitorProfileLoading
+    : profileQuery.isLoading;
+  const effectiveProfileError = platformManagedSignalData
+    ? signalMonitorProfileError
+    : profileQuery.error;
+  const effectiveProfileIsError = Boolean(effectiveProfileError) || (
+    !platformManagedSignalData && profileQuery.isError
+  );
+  const profile = effectiveStateData?.profile || effectiveProfileData || null;
   const profileIndicatorSettings = useMemo(
     () => resolveSignalMonitorSettingsDraft(profile?.pyrusSignalsSettings || {}),
     [profile?.pyrusSignalsSettings],
@@ -3037,11 +3278,11 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage(
         "state-response-ready",
         () => {
-          if (stateQuery.data) {
+          if (effectiveStateData) {
             return {
-              ...stateQuery.data,
-              universeSymbols: stateQuery.data.universeSymbols?.length
-                ? stateQuery.data.universeSymbols
+              ...effectiveStateData,
+              universeSymbols: effectiveStateData.universeSymbols?.length
+                ? effectiveStateData.universeSymbols
                 : signalMonitorSymbols,
             };
           }
@@ -3054,7 +3295,11 @@ export default function SignalsScreen({
           };
         },
         (value) => ({
-          source: stateQuery.data ? "query" : "fallback",
+          source: effectiveStateData
+            ? platformManagedSignalData
+              ? "platform"
+              : "query"
+            : "fallback",
           states: Array.isArray(value?.states) ? value.states.length : 0,
           universeSymbols: Array.isArray(value?.universeSymbols)
             ? value.universeSymbols.length
@@ -3066,15 +3311,16 @@ export default function SignalsScreen({
       ),
     [
       captureSignalsRouteDataStage,
+      effectiveStateData,
       profile,
+      platformManagedSignalData,
       signalMonitorSymbols,
-      stateQuery.data,
     ],
   );
   const stateResponseReady = Boolean(
-    stateQuery.data ||
-      stateQuery.isFetched ||
-      !stateQuery.isLoading ||
+    effectiveStateData ||
+      effectiveStateFetched ||
+      !effectiveStateLoading ||
       signalMonitorSymbols.length ||
       signalMatrixStates.length,
   );
@@ -3335,17 +3581,11 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage(
         "sparkline-rows-planned",
         () => {
-          const visibleSymbolKeys = new Set(
-            visibleHydrationSymbols
-              .map((symbol) => signalSparklineRowKey(symbol))
-              .filter(Boolean),
+          const sparklineSourceRows = filteredRows.slice(
+            0,
+            SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT,
           );
-          const sourceRows = visibleSymbolKeys.size
-            ? filteredRows.filter((row) =>
-                visibleSymbolKeys.has(signalSparklineRowKey(row.symbol)),
-              )
-            : filteredRows.slice(0, SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT);
-          const rowSparklines = sourceRows
+          const rowSparklines = sparklineSourceRows
             .map((row) => ({
               key: signalSparklineRowKey(row.symbol),
               symbol: row.symbol,
@@ -3363,11 +3603,11 @@ export default function SignalsScreen({
         (value) => ({
           sparklineRows: value.length,
           sourceRows: filteredRows.length,
-          visibleRows: visibleHydrationSymbols.length,
+          fetchRowLimit: SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT,
           timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
         }),
       ),
-    [captureSignalsRouteDataStage, filteredRows, visibleHydrationSymbols],
+    [captureSignalsRouteDataStage, filteredRows],
   );
   useEffect(() => {
     if (!active || !signalsRowsReady) {
@@ -3391,10 +3631,13 @@ export default function SignalsScreen({
   );
   const signalSparklineFetchReady = Boolean(
     active &&
-      !stateQuery.isLoading &&
-      !profileQuery.isLoading &&
+      !effectiveStateLoading &&
+      !effectiveProfileLoading &&
       signalSparklineRows.length,
   );
+  useEffect(() => {
+    signalSparklineBarsBySymbolRef.current = signalSparklineBarsBySymbol;
+  }, [signalSparklineBarsBySymbol]);
   useEffect(() => {
     if (!signalSparklineFetchReady) {
       setSignalSparklineBarsBySymbol(EMPTY_SIGNAL_SPARKLINE_BARS);
@@ -3403,8 +3646,12 @@ export default function SignalsScreen({
 
     const controller = new AbortController();
     const activeKeys = new Set(signalSparklineRows.map((row) => row.key));
+    const currentCache = signalSparklineBarsBySymbolRef.current || EMPTY_SIGNAL_SPARKLINE_BARS;
+    const rowsNeedingFetch = signalSparklineRows.filter(
+      (row) => !Object.prototype.hasOwnProperty.call(currentCache, row.key),
+    );
     const batches = chunkSignalSparklineRows(
-      signalSparklineRows,
+      rowsNeedingFetch,
       SIGNALS_TABLE_SPARKLINE_BATCH_SIZE,
     );
     let cancelled = false;
@@ -3414,8 +3661,22 @@ export default function SignalsScreen({
       const entries = Object.entries(current).filter(([key]) =>
         activeKeys.has(key),
       );
-      return entries.length ? Object.fromEntries(entries) : EMPTY_SIGNAL_SPARKLINE_BARS;
+      const next = entries.length ? Object.fromEntries(entries) : {};
+      rowsNeedingFetch.forEach((row) => {
+        if (!Object.prototype.hasOwnProperty.call(next, row.key)) {
+          next[row.key] = [];
+        }
+      });
+      const nextCache = Object.keys(next).length
+        ? next
+        : EMPTY_SIGNAL_SPARKLINE_BARS;
+      signalSparklineBarsBySymbolRef.current = nextCache;
+      return nextCache;
     });
+
+    if (!rowsNeedingFetch.length) {
+      return undefined;
+    }
 
     const runBatchWorker = async () => {
       while (!cancelled && !controller.signal.aborted && nextBatchIndex < batches.length) {
@@ -3472,9 +3733,20 @@ export default function SignalsScreen({
     signalSparklineFetchReady,
     signalSparklineRowsKey,
   ]);
+  const signalSparklinePointsBySymbol = useMemo(() => {
+    const entries = Object.entries(signalSparklineBarsBySymbol)
+      .map(([symbolKey, bars]) => [
+        symbolKey,
+        extractSparklinePoints(bars),
+      ])
+      .filter(([, points]) => points.length >= 2);
+    return entries.length
+      ? Object.fromEntries(entries)
+      : EMPTY_SIGNAL_SPARKLINE_POINTS;
+  }, [signalSparklineBarsBySymbol]);
   useEffect(() => {
     persistState({
-      signalsColumnOrder: normalizeColumnOrder(columnOrder, SIGNALS_COLUMN_IDS),
+      signalsColumnOrder: normalizeSignalsColumnOrder(columnOrder),
     });
   }, [columnOrder]);
   const handleSignalsSortChange = useCallback(
@@ -3511,36 +3783,23 @@ export default function SignalsScreen({
   );
   const priorityHydrationSymbols = useMemo(
     () => {
-      const manifestSymbols = new Set(
-        signalsHydrationUniverseSymbols
-          .map((symbol) => normalizeSignalsTicker(symbol))
-          .filter(Boolean),
-      );
-      const seen = new Set();
-      const symbols = [];
-      [
+      const candidateSymbols = [
         selectedSymbol,
         expandedSymbol,
-        ...signalsHydrationUniverseSymbols.slice(
-          0,
-          SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT,
-        ),
-      ].filter(Boolean).forEach((symbol) => {
-        const normalizedSymbol = normalizeSignalsTicker(symbol);
-        if (
-          !normalizedSymbol ||
-          (manifestSymbols.size && !manifestSymbols.has(normalizedSymbol)) ||
-          seen.has(normalizedSymbol)
-        ) {
-          return;
-        }
-        seen.add(normalizedSymbol);
-        symbols.push(normalizedSymbol);
+        ...filteredRows
+          .slice(0, SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT)
+          .map((row) => row.symbol),
+      ];
+      return buildSignalsPriorityHydrationSymbols({
+        selectedSymbol,
+        expandedSymbol,
+        candidateSymbols,
+        scopeSymbols: signalsHydrationUniverseSymbols,
       });
-      return symbols;
     },
     [
       expandedSymbol,
+      filteredRows,
       selectedSymbol,
       signalsHydrationUniverseSymbols,
     ],
@@ -3613,6 +3872,8 @@ export default function SignalsScreen({
   );
   const matrixHydrationRequestTimeframes =
     matrixHydrationPlan.timeframes;
+  const matrixHydrationRequestMaterializesPending =
+    matrixHydrationPlan.priorityMissingSymbols.length > 0;
   const summary = useMemo(() => summarizeSignalsRows(rows), [rows]);
   const netBias = useMemo(() => summarizeSignalsNetBias(rows), [rows]);
   const timeframeSignalSummary = useMemo(
@@ -3631,17 +3892,6 @@ export default function SignalsScreen({
       null,
     [filteredRows, rows, selectedSymbol],
   );
-  const watchlistOptions = useMemo(
-    () => [
-      { value: "", label: "Default" },
-      ...watchlists.map((watchlist) => ({
-        value: watchlist.id || "",
-        label: watchlist.name || watchlist.id || "Watchlist",
-      })),
-    ],
-    [watchlists],
-  );
-
   useEffect(() => {
     onReadinessChange?.({
       primaryReady: Boolean(active),
@@ -3667,8 +3917,7 @@ export default function SignalsScreen({
       requestSymbols: matrixHydrationPlan.requestSymbols,
       requestCells: matrixHydrationPlan.requestCells,
       timeframes: matrixHydrationRequestTimeframes,
-      clientRole: "algo-sta",
-      requestOrigin: "sta-visible-page",
+      materializePendingCells: matrixHydrationRequestMaterializesPending,
       reason: matrixHydrationFullRequestReady
         ? "signals-screen"
         : "signals-screen-initial",
@@ -3683,25 +3932,11 @@ export default function SignalsScreen({
     matrixHydrationPlan.requestSymbols,
     matrixHydrationPlan.symbols.length,
     matrixHydrationPlan.symbols,
+    matrixHydrationRequestMaterializesPending,
     matrixHydrationRequestTimeframes,
     matrixHydrationRequestKey,
     onRequestSignalMatrixHydration,
   ]);
-
-  const handleVisibleRowsChange = useCallback((visibleRows = []) => {
-    const nextSymbols = visibleRows
-      .map((row) => row?.symbol)
-      .filter(Boolean);
-    setVisibleHydrationSymbols((current) => {
-      if (
-        current.length === nextSymbols.length &&
-        current.every((symbol, index) => symbol === nextSymbols[index])
-      ) {
-        return current;
-      }
-      return nextSymbols;
-    });
-  }, []);
 
   useEffect(() => {
     if (!selectedSymbol && filteredRows[0]?.symbol) {
@@ -3742,8 +3977,7 @@ export default function SignalsScreen({
       requestSymbols: matrixHydrationPlan.requestSymbols,
       requestCells: matrixHydrationPlan.requestCells,
       timeframes: matrixHydrationRequestTimeframes,
-      clientRole: "algo-sta",
-      requestOrigin: "sta-visible-page",
+      materializePendingCells: matrixHydrationRequestMaterializesPending,
       reason: "signals-refresh",
       force: true,
     });
@@ -3761,6 +3995,7 @@ export default function SignalsScreen({
     matrixHydrationPlan.requestCells,
     matrixHydrationPlan.requestSymbols,
     matrixHydrationPlan.symbols,
+    matrixHydrationRequestMaterializesPending,
     matrixHydrationRequestTimeframes,
     onRequestSignalMatrixHydration,
     profileQuery,
@@ -3817,22 +4052,35 @@ export default function SignalsScreen({
       setSettingsApplying(false);
     }
   }, [onApplyPyrusSignalsSettings, settingsDraft]);
+  const handleMonitorUniverseChange = useCallback(
+    async (value) => {
+      const nextSettings = {
+        ...settingsDraft,
+        [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: value,
+      };
+      setSettingsDraft(nextSettings);
+      setSettingsApplying(true);
+      try {
+        await onApplyPyrusSignalsSettings?.(nextSettings);
+        setSettingsDirty(false);
+      } catch {
+        setSettingsDirty(true);
+      } finally {
+        setSettingsApplying(false);
+      }
+    },
+    [onApplyPyrusSignalsSettings, settingsDraft],
+  );
 
   const baseColumns = useMemo(
     () => [
       {
         id: "symbol",
         header: "Ticker",
-        meta: { width: phone ? "minmax(72px, 0.9fr)" : "minmax(104px, 0.9fr)" },
+        meta: { width: phone ? "minmax(72px, 0.9fr)" : "minmax(96px, 0.85fr)" },
         cell: ({ row }) => {
           const item = row.original;
-          const watchlisted = item.watchlistLabels.length > 0;
           const expanded = item.symbol === expandedSymbol;
-          const secondaryLabel =
-            item.watchlistLabels[0] || `Rank ${item.universeRank}`;
-          const watchlistTitle = watchlisted
-            ? `In watchlist: ${item.watchlistLabels.join(", ")}`
-            : "";
           return (
             <button
               type="button"
@@ -3868,19 +4116,6 @@ export default function SignalsScreen({
                   transition: "transform 160ms ease-out, color 160ms ease-out",
                 }}
               />
-              {watchlisted ? (
-                <Star
-                  size={12}
-                  strokeWidth={2}
-                  fill="currentColor"
-                  aria-hidden="true"
-                  title={watchlistTitle}
-                  style={{
-                    color: CSS_COLOR.amber,
-                    flex: "0 0 auto",
-                  }}
-                />
-              ) : null}
               <span
                 style={{
                   ...cellTextStyle,
@@ -3891,19 +4126,19 @@ export default function SignalsScreen({
               >
                 {item.symbol}
               </span>
-              <span
-                style={{
-                  ...cellTextStyle,
-                  flex: "1 1 auto",
-                  color: CSS_COLOR.textDim,
-                  fontSize: fs(10),
-                }}
-              >
-                {secondaryLabel}
-              </span>
             </button>
           );
         },
+      },
+      {
+        id: "rank",
+        header: "Rank",
+        meta: { width: phone ? "58px" : "64px", align: "right" },
+        cell: ({ row }) => (
+          <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
+            {formatCount(row.original.universeRank)}
+          </span>
+        ),
       },
       {
         id: "signal",
@@ -3937,6 +4172,7 @@ export default function SignalsScreen({
               rowDirection={row.original.direction}
               fallbackPrice={signalRowSparklineFallbackPrice(row.original)}
               sparklineData={signalSparklineBarsBySymbol[symbolKey] || []}
+              sparklinePoints={signalSparklinePointsBySymbol[symbolKey] || null}
               signalEvents={
                 signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS
               }
@@ -3950,50 +4186,60 @@ export default function SignalsScreen({
         meta: { width: phone ? "56px" : "58px" },
         cell: ({ row }) => <TrendCell row={row.original} />,
       },
-      phone
+      compact
         ? null
         : {
-        id: "strength",
-        header: "Str",
-        meta: { width: "50px" },
-        cell: ({ row }) => (
-          <span style={{ ...cellTextStyle, color: CSS_COLOR.textSec }}>
-            {row.original.dashboardSummary?.strength || MISSING_VALUE}
-          </span>
-        ),
-      },
-      phone
+            id: "strength",
+            header: "Str",
+            meta: { width: "50px" },
+            cell: ({ row }) => (
+              <span style={{ ...cellTextStyle, color: CSS_COLOR.textSec }}>
+                {row.original.dashboardSummary?.strength || MISSING_VALUE}
+              </span>
+            ),
+          },
+      compact
         ? null
         : {
-        id: "age",
-        header: "Age",
-        meta: { width: "54px", align: "right" },
-        cell: ({ row }) => (
-          <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
-            {formatAge(row.original.dashboardSummary)}
-          </span>
-        ),
-      },
-      phone
+            id: "age",
+            header: "Age",
+            meta: { width: "54px", align: "right" },
+            cell: ({ row }) => (
+              <span
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {formatAge(row.original.dashboardSummary)}
+              </span>
+            ),
+          },
+      compact
         ? null
         : {
-        id: "vol",
-        header: "Vol",
-        meta: { width: "44px", align: "right" },
-        cell: ({ row }) => (
-          <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
-            {formatMetric(row.original.dashboardSummary?.volatilityScore)}
-          </span>
-        ),
-      },
-      phone
+            id: "vol",
+            header: "Vol",
+            meta: { width: "44px", align: "right" },
+            cell: ({ row }) => (
+              <span
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {formatMetric(row.original.dashboardSummary?.volatilityScore)}
+              </span>
+            ),
+          },
+      compact
         ? null
         : {
-        id: "mtf",
-        header: "MTF",
-        meta: { width: "50px", align: "right" },
-        cell: ({ row }) => <MtfCell row={row.original} />,
-      },
+            id: "mtf",
+            header: "MTF",
+            meta: { width: "50px", align: "right" },
+            cell: ({ row }) => <MtfCell row={row.original} />,
+          },
       {
         id: "bars",
         header: "Bars",
@@ -4004,38 +4250,45 @@ export default function SignalsScreen({
           </span>
         ),
       },
-      phone
+      compact
         ? null
         : {
-        id: "price",
-        header: "Price",
-        meta: { width: "78px", align: "right" },
-        cell: ({ row }) => (
-          <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
-            {formatQuotePrice(row.original.currentSignalPrice)}
-          </span>
-        ),
-      },
-      phone
+            id: "price",
+            header: "Price",
+            meta: { width: "78px", align: "right" },
+            cell: ({ row }) => (
+              <span
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {formatQuotePrice(row.original.currentSignalPrice)}
+              </span>
+            ),
+          },
+      compact
         ? null
         : {
-        id: "latest",
-        header: "Latest",
-        meta: { width: "76px" },
-        cell: ({ row }) => (
-          <span style={{ ...cellTextStyle, color: CSS_COLOR.textDim }}>
-            {formatTime(row.original.currentSignalAt || row.original.lastEvaluatedAt)}
-          </span>
-        ),
-      },
-      phone
+            id: "latest",
+            header: "Latest",
+            meta: { width: "76px" },
+            cell: ({ row }) => (
+              <span style={{ ...cellTextStyle, color: CSS_COLOR.textDim }}>
+                {formatTime(
+                  row.original.currentSignalAt || row.original.lastEvaluatedAt,
+                )}
+              </span>
+            ),
+          },
+      compact
         ? null
         : {
-        id: "coverage",
-        header: "Coverage",
-        meta: { width: "minmax(100px, 1fr)" },
-        cell: ({ row }) => <CoverageCell row={row.original} />,
-      },
+            id: "coverage",
+            header: "Coverage",
+            meta: { width: "minmax(100px, 1fr)" },
+            cell: ({ row }) => <CoverageCell row={row.original} />,
+          },
       {
         id: "action",
         header: "",
@@ -4080,9 +4333,11 @@ export default function SignalsScreen({
       expandedSymbol,
       handleRowSelect,
       onJumpToTrade,
+      compact,
       phone,
       signalEventsBySymbol,
       signalSparklineBarsBySymbol,
+      signalSparklinePointsBySymbol,
     ],
   );
   const columns = useMemo(
@@ -4112,8 +4367,9 @@ export default function SignalsScreen({
     markSignalsRouteDataTiming,
   ]);
 
-  const loading = stateQuery.isLoading || (!profile && profileQuery.isLoading);
-  const errored = stateQuery.isError || profileQuery.isError || eventsQuery.isError;
+  const loading = effectiveStateLoading || (!profile && effectiveProfileLoading);
+  const errored =
+    effectiveStateIsError || effectiveProfileIsError || eventsQuery.isError;
   useEffect(() => {
     if (!active || loading || errored) {
       return;
@@ -4122,7 +4378,6 @@ export default function SignalsScreen({
       columns: columns.length,
       filteredRows: filteredRows.length,
       rows: rows.length,
-      visibleHydrationSymbols: visibleHydrationSymbols.length,
     });
   }, [
     active,
@@ -4132,12 +4387,11 @@ export default function SignalsScreen({
     loading,
     markSignalsRouteDataTiming,
     rows.length,
-    visibleHydrationSymbols.length,
   ]);
   const signalsErrorCopy = useMemo(
     () =>
       describeUserFacingRuntimeError(
-        stateQuery.error || profileQuery.error || eventsQuery.error,
+        effectiveStateError || effectiveProfileError || eventsQuery.error,
         {
           title: "Signals unavailable",
           detail: "Signal monitor data could not be loaded.",
@@ -4145,19 +4399,24 @@ export default function SignalsScreen({
           safeQaTitle: "Signals data paused",
         },
       ),
-    [eventsQuery.error, profileQuery.error, stateQuery.error],
+    [
+      effectiveProfileError,
+      effectiveStateError,
+      eventsQuery.error,
+    ],
   );
   const cacheTone =
-    stateQuery.data?.cacheStatus === "hit"
+    effectiveStateData?.cacheStatus === "hit"
       ? CSS_COLOR.green
-      : stateQuery.data?.cacheStatus === "stale"
+      : effectiveStateData?.cacheStatus === "stale"
         ? CSS_COLOR.amber
         : CSS_COLOR.textDim;
   const cacheIssues = collectDataIssuesFromRecord(
     {
-      cacheStatus: stateQuery.data?.cacheStatus,
-      status: stateQuery.data?.cacheStatus === "stale" ? "stale" : "ok",
-      updatedAt: stateQuery.data?.updatedAt || stateQuery.data?.lastEvaluatedAt,
+      cacheStatus: effectiveStateData?.cacheStatus,
+      status: effectiveStateData?.cacheStatus === "stale" ? "stale" : "ok",
+      updatedAt:
+        effectiveStateData?.updatedAt || effectiveStateData?.lastEvaluatedAt,
     },
     {
       valueLabel: "Signals cache",
@@ -4183,14 +4442,12 @@ export default function SignalsScreen({
   const matrixHydrationLabel = matrixHydrationTotal
     ? `Intervals ${matrixHydrationHydrated}/${matrixHydrationTotal}`
     : "Intervals idle";
-  const activeSignalCount = Math.max(1, summary.active || 0);
-  const trackedCount = Math.max(1, summary.total || 0);
-  const minTableWidth = phone ? dim(1000) : dim(1360);
+  const minTableWidth = phone ? dim(900) : compact ? dim(1040) : dim(1360);
   const minTableHeight = phone
     ? SIGNALS_TABLE_MIN_HEIGHT_PHONE
+    : compact
+      ? SIGNALS_TABLE_MIN_HEIGHT_COMPACT
     : SIGNALS_TABLE_MIN_HEIGHT_DESKTOP;
-  const activeWatchlistId = getActiveWatchlistId(profile, defaultWatchlist);
-
   if (!active) {
     return null;
   }
@@ -4261,10 +4518,10 @@ export default function SignalsScreen({
             >
               {profile?.enabled ? "Monitor on" : "Monitor off"}
             </StatusPill>
-            {stateQuery.data?.cacheStatus ? (
+            {effectiveStateData?.cacheStatus ? (
               <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
                 <StatusPill color={cacheTone} variant="outline">
-                  {stateQuery.data.cacheStatus}
+                  {effectiveStateData.cacheStatus}
                 </StatusPill>
                 <DataIssueInlineIcon issues={cacheIssues} side="bottom" align="center" />
               </span>
@@ -4275,70 +4532,17 @@ export default function SignalsScreen({
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: sp(8),
-            flexWrap: "wrap",
-            alignItems: "stretch",
-          }}
-        >
-          <MetricTile
-            label="Tracked"
-            value={formatCount(summary.total)}
-            subtitle={`${formatCount(summary.active)} active`}
-            ratio={summary.active / trackedCount}
-          />
-          <MetricTile
-            label="Fresh"
-            value={formatCount(summary.fresh)}
-            tone={CSS_COLOR.green}
-            subtitle={`${formatCount(Math.max(0, summary.active - summary.fresh))} aged`}
-            ratio={summary.fresh / activeSignalCount}
-          />
-          <MetricTile
-            label="Buy"
-            value={formatCount(summary.buy)}
-            tone={CSS_COLOR.blue}
-            subtitle="long bias"
-            ratio={summary.buy / activeSignalCount}
-          />
-          <MetricTile
-            label="Sell"
-            value={formatCount(summary.sell)}
-            tone={CSS_COLOR.red}
-            subtitle="short bias"
-            ratio={summary.sell / activeSignalCount}
-          />
-          <MetricTile
-            label="Net Bias"
-            value={netBias.label}
-            tone={toneForDirection(netBias.direction)}
-            subtitle={`${formatCount(netBias.buy)} buy / ${formatCount(netBias.sell)} sell`}
-            ratio={netBias.strength}
-          />
-          <MetricTile
-            label="Attention"
-            value={formatCount(summary.problem)}
-            tone={CSS_COLOR.amber}
-            subtitle={`${formatCount(summary.skipped)} scan pending`}
-            ratio={summary.problem / trackedCount}
-          />
-        </div>
-
-        <TimeframeSignalKpiStrip
-          summaries={timeframeSignalSummary}
-          phone={phone}
+        <SignalsOverviewPanel
+          breadthHistory={breadthHistory}
+          breadthHistoryError={breadthHistoryQuery.error}
+          breadthHistoryLoading={breadthHistoryQuery.isLoading}
+          breadthHistoryRange={breadthHistoryRange}
           compact={compact}
-        />
-
-        <SignalBreadthHistoryStrip
-          history={breadthHistory}
-          range={breadthHistoryRange}
-          onRangeChange={setBreadthHistoryRange}
-          loading={breadthHistoryQuery.isLoading}
-          error={breadthHistoryQuery.error}
+          netBias={netBias}
+          onBreadthHistoryRangeChange={setBreadthHistoryRange}
           phone={phone}
+          summary={summary}
+          timeframeSummaries={timeframeSignalSummary}
         />
 
         <Card
@@ -4377,15 +4581,10 @@ export default function SignalsScreen({
                   color: CSS_COLOR.textMuted,
                 }}
               />
-              <input
+              <SignalsTickerSearchInput
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ticker"
-                style={{
-                  ...selectStyle,
-                  width: "100%",
-                  paddingLeft: dim(30),
-                }}
+                onCommit={setQuery}
+                style={selectStyle}
               />
             </span>
           </label>
@@ -4418,10 +4617,10 @@ export default function SignalsScreen({
             onChange={onChangeMonitorTimeframe}
           />
           <FieldSelect
-            label="Watchlist"
-            value={activeWatchlistId}
-            options={watchlistOptions}
-            onChange={onChangeMonitorWatchlist}
+            label="Universe"
+            value={settingsDraft[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]}
+            options={SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS}
+            onChange={handleMonitorUniverseChange}
             style={{ minWidth: dim(144) }}
           />
           <NumberField
@@ -4530,6 +4729,7 @@ export default function SignalsScreen({
             missing={matrixHydrationMissing}
             phone={phone}
             priorityCount={priorityHydrationSymbols.length}
+            timeframeHydration={matrixHydrationPlan.timeframeHydration}
             total={matrixHydrationTotal}
           />
           {errored ? (
@@ -4551,121 +4751,132 @@ export default function SignalsScreen({
               fill
             />
           ) : (
-            <DenseVirtualTable
-              columnOrder={columns.map((column) => column.id)}
-              columns={columns}
-              data={filteredRows}
-              getRowId={(row) => row.id}
-              lockedColumnIds={SIGNALS_LOCKED_COLUMN_IDS}
-              rowHeight={phone ? 58 : 56}
-              rowDetailHeight={phone ? 820 : compact ? 720 : 650}
-              rowDetailTestId="signals-table-row-drilldown"
-              minWidth={minTableWidth}
-              onColumnOrderChange={handleSignalsColumnOrderChange}
-              onSortChange={handleSignalsSortChange}
-              onVisibleRowsChange={handleVisibleRowsChange}
-              isRowExpanded={(row) => row.symbol === expandedSymbol}
-              renderRowDetail={(row) => (
-                <SignalsRowDrilldown
-                  row={row}
-                  onJumpToTrade={onJumpToTrade}
-                  phone={phone}
-                />
-              )}
-              getRowDetailProps={(row) => ({
-                id: getSignalDrilldownId(row.symbol),
-                role: "region",
-                "aria-label": `${row.symbol} signal detail`,
-                style: {
-                  minWidth: minTableWidth,
-                  borderBottom: `1px solid ${CSS_COLOR.border}`,
-                },
-              })}
-              rowTestId="signals-table-row"
-              sortState={{ id: sortKey, direction: sortDirection }}
-              headerStyle={{
-                minWidth: minTableWidth,
-                minHeight: dim(34),
-                alignItems: "center",
-                columnGap: sp(2),
-                padding: sp("0 4px"),
-                borderBottom: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg2,
-                color: CSS_COLOR.textMuted,
-                fontSize: fs(10),
-                fontWeight: FONT_WEIGHTS.label,
-                letterSpacing: 0,
-                textTransform: "uppercase",
+            <div
+              data-testid="signals-table-scroll-shell"
+              style={{
+                minWidth: 0,
+                minHeight: 0,
+                height: "100%",
+                overflowX: "auto",
+                overflowY: "hidden",
+                WebkitOverflowScrolling: "touch",
               }}
-              getRowProps={(row) => {
-                const activeRow = row.symbol === selectedRow?.symbol;
-                const expandedRow = row.symbol === expandedSymbol;
-                const tone = toneForStatus(row.status);
-                const directionTone = toneForDirection(row.direction);
-                const directionRailTone =
-                  row.direction === "buy" || row.direction === "sell"
-                    ? `inset 3px 0 0 ${directionTone}`
-                    : "inset 3px 0 0 transparent";
-                const flippedRow = flippedSignalSymbols.has(row.symbol);
-                return {
-                  role: "button",
-                  tabIndex: 0,
-                  onClick: (event) => {
-                    if (isNestedInteractiveTarget(event)) return;
-                    handleRowSelect(row);
-                  },
-                  onKeyDown: (event) => handleRowKeyDown(event, row),
-                  "aria-controls": getSignalDrilldownId(row.symbol),
-                  "aria-expanded": expandedRow ? "true" : "false",
-                  "aria-selected": activeRow ? "true" : "false",
-                  "data-signal-direction": row.direction || "none",
-                  "data-signal-flipped": flippedRow ? "true" : "false",
-                  "data-matrix-hydrated-count": SIGNALS_TABLE_TIMEFRAMES.filter(
-                    (timeframe) =>
-                      isHydratedSignalMatrixState(
-                        row.matrixStatesByTimeframe?.[timeframe],
-                      ),
-                  ).length,
-                  "data-symbol": row.symbol,
+            >
+              <DenseVirtualTable
+                columnOrder={columns.map((column) => column.id)}
+                columns={columns}
+                data={filteredRows}
+                getRowId={(row) => row.id}
+                lockedColumnIds={SIGNALS_LOCKED_COLUMN_IDS}
+                rowHeight={phone ? 58 : 56}
+                rowDetailHeight={phone ? 820 : compact ? 720 : 650}
+                rowDetailTestId="signals-table-row-drilldown"
+                minWidth={minTableWidth}
+                onColumnOrderChange={handleSignalsColumnOrderChange}
+                onSortChange={handleSignalsSortChange}
+                isRowExpanded={(row) => row.symbol === expandedSymbol}
+                renderRowDetail={(row) => (
+                  <SignalsRowDrilldown
+                    row={row}
+                    onJumpToTrade={onJumpToTrade}
+                    phone={phone}
+                  />
+                )}
+                getRowDetailProps={(row) => ({
+                  id: getSignalDrilldownId(row.symbol),
+                  role: "region",
+                  "aria-label": `${row.symbol} signal detail`,
                   style: {
                     minWidth: minTableWidth,
-                    alignItems: "center",
-                    columnGap: sp(2),
-                    padding: sp("0 4px"),
-                    borderBottom: `1px solid ${
-                      expandedRow ? cssColorMix(tone, 42) : CSS_COLOR.border
-                    }`,
-                    background: expandedRow
-                      ? cssColorMix(tone, 12)
-                      : flippedRow
-                        ? cssColorMix(directionTone, 14)
-                      : activeRow
-                        ? cssColorMix(tone, 8)
-                        : row.fresh
-                          ? cssColorMix(tone, 5)
-                          : "transparent",
-                    boxShadow: directionRailTone,
-                    cursor: "pointer",
-                    transition: "background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out",
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
                   },
-                };
-              }}
-              getCellProps={() => ({
-                style: {
-                  padding: sp("0 2px"),
-                  fontSize: textSize("body"),
-                },
-              })}
-              emptyState={
-                <DataUnavailableState
-                  title="No matching signals"
-                  detail="No tracked ticker matches the current filters."
-                  icon={<ListFilter size={22} strokeWidth={2} />}
-                  minHeight={220}
-                  fill
-                />
-              }
-            />
+                })}
+                rowTestId="signals-table-row"
+                sortState={{ id: sortKey, direction: sortDirection }}
+                headerStyle={{
+                  minWidth: minTableWidth,
+                  minHeight: dim(34),
+                  alignItems: "center",
+                  columnGap: sp(2),
+                  padding: sp("0 4px"),
+                  borderBottom: `1px solid ${CSS_COLOR.border}`,
+                  background: CSS_COLOR.bg2,
+                  color: CSS_COLOR.textMuted,
+                  fontSize: fs(10),
+                  fontWeight: FONT_WEIGHTS.label,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
+                }}
+                getRowProps={(row) => {
+                  const activeRow = row.symbol === selectedRow?.symbol;
+                  const expandedRow = row.symbol === expandedSymbol;
+                  const tone = toneForStatus(row.status);
+                  const directionTone = toneForDirection(row.direction);
+                  const directionRailTone =
+                    row.direction === "buy" || row.direction === "sell"
+                      ? `inset 3px 0 0 ${directionTone}`
+                      : "inset 3px 0 0 transparent";
+                  const flippedRow = flippedSignalSymbols.has(row.symbol);
+                  return {
+                    role: "button",
+                    tabIndex: 0,
+                    onClick: (event) => {
+                      if (isNestedInteractiveTarget(event)) return;
+                      handleRowSelect(row);
+                    },
+                    onKeyDown: (event) => handleRowKeyDown(event, row),
+                    "aria-controls": getSignalDrilldownId(row.symbol),
+                    "aria-expanded": expandedRow ? "true" : "false",
+                    "aria-selected": activeRow ? "true" : "false",
+                    "data-signal-direction": row.direction || "none",
+                    "data-signal-flipped": flippedRow ? "true" : "false",
+                    "data-matrix-hydrated-count": SIGNALS_TABLE_TIMEFRAMES.filter(
+                      (timeframe) =>
+                        isHydratedSignalMatrixState(
+                          row.matrixStatesByTimeframe?.[timeframe],
+                        ),
+                    ).length,
+                    "data-symbol": row.symbol,
+                    style: {
+                      minWidth: minTableWidth,
+                      alignItems: "center",
+                      columnGap: sp(2),
+                      padding: sp("0 4px"),
+                      borderBottom: `1px solid ${
+                        expandedRow ? cssColorMix(tone, 42) : CSS_COLOR.border
+                      }`,
+                      background: expandedRow
+                        ? cssColorMix(tone, 12)
+                        : flippedRow
+                          ? cssColorMix(directionTone, 14)
+                          : activeRow
+                            ? cssColorMix(tone, 8)
+                            : row.fresh
+                              ? cssColorMix(tone, 5)
+                              : "transparent",
+                      boxShadow: directionRailTone,
+                      cursor: "pointer",
+                      transition: "background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out",
+                    },
+                  };
+                }}
+                getCellProps={() => ({
+                  style: {
+                    padding: sp("0 2px"),
+                    fontSize: textSize("body"),
+                  },
+                })}
+                emptyState={
+                  <DataUnavailableState
+                    title="No matching signals"
+                    detail="No tracked ticker matches the current filters."
+                    icon={<ListFilter size={22} strokeWidth={2} />}
+                    minHeight={220}
+                    fill
+                  />
+                }
+              />
+            </div>
           )}
         </Card>
       </div>

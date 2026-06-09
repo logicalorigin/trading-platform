@@ -25,6 +25,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -79,8 +80,16 @@ import {
   getIbkrLaunchActionProgressLabel,
 } from "./ibkrConnectionOperationStepperModel";
 import { buildIbkrConnectionSnapshot } from "./ibkrConnectionSnapshot";
+import { resolveIbkrCredentialActionState } from "./ibkrConnectionCredentialActionModel";
 import { buildIbkrConnectionInsightModel } from "./ibkrConnectionInsightModel";
-import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
+import {
+  buildHeaderIbkrPopoverModel,
+  buildHeaderIbkrTriggerModel,
+} from "./ibkrPopoverModel";
+import {
+  selectHeaderIbkrLineUsageSnapshot,
+  shouldActivateHeaderIbkrLineUsage,
+} from "./headerIbkrLineUsagePolicy";
 import { platformJsonRequest } from "./platformJsonRequest";
 import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
@@ -840,6 +849,75 @@ const HeaderIbkrTriggerSummary = ({
       ) : null}
     </span>
   );
+};
+
+const isIbkrDeactivateOperationComplete = (model) =>
+  Boolean(
+    model?.operation === "deactivate" &&
+      Array.isArray(model.steps) &&
+      model.steps.length > 0 &&
+      model.steps.every((step) => step.status === "complete"),
+  );
+
+const buildIbkrDeactivatedTone = () => ({
+  color: CSS_COLOR.green,
+  Icon: Power,
+  label: "Deactivated",
+  pulse: false,
+});
+
+const buildIbkrDeactivatedPopoverModel = (model) => {
+  if (!model) {
+    return model;
+  }
+
+  const deactivatedHealth = {
+    status: "deactivated",
+    label: "Deactivated",
+    color: CSS_COLOR.green,
+    detail: "Windows helper confirmed IB Gateway shutdown.",
+  };
+  const deactivatedIssue = {
+    key: "deactivated",
+    label: "Windows helper confirmed IB Gateway shutdown.",
+    tone: CSS_COLOR.green,
+    iconKey: "check",
+    severity: "healthy",
+    autoOpenDetails: false,
+  };
+  const tiles = Array.isArray(model.tiles)
+    ? model.tiles.map((tile) =>
+        tile.label === "Gateway"
+          ? {
+              ...tile,
+              value: "Stopped",
+              tone: CSS_COLOR.green,
+            }
+          : tile,
+      )
+    : model.tiles;
+  const providerRows = Array.isArray(model.providerRows)
+    ? model.providerRows.map((row) =>
+        row.label === "IBKR"
+          ? {
+              ...row,
+              value: "Deactivated",
+              detail: "Gateway stopped",
+              tone: CSS_COLOR.green,
+            }
+          : row,
+      )
+    : model.providerRows;
+
+  return {
+    ...model,
+    health: deactivatedHealth,
+    issue: deactivatedIssue,
+    tiles,
+    providerRows,
+    priorityDetailGroup: null,
+    autoOpenDetails: false,
+  };
 };
 
 const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
@@ -2621,9 +2699,18 @@ export const HeaderStatusCluster = ({
   );
   const gatewayConnection = getIbkrConnection(session, "tws");
   const gatewayTone = getIbkrConnectionTone(gatewayConnection);
-  const gatewayLatencyStats = useIbkrLatencyStats();
+  const gatewayLatencyStats = useIbkrLatencyStats(bridgePopoverOpen);
+  const activeGatewayLatencyStats = bridgePopoverOpen ? gatewayLatencyStats : null;
   const sessionIbkrRuntime = session?.runtime?.ibkr || null;
   const bridgeLaunchSessionInFlight = bridgeLaunchInFlightUntil > marketClockNow;
+  const brokerSnapshotClockActive = Boolean(
+    bridgeActivationId ||
+      bridgeManagementToken ||
+      bridgeLaunchInFlightUntil > 0 ||
+      bridgeLauncherBusy ||
+      bridgeLaunchCancelInFlight,
+  );
+  const brokerSnapshotNowMs = brokerSnapshotClockActive ? marketClockNow : 0;
   const gatewayBrokerSnapshot = useMemo(
     () =>
       buildIbkrConnectionSnapshot({
@@ -2638,7 +2725,7 @@ export const HeaderStatusCluster = ({
           busy: bridgeLauncherBusy,
           cancelInFlight: bridgeLaunchCancelInFlight,
         },
-        nowMs: marketClockNow,
+        nowMs: brokerSnapshotNowMs,
       }),
     [
       bridgeActivationId,
@@ -2647,28 +2734,34 @@ export const HeaderStatusCluster = ({
       bridgeLaunchInFlightUntil,
       bridgeLauncherBusy,
       bridgeManagementToken,
+      brokerSnapshotNowMs,
       gatewayConnection,
-      marketClockNow,
       session,
       sessionIbkrRuntime,
     ],
   );
   const gatewayRuntimeActivityPresent = gatewayBrokerSnapshot.activityPresent;
-  const gatewayLineUsageEnabled = Boolean(
+  const gatewayLineUsageAvailable = Boolean(
     !safeQaMode && gatewayBrokerSnapshot.lineUsageEnabled,
   );
+  const gatewayLineUsageActive = shouldActivateHeaderIbkrLineUsage({
+    popoverOpen: bridgePopoverOpen,
+    safeQaMode,
+    lineUsageAvailable: gatewayLineUsageAvailable,
+  });
   const lineUsageControl = useIbkrLineUsageSnapshot({
-    enabled: gatewayLineUsageEnabled,
-    lineUsageStreamEnabled: Boolean(bridgePopoverOpen && gatewayLineUsageEnabled),
-    lineUsagePollInterval: bridgePopoverOpen ? 2_000 : 15_000,
+    enabled: gatewayLineUsageActive,
+    lineUsageStreamEnabled: gatewayLineUsageActive,
+    lineUsagePollInterval: 2_000,
+    lineUsageDetail: "compact",
   });
   useRuntimeWorkloadFlag(
     "header:ibkr-line-usage",
-    gatewayLineUsageEnabled,
+    gatewayLineUsageActive,
     {
       kind: "poll",
       label: "Header IBKR lines",
-      detail: bridgePopoverOpen ? "2s/open" : "15s",
+      detail: "2s/compact",
       priority: 7,
     },
   );
@@ -2680,22 +2773,47 @@ export const HeaderStatusCluster = ({
     () => gatewayBrokerSnapshot.runtimeDiagnostics,
     [gatewayBrokerSnapshot.runtimeDiagnostics],
   );
-  const gatewayPopoverModel = useMemo(
+  const gatewayLineUsageSnapshot = selectHeaderIbkrLineUsageSnapshot({
+    popoverOpen: bridgePopoverOpen,
+    lineUsageSnapshot: lineUsageControl.lineUsageSnapshot,
+  });
+  const gatewayTriggerModel = useMemo(
     () =>
-      buildHeaderIbkrPopoverModel({
+      buildHeaderIbkrTriggerModel({
         connection: gatewayConnection,
-        latencyStats: gatewayLatencyStats,
         runtimeDiagnostics: gatewayRuntimeDiagnostics,
         runtimeError: gatewayRuntimeError,
-        lineUsage: null,
-        lineUsageSnapshot: lineUsageControl.lineUsageSnapshot,
+        lineUsageSnapshot: gatewayLineUsageSnapshot,
       }),
     [
       gatewayConnection,
-      gatewayLatencyStats,
+      gatewayLineUsageSnapshot,
       gatewayRuntimeDiagnostics,
       gatewayRuntimeError,
-      lineUsageControl.lineUsageSnapshot,
+    ],
+  );
+  const gatewayPopoverModel = useMemo(
+    () => {
+      if (!bridgePopoverOpen) {
+        return gatewayTriggerModel;
+      }
+      return buildHeaderIbkrPopoverModel({
+        connection: gatewayConnection,
+        latencyStats: activeGatewayLatencyStats,
+        runtimeDiagnostics: gatewayRuntimeDiagnostics,
+        runtimeError: gatewayRuntimeError,
+        lineUsage: null,
+        lineUsageSnapshot: gatewayLineUsageSnapshot,
+      });
+    },
+    [
+      activeGatewayLatencyStats,
+      bridgePopoverOpen,
+      gatewayConnection,
+      gatewayLineUsageSnapshot,
+      gatewayTriggerModel,
+      gatewayRuntimeDiagnostics,
+      gatewayRuntimeError,
     ],
   );
   const bridgeRuntimeOverrideActive = Boolean(
@@ -2717,12 +2835,6 @@ export const HeaderStatusCluster = ({
   );
   const desktopReconnectUpgradeRequired = Boolean(
     desktopReconnectNeeded && ibkrRuntimeState?.desktopAgentUpgradeRequired,
-  );
-  const canDeactivate = Boolean(
-    bridgeManagementToken ||
-      bridgeRuntimeOverrideActive ||
-      session?.configured?.ibkr ||
-      gatewayConnection?.configured,
   );
   const gatewayConnectedForBridge = isIbkrGatewayBridgeAttached({
     connection: gatewayConnection,
@@ -2782,6 +2894,23 @@ export const HeaderStatusCluster = ({
   ]);
   const bridgeOperationModel =
     bridgeManualOperationModel || bridgeLaunchOperationModel;
+  const bridgeDeactivationComplete =
+    isIbkrDeactivateOperationComplete(bridgeOperationModel);
+  const bridgeDeactivatedTone = bridgeDeactivationComplete
+    ? buildIbkrDeactivatedTone()
+    : null;
+  const displayedBridgeTone = bridgeDeactivatedTone || bridgeTone;
+  const displayedGatewayTone = bridgeDeactivatedTone || gatewayTone;
+  const displayedGatewayPopoverModel = bridgeDeactivationComplete
+    ? buildIbkrDeactivatedPopoverModel(gatewayPopoverModel)
+    : gatewayPopoverModel;
+  const canDeactivate = Boolean(
+    !bridgeDeactivationComplete &&
+      (bridgeManagementToken ||
+        bridgeRuntimeOverrideActive ||
+        session?.configured?.ibkr ||
+        gatewayConnection?.configured),
+  );
   const bridgeConnectionInsightModel = useMemo(() => {
     if (bridgeOperationModel?.operation && bridgeOperationModel.operation !== "launch") {
       return null;
@@ -2808,7 +2937,7 @@ export const HeaderStatusCluster = ({
   ]);
   const popoverLatencyMs = Number.isFinite(gatewayConnection?.lastPingMs)
     ? gatewayConnection.lastPingMs
-    : gatewayLatencyStats?.totalMs?.p95;
+    : activeGatewayLatencyStats?.totalMs?.p95;
   const popoverLatencyLabel = formatIbkrPingMs(popoverLatencyMs);
   const desktopAgentOnlineForLaunch =
     ibkrRuntimeState?.desktopAgentOnline === true;
@@ -2851,26 +2980,20 @@ export const HeaderStatusCluster = ({
     bridgeDirectActivationShouldRelaunchRemotely ||
       bridgeDirectActivationShouldRestartLocally,
   );
-  const bridgeLaunchCancelable = Boolean(
-    !gatewayConnectedForBridge &&
-      bridgeActivationId &&
-      bridgeManagementToken &&
-      (bridgeActivationActive || bridgeLaunchInFlight || bridgeLauncherBusy),
-  );
-  const bridgeCredentialResumeAvailable = Boolean(
-    !bridgeDirectActivationShouldReplaceCurrentLaunch &&
-      !gatewayConnectedForBridge &&
-      bridgeActivationId &&
-      bridgeManagementToken &&
-      bridgeActivationActive &&
-      bridgeLaunchInFlight &&
-      bridgeActivationLoginHandoffReady,
-  );
-  const autoLoginPrimaryBlockedByActiveLaunch = Boolean(
-    bridgeLaunchCancelable &&
-      !bridgeCredentialResumeAvailable &&
-      !bridgeDirectActivationShouldReplaceCurrentLaunch,
-  );
+  const credentialActionState = resolveIbkrCredentialActionState({
+    activationActive: bridgeActivationActive,
+    activationId: bridgeActivationId,
+    directActivationShouldReplaceCurrentLaunch:
+      bridgeDirectActivationShouldReplaceCurrentLaunch,
+    gatewayConnected: gatewayConnectedForBridge,
+    launchInFlight: bridgeLaunchInFlight || bridgeLauncherBusy,
+    managementToken: bridgeManagementToken,
+  });
+  const bridgeLaunchCancelable = credentialActionState.launchCancelable;
+  const bridgeCredentialResumeAvailable =
+    credentialActionState.resumeAvailable;
+  const autoLoginPrimaryBlockedByActiveLaunch =
+    credentialActionState.primaryBlockedByActiveLaunch;
   const bridgeCredentialSecondaryCancelsLaunch = bridgeLaunchCancelable;
   const bridgeCredentialSecondaryActionDisabled = Boolean(
     bridgeCredentialSecondaryCancelsLaunch
@@ -2984,6 +3107,7 @@ export const HeaderStatusCluster = ({
 
   const openBridgeReconnectPopover = useCallback(() => {
     setBridgePopoverOpen(true);
+    setBridgeManualOperationModel(null);
     if (!bridgeLauncherBusy && !bridgeLaunchInFlight) {
       setBridgeLauncherError(null);
       setBridgeLauncherNotice(null);
@@ -3183,6 +3307,20 @@ export const HeaderStatusCluster = ({
       document.body.style.overflow = previousOverflow;
     };
   }, [bridgePopoverAsSheet, bridgePopoverOpen]);
+
+  useLayoutEffect(() => {
+    if (!bridgePopoverOpen) {
+      setBridgePopoverPosition(null);
+      return;
+    }
+
+    if (bridgePopoverAsSheet) {
+      setBridgePopoverPosition(null);
+      return;
+    }
+
+    updateBridgePopoverPosition();
+  }, [bridgePopoverAsSheet, bridgePopoverOpen, updateBridgePopoverPosition]);
 
   useEffect(() => {
     if (!bridgePopoverOpen) {
@@ -3896,10 +4034,10 @@ export const HeaderStatusCluster = ({
           }}
         >
           <HeaderIbkrTriggerSummary
-            model={gatewayPopoverModel}
+            model={displayedGatewayPopoverModel}
             connection={gatewayConnection}
-            tone={gatewayTone}
-            latencyStats={gatewayLatencyStats}
+            tone={displayedGatewayTone}
+            latencyStats={activeGatewayLatencyStats}
             compact={compact}
             dense={isDense}
             minimal={minimal}
@@ -3953,6 +4091,10 @@ export const HeaderStatusCluster = ({
                   bridgePopoverPosition?.maxHeight ?? dim(420),
                   dim(420),
                 ),
+              visibility:
+                !bridgePopoverAsSheet && !bridgePopoverPosition
+                  ? "hidden"
+                  : undefined,
               overflowY: "auto",
               WebkitOverflowScrolling: bridgePopoverAsSheet ? "touch" : undefined,
               overscrollBehavior: bridgePopoverAsSheet ? "contain" : undefined,
@@ -4004,7 +4146,7 @@ export const HeaderStatusCluster = ({
                 </span>
                 <span
                   style={{
-                    color: bridgeTone.color,
+                    color: displayedBridgeTone.color,
                     fontSize: textSize("paragraph"),
                     fontWeight: FONT_WEIGHTS.label,
                     fontFamily: T.sans,
@@ -4013,7 +4155,7 @@ export const HeaderStatusCluster = ({
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {bridgeTone.label}
+                  {displayedBridgeTone.label}
                 </span>
               </div>
               <span
@@ -4130,15 +4272,15 @@ export const HeaderStatusCluster = ({
               model={bridgeOperationModel}
             />
 
-            <HeaderIbkrConnectionSummary model={gatewayPopoverModel} />
+            <HeaderIbkrConnectionSummary model={displayedGatewayPopoverModel} />
             <HeaderMarketDataLineUsage
-              lineUsage={gatewayPopoverModel.lineUsage}
-              compactLineUsage={gatewayPopoverModel.compactLineUsage}
+              lineUsage={displayedGatewayPopoverModel.lineUsage}
+              compactLineUsage={displayedGatewayPopoverModel.compactLineUsage}
             />
 
             <HeaderIbkrAdvancedDetails
               insightModel={bridgeConnectionInsightModel}
-              model={gatewayPopoverModel}
+              model={displayedGatewayPopoverModel}
             />
           </div>
           </>

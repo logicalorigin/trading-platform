@@ -1,0 +1,462 @@
+# Live Session Handoff: Account Position Day PnL Investigation
+
+- Last Updated (MT): `2026-06-08 13:47:45 MDT`
+- Last Updated (UTC): `2026-06-08T19:47:45Z`
+- Native Codex Session ID: `live-account-position-day-pnl-investigation`
+- Scope: Fix inconsistent account positions Day PnL, with first priority on manually opened NVDA option positions getting the same accounts-table treatment as automated option positions.
+
+## Latest Update
+
+- 2026-06-08 post-13:43 restart live check:
+  - Observed app/runtime after the user's latest restart:
+    - Running app is on `127.0.0.1:18747`; `/api/healthz` returned `{"status":"ok"}`.
+    - API process started at `13:43:04 MDT`, after the rebuilt API dist mtime `13:43:05 MDT`; live behavior reflects the latest API-side generation fix.
+    - Desktop helper is online as `desktop-EASYSTREET-c572024619f59c20`, still reporting helper version `2026-06-07.ib-async-sidecar-v10-agent-self-update`; API expected helper version is the same, so `helperUpdateRequired:false` / `desktopAgentUpgradeRequired:false`.
+    - Activation diagnostics show `activeCount:0`, insight `Idle`, and the desktop agent is polling/registering successfully.
+  - Observed account positions REST after restart:
+    - FCEL stock row is still not fixed live: `quote.source:"position_mark"`, null bid/ask, null Day PnL, mark `13.354003`.
+    - F option row still has bid/ask (`0.60/0.61` in the probe) but `freshness:"stale"` and old `dataUpdatedAt:"2026-06-08T18:37:49.937Z"`.
+    - NVDA option row still has bid/ask (`0.01/0.01`) but `freshness:"stale"` and old `dataUpdatedAt:"2026-06-08T19:36:24.814Z"`.
+  - Observed direct position quote SSE:
+    - `/api/streams/position-quotes?symbols=F,FCEL,NVDA` advertised `source:"ibkr-bridge"` but emitted only `ready` and `quotes:[]` over a 20s probe.
+  - Observed line-usage/generation:
+    - API-side generation fix is live: desired `equity:F` and `equity:NVDA` now have `contract.providerContractId:null`; `equity:FCEL` keeps numeric `providerContractId:"740517233"`.
+    - Remaining failure is bridge apply/runtime: sidecar desired generation had `desiredLineCount:78`, bridge live line count `1`, `comparison.status:"desired_missing"`, and position lines such as `equity:FCEL`, `equity:NVDA`, `option:880754762`, and `option:886484902` are desired-only/pending.
+  - Observed bridge bundle delivery:
+    - API-served `/api/ibkr/bridge/bundle.tar.gz` hash exactly matches local `artifacts/ibgateway-bridge-windows-current.tar.gz`: `14cce817393268834be6a35692bb1bdf8667c4335bafbcfbc33f59ce32bb8226`.
+    - The bundle contains `artifacts/ibkr-bridge/dist/index.mjs`, so a desktop-agent remote launch should download the rebuilt bridge bundle and restart the local bridge if the bundle hash differs from the Windows helper's installed bundle.
+  - Next action:
+    - Queue a desktop-agent `/api/ibkr/remote-launch` job for `desktop-EASYSTREET-c572024619f59c20` to force the Windows helper to relaunch the bridge from the current bundle, then monitor activation diagnostics and recheck position quote SSE plus account positions.
+
+- 2026-06-08 post-13:31 restart, live check, and option-underlier generation fix:
+  - Observed app/runtime after the user's latest restart:
+    - Running app is on `127.0.0.1:18747`; `/api/healthz` returned `{"status":"ok"}`.
+    - API process started at `13:31 MDT`, before the latest API rebuild below.
+    - Helper metadata still reports online desktop `desktop-EASYSTREET-c572024619f59c20`, helper version `2026-06-07.ib-async-sidecar-v10-agent-self-update`, runtime override updated `2026-06-08T15:53:19.664Z`, and no helper update required.
+    - Activation diagnostics show `activeCount:0` and insight `Idle`; no active helper launch/update job is running.
+  - Observed account positions REST after restart:
+    - FCEL stock row is now IBKR/TWS-backed in the positions payload: `quote.source:"bridge_quote"`, `transport:"tws"`, `delayed:false`, `freshness:"live"`, `cacheAgeMs:0`, and non-null bid/ask (`15.36/15.38` in the probe). FCEL Day PnL is now calculated from the live mark at API level.
+    - F option row still reports `quote.source:"option_quote"` with bid/ask (`0.62/0.64`) but `freshness:"stale"` and `dataUpdatedAt:"2026-06-08T18:37:49.937Z"`.
+    - NVDA option row still reports bid/ask (`0.01/0.02`) but `freshness:"stale"`; in one probe its quote timestamp was fresh-ish (`2026-06-08T19:32:31.672Z`) while stale state persisted because cache age exceeded the strict freshness window.
+  - Observed position quote SSE:
+    - Direct `/api/streams/position-quotes?symbols=F,FCEL,NVDA` advertised `source:"ibkr-bridge"` but emitted only FCEL during the 12s probe.
+    - While open, API quote stream diagnostics showed requested/desired `["F","FCEL","NVDA"]`, but bridge diagnostics showed only `activeEquitySymbols:["FCEL"]`; F/NVDA underliers were missing from live equity subscriptions.
+  - Confirmed platform root cause in line-usage/generation:
+    - `/api/settings/ibkr-line-usage?detail=full` desired generation showed `equity:F` with `contract.providerContractId:"twsopt:...F 20260626 C15..."` and `equity:NVDA` with `contract.providerContractId:"twsopt:...NVDA 20260608 C210..."`.
+    - Those are option contract ids incorrectly attached to synthetic underlier equity support lines. The source of the bug is `ibkr-sidecar-generation.ts` carrying the lease-level option `providerContractId` into every line produced by that option lease, including `equity:<underlying>` lines whose role is `option-underlier-support`.
+  - Patched:
+    - `artifacts/api-server/src/services/ibkr-sidecar-generation.ts` now suppresses `providerContractId` on equity desired lines when that line role is `option-underlier-support`; option desired lines still keep their option provider contract id, and true equity leases still keep numeric equity conids such as FCEL `740517233`.
+    - Added a regression test proving a single option lease that creates both `option:twsopt...` and `equity:F` keeps the option id only on the option line and leaves `equity:F.contract.providerContractId` null.
+    - Rebuilt `artifacts/api-server/dist/index.mjs`; mtime `2026-06-08 13:37:49 MDT`.
+  - Bridge-side option freshness fix from the prior pass is still built locally but not live on the remote helper:
+    - `artifacts/ibkr-bridge/src/tws-provider.ts` selects option quote `dataUpdatedAt` from the freshest relevant bid/ask/size/model tick instead of letting an old LAST tick pin freshness.
+    - Bridge bundle mtime remains `2026-06-08 13:28:10 MDT` (`artifacts/ibgateway-bridge-windows-current.tar.gz`).
+    - Remote helper metadata still shows the old helper runtime override and no active update, so this bridge bundle has not been loaded remotely yet.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/ibkr-sidecar-generation.test.ts`
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+  - Runtime status / next check:
+    - Current running API process predates the `13:37:49 MDT` API rebuild, so live diagnostics will still show the old bad F/NVDA generation until the app is restarted again through normal Run App.
+    - After restart, expected sidecar desired generation for `equity:F` and `equity:NVDA` should have `contract.providerContractId:null` (or a real numeric equity conid if available), not `twsopt:*`.
+    - Then recheck `/api/settings/ibkr-line-usage?detail=full`, `/api/streams/position-quotes?symbols=F,FCEL,NVDA`, and `/api/accounts/U24762790/positions?mode=live&assetClass=all`.
+    - Remote Windows helper still needs to load the rebuilt bridge bundle before the option timestamp/freshness fix can be live-verified.
+
+- 2026-06-08 post-priority-patch live probe and equity conid fast path:
+  - The running API did load the priority ordering patch after an automatic app restart around `13:08:00 MDT`; live desired generation order started with account-monitor lines such as `equity:FCEL`, `option:880754762`, and `option:886484902`.
+  - Live probe still failed:
+    - `/api/streams/position-quotes?symbols=FCEL,F,NVDA` had `streams.quoteStreams.activeConsumerCount:1`, `streamSignature:"F,FCEL,NVDA"`, and `desiredSymbols:["F","FCEL","NVDA"]`.
+    - SSE still emitted only `ready` and empty `quotes: []`.
+    - `lastError` became `Upstream request failed.` / `IBKR bridge quotes work is backed off.`
+    - `/api/accounts/U24762790/positions?mode=live&assetClass=all` still left FCEL as `position_mark` with null bid/ask; F warmed only from stale option cache; NVDA stayed pending.
+  - Bridge diagnostics identified a lower-level root cause:
+    - Bridge generation had F/FCEL/NVDA in `state:"desired"` with `lastTickAt:null`, and active bridge equity subscriptions were `0`.
+    - Bridge scheduler `market-subscriptions` was `stalled` with repeated `Lane timed out after 30000ms`.
+    - The bridge had many live option subscriptions, but equity subscription creation was stuck in `resolveStockContract()`/contract-detail lookup before `ensureQuoteSubscription()` could create any equity line.
+  - Patched conid fast path:
+    - `market-data-admission.ts` now preserves optional `providerContractId` on equity leases while keeping line id `equity:SYMBOL`.
+    - Existing lease refresh now updates provider metadata, so a previously-null `equity:FCEL` lease can pick up a conid on refresh.
+    - `account.ts` infers numeric equity conids from broker position ids such as `U24762790:740517233` and passes them to `fetchBridgeQuoteSnapshots`.
+    - `bridge-quote-stream.ts` accepts `providerContractIdsBySymbol` for snapshot admission.
+    - `ibkr-sidecar-generation.ts` carries/merges equity provider contract ids into desired generation contracts without changing line keys.
+    - `artifacts/ibkr-bridge/src/tws-provider.ts` now uses `resolveStockContractForDesiredLine()` during generation apply, building a stock contract directly from a known numeric conid before falling back to contract-details lookup.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts src/services/ibkr-sidecar-generation.test.ts src/services/account-position-equity-quotes.test.ts src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server exec tsx --test ../ibkr-bridge/src/tws-provider-quote-stream.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/ibkr-bridge run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - `pnpm run build:ibkr-bridge-bundle`
+    - Scoped `git diff --check`
+  - Runtime status:
+    - Active API PID `84599` started at `2026-06-08T19:08:00Z`.
+    - Rebuilt API bundle mtime is `2026-06-08T19:18:09Z`.
+    - Rebuilt bridge bundle mtime is `2026-06-08T19:18:10Z`.
+    - Another normal Run App restart is required for the API conid-admission side.
+    - The remote Windows helper must relaunch/update from the new `artifacts/ibgateway-bridge-windows-current.tar.gz` before the bridge-side conid fast path can be live-verified.
+
+- 2026-06-08 post-13:00 restart, long live probe, and priority-generation fix:
+  - User restarted; observed Run App/API/Pyrus runtime started around `2026-06-08T18:59:23Z` and `/api/healthz` returned OK.
+  - Helper metadata still showed remote desktop helper online (`desktop-EASYSTREET-c572024619f59c20`) with helper version `2026-06-07.ib-async-sidecar-v10-agent-self-update` and runtime override updated at `2026-06-08T15:53:19.664Z`.
+  - Live account route still reproduced the symptom:
+    - FCEL equity row had null bid/ask, source `position_mark`, and null Day PnL.
+    - F/NVDA option rows were `pending/awaiting_quote` with null bid/ask.
+  - Warm `/api/streams/position-quotes?symbols=FCEL,F,NVDA` probe:
+    - SSE advertised `source:"ibkr-bridge"`.
+    - It emitted only `ready` and an empty `quotes: []` over 22 seconds, with no fresh ticks.
+    - While open, account-monitor demand expanded to `equity:F`, `equity:FCEL`, `equity:NVDA`, the two numeric held option ids, and structured F/NVDA option ids.
+    - Sidecar/drift diagnostics listed those position lines as desired by the API but missing from bridge live lines (`desired_generation_differs_from_bridge_live_lines` / `api_active_bridge_missing`).
+  - Longer 45-second probe:
+    - Account-monitor demand stayed present, but bridge live line count remained below desired and FCEL/F/NVDA repeatedly appeared in desired-only/persistent API-only samples.
+    - No quote payloads arrived on the position quote SSE beyond the initial empty payload.
+    - After the probe closed, demand was cleaned up instead of leaking, so the latest stream cleanup/churn patches are working.
+  - New root cause confirmed in source:
+    - `artifacts/api-server/src/services/ibkr-sidecar-generation.ts` attached admission priority to desired lines but then sorted the desired generation alphabetically by `lineKey`.
+    - `artifacts/ibkr-bridge/src/tws-provider.ts` consumes desired lines in generation order for subscription apply and budget limiting.
+    - Result: account-monitor position lines could sit behind lower-priority scanner/automation lines while async-sidecar/full-generation apply churned, causing held-position quotes to be desired but not subscribed quickly.
+  - Patched:
+    - `ibkr-sidecar-generation.ts` now sorts desired lines by descending priority first, then `lineKey`.
+    - Added `artifacts/api-server/src/services/ibkr-sidecar-generation.test.ts` proving `account-monitor-live` FCEL sorts ahead of lower-priority scanner/automation lines even when alphabetically later.
+    - `artifacts/pyrus/src/features/platform/live-streams.ts` now stores quote stream callbacks in a ref so watchlist/position callback identity changes do not reopen EventSource streams.
+  - Validation passed:
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/live-streams.test.mjs src/screens/algo/OperationsPositionsTable.test.mjs src/screens/account/PositionOptionQuoteStreams.test.mjs src/screens/account/PositionsPanel.test.mjs src/features/platform/positionMarketDataStore.test.mjs`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/ibkr-sidecar-generation.test.ts src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - `git diff --check`
+  - Runtime status:
+    - Rebuilt API bundle `artifacts/api-server/dist/index.mjs` mtime is `2026-06-08T19:08:01Z`.
+    - Current API process predates this backend patch; another normal Run Replit App restart is required before the priority-generation fix can be live-verified.
+
+- 2026-06-08 post-12:26 restart and recent account-position symbol registry:
+  - User restarted again; observed new API runtime (`runDevApp` pid `59993`, API pid `60013`, health OK) and the API bundle contained `hydrate:false` plus the dynamic position quote reconciliation code.
+  - Live check improved but was still not complete:
+    - `/api/streams/position-quotes?symbols=FCEL,F,NVDA` emitted a live IBKR FCEL quote (`bid:15.18`, `ask:15.21`, `source:"ibkr"`, `transport:"tws"`, `freshness:"live"`).
+    - During the same probe, `account-position-quote-stream:1` leases existed for `equity:F`, `equity:FCEL`, and `equity:NVDA`.
+    - Later in the probe, account-position leases disappeared and `streams.quoteStreams.activeConsumerCount` dropped to `0`; `/api/accounts/U24762790/positions?mode=live&assetClass=all` then fell back to `position_mark` for FCEL/F/NVDA.
+  - Confirmed root cause of this remaining API-side issue:
+    - Position quote SSE eligibility was tied only to current market-data leases.
+    - Account-position leases can churn/disappear even when the positions page is still trying to subscribe, so the quote SSE can unsubscribe from real held-position symbols.
+  - Patched:
+    - Added `artifacts/api-server/src/services/account-position-quote-symbols.ts`, a short-lived registry of symbols recently observed by actual account-position readers.
+    - `artifacts/api-server/src/services/account.ts` records account-position equity symbols and option underlyings when reading positions.
+    - `artifacts/api-server/src/services/bridge-streams.ts` filters position quote SSE symbols against active account-position leases plus this recent account-position registry.
+    - `artifacts/api-server/src/services/bridge-streams.test.ts` now covers that recently observed account-position symbols remain eligible while broad stale clients remain blocked.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server exec tsx --test ../ibkr-bridge/src/tws-provider-quote-stream.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/ibkr-bridge run typecheck`
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/algo/OperationsPositionsTable.test.mjs src/screens/account/PositionsPanel.test.mjs src/features/platform/positionMarketDataStore.test.mjs`
+    - `pnpm --filter @workspace/api-server run build`
+    - `pnpm run build:ibkr-bridge-bundle`
+    - Scoped `git diff --check`
+  - Built artifacts:
+    - `artifacts/api-server/dist/index.mjs` mtime `2026-06-08T18:31:17Z`
+    - `artifacts/ibkr-bridge/dist/index.mjs` mtime `2026-06-08T18:31:17Z`
+    - `artifacts/ibgateway-bridge-windows-current.tar.gz` mtime `2026-06-08T18:31:18Z`
+  - Runtime status:
+    - Current API process `62865` started at `2026-06-08T18:29:57Z`, before this latest build. Another Run App restart is required before the recent-symbol registry can be live-verified.
+    - The active bridge helper is still the same remote desktop helper; helper metadata still shows runtime override from `2026-06-08T15:53:19Z`.
+
+- 2026-06-08 bridge quote stream bootstrap root cause:
+  - Post-restart dynamic-subscription proof was partially successful:
+    - The SSE opened before the account positions route, then account demand appeared.
+    - `account-position-quote-stream:1` leases were created for `equity:F`, `equity:FCEL`, and `equity:NVDA`.
+    - Bridge market-data generation marked F/FCEL/NVDA as desired with account-position owners.
+  - Live proof still failed:
+    - `/api/streams/position-quotes?symbols=FCEL,F,NVDA` still emitted empty `quotes: []`.
+    - `streams.quoteStreams.lastError` showed `IBKR bridge quotes work is backed off.`
+    - Direct probe of the active bridge helper (`corps-action-stakeholders-wichita.trycloudflare.com`, token not printed) showed `/quotes/snapshot?symbols=FCEL,F,NVDA` timed out after 15s and `/streams/quotes?symbols=FCEL,F,NVDA` produced no SSE events in 12s.
+  - Confirmed root cause in repo code:
+    - `artifacts/ibkr-bridge/src/tws-provider.ts` `subscribeQuoteStream()` registered a listener and sent any cached quotes, but then awaited `this.getQuoteSnapshots(normalizedSymbols)` before returning to the bridge `/streams/quotes` route.
+    - When that snapshot bootstrap hung under load, the quote stream route never reached `ready`; API saw an open/silent bridge stream and account-position quote SSE stayed empty.
+    - The API-side position quote subscription was also doing an extra `fetchBridgeQuoteSnapshots` refresh after subscribing, which could trip the API quote governor backoff.
+  - Patched:
+    - `artifacts/ibkr-bridge/src/tws-provider.ts`: quote stream subscription no longer waits on snapshot bootstrap; it sends cached quotes and ensures live subscriptions, then returns so realtime ticks can flow.
+    - `artifacts/api-server/src/services/bridge-quote-stream.ts`: `fetchBridgeQuoteSnapshots` supports `hydrate:false`.
+    - `artifacts/api-server/src/services/bridge-streams.ts`: position quote snapshots pass `hydrate:false`; position subscription reconciliation no longer opens an extra snapshot bootstrap.
+    - Added `artifacts/ibkr-bridge/src/tws-provider-quote-stream.test.ts`.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server exec tsx --test ../ibkr-bridge/src/tws-provider-quote-stream.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/ibkr-bridge run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - `pnpm --filter @workspace/ibkr-bridge run build`
+    - `pnpm run build:ibkr-bridge-bundle`
+    - Scoped `git diff --check`
+  - Built artifacts:
+    - `artifacts/api-server/dist/index.mjs` mtime `2026-06-08T18:22:49Z`
+    - `artifacts/ibkr-bridge/dist/index.mjs` mtime `2026-06-08T18:23:54Z`
+    - `artifacts/ibgateway-bridge-windows-current.tar.gz` mtime `2026-06-08T18:23:55Z`
+  - Rollout status:
+    - The active bridge helper is remote (`corps-action-stakeholders-wichita.trycloudflare.com`), so a normal Replit app restart loads only API changes. The remote helper must relaunch/update from the newly packaged bridge bundle before the bridge-side stream fix can be live-verified.
+
+- 2026-06-08 post-restart live check and dynamic subscription fix:
+  - User restarted; observed new API runtime (`runDevApp` pid `46780`, API pid `46800`, health OK).
+  - Live check still failed:
+    - `/api/streams/position-quotes?symbols=FCEL,F,NVDA` returned `ready` with `source:"ibkr-bridge"` but emitted only `quotes: []`.
+    - `/api/accounts/U24762790/positions?mode=live&assetClass=all` still had FCEL as `source:"position_mark"` with null bid/ask; F/NVDA options warmed only to stale cached option quotes.
+    - Raw `/api/settings/ibkr-line-usage?detail=full` showed account-position demand existed for `equity:FCEL`, `equity:F`, and `equity:NVDA`, but no `account-position-quote-stream:*` lease was created during the direct SSE probe.
+  - Confirmed remaining root cause: the backend guard filtered requested symbols only once at SSE subscription time. If the position quote stream connected before account-position/account-monitor leases existed, `subscribePositionQuoteSnapshots` returned a permanent no-op. Later account-position demand appeared, but the SSE stream never re-evaluated eligibility.
+  - Patched `artifacts/api-server/src/services/bridge-streams.ts` again:
+    - `subscribePositionQuoteSnapshots` now keeps requested symbols and reconciles every 1s plus on `account-monitor-live` lease changes.
+    - When eligible account-position symbols appear, it subscribes to `subscribeBridgeQuoteSnapshots` with `ownerPrefix:"account-position-quote-stream"`, `intent:"account-monitor-live"`, and `fallbackProvider:"none"`.
+    - If eligibility changes, it unsubscribes/resubscribes instead of staying stale.
+    - It fetches an IBKR bridge snapshot after subscribing so the SSE gets an immediate account-position quote payload when cache data exists.
+  - Updated `artifacts/api-server/src/services/bridge-streams.test.ts` source guard so the position subscription path must re-evaluate requested symbols, listen to market-data lease changes, and avoid a permanent empty-symbol no-op.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - Scoped `git diff --check`
+  - Runtime status:
+    - Current API process `46800` started at `2026-06-08T18:10:13Z`.
+    - New rebuilt bundle mtime is `2026-06-08T18:14:32Z`, so another normal Run Replit App restart is required before live verification can reflect this dynamic subscription fix.
+
+- 2026-06-08 realtime follow-up after second post-fix restart check:
+  - Observed after the user restarted that the rebuilt API bundle from the previous patch was loaded (`runDevApp` and API process started at 11:58 MDT; `/api/healthz` OK), but account-position quote data was still not fully realtime.
+  - Observed `/api/settings/ibkr-line-usage?detail=full` had `account-position-quote-stream:*` leases containing broad watchlist/algo-like symbols such as `AAOI`, `ABT`, `COIN`, `NVDA`, etc., while real account-position leases separately owned `FCEL`, `F`, and `NVDA`.
+  - Observed direct `/api/streams/position-quotes?symbols=FCEL,F,NVDA` was ready on `source:"ibkr-bridge"` but emitted empty quote arrays while the bridge quote stream diagnostics showed open/silent or backed-off work. This disproved the prior theory that only subscriber intent was wrong.
+  - Confirmed second root cause in frontend source: `OperationsPositionsTable` reused `PositionsPanel`, which registered algo/operations stock underlyings into the global account position quote symbol store. That polluted `/api/streams/position-quotes` with non-account symbols and could consume the bridge quote stream before true account-position symbols got live coverage.
+  - Patched frontend:
+    - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx` accepts `registerMarketDataSymbols`, defaulting to true for real account positions.
+    - `artifacts/pyrus/src/screens/algo/OperationsPositionsTable.jsx` passes `registerMarketDataSymbols={false}` so algo operations rows do not feed the account-position quote stream.
+    - Added `artifacts/pyrus/src/screens/algo/OperationsPositionsTable.test.mjs` source guard.
+  - Added backend defense-in-depth:
+    - `artifacts/api-server/src/services/bridge-streams.ts` now filters `/streams/position-quotes` symbols against existing `account-monitor-live` leases owned by account-position/account-monitor owners (`account-monitor:`, `account-position-equity-quotes:`, `account-position-option-quotes:`, `shadow-position:`).
+    - Stale or broad `account-position-quote-stream:*` clients can no longer make arbitrary symbols eligible for the account-position IBKR quote stream.
+    - `fetchPositionQuoteSnapshotPayload` and `subscribePositionQuoteSnapshots` return empty payload/no-op when requested symbols are not backed by current account-position demand.
+    - Extended `artifacts/api-server/src/services/bridge-streams.test.ts` with the polluted-client regression case.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/algo/OperationsPositionsTable.test.mjs src/screens/account/PositionsPanel.test.mjs src/features/platform/positionMarketDataStore.test.mjs`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - Scoped `git diff --check`
+  - Runtime status:
+    - Current API process `41607` started at `2026-06-08T17:58:50Z`, before the final rebuilt bundle mtime `2026-06-08T18:04:09Z`.
+    - One more normal Run Replit App restart is required before live verification can prove the backend guard.
+  - Required post-restart live checks:
+    - Confirm `account-position-quote-stream:*` leases are limited to actual account position symbols.
+    - Confirm `/api/streams/position-quotes?symbols=FCEL,F,NVDA` emits IBKR bridge quotes instead of empty arrays.
+    - Confirm `/api/accounts/U24762790/positions?mode=live&assetClass=all` shows FCEL/F/NVDA quote fields with live/low-age data.
+
+- Post-restart realtime follow-up after user still saw IBKR lag:
+  - Current user request: continue until all account-position bid/ask data updates in real time like the watchlist.
+  - Observed after the latest restart that the platform was still not fixed:
+    - FCEL account position no longer seeded from Massive after the earlier backend patch, but its IBKR quote was stale (`source:"bridge_quote"`, `transport:"tws"`, non-null bid/ask with old `dataUpdatedAt`/large `cacheAgeMs`).
+    - `/api/streams/position-quotes?symbols=FCEL,F,NVDA` emitted cached stale FCEL, not a fresh realtime cadence.
+    - `/api/settings/ibkr-line-usage?detail=full` showed admission/desired lines containing account-position lines (`equity:FCEL`, held option ids), while bridge generation/subscriptions were missing many desired lines.
+    - `sidecar.applyTarget` was `ib-async-sidecar`, `applyPending:true`, and there was no async sidecar process in the workspace. Generation apply was routed through the bridge async-sidecar proxy and could sit pending instead of applying account-monitor lines to the TWS bridge.
+    - API quote stream diagnostics treated SSE signal/heartbeat freshness as stream freshness: `lastSignalAgeMs` stayed fresh while `lastEventAgeMs`/`dataFreshnessAgeMs` were stale, allowing an open-but-silent quote stream to avoid reconnect/re-ensure.
+  - New platform fixes:
+    - `artifacts/api-server/src/services/bridge-quote-stream.ts`: added a separate data-freshness clock; stall watchdog now uses quote event freshness (`lastEventAt`) rather than SSE signal/heartbeat freshness (`lastSignalAt`); diagnostics pressure now uses quote data freshness for stale detection.
+    - `artifacts/api-server/src/services/ibkr-line-usage.ts`: added `IBKR_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS` with default `2500`; sidecar generation apply now uses that short deadline before the existing TWS bridge fallback.
+    - Added `artifacts/api-server/src/services/bridge-quote-stream-supervisor.test.ts`.
+    - Added `artifacts/api-server/src/services/ibkr-line-usage-sidecar-fallback.test.ts`.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/account-position-equity-quotes.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+  - Runtime proof is pending:
+    - The live app is still running API process `22621`, started at 11:20, before the rebuilt `dist/index.mjs`.
+    - Repo guard in `artifacts/pyrus/scripts/runDevApp.mjs` refuses full app supervisor starts from Codex-owned shells unless an override env var is set, and workspace instructions require default Replit Run App bring-up.
+    - After user restarts via the default Replit Run App path, verify `/api/settings/ibkr-line-usage?detail=full`, `/api/streams/position-quotes?symbols=FCEL,F,NVDA`, and `/api/accounts/U24762790/positions?mode=live&assetClass=all`.
+
+- Post-restart verification and residual account-row fix:
+  - User restarted the app; observed API health OK and Vite serving.
+  - Observed `/api/streams/position-quotes?symbols=FCEL` now emits `source:"ibkr"`, `transport:"tws"`, `freshness:"live"`, `marketDataMode:"live"`, with bid/ask updates such as `15.88/15.90` and `providerContractId:"740517233"`.
+  - Observed `/api/streams/quotes?symbols=FCEL` still emits Massive, as intended for the generic/watchlist quote path.
+  - Observed remaining issue: `/api/accounts/U24762790/positions?mode=live&assetClass=all` still returned FCEL `quote.source:"massive"` from the account positions REST seed. That was because `fetchEquityQuoteSnapshotsForPositions` in `artifacts/api-server/src/services/account.ts` still called generic `getQuoteSnapshots(... allowMassiveFallback:true ...)`.
+  - Patched `fetchEquityQuoteSnapshotsForPositions` to call `fetchBridgeQuoteSnapshots(... fallbackProvider:"none")`, so account-position equity hydration seeds from IBKR bridge instead of Massive.
+  - Observed another frontend clobber path: both generic quote ticks and position quote ticks fed the shared `runtimeTickerStore`, so a newer Massive watchlist tick could win over an IBKR position tick by timestamp. Patched frontend quote plumbing:
+    - `artifacts/pyrus/src/features/platform/positionMarketDataStore.js` now stores dedicated position quote snapshots.
+    - `artifacts/pyrus/src/features/platform/MarketDataSubscriptionProvider.jsx` writes `/api/streams/position-quotes` payloads into that dedicated store.
+    - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx` prefers dedicated position quote snapshots over shared runtime/watchlist snapshots for position rows.
+  - Added validation:
+    - `artifacts/api-server/src/services/account-position-equity-quotes.test.ts`
+    - `artifacts/pyrus/src/features/platform/positionMarketDataStore.test.mjs`
+    - Extended `artifacts/pyrus/src/screens/account/PositionsPanel.test.mjs` for IBKR-over-Massive row merge.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/account-position-equity-quotes.test.ts`
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/positionMarketDataStore.test.mjs src/screens/account/PositionsPanel.test.mjs`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/api-server run build`
+    - Scoped `git diff --check`
+  - Runtime caveat: current API PID `18140` started at `2026-06-08 11:09:25 MDT`; rebuilt `artifacts/api-server/dist/index.mjs` is newer (`2026-06-08 11:12:42 MDT`). The live position SSE route is already IBKR, but the account REST seed-path fix needs one more normal Run Replit App restart before `/api/accounts/.../positions` stops returning Massive for FCEL.
+- Follow-up for delayed account positions bid/ask versus IBKR:
+  - Observed runtime `/api/streams/position-quotes?symbols=FCEL` had been using the generic equity quote path, which selected Massive when `isMassiveStocksRealtimeConfigured()` was true. That explained why the positions table could lag IBKR even though it was receiving realtime-looking ticks: it was not sourcing equity position bid/ask from IBKR.
+  - Patched `artifacts/api-server/src/services/bridge-streams.ts` so the generic watchlist quote stream can still resolve to Massive, but the account-position quote snapshot and subscription paths always use the IBKR bridge (`fetchBridgeQuoteSnapshots` and `subscribeBridgeQuoteSnapshots`).
+  - Patched `artifacts/api-server/src/routes/platform.ts` so `/api/streams/position-quotes` advertises `source:"ibkr-bridge"` independently from `/api/streams/quotes`, which still advertises Massive when configured.
+  - Added `artifacts/api-server/src/services/bridge-streams.test.ts` coverage locking the position quote source, snapshot path, and subscription path to the IBKR bridge.
+  - Runtime evidence after the code change:
+    - `/api/streams/position-quotes?symbols=FCEL` returned ready `source:"ibkr-bridge"` from the already-running API process.
+    - `/api/streams/quotes?symbols=FCEL` still returned ready `source:"massive"` and Massive websocket quote payloads, proving the watchlist/generic path stayed separate.
+    - The FCEL position quote stream did not emit a non-empty IBKR quote within the 6-second curl window; this confirms routing, not a full market-data tick soak.
+  - Validation passed:
+    - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts`
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - Scoped `git diff --check` for the touched account quote/PnL files.
+- Follow-up for realtime account positions table / FCEL Day PnL:
+  - Observed `/api/streams/position-quotes?symbols=FCEL` emitting Massive realtime ticks with changing bid/ask values within seconds, matching the watchlist quote provider path rather than a missing backend stream.
+  - Observed current FCEL route payload has `openedAt:"2026-04-30T00:00:00.000Z"` / `openedAtSource:"flex_snapshot"`, so the user-visible FCEL symptom is not same-day-specific.
+  - Observed account `PositionsPanel` equity row merge consumed runtime quote snapshots, but equity Day PnL used quote day move times quantity. That can lag or disagree with the row mark when the live position mark is bid/ask-derived.
+  - Patched `artifacts/pyrus/src/screens/account/PositionsPanel.jsx` so same-day equity positions use live-mark `unrealizedPnl` / `unrealizedPnlPercent`, and prior-day equity positions derive Day PnL from the same live mark versus previous close before falling back to quote day-change fields.
+  - Added `artifacts/pyrus/src/screens/account/PositionsPanel.test.mjs` coverage for same-day equity rows and FCEL-like prior-day equity rows where live mark differs from quote day-change math.
+  - Validation passed:
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/screens/account/PositionsPanel.test.mjs`
+    - `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/live-streams.test.mjs`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+- Code-side account table fixes are in and validated:
+  - Real manual NVDA option `U24762790:886484902` uses execution-derived `openedAtSource:"execution"` and structured `twsopt:` option quote ids.
+  - Account page positions query/cache/stream paths now request and seed `liveQuotes:true` instead of `liveQuotes:false`.
+  - Shadow account stream snapshots now hydrate live quotes.
+  - Shadow option quote cache now has a short stale-while-refresh guard and does not let empty/non-display quote updates overwrite cached bid/ask display quotes. This addresses the observed ABT/SPY/SPY flicker from `option_quote` to `shadow_ledger` nulls while live refresh races.
+- Latest focused validation passed:
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/shadow-account-read-cache.test.ts src/services/shadow-account-streams.test.ts src/services/account-page-streams.test.ts src/routes/account-positions-route.test.ts src/services/account-position-open-date.test.ts`
+  - `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/live-streams.test.mjs src/screens/account/PositionOptionQuoteStreams.test.mjs src/screens/AccountScreen.positions.test.mjs`
+  - `pnpm --filter @workspace/api-server run typecheck`
+  - `pnpm --filter @workspace/pyrus run typecheck`
+  - `pnpm --filter @workspace/api-server run build`
+  - `git diff --check`
+- Runtime validation before the final cache guard rebuild showed:
+  - IBKR bridge/readiness was healthy.
+  - NVDA manual real option had bid/ask and same-day `dayChange == unrealizedPnl`.
+  - Shadow Account page stream emitted `primary` and `live` payloads with option quotes.
+  - A 15-second soak caught remaining SPY shadow option quote flicker, which led to the final cache-overwrite fix above.
+- Post-restart runtime proof passed at `2026-06-08T16:25:46Z`:
+  - Runtime has one API process (`pid 100386`) and one Vite process; IBKR readiness is `ready`, bridge/socket/account stream are connected, and strict readiness is true.
+  - Real NVDA manual option `U24762790:886484902` warmed to `quote.source:"option_quote"`, bid/ask `0.50/0.51`, `openedAtSource:"execution"`, and `dayChange == unrealizedPnl`.
+  - Real F option has structured `twsopt:` provider id and `option_quote` bid/ask. FCEL equity quote updates via Massive.
+  - Real account-page SSE emitted `primary` and `live` events with F, FCEL, and NVDA rows carrying the same live quote/open-date fields.
+  - Shadow route soak kept MSTR/AIP/ABT/SPY option rows on `option_quote` with non-null bid/ask; SPY did not flicker back to `shadow_ledger` nulls after the final cache guard.
+  - Shadow NVDA/MSTR equity quote timestamps moved via Massive during the soak.
+  - Initial cold reads after restart can show empty executions and missing NVDA open date until `/api/executions` warms. Observed unfiltered executions recovered with NVDA execution `0000f017.6a26a64a.01.01`, then the positions route populated `openedAtSource:"execution"`.
+
+## Current Status
+
+- Observed root cause for manual real-account option rows: broker `/positions` snapshots can omit `openedAt`; same-day Day PnL logic depends on `openedAt`, so manual NVDA options could fall back to null/quote-change behavior while automated rows had open metadata.
+- Implemented execution-derived open-date inference in `artifacts/api-server/src/services/account.ts`. It builds FIFO open lots from live executions and uses them as fallback `openedAt` data before account row market hydration.
+- Execution inference is not automation-specific. It uses structured option contracts when present and can parse OCC-style contract descriptions such as `NVDA260612C00145000`.
+- Implemented frontend account-position realtime cache fixes in `artifacts/pyrus/src/features/platform/live-streams.ts` so same-day rows update `dayChange`/`dayChangePercent` when either live option quotes or broker account snapshots update mark/unrealized PnL.
+- Confirmed second root cause for manually opened real-account NVDA option bid/ask:
+  - Runtime account row `U24762790:886484902` was demanding numeric conid `886484902` and had active admission/leases, but no quote cache entry, so account reader returned `pending/awaiting_quote`.
+  - F row was not a valid “working realtime” comparison; it was showing stale cached quote data under numeric conid `880754762`.
+  - Source reader path `readIbkrLiveDemandState()` does strict lookup by requested providerContractId.
+  - Existing bridge path successfully returned live TWS bid/ask for the held NVDA 2026-06-08 210C when requested by structured id `twsopt:eyJ2IjoxLCJ1IjoiTlZEQSIsImUiOiIyMDI2MDYwOCIsInMiOjIxMCwiciI6IkMiLCJ4IjoiU01BUlQiLCJ0YyI6Ik5WREEiLCJtIjoxMDB9`; live probe returned bid `0.49`, ask `0.51`, marketDataMode `live`, delayed `false`.
+  - Implemented canonical structured option quote ids for account option-position demand when metadata is complete, while preserving the numeric conid as an alias for row identity/cache matching.
+- Runtime follow-up after first patched restart:
+  - NVDA real-account row `U24762790:886484902` was verified fixed in the live account route: structured provider id, bid `0.56`, ask `0.57`, `status: "live"`, marketDataMode `live`, no `pending/awaiting_quote`.
+  - F row exposed a reader-edge regression from canonicalizing demand: structured F was pending while old numeric F cache had been the previous stale display. Patched backend reader to demand one canonical structured line but read both structured and numeric aliases, so existing numeric alias cache can still win until structured updates.
+- Runtime follow-up after current validation:
+  - `GET /api/accounts/U24762790/positions?mode=live&assetClass=all` returned NVDA `U24762790:886484902` with structured provider id, bid/ask `0.41/0.42`, `status:"live"`, `openedAtSource:"execution"`, and `dayChange == unrealizedPnl`.
+  - `GET /api/accounts/U24762790/positions?mode=live&assetClass=all&liveQuotes=false` also returned NVDA `openedAtSource:"execution"`, proving the account-page base writer path has the open-date metadata it needs.
+  - Account-page SSE for `U24762790` emitted `primary`, `live`, and `freshness` events. NVDA rows carried `openedAtSource:"execution"` plus bid/ask; FCEL rows updated via Massive across live events.
+  - After the supervisor restarted again, the first cold account-route read showed option rows as pending while the quote snapshot warmed. A warm read a few seconds later returned NVDA bid/ask `0.23/0.24`, `status:"live"`, `updatedAt:"2026-06-08T15:31:17.802Z"`, and same-day `dayChange == unrealizedPnl`; FCEL Massive updated at `15:31:17.942Z`. F had bid/ask but remained `status:"stale"` because its IBKR quote timestamp was older.
+  - Shadow account base stream still emits `liveQuotes:false` ledger rows for ABT/SPY with null bid/ask, but the row metadata contains structured `twsopt:` ids. `liveQuotes:true`, `/api/streams/options/quotes`, and `/api/ws/options/quotes` all resolve SPY/ABT bid/ask through IBKR when subscribed.
+- Added frontend merge hardening in `artifacts/pyrus/src/features/platform/live-streams.ts`: account-page payloads that lack `openedAt/openedAtSource` no longer erase cached execution open-date metadata before live option quote/day-PnL recomputation.
+- Touched files for the NVDA alias fix:
+  - `artifacts/api-server/src/services/account.ts`
+  - `artifacts/api-server/src/services/account-position-open-date.test.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.test.mjs`
+  - `artifacts/pyrus/src/screens/account/PositionOptionQuoteStreams.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionOptionQuoteStreams.test.mjs`
+- Rebuilt API dist with `pnpm --filter @workspace/api-server run build`. Runtime doctor still warns the API PID predates the latest bundle mtime after the final rebuild, but live route/SSE probes confirmed the relevant behavior is active in the running process.
+- Worktree remains broadly dirty from other sessions; only the account position Day PnL files/tests/handoff belong to this slice.
+
+## Validation
+
+- Passed: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-position-open-date.test.ts`
+- Passed: `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/live-streams.test.mjs src/screens/account/PositionOptionQuoteStreams.test.mjs`
+- Passed: `pnpm --filter @workspace/api-server run typecheck`
+- Passed: `pnpm --filter @workspace/pyrus run typecheck`
+- Passed: `pnpm --filter @workspace/api-server run build`
+- Passed: scoped `git diff --check` for account alias/day-PnL files.
+- Live bridge check passed before source restart: `/api/options/quotes` returned live structured NVDA 210C bid/ask through existing bridge path.
+- Live account-route check passed after a runtime restart for NVDA `U24762790:886484902`: bid/ask non-null and live.
+- Live account-page SSE check passed for real account rows: NVDA execution open date and same-day Day PnL are present; FCEL Massive quotes move between live events.
+- Shadow quote stream checks passed: SPY structured option quote returned bid/ask over SSE and WebSocket; ABT returned bid/ask over SSE. UI should patch the shadow positions cache after `PositionOptionQuoteStreams` mounts.
+- Fresh-process warm check passed: initial cold option rows can be pending for several seconds, but NVDA warmed to live bid/ask and same-day Day PnL on the account route.
+
+## Known Caveats
+
+- Runtime doctor still reports the API process started before the latest `dist/index.mjs` mtime because the API bundle was rebuilt during validation. The observed route/SSE behavior is fixed, but a normal Replit Run App restart is still the clean way to align process start time with bundle mtime.
+- Cold-start option quote warm-up can take several seconds; the account route may temporarily show `pending/awaiting_quote` immediately after process restart before the dedicated IBKR option line returns a snapshot.
+- Execution open-date inference uses the existing live execution lookback window of 7 days. This covers same-day manual NVDA options; older manual positions still depend on broker `openedAt`, FLEX open-position data, or quote day-change data.
+- Browser-level visual QA was not completed because local Playwright/Puppeteer packages were not available from the repo root in this session. Validation used source, focused tests, HTTP/SSE, and direct WebSocket probes.
+
+## 2026-06-08 17:49Z Realtime Position Quote Follow-Up
+
+- Observed after the user's restart:
+  - API process `33616` started at `2026-06-08T17:40:59Z`; rebuilt API bundle after this patch is `artifacts/api-server/dist/index.mjs` mtime `2026-06-08T17:48:41Z`, so another normal Run Replit App restart is required before live verification reflects this patch.
+  - `/api/settings/ibkr-line-usage?detail=full` showed account-monitor leases for `equity:FCEL`, `equity:F`, and `equity:NVDA`, but `/api/streams/position-quotes` still depended on generic `bridge-quote-stream:*` visible leases. The quote stream `desiredSymbols` omitted FCEL/F when those generic visible leases were not active.
+  - This explains why the positions table could have account-monitor demand and still lag IBKR: the live SSE subscriber that feeds the position quote store was not itself admitted as `account-monitor-live`.
+- Patched:
+  - `artifacts/api-server/src/services/bridge-quote-stream.ts` now lets each bridge quote subscriber carry `intent`, `fallbackProvider`, and `ownerPrefix`; defaults preserve the watchlist/generic `visible-live` + Massive fallback behavior.
+  - `artifacts/api-server/src/services/bridge-streams.ts` now routes position quote snapshots and subscriptions through `account-monitor-live` with `fallbackProvider:"none"` and owner prefix `account-position-quote-stream`.
+  - Added `artifacts/api-server/src/services/bridge-quote-stream-subscriptions.test.ts` proving a position-style FCEL subscriber creates an account-monitor lease and appears in bridge quote stream `desiredSymbols`.
+  - Updated `artifacts/api-server/src/services/bridge-streams.test.ts` to lock position quote snapshots/subscriptions to account-monitor IBKR bridge demand.
+- Validation passed:
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+  - `pnpm --filter @workspace/api-server run typecheck`
+  - `pnpm --filter @workspace/api-server run build`
+- Remaining required live check after restart:
+  - Confirm `/api/settings/ibkr-line-usage?detail=full` has `account-position-quote-stream:*` leases and quote stream `desiredSymbols` includes FCEL/F/NVDA.
+  - Confirm `/api/streams/position-quotes?symbols=FCEL,F,NVDA` emits FCEL and F/NVDA underlying stock quotes from IBKR bridge, not only watchlist symbols.
+  - Confirm `/api/accounts/U24762790/positions?mode=live&assetClass=all` has FCEL bridge quote `freshness:"live"`/low `cacheAgeMs` and option rows refresh bid/ask without stale cache dependence.
+
+## 2026-06-08 18:40Z Position Stream UI-Owner Pollution Guard
+
+- Observed after the user's latest restart:
+  - Run App process `65130` and API process `65150` started at `2026-06-08T18:34:03Z`/`18:34:05Z`.
+  - New API bundle with this guard was built at `2026-06-08T18:39:29Z`, so the active process is still pre-guard and another normal Run App restart is required before live verification reflects it.
+  - The current server is healthy on `PORT=8080` (`/api/healthz` returned `{"status":"ok"}`).
+  - Prior live line-usage evidence showed `account-position-option-quotes:ui:*` leases widening the account-position quote stream with non-held/broad symbols like ABT/AFRM/AIP/GLD/MSTR/SPY/VIXY. That kept FCEL in `desired` while the bridge `market-subscriptions` lane became degraded/queue-full.
+- Patched:
+  - `artifacts/api-server/src/services/bridge-streams.ts` now rejects default UI option quote owners (`account-position-option-quotes:ui` and `account-position-option-quotes:ui:*`) when deriving eligible symbols for `/api/streams/position-quotes`.
+  - Real account demand remains eligible through `account-position-equity-quotes:<accountKey>` and `account-position-option-quotes:<accountKey>[:underlying]`, and recent account-position symbols are still recorded by `account.ts`.
+  - Updated `artifacts/api-server/src/services/bridge-streams.test.ts` to reproduce a `account-position-option-quotes:ui:ABT` lease beside real FCEL/F demand and assert ABT is excluded from the position quote stream.
+- Validation passed:
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+  - `pnpm --filter @workspace/api-server run typecheck`
+  - `pnpm --filter @workspace/api-server run build`
+  - Scoped `git diff --check -- artifacts/api-server/src/services/bridge-streams.ts artifacts/api-server/src/services/bridge-streams.test.ts`
+- Remaining required live check after restart:
+  - Confirm the active API PID is newer than the `2026-06-08T18:39:29Z` bundle.
+  - Confirm `/api/settings/ibkr-line-usage?detail=full` position quote `desiredSymbols` is limited to real account-held position underlyings, especially FCEL/F/NVDA, and no longer includes the broad `:ui` list.
+  - Confirm `/api/streams/position-quotes?symbols=FCEL,F,NVDA` emits low-latency IBKR bridge quote payloads for all held symbols and FCEL becomes `live`, not only `desired`.
+
+## 2026-06-08 18:49Z Position SSE Reconcile Hardening
+
+- Observed after the restart that loaded the UI-owner guard:
+  - API process `68380` started at `2026-06-08T18:41:21Z`; the latest reconcile-hardening bundle was built at `2026-06-08T18:48:54Z`, so another normal Run App restart is required before live verification reflects this patch.
+  - `/api/healthz` was OK on `PORT=8080`.
+  - Direct `/api/streams/position-quotes?symbols=FCEL,F,NVDA` stayed open and emitted pings, but `/api/settings/ibkr-line-usage?detail=full` still showed `streams.quoteStreams.activeConsumerCount:0` while the SSE was open.
+  - The same SSE emitted only cached/stale FCEL IBKR data (`updatedAt:"2026-06-08T18:40:35.619Z"`, `freshness:"stale"`, `cacheAgeMs` about 231s) and no live F/NVDA bridge quote events.
+  - Line usage simultaneously showed real account-position leases for `account-position-equity-quotes:U24762790` (`equity:FCEL`) and `account-position-option-quotes:U24762790:F/NVDA` (`equity:F`, `equity:NVDA`), so the remaining issue was not missing account-position demand.
+  - A local in-process reproduction with the same exported functions did create `account-position-quote-stream:1` leases and bridge desired symbols `["F","FCEL","NVDA"]`, indicating the core filter works when reconcile actually runs.
+- Patched:
+  - `artifacts/api-server/src/services/bridge-streams.ts` now runs zero-delay position quote reconciles synchronously instead of routing them through an unref'd `setTimeout(0)`.
+  - `artifacts/api-server/src/services/bridge-streams.test.ts` now covers both pre-existing account-position demand and later-arriving account-position demand creating an active bridge quote consumer for `/api/streams/position-quotes`.
+- Validation passed:
+  - `pnpm --filter @workspace/api-server exec tsx --test src/services/bridge-streams.test.ts src/services/bridge-quote-stream-subscriptions.test.ts src/services/bridge-quote-stream-supervisor.test.ts src/services/account-position-equity-quotes.test.ts src/services/ibkr-line-usage-sidecar-fallback.test.ts`
+  - `pnpm --filter @workspace/api-server run typecheck`
+  - `pnpm --filter @workspace/api-server run build`
+  - Scoped `git diff --check -- artifacts/api-server/src/services/bridge-streams.ts artifacts/api-server/src/services/bridge-streams.test.ts SESSION_HANDOFF_LIVE_2026-06-08_account-position-day-pnl-investigation.md SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_MASTER.md`
+- Remaining required live check after restart:
+  - Confirm active API PID is newer than `2026-06-08T18:48:54Z`.
+  - With `/api/streams/position-quotes?symbols=FCEL,F,NVDA` held open, confirm `streams.quoteStreams.activeConsumerCount > 0`, `desiredSymbols` includes `F`, `FCEL`, `NVDA`, and `account-position-quote-stream:*` leases exist.
+  - Confirm the SSE emits fresh/live IBKR quote payloads, not just stale cached FCEL.
+
+## Next Steps
+
+1. Restart via normal Run Replit App so API PID is newer than the `2026-06-08T18:48:54Z` API bundle.
+2. Recheck `/api/settings/ibkr-line-usage?detail=full`, `/api/streams/position-quotes?symbols=FCEL,F,NVDA`, and `/api/accounts/U24762790/positions?mode=live&assetClass=all`.
+3. If FCEL is still `desired` but not `live`, check bridge helper deployment age next; the remote helper still appeared older than the local rebuilt bridge bundle in the prior probe.

@@ -326,10 +326,10 @@ function applyOpportunityScores(
       };
     })
     .sort((left, right) => {
+      if (right.beta !== left.beta) return right.beta - left.beta;
       if (right.opportunityScore !== left.opportunityScore) {
         return right.opportunityScore - left.opportunityScore;
       }
-      if (right.beta !== left.beta) return right.beta - left.beta;
       return left.symbol.localeCompare(right.symbol);
     })
     .map((row, index) => ({

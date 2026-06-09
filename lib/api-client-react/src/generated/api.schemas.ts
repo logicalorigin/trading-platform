@@ -477,6 +477,8 @@ export interface IbkrBridgeHelperMetadataRuntime {
   desktopAgentHelperVersion: string | null;
   desktopAgentKnownBad: boolean;
   desktopAgentOnline: boolean;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
   runtimeOverrideActive: boolean;
@@ -782,8 +784,41 @@ export interface IbkrBridgeActivationDiagnosticsLatestActivation {
   [key: string]: unknown;
  }
 
+export type IbkrRemoteDesktopRequestDiagnosticRoute = typeof IbkrRemoteDesktopRequestDiagnosticRoute[keyof typeof IbkrRemoteDesktopRequestDiagnosticRoute];
+
+
+export const IbkrRemoteDesktopRequestDiagnosticRoute = {
+  register: 'register',
+  heartbeat: 'heartbeat',
+  claim: 'claim',
+  raw: 'raw',
+} as const;
+
+export interface IbkrRemoteDesktopRequestDiagnostic {
+  at: string;
+  /** @nullable */
+  code: string | null;
+  /** @nullable */
+  contentType?: string | null;
+  /** @nullable */
+  desktopId: string | null;
+  /** @nullable */
+  helperVersion: string | null;
+  /** @nullable */
+  method?: string | null;
+  /** @nullable */
+  message: string | null;
+  ok: boolean;
+  /** @nullable */
+  path?: string | null;
+  route: IbkrRemoteDesktopRequestDiagnosticRoute;
+  /** @nullable */
+  userAgent?: string | null;
+}
+
 export interface IbkrBridgeActivationDiagnosticsResponse {
   activeCount: number;
+  desktopAgentRequests: IbkrRemoteDesktopRequestDiagnostic[];
   latestActivation: IbkrBridgeActivationDiagnosticsLatestActivation | null;
   /** @nullable */
   latestActivationId: string | null;
@@ -867,6 +902,8 @@ export interface SessionIbkrRuntime {
   /** @nullable */
   runtimeOverrideUpdatedAt: string | null;
   desktopAgentOnline: boolean;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   /** @nullable */
   desktopAgentCompatibility: SessionIbkrRuntimeDesktopAgentCompatibility;
   desktopAgentCompatible: boolean;
@@ -876,6 +913,7 @@ export interface SessionIbkrRuntime {
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
+  activation: IbkrBridgeActivationDiagnosticsResponse;
 }
 
 export interface SessionRuntime {
@@ -1154,6 +1192,8 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   runtimeOverrideUpdatedAt: string | null;
   desktopAgentOnline: boolean;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   /** @nullable */
   desktopAgentCompatibility: RuntimeIbkrDiagnosticsDesktopAgentCompatibility;
   desktopAgentCompatible: boolean;
@@ -4885,7 +4925,6 @@ export const EvaluateSignalMonitorMatrixRequestClientRole = {
   follower: 'follower',
   manual: 'manual',
   test: 'test',
-  'algo-sta': 'algo-sta',
 } as const;
 
 export type EvaluateSignalMonitorMatrixRequestRequestOrigin = typeof EvaluateSignalMonitorMatrixRequestRequestOrigin[keyof typeof EvaluateSignalMonitorMatrixRequestRequestOrigin];
@@ -4896,7 +4935,6 @@ export const EvaluateSignalMonitorMatrixRequestRequestOrigin = {
   poll: 'poll',
   manual: 'manual',
   test: 'test',
-  'sta-visible-page': 'sta-visible-page',
 } as const;
 
 export interface EvaluateSignalMonitorMatrixCellRequest {
@@ -5125,6 +5163,7 @@ export type SignalMonitorMatrixResponseCoverage = {
   sourceRequestCount?: number;
   hydratedSymbols?: number;
   missingSymbols?: number;
+  pendingCellCount?: number;
   /** @nullable */
   estimatedFullCycleMs?: number | null;
   cacheStatus: SignalMonitorMatrixResponseCoverageCacheStatus;
@@ -5144,8 +5183,161 @@ export interface SignalMonitorMatrixResponse {
   skippedSymbols: string[];
   cacheStatus?: SignalMonitorMatrixResponseCacheStatus;
   refreshing?: boolean;
+  warming?: boolean;
+  pendingCells?: EvaluateSignalMonitorMatrixCellRequest[];
   coverage?: SignalMonitorMatrixResponseCoverage;
 }
+
+export type SignalMonitorMatrixStreamSource = typeof SignalMonitorMatrixStreamSource[keyof typeof SignalMonitorMatrixStreamSource];
+
+
+export const SignalMonitorMatrixStreamSource = {
+  'massive-websocket': 'massive-websocket',
+  'massive-delayed-websocket': 'massive-delayed-websocket',
+  'ibkr-websocket-derived': 'ibkr-websocket-derived',
+  none: 'none',
+} as const;
+
+export interface SignalMonitorMatrixStreamCoverage {
+  requestedSymbols: number;
+  activeScopeSymbols: number;
+  timeframes: number;
+  taskCount: number;
+  source: SignalMonitorMatrixStreamSource;
+  delayed: boolean;
+  eventCount: number;
+  stateCount: number;
+  skippedSymbols: number;
+  truncated: boolean;
+  /** @nullable */
+  lastEventAt: string | null;
+  /** @nullable */
+  lastEventAgeMs: number | null;
+}
+
+export type SignalMonitorMatrixStreamBootstrapEventStream = typeof SignalMonitorMatrixStreamBootstrapEventStream[keyof typeof SignalMonitorMatrixStreamBootstrapEventStream];
+
+
+export const SignalMonitorMatrixStreamBootstrapEventStream = {
+  'signal-matrix': 'signal-matrix',
+} as const;
+
+export type SignalMonitorMatrixStreamBootstrapEventEvent = typeof SignalMonitorMatrixStreamBootstrapEventEvent[keyof typeof SignalMonitorMatrixStreamBootstrapEventEvent];
+
+
+export const SignalMonitorMatrixStreamBootstrapEventEvent = {
+  bootstrap: 'bootstrap',
+} as const;
+
+export interface SignalMonitorMatrixStreamBootstrapEvent {
+  stream: SignalMonitorMatrixStreamBootstrapEventStream;
+  event: SignalMonitorMatrixStreamBootstrapEventEvent;
+  profile: SignalMonitorProfile;
+  states: SignalMonitorMatrixState[];
+  evaluatedAt: string;
+  timeframes: SignalMonitorMatrixTimeframe[];
+  coverage: SignalMonitorMatrixStreamCoverage;
+}
+
+export type SignalMonitorMatrixStreamStateDeltaEventStream = typeof SignalMonitorMatrixStreamStateDeltaEventStream[keyof typeof SignalMonitorMatrixStreamStateDeltaEventStream];
+
+
+export const SignalMonitorMatrixStreamStateDeltaEventStream = {
+  'signal-matrix': 'signal-matrix',
+} as const;
+
+export type SignalMonitorMatrixStreamStateDeltaEventEvent = typeof SignalMonitorMatrixStreamStateDeltaEventEvent[keyof typeof SignalMonitorMatrixStreamStateDeltaEventEvent];
+
+
+export const SignalMonitorMatrixStreamStateDeltaEventEvent = {
+  'state-delta': 'state-delta',
+} as const;
+
+export interface SignalMonitorMatrixStreamStateDeltaEvent {
+  stream: SignalMonitorMatrixStreamStateDeltaEventStream;
+  event: SignalMonitorMatrixStreamStateDeltaEventEvent;
+  states: SignalMonitorMatrixState[];
+  evaluatedAt: string;
+  timeframes: SignalMonitorMatrixTimeframe[];
+  coverage: SignalMonitorMatrixStreamCoverage;
+}
+
+export type SignalMonitorMatrixStreamStatusEventStream = typeof SignalMonitorMatrixStreamStatusEventStream[keyof typeof SignalMonitorMatrixStreamStatusEventStream];
+
+
+export const SignalMonitorMatrixStreamStatusEventStream = {
+  'signal-matrix': 'signal-matrix',
+} as const;
+
+export type SignalMonitorMatrixStreamStatusEventEvent = typeof SignalMonitorMatrixStreamStatusEventEvent[keyof typeof SignalMonitorMatrixStreamStatusEventEvent];
+
+
+export const SignalMonitorMatrixStreamStatusEventEvent = {
+  'stream-status': 'stream-status',
+} as const;
+
+export type SignalMonitorMatrixStreamStatusEventState = typeof SignalMonitorMatrixStreamStatusEventState[keyof typeof SignalMonitorMatrixStreamStatusEventState];
+
+
+export const SignalMonitorMatrixStreamStatusEventState = {
+  open: 'open',
+  degraded: 'degraded',
+  unavailable: 'unavailable',
+} as const;
+
+export type SignalMonitorMatrixStreamStatusEventFallbackState = typeof SignalMonitorMatrixStreamStatusEventFallbackState[keyof typeof SignalMonitorMatrixStreamStatusEventFallbackState];
+
+
+export const SignalMonitorMatrixStreamStatusEventFallbackState = {
+  streaming: 'streaming',
+  'bootstrap-fallback': 'bootstrap-fallback',
+  unavailable: 'unavailable',
+} as const;
+
+export interface SignalMonitorMatrixStreamStatusEvent {
+  stream: SignalMonitorMatrixStreamStatusEventStream;
+  event: SignalMonitorMatrixStreamStatusEventEvent;
+  state: SignalMonitorMatrixStreamStatusEventState;
+  source: SignalMonitorMatrixStreamSource;
+  provider: SignalMonitorMatrixStreamSource;
+  activeProvider: SignalMonitorMatrixStreamSource | null;
+  delayed: boolean;
+  activeScopeSymbols: number;
+  activeScopeCells: number;
+  skippedSymbols: number;
+  truncated: boolean;
+  eventCount: number;
+  /** @nullable */
+  lastEventAt: string | null;
+  /** @nullable */
+  lastEventAgeMs: number | null;
+  fallbackState: SignalMonitorMatrixStreamStatusEventFallbackState;
+}
+
+export type SignalMonitorMatrixStreamErrorEventStream = typeof SignalMonitorMatrixStreamErrorEventStream[keyof typeof SignalMonitorMatrixStreamErrorEventStream];
+
+
+export const SignalMonitorMatrixStreamErrorEventStream = {
+  'signal-matrix': 'signal-matrix',
+} as const;
+
+export type SignalMonitorMatrixStreamErrorEventEvent = typeof SignalMonitorMatrixStreamErrorEventEvent[keyof typeof SignalMonitorMatrixStreamErrorEventEvent];
+
+
+export const SignalMonitorMatrixStreamErrorEventEvent = {
+  error: 'error',
+} as const;
+
+export interface SignalMonitorMatrixStreamErrorEvent {
+  stream: SignalMonitorMatrixStreamErrorEventStream;
+  event: SignalMonitorMatrixStreamErrorEventEvent;
+  code: string;
+  detail: string;
+  /** @nullable */
+  cooldownMs: number | null;
+}
+
+export type SignalMonitorMatrixStreamEvent = SignalMonitorMatrixStreamBootstrapEvent | SignalMonitorMatrixStreamStateDeltaEvent | SignalMonitorMatrixStreamStatusEvent | SignalMonitorMatrixStreamErrorEvent;
 
 export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
@@ -6733,6 +6925,44 @@ export type BenchmarkFlowScannerBody = {
 export type GetSignalMonitorProfileParams = {
 environment?: EnvironmentMode;
 };
+
+export type StreamSignalMonitorMatrixParams = {
+environment?: EnvironmentMode;
+/**
+ * Comma-separated ticker symbols to stream when exact cells are not supplied.
+ */
+symbols?: string;
+/**
+ * Comma-separated Signal Matrix timeframes to stream.
+ */
+timeframes?: string;
+/**
+ * Comma-separated exact cells in SYMBOL:timeframe form. When non-empty, cells are authoritative over symbols/timeframes.
+ */
+cells?: string;
+clientRole?: StreamSignalMonitorMatrixClientRole;
+requestOrigin?: StreamSignalMonitorMatrixRequestOrigin;
+};
+
+export type StreamSignalMonitorMatrixClientRole = typeof StreamSignalMonitorMatrixClientRole[keyof typeof StreamSignalMonitorMatrixClientRole];
+
+
+export const StreamSignalMonitorMatrixClientRole = {
+  leader: 'leader',
+  follower: 'follower',
+  manual: 'manual',
+  test: 'test',
+} as const;
+
+export type StreamSignalMonitorMatrixRequestOrigin = typeof StreamSignalMonitorMatrixRequestOrigin[keyof typeof StreamSignalMonitorMatrixRequestOrigin];
+
+
+export const StreamSignalMonitorMatrixRequestOrigin = {
+  startup: 'startup',
+  poll: 'poll',
+  manual: 'manual',
+  test: 'test',
+} as const;
 
 export type GetSignalMonitorStateParams = {
 environment?: EnvironmentMode;

@@ -43,6 +43,8 @@ const LAUNCH_STEP_PHASES = {
   ]),
   credentials: new Set([
     "autologin_preflight",
+    "credential_key_published",
+    "credential_key_read",
     "credentials_delivered",
     "credentials_received",
     "credentials_sent_to_pyrus",
@@ -108,6 +110,8 @@ const LAUNCH_ACTION_LABEL_BY_STEP = {
   checking_gateway_socket: "Checking Gateway",
   cloning_repo: "Preparing bridge",
   connected: "Connected",
+  credential_key_published: "Waiting credentials",
+  credential_key_read: "Encrypting",
   credentials_delivered: "Credentials sent",
   credentials_received: "Credentials sent",
   credentials_sent_to_pyrus: "Credentials sent",
@@ -358,6 +362,7 @@ export const buildIbkrDeactivateOperationStepper = ({
     ...step,
     status: statusById[step.id],
   }));
+  const complete = steps.every((step) => step.status === "complete");
   const activeStep =
     [...steps].reverse().find((step) => step.status === "current") || null;
   const activityByStepId = {
@@ -387,7 +392,7 @@ export const buildIbkrDeactivateOperationStepper = ({
         }
       : null,
     operation: "deactivate",
-    title: "Deactivate IBKR",
+    title: complete ? "IBKR Deactivated" : "Deactivate IBKR",
     latestMessage: message,
     steps,
   };

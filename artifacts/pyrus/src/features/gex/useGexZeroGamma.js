@@ -20,8 +20,6 @@ const GEX_ZERO_GAMMA_STALE_BLEND_TOKEN = "--ra-surface-1";
 const GEX_ZERO_GAMMA_STALE_BLEND_FALLBACK = "#090D18";
 const THEME_ATTRIBUTE_FILTER = [
   "data-pyrus-theme",
-  "data-pyrus-theme",
-  "data-pyrus-color-mode",
   "data-pyrus-color-mode",
   "class",
   "style",

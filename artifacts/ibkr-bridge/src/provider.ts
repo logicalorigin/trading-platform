@@ -201,11 +201,13 @@ export interface IbkrBridgeProvider {
     underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<OptionChainContract[]>;
   getOptionExpirations(input: {
     underlying: string;
     maxExpirations?: number;
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<Date[]>;
   getMarketDepth(input: {
     accountId?: string | null;

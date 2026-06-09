@@ -110,7 +110,6 @@ type RankingCandidate = {
 const DEFAULT_REFRESH_MS = 15 * 60_000;
 const COOLDOWN_FAILURE_THRESHOLD = 2;
 const COOLDOWN_MS = 15 * 60_000;
-const OUTSIDE_RTH_INTERVAL_MULTIPLIER = 4;
 const OPTIONABLE_DERIVATIVE_SEC_TYPE_RE = /(^|,)\s*OPT\s*(,|$)/i;
 
 function uniqueSymbols(symbols: readonly string[]): string[] {
@@ -270,11 +269,9 @@ export function getFlowScannerIntervalMs(input: {
   alwaysOn?: boolean;
   now?: Date;
 }): number {
-  const base = Math.max(1_000, input.baseIntervalMs);
-  if (!input.alwaysOn || isRegularTradingHours(input.now ?? new Date())) {
-    return base;
-  }
-  return base * OUTSIDE_RTH_INTERVAL_MULTIPLIER;
+  // Scanner runs at full rate in ALL sessions (time-of-day gates only execution, not
+  // market-data discovery) — no off-hours cadence slowdown.
+  return Math.max(1_000, input.baseIntervalMs);
 }
 
 export function rankFlowUniverseCandidates(input: {

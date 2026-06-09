@@ -56,6 +56,7 @@ import {
   formatPlainPrice,
   mergeSignalOptionsProfile,
   numberFrom,
+  normalizeSignalOptionsMtfTimeframes,
   parseChaseSteps,
   resolveStrategySignalSettings,
   resolveStableStaActionSnapshot,
@@ -505,6 +506,8 @@ export const AlgoScreen = ({
     },
   );
   const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
+  const deploymentListUnavailable =
+    deploymentsQuery.data?.cacheStatus === "unavailable";
   const candidateDrafts = useMemo(() => {
     const drafts = draftsQuery.data?.drafts || EMPTY_ALGO_DRAFTS;
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
@@ -1031,6 +1034,13 @@ export const AlgoScreen = ({
   const profileDirty = profileDraftState.isDirty;
   const strategySettingsDraft = strategySettingsDraftState.draft;
   const strategyDirty = strategySettingsDraftState.isDirty;
+  const staSignalTimeframes = useMemo(
+    () =>
+      normalizeSignalOptionsMtfTimeframes(
+        profileDraft?.entryGate?.mtfAlignment?.timeframes,
+      ),
+    [profileDraft?.entryGate?.mtfAlignment?.timeframes],
+  );
 
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
@@ -1877,6 +1887,7 @@ export const AlgoScreen = ({
             deployments={deployments}
             candidateDrafts={candidateDrafts}
             setupDataSettled={algoSetupDataSettled}
+            deploymentListUnavailable={deploymentListUnavailable}
             selectedDraft={selectedDraft}
             setSelectedDraftId={setSelectedDraftId}
             deploymentName={deploymentName}
@@ -1908,6 +1919,7 @@ export const AlgoScreen = ({
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             selectedCandidate={selectedCandidate}
             signalOptionsProfile={signalOptionsProfile}
+            staSignalTimeframes={staSignalTimeframes}
             onOpenCandidateInTrade={handleOpenCandidateInTrade}
             safeQaMode={safeQaMode}
             backgroundQueriesEnabled={algoBackgroundQueriesEnabled}

@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { EvaluateSignalMonitorMatrixCellRequest } from './evaluateSignalMonitorMatrixCellRequest';
 import type { SignalMonitorMatrixResponseCacheStatus } from './signalMonitorMatrixResponseCacheStatus';
 import type { SignalMonitorMatrixResponseCoverage } from './signalMonitorMatrixResponseCoverage';
 import type { SignalMonitorMatrixState } from './signalMonitorMatrixState';
@@ -20,5 +21,7 @@ export interface SignalMonitorMatrixResponse {
   skippedSymbols: string[];
   cacheStatus?: SignalMonitorMatrixResponseCacheStatus;
   refreshing?: boolean;
+  warming?: boolean;
+  pendingCells?: EvaluateSignalMonitorMatrixCellRequest[];
   coverage?: SignalMonitorMatrixResponseCoverage;
 }

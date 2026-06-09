@@ -16,6 +16,8 @@ export interface IbkrBridgeHelperMetadataRuntime {
   desktopAgentHelperVersion: string | null;
   desktopAgentKnownBad: boolean;
   desktopAgentOnline: boolean;
+  desktopAgentRegistered: boolean;
+  desktopAgentRegisteredCount: number;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
   runtimeOverrideActive: boolean;

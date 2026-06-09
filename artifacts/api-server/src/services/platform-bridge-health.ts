@@ -415,12 +415,22 @@ function scheduleBridgeHealthRefreshForSession(context: string): void {
   });
 }
 
-export async function getBridgeHealthForSession(): Promise<AnnotatedBridgeHealth | null> {
+type BridgeHealthForSessionOptions = {
+  waitForInitialRefresh?: boolean;
+  waitForStaleRefresh?: boolean;
+};
+
+export async function getBridgeHealthForSession(
+  options: BridgeHealthForSessionOptions = {},
+): Promise<AnnotatedBridgeHealth | null> {
   if (!getProviderConfiguration().ibkr) {
     return null;
   }
 
-  const initialTimeoutMs = sessionBridgeHealthInitialTimeoutMs();
+  const initialTimeoutMs =
+    options.waitForInitialRefresh === false
+      ? 0
+      : sessionBridgeHealthInitialTimeoutMs();
   if (!lastKnownBridgeHealth && initialTimeoutMs > 0) {
     await refreshBridgeHealthForSession(
       initialTimeoutMs,
@@ -441,14 +451,18 @@ export async function getBridgeHealthForSession(): Promise<AnnotatedBridgeHealth
     !lastBridgeHealthRefreshPromise &&
     !isBridgeWorkBackedOff("health")
   ) {
-    await refreshBridgeHealthForSession(
-      sessionBridgeHealthStaleTimeoutMs(),
-      "session_stale",
-    );
-    if (lastKnownBridgeHealth) {
-      annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
-        bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
-      });
+    if (options.waitForStaleRefresh === false) {
+      scheduleBridgeHealthRefreshForSession("session_background");
+    } else {
+      await refreshBridgeHealthForSession(
+        sessionBridgeHealthStaleTimeoutMs(),
+        "session_stale",
+      );
+      if (lastKnownBridgeHealth) {
+        annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
+          bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+        });
+      }
     }
   }
   if (shouldScheduleCachedBridgeHealthRefresh(lastKnownBridgeHealth)) {

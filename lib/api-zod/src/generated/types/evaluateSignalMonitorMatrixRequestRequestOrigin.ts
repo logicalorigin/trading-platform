@@ -14,5 +14,4 @@ export const EvaluateSignalMonitorMatrixRequestRequestOrigin = {
   poll: 'poll',
   manual: 'manual',
   test: 'test',
-  'sta-visible-page': 'sta-visible-page',
 } as const;

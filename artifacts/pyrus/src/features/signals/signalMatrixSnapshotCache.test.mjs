@@ -66,7 +66,7 @@ test("signal matrix snapshot cache preserves fresh warm-start states inside the 
   assert.equal(cached.states[0].fresh, true);
 });
 
-test("signal matrix snapshot cache marks retained warm-start states aged after the fresh window", () => {
+test("signal matrix snapshot cache preserves retained warm-start states aged after the fresh window", () => {
   const storage = createStorage();
   const nowMs = Date.parse("2026-06-05T14:40:00.000Z");
 
@@ -88,7 +88,7 @@ test("signal matrix snapshot cache marks retained warm-start states aged after t
   assert.equal(cached.cacheStatus, "warm-start-stale");
   assert.equal(cached.states.length, 1);
   assert.equal(cached.states[0].status, "ok");
-  assert.equal(cached.states[0].fresh, false);
+  assert.equal(cached.states[0].fresh, true);
   assert.equal(cached.states[0].currentSignalDirection, "buy");
 });
 

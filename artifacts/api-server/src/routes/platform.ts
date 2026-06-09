@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import {
   GetBarsQueryParams,
   GetBarsResponse,
@@ -101,6 +100,8 @@ import {
   fetchPositionQuoteSnapshotPayload,
   fetchQuoteSnapshotPayload,
   readOptionQuoteDemandSnapshotPayload,
+  resolvePositionQuoteStreamSource,
+  resolveQuoteStreamSource,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
   subscribeMarketDepthSnapshots,
@@ -176,6 +177,7 @@ import {
   readIbkrRemoteDesktopJobStatus,
   readLegacyIbkrBridgeActivationStatus,
   readLegacyIbkrBridgeLoginKeyWithWait,
+  recordIbkrRemoteDesktopRouteAttempt,
   recordLegacyIbkrBridgeActivationProgress,
   registerIbkrRemoteDesktop,
   submitLegacyIbkrBridgeLoginEnvelope,
@@ -728,6 +730,9 @@ const BARS_REQUEST_MAX_WINDOW_DAYS: Record<string, number> = {
 };
 const BARS_BATCH_MAX_REQUESTS = 72;
 const BARS_BATCH_CONCURRENCY = 6;
+const BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT = 40;
+const BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT = 240;
+type BarsBatchResponseShape = "bars" | "sparkline";
 
 function validateBarsRequestWindow(
   query: ReturnType<typeof GetBarsQueryParams.parse>,
@@ -769,6 +774,60 @@ function readOptionalString(value: unknown, maxLength = 160): string | undefined
     return undefined;
   }
   return trimmed.slice(0, maxLength);
+}
+
+function readBarsBatchResponseShape(value: unknown): BarsBatchResponseShape {
+  return String(value || "").trim().toLowerCase() === "sparkline"
+    ? "sparkline"
+    : "bars";
+}
+
+function readBarsBatchSparklinePointLimit(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT;
+  }
+  return Math.max(
+    2,
+    Math.min(BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT, Math.floor(numeric)),
+  );
+}
+
+function readBatchBarCloseValue(bar: unknown): number | null {
+  const record = bar && typeof bar === "object" ? (bar as Record<string, unknown>) : null;
+  const close = Number(record?.close ?? record?.c);
+  return Number.isFinite(close) ? close : null;
+}
+
+function compactBarsForBatchSparkline(
+  bars: unknown[],
+  pointLimit: number,
+): Array<{ timestamp: unknown; close: number }> {
+  const validBars = bars.filter((bar) => readBatchBarCloseValue(bar) != null);
+  const sampledBars =
+    validBars.length <= pointLimit
+      ? validBars
+      : Array.from({ length: pointLimit }, (_, index) => {
+          const sourceIndex = Math.round(
+            (index * (validBars.length - 1)) / (pointLimit - 1),
+          );
+          return validBars[sourceIndex];
+        });
+
+  const points: Array<{ timestamp: unknown; close: number }> = [];
+  for (const bar of sampledBars) {
+    const record =
+      bar && typeof bar === "object" ? (bar as Record<string, unknown>) : null;
+    const close = readBatchBarCloseValue(record);
+    if (close == null) {
+      continue;
+    }
+    points.push({
+      timestamp: record?.timestamp ?? record?.time ?? record?.t ?? null,
+      close,
+    });
+  }
+  return points;
 }
 
 function sendBarsBatchProblem(
@@ -824,10 +883,15 @@ function parseBarsBatchRecord(record: Record<string, unknown>, index: number) {
   const key =
     readOptionalString(record.key, 140) ||
     `${query.symbol}:${query.timeframe}:${index}`;
+  const responseShape = readBarsBatchResponseShape(record.responseShape);
   return {
     key,
     query,
     brokerRecentWindowMinutes,
+    responseShape,
+    sparklinePointLimit: readBarsBatchSparklinePointLimit(
+      record.sparklinePointLimit ?? record.pointLimit,
+    ),
   };
 }
 
@@ -1251,15 +1315,36 @@ router.get("/ibkr/desktops", async (_req, res) => {
 });
 
 router.post("/ibkr/desktop/register", async (req, res) => {
-  res.json(registerIbkrRemoteDesktop(req.body));
+  try {
+    const result = registerIbkrRemoteDesktop(req.body);
+    recordIbkrRemoteDesktopRouteAttempt("register", req.body);
+    res.json(result);
+  } catch (error) {
+    recordIbkrRemoteDesktopRouteAttempt("register", req.body, error);
+    throw error;
+  }
 });
 
 router.post("/ibkr/desktop/heartbeat", async (req, res) => {
-  res.json(heartbeatIbkrRemoteDesktop(req.body));
+  try {
+    const result = heartbeatIbkrRemoteDesktop(req.body);
+    recordIbkrRemoteDesktopRouteAttempt("heartbeat", req.body);
+    res.json(result);
+  } catch (error) {
+    recordIbkrRemoteDesktopRouteAttempt("heartbeat", req.body, error);
+    throw error;
+  }
 });
 
 router.post("/ibkr/desktop/jobs/claim", async (req, res) => {
-  res.json(await claimIbkrRemoteDesktopLaunchJobWithWait(req.body));
+  try {
+    const result = await claimIbkrRemoteDesktopLaunchJobWithWait(req.body);
+    recordIbkrRemoteDesktopRouteAttempt("claim", req.body);
+    res.json(result);
+  } catch (error) {
+    recordIbkrRemoteDesktopRouteAttempt("claim", req.body, error);
+    throw error;
+  }
 });
 
 router.post("/ibkr/desktop/jobs/complete", async (req, res) => {
@@ -1454,6 +1539,12 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const liveQuotes =
+    req.query.liveQuotes === "true"
+      ? true
+      : req.query.liveQuotes === "false"
+        ? false
+        : undefined;
   res.json(
     await getAccountPositions({
       accountId: req.params.accountId,
@@ -1461,12 +1552,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
         typeof req.query.assetClass === "string" ? req.query.assetClass : null,
       mode,
       source: readOptionalString(req.query.source, 80),
-      liveQuotes:
-        req.query.liveQuotes === "false"
-          ? false
-          : req.query.liveQuotes === "true"
-            ? true
-            : undefined,
+      liveQuotes,
     }),
   );
 });
@@ -2104,13 +2190,20 @@ router.post("/bars/batch", async (req, res) => {
             },
           );
           const data = GetBarsResponse.parse(raw);
+          const compactSparklineBars =
+            item.responseShape === "sparkline"
+              ? compactBarsForBatchSparkline(data.bars, item.sparklinePointLimit)
+              : null;
           fulfilledCount += 1;
           items[index] = {
             key: item.key,
             status: "fulfilled",
             symbol: data.symbol,
             timeframe: data.timeframe,
-            bars: data.bars,
+            bars: compactSparklineBars ?? data.bars,
+            barShape: item.responseShape,
+            sourceBarCount:
+              item.responseShape === "sparkline" ? data.bars.length : undefined,
             historySource: data.historySource,
             marketDataMode: data.marketDataMode,
             oldestBarAt: data.historyPage?.oldestBarAt ?? null,
@@ -2403,7 +2496,7 @@ router.get("/streams/quotes", async (req, res) => {
   await startSse(req, res, "quotes", async ({ writeEvent }) => {
     await writeEvent("ready", {
       symbols,
-      source: isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge",
+      source: resolveQuoteStreamSource(),
     });
 
     let active = true;
@@ -2463,7 +2556,7 @@ router.get("/streams/position-quotes", async (req, res) => {
   await startSse(req, res, "position-quotes", async ({ writeEvent }) => {
     await writeEvent("ready", {
       symbols,
-      source: isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge",
+      source: resolvePositionQuoteStreamSource(),
     });
 
     let active = true;

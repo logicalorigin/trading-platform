@@ -10,22 +10,21 @@ export const SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE = null;
 export const SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE = null;
 
 const stateTimeframe = (state) => String(state?.timeframe || "").trim();
-const NON_HYDRATED_MATRIX_STATUSES = new Set([
-  "error",
-  "unknown",
-]);
+const hasHydratedMatrixState = (state, options = {}) =>
+  Boolean(state && stateTimeframe(state) && isRenderableMatrixState(state, options));
 
-const hasHydratedMatrixState = (state) =>
-  Boolean(
-    state &&
-      stateTimeframe(state) &&
-      state.active !== false &&
-      !NON_HYDRATED_MATRIX_STATUSES.has(normalizeSignalStatus(state)) &&
-      (state.latestBarAt ||
-        state.currentSignalAt ||
-        (normalizeSignalStatus(state) === "unavailable" &&
-          (state.lastEvaluatedAt || state.lastError))),
+const isRenderableMatrixState = (state, options = {}) => {
+  const status = normalizeSignalStatus(state);
+  if (options.refreshStale && status === "stale") {
+    return false;
+  }
+  return Boolean(
+    state?.active !== false &&
+      (status === "ok" || status === "stale") &&
+      !state?.lastError &&
+      (state?.latestBarAt || state?.currentSignalAt),
   );
+};
 
 const uniqueSymbols = (symbols = []) => {
   const seen = new Set();
@@ -55,14 +54,42 @@ export function buildSignalsHydrationManifest({
   return result;
 }
 
-const buildComputedTimeframesBySymbol = (states = []) => {
+export function buildSignalsPriorityHydrationSymbols({
+  selectedSymbol = "",
+  expandedSymbol = "",
+  candidateSymbols = [],
+  scopeSymbols = [],
+} = {}) {
+  const scopeSet = new Set(uniqueSymbols(scopeSymbols));
+  const seen = new Set();
+  const result = [];
+  [
+    selectedSymbol,
+    expandedSymbol,
+    ...(Array.isArray(candidateSymbols) ? candidateSymbols : []),
+  ].forEach((symbol) => {
+    const normalized = normalizeSignalsTicker(symbol);
+    if (
+      !normalized ||
+      (scopeSet.size && !scopeSet.has(normalized)) ||
+      seen.has(normalized)
+    ) {
+      return;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  });
+  return result;
+}
+
+const buildComputedStatesBySymbol = (states = [], options = {}) => {
   const bySymbol = new Map();
   (Array.isArray(states) ? states : []).forEach((state) => {
     const symbol = normalizeSignalsTicker(state?.symbol);
     const timeframe = stateTimeframe(state);
-    if (!symbol || !timeframe || !hasHydratedMatrixState(state)) return;
-    const current = bySymbol.get(symbol) ?? new Set();
-    current.add(timeframe);
+    if (!symbol || !timeframe || !hasHydratedMatrixState(state, options)) return;
+    const current = bySymbol.get(symbol) ?? new Map();
+    current.set(timeframe, state);
     bySymbol.set(symbol, current);
   });
   return bySymbol;
@@ -84,6 +111,35 @@ const normalizeRequestLimit = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   return Math.max(1, Math.floor(numeric));
+};
+
+export const prioritizeSignalMatrixTimeframes = (
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+  priorityTimeframes = [],
+) => {
+  const allowed = new Set(SIGNALS_TABLE_TIMEFRAMES);
+  const normalizedTimeframes = Array.from(
+    new Set(
+      (Array.isArray(timeframes) && timeframes.length
+        ? timeframes
+        : SIGNALS_TABLE_TIMEFRAMES
+      )
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter((timeframe) => allowed.has(timeframe)),
+    ),
+  );
+  const scopedTimeframes = normalizedTimeframes.length
+    ? normalizedTimeframes
+    : [...SIGNALS_TABLE_TIMEFRAMES];
+  const prioritySet = new Set(
+    (Array.isArray(priorityTimeframes) ? priorityTimeframes : [])
+      .map((timeframe) => String(timeframe || "").trim())
+      .filter((timeframe) => scopedTimeframes.includes(timeframe)),
+  );
+  return [
+    ...scopedTimeframes.filter((timeframe) => prioritySet.has(timeframe)),
+    ...scopedTimeframes.filter((timeframe) => !prioritySet.has(timeframe)),
+  ];
 };
 
 const selectRequestCellsForSymbols = ({
@@ -109,6 +165,7 @@ export function buildSignalsMatrixHydrationPlan({
   prioritySymbols = [],
   currentStates = [],
   timeframes = SIGNALS_TABLE_TIMEFRAMES,
+  refreshStale = false,
   chunkSize = SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE,
   priorityChunkSize = SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE,
 } = {}) {
@@ -133,27 +190,53 @@ export function buildSignalsMatrixHydrationPlan({
   const normalizedPrioritySymbols = uniqueSymbols(prioritySymbols).filter(
     (symbol) => scopeSymbolSet.has(symbol),
   );
-  const computedBySymbol = buildComputedTimeframesBySymbol(currentStates);
+  const computedBySymbol = buildComputedStatesBySymbol(currentStates, {
+    refreshStale,
+  });
   const hydratedSymbols = [];
   const missingSymbols = [];
   const hydratedCells = [];
   const missingCells = [];
+  const hydratedCellCountsByTimeframe = new Map(
+    matrixTimeframes.map((timeframe) => [timeframe, 0]),
+  );
+  const missingCellCountsByTimeframe = new Map(
+    matrixTimeframes.map((timeframe) => [timeframe, 0]),
+  );
+  const agedCellCountsByTimeframe = new Map(
+    matrixTimeframes.map((timeframe) => [timeframe, 0]),
+  );
   const hydratedTimeframesBySymbol = {};
   const missingCellsBySymbol = new Map();
 
   normalizedSymbols.forEach((symbol) => {
-    const computedTimeframes = computedBySymbol.get(symbol);
+    const computedStates = computedBySymbol.get(symbol);
     const symbolHydratedCells = [];
     const symbolMissingCells = [];
     matrixTimeframes.forEach((timeframe) => {
       const cell = { symbol, timeframe };
-      if (computedTimeframes?.has(timeframe)) {
+      const computedState = computedStates?.get(timeframe);
+      if (computedState) {
         symbolHydratedCells.push(cell);
         hydratedCells.push(cell);
+        hydratedCellCountsByTimeframe.set(
+          timeframe,
+          (hydratedCellCountsByTimeframe.get(timeframe) || 0) + 1,
+        );
+        if (normalizeSignalStatus(computedState) === "stale") {
+          agedCellCountsByTimeframe.set(
+            timeframe,
+            (agedCellCountsByTimeframe.get(timeframe) || 0) + 1,
+          );
+        }
         return;
       }
       symbolMissingCells.push(cell);
       missingCells.push(cell);
+      missingCellCountsByTimeframe.set(
+        timeframe,
+        (missingCellCountsByTimeframe.get(timeframe) || 0) + 1,
+      );
     });
 
     if (symbolHydratedCells.length) {
@@ -197,6 +280,22 @@ export function buildSignalsMatrixHydrationPlan({
   const requestTimeframes = [
     ...new Set(requestCells.map((cell) => cell.timeframe)),
   ];
+  const requestCellCountsByTimeframe = requestCells.reduce((counts, cell) => {
+    counts.set(cell.timeframe, (counts.get(cell.timeframe) || 0) + 1);
+    return counts;
+  }, new Map());
+  const timeframeHydration = matrixTimeframes.map((timeframe) => {
+    const hydrated = hydratedCellCountsByTimeframe.get(timeframe) || 0;
+    const missing = missingCellCountsByTimeframe.get(timeframe) || 0;
+    return {
+      timeframe,
+      hydrated,
+      aged: agedCellCountsByTimeframe.get(timeframe) || 0,
+      missing,
+      requested: requestCellCountsByTimeframe.get(timeframe) || 0,
+      total: hydrated + missing,
+    };
+  });
 
   return {
     symbols: normalizedSymbols,
@@ -212,6 +311,7 @@ export function buildSignalsMatrixHydrationPlan({
     hydratedCellCount: hydratedCells.length,
     missingCellCount: missingCells.length,
     totalCellCount: normalizedSymbols.length * matrixTimeframes.length,
+    timeframeHydration,
     hydratedTimeframesBySymbol,
     missingTimeframesBySymbol: indexCellsBySymbol(missingCells),
     priorityMissingSymbols,

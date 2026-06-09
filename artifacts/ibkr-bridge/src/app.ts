@@ -9,6 +9,7 @@ import { ibkrBridgeService } from "./service";
 import { createSseWriter, type SseWriter } from "./sse-writer";
 
 const app: Express = express();
+const BRIDGE_REQUEST_BODY_LIMIT = "2mb";
 const HISTORY_BAR_TIMEFRAMES = ["5s", "1m", "5m", "15m", "1h", "1d"] as const;
 type RouteHistoryBarTimeframe = (typeof HISTORY_BAR_TIMEFRAMES)[number];
 
@@ -192,6 +193,14 @@ export function createRequestAbortSignal(
   return controller.signal;
 }
 
+function readPositiveQueryNumber(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function isTruthyEnv(raw: string | undefined): boolean {
   if (!raw) {
     return false;
@@ -343,8 +352,8 @@ app.use((req, res, next) => {
 
   next();
 });
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: BRIDGE_REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BRIDGE_REQUEST_BODY_LIMIT }));
 
 app.get("/healthz", async (_req, res) => {
   res.json(await ibkrBridgeService.getHealth());
@@ -360,6 +369,26 @@ app.get("/readyz", (_req, res) => {
 
 app.get("/session", async (_req, res) => {
   res.json(await ibkrBridgeService.refreshSession());
+});
+
+// Graceful shutdown for the desktop deactivate path. The Windows helper has no
+// SIGTERM and otherwise force-kills this process, leaving the TWS API client
+// session (clientId) dangling on the Gateway. Calling this first runs the clean
+// provider disconnect, then exits, so deactivate is clean and the next launch
+// isn't fighting a zombie session. Requires the bridge Bearer token (this route
+// is behind the auth middleware).
+app.post("/shutdown", (_req, res) => {
+  res.json({ ok: true, shuttingDown: true });
+  setTimeout(() => {
+    Promise.resolve(ibkrBridgeService.shutdown())
+      .catch((error) => {
+        logger.warn({ err: error }, "IBKR bridge HTTP shutdown failed");
+      })
+      .finally(() => {
+        // Brief grace so the clean TWS disconnect flushes before exit.
+        setTimeout(() => process.exit(0), 250).unref();
+      });
+  }, 100);
 });
 
 app.get("/diagnostics/lanes", async (_req, res) => {
@@ -1062,6 +1091,7 @@ app.get("/options/chains", async (req, res) => {
         req.query.quoteHydration === "snapshot"
           ? req.query.quoteHydration
           : undefined,
+      timeoutMs: readPositiveQueryNumber(req.query.timeoutMs),
       signal,
     });
 
@@ -1103,6 +1133,7 @@ app.get("/options/expirations", async (req, res) => {
         typeof req.query.maxExpirations === "string"
           ? Number(req.query.maxExpirations)
           : undefined,
+      timeoutMs: readPositiveQueryNumber(req.query.timeoutMs),
       signal,
     });
 

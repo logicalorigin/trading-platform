@@ -6616,14 +6616,6 @@ const ResearchChartSurfaceComponent = ({
   const desktopCrosshairBadgeRef = useRef(
     Boolean(userPreferences.chart.desktopCrosshairBadge),
   );
-  // Last-price pulse — small dot at the right edge of the plot, painted
-  // at the latest bar's close-price Y coordinate. Hidden when the user
-  // has panned away from realtime (realtimeFollowRef.current is false)
-  // so it doesn't suggest "live" on a stale viewport.
-  const [lastPricePulse, setLastPricePulse] = useState<{
-    y: number;
-    tone: "up" | "down" | "flat";
-  } | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
@@ -9529,45 +9521,6 @@ const ResearchChartSurfaceComponent = ({
     baselineBaseValue,
   ]);
 
-  // Last-price pulse — recompute the dot's Y coordinate whenever bars
-  // change. Hidden when the user has panned away from realtime
-  // (realtimeFollowRef.current is false) — showing a pulse on a stale
-  // viewport would lie about the price being "live now." Also hidden
-  // when priceToCoordinate returns null (the bar's price is outside
-  // the visible range — e.g., user wheel-zoomed Y past it).
-  useLayoutEffect(() => {
-    const series = activePriceSeriesRef.current;
-    const latestBar = model.chartBars[model.chartBars.length - 1];
-    if (!series || !latestBar || !realtimeFollowRef.current) {
-      setLastPricePulse((current) => (current === null ? current : null));
-      return;
-    }
-    const close = latestBar.c;
-    if (typeof close !== "number" || !Number.isFinite(close)) {
-      setLastPricePulse((current) => (current === null ? current : null));
-      return;
-    }
-    const y = series.priceToCoordinate?.(close);
-    if (typeof y !== "number" || !Number.isFinite(y)) {
-      setLastPricePulse((current) => (current === null ? current : null));
-      return;
-    }
-    const open = latestBar.o;
-    const tone =
-      typeof open === "number" && Number.isFinite(open)
-        ? close > open
-          ? "up"
-          : close < open
-            ? "down"
-            : "flat"
-        : "flat";
-    setLastPricePulse((current) =>
-      current && Math.abs(current.y - y) < 0.5 && current.tone === tone
-        ? current
-        : { y, tone },
-    );
-  }, [model.chartBars, baseSeriesType, autoScale, invertScale, scaleMode]);
-
   useLayoutEffect(() => {
     if (!chartRef.current || !hasChartBars) {
       return;
@@ -9700,15 +9653,15 @@ const ResearchChartSurfaceComponent = ({
           }))
         : [];
     const markers = [
-      ...deferredModel.indicatorMarkerPayload.overviewMarkers,
-      ...buildTradeMarkers(deferredModel, chartTheme),
+      ...flowChartModel.indicatorMarkerPayload.overviewMarkers,
+      ...buildTradeMarkers(flowChartModel, chartTheme),
       ...positionMarkers,
     ]
       .filter((marker) =>
         isMarkerVisibleInLogicalRange(
           marker,
           visibleLogicalRange,
-          deferredModel.chartBars.length,
+          flowChartModel.chartBars.length,
         ),
       )
       .filter((marker) => {
@@ -9746,9 +9699,9 @@ const ResearchChartSurfaceComponent = ({
     surfaceDiagnosticsRef.current.markerSetCalls += 1;
     writeSurfaceDiagnosticsAttributes();
   }, [
-    deferredModel.chartBars.length,
-    deferredModel.indicatorMarkerPayload,
-    deferredModel.tradeMarkerGroups,
+    flowChartModel.chartBars.length,
+    flowChartModel.indicatorMarkerPayload,
+    flowChartModel.tradeMarkerGroups,
     compact,
     overlayRevision,
     plotSize.height,
@@ -9911,7 +9864,7 @@ const ResearchChartSurfaceComponent = ({
       setWindowOverlays,
       buildWindowOverlays(
         chartRef.current,
-        deferredModel,
+        flowChartModel,
         theme,
         viewportWidth,
         viewportHeight,
@@ -9922,7 +9875,7 @@ const ResearchChartSurfaceComponent = ({
       buildGexProjectionConeSvgOverlay({
         chart: chartRef.current,
         series: activePriceSeriesRef.current,
-        model: deferredModel,
+        model: flowChartModel,
         overlay: gexProjectionCone,
         theme,
         chartTimeframe: legend?.timeframe || footprintContext?.timeframe || null,
@@ -10013,7 +9966,7 @@ const ResearchChartSurfaceComponent = ({
     const indicatorEventOverlays = buildIndicatorEventOverlays(
       chartRef.current,
       activePriceSeriesRef.current,
-      deferredModel,
+      flowChartModel,
       viewportWidth,
       viewportHeight,
     );
@@ -10090,11 +10043,11 @@ const ResearchChartSurfaceComponent = ({
     legend?.timeframe,
     deferredModel.chartBars,
     deferredModel.activeTradeSelectionId,
-    deferredModel.indicatorEvents,
+    flowChartModel.indicatorEvents,
     deferredModel.tradeMarkerGroups,
     deferredModel.tradeOverlays,
-    deferredModel.indicatorWindows,
-    deferredModel.indicatorZones,
+    flowChartModel.indicatorWindows,
+    flowChartModel.indicatorZones,
     extendedSessionWindows,
     hydrationScopeKey,
     latestQuotePrice,
@@ -11895,40 +11848,6 @@ const ResearchChartSurfaceComponent = ({
             >
               {symbol}
             </div>
-          ) : null}
-          {lastPricePulse ? (
-            <span
-              aria-hidden="true"
-              data-chart-last-price-pulse=""
-              data-chart-last-price-tone={lastPricePulse.tone}
-              style={{
-                position: "absolute",
-                top: chartInsetTop + lastPricePulse.y - 4,
-                right:
-                  (chartRef.current?.priceScale?.("right", 0)?.width?.() || 0) +
-                  4,
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background:
-                  lastPricePulse.tone === "up"
-                    ? CSS_COLOR.green
-                    : lastPricePulse.tone === "down"
-                      ? CSS_COLOR.red
-                      : CSS_COLOR.textMuted,
-                boxShadow: `0 0 0 2px ${
-                  lastPricePulse.tone === "up"
-                    ? `${cssColorMix(CSS_COLOR.green, 20)}`
-                    : lastPricePulse.tone === "down"
-                      ? `${cssColorMix(CSS_COLOR.red, 20)}`
-                      : `${cssColorMix(CSS_COLOR.textMuted, 20)}`
-                }`,
-                animation:
-                  "raStatusPulse 1450ms var(--ra-motion-ease) infinite",
-                pointerEvents: "none",
-                zIndex: 2,
-              }}
-            />
           ) : null}
           {(mobileTrackingMode || userPreferences.chart.desktopCrosshairBadge) &&
           floatingCrosshair ? (

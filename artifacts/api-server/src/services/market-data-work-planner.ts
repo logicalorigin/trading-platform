@@ -750,9 +750,12 @@ function buildMarketSessionPlan(status: UsEquityMarketStatus): MarketDataWorkPla
 }
 
 function flowScannerSessionBlockedReason(
-  marketSession: MarketDataWorkPlan["marketSession"],
+  _marketSession: MarketDataWorkPlan["marketSession"],
 ): "market_session_quiet" | null {
-  return marketSession.regularTrading ? null : "market_session_quiet";
+  // The options-flow scanner runs in ALL sessions (full-rate, 24/7). Time-of-day gates
+  // only trade execution, not market-data discovery — so the scanner is never
+  // session-blocked and its live option lines are not evicted off-hours.
+  return null;
 }
 
 export function buildMarketDataWorkPlan(

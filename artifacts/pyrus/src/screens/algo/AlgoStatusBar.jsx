@@ -14,11 +14,21 @@ import { PulseDot } from "../../components/ui/PulseDot.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 
+const resolveDeploymentAccountLabel = ({ deployment, accountId }) => {
+  const providerAccountId = deployment?.providerAccountId || null;
+  if (providerAccountId) {
+    return providerAccountId;
+  }
+  return accountId || null;
+};
+
 export const AlgoStatusBar = ({
   focusedDeployment,
   deployments,
   onSelectDeployment,
   gatewayReady,
+  signalScanReady = true,
+  signalScanBlockedReason = null,
   gatewayBridgeLaunching,
   environment,
   bridgeTone,
@@ -51,8 +61,10 @@ export const AlgoStatusBar = ({
   const subtitle = focusedDeployment
     ? `${focusedDeploymentName} · ${mode}${symbolCount ? ` · ${symbolCount} sym` : ""}`
     : "no deployment selected";
-  const accountLabel =
-    accountId || focusedDeployment?.providerAccountId || null;
+  const accountLabel = resolveDeploymentAccountLabel({
+    deployment: focusedDeployment,
+    accountId,
+  });
 
   return (
     <div
@@ -137,8 +149,18 @@ export const AlgoStatusBar = ({
         )}
         {!narrow && <Badge color={CSS_COLOR.textMuted}>Shadow</Badge>}
         <Badge color={gatewayReady ? CSS_COLOR.textSec : CSS_COLOR.amber}>
-          {gatewayReady ? "DATA" : "BLOCKED"}
+          {gatewayReady ? "BROKER" : "BROKER OFF"}
         </Badge>
+        {!signalScanReady ? (
+          <Badge color={CSS_COLOR.amber}>
+            {signalScanBlockedReason ? "SCAN PAUSED" : "SCAN BLOCKED"}
+          </Badge>
+        ) : null}
+        {signalScanReady ? (
+          <Badge color={CSS_COLOR.cyan}>
+            SCAN READY
+          </Badge>
+        ) : null}
         <Badge color={focusedDeployment?.enabled ? CSS_COLOR.green : CSS_COLOR.textDim}>
           {focusedDeployment?.enabled ? "ON" : "OFF"}
         </Badge>
@@ -183,31 +205,27 @@ export const AlgoStatusBar = ({
             type="button"
             data-testid="algo-status-run-scan"
             onClick={onRunScan}
-            disabled={!focusedDeployment || gatewayBridgeLaunching}
+            disabled={!focusedDeployment || !signalScanReady}
             pending={scanPending}
             pendingLabel="Scanning..."
             size="sm"
             style={{
               border: !focusedDeployment
                 ? "none"
-                : `1px solid ${gatewayReady ? CSS_COLOR.cyan : CSS_COLOR.amber}`,
+                : `1px solid ${signalScanReady ? CSS_COLOR.cyan : CSS_COLOR.amber}`,
               background: !focusedDeployment
                 ? CSS_COLOR.textMuted
-                : gatewayReady
+                : signalScanReady
                   ? cssColorMix(CSS_COLOR.cyan, 10)
                   : CSS_COLOR.amberBg,
               color: !focusedDeployment
                 ? CSS_COLOR.bg0
-                : gatewayReady
+                : signalScanReady
                   ? CSS_COLOR.cyan
                   : CSS_COLOR.amber,
             }}
           >
-            {!gatewayReady
-              ? gatewayBridgeLaunching
-                ? "Preparing..."
-                : "Start data"
-              : "Run scan"}
+            {signalScanReady ? "Run scan" : "Scan paused"}
           </ActionButton>
         </div>
       </div>

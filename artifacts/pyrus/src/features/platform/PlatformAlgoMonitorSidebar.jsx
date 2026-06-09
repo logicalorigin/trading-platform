@@ -56,19 +56,27 @@ import {
   findSignalOptionsCandidateForSignal,
   resolveSignalScoreBreakdown,
   resolveStableStaActionSnapshot,
+  normalizeSignalOptionsMtfTimeframes,
   signalActionLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
   buildVisibleSignalRows,
 } from "../../screens/algo/algoHelpers";
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
-import { buildSignalsMatrixHydrationPlan } from "../signals/signalsMatrixHydration.js";
+import {
+  buildSignalsMatrixHydrationPlan,
+  prioritizeSignalMatrixTimeframes,
+} from "../signals/signalsMatrixHydration.js";
 import {
   hydrateSignalMatrixProfileTimeframe,
   SIGNALS_TABLE_TIMEFRAMES,
   signalPrimaryStateForMatrix,
 } from "../signals/signalsRowModel.js";
 import { setAlgoFocus } from "./algoFocusStore";
+import {
+  isAlgoStreamFreshnessForDeployment,
+  resolveAlgoMonitorRestPolling,
+} from "./algoMonitorFreshness";
 import { useAlgoCockpitStream } from "./live-streams";
 import { buildSignalMatrixBySymbol } from "./watchlistModel";
 
@@ -351,10 +359,10 @@ const readSignalActionLabel = (signal, candidate) => {
 const signalDirectionMeta = (direction) => {
   const value = String(direction || "").toLowerCase();
   if (value === "buy" || value === "long" || value === "bullish") {
-    return { label: "BUY", primitive: "buy", tone: CSS_COLOR.green };
+    return { label: "BULL", primitive: "buy", tone: CSS_COLOR.green };
   }
   if (value === "sell" || value === "short" || value === "bearish") {
-    return { label: "SELL", primitive: "sell", tone: CSS_COLOR.red };
+    return { label: "BEAR", primitive: "sell", tone: CSS_COLOR.red };
   }
   return { label: MISSING_VALUE, primitive: null, tone: CSS_COLOR.textDim };
 };
@@ -476,6 +484,21 @@ export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = []
   });
 };
 
+export const buildAlgoMonitorStaSignalRows = ({
+  signals = [],
+  candidates = [],
+  signalEvents = [],
+  universeSymbols = [],
+  signalMonitorEventsLoaded = false,
+} = {}) =>
+  buildVisibleSignalRows({
+    signals,
+    candidates,
+    signalEvents: signalMonitorEventsLoaded ? signalEvents : [],
+    universeSymbols,
+    includeSignalHistory: signalMonitorEventsLoaded,
+  });
+
 const signalActionRowMatrixSymbols = (rows = []) => {
   const seen = new Set();
   const symbols = [];
@@ -489,21 +512,102 @@ const signalActionRowMatrixSymbols = (rows = []) => {
   return symbols;
 };
 
+const signalActionRowTimeframes = (rows = []) => {
+  const seen = new Set();
+  const timeframes = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const timeframe = String(asRecord(asRecord(row).signal).timeframe || "")
+      .trim();
+    if (!timeframe || seen.has(timeframe)) return;
+    seen.add(timeframe);
+    timeframes.push(timeframe);
+  });
+  return timeframes;
+};
+
+const NON_HYDRATED_ALGO_MONITOR_MATRIX_STATUSES = new Set([
+  "pending",
+  "unknown",
+]);
+
+const isAlgoMonitorSignalBubbleHydrated = (state) => {
+  const record = asRecord(state);
+  if (!Object.keys(record).length) return false;
+  const status = String(record.status || "ok").trim().toLowerCase();
+  return Boolean(
+    record.active !== false &&
+      !NON_HYDRATED_ALGO_MONITOR_MATRIX_STATUSES.has(status) &&
+      (
+        record.latestBarAt ||
+        record.currentSignalAt ||
+        record.lastEvaluatedAt ||
+        record.lastError
+      ),
+  );
+};
+
+export const splitAlgoMonitorSignalRowsByMatrixHydration = ({
+  rows = [],
+  signalMatrixBySymbol = {},
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+} = {}) => {
+  const hydratedRows = [];
+  const pendingRows = [];
+  const selectedTimeframes = Array.from(
+    new Set(
+      (Array.isArray(timeframes) && timeframes.length
+        ? timeframes
+        : SIGNALS_TABLE_TIMEFRAMES
+      )
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter((timeframe) => SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)),
+    ),
+  );
+  const requiredTimeframes = selectedTimeframes.length
+    ? selectedTimeframes
+    : [...SIGNALS_TABLE_TIMEFRAMES];
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const symbol = readSignalSymbol(row?.signal, row?.candidate);
+    const statesByTimeframe = asRecord(signalMatrixBySymbol?.[symbol]);
+    const hydrated = Boolean(
+      symbol &&
+        requiredTimeframes.length &&
+        requiredTimeframes.every((timeframe) =>
+          isAlgoMonitorSignalBubbleHydrated(statesByTimeframe[timeframe]),
+        ),
+    );
+    if (hydrated) {
+      hydratedRows.push(row);
+    } else {
+      pendingRows.push(row);
+    }
+  });
+
+  return {
+    hydratedRows,
+    pendingRows,
+  };
+};
+
 export const buildAlgoMonitorSignalMatrixHydrationRequest = ({
   rows = [],
-  visibleRows = [],
   currentStates = [],
   timeframes = SIGNALS_TABLE_TIMEFRAMES,
 } = {}) => {
   const symbols = signalActionRowMatrixSymbols(rows);
   if (!symbols.length) return null;
-  const prioritySymbols = signalActionRowMatrixSymbols(visibleRows);
+  const requestTimeframes = prioritizeSignalMatrixTimeframes(
+    timeframes,
+    signalActionRowTimeframes(rows),
+  );
 
   const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
     symbols,
-    prioritySymbols,
+    prioritySymbols: symbols,
     currentStates,
-    timeframes,
+    timeframes: requestTimeframes,
+    refreshStale: true,
   });
 
   if (
@@ -515,17 +619,29 @@ export const buildAlgoMonitorSignalMatrixHydrationRequest = ({
 
   return {
     symbols: matrixHydrationPlan.symbols,
-    prioritySymbols: prioritySymbols.length
-      ? prioritySymbols
-      : matrixHydrationPlan.requestSymbols,
+    prioritySymbols: matrixHydrationPlan.symbols,
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
     requestCells: matrixHydrationPlan.requestCells,
     timeframes: matrixHydrationPlan.requestTimeframes,
     requestTimeframes: matrixHydrationPlan.requestTimeframes,
-    clientRole: "algo-sta",
-    requestOrigin: "sta-visible-page",
     reason: "algo-monitor-sidebar",
+  };
+};
+
+export const resolveAlgoMonitorReadinessStatus = ({
+  readinessReady = true,
+  attentionItems = [],
+  deploymentEnabled = false,
+} = {}) => {
+  const hasWarningAttention = attentionItems.some(
+    (item) => item?.severity === "warning",
+  );
+  const hasInfoOnlyReadinessPause =
+    readinessReady === false && attentionItems.length > 0 && !hasWarningAttention;
+  return {
+    gatewayReady: hasInfoOnlyReadinessPause ? true : readinessReady !== false,
+    scanOn: Boolean(deploymentEnabled && readinessReady !== false),
   };
 };
 
@@ -577,7 +693,12 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   );
 };
 
-const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) => {
+const SignalActionRow = ({
+  row,
+  onOpenAlgo,
+  signalStatesByTimeframe = null,
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+}) => {
   const signal = asRecord(row.signal);
   const candidate = asRecord(row.candidate);
   const symbol = readSignalSymbol(signal, candidate);
@@ -602,6 +723,7 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
     matrixStatesByTimeframe: signalStatesByTimeframe || {},
     primaryState: primarySignalState,
     profileTimeframe: signal.timeframe || "5m",
+    includePrimaryFallback: false,
   });
 
   return (
@@ -691,7 +813,7 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
           <SignalDots
             testId="algo-monitor-signal-dots"
             statesByTimeframe={resolvedSignalStatesByTimeframe}
-            timeframes={SIGNALS_TABLE_TIMEFRAMES}
+            timeframes={timeframes}
             style={{ minWidth: dim(36), gap: sp(4), flex: "0 0 auto" }}
           />
           <span
@@ -1019,39 +1141,55 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     focusedDeployment?.name || "Pyrus Signals Shadow",
   );
   const deploymentId = focusedDeployment?.id || "";
+  const externalStreamHydratesDeployment = isAlgoStreamFreshnessForDeployment(
+    externalStreamFreshness,
+    deploymentId,
+  );
   const ownStreamFreshness = useAlgoCockpitStream({
     deploymentId,
     mode: focusedDeployment?.mode || mode,
     eventLimit: 20,
-    enabled: Boolean(queryEnabled && deploymentId && !externalStreamFreshness),
+    enabled: Boolean(
+      queryEnabled && deploymentId && !externalStreamHydratesDeployment,
+    ),
   });
-  const streamFreshness = externalStreamFreshness || ownStreamFreshness;
-  const primaryRestCatchupEnabled = Boolean(
-    queryEnabled && deploymentId && !streamFreshness.algoPrimaryFresh,
-  );
-  const derivedRestCatchupEnabled = Boolean(
-    queryEnabled && deploymentId && !streamFreshness.algoFullFresh,
-  );
+  const streamFreshness = externalStreamHydratesDeployment
+    ? externalStreamFreshness
+    : ownStreamFreshness;
+  const restQueriesActive = Boolean(queryEnabled && deploymentId);
+  // Shell-level stream freshness is not enough to prove this deployment's cache was
+  // updated. Only deployment-scoped freshness can suppress the REST catch-up polls.
+  const {
+    deploymentDataFreshness,
+    primaryPollInterval,
+    derivedPollInterval,
+  } = resolveAlgoMonitorRestPolling({
+    restQueriesActive,
+    deploymentId,
+    streamFreshness,
+  });
   const cockpitQuery = useGetAlgoDeploymentCockpit(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: derivedRestCatchupEnabled,
-      refetchInterval: derivedRestCatchupEnabled ? 30_000 : false,
+      enabled: restQueriesActive,
+      refetchInterval: derivedPollInterval,
       placeholderData: (previousData) => previousData,
     },
   });
   const automationStateQuery = useGetSignalOptionsAutomationState(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: primaryRestCatchupEnabled,
-      refetchInterval: primaryRestCatchupEnabled ? 30_000 : false,
+      enabled: restQueriesActive,
+      refetchInterval: primaryPollInterval,
+      placeholderData: (previousData) => previousData,
     },
   });
   const performanceQuery = useGetSignalOptionsPerformance(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: derivedRestCatchupEnabled,
+      enabled: restQueriesActive,
       refetchInterval: false,
+      placeholderData: (previousData) => previousData,
     },
   });
   const eventsQuery = useListExecutionEvents(
@@ -1059,19 +1197,21 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: primaryRestCatchupEnabled,
-        refetchInterval: primaryRestCatchupEnabled ? 30_000 : false,
+        enabled: restQueriesActive,
+        refetchInterval: primaryPollInterval,
+        placeholderData: (previousData) => previousData,
       },
     },
   );
   const ledgerPositionsQuery = useGetAccountPositions(
     "shadow",
-    { mode: "paper", assetClass: "Options" },
+    { mode: "paper", assetClass: "Options", liveQuotes: false },
     {
       query: {
         ...QUERY_DEFAULTS,
         enabled: Boolean(queryEnabled && deploymentId),
-        refetchInterval: queryEnabled && !streamFreshness.algoFullFresh ? 30_000 : false,
+        refetchInterval:
+          queryEnabled && !deploymentDataFreshness.algoFullFresh ? 30_000 : false,
       },
     },
   );
@@ -1114,45 +1254,68 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const signalOptionsSignals = Array.isArray(staActionSnapshot.signals)
     ? staActionSnapshot.signals
     : [];
-  const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];
-  const visibleStaSignals = useMemo(
+  const displaySignalTimeframes = useMemo(
     () =>
-      buildVisibleSignalRows({
+      normalizeSignalOptionsMtfTimeframes(
+        automationState?.profile?.entryGate?.mtfAlignment?.timeframes ??
+          focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
+      ),
+    [
+      automationState?.profile?.entryGate?.mtfAlignment?.timeframes,
+      focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
+    ],
+  );
+  const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];
+  const staSignalRows = useMemo(
+    () =>
+      buildAlgoMonitorStaSignalRows({
         signals: signalOptionsSignals,
         candidates: signalOptionsCandidates,
         signalEvents: signalMonitorEventRows,
         universeSymbols: focusedDeployment?.symbolUniverse || [],
+        signalMonitorEventsLoaded,
       }),
     [
       focusedDeployment?.symbolUniverse,
       signalMonitorEventRows,
+      signalMonitorEventsLoaded,
       signalOptionsCandidates,
       signalOptionsSignals,
     ],
   );
   const signalActionRows = useMemo(() => {
     return buildAlgoMonitorSignalActionRows({
-      signals: visibleStaSignals,
+      signals: staSignalRows,
       candidates: signalOptionsCandidates,
     });
-  }, [signalOptionsCandidates, visibleStaSignals]);
+  }, [signalOptionsCandidates, staSignalRows]);
   const signalMatrixBySymbol = useMemo(
-    () => buildSignalMatrixBySymbol(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES),
-    [signalMatrixStates],
+    () => buildSignalMatrixBySymbol(signalMatrixStates, displaySignalTimeframes),
+    [displaySignalTimeframes, signalMatrixStates],
   );
-  const visibleSignalActionRows = useMemo(
-    () => signalActionRows.slice(0, 4),
-    [signalActionRows],
+  const signalMatrixHydrationSplit = useMemo(
+    () =>
+      splitAlgoMonitorSignalRowsByMatrixHydration({
+        rows: signalActionRows,
+        signalMatrixBySymbol,
+        timeframes: displaySignalTimeframes,
+      }),
+    [displaySignalTimeframes, signalActionRows, signalMatrixBySymbol],
+  );
+  const matrixHydratedActionRows = signalMatrixHydrationSplit.hydratedRows;
+  const matrixPendingActionRows = signalMatrixHydrationSplit.pendingRows;
+  const displaySignalActionRows = useMemo(
+    () => matrixHydratedActionRows.slice(0, 4),
+    [matrixHydratedActionRows],
   );
   const signalMatrixHydrationRequest = useMemo(
     () =>
       buildAlgoMonitorSignalMatrixHydrationRequest({
         rows: signalActionRows,
-        visibleRows: visibleSignalActionRows,
         currentStates: signalMatrixStates,
-        timeframes: SIGNALS_TABLE_TIMEFRAMES,
+        timeframes: displaySignalTimeframes,
       }),
-    [signalActionRows, signalMatrixStates, visibleSignalActionRows],
+    [displaySignalTimeframes, signalActionRows, signalMatrixStates],
   );
   useEffect(() => {
     if (!signalMatrixHydrationRequest) return;
@@ -1188,7 +1351,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const dailyHaltActive = Boolean(cockpitRisk.dailyHaltActive || openExposure.dailyHaltActive);
   const combinedPnl =
     totalPnl ?? ((realizedPnl ?? 0) + (openPnl ?? 0));
-  const gatewayReady = cockpit?.readiness?.ready !== false;
+  const monitorReadinessStatus = resolveAlgoMonitorReadinessStatus({
+    readinessReady: cockpit?.readiness?.ready !== false,
+    attentionItems,
+    deploymentEnabled: focusedDeployment?.enabled,
+  });
   const latestEventTime = latestEvent?.occurredAt
     ? formatRelativeTimeShort(latestEvent.occurredAt)
     : "no execution events";
@@ -1202,15 +1369,15 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       metrics: [
         {
           label: "Scan",
-          value: streamFreshness.algoFullFresh
+          value: deploymentDataFreshness.algoFullFresh
             ? "live"
-            : streamFreshness.algoPrimaryFresh
+            : deploymentDataFreshness.algoPrimaryFresh
               ? "primary"
               : "polling",
           detail: focusedDeployment?.lastEvaluatedAt
             ? formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)
             : "waiting",
-          tone: streamFreshness.algoFullFresh ? CSS_COLOR.green : CSS_COLOR.amber,
+          tone: deploymentDataFreshness.algoFullFresh ? CSS_COLOR.green : CSS_COLOR.amber,
           icon: Clock,
         },
         {
@@ -1330,20 +1497,31 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         />
       ) : (
         <>
-          <Section title="Signals → Actions" meta={`${visibleSignalActionRows.length}/${signalActionRows.length}`}>
+          <Section title="Signals → Actions" meta={`${displaySignalActionRows.length}/${signalActionRows.length}`}>
             <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
-              {visibleSignalActionRows.length ? (
-                visibleSignalActionRows.map((row) => (
+              {displaySignalActionRows.length ? (
+                displaySignalActionRows.map((row) => (
                   <SignalActionRow
                     key={row.id}
                     row={row}
                     onOpenAlgo={onOpenAlgo}
+                    timeframes={displaySignalTimeframes}
                     signalStatesByTimeframe={
                       signalMatrixBySymbol[readSignalSymbol(row.signal, row.candidate)] ||
                       null
                     }
                   />
                 ))
+              ) : signalActionRows.length && matrixPendingActionRows.length ? (
+                <DataUnavailableState
+                  title="Hydrating signal bubbles"
+                  detail={`${matrixPendingActionRows.length} action ${
+                    matrixPendingActionRows.length === 1 ? "row is" : "rows are"
+                  } waiting for ${displaySignalTimeframes.join(", ")} bubbles.`}
+                  minHeight={86}
+                  loading
+                  loadingEndpoint="/api/signal-monitor/matrix"
+                />
               ) : (
                 <DataUnavailableState
                   title="No active signals"
@@ -1375,8 +1553,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
               </span>
             </div>
             <OperationsStatusOrb
-              gatewayReady={gatewayReady}
-              scanOn={Boolean(focusedDeployment.enabled)}
+              gatewayReady={monitorReadinessStatus.gatewayReady}
+              scanOn={monitorReadinessStatus.scanOn}
               deploymentEnabled={focusedDeployment.enabled}
               attentionItems={attentionItems}
             />

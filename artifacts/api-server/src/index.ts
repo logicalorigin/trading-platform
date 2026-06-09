@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
+import { isTransientPostgresError } from "./lib/transient-db-error";
 import {
   recordServerDiagnosticEvent,
   startDiagnosticsCollector,
@@ -33,6 +34,7 @@ import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-us
 import {
   getPythonComputeDiagnostics,
   startPythonComputeRuntime,
+  stopPythonComputeRuntime,
 } from "./services/python-compute";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
 import { getBridgeQuoteStreamDiagnostics } from "./services/bridge-quote-stream";
@@ -182,6 +184,61 @@ server.once("error", (err) => {
   process.exit(1);
 });
 
+let shuttingDown = false;
+
+function shutdownApi(signal: NodeJS.Signals): void {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  appendRuntimeFlightRecorderEvent("api-shutdown-start", { signal });
+  stopPythonComputeRuntime();
+  server.close((error) => {
+    if (error) {
+      logger.warn({ err: error }, "API server shutdown close failed");
+    }
+    appendRuntimeFlightRecorderEvent("api-shutdown-complete", { signal });
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
+  setTimeout(() => {
+    appendRuntimeFlightRecorderEvent("api-shutdown-forced", { signal });
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  }, 5_000).unref();
+}
+
+process.once("SIGINT", () => shutdownApi("SIGINT"));
+process.once("SIGTERM", () => shutdownApi("SIGTERM"));
+
+const DEFAULT_SIGNAL_OPTIONS_SEED_RETRY_MS = 15_000;
+const DEFAULT_SIGNAL_OPTIONS_SEED_MAX_RETRY_MS = 120_000;
+
+function ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt = 1): void {
+  void ensureDefaultSignalOptionsPaperDeployment({
+    enabled: true,
+    preserveExistingPaused: true,
+  }).catch((err) => {
+    logger.warn(
+      { err, attempt },
+      "Failed to ensure default signal-options shadow deployment",
+    );
+    if (!isTransientPostgresError(err)) {
+      return;
+    }
+    const retryAfterMs = Math.min(
+      DEFAULT_SIGNAL_OPTIONS_SEED_RETRY_MS * attempt,
+      DEFAULT_SIGNAL_OPTIONS_SEED_MAX_RETRY_MS,
+    );
+    logger.warn(
+      { attempt, retryAfterMs },
+      "Retrying default signal-options shadow deployment seed after transient database failure",
+    );
+    setTimeout(
+      () => ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt + 1),
+      retryAfterMs,
+    ).unref();
+  });
+}
+
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
   ensureIbkrLaneRuntimeOverridesLoaded();
@@ -195,21 +252,10 @@ server.listen(port, () => {
   void startPythonComputeRuntime().catch((err) => {
     logger.warn({ err }, "Failed to start Python compute runtime");
   });
-  void ensureDefaultSignalOptionsPaperDeployment({
-    enabled: true,
-    preserveExistingPaused: true,
-  })
-    .catch((err) => {
-      logger.warn(
-        { err },
-        "Failed to ensure default signal-options shadow deployment",
-      );
-    })
-    .finally(() => {
-      startSignalOptionsWorker();
-      startSignalOptionsPositionTickManager();
-      startOvernightSpotWorker();
-    });
+  ensureDefaultSignalOptionsPaperDeploymentWithRetry();
+  startSignalOptionsWorker();
+  startSignalOptionsPositionTickManager();
+  startOvernightSpotWorker();
   startDiagnosticsCollector(collectDiagnosticsInput);
   startRuntimeFlightRecorder();
   void importRuntimeFlightRecorderIncidents(recordServerDiagnosticEvent).catch(

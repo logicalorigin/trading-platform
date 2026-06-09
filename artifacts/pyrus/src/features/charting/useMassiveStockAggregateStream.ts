@@ -314,6 +314,29 @@ const summarizeBucket = (values: number[]) => ({
   p95: percentile(values, 95),
 });
 
+const EMPTY_LATENCY_BUCKET = Object.freeze({
+  p50: null,
+  p95: null,
+});
+
+const EMPTY_IBKR_LATENCY_STATS = Object.freeze({
+  bridgeToApiMs: EMPTY_LATENCY_BUCKET,
+  apiToReactMs: EMPTY_LATENCY_BUCKET,
+  totalMs: EMPTY_LATENCY_BUCKET,
+  sampleCount: 0,
+  stream: Object.freeze({
+    activeConsumerCount: 0,
+    unionSymbolCount: 0,
+    reconnectCount: 0,
+    refreshCount: 0,
+    eventCount: 0,
+    streamGapCount: 0,
+    stallReconnectCount: 0,
+    maxGapMs: 0,
+    lastEventAgeMs: null,
+  }),
+});
+
 const recordLatencySample = (message: BrokerStockAggregateMessage): boolean => {
   const latency = message.latency;
   if (!latency) {
@@ -813,6 +836,10 @@ export const useIbkrLatencyStats = (enabled = true) => {
     enabled ? getLatencyStoreSnapshot : () => 0,
     () => 0,
   );
+
+  if (!enabled) {
+    return EMPTY_IBKR_LATENCY_STATS;
+  }
 
   return {
     bridgeToApiMs: summarizeBucket(latencySamples.bridgeToApiMs),

@@ -102,7 +102,11 @@ const areSignalMonitorSnapshotsEquivalent = (left, right) => {
 const notifySymbol = (symbol) => {
   const normalized = normalizeSymbol(symbol);
   if (!normalized) return;
-  symbolVersions.set(normalized, (symbolVersions.get(normalized) ?? 0) + 1);
+  if (Object.prototype.hasOwnProperty.call(signalStatesBySymbol, normalized)) {
+    symbolVersions.set(normalized, (symbolVersions.get(normalized) ?? 0) + 1);
+  } else {
+    symbolVersions.delete(normalized);
+  }
   Array.from(symbolListeners.get(normalized) || []).forEach((listener) => listener());
 };
 
@@ -210,6 +214,12 @@ export const getSignalMonitorSnapshotForTests = () => signalMonitorSnapshot;
 export const getSignalMonitorSnapshotVersionForTests = getSnapshotVersion;
 
 export const subscribeToSignalMonitorSnapshotForTests = subscribe;
+
+export const __signalMonitorStoreTestHooks = {
+  subscribeSymbol,
+  symbolVersion: getSignalStateVersionForSymbol,
+  symbolVersionCount: () => symbolVersions.size,
+};
 
 export const resetSignalMonitorStoreForTests = () => {
   globalListeners.clear();

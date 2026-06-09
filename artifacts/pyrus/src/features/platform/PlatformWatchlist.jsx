@@ -41,7 +41,6 @@ import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
 import {
   SIGNALS_ROW_STATUS,
-  buildSignalsRows,
 } from "../signals/signalsRowModel.js";
 import {
   EMPTY_SIGNAL_EVENTS,
@@ -53,10 +52,6 @@ import {
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
-import {
-  useSignalMonitorSnapshot,
-  useSignalMonitorStateForSymbol,
-} from "./signalMonitorStore";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_COMPACT_HEIGHT,
@@ -277,7 +272,6 @@ const SIGNALS_PAGE_ACTIVE_STATUSES = new Set([
   SIGNALS_ROW_STATUS.activeStale,
 ]);
 
-const EMPTY_SIGNAL_STATES = Object.freeze([]);
 const signalColorForDirection = defaultSignalSparklineColorForDirection;
 
 const WatchlistRow = memo(
@@ -297,7 +291,6 @@ const WatchlistRow = memo(
     onToggleSelection,
     onSignalAction,
     signalStatesByTimeframe = {},
-    signalsRow = null,
     signalEvents = EMPTY_SIGNAL_EVENTS,
     busy = false,
     density = "default",
@@ -310,7 +303,6 @@ const WatchlistRow = memo(
       [item.name, item.sym, itemIndex],
     );
     const snapshot = useRuntimeTickerSnapshot(item.sym, fallback);
-    const signalState = useSignalMonitorStateForSymbol(item.sym);
     const bestSignalState = getBestWatchlistSignalState(signalStatesByTimeframe);
     const rowSelectable = Boolean(item.canRemove && item.id);
     const selectedRow = selected === item.sym;
@@ -321,32 +313,28 @@ const WatchlistRow = memo(
       bestSignalState?.status !== "unavailable";
     const signalColor = signalDirection === "buy" ? CSS_COLOR.blue : CSS_COLOR.red;
     const sparklineRow = useMemo(() => {
-      if (signalsRow) {
-        return signalsRow;
-      }
-      const currentDirection = signalState?.currentSignalDirection;
+      const currentDirection = bestSignalState?.currentSignalDirection;
       if (
         !isWatchlistSignalDirection(currentDirection) ||
-        signalState?.status === "error" ||
-        signalState?.status === "unavailable"
+        bestSignalState?.status === "error" ||
+        bestSignalState?.status === "unavailable"
       ) {
         return null;
       }
       return {
         direction: currentDirection,
-        currentSignalAt: signalState?.currentSignalAt || null,
-        profileTimeframe: signalState?.timeframe || "",
-        status: signalState?.fresh
+        currentSignalAt: bestSignalState?.currentSignalAt || null,
+        profileTimeframe: bestSignalState?.timeframe || "",
+        status: bestSignalState?.fresh
           ? SIGNALS_ROW_STATUS.activeFresh
           : SIGNALS_ROW_STATUS.activeStale,
       };
     }, [
-      signalState?.currentSignalAt,
-      signalState?.currentSignalDirection,
-      signalState?.fresh,
-      signalState?.status,
-      signalState?.timeframe,
-      signalsRow,
+      bestSignalState?.currentSignalAt,
+      bestSignalState?.currentSignalDirection,
+      bestSignalState?.fresh,
+      bestSignalState?.status,
+      bestSignalState?.timeframe,
     ]);
     const sparklineSignalDirection = sparklineRow?.direction;
     const sparklineSignalColor =
@@ -356,9 +344,7 @@ const WatchlistRow = memo(
         : null;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
-    const priceValue = isFiniteNumber(snapshot?.price)
-      ? snapshot.price
-      : signalState?.currentSignalPrice;
+    const priceValue = isFiniteNumber(snapshot?.price) ? snapshot.price : null;
     const quotePriceForFlash = isFiniteNumber(snapshot?.price)
       ? snapshot.price
       : null;
@@ -955,28 +941,10 @@ export const Watchlist = ({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState(() => new Set());
   const deferredAddQuery = useDeferredValue(addQuery.trim());
-  const signalMonitorSnapshot = useSignalMonitorSnapshot();
-  const snapshotProfile = signalMonitorSnapshot?.profile || null;
-  const snapshotEnvironment = String(snapshotProfile?.environment || "").trim();
-  const propEnvironment = String(signalProfile?.environment || "").trim();
-  const snapshotMatchesEnvironment =
-    !snapshotEnvironment ||
-    !propEnvironment ||
-    snapshotEnvironment === propEnvironment;
-  const effectiveSignalProfile =
-    signalProfile || (snapshotMatchesEnvironment ? snapshotProfile : null);
-  const effectiveSignalStates =
-    Array.isArray(signalStates) && signalStates.length
-      ? signalStates
-      : snapshotMatchesEnvironment && Array.isArray(signalMonitorSnapshot?.states)
-        ? signalMonitorSnapshot.states
-        : EMPTY_SIGNAL_STATES;
   const effectiveSignalEvents =
     Array.isArray(signalEvents) && signalEvents.length
       ? signalEvents
-      : snapshotMatchesEnvironment && Array.isArray(signalMonitorSnapshot?.events)
-        ? signalMonitorSnapshot.events
-        : EMPTY_SIGNAL_EVENTS;
+      : EMPTY_SIGNAL_EVENTS;
   const activeWatchlist =
     activeWatchlistId != null
       ? watchlists.find((watchlist) => watchlist.id === activeWatchlistId) ||
@@ -1003,28 +971,6 @@ export const Watchlist = ({
     () => items.map((item) => item.sym).filter(Boolean),
     [items],
   );
-  const signalsRowsBySymbol = useMemo(() => {
-    const rows = buildSignalsRows({
-      stateResponse: {
-        profile: effectiveSignalProfile,
-        states: effectiveSignalStates,
-        universeSymbols: itemSymbols,
-        skippedSymbols: [],
-        universe: null,
-      },
-      matrixStates: signalMatrixStates,
-      events: effectiveSignalEvents,
-      watchlists,
-    });
-    return new Map(rows.map((row) => [row.symbol, row]));
-  }, [
-    effectiveSignalEvents,
-    effectiveSignalProfile,
-    effectiveSignalStates,
-    itemSymbols,
-    signalMatrixStates,
-    watchlists,
-  ]);
   const signalEventsBySymbol = useMemo(
     () => buildSignalEventsBySymbol(effectiveSignalEvents),
     [effectiveSignalEvents],
@@ -1869,7 +1815,6 @@ export const Watchlist = ({
               onToggleSelection={toggleItemSelection}
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
-              signalsRow={signalsRowsBySymbol.get(item.sym) || null}
               signalEvents={signalEventsBySymbol.get(item.sym) || EMPTY_SIGNAL_EVENTS}
               busy={busy}
               density={density}

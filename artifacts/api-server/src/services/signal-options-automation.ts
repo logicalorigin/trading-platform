@@ -1697,6 +1697,22 @@ function resolvePositionMarkQuote(input: {
   };
 }
 
+function positionMarkUnavailableSummary(input: {
+  symbol: string;
+  markReason?: string | null;
+}) {
+  const symbol = normalizeSymbol(input.symbol).toUpperCase() || input.symbol;
+  return input.markReason === "quote_not_fresh"
+    ? `${symbol} shadow mark skipped: option quote stale`
+    : `${symbol} shadow mark skipped: option mark unavailable`;
+}
+
+function positionMarkUnavailableMessage(markReason?: string | null) {
+  return markReason === "quote_not_fresh"
+    ? "The option quote was stale or unavailable for the open shadow position."
+    : "The option quote did not include a positive mark price.";
+}
+
 function positionMarkAttemptPayload(input: {
   source:
     | "provider_snapshot"
@@ -2312,6 +2328,9 @@ async function listSignalOptionsSignalSnapshots(
         states: Array.isArray(state.states)
           ? (state.states as SignalMonitorState[])
           : [],
+        timeframe: resolveSignalMonitorTimeframe(
+          asRecord(state.profile).timeframe,
+        ),
         freshWindowBars: optionalFiniteNumber(
           asRecord(state.profile).freshWindowBars,
         ),
@@ -2323,12 +2342,18 @@ async function listSignalOptionsSignalSnapshots(
     );
     return {
       states: [] as SignalMonitorState[],
+      timeframe: null as SignalMonitorTimeframe | null,
       freshWindowBars: null as number | null,
     };
   });
   const filteredStates = signalState.states.filter((state) => {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
-    return symbol && (universe.size === 0 || universe.has(symbol));
+    const stateTimeframe = compactString(state.timeframe);
+    return (
+      symbol &&
+      (universe.size === 0 || universe.has(symbol)) &&
+      (!signalState.timeframe || stateTimeframe === signalState.timeframe)
+    );
   });
   const visibleStates = filteredStates.filter(isSignalOptionsVisibleSignalState);
   const freshWindowBars = signalState.freshWindowBars;
@@ -2692,13 +2717,16 @@ function hasUnseenSignalOptionsActionableState(input: {
 function orderSignalOptionsActionStates(input: {
   states: SignalMonitorState[];
   universe: Set<string>;
+  timeframe?: SignalMonitorTimeframe | null;
 }): SignalMonitorState[] {
   return input.states
     .map((state, index) => {
       const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      const stateTimeframe = compactString(state.timeframe);
       const inUniverse =
         Boolean(symbol) &&
-        (input.universe.size === 0 || input.universe.has(symbol));
+        (input.universe.size === 0 || input.universe.has(symbol)) &&
+        (!input.timeframe || stateTimeframe === input.timeframe);
       const signalAtMs = dateOrNull(state.currentSignalAt)?.getTime() ?? 0;
       const latestBarMs = dateOrNull(state.latestBarAt)?.getTime() ?? 0;
       const barsSinceSignal =
@@ -4613,6 +4641,7 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
   if (!profile) {
     return {
       states: [] as SignalMonitorState[],
+      timeframe: null as SignalMonitorTimeframe | null,
       freshWindowBars: null as number | null,
     };
   }
@@ -4721,6 +4750,7 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
 
   return {
     states,
+    timeframe,
     freshWindowBars: optionalFiniteNumber(profile.freshWindowBars),
   };
 }
@@ -4814,76 +4844,9 @@ function resolveSignalOptionsWorkerMonitorBatchCapacity(
 function shouldBatchSignalOptionsWorkerMonitorRefresh(input: {
   source?: "manual" | "worker";
   pressure: ReturnType<typeof getApiResourcePressureSnapshot>;
-  streamFirstMonitorAvailable?: boolean;
 }): boolean {
-  if (input.source !== "worker") {
-    return false;
-  }
-  if (input.pressure.caps.signalOptions.signalRefreshAllowed === false) {
-    return false;
-  }
-  return (
-    input.streamFirstMonitorAvailable === true ||
-    input.pressure.level === "watch" ||
-    input.pressure.level === "high" ||
-    input.pressure.scannerPressure.level === "watch" ||
-    input.pressure.scannerPressure.level === "high"
-  );
-}
-
-function signalOptionsMonitorStateMergeKey(state: unknown): string | null {
-  const record = asRecord(state);
-  const symbol = normalizeSymbol(String(record.symbol ?? "")).toUpperCase();
-  const timeframe = compactString(record.timeframe);
-  return symbol && timeframe ? `${symbol}:${timeframe}` : null;
-}
-
-function mergeSignalOptionsMonitorStateBatch(input: {
-  stored: unknown;
-  evaluated: unknown;
-}) {
-  const stored = asRecord(input.stored);
-  const evaluated = asRecord(input.evaluated);
-  const storedStates = asArray(stored.states);
-  const evaluatedStates = asArray(evaluated.states);
-  const evaluatedByKey = new Map<string, unknown>();
-
-  for (const state of evaluatedStates) {
-    const key = signalOptionsMonitorStateMergeKey(state);
-    if (key) {
-      evaluatedByKey.set(key, state);
-    }
-  }
-
-  const mergedStates = storedStates.map((state) => {
-    const key = signalOptionsMonitorStateMergeKey(state);
-    if (!key) {
-      return state;
-    }
-    const updated = evaluatedByKey.get(key);
-    if (updated !== undefined) {
-      evaluatedByKey.delete(key);
-      return updated;
-    }
-    return state;
-  });
-  mergedStates.push(...evaluatedByKey.values());
-
-  return {
-    ...stored,
-    ...evaluated,
-    states: mergedStates,
-    universeSymbols: asArray(stored.universeSymbols).length
-      ? stored.universeSymbols
-      : evaluated.universeSymbols,
-    universe: Object.keys(asRecord(stored.universe)).length
-      ? stored.universe
-      : evaluated.universe,
-    truncated: Boolean(stored.truncated) || Boolean(evaluated.truncated),
-    skippedSymbols: asArray(stored.skippedSymbols).length
-      ? stored.skippedSymbols
-      : evaluated.skippedSymbols,
-  };
+  void input;
+  return false;
 }
 
 function shouldRefreshSignalOptionsMonitorState(input: {
@@ -5066,62 +5029,10 @@ async function loadSignalOptionsMonitorState(input: {
     const streamFirstMonitorAvailable =
       process.env["SIGNAL_OPTIONS_STREAM_FIRST_MONITOR"] !== "0" &&
       isStockAggregateStreamingAvailable();
-    const pressure = getApiResourcePressureSnapshot();
     const signalStabilityPolicy =
       input.source === "worker" && streamFirstMonitorAvailable
         ? "allow-partial-live-edge"
         : undefined;
-    if (
-      input.forceEvaluate !== true &&
-      requireWorkerLiveEdgeRefresh &&
-      shouldBatchSignalOptionsWorkerMonitorRefresh({
-        source: input.source,
-        pressure,
-        streamFirstMonitorAvailable,
-      })
-    ) {
-      const batch = resolveSignalOptionsMonitorBatch({
-        deploymentId: input.deployment.id,
-        universe: input.universe,
-        profile,
-        capacity: resolveSignalOptionsWorkerMonitorBatchCapacity(profile),
-      });
-      if (!batch.symbols.length) {
-        return {
-          ...stored,
-          signalOptionsBatch: {
-            ...batch,
-            forced: false,
-            source: "stored_state",
-            reason: "worker_live_edge_batch_empty",
-          },
-        };
-      }
-      const evaluated = await evaluateSignalMonitorProfileSymbols({
-        profile,
-        mode: "incremental",
-        symbols: batch.symbols,
-        maxSymbolsOverride: batch.symbols.length,
-        pressureCapMode: "bypass-soft",
-        evaluationConcurrencyOverride: Math.min(
-          SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY,
-          batch.symbols.length,
-        ),
-        barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
-        includeProvisionalLiveEdge: true,
-        allowHistoricalFallback: streamFirstMonitorAvailable ? false : undefined,
-        signalStabilityPolicy,
-        signal: input.signal,
-      });
-      return {
-        ...mergeSignalOptionsMonitorStateBatch({ stored, evaluated }),
-        signalOptionsBatch: {
-          ...batch,
-          forced: false,
-          source: "worker_live_edge_batch",
-        },
-      };
-    }
     if (
       input.forceEvaluate !== true &&
       input.source === "worker" &&
@@ -7612,16 +7523,16 @@ function buildCockpitAttention(input: {
     const marketSessionQuiet = isMarketSessionQuietReadiness(input.readiness);
     items.push({
       id: "gateway-readiness",
-      severity: "warning",
+      severity: marketSessionQuiet ? "info" : "warning",
       stage: "scan_universe",
       symbol: null,
       summary: marketSessionQuiet
-        ? "Market session is closed."
+        ? "Options session is closed."
         : "Market data readiness is blocking scans.",
       detail: input.readiness.message,
       occurredAt: new Date().toISOString(),
       action: marketSessionQuiet
-        ? "Signal-options scans will resume when the market session opens."
+        ? "Signal-options scans will resume when the regular options session opens."
         : "Start or repair the IBKR bridge/data mode before running signal-options scans.",
     });
   }
@@ -10762,13 +10673,6 @@ async function refreshActivePosition(input: {
     return { managed: false, reason: "invalid_expiration" };
   }
   const now = input.now ?? new Date();
-  if (!isLiveOptionTradingSession(now, contract)) {
-    return {
-      managed: true,
-      reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON,
-      position: input.position,
-    };
-  }
 
   const providerContractId =
     typeof contract.providerContractId === "string"
@@ -11041,14 +10945,17 @@ async function refreshActivePosition(input: {
 
   if (!markResolution?.ok || markResolution.markPrice == null) {
     return await emitPositionMarkSkip({
-      summary: `${input.position.symbol} shadow mark skipped: option mark unavailable`,
-      message:
-        markResolution?.reason === "quote_not_fresh"
-          ? "The option quote was stale or unavailable for the open shadow position."
-          : "The option quote did not include a positive mark price.",
+      summary: positionMarkUnavailableSummary({
+        symbol: input.position.symbol,
+        markReason: markResolution?.reason,
+      }),
+      message: positionMarkUnavailableMessage(markResolution?.reason),
       quote,
       liquidity: markResolution?.liquidity ?? null,
       reason: "position_mark_unavailable",
+      detail: {
+        markReason: markResolution?.reason ?? null,
+      },
     });
   }
 
@@ -11152,7 +11059,12 @@ async function refreshActivePosition(input: {
         : (input.position.greekBaselineSource ?? null),
   };
 
-  if (exitReason) {
+  // Mark computation/recording above runs in ALL sessions (data). Exit PLACEMENT is
+  // execution and stays gated to live trading sessions: off-hours a hit stop does not
+  // place an exit — it defers to the next in-session scan (same exit timing as before,
+  // since orders are never placed off-hours). This splits the old blanket off-hours
+  // early-return so position marks stay current 24/7 without enabling off-hours exits.
+  if (exitReason && isLiveOptionTradingSession(now, contract)) {
     const exitQuoteEligible =
       isSignalOptionsLiveExitQuoteEligible({
         quote,
@@ -16696,11 +16608,15 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   });
   const unmanagedPositionSymbols = new Set<string>();
   const evaluatedStates = evaluated.states as SignalMonitorState[];
+  const evaluatedProfile = asRecord(asRecord(evaluated).profile);
+  const signalActionTimeframe = resolveSignalMonitorTimeframe(
+    evaluatedProfile.timeframe,
+  );
   const signalActionStates = orderSignalOptionsActionStates({
     states: evaluatedStates,
     universe,
+    timeframe: signalActionTimeframe,
   });
-  const evaluatedProfile = asRecord(asRecord(evaluated).profile);
   const evaluatedPyrusSignalsSettings = asRecord(
     evaluatedProfile.pyrusSignalsSettings,
   );
@@ -17282,6 +17198,8 @@ export const __signalOptionsAutomationInternalsForTests = {
   classifySignalOptionsEntryQuality,
   quoteSnapshotToSignalOptionsQuote,
   resolvePositionMarkQuote,
+  positionMarkUnavailableSummary,
+  positionMarkUnavailableMessage,
   isSignalOptionsLiveExitQuoteEligible,
   isSignalOptionsShadowMarkFallbackExitEligible,
   signalOptionsEntryEventHasActionableOptionSession,
@@ -17303,7 +17221,6 @@ export const __signalOptionsAutomationInternalsForTests = {
   createSignalOptionsActionWorkBudget,
   resolveSignalOptionsMonitorBatch,
   resolveSignalOptionsWorkerMonitorBatchCapacity,
-  mergeSignalOptionsMonitorStateBatch,
   resolveSignalOptionsMonitorFullRefresh,
   shouldBatchSignalOptionsWorkerMonitorRefresh,
   shouldRefreshSignalOptionsMonitorState,

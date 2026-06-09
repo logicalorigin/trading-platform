@@ -3,12 +3,12 @@ export const ACCOUNT_REFRESH_INTERVALS = Object.freeze({
   primaryFallback: 15_000,
   secondaryFallback: 30_000,
   tradesFallback: 60_000,
-  chart: 60_000,
+  chart: 300_000,
   health: 15_000,
   shadowPrimaryFallback: 30_000,
   shadowSecondaryFallback: 60_000,
   shadowTradesFallback: 120_000,
-  shadowChart: 120_000,
+  shadowChart: 300_000,
 });
 
 export const buildAccountRefreshPolicy = ({

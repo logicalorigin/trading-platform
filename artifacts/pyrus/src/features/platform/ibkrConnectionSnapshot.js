@@ -160,16 +160,31 @@ export const buildIbkrConnectionSnapshot = ({
     socketConnected,
     connection?.reachable,
   );
+  const brokerProofEnabled = configured === true;
+  const effectiveBridgeReachable = brokerProofEnabled ? bridgeReachable : false;
+  const effectiveSocketConnected = brokerProofEnabled ? socketConnected : false;
+  const effectiveBrokerServerConnected = brokerProofEnabled
+    ? brokerServerConnected
+    : false;
+  const effectiveAuthenticated = brokerProofEnabled ? authenticated : false;
+  const effectiveAccountsLoaded = brokerProofEnabled ? accountsLoaded : false;
+  const effectiveConfiguredLiveMarketDataMode = brokerProofEnabled
+    ? configuredLiveMarketDataMode
+    : false;
+  const effectiveStreamFresh = brokerProofEnabled ? streamFresh : false;
+  const effectiveHealthFresh = brokerProofEnabled ? healthFresh : false;
+  const effectiveStrictReady = brokerProofEnabled ? strictReady : false;
+  const effectiveConnected = brokerProofEnabled ? connected : false;
   const launchActivityPresent = hasLaunchActivity(launch, nowMs);
   const activationActive = Boolean(activation?.active || activation?.latestActivation);
   const activityPresent = Boolean(
     launchActivityPresent ||
       activationActive ||
       configured ||
-      connected ||
-      authenticated ||
-      bridgeReachable ||
-      socketConnected ||
+      effectiveConnected ||
+      effectiveAuthenticated ||
+      effectiveBridgeReachable ||
+      effectiveSocketConnected ||
       runtimeIbkr.desktopAgentOnline ||
       runtimeIbkr.runtimeOverrideActive,
   );
@@ -206,7 +221,8 @@ export const buildIbkrConnectionSnapshot = ({
         transport: "tws",
         configured,
         bridgeUrlConfigured: Boolean(
-          runtimeIbkr.runtimeOverrideActive || bridge || bridgeReachable,
+          runtimeIbkr.runtimeOverrideActive ||
+            (brokerProofEnabled && (bridge || effectiveBridgeReachable)),
         ),
         bridgeTokenConfigured: runtimeIbkr.bridgeTokenConfigured,
         runtimeOverrideActive: Boolean(runtimeIbkr.runtimeOverrideActive),
@@ -228,7 +244,7 @@ export const buildIbkrConnectionSnapshot = ({
         ),
         reconnectAvailable: Boolean(runtimeIbkr.reconnectAvailable),
         activation,
-        reachable: Boolean(bridgeReachable || connected),
+        reachable: Boolean(effectiveBridgeReachable || effectiveConnected),
         healthError: firstValue(
           runtimeIbkr.healthError,
           bridge?.healthError,
@@ -239,86 +255,127 @@ export const buildIbkrConnectionSnapshot = ({
         healthErrorCode: runtimeIbkr.healthErrorCode,
         healthErrorStatusCode: runtimeIbkr.healthErrorStatusCode,
         healthErrorDetail: runtimeIbkr.healthErrorDetail,
-        connected: Boolean(connected),
-        authenticated: Boolean(authenticated),
-        competing: Boolean(
-          firstBoolean(connection?.competing, bridge?.competing, runtimeIbkr.competing),
-        ),
-        selectedAccountId: selectedAccountId || null,
-        accountCount,
-        connectionTarget: target || null,
-        sessionMode: sessionMode || null,
-        clientId: clientId ?? null,
-        marketDataMode: marketDataMode || null,
-        liveMarketDataAvailable: liveMarketDataAvailable ?? null,
-        healthFresh: healthFresh ?? false,
-        healthAgeMs: firstValue(
-          connection?.healthAgeMs,
-          bridge?.healthAgeMs,
-          runtimeIbkr.healthAgeMs,
-        ) ?? null,
+        connected: Boolean(effectiveConnected),
+        authenticated: Boolean(effectiveAuthenticated),
+        competing: brokerProofEnabled
+          ? Boolean(
+              firstBoolean(
+                connection?.competing,
+                bridge?.competing,
+                runtimeIbkr.competing,
+              ),
+            )
+          : false,
+        selectedAccountId: brokerProofEnabled ? selectedAccountId || null : null,
+        accountCount: brokerProofEnabled ? accountCount : 0,
+        connectionTarget: brokerProofEnabled ? target || null : null,
+        sessionMode: brokerProofEnabled ? sessionMode || null : null,
+        clientId: brokerProofEnabled ? clientId ?? null : null,
+        marketDataMode: brokerProofEnabled ? marketDataMode || null : null,
+        liveMarketDataAvailable: brokerProofEnabled
+          ? liveMarketDataAvailable ?? null
+          : null,
+        healthFresh: effectiveHealthFresh ?? false,
+        healthAgeMs: brokerProofEnabled
+          ? firstValue(
+              connection?.healthAgeMs,
+              bridge?.healthAgeMs,
+              runtimeIbkr.healthAgeMs,
+            ) ?? null
+          : null,
         stale: firstBoolean(
           connection?.stale,
           bridge?.stale,
           runtimeIbkr.stale,
-          healthFresh === false ? true : undefined,
+          effectiveHealthFresh === false ? true : undefined,
         ) ?? false,
-        bridgeReachable: Boolean(bridgeReachable),
-        socketConnected: Boolean(socketConnected),
-        brokerServerConnected: Boolean(brokerServerConnected),
+        bridgeReachable: Boolean(effectiveBridgeReachable),
+        socketConnected: Boolean(effectiveSocketConnected),
+        brokerServerConnected: Boolean(effectiveBrokerServerConnected),
         serverConnectivity:
-          firstValue(
-            connection?.serverConnectivity,
-            bridge?.serverConnectivity,
-            runtimeIbkr.serverConnectivity,
-          ) || null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.serverConnectivity,
+                bridge?.serverConnectivity,
+                runtimeIbkr.serverConnectivity,
+              ) || null
+            : null,
         lastServerConnectivityAt:
-          firstValue(
-            connection?.lastServerConnectivityAt,
-            bridge?.lastServerConnectivityAt,
-            runtimeIbkr.lastServerConnectivityAt,
-          ) || null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastServerConnectivityAt,
+                bridge?.lastServerConnectivityAt,
+                runtimeIbkr.lastServerConnectivityAt,
+              ) || null
+            : null,
         lastServerConnectivityError:
-          firstValue(
-            connection?.lastServerConnectivityError,
-            bridge?.lastServerConnectivityError,
-            runtimeIbkr.lastServerConnectivityError,
-          ) || null,
-        accountsLoaded: Boolean(accountsLoaded),
-        configuredLiveMarketDataMode: Boolean(configuredLiveMarketDataMode),
-        streamFresh: Boolean(streamFresh),
-        streamState: streamState || "offline",
-        streamStateReason: streamStateReason || null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastServerConnectivityError,
+                bridge?.lastServerConnectivityError,
+                runtimeIbkr.lastServerConnectivityError,
+              ) || null
+            : null,
+        accountsLoaded: Boolean(effectiveAccountsLoaded),
+        configuredLiveMarketDataMode: Boolean(
+          effectiveConfiguredLiveMarketDataMode,
+        ),
+        streamFresh: Boolean(effectiveStreamFresh),
+        streamState: brokerProofEnabled ? streamState || "offline" : "offline",
+        streamStateReason: brokerProofEnabled
+          ? streamStateReason || null
+          : "bridge_not_configured",
         lastStreamEventAgeMs:
-          toFiniteNumber(
-            firstValue(
-              connection?.lastStreamEventAgeMs,
-              bridge?.lastStreamEventAgeMs,
-              runtimeIbkr.lastStreamEventAgeMs,
-            ),
-          ) ?? null,
-        strictReady: Boolean(strictReady),
+          brokerProofEnabled
+            ? toFiniteNumber(
+                firstValue(
+                  connection?.lastStreamEventAgeMs,
+                  bridge?.lastStreamEventAgeMs,
+                  runtimeIbkr.lastStreamEventAgeMs,
+                ),
+              ) ?? null
+            : null,
+        strictReady: Boolean(effectiveStrictReady),
         strictReason:
-          firstValue(connection?.strictReason, bridge?.strictReason, runtimeIbkr.strictReason) ||
-          null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.strictReason,
+                bridge?.strictReason,
+                runtimeIbkr.strictReason,
+              ) || null
+            : "ibkr_bridge_not_configured",
         lastTickleAt:
-          firstValue(connection?.lastTickleAt, bridge?.lastTickleAt, runtimeIbkr.lastTickleAt) ||
-          null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastTickleAt,
+                bridge?.lastTickleAt,
+                runtimeIbkr.lastTickleAt,
+              ) || null
+            : null,
         lastRecoveryAttemptAt:
-          firstValue(
-            connection?.lastRecoveryAttemptAt,
-            bridge?.lastRecoveryAttemptAt,
-            runtimeIbkr.lastRecoveryAttemptAt,
-          ) || null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastRecoveryAttemptAt,
+                bridge?.lastRecoveryAttemptAt,
+                runtimeIbkr.lastRecoveryAttemptAt,
+              ) || null
+            : null,
         lastRecoveryError:
-          firstValue(
-            connection?.lastRecoveryError,
-            bridge?.lastRecoveryError,
-            runtimeIbkr.lastRecoveryError,
-          ) || null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastRecoveryError,
+                bridge?.lastRecoveryError,
+                runtimeIbkr.lastRecoveryError,
+              ) || null
+            : null,
         lastError:
-          firstValue(connection?.lastError, bridge?.lastError, runtimeIbkr.lastError) ||
-          null,
+          brokerProofEnabled
+            ? firstValue(
+                connection?.lastError,
+                bridge?.lastError,
+                runtimeIbkr.lastError,
+              ) || null
+            : null,
       },
     },
   };
