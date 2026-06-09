@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-09.ib-async-sidecar-v17-foreground-retry-safe-selfupdate'
+$HelperVersion = '2026-06-09.ib-async-sidecar-v18-agent-converge'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -419,30 +419,35 @@ function Test-DesktopAgentProcessRunning {
     return $false
 }
 
+function Stop-StaleDesktopAgentProcesses([string]$Reason) {
+    # Kill EVERY running desktop-agent process (by command line), not just the one tracked in the
+    # pid file. A stale agent relaunched by the scheduled-task watchdog may not be the tracked PID;
+    # if it survives it keeps re-registering its OLD helper version and flaps against the freshly
+    # updated helper (the exact v15<->v17 bounce we observed). Leaving none behind is what lets the
+    # box converge on a single version after a self-update.
+    try {
+        $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessId -ne $PID -and
+            $_.CommandLine -and
+            $_.CommandLine -match 'pyrus-ibkr-helper\.ps1' -and
+            $_.CommandLine -match '\s-Agent(\s|$)'
+        })
+    } catch {
+        $procs = @()
+        Write-Log "Could not enumerate desktop agent processes to stop: $($_.Exception.Message)"
+    }
+    foreach ($p in $procs) {
+        Write-Log "Stopping stale Pyrus IBKR desktop agent process $($p.ProcessId). $Reason"
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Restart-DesktopAgentProcessWithCurrentHelper([string]$BaseUrl, [string]$Reason) {
     if (-not $BaseUrl) {
         return
     }
 
-    $pidValue = Read-FirstLine -Path $DesktopAgentPidFile
-    if ($pidValue -and $pidValue -match '^\d+$') {
-        $pidNumber = [int]$pidValue
-        if ($pidNumber -ne $PID) {
-            try {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $pidNumber" -ErrorAction SilentlyContinue
-                if ($process -and $process.CommandLine -match '(pyrus|pyrus)-ibkr-helper\.ps1' -and $process.CommandLine -match '\s-Agent(\s|$)') {
-                    Write-Log "Restarting Pyrus IBKR desktop agent process $pidNumber with current helper. $Reason"
-                    Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
-                }
-            } catch {
-                $process = Get-Process -Id $pidNumber -ErrorAction SilentlyContinue
-                if ($process -and @('powershell', 'pwsh') -contains ([string]$process.ProcessName).ToLowerInvariant()) {
-                    Write-Log "Restarting Pyrus IBKR desktop agent process $pidNumber with current helper. $Reason"
-                    Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-    }
+    Stop-StaleDesktopAgentProcesses -Reason $Reason
 
     Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
     Start-DesktopAgentProcess -BaseUrl $BaseUrl
@@ -838,6 +843,17 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
     }
 
     if ($env:PYRUS_IBKR_HELPER_SELF_UPDATE -eq $requestedVersion) {
+        # This process lineage already pulled $requestedVersion (the flag is inherited by child
+        # launch helpers). If the installed helper on disk IS already that version, we are merely a
+        # stale process still executing old code — re-exec from the updated helper instead of
+        # skipping forever (the inherited flag is exactly what stranded the box on the old version).
+        $installed = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
+        if (Test-DownloadedHelperVersion -Path $installed -ExpectedVersion $requestedVersion) {
+            Write-Log "Installed helper already at $requestedVersion; re-executing launch from the updated helper."
+            $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Start-Process -FilePath $powershell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installed, $RawLaunchUrl) | Out-Null
+            exit 0
+        }
         Write-Log "Helper self-update already attempted for $requestedVersion; continuing with local version $HelperVersion."
         return
     }
