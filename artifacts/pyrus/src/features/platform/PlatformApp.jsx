@@ -105,6 +105,9 @@ import {
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 import {
+  mergeSignalEventsIntoMatrixStates,
+} from "../signals/signalMatrixStateMerge.js";
+import {
   WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
   WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
   WATCHLIST_QUOTE_STREAM_ROTATION_MS,
@@ -228,6 +231,7 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
   const seenCursors = new Set();
   let cursor = null;
   let lastPage = null;
+  let sourceStatus = "database";
 
   do {
     const page = await listSignalMonitorEvents(
@@ -239,12 +243,14 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
       options,
     );
     lastPage = page;
+    sourceStatus = page.sourceStatus || sourceStatus;
     events.push(...(page.events || []));
     if (!page.hasMore || !page.nextCursor) {
       return {
         events,
         nextCursor: null,
         hasMore: false,
+        sourceStatus,
       };
     }
     if (seenCursors.has(page.nextCursor)) {
@@ -258,6 +264,7 @@ const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
     events,
     nextCursor: lastPage?.nextCursor ?? null,
     hasMore: Boolean(lastPage?.hasMore),
+    sourceStatus,
   };
 };
 
@@ -311,6 +318,7 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 `;
 
 const SESSION_QUERY_KEY = getGetSessionQueryKey();
+const SESSION_REFETCH_INTERVAL_MS = 20_000;
 const WATCHLISTS_QUERY_KEY = getListWatchlistsQueryKey();
 const PLATFORM_FRESHNESS_FAMILY = Object.freeze({
   session: "session",
@@ -360,6 +368,8 @@ const SIGNAL_MATRIX_SURFACE_REQUEST_REASONS = new Set([
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
+const HEADER_SIGNAL_MATRIX_SYMBOL_LIMIT = 24;
+const ACTIVITY_SIGNAL_MATRIX_SYMBOL_LIMIT = 64;
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -374,6 +384,32 @@ const normalizeSignalMatrixRequestSymbols = (symbols = []) => {
     result.push(normalized);
   });
   return result;
+};
+
+const filterSignalMatrixStatesForSymbols = ({
+  states = [],
+  symbols = [],
+  maxStates = null,
+}) => {
+  const symbolSet = new Set(normalizeSignalMatrixRequestSymbols(symbols));
+  if (!symbolSet.size) {
+    return [];
+  }
+
+  const boundedStates = [];
+  const resolvedMaxStates =
+    Number.isFinite(maxStates) && maxStates > 0 ? Math.floor(maxStates) : null;
+  for (const state of Array.isArray(states) ? states : []) {
+    if (resolvedMaxStates != null && boundedStates.length >= resolvedMaxStates) {
+      break;
+    }
+    const symbol = normalizeTickerSymbol(state?.symbol);
+    if (!symbol || !symbolSet.has(symbol)) {
+      continue;
+    }
+    boundedStates.push(state);
+  }
+  return boundedStates;
 };
 
 const normalizeSignalMatrixRequestTimeframes = (
@@ -612,6 +648,15 @@ const INACTIVE_HEAVY_QUERY_PREFIXES = [
   ["trade-option-chain-batch"],
 ];
 
+const RECENT_SIGNAL_MARKET_DATA_SYMBOL_LIMIT = 16;
+const WATCHLIST_MARKET_DATA_SYMBOL_LIMIT = 48;
+const HEADER_SIGNAL_MATRIX_STATE_LIMIT =
+  (HEADER_SIGNAL_MATRIX_SYMBOL_LIMIT + 1) * SIGNAL_MATRIX_TIMEFRAMES.length;
+const WATCHLIST_SIGNAL_MATRIX_STATE_LIMIT =
+  WATCHLIST_MARKET_DATA_SYMBOL_LIMIT * SIGNAL_MATRIX_TIMEFRAMES.length;
+const ACTIVITY_SIGNAL_MATRIX_STATE_LIMIT =
+  ACTIVITY_SIGNAL_MATRIX_SYMBOL_LIMIT * SIGNAL_MATRIX_TIMEFRAMES.length;
+
 const resolveRecentSignalMarketDataSymbols = (
   states = [],
   nowMs = Date.now(),
@@ -635,7 +680,8 @@ const resolveRecentSignalMarketDataSymbols = (
     })
     .map((state) => normalizeTickerSymbol(state?.symbol))
     .filter(Boolean)
-    .filter((symbol, index, symbols) => symbols.indexOf(symbol) === index);
+    .filter((symbol, index, symbols) => symbols.indexOf(symbol) === index)
+    .slice(0, RECENT_SIGNAL_MARKET_DATA_SYMBOL_LIMIT);
 };
 
 const resolveQuoteStreamGateReason = ({
@@ -643,12 +689,17 @@ const resolveQuoteStreamGateReason = ({
   sessionMetadataSettled,
   brokerConfigured,
   brokerAuthenticated,
+  massiveStockRealtimeConfigured,
   quoteStreamEnabled,
 }) => {
   if (!workspaceLeader) return "workspace-passive";
   if (!sessionMetadataSettled) return "session-not-ready";
-  if (!brokerConfigured) return "ibkr-not-configured";
-  if (!brokerAuthenticated) return "ibkr-not-ready";
+  if (!brokerConfigured && !massiveStockRealtimeConfigured) {
+    return "market-data-not-configured";
+  }
+  if (!brokerAuthenticated && !massiveStockRealtimeConfigured) {
+    return "ibkr-not-ready";
+  }
   if (!quoteStreamEnabled) return "runtime-disabled";
   return null;
 };
@@ -1160,8 +1211,8 @@ export default function PlatformApp() {
 
   const sessionQuery = useGetSession({
     query: {
-      staleTime: 5_000,
-      refetchInterval: 5_000,
+      staleTime: SESSION_REFETCH_INTERVAL_MS,
+      refetchInterval: pageVisible ? SESSION_REFETCH_INTERVAL_MS : false,
       retry: false,
     },
   });
@@ -1185,10 +1236,10 @@ export default function PlatformApp() {
   const sessionMetadataSettled = Boolean(
     sessionQuery.data || sessionQuery.isFetched || sessionQuery.isError,
   );
-  useRuntimeWorkloadFlag("platform:session", true, {
+  useRuntimeWorkloadFlag("platform:session", pageVisible, {
     kind: "poll",
     label: "Session",
-    detail: "5s",
+    detail: "20s visible",
     priority: 2,
   });
   const watchlistsQuery = useListWatchlists({
@@ -1586,8 +1637,20 @@ export default function PlatformApp() {
     };
   }, []);
   const watchlistMarketDataSymbols = useMemo(
-    () => watchlistSymbols,
-    [watchlistSymbols],
+    () =>
+      [
+        ...new Set(
+          [
+            sym,
+            ...HEADER_KPI_SYMBOLS,
+            ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
+            ...watchlistSymbols,
+          ]
+            .map(normalizeTickerSymbol)
+            .filter(Boolean),
+        ),
+      ].slice(0, WATCHLIST_MARKET_DATA_SYMBOL_LIMIT),
+    [marketScreenActive, sym, watchlistSymbols],
   );
   const broadMarketDataSymbols = useMemo(() => {
     const limit = platformPressureCaps.broadMarketSymbolLimit;
@@ -1682,7 +1745,7 @@ export default function PlatformApp() {
   const accountsQueryEnabled = Boolean(
     sessionQuery.data &&
       !safeQaMode &&
-      (brokerAccountsReadyForBoot || bootProgress.complete),
+      brokerAccountsReadyForBoot,
   );
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },
@@ -1765,14 +1828,6 @@ export default function PlatformApp() {
     sessionMetadataSettled,
     sessionQuery.data,
   ]);
-  const marketStockAggregateStreamingEnabled = Boolean(
-    !safeQaMode &&
-      sessionQuery.data?.configured?.ibkr &&
-      sessionQuery.data?.ibkrBridge?.authenticated &&
-      sessionQuery.data?.ibkrBridge?.healthFresh !== false &&
-      marketScreenActive,
-  );
-
   useEffect(() => {
     if (!accounts.length) {
       return;
@@ -2131,6 +2186,16 @@ export default function PlatformApp() {
     session?.ibkrBridge?.authenticated &&
       session?.ibkrBridge?.healthFresh !== false,
   );
+  const massiveStockRealtimeConfigured = Boolean(
+    session?.configured?.massive,
+  );
+  const ibkrStockAggregateStreamingConfigured = Boolean(
+    brokerConfigured && brokerAuthenticated,
+  );
+  const stockAggregateStreamingConfigured = Boolean(
+    massiveStockRealtimeConfigured ||
+      ibkrStockAggregateStreamingConfigured,
+  );
   const gatewayTradingReadiness = resolveGatewayTradingReadiness(session);
   const gatewayTradingReady = gatewayTradingReadiness.ready;
   const gatewayTradingMessage = gatewayTradingReadiness.message;
@@ -2148,7 +2213,7 @@ export default function PlatformApp() {
   const effectiveGatewayTradingBlockReason =
     gatewayTradingReady && !accountOrderStreamsFresh ? "streams_stale" : "gateway";
   const stockAggregateStreamingEnabled = Boolean(
-    brokerConfigured && brokerAuthenticated && !safeQaMode,
+    stockAggregateStreamingConfigured && platformRealtimeWorkActive,
   );
   const bridgeTone = bridgeRuntimeTone(session);
   const primaryAccount =
@@ -2894,6 +2959,7 @@ export default function PlatformApp() {
         memoryPressure: memoryPressureSignal,
         brokerConfigured,
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
+        massiveStockRealtimeConfigured,
         mobileViewport: isPhone,
         automationEnabled: Boolean(
           signalMonitorProfile?.enabled && !signalMonitorProfileDegraded,
@@ -2909,6 +2975,7 @@ export default function PlatformApp() {
       platformRealtimeWorkActive,
       screen,
       screenWarmupPhase,
+      massiveStockRealtimeConfigured,
       startupProtectionActive,
       activeScreenBackgroundAllowed,
       sessionMetadataSettled,
@@ -3275,6 +3342,19 @@ export default function PlatformApp() {
     signalMonitorStateQuery.data?.states || EMPTY_SIGNAL_MONITOR_STATES;
   const signalMonitorEvents =
     signalMonitorEventsQuery.data?.events || EMPTY_SIGNAL_MONITOR_EVENTS;
+  const signalMonitorEventsSourceStatus =
+    signalMonitorEventsQuery.data?.sourceStatus || "database";
+  const signalMonitorPublishedStates = useMemo(
+    () =>
+      mergeSignalEventsIntoMatrixStates({
+        states: mergeSignalMatrixStates({
+          currentStates: signalMonitorStates,
+          incomingStates: signalMatrixSnapshot.states,
+        }),
+        events: signalMonitorEvents,
+      }),
+    [signalMatrixSnapshot.states, signalMonitorEvents, signalMonitorStates],
+  );
   const signalMonitorStateUniverseSymbols =
     Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
       ? signalMonitorStateQuery.data.universeSymbols
@@ -3282,10 +3362,10 @@ export default function PlatformApp() {
   const headerSignalContextSymbols = useMemo(
     () =>
       buildHeaderSignalContextSymbols({
-        states: signalMonitorStates,
+        states: signalMonitorPublishedStates,
         events: signalMonitorEvents,
       }),
-    [signalMonitorEvents, signalMonitorStates],
+    [signalMonitorEvents, signalMonitorPublishedStates],
   );
   const signalMonitorSymbols = useMemo(
     () =>
@@ -3293,13 +3373,13 @@ export default function PlatformApp() {
         ...new Set(
           [
             ...headerSignalContextSymbols,
-            ...signalMonitorStates.map((state) =>
+            ...signalMonitorPublishedStates.map((state) =>
               normalizeTickerSymbol(state?.symbol),
             ),
           ].filter(Boolean),
         ),
       ],
-    [headerSignalContextSymbols, signalMonitorStates],
+    [headerSignalContextSymbols, signalMonitorPublishedStates],
   );
   const signalMonitorDisplaySymbols = useMemo(
     () =>
@@ -3310,7 +3390,7 @@ export default function PlatformApp() {
               normalizeTickerSymbol(symbol),
             ),
             ...headerSignalContextSymbols,
-            ...signalMonitorStates.map((state) =>
+            ...signalMonitorPublishedStates.map((state) =>
               normalizeTickerSymbol(state?.symbol),
             ),
           ].filter(Boolean),
@@ -3318,8 +3398,8 @@ export default function PlatformApp() {
       ],
     [
       headerSignalContextSymbols,
+      signalMonitorPublishedStates,
       signalMonitorStateUniverseSymbols,
-      signalMonitorStates,
     ],
   );
   const signalsScreenMatrixSymbols = signalsScreenMatrixRequest.symbols;
@@ -3513,19 +3593,27 @@ export default function PlatformApp() {
     signalMatrixSurfaceRequestActive,
   ]);
   const recentSignalMarketDataSymbols = useMemo(
-    () => resolveRecentSignalMarketDataSymbols(signalMonitorStates),
-    [signalMonitorStates],
+    () => resolveRecentSignalMarketDataSymbols(signalMonitorPublishedStates),
+    [signalMonitorPublishedStates],
   );
   const quoteStreamRotationSymbols = useMemo(
     () =>
       [
         ...new Set(
-          [...watchlistSymbols, ...signalMonitorDisplaySymbols]
+          [
+            ...watchlistMarketDataSymbols,
+            ...headerSignalContextSymbols,
+            ...recentSignalMarketDataSymbols,
+          ]
             .map(normalizeTickerSymbol)
             .filter(Boolean),
         ),
       ],
-    [signalMonitorDisplaySymbols, watchlistSymbols],
+    [
+      headerSignalContextSymbols,
+      recentSignalMarketDataSymbols,
+      watchlistMarketDataSymbols,
+    ],
   );
   const quoteStreamPinnedSymbols = useMemo(
     () =>
@@ -3549,6 +3637,15 @@ export default function PlatformApp() {
       watchlistMarketDataSymbols,
     ],
   );
+  const activeVisibleQuoteSymbols = quoteStreamPinnedSymbols;
+  const watchlistQuoteStreamBatchSize = useMemo(
+    () =>
+      Math.max(
+        WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+        activeVisibleQuoteSymbols.length,
+      ),
+    [activeVisibleQuoteSymbols.length],
+  );
   const [watchlistQuoteRotationCursor, setWatchlistQuoteRotationCursor] =
     useState(0);
   const [watchlistQuoteLastTouchedBySymbol, setWatchlistQuoteLastTouchedBySymbol] =
@@ -3560,12 +3657,13 @@ export default function PlatformApp() {
         rotationSymbols: quoteStreamRotationSymbols,
         pinnedSymbols: quoteStreamPinnedSymbols,
         cursor: watchlistQuoteRotationCursor,
-        batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+        batchSize: watchlistQuoteStreamBatchSize,
       }),
     [
       quoteStreamPinnedSymbols,
       quoteStreamRotationSymbols,
       watchlistQuoteRotationCursor,
+      watchlistQuoteStreamBatchSize,
       watchlistSymbols,
     ],
   );
@@ -3584,10 +3682,12 @@ export default function PlatformApp() {
         sessionMetadataSettled,
         brokerConfigured,
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
+        massiveStockRealtimeConfigured,
         quoteStreamEnabled: workSchedule.streams.watchlistQuoteStream,
       }),
     [
       brokerConfigured,
+      massiveStockRealtimeConfigured,
       session?.ibkrBridge?.authenticated,
       sessionMetadataSettled,
       workspaceLeader,
@@ -3609,7 +3709,7 @@ export default function PlatformApp() {
           rotationSymbols: quoteStreamRotationSymbols,
           pinnedSymbols: quoteStreamPinnedSymbols,
           cursor,
-          batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+          batchSize: watchlistQuoteStreamBatchSize,
         }).nextCursor,
       );
     }, WATCHLIST_QUOTE_STREAM_ROTATION_MS);
@@ -3618,6 +3718,7 @@ export default function PlatformApp() {
     quoteStreamGateReason,
     quoteStreamPinnedSymbols,
     quoteStreamRotationSymbols,
+    watchlistQuoteStreamBatchSize,
     watchlistQuoteRotationBatch.rotatingUniverseSize,
     watchlistSymbols,
   ]);
@@ -4862,15 +4963,85 @@ export default function PlatformApp() {
     () => [...new Set(streamedAggregateSymbols)],
     [streamedAggregateSymbols],
   );
-  const signalMonitorPublishedStates = useMemo(
+  const headerBroadcastSignalMatrixStates = useMemo(
     () =>
-      mergeSignalMatrixStates({
-        currentStates: signalMonitorStates,
-        incomingStates: signalMatrixSnapshot.states,
+      filterSignalMatrixStatesForSymbols({
+        states: signalMonitorPublishedStates,
+        symbols: [
+          sym,
+          ...headerSignalContextSymbols.slice(0, HEADER_SIGNAL_MATRIX_SYMBOL_LIMIT),
+        ],
+        maxStates: HEADER_SIGNAL_MATRIX_STATE_LIMIT,
       }),
-    [signalMatrixSnapshot.states, signalMonitorStates],
+    [headerSignalContextSymbols, signalMonitorPublishedStates, sym],
   );
-  const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;
+  const watchlistSignalSymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          [
+            ...watchlistMarketDataSymbols,
+            ...headerSignalContextSymbols,
+            ...recentSignalMarketDataSymbols,
+          ]
+            .map(normalizeTickerSymbol)
+            .filter(Boolean),
+        ),
+      ].slice(0, WATCHLIST_MARKET_DATA_SYMBOL_LIMIT),
+    [
+      headerSignalContextSymbols,
+      recentSignalMarketDataSymbols,
+      watchlistMarketDataSymbols,
+    ],
+  );
+  const watchlistSignalMonitorStates = useMemo(
+    () =>
+      filterSignalMatrixStatesForSymbols({
+        states: signalMonitorPublishedStates,
+        symbols: watchlistSignalSymbols,
+        maxStates: WATCHLIST_SIGNAL_MATRIX_STATE_LIMIT,
+      }),
+    [signalMonitorPublishedStates, watchlistSignalSymbols],
+  );
+  const watchlistSignalMatrixStates = useMemo(
+    () =>
+      filterSignalMatrixStatesForSymbols({
+        states: signalMonitorPublishedStates,
+        symbols: watchlistSignalSymbols,
+        maxStates: WATCHLIST_SIGNAL_MATRIX_STATE_LIMIT,
+      }),
+    [signalMonitorPublishedStates, watchlistSignalSymbols],
+  );
+  const activitySignalMatrixSymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          [
+            sym,
+            ...headerSignalContextSymbols,
+            ...watchlistMarketDataSymbols,
+            ...recentSignalMarketDataSymbols,
+          ]
+            .map(normalizeTickerSymbol)
+            .filter(Boolean),
+        ),
+      ].slice(0, ACTIVITY_SIGNAL_MATRIX_SYMBOL_LIMIT),
+    [
+      headerSignalContextSymbols,
+      recentSignalMarketDataSymbols,
+      sym,
+      watchlistMarketDataSymbols,
+    ],
+  );
+  const activitySignalMatrixStates = useMemo(
+    () =>
+      filterSignalMatrixStatesForSymbols({
+        states: signalMonitorPublishedStates,
+        symbols: activitySignalMatrixSymbols,
+        maxStates: ACTIVITY_SIGNAL_MATRIX_STATE_LIMIT,
+      }),
+    [activitySignalMatrixSymbols, signalMonitorPublishedStates],
+  );
   useEffect(() => {
     publishSignalMonitorSnapshot({
       profile: signalMonitorProfile,
@@ -5371,6 +5542,7 @@ export default function PlatformApp() {
       signalMonitorStateError={signalMonitorStateQuery.error || null}
       signalMonitorDataManagedByPlatform
       signalMonitorEvents={signalMonitorEvents}
+      signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
       signalMonitorEventsLoaded={Boolean(
         signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
       )}
@@ -5455,6 +5627,7 @@ export default function PlatformApp() {
     signalMonitorEvents,
     signalMonitorEventsQuery.data,
     signalMonitorEventsQuery.isFetched,
+    signalMonitorEventsSourceStatus,
     signalMonitorSymbols,
     stockAggregateStreamingEnabled,
     sym,
@@ -5483,15 +5656,14 @@ export default function PlatformApp() {
         broadFlowWatchlistSymbols={broadFlowWatchlistSymbols}
         activeWatchlistItems={activeWatchlist?.items}
         quoteSymbols={safeQaMode ? [] : runtimeQuoteSymbols}
+        activeVisibleQuoteSymbols={safeQaMode ? [] : activeVisibleQuoteSymbols}
         sparklineSymbols={safeQaMode ? [] : runtimeSparklineSymbols}
         prioritySparklineSymbols={safeQaMode ? [] : prioritySparklineSymbols}
         streamedQuoteSymbols={safeQaMode ? [] : runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={safeQaMode ? [] : runtimeStreamedAggregateSymbols}
         quoteStreamRuntimeEnabled={
           !safeQaMode &&
-          workSchedule.streams.watchlistQuoteStream &&
-          !priorityScreenCodePreloadPending &&
-          !signalHydrationBootstrapActive
+          workSchedule.streams.watchlistQuoteStream
         }
         positionQuoteStreamRuntimeEnabled={
           !safeQaMode &&
@@ -5501,11 +5673,14 @@ export default function PlatformApp() {
         quoteStreamCoverageDiagnostics={watchlistQuoteStreamDiagnostics}
         marketStockAggregateStreamingEnabled={
           !safeQaMode &&
-          workSchedule.streams.marketStockAggregates &&
-          !priorityScreenCodePreloadPending &&
-          !signalHydrationBootstrapActive
+          workSchedule.streams.marketStockAggregates
         }
         marketScreenActive={marketScreenActive}
+        realtimeQuoteCoverageRequired={
+          !safeQaMode &&
+          massiveStockRealtimeConfigured &&
+          !quoteStreamGateReason
+        }
         lowPriorityHistoryEnabled={
           !safeQaMode &&
           workSchedule.streams.lowPriorityHistory &&
@@ -5551,14 +5726,15 @@ export default function PlatformApp() {
             apiSourcePressureSnapshot={footerApiSourceRuntime.snapshot}
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
-            signalMonitorStates={signalMonitorStates}
+            signalMonitorStates={watchlistSignalMonitorStates}
             signalMonitorProfile={signalMonitorProfile}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={Boolean(
               signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
             )}
-            signalMatrixStates={signalMonitorPublishedStates}
             headerSignalMatrixStates={headerBroadcastSignalMatrixStates}
+            watchlistSignalMatrixStates={watchlistSignalMatrixStates}
+            activitySignalMatrixStates={activitySignalMatrixStates}
             onRequestSignalMatrixHydration={handleRequestSignalMatrixHydration}
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}

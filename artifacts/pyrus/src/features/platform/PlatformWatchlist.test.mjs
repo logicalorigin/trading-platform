@@ -131,24 +131,71 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   );
 });
 
-test("platform bubble surfaces receive broad monitor states with matrix overlay", () => {
+test("platform auxiliary signal surfaces receive bounded matrix overlays", () => {
   const source = readLocalSource("./PlatformApp.jsx");
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+  const headerSource = readLocalSource("./AppHeader.jsx");
+  const shellCallStart = source.indexOf("<PlatformShell");
+  const shellCallEnd = source.indexOf(
+    "onRequestSignalMatrixHydration",
+    shellCallStart,
+  );
+  const shellCallSource = source.slice(shellCallStart, shellCallEnd);
 
   assert.equal(source.includes("signalMatrixStates={signalMatrixSnapshot.states}"), false);
   assert.match(
     source,
-    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalMatrixStates\(\{/s,
+    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalEventsIntoMatrixStates\(\{/s,
   );
   assert.match(
     source,
-    /currentStates:\s*signalMonitorStates,\s*incomingStates:\s*signalMatrixSnapshot\.states/s,
+    /states:\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMonitorStates,\s*incomingStates:\s*signalMatrixSnapshot\.states/s,
+  );
+  assert.match(
+    source,
+    /events:\s*signalMonitorEvents/,
+  );
+  assert.match(
+    source,
+    /buildHeaderSignalContextSymbols\(\{\s*states:\s*signalMonitorPublishedStates,\s*events:\s*signalMonitorEvents/s,
+  );
+  assert.match(
+    source,
+    /resolveRecentSignalMarketDataSymbols\(signalMonitorPublishedStates\)/,
   );
   assert.equal(
     source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)?.length,
-    2,
+    1,
+  );
+  assert.match(source, /const headerBroadcastSignalMatrixStates = useMemo\(/);
+  assert.match(source, /const watchlistSignalMonitorStates = useMemo\(/);
+  assert.match(source, /const watchlistSignalMatrixStates = useMemo\(/);
+  assert.match(source, /const activitySignalMatrixStates = useMemo\(/);
+  assert.match(source, /filterSignalMatrixStatesForSymbols\(\{/);
+  assert.match(source, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
+  assert.match(source, /watchlistSignalMatrixStates=\{watchlistSignalMatrixStates\}/);
+  assert.match(source, /activitySignalMatrixStates=\{activitySignalMatrixStates\}/);
+  assert.equal(
+    source.includes("const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;"),
+    false,
+  );
+  assert.equal(
+    shellSource.includes("...(Array.isArray(signalMatrixStates) ? signalMatrixStates : [])"),
+    false,
+  );
+  assert.match(shellSource, /signalMatrixStates=\{watchlistSignalMatrixStates\}/);
+  assert.match(shellSource, /signalMatrixStates=\{activitySignalMatrixStates\}/);
+  assert.match(shellCallSource, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
+  assert.equal(
+    shellCallSource.includes("signalMonitorStates={signalMonitorStates}"),
+    false,
+  );
+  assert.equal(
+    headerSource.includes("headerSignalMatrixStates?.length ? headerSignalMatrixStates"),
+    false,
   );
   assert.match(
-    source,
-    /const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;/,
+    headerSource,
+    /signalMatrixStates=\{headerSignalMatrixStates\}/,
   );
 });

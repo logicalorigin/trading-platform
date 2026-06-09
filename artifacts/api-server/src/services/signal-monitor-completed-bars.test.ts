@@ -55,21 +55,82 @@ test("active-session completed bars still require the expected live edge", () =>
   );
 });
 
-test("quiet automatic matrix stored coverage still refreshes in background", () => {
-  // Time-of-day gates only execution, not market data: background coverage refresh runs
-  // in all sessions, including outside regular trading hours.
+test("signal monitor bar evaluation is passive by default", () => {
   assert.equal(
-    __signalMonitorInternalsForTests.shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
-      evaluatedAt: new Date("2026-06-08T01:00:00.000Z"),
+    __signalMonitorInternalsForTests.isSignalMonitorBarEvaluationEnabled({}),
+    false,
+  );
+});
+
+test("signal monitor bar evaluation requires explicit opt-in", () => {
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorBarEvaluationEnabled({
+      PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED: "1",
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorBarEvaluationEnabled({
+      SIGNAL_MONITOR_BAR_EVALUATION_ENABLED: "true",
     }),
     true,
   );
 });
 
-test("active-session automatic matrix stored coverage can refresh in background", () => {
+test("non-current signal state snapshots preserve last-known direction for display hydration", () => {
+  const response =
+    __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+      {
+        id: "state-crwv-1m",
+        profileId: "profile-test",
+        symbol: "CRWV",
+        timeframe: "1m",
+        currentSignalDirection: "sell",
+        currentSignalAt: new Date("2026-06-08T17:02:00.000Z"),
+        currentSignalPrice: "48.12",
+        latestBarAt: new Date("2026-06-08T17:44:00.000Z"),
+        barsSinceSignal: 42,
+        fresh: false,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: new Date("2026-06-08T17:44:00.000Z"),
+        lastError: null,
+      } as never,
+      {
+        timeframe: "1m",
+        evaluatedAt: new Date("2026-06-09T20:00:00.000Z"),
+        markNonCurrentStale: true,
+      },
+    );
+
+  assert.equal(response.status, "stale");
+  assert.equal(response.fresh, false);
+  assert.equal(response.currentSignalDirection, "sell");
+  assert.equal(
+    response.currentSignalAt?.toISOString(),
+    "2026-06-08T17:02:00.000Z",
+  );
+  assert.equal(response.currentSignalPrice, 48.12);
+  assert.equal(response.barsSinceSignal, 42);
+});
+
+test("quiet automatic matrix stored coverage does not refresh in passive mode", () => {
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
+      evaluatedAt: new Date("2026-06-08T01:00:00.000Z"),
+      env: {},
+    }),
+    false,
+  );
+});
+
+test("automatic matrix stored coverage refresh requires explicit opt-in", () => {
   assert.equal(
     __signalMonitorInternalsForTests.shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
       evaluatedAt: new Date("2026-06-08T15:00:00.000Z"),
+      env: {
+        PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED: "1",
+      },
     }),
     true,
   );
@@ -255,6 +316,121 @@ test("oversized exact matrix evaluation is rejected before inline work", () => {
   );
 });
 
+test("fresh signal monitor events persist when first observed after the zero bar", () => {
+  const evaluatedAt = new Date("2026-06-09T16:50:10.000Z");
+  const signalAt = new Date("2026-06-09T16:40:00.000Z");
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorStateEvent({
+      mode: "incremental",
+      fresh: true,
+      barsSinceSignal: 2,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: false,
+    }),
+    true,
+  );
+});
+
+test("signal monitor event catch-up does not persist stale or out-of-window signals", () => {
+  const evaluatedAt = new Date("2026-06-09T16:50:10.000Z");
+  const signalAt = new Date("2026-06-09T16:30:00.000Z");
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorStateEvent({
+      mode: "incremental",
+      fresh: true,
+      barsSinceSignal: 4,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorStateEvent({
+      mode: "incremental",
+      fresh: false,
+      barsSinceSignal: 1,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorStateEvent({
+      mode: "incremental",
+      fresh: true,
+      barsSinceSignal: 1,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: true,
+    }),
+    false,
+  );
+});
+
+test("canonical signal monitor event eligibility is shared by matrix and symbol paths", () => {
+  const evaluatedAt = new Date("2026-06-09T16:50:10.000Z");
+  const signalAt = new Date("2026-06-09T16:40:00.000Z");
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistCanonicalSignalMonitorEvent({
+      fresh: true,
+      barsSinceSignal: 2,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: false,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistCanonicalSignalMonitorEvent({
+      fresh: true,
+      barsSinceSignal: 1,
+      freshWindowBars: 3,
+      signalAt,
+      evaluatedAt,
+      sourceBarPartial: true,
+    }),
+    false,
+  );
+});
+
+test("signal monitor event pagination reports source status", () => {
+  const response =
+    __signalMonitorInternalsForTests.paginateSignalMonitorEventResponses(
+      [
+        {
+          id: "event-1",
+          profileId: "profile-1",
+          environment: "paper",
+          symbol: "SPY",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: new Date("2026-06-09T16:40:00.000Z"),
+          signalPrice: 100,
+          close: 100,
+          emittedAt: new Date("2026-06-09T16:40:01.000Z"),
+          source: "pyrus-signals",
+          payload: {},
+        },
+      ],
+      100,
+      "runtime-fallback",
+    );
+
+  assert.equal(response.sourceStatus, "runtime-fallback");
+  assert.equal(response.hasMore, false);
+});
+
 test("disabled signal monitor profile symbols do not evaluate bars", async () => {
   const now = new Date("2026-06-08T15:00:00.000Z");
   const result = await evaluateSignalMonitorProfileSymbols({
@@ -283,6 +459,60 @@ test("disabled signal monitor profile symbols do not evaluate bars", async () =>
   assert.deepEqual(result.states, []);
   assert.deepEqual(result.universeSymbols, ["SPY", "QQQ"]);
   assert.equal(result.universe.degradedReason, "Signal monitor profile is disabled.");
+});
+
+test("enabled signal monitor profile symbols stay passive by default", async () => {
+  const previousPyrusFlag =
+    process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  const previousLegacyFlag =
+    process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  try {
+    const now = new Date("2026-06-08T15:00:00.000Z");
+    const result = await evaluateSignalMonitorProfileSymbols({
+      profile: {
+        id: "enabled-profile",
+        environment: "paper",
+        enabled: true,
+        watchlistId: null,
+        timeframe: "5m",
+        pyrusSignalsSettings: {},
+        freshWindowBars: 3,
+        pollIntervalSeconds: 60,
+        maxSymbols: 500,
+        evaluationConcurrency: 10,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      evaluatedAt: now,
+      symbols: ["SPY", "QQQ"],
+      maxSymbolsOverride: 2,
+    });
+
+    assert.equal(result.profile.enabled, true);
+    assert.deepEqual(result.states, []);
+    assert.deepEqual(result.universeSymbols, ["SPY", "QQQ"]);
+    assert.equal(
+      result.universe.degradedReason,
+      __signalMonitorInternalsForTests.SIGNAL_MONITOR_PASSIVE_SIGNAL_SOURCE_MESSAGE,
+    );
+  } finally {
+    if (previousPyrusFlag === undefined) {
+      delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousPyrusFlag;
+    }
+    if (previousLegacyFlag === undefined) {
+      delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousLegacyFlag;
+    }
+  }
 });
 
 test("signal monitor state snapshots fill missing universe cells as unavailable", () => {
@@ -349,6 +579,9 @@ test("signal monitor cold state fallback is schema-valid and marked warming", ()
   });
 
   assert.equal(parsed.profile.environment, "paper");
+  assert.equal(parsed.profile.id, "state-cache-warming-paper");
+  assert.match(parsed.profile.lastError ?? "", /cache is warming/);
+  assert.doesNotMatch(parsed.profile.lastError ?? "", /Postgres is unavailable/);
   assert.ok(parsed.universeSymbols.length > 0);
   assert.ok(parsed.states.length >= parsed.universeSymbols.length);
   assert.ok(parsed.universeSymbols.includes("SPY"));
@@ -364,5 +597,37 @@ test("signal monitor cold state fallback is schema-valid and marked warming", ()
   assert.match(
     parsed.universe.degradedReason ?? "",
     /cache is warming/,
+  );
+});
+
+test("signal monitor state invalidation preserves usable stale cache", () => {
+  const current = new Date("2026-06-09T18:30:00.000Z").getTime();
+
+  assert.equal(
+    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
+      {
+        fetchedAt: current - 5_000,
+        current,
+      },
+    ),
+    current - 15_001,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
+      {
+        fetchedAt: current - 20_000,
+        current,
+      },
+    ),
+    current - 20_000,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
+      {
+        fetchedAt: current - 31 * 60_000,
+        current,
+      },
+    ),
+    null,
   );
 });
