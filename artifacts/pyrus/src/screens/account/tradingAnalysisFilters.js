@@ -1,5 +1,6 @@
 import { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 import { accountDateFilterBoundaryIso } from "./accountCalendarData";
+import { normalizeAccountPositionTypeFilter } from "../../features/account/accountPositionTypes";
 
 const EMPTY_ARRAY = Object.freeze([]);
 const DAY_MS = 86_400_000;
@@ -76,7 +77,7 @@ export const normalizeTradingAnalysisFilters = (filters = {}) => ({
   ...defaultTradingAnalysisFilters(),
   ...filters,
   symbol: normalizeSymbol(filters.symbol),
-  assetClass: normalizeSelectValue(filters.assetClass),
+  assetClass: normalizeAccountPositionTypeFilter(filters.assetClass),
   pnlSign: normalizeSelectValue(filters.pnlSign),
   side: normalizeSelectValue(filters.side).toLowerCase(),
   holdDurations: normalizeStringArray(

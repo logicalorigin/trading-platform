@@ -117,6 +117,11 @@ import {
   type OrderTab,
 } from "./account-trade-model";
 import {
+  accountPositionTypeMatchesFilter,
+  classifyAccountPositionType,
+  normalizeAccountPositionTypeFilter,
+} from "./account-position-type";
+import {
   betaForSymbol,
   buildExpiryConcentration,
   buildGreekScenarioMatrixInput,
@@ -1380,14 +1385,13 @@ export async function getAccountPositionVisibilityProbe(input: {
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positions = await listPositionsForUniverse(universe, mode);
-  const filteredPositions =
-    input.assetClass && input.assetClass !== "all"
-      ? positions.filter(
-          (position) =>
-            normalizeAssetClassLabel(position).toLowerCase() ===
-            input.assetClass?.toLowerCase(),
-        )
-      : positions;
+  const filter = resolveAccountPositionTypeFilter(input.assetClass);
+  const filteredPositions = positions.filter((position) =>
+    accountPositionTypeMatchesFilter(
+      classifyAccountPositionType(position),
+      filter,
+    ),
+  );
 
   return {
     accountId: universe.requestedAccountId,
@@ -3248,6 +3252,9 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
     const settleDate = parseDate(
       firstString(attrs, ["settleDate", "settleDateTarget"]),
     );
+    const assetClass =
+      firstString(attrs, ["assetCategory", "assetClass", "secType"]) ??
+      "stock";
 
     return [
       {
@@ -3255,9 +3262,12 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         tradeId,
         symbol,
         description: firstString(attrs, ["description"]),
-        assetClass:
-          firstString(attrs, ["assetCategory", "assetClass", "secType"]) ??
-          "stock",
+        assetClass,
+        positionType: classifyAccountPositionType({
+          symbol,
+          assetClass,
+          raw: attrs,
+        }),
         side,
         quantity: nonNullNumericString(firstNumber(attrs, ["quantity", "qty"])),
         price: numericString(firstNumber(attrs, ["tradePrice", "price"])),
@@ -3286,6 +3296,8 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         target: [flexTradesTable.providerAccountId, flexTradesTable.tradeId],
         set: {
           side: sql`excluded.side`,
+          assetClass: sql`excluded.asset_class`,
+          positionType: sql`excluded.position_type`,
           quantity: sql`excluded.quantity`,
           price: sql`excluded.price`,
           amount: sql`excluded.amount`,
@@ -3418,6 +3430,9 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
     const asOf =
       parseDate(firstString(attrs, ["reportDate", "date", "asOfDate"])) ??
       new Date();
+    const assetClass =
+      firstString(attrs, ["assetCategory", "assetClass", "secType"]) ??
+      "stock";
 
     if (quantity === null) {
       return [];
@@ -3428,9 +3443,12 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         providerAccountId,
         symbol,
         description: firstString(attrs, ["description"]),
-        assetClass:
-          firstString(attrs, ["assetCategory", "assetClass", "secType"]) ??
-          "stock",
+        assetClass,
+        positionType: classifyAccountPositionType({
+          symbol,
+          assetClass,
+          raw: attrs,
+        }),
         quantity: String(quantity),
         costBasis: numericString(
           firstNumber(attrs, ["costBasisMoney", "costBasis", "cost"]),
@@ -3458,6 +3476,8 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         ],
         set: {
           quantity: sql`excluded.quantity`,
+          assetClass: sql`excluded.asset_class`,
+          positionType: sql`excluded.position_type`,
           costBasis: sql`excluded.cost_basis`,
           marketValue: sql`excluded.market_value`,
           raw: sql`excluded.raw`,
@@ -4651,6 +4671,7 @@ export async function getAccountPositions(input: {
   source?: string | null;
   liveQuotes?: boolean;
 }) {
+  resolveAccountPositionTypeFilter(input.assetClass);
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountPositions({
       assetClass: input.assetClass,
@@ -4668,6 +4689,19 @@ export async function getAccountPositions(input: {
     );
   }
   return response;
+}
+
+function resolveAccountPositionTypeFilter(input: string | null | undefined) {
+  const filter = normalizeAccountPositionTypeFilter(input);
+  if (filter.kind === "invalid") {
+    throw new HttpError(400, "Unsupported account position type filter.", {
+      code: "invalid_account_position_type",
+      detail:
+        "Use all, stock, etf, option, or the legacy equity alias for account position filters.",
+      expose: true,
+    });
+  }
+  return filter;
 }
 
 type RealPositionAttributionSourceType =
@@ -4808,7 +4842,15 @@ async function getAccountPositionsUncached(input: {
 }) {
   const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const positionsPromise = listPositionsForUniverse(universe, mode);
+  const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
+  const positionsPromise = listPositionsForUniverse(universe, mode).then((result) =>
+    result.filter((position) =>
+      accountPositionTypeMatchesFilter(
+        classifyAccountPositionType(position),
+        assetClassFilter,
+      ),
+    ),
+  );
   const [
     positions,
     ordersResult,
@@ -4825,7 +4867,11 @@ async function getAccountPositionsUncached(input: {
     positionsPromise.then((result) =>
       enrichPositionGreeks(result, { refreshChains: false }),
     ),
-    positionsPromise.then((result) => fetchEquityQuoteSnapshotsForPositions(result)),
+    positionsPromise.then((result) =>
+      input.liveQuotes === false
+        ? new Map<string, QuoteSnapshot>()
+        : fetchEquityQuoteSnapshotsForPositions(result),
+    ),
     positionsPromise.then((result) =>
       input.liveQuotes === false
         ? new Map<string, AccountPositionOptionQuoteDemandState>()
@@ -4861,14 +4907,6 @@ async function getAccountPositionsUncached(input: {
   );
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
-  const filteredPositions =
-    input.assetClass && input.assetClass !== "all"
-      ? positions.filter(
-          (position) =>
-            normalizeAssetClassLabel(position).toLowerCase() ===
-            input.assetClass?.toLowerCase(),
-        )
-      : positions;
 
   const openOrdersBySymbol = new Map<string, BrokerOrderSnapshot[]>();
   orders.filter((order) => workingOrderStatus(order.status)).forEach((order) => {
@@ -4889,6 +4927,7 @@ async function getAccountPositionsUncached(input: {
     symbol: string;
     description: string;
     assetClass: string;
+    positionType: ReturnType<typeof classifyAccountPositionType>;
     optionContract: BrokerPositionSnapshot["optionContract"] | null;
     marketDataSymbol: string;
     sector: string;
@@ -4912,7 +4951,7 @@ async function getAccountPositionsUncached(input: {
 
   const rows = universe.isCombined
     ? Array.from(
-        filteredPositions.reduce((map, position) => {
+        positions.reduce((map, position) => {
           const key = positionGroupKey(position);
           const current = map.get(key) ?? {
             id: key,
@@ -4923,6 +4962,7 @@ async function getAccountPositionsUncached(input: {
               ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
               : position.symbol,
             assetClass: normalizeAssetClassLabel(position),
+            positionType: classifyAccountPositionType(position),
             optionContract: position.optionContract ?? null,
             marketDataSymbol: accountPositionMarketDataSymbol(position),
             sector: sectorForSymbol(positionReferenceSymbol(position)),
@@ -5013,6 +5053,7 @@ async function getAccountPositionsUncached(input: {
         symbol: row.symbol,
         description: row.description,
         assetClass: row.assetClass,
+        positionType: row.positionType,
         optionContract: row.optionContract,
         marketDataSymbol: row.marketDataSymbol,
         sector: row.sector,
@@ -5083,7 +5124,7 @@ async function getAccountPositionsUncached(input: {
             : null,
         ),
       }))
-    : filteredPositions.map((position) => {
+    : positions.map((position) => {
         const hydratedMarket = marketHydration.get(position.id);
         const marketValue =
           hydratedMarket?.marketValue ?? positionSignedNotional(position);
@@ -5107,6 +5148,7 @@ async function getAccountPositionsUncached(input: {
             ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
             : position.symbol,
           assetClass: normalizeAssetClassLabel(position),
+          positionType: classifyAccountPositionType(position),
           optionContract: position.optionContract ?? null,
           marketDataSymbol: accountPositionMarketDataSymbol(position),
           sector: sectorForSymbol(referenceSymbol),
@@ -5144,7 +5186,7 @@ async function getAccountPositionsUncached(input: {
       });
 
   const openRows = rows.filter((row) => Math.abs(Number(row.quantity)) > POSITION_QUANTITY_EPSILON);
-  const exposure = exposureSummary(filteredPositions, (position) =>
+  const exposure = exposureSummary(positions, (position) =>
     hydratedPositionMarketValue(position, marketHydration),
   );
   return {
@@ -5170,6 +5212,7 @@ export async function getAccountPositionsAtDate(input: {
   source?: string | null;
 }) {
   const window = dateWindowUtc(input.date);
+  const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountPositionsAtDate({
       date: window.date,
@@ -5185,9 +5228,6 @@ export async function getAccountPositionsAtDate(input: {
     gte(flexOpenPositionsTable.asOf, window.start),
     lt(flexOpenPositionsTable.asOf, window.end),
   ];
-  if (input.assetClass && input.assetClass !== "all") {
-    positionConditions.push(eq(flexOpenPositionsTable.assetClass, input.assetClass));
-  }
 
   const balanceConditions = [
     inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
@@ -5313,11 +5353,22 @@ export async function getAccountPositionsAtDate(input: {
     }),
   ]);
 
-  const nav = positionRows.reduce(
+  const filteredPositionRows = positionRows.filter((row) =>
+    accountPositionTypeMatchesFilter(
+      classifyAccountPositionType({
+        symbol: row.symbol,
+        assetClass: row.assetClass,
+        positionType: row.positionType,
+        raw: row.raw,
+      }),
+      assetClassFilter,
+    ),
+  );
+  const nav = filteredPositionRows.reduce(
     (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
     0,
   );
-  const positions = positionRows.map((row) => {
+  const positions = filteredPositionRows.map((row) => {
     const quantity = toNumber(row.quantity) ?? 0;
     const costBasis = toNumber(row.costBasis) ?? 0;
     const marketValue = toNumber(row.marketValue) ?? 0;
@@ -5330,6 +5381,12 @@ export async function getAccountPositionsAtDate(input: {
         ? Math.abs(marketValue) / Math.abs(quantity)
         : 0;
     const unrealizedPnl = marketValue - costBasis;
+    const positionType = classifyAccountPositionType({
+      symbol: row.symbol,
+      assetClass: row.assetClass,
+      positionType: row.positionType,
+      raw: row.raw,
+    });
     return {
       id: `FLEX:${row.providerAccountId}:${row.symbol}:${row.asOf.toISOString()}`,
       accountId: row.providerAccountId,
@@ -5340,6 +5397,7 @@ export async function getAccountPositionsAtDate(input: {
         assetClass: row.assetClass,
         symbol: row.symbol,
       }),
+      positionType,
       optionContract: null,
       marketDataSymbol: accountPositionMarketDataSymbol(row),
       sector: sectorForSymbol(row.symbol),
@@ -5619,6 +5677,7 @@ type NormalizedAccountTrade = {
   symbol: string;
   side: string;
   assetClass: string;
+  positionType: ReturnType<typeof classifyAccountPositionType>;
   quantity: number;
   openDate: Date | null;
   closeDate: Date | null;
@@ -5844,10 +5903,21 @@ const flexTradeSide = (row: FlexTradeRecord): "buy" | "sell" | null => {
   return quantity < 0 ? "sell" : "buy";
 };
 
+const flexTradePositionType = (
+  row: FlexTradeRecord,
+): ReturnType<typeof classifyAccountPositionType> =>
+  classifyAccountPositionType({
+    assetClass: row.assetClass,
+    symbol: row.symbol,
+    positionType: row.positionType,
+    raw: row.raw,
+  });
+
 const flexTradeAssetClassLabel = (row: FlexTradeRecord): string =>
   normalizeTradeAssetClassLabel({
     assetClass: row.assetClass,
     symbol: row.symbol,
+    positionType: row.positionType,
   });
 
 const flexTradeContractKey = (row: FlexTradeRecord): string =>
@@ -5869,6 +5939,7 @@ const flexTradeToNormalizedClosedTrade = (
   symbol: row.symbol,
   side: row.side,
   assetClass: flexTradeAssetClassLabel(row),
+  positionType: flexTradePositionType(row),
   quantity: toNumber(row.quantity) ?? 0,
   openDate: null,
   closeDate: row.tradeDate,
@@ -5965,6 +6036,7 @@ const buildInferredFlexClosedTrades = (
         symbol: row.symbol,
         side,
         assetClass: flexTradeAssetClassLabel(row),
+        positionType: flexTradePositionType(row),
         quantity: matchedQuantity,
         openDate: earliestOpen,
         closeDate: tradeDate,
@@ -6046,7 +6118,7 @@ const accountTradeActivityMatchKey = (trade: NormalizedAccountTrade): string =>
   [
     trade.accountId,
     normalizeSymbol(trade.symbol || ""),
-    String(trade.assetClass || "").toLowerCase(),
+    trade.positionType,
     String(trade.side || "").toLowerCase(),
     activityMatchQuantityKey(trade.quantity),
     activityMatchPriceKey(trade.avgClose),
@@ -6066,8 +6138,10 @@ const accountTradeMatchesClosedTradeFilters = (
   }
   if (
     input.assetClass &&
-    input.assetClass !== "all" &&
-    trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+    !accountPositionTypeMatchesFilter(
+      trade.positionType,
+      resolveAccountPositionTypeFilter(input.assetClass),
+    )
   ) {
     return false;
   }
@@ -6102,10 +6176,21 @@ const executionMultiplier = (execution: BrokerExecutionSnapshot): number => {
   return execution.assetClass === "option" ? 100 : 1;
 };
 
+const executionPositionType = (
+  execution: BrokerExecutionSnapshot,
+): ReturnType<typeof classifyAccountPositionType> =>
+  classifyAccountPositionType({
+    symbol: execution.symbol,
+    assetClass: execution.assetClass,
+    optionContract: executionOptionContract(execution),
+  });
+
 const executionAssetClassLabel = (execution: BrokerExecutionSnapshot): string =>
   normalizeTradeAssetClassLabel({
     assetClass: execution.assetClass,
     symbol: execution.symbol,
+    positionType: executionPositionType(execution),
+    optionContract: executionOptionContract(execution),
   });
 
 const executionContractKey = (execution: BrokerExecutionSnapshot): string =>
@@ -6216,6 +6301,7 @@ const liveExecutionActivityTrade = (
     symbol: normalizeSymbol(execution.symbol),
     side: execution.side,
     assetClass: executionAssetClassLabel(execution),
+    positionType: executionPositionType(execution),
     quantity: Math.abs(toNumber(execution.quantity) ?? 0),
     openDate: execution.side === "buy" ? activityDate : null,
     closeDate: activityDate,
@@ -6315,6 +6401,7 @@ const buildLiveExecutionActivityTrades = (
         symbol: normalizeSymbol(execution.symbol),
         side: execution.side,
         assetClass: executionAssetClassLabel(execution),
+        positionType: executionPositionType(execution),
         quantity: matchedQuantity,
         openDate: earliestOpen,
         closeDate: execution.executedAt,
@@ -6387,10 +6474,7 @@ const brokerOrderActivityMatchKey = (order: BrokerOrderSnapshot): string =>
   [
     order.accountId,
     normalizeSymbol(order.symbol || ""),
-    normalizeTradeAssetClassLabel({
-      assetClass: order.assetClass,
-      symbol: order.symbol,
-    }).toLowerCase(),
+    brokerOrderPositionType(order),
     String(order.side || "").toLowerCase(),
     activityMatchQuantityKey(order.filledQuantity || order.quantity),
     activityMatchPriceKey(orderActivityPrice(order)),
@@ -6399,6 +6483,15 @@ const brokerOrderActivityMatchKey = (order: BrokerOrderSnapshot): string =>
 
 const filledLiveOrderActivity = (order: BrokerOrderSnapshot): boolean =>
   terminalOrderStatus(order.status) && (toNumber(order.filledQuantity) ?? 0) > 0;
+
+const brokerOrderPositionType = (
+  order: BrokerOrderSnapshot,
+): ReturnType<typeof classifyAccountPositionType> =>
+  classifyAccountPositionType({
+    symbol: order.symbol,
+    assetClass: order.assetClass,
+    optionContract: order.optionContract,
+  });
 
 const orderMatchesClosedTradeFilters = (
   order: BrokerOrderSnapshot,
@@ -6413,11 +6506,10 @@ const orderMatchesClosedTradeFilters = (
   }
   if (
     input.assetClass &&
-    input.assetClass !== "all" &&
-    normalizeTradeAssetClassLabel({
-      assetClass: order.assetClass,
-      symbol: order.symbol,
-    }).toLowerCase() !== input.assetClass.toLowerCase()
+    !accountPositionTypeMatchesFilter(
+      brokerOrderPositionType(order),
+      resolveAccountPositionTypeFilter(input.assetClass),
+    )
   ) {
     return false;
   }
@@ -6451,7 +6543,10 @@ const liveOrderToAccountActivityTrade = (
     assetClass: normalizeTradeAssetClassLabel({
       assetClass: order.assetClass,
       symbol: order.symbol,
+      positionType: brokerOrderPositionType(order),
+      optionContract: order.optionContract,
     }),
+    positionType: brokerOrderPositionType(order),
     quantity,
     openDate: order.placedAt,
     closeDate: activityDate,
@@ -7640,6 +7735,7 @@ export const __accountMarginInternalsForTests = {
 };
 
 export const __accountOrderInternalsForTests = {
+  accountTradeMatchesClosedTradeFilters,
   accountOrderRowFromExecution,
   buildLiveExecutionActivityTrades,
   mergeExecutionHistoryOrderRows,
@@ -7647,6 +7743,7 @@ export const __accountOrderInternalsForTests = {
   mergeLiveOrderActivityTrades,
   normalizeOrderTab,
   normalizeTradeAssetClassLabel,
+  orderMatchesClosedTradeFilters,
   orderGroupKey,
   positionGroupKey,
   terminalOrderStatus,

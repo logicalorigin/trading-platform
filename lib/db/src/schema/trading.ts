@@ -191,6 +191,7 @@ export const shadowOrdersTable = pgTable(
     clientOrderId: varchar("client_order_id", { length: 160 }),
     symbol: varchar("symbol", { length: 64 }).notNull(),
     assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    positionType: varchar("position_type", { length: 32 }),
     side: orderSideEnum("side").notNull(),
     type: orderTypeEnum("type").notNull().default("market"),
     timeInForce: timeInForceEnum("time_in_force").notNull().default("day"),
@@ -218,6 +219,7 @@ export const shadowOrdersTable = pgTable(
   (table) => [
     index("shadow_orders_account_idx").on(table.accountId),
     index("shadow_orders_symbol_idx").on(table.symbol),
+    index("shadow_orders_position_type_idx").on(table.positionType),
     index("shadow_orders_status_idx").on(table.status),
     index("shadow_orders_placed_at_idx").on(table.placedAt),
     uniqueIndex("shadow_orders_source_event_idx").on(table.sourceEventId),
@@ -238,6 +240,7 @@ export const shadowFillsTable = pgTable(
     sourceEventId: uuid("source_event_id"),
     symbol: varchar("symbol", { length: 64 }).notNull(),
     assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    positionType: varchar("position_type", { length: 32 }),
     side: orderSideEnum("side").notNull(),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     price: numeric("price", { precision: 18, scale: 6 }).notNull(),
@@ -257,6 +260,7 @@ export const shadowFillsTable = pgTable(
     index("shadow_fills_account_idx").on(table.accountId),
     index("shadow_fills_order_idx").on(table.orderId),
     index("shadow_fills_symbol_idx").on(table.symbol),
+    index("shadow_fills_position_type_idx").on(table.positionType),
     index("shadow_fills_occurred_at_idx").on(table.occurredAt),
     uniqueIndex("shadow_fills_source_event_idx").on(table.sourceEventId),
   ],
@@ -272,6 +276,7 @@ export const shadowPositionsTable = pgTable(
     positionKey: varchar("position_key", { length: 240 }).notNull(),
     symbol: varchar("symbol", { length: 64 }).notNull(),
     assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    positionType: varchar("position_type", { length: 32 }),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     averageCost: numeric("average_cost", { precision: 18, scale: 6 }).notNull(),
     mark: numeric("mark", { precision: 18, scale: 6 }),
@@ -295,6 +300,7 @@ export const shadowPositionsTable = pgTable(
   (table) => [
     index("shadow_positions_account_idx").on(table.accountId),
     index("shadow_positions_symbol_idx").on(table.symbol),
+    index("shadow_positions_position_type_idx").on(table.positionType),
     index("shadow_positions_status_idx").on(table.status),
     uniqueIndex("shadow_positions_account_key_idx").on(
       table.accountId,
@@ -471,6 +477,7 @@ export const flexTradesTable = pgTable(
     symbol: varchar("symbol", { length: 64 }).notNull(),
     description: text("description"),
     assetClass: varchar("asset_class", { length: 32 }).notNull().default("stock"),
+    positionType: varchar("position_type", { length: 32 }),
     side: varchar("side", { length: 16 }).notNull(),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     price: numeric("price", { precision: 18, scale: 6 }),
@@ -488,6 +495,7 @@ export const flexTradesTable = pgTable(
   (table) => [
     index("flex_trades_account_idx").on(table.providerAccountId),
     index("flex_trades_symbol_idx").on(table.symbol),
+    index("flex_trades_position_type_idx").on(table.positionType),
     index("flex_trades_trade_date_idx").on(table.tradeDate),
     uniqueIndex("flex_trades_unique_account_trade_idx").on(
       table.providerAccountId,
@@ -555,6 +563,7 @@ export const flexOpenPositionsTable = pgTable(
     symbol: varchar("symbol", { length: 64 }).notNull(),
     description: text("description"),
     assetClass: varchar("asset_class", { length: 32 }).notNull().default("stock"),
+    positionType: varchar("position_type", { length: 32 }),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     costBasis: numeric("cost_basis", { precision: 20, scale: 6 }),
     marketValue: numeric("market_value", { precision: 20, scale: 6 }),
@@ -567,6 +576,7 @@ export const flexOpenPositionsTable = pgTable(
   (table) => [
     index("flex_open_positions_account_idx").on(table.providerAccountId),
     index("flex_open_positions_symbol_idx").on(table.symbol),
+    index("flex_open_positions_position_type_idx").on(table.positionType),
     index("flex_open_positions_as_of_idx").on(table.asOf),
     uniqueIndex("flex_open_positions_unique_account_symbol_as_of_idx").on(
       table.providerAccountId,

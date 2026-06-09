@@ -100,6 +100,13 @@ import {
 import { resolveAccountPortfolioRisk } from "./account-portfolio-risk";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import {
+  accountPositionTypeDisplayLabel,
+  accountPositionTypeMatchesFilter,
+  classifyAccountPositionType,
+  normalizeAccountPositionTypeFilter,
+  type AccountPositionTypeFilter,
+} from "./account-position-type";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
@@ -1044,29 +1051,73 @@ function weightPercent(value: number, nav: number | null): number | null {
   return nav && nav !== 0 ? (value / nav) * 100 : null;
 }
 
-function assetClassLabel(position: { assetClass: string; symbol: string }): string {
-  if (position.assetClass === "option") {
-    return "Options";
-  }
-  return "Stocks";
+type ShadowPositionTypeFilter = "option" | "stock" | "etf" | "equity" | "all" | null;
+
+function shadowPositionTypeFilterFromAccountFilter(
+  filter: AccountPositionTypeFilter,
+): ShadowPositionTypeFilter {
+  if (filter.kind === "all") return "all";
+  if (filter.kind === "equity") return "equity";
+  if (filter.kind === "single") return filter.value;
+  return null;
 }
 
-function normalizePositionAssetClass(value: unknown): "options" | "stocks" | "all" | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === "all") return "all";
-  if (normalized === "option" || normalized === "options" || normalized === "opt") {
-    return "options";
+function normalizePositionAssetClass(value: unknown): ShadowPositionTypeFilter {
+  const filter = normalizeAccountPositionTypeFilter(value);
+  if (filter.kind === "invalid") {
+    throw new HttpError(400, "Unsupported account position type filter.", {
+      code: "invalid_account_position_type",
+      detail:
+        "Use all, stock, etf, option, or the legacy equity alias for account position filters.",
+      expose: true,
+    });
   }
-  if (
-    normalized === "stock" ||
-    normalized === "stocks" ||
-    normalized === "equity" ||
-    normalized === "equities"
-  ) {
-    return "stocks";
+  return shadowPositionTypeFilterFromAccountFilter(filter);
+}
+
+function shadowPositionType(position: {
+  assetClass: string;
+  symbol: string;
+  positionType?: string | null;
+  optionContract?: unknown;
+}) {
+  return classifyAccountPositionType({
+    symbol: position.symbol,
+    assetClass: position.assetClass,
+    positionType: position.positionType,
+    optionContract: position.optionContract,
+  });
+}
+
+function assetClassLabel(position: {
+  assetClass: string;
+  symbol: string;
+  positionType?: string | null;
+  optionContract?: unknown;
+}): string {
+  return accountPositionTypeDisplayLabel(shadowPositionType(position));
+}
+
+function shadowPositionMatchesAssetClass(
+  position: {
+    assetClass: string;
+    symbol: string;
+    positionType?: string | null;
+    optionContract?: unknown;
+  },
+  assetClassFilter: ShadowPositionTypeFilter,
+): boolean {
+  if (!assetClassFilter || assetClassFilter === "all") {
+    return true;
   }
-  return null;
+  const positionType = shadowPositionType(position);
+  if (assetClassFilter === "equity") {
+    return accountPositionTypeMatchesFilter(positionType, { kind: "equity" });
+  }
+  return accountPositionTypeMatchesFilter(positionType, {
+    kind: "single",
+    value: assetClassFilter,
+  });
 }
 
 function marketMultiplier(input: {
@@ -4289,6 +4340,11 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   const optionContract = asOptionContract(normalized.optionContract);
   const quantity = toNumber(normalized.quantity) ?? 0;
   const symbol = normalizeSymbol(normalized.symbol).toUpperCase();
+  const positionType = classifyAccountPositionType({
+    symbol,
+    assetClass: normalized.assetClass,
+    optionContract,
+  });
 
   await db.transaction(async (tx) => {
     await tx.insert(shadowOrdersTable).values({
@@ -4301,6 +4357,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
         `shadow-${normalized.source ?? "manual"}-${orderId}`,
       symbol,
       assetClass: normalized.assetClass,
+      positionType,
       side: normalized.side,
       type: normalized.type,
       timeInForce: normalized.timeInForce,
@@ -4324,6 +4381,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       sourceEventId: normalized.sourceEventId ?? null,
       symbol,
       assetClass: normalized.assetClass,
+      positionType,
       side: normalized.side,
       quantity: money(quantity),
       price: money(plan.price),
@@ -4981,6 +5039,11 @@ async function upsertPositionForFill(
   const currentAverageCost = toNumber(current?.averageCost) ?? 0;
   const currentRealized = toNumber(current?.realizedPnl) ?? 0;
   const currentFees = toNumber(current?.fees) ?? 0;
+  const positionType = classifyAccountPositionType({
+    symbol: input.symbol,
+    assetClass: input.assetClass,
+    optionContract: input.optionContract,
+  });
 
   if (input.side === "buy") {
     const nextQuantity = current?.status === "open" ? currentQuantity + input.quantity : input.quantity;
@@ -4995,6 +5058,7 @@ async function upsertPositionForFill(
       await tx
         .update(shadowPositionsTable)
         .set({
+          positionType,
           quantity: money(nextQuantity),
           averageCost: money(nextAverageCost),
           mark: money(input.price),
@@ -5015,6 +5079,7 @@ async function upsertPositionForFill(
         positionKey: input.positionKey,
         symbol: input.symbol,
         assetClass: input.assetClass,
+        positionType,
         quantity: money(nextQuantity),
         averageCost: money(nextAverageCost),
         mark: money(input.price),
@@ -5036,6 +5101,7 @@ async function upsertPositionForFill(
   await tx
     .update(shadowPositionsTable)
     .set({
+      positionType,
       quantity: money(nextQuantity),
       mark: money(input.price),
       marketValue: money(marketValue),
@@ -7652,7 +7718,7 @@ function applyShadowAccountPositionWeights<T extends ShadowAccountPositionWeight
 }
 
 function shadowPositionsReadCacheKey(input: {
-  assetClassFilter: "options" | "stocks" | "all" | null;
+  assetClassFilter: ShadowPositionTypeFilter;
   source: ShadowSourceScope | null;
   includeLiveQuotes: boolean;
 }): string {
@@ -7684,11 +7750,18 @@ function isShadowAccountPositionsResponseShape(
 
 function filterShadowAccountPositionsResponseForAssetClass(
   response: ShadowAccountPositionsResponseShape,
-  assetClassFilter: "options" | "stocks",
+  assetClassFilter: Exclude<ShadowPositionTypeFilter, "all" | null>,
 ): ShadowAccountPositionsResponseShape {
-  const rows = response.positions.filter(
-    (position) =>
-      normalizePositionAssetClass(position.assetClass) === assetClassFilter,
+  const rows = response.positions.filter((position) =>
+    shadowPositionMatchesAssetClass(
+      {
+        symbol: position.symbol,
+        assetClass: position.assetClass,
+        positionType: (position as { positionType?: string | null }).positionType,
+        optionContract: (position as { optionContract?: unknown }).optionContract,
+      },
+      assetClassFilter,
+    ),
   );
   const cash = toNumber(response.totals.cash) ?? 0;
   const accountNetLiquidation =
@@ -7728,7 +7801,7 @@ function filterShadowAccountPositionsResponseForAssetClass(
 }
 
 function readReusableShadowPositionsResponseForAssetClass(input: {
-  assetClassFilter: "options" | "stocks" | "all" | null;
+  assetClassFilter: ShadowPositionTypeFilter;
   source: ShadowSourceScope | null;
   includeLiveQuotes: boolean;
 }): ShadowAccountPositionsResponseShape | null {
@@ -7782,7 +7855,7 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
 }
 
 function readReusableLiveQuotedShadowPositionsResponse(input: {
-  assetClassFilter: "options" | "stocks" | "all" | null;
+  assetClassFilter: ShadowPositionTypeFilter;
   source: ShadowSourceScope | null;
   includeLiveQuotes: boolean;
 }): ShadowAccountPositionsResponseShape | null {
@@ -7887,10 +7960,8 @@ export async function getShadowAccountPositions(input: {
         const positions = ledgerBundle.positions;
         const filtered =
           assetClassFilter && assetClassFilter !== "all"
-            ? positions.filter(
-                (position) =>
-                  normalizePositionAssetClass(assetClassLabel(position)) ===
-                  assetClassFilter,
+            ? positions.filter((position) =>
+                shadowPositionMatchesAssetClass(position, assetClassFilter),
               )
             : positions;
         const ordersByPositionKey = shadowOrdersByPositionKey(orders);
@@ -8132,6 +8203,7 @@ export async function getShadowAccountPositions(input: {
                       : marketPositionQuote.spreadPercent,
                 }
               : marketPositionQuote;
+          const positionType = shadowPositionType(position);
           const optionUnderlyingQuote = contract
             ? shadowUnderlyingQuoteFromOptionQuote(
                 underlyingSymbol,
@@ -8150,6 +8222,7 @@ export async function getShadowAccountPositions(input: {
             marketDataSymbol: shadowPositionMarketDataSymbol(position),
             description: positionDescription(position),
             assetClass: assetClassLabel(position),
+            positionType,
             optionContract: optionPayload(
               asOptionContract(position.optionContract),
               responseProviderContractId,
@@ -8536,11 +8609,11 @@ export async function getShadowAccountPositionsAtDate(input: {
   const rawPositions = Array.from(books.entries()).filter(
     ([, book]) => Math.abs(book.quantity) > 1e-8,
   );
+  const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const filteredPositions =
-    input.assetClass && input.assetClass !== "all"
-      ? rawPositions.filter(
-          ([, book]) =>
-            assetClassLabel(book).toLowerCase() === input.assetClass?.toLowerCase(),
+    assetClassFilter && assetClassFilter !== "all"
+      ? rawPositions.filter(([, book]) =>
+          shadowPositionMatchesAssetClass(book, assetClassFilter),
         )
       : rawPositions;
   const marketValueTotal = filteredPositions.reduce((sum, [, book]) => {
@@ -8566,6 +8639,7 @@ export async function getShadowAccountPositionsAtDate(input: {
     const marketValue = book.quantity * book.mark * multiplier;
     const unrealizedPnl = marketValue - book.totalCost;
     const scopedWeightPercent = weightPercent(marketValue, nav);
+    const positionType = shadowPositionType(book);
     return {
       id: `SHADOW:${key}:${window.date}`,
       accountId: SHADOW_ACCOUNT_ID,
@@ -8580,6 +8654,7 @@ export async function getShadowAccountPositionsAtDate(input: {
         ? `${book.optionContract.underlying} ${optionDateKey(book.optionContract.expirationDate)} ${book.optionContract.strike} ${String(book.optionContract.right).toUpperCase()}`
         : book.symbol,
       assetClass: assetClassLabel(book),
+      positionType,
       optionContract: optionPayload(book.optionContract),
       sector: "Shadow Holdings",
       quantity: book.quantity,
@@ -8706,16 +8781,16 @@ function shadowClosedTradesReadCacheKey(input: {
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
-  assetClass?: string | null;
+  assetClassFilter: ShadowPositionTypeFilter;
   pnlSign?: string | null;
 }): string {
   return [
-    "closed-trades",
+    "closed-trades:v2",
     shadowSourceCacheKey(input.source),
     shadowClosedTradesDateCachePart(input.from),
     shadowClosedTradesDateCachePart(input.to),
     shadowClosedTradesSymbolCachePart(input.symbol),
-    shadowClosedTradesStringCachePart(input.assetClass),
+    input.assetClassFilter ?? "",
     shadowClosedTradesStringCachePart(input.pnlSign),
   ].join(":");
 }
@@ -8729,13 +8804,14 @@ export async function getShadowAccountClosedTrades(input: {
   source?: string | null;
 }) {
   const source = normalizeShadowSourceScope(input.source);
+  const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   return withShadowReadCache(
     shadowClosedTradesReadCacheKey({
       source,
       from: input.from,
       to: input.to,
       symbol: input.symbol,
-      assetClass: input.assetClass,
+      assetClassFilter,
       pnlSign: input.pnlSign,
     }),
     async () => {
@@ -8783,7 +8859,12 @@ export async function getShadowAccountClosedTrades(input: {
         const { roundTrips } = buildShadowAnalysisRoundTrips(events);
         const closedTrades = roundTrips
           .map(shadowRoundTripToClosedTrade)
-          .filter((trade) => shadowTradeMatchesClosedTradeInput(trade, input))
+          .filter((trade) =>
+            shadowTradeMatchesClosedTradeInput(trade, {
+              ...input,
+              assetClassFilter,
+            }),
+          )
           .sort((left, right) => {
             const leftTime = left.closeDate
               ? new Date(left.closeDate).getTime()
@@ -8797,7 +8878,7 @@ export async function getShadowAccountClosedTrades(input: {
           closedTrades,
           events,
           roundTrips,
-          input,
+          { ...input, assetClassFilter },
         );
         return {
           accountId: SHADOW_ACCOUNT_ID,
@@ -8874,6 +8955,12 @@ function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
   const price = toNumber(fill.price);
   const realizedPnl = toNumber(fill.realizedPnl);
   const contract = asOptionContract(fill.optionContract);
+  const positionType = shadowPositionType({
+    symbol: fill.symbol,
+    assetClass: fill.assetClass,
+    positionType: fill.positionType,
+    optionContract: contract,
+  });
   const multiplier = marketMultiplier({
     assetClass: fill.assetClass as ShadowAssetClass,
     optionContract: contract,
@@ -8889,7 +8976,8 @@ function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
     accountId: SHADOW_ACCOUNT_ID,
     symbol: fill.symbol,
     side: fill.side,
-    assetClass: fill.assetClass === "option" ? "Options" : "Stocks",
+    assetClass: accountPositionTypeDisplayLabel(positionType),
+    positionType,
     quantity,
     openDate: null,
     closeDate: fill.occurredAt,
@@ -8911,6 +8999,8 @@ type ShadowAnalysisTradeEvent = {
   symbol: string;
   side: ShadowSide;
   assetClass: string;
+  positionType: ReturnType<typeof classifyAccountPositionType>;
+  positionKey: string;
   quantity: number;
   price: number;
   grossAmount: number;
@@ -8933,6 +9023,8 @@ type ShadowAnalysisRoundTrip = {
   entryIds: string[];
   symbol: string;
   assetClass: string;
+  positionType: ReturnType<typeof classifyAccountPositionType>;
+  positionKey: string;
   quantity: number;
   openDate: string | null;
   closeDate: string;
@@ -8953,6 +9045,8 @@ type ShadowAnalysisOpenLot = {
   id: string;
   symbol: string;
   assetClass: string;
+  positionType: ReturnType<typeof classifyAccountPositionType>;
+  positionKey: string;
   quantity: number;
   entryPrice: number;
   entryAt: Date;
@@ -8998,6 +9092,23 @@ function shadowAnalysisTradeEvent(
     readRecord(payloadParts.position.selectedContract) ??
     readRecord(payloadParts.candidate.selectedContract) ??
     {};
+  const contract = asOptionContract(fill.optionContract) ?? asOptionContract(payloadSelectedContract);
+  const positionType = shadowPositionType({
+    symbol: fill.symbol,
+    assetClass: fill.assetClass,
+    positionType: fill.positionType,
+    optionContract: contract,
+  });
+  const payload = readRecord(order?.payload) ?? {};
+  const payloadMetadata = readRecord(payload.metadata) ?? {};
+  const attributedPositionKey =
+    readString(payloadMetadata.positionKey) ??
+    readString(payload.positionKey) ??
+    positionKey({
+      symbol: fill.symbol,
+      assetClass: fill.assetClass as ShadowAssetClass,
+      optionContract: contract,
+    });
   const metadata = normalizeLegacyAlgoBranding({
     ...payloadParts.metadata,
     reason:
@@ -9032,6 +9143,8 @@ function shadowAnalysisTradeEvent(
     symbol: normalizeSymbol(fill.symbol).toUpperCase(),
     side: fill.side as ShadowSide,
     assetClass: fill.assetClass,
+    positionType,
+    positionKey: attributedPositionKey,
     quantity: Math.abs(toNumber(fill.quantity) ?? 0),
     price: toNumber(fill.price) ?? 0,
     grossAmount: toNumber(fill.grossAmount) ?? 0,
@@ -9191,6 +9304,12 @@ function roundTripStrikeSlot(input: {
 function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
   const selectedContract = roundTripSelectedContract(trade);
   const contract = asOptionContract(selectedContract);
+  const positionType = shadowPositionType({
+    symbol: trade.symbol,
+    assetClass: trade.assetClass,
+    positionType: trade.positionType,
+    optionContract: contract,
+  });
   const candidate = roundTripCandidate(trade);
   const profile = roundTripProfile(trade);
   const selectedExpiration = roundTripSelectedExpiration(trade);
@@ -9231,7 +9350,8 @@ function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
     accountId: SHADOW_ACCOUNT_ID,
     symbol: trade.symbol,
     side: "sell",
-    assetClass: trade.assetClass === "option" ? "Options" : "Stocks",
+    assetClass: accountPositionTypeDisplayLabel(positionType),
+    positionType,
     quantity: trade.quantity,
     openDate: trade.openDate,
     closeDate: trade.closeDate,
@@ -9285,6 +9405,12 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
     candidate.selectedContract,
   );
   const contract = asOptionContract(selectedContract);
+  const positionType = shadowPositionType({
+    symbol: event.symbol,
+    assetClass: event.assetClass,
+    positionType: event.positionType,
+    optionContract: contract,
+  });
   const optionRight =
     readString(contract?.right) ??
     readString(selectedContract.right) ??
@@ -9303,7 +9429,8 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
     accountId: SHADOW_ACCOUNT_ID,
     symbol: event.symbol,
     side: event.side,
-    assetClass: event.assetClass === "option" ? "Options" : "Stocks",
+    assetClass: accountPositionTypeDisplayLabel(positionType),
+    positionType,
     quantity: event.quantity,
     openDate: event.side === "buy" ? event.occurredAt : null,
     closeDate: event.occurredAt,
@@ -9345,7 +9472,7 @@ function shadowTradeMatchesClosedTradeInput(
     from?: Date | null;
     to?: Date | null;
     symbol?: string | null;
-    assetClass?: string | null;
+    assetClassFilter: ShadowPositionTypeFilter;
     pnlSign?: string | null;
   },
 ) {
@@ -9361,9 +9488,17 @@ function shadowTradeMatchesClosedTradeInput(
     return false;
   }
   if (
-    input.assetClass &&
-    input.assetClass !== "all" &&
-    trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+    input.assetClassFilter &&
+    input.assetClassFilter !== "all" &&
+    !shadowPositionMatchesAssetClass(
+      {
+        symbol: trade.symbol,
+        assetClass: trade.assetClass,
+        positionType: trade.positionType,
+        optionContract: trade.optionContract,
+      },
+      input.assetClassFilter,
+    )
   ) {
     return false;
   }
@@ -9384,7 +9519,7 @@ function mergeShadowActivityTrades(
     from?: Date | null;
     to?: Date | null;
     symbol?: string | null;
-    assetClass?: string | null;
+    assetClassFilter: ShadowPositionTypeFilter;
     pnlSign?: string | null;
   },
 ) {
@@ -9412,7 +9547,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
   const anomalies: Array<Record<string, unknown>> = [];
 
   for (const event of events) {
-    const key = `${event.assetClass}:${event.symbol}`;
+    const key = event.positionKey || `${event.positionType}:${event.symbol}`;
     const lots = lotsByKey.get(key) ?? [];
     lotsByKey.set(key, lots);
     if (event.side === "buy") {
@@ -9420,6 +9555,8 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
         id: event.id,
         symbol: event.symbol,
         assetClass: event.assetClass,
+        positionType: event.positionType,
+        positionKey: event.positionKey,
         quantity: event.quantity,
         entryPrice: event.price,
         entryAt: event.occurredAtDate,
@@ -9481,6 +9618,8 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       entryIds,
       symbol: event.symbol,
       assetClass: event.assetClass,
+      positionType: event.positionType,
+      positionKey: event.positionKey,
       quantity: event.quantity,
       openDate: shadowAnalysisJsonDate(earliestEntry),
       closeDate: event.occurredAt,
@@ -9997,7 +10136,7 @@ async function buildShadowAccountRisk(input: {
           underlyingPrices,
         });
     const totalOptionPositions = positionsResponse.positions.filter(
-      (position) => position.assetClass === "Options",
+      (position) => shadowPositionType(position) === "option",
     ).length;
     const matchedOptionPositions = Array.from(greekByPositionId.values()).filter(
       (greek) => greek.matched,
@@ -10117,7 +10256,8 @@ async function buildShadowAccountRisk(input: {
           theta: greekByPositionId.get(position.id)?.theta ?? null,
           vega: greekByPositionId.get(position.id)?.vega ?? null,
           positionCount: 1,
-          optionPositionCount: position.assetClass === "Options" ? 1 : 0,
+          optionPositionCount:
+            shadowPositionType(position) === "option" ? 1 : 0,
         })),
         warning: shadowGreekWarning,
       },
@@ -10440,17 +10580,24 @@ function shadowPositionForNotionalRisk(position: {
   marketValue?: unknown;
   unrealizedPnl?: unknown;
   unrealizedPnlPercent?: unknown;
+  positionType?: string | null;
   optionContract?: unknown;
 }): BrokerPositionSnapshot {
   const optionContract = asOptionContract(position.optionContract);
   const riskOptionContract = optionContract
     ? { ...optionContract, providerContractId: optionContract.providerContractId ?? null }
     : null;
+  const positionType = shadowPositionType({
+    symbol: position.symbol,
+    assetClass: position.assetClass,
+    positionType: position.positionType,
+    optionContract: riskOptionContract,
+  });
   return {
     id: position.id,
     accountId: SHADOW_ACCOUNT_ID,
     symbol: position.symbol,
-    assetClass: riskOptionContract || position.assetClass === "Options" ? "option" : "equity",
+    assetClass: positionType === "option" ? "option" : "equity",
     quantity: toNumber(position.quantity) ?? 0,
     averagePrice: toNumber(position.averageCost) ?? 0,
     marketPrice: toNumber(position.mark) ?? 0,
@@ -10516,7 +10663,10 @@ async function hydrateShadowOptionUnderlyingPrices(
 function buildShadowExpiryConcentration(
   positions: Array<{
     assetClass: string;
+    positionType?: string | null;
     id: string;
+    symbol: string;
+    optionContract?: unknown;
     description?: unknown;
     marketValue?: unknown;
   }>,
@@ -10527,7 +10677,7 @@ function buildShadowExpiryConcentration(
   const ninety = now + 90 * 86_400_000;
   const buckets = { thisWeek: 0, thisMonth: 0, next90Days: 0 };
   positions.forEach((position) => {
-    if (position.assetClass !== "Options") {
+    if (shadowPositionType(position) !== "option") {
       return;
     }
     const expiryMatch = String(position.description ?? "").match(/\d{4}-\d{2}-\d{2}/);
@@ -13092,6 +13242,10 @@ async function insertWatchlistBacktestFills(input: {
       const orderId = randomUUID();
       const fillId = randomUUID();
       const fillMarketDate = marketDateKey(fill.placedAt);
+      const positionType = classifyAccountPositionType({
+        symbol: fill.symbol,
+        assetClass: "equity",
+      });
       const payload = {
         metadata: {
           source: WATCHLIST_BACKTEST_SOURCE,
@@ -13124,6 +13278,7 @@ async function insertWatchlistBacktestFills(input: {
         clientOrderId: `shadow-watchlist-backtest-${input.rangeKey}-${input.runId}-${index + 1}`,
         symbol: fill.symbol,
         assetClass: "equity",
+        positionType,
         side: fill.side,
         type: "market",
         timeInForce: "day",
@@ -13144,6 +13299,7 @@ async function insertWatchlistBacktestFills(input: {
         sourceEventId: null,
         symbol: fill.symbol,
         assetClass: "equity",
+        positionType,
         side: fill.side,
         quantity: money(fill.quantity),
         price: money(fill.price),
@@ -13211,6 +13367,10 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   getShadowAccountReadDiagnostics,
   resetShadowAccountReadDiagnosticsForTests,
   shadowClosedTradesReadCacheKey,
+  buildShadowAnalysisRoundTrips,
+  shadowRoundTripToClosedTrade,
+  shadowTradeEventToActivityTrade,
+  shadowTradeMatchesClosedTradeInput,
   readReusableShadowPositionsResponseForAssetClass,
   filterShadowAccountPositionsResponseForAssetClass,
   applyShadowAccountPositionWeights,
@@ -13230,9 +13390,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   latestHistoricalShadowTotalsDate,
   isLiveShadowOrder,
   isDefaultShadowLedgerAnalyticsOrder,
-  buildShadowAnalysisRoundTrips,
   mergeShadowActivityTrades,
-  shadowTradeEventToActivityTrade,
   isLiveShadowPosition,
   isDefaultShadowLedgerAnalyticsPosition,
   isExpiredHistoricalShadowOptionPosition,

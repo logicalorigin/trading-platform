@@ -24,6 +24,25 @@ import { SegmentedControl, Skeleton } from "../../components/platform/primitives
 
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
+const NUMBER_FORMATTER_CACHE_LIMIT = 64;
+const numberFormatterCache = new Map();
+
+const getNumberFormatter = (key, options) => {
+  const cached = numberFormatterCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  if (numberFormatterCache.size >= NUMBER_FORMATTER_CACHE_LIMIT) {
+    const oldestKey = numberFormatterCache.keys().next().value;
+    if (oldestKey) {
+      numberFormatterCache.delete(oldestKey);
+    }
+  }
+  const formatter = new Intl.NumberFormat(undefined, options);
+  numberFormatterCache.set(key, formatter);
+  return formatter;
+};
+
 export const formatMoney = (value, currency = "USD", compact = false) => {
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
   const numeric = Number(value);
@@ -34,9 +53,11 @@ export const formatMoney = (value, currency = "USD", compact = false) => {
   if (compact && Math.abs(numeric) >= 1e3) {
     return `${symbol}${(numeric / 1e3).toFixed(1)}K`;
   }
-  return `${symbol}${numeric.toLocaleString(undefined, {
-    maximumFractionDigits: Math.abs(numeric) >= 100 ? 0 : 2,
-  })}`;
+  const maximumFractionDigits = Math.abs(numeric) >= 100 ? 0 : 2;
+  return `${symbol}${getNumberFormatter(
+    `money:${maximumFractionDigits}`,
+    { maximumFractionDigits },
+  ).format(numeric)}`;
 };
 
 export const ACCOUNT_VALUE_MASK = "****";
@@ -53,18 +74,22 @@ export const formatAccountMoney = (
 
 export const formatNumber = (value, digits = 2) => {
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
-  return Number(value).toLocaleString(undefined, {
-    maximumFractionDigits: digits,
-  });
+  return getNumberFormatter(
+    `number:${digits}`,
+    { maximumFractionDigits: digits },
+  ).format(Number(value));
 };
 
 export const formatAccountPrice = (value, digits = 2, maskValues = false) => {
   if (maskValues) return ACCOUNT_VALUE_MASK;
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
-  return Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
+  return getNumberFormatter(
+    `price:${digits}`,
+    {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    },
+  ).format(Number(value));
 };
 
 export const formatPercent = (value, digits = 2) => {

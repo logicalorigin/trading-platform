@@ -476,6 +476,7 @@ export const buildAlgoAccountPositionRows = ({
       symbol: optionContract.underlying || symbol,
       description,
       assetClass: "Options",
+      positionType: "option",
       optionContract,
       optionQuote,
       underlyingMarket,

@@ -79,6 +79,10 @@ import {
 } from "./account/PositionOptionQuoteStreams.jsx";
 import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
 import {
+  accountPositionTypeParam,
+  normalizeAccountPositionTypeFilter,
+} from "../features/account/accountPositionTypes";
+import {
   ACCOUNT_RANGES,
   Panel,
   Pill,
@@ -495,7 +499,7 @@ const DeferredPanelSuspense = ({
   </PlatformErrorBoundary>
 );
 
-const ACCOUNT_LIVE_STALE_MS = 5_000;
+const ACCOUNT_LIVE_STALE_MS = 15_000;
 const ACCOUNT_DERIVED_STALE_MS = 120_000;
 const ACCOUNT_ACTIVITY_STALE_MS = ACCOUNT_LIVE_STALE_MS;
 const ACCOUNT_HISTORY_STALE_MS = 120_000;
@@ -1022,7 +1026,9 @@ const AccountScreenInner = ({
     normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")),
   );
   const [assetFilter, setAssetFilter] = useState(() =>
-    readAccountWorkspaceDefault("accountAssetFilter", "all"),
+    normalizeAccountPositionTypeFilter(
+      readAccountWorkspaceDefault("accountAssetFilter", "all"),
+    ),
   );
   const [sourceFilter, setSourceFilter] = useState(() =>
     readAccountWorkspaceDefault("accountSourceFilter", "all"),
@@ -1056,7 +1062,12 @@ const AccountScreenInner = ({
   }, [range]);
 
   useEffect(() => {
-    writeAccountWorkspaceDefault("accountAssetFilter", assetFilter);
+    const normalizedAssetFilter = normalizeAccountPositionTypeFilter(assetFilter);
+    if (normalizedAssetFilter !== assetFilter) {
+      setAssetFilter(normalizedAssetFilter);
+      return;
+    }
+    writeAccountWorkspaceDefault("accountAssetFilter", normalizedAssetFilter);
   }, [assetFilter]);
 
   useEffect(() => {
@@ -1076,7 +1087,11 @@ const AccountScreenInner = ({
   useEffect(() => {
     const listener = () => {
       setRange(normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")));
-      setAssetFilter(readAccountWorkspaceDefault("accountAssetFilter", "all"));
+      setAssetFilter(
+        normalizeAccountPositionTypeFilter(
+          readAccountWorkspaceDefault("accountAssetFilter", "all"),
+        ),
+      );
       setSourceFilter(readAccountWorkspaceDefault("accountSourceFilter", "all"));
       setOrderTab(readAccountWorkspaceDefault("accountOrderTab", "working"));
     };
@@ -1110,12 +1125,29 @@ const AccountScreenInner = ({
     (date) => retainPreviousAccountDateData(accountRequestId, date),
     [accountRequestId],
   );
-  const inactiveAccountSection = shadowMode ? "real" : "shadow";
+  const realAccountRoutesAvailable = Boolean(
+    !safeQaMode &&
+      brokerConfigured &&
+      brokerAuthenticated &&
+      activeAccountId,
+  );
+  const inactiveAccountSection = shadowMode
+    ? realAccountRoutesAvailable
+      ? "real"
+      : null
+    : "shadow";
+  const realAccountDataEnabled = Boolean(
+    isVisible &&
+      !safeQaMode &&
+      !shadowMode &&
+      realAccountRoutesAvailable &&
+      accountRequestId,
+  );
   const accountQueriesEnabled = Boolean(
     isVisible &&
       !safeQaMode &&
       accountRequestId &&
-      (shadowMode || brokerConfigured || brokerAuthenticated || accounts.length),
+      (shadowMode || realAccountDataEnabled),
   );
   const modeParams = useMemo(
     () => ({
@@ -1171,9 +1203,8 @@ const AccountScreenInner = ({
       accountId: accountRequestId,
       mode: modeParams.mode,
       environment: modeParams.mode,
-      assetClass: assetFilter === "all" ? "all" : assetFilter,
     }),
-    [accountRequestId, assetFilter, modeParams.mode],
+    [accountRequestId, modeParams.mode],
   );
   const equityHistoryRuntimeCacheKey = useMemo(
     () =>
@@ -1285,18 +1316,21 @@ const AccountScreenInner = ({
           environment,
         }),
         orderTab: nextShadowMode && orderTab === "working" ? "history" : orderTab,
-        assetClass: assetFilter === "all" ? undefined : assetFilter,
+        assetClass: accountPositionTypeParam(assetFilter),
       };
     },
     [activeAccountId, assetFilter, environment, orderTab],
   );
   const inactiveAccountPageRequest = useMemo(
-    () => getAccountSectionRequest(inactiveAccountSection),
+    () =>
+      inactiveAccountSection
+        ? getAccountSectionRequest(inactiveAccountSection)
+        : null,
     [getAccountSectionRequest, inactiveAccountSection],
   );
   const prefetchAccountSectionLiveQueries = useCallback(
     (section) => {
-      if (!accountQueriesEnabled) {
+      if (!accountQueriesEnabled || !section) {
         return;
       }
       const target = getAccountSectionRequest(section);
@@ -1358,7 +1392,7 @@ const AccountScreenInner = ({
     [accountQueriesEnabled, getAccountSectionRequest, queryClient],
   );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(
-    !shadowMode && !safeQaMode,
+    realAccountDataEnabled,
   );
   const accountPageStreamEnabled = Boolean(
     isVisible && accountQueriesEnabled,
@@ -1368,7 +1402,7 @@ const AccountScreenInner = ({
     mode: modeParams.mode,
     range,
     orderTab: effectiveOrderTab,
-    assetClass: assetFilter === "all" ? undefined : assetFilter,
+    assetClass: accountPositionTypeParam(assetFilter),
     tradeFilters: {
       from: closedTradeParams.from,
       to: closedTradeParams.to,
@@ -1503,6 +1537,7 @@ const AccountScreenInner = ({
   const inactiveAccountPrewarmEnabled = Boolean(
     isVisible &&
       accountQueriesEnabled &&
+      inactiveAccountSection &&
       accountPrimaryReady &&
       (!inactiveAccountPageStreamEnabled || inactiveAccountPrewarmFallbackReady) &&
       !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
@@ -1555,7 +1590,7 @@ const AccountScreenInner = ({
     runtimeDiagnosticsEnabled: false,
     lineUsageEnabled: isVisible,
     lineUsageStreamEnabled: isVisible,
-    lineUsagePollInterval: 2_000,
+    lineUsagePollInterval: 10_000,
   });
   const accountWarmupPending = Boolean(
     accountRuntimeControl.lineUsage?.warmup?.accountPendingLineCount > 0,
@@ -1804,7 +1839,7 @@ const AccountScreenInner = ({
     accountRequestId,
     {
       ...accountDataParams,
-      assetClass: assetFilter === "all" ? undefined : assetFilter,
+      assetClass: accountPositionTypeParam(assetFilter),
       liveQuotes: true,
     },
     {
@@ -1823,7 +1858,7 @@ const AccountScreenInner = ({
     {
       ...accountDataParams,
       date: activeEquityInspectionDate || "1970-01-01",
-      assetClass: assetFilter === "all" ? undefined : assetFilter,
+      assetClass: accountPositionTypeParam(assetFilter),
     },
     {
       query: {

@@ -2,29 +2,20 @@ import type {
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
 } from "../providers/ibkr/client";
+import {
+  accountPositionTypeDisplayLabel,
+  classifyAccountPositionType,
+  isStaticAccountEtfSymbol,
+} from "./account-position-type";
 
 export type OrderTab = "working" | "history";
-
-const ETF_SYMBOLS = new Set([
-  "SPY",
-  "QQQ",
-  "IWM",
-  "DIA",
-  "TLT",
-  "IEF",
-  "GLD",
-  "USO",
-  "SOXX",
-  "VXX",
-  "VIXY",
-]);
 
 function formatDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
 export function isEtfSymbol(symbol: string): boolean {
-  return ETF_SYMBOLS.has(symbol.toUpperCase());
+  return isStaticAccountEtfSymbol(symbol);
 }
 
 export function normalizeOrderTab(raw: unknown): OrderTab {
@@ -51,32 +42,33 @@ export function workingOrderStatus(
 export function normalizeAssetClassLabel(
   position: BrokerPositionSnapshot,
 ): string {
-  if (position.assetClass === "option") {
-    return "Options";
-  }
-  if (isEtfSymbol(position.symbol)) {
-    return "ETF";
-  }
-  return "Stocks";
+  return accountPositionTypeDisplayLabel(classifyAccountPositionType(position));
 }
 
 export function normalizeTradeAssetClassLabel(input: {
   assetClass: string | null | undefined;
   symbol: string;
+  positionType?: string | null;
+  optionContract?: unknown;
 }): string {
   const normalized = (input.assetClass ?? "").trim().toLowerCase();
   const compactSymbol = input.symbol.replace(/\s+/g, "").toUpperCase();
   if (
+    input.optionContract ||
     normalized.includes("option") ||
     normalized === "opt" ||
     /^[A-Z0-9.]+\d{6}[CP]\d{8}$/.test(compactSymbol)
   ) {
     return "Options";
   }
-  if (isEtfSymbol(input.symbol)) {
-    return "ETF";
-  }
-  return "Stocks";
+  return accountPositionTypeDisplayLabel(
+    classifyAccountPositionType({
+      symbol: input.symbol,
+      assetClass: input.assetClass,
+      positionType: input.positionType,
+      optionContract: input.optionContract,
+    }),
+  );
 }
 
 export function positionGroupKey(position: BrokerPositionSnapshot): string {

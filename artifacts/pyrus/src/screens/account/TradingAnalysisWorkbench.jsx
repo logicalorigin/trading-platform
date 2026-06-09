@@ -30,6 +30,7 @@ import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { useNumberTick } from "../../lib/numberTick";
 import { useValueFlash } from "../../lib/motion.jsx";
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
+import { normalizeAccountPositionTypeFilter } from "../../features/account/accountPositionTypes";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -99,9 +100,10 @@ const VIEW_OPTIONS = [
 
 const ASSET_OPTIONS = [
   { value: "all", label: "All" },
-  { value: "Stocks", label: "Stocks" },
-  { value: "Options", label: "Options" },
-  { value: "Futures", label: "Futures" },
+  { value: "equity", label: "Stocks + ETFs" },
+  { value: "stock", label: "Stocks" },
+  { value: "etf", label: "ETFs" },
+  { value: "option", label: "Options" },
 ];
 
 const HOLD_OPTIONS = [
@@ -172,9 +174,9 @@ const normalizeText = (value, fallback = "") => {
 const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
 
 const marketForAssetClass = (assetClass) => {
-  const normalized = String(assetClass || "").toLowerCase();
+  const normalized = normalizeAccountPositionTypeFilter(assetClass);
   if (normalized === "etf") return "etf";
-  if (normalized === "options") return "options";
+  if (normalized === "option") return "options";
   return "stocks";
 };
 
@@ -1205,7 +1207,7 @@ const TradeRow = ({
       return (
         <div style={{ minWidth: 0 }}>
           <MarketIdentityInline
-            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.assetClass) }}
+            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.positionType || trade.assetClass) }}
             size={14}
             showMark={false}
             showChips={!isPhone}
@@ -1273,7 +1275,7 @@ const TradeRow = ({
       {isPhone ? (
         <div style={{ minWidth: 0 }}>
           <MarketIdentityInline
-            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.assetClass) }}
+            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.positionType || trade.assetClass) }}
             size={14}
             showMark={false}
             showChips={false}

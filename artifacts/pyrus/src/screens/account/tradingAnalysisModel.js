@@ -5,6 +5,7 @@ import {
   getAccountTradeId,
   holdDurationBucket,
 } from "./accountTradingAnalysis";
+import { normalizeAccountPositionTypeFilter } from "../../features/account/accountPositionTypes";
 
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 
@@ -114,7 +115,7 @@ export const normalizeTradingAnalysisFilters = (filters = {}) => ({
   ...defaultTradingAnalysisFilters(),
   ...filters,
   symbol: normalizeSymbol(filters.symbol),
-  assetClass: normalizeSelectValue(filters.assetClass),
+  assetClass: normalizeAccountPositionTypeFilter(filters.assetClass),
   pnlSign: normalizeSelectValue(filters.pnlSign),
   side: normalizeSelectValue(filters.side).toLowerCase(),
   holdDurations: normalizeStringArray(
@@ -276,10 +277,7 @@ export const filterAccountAnalysisTrades = ({
     if (fromMs != null && (closeMs == null || closeMs < fromMs)) return false;
     if (toMs != null && (closeMs == null || closeMs > toMs)) return false;
     if (normalized.symbol && normalizeSymbol(trade?.symbol) !== normalized.symbol) return false;
-    if (
-      normalized.assetClass !== "all" &&
-      normalizeText(trade?.assetClass).toLowerCase() !== normalized.assetClass.toLowerCase()
-    ) {
+    if (!tradeMatchesAssetClass(trade, normalized.assetClass)) {
       return false;
     }
     const pnl = finiteNumber(trade?.realizedPnl) ?? 0;
@@ -493,12 +491,25 @@ export const buildTradingAnalysisScopeLabel = ({
 };
 
 export const tradeHasOptionFields = (trade) =>
+  normalizeAccountPositionTypeFilter(trade?.positionType) === "option" ||
   normalizeText(trade?.assetClass).toLowerCase() === "options" ||
   trade?.optionRight != null ||
   trade?.selectedContract?.right != null ||
   trade?.optionContract?.right != null ||
   trade?.dte != null ||
   trade?.strikeSlot != null;
+
+const tradeMatchesAssetClass = (trade, assetClass) => {
+  const normalized = normalizeAccountPositionTypeFilter(assetClass);
+  if (normalized === "all") return true;
+  const tradeType = normalizeAccountPositionTypeFilter(
+    trade?.positionType || trade?.assetClass,
+  );
+  if (normalized === "equity") {
+    return tradeType === "stock" || tradeType === "etf";
+  }
+  return tradeType === normalized;
+};
 
 export const buildSymbolSparklineMap = (trades = []) => {
   const bySymbol = new Map();

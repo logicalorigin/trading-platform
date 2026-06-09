@@ -110,13 +110,9 @@ import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorMo
 import { AppTooltip } from "@/components/ui/tooltip";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { _initialState, persistState } from "../../lib/workspaceState";
+import { ACCOUNT_POSITION_TYPE_FILTER_OPTIONS } from "../../features/account/accountPositionTypes";
 
-const ASSET_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "Stocks", label: "Stock" },
-  { value: "ETF", label: "ETF" },
-  { value: "Options", label: "Option" },
-];
+const ASSET_FILTERS = ACCOUNT_POSITION_TYPE_FILTER_OPTIONS;
 
 const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
@@ -802,6 +798,7 @@ const applyFreshestLiveOptionQuoteToRow = (
 
 const isOptionPosition = (row) =>
   Boolean(row?.optionContract) ||
+  String(row?.positionType || "").toLowerCase() === "option" ||
   ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
 
 const resolvePositionUnderlyingSymbol = (row) => {
@@ -2244,6 +2241,7 @@ const positionSearchText = (row) =>
     row?.symbol,
     row?.description,
     row?.assetClass,
+    row?.positionType,
     row?.sector,
     row?.strategyLabel,
     row?.sourceType,
