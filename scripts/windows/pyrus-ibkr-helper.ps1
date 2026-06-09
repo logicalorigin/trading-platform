@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-09.ib-async-sidecar-v15-graceful-deactivate'
+$HelperVersion = '2026-06-09.ib-async-sidecar-v17-foreground-retry-safe-selfupdate'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -809,6 +809,27 @@ function Test-TruthyParam($Value) {
     return @('1', 'true', 'yes', 'y') -contains $normalized
 }
 
+function Test-DownloadedHelperVersion([string]$Path, [string]$ExpectedVersion) {
+    # Guards against silent self-update failure: a 404 page, a truncated body, or any wrong-content
+    # file can clear the >=4096-byte size check yet leave the box on the old version after relaunch.
+    # Require the downloaded helper to declare exactly the version we asked for before we overwrite
+    # the working copy. The declaration line format is: $HelperVersion = '<version>' (see top of file).
+    if (-not $Path -or -not (Test-Path $Path) -or -not $ExpectedVersion) {
+        return $false
+    }
+
+    try {
+        $content = Get-Content -Path $Path -Raw -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    if (-not $content) {
+        return $false
+    }
+
+    return $content.Contains("`$HelperVersion = '$ExpectedVersion'")
+}
+
 function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
     $requestedVersion = [string]$Params['helperVersion']
     $helperUrl = [string]$Params['helperUrl']
@@ -824,9 +845,14 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
     $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
     $download = Join-Path $StateDir 'pyrus-ibkr-helper.new.ps1'
     Send-BridgeProgress -Status 'starting_bridge' -Step 'updating_helper' -Message "Updating Pyrus IBKR helper from $HelperVersion to $requestedVersion."
-    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download
+    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 60
     if (-not (Test-Path $download) -or (Get-Item $download).Length -lt 4096) {
         throw 'Downloaded helper was empty or incomplete.'
+    }
+    if (-not (Test-DownloadedHelperVersion -Path $download -ExpectedVersion $requestedVersion)) {
+        Remove-Item -Path $download -Force -ErrorAction SilentlyContinue
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'updating_helper' -Message "Pyrus IBKR helper self-update aborted: download did not declare version $requestedVersion. Keeping local helper $HelperVersion and will retry on the next launch."
+        throw "Downloaded helper did not declare expected version $requestedVersion; refused to overwrite local helper $HelperVersion."
     }
     Copy-Item -Path $download -Destination $target -Force
     $currentTarget = Resolve-OwnScriptPath
@@ -841,7 +867,17 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
     $env:PYRUS_IBKR_HELPER_SELF_UPDATE = $requestedVersion
 
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File $target -Install
+    # Scheduled-task install must not block or abort the relaunch: a blocked/failed
+    # install would otherwise strand the launch with the agent already torn down and no
+    # progress reported. The relaunched helper reinstalls the task itself after attach.
+    try {
+        Start-Process -FilePath $powershell `
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-Install') `
+            -WindowStyle Hidden -Wait -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Log "Updated helper install step failed; continuing with relaunch: $($_.Exception.Message)"
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'updating_helper' -Message (Truncate-Message "Pyrus IBKR helper update: scheduled-task install step did not complete ($($_.Exception.Message)); continuing with relaunch.")
+    }
     Start-Process -FilePath $powershell `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $target, $RawLaunchUrl) `
         | Out-Null
@@ -872,9 +908,14 @@ function Invoke-DesktopAgentSelfUpdateIfNeeded([string]$BaseUrl, $Response) {
     $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
     $download = Join-Path $StateDir 'pyrus-ibkr-helper.new.ps1'
     Write-Log "Desktop agent updating Pyrus IBKR helper from $HelperVersion to $requestedVersion."
-    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download
+    Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $download -TimeoutSec 60
     if (-not (Test-Path $download) -or (Get-Item $download).Length -lt 4096) {
         throw 'Downloaded helper was empty or incomplete.'
+    }
+    if (-not (Test-DownloadedHelperVersion -Path $download -ExpectedVersion $requestedVersion)) {
+        Remove-Item -Path $download -Force -ErrorAction SilentlyContinue
+        Write-Log "Desktop agent self-update aborted: download did not declare version $requestedVersion; keeping local helper $HelperVersion for retry on the next heartbeat."
+        throw "Downloaded helper did not declare expected version $requestedVersion; refused to overwrite local helper $HelperVersion."
     }
     Copy-Item -Path $download -Destination $target -Force
     $currentTarget = Resolve-OwnScriptPath
@@ -1689,6 +1730,18 @@ public static class PyrusWin32Window {
 
     [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
 }
 "@
 }
@@ -1942,6 +1995,33 @@ function Assert-IBGatewayCredentialWindowForeground([string]$Context = 'before t
     throw (Truncate-Message "IB Gateway login window is not active $Context; refused to type credentials into the wrong window.$detail")
 }
 
+function Confirm-IBGatewayCredentialWindowForeground([string]$Context = 'before typing credentials', [int]$Attempts = 6) {
+    # Resilient replacement for a single-shot Assert. The user launches from Chrome, which holds
+    # the foreground, so the Gateway window can lose focus between (or during) the credential
+    # typing steps. Rather than throw on the first miss, re-grab the foreground up to $Attempts
+    # times using the same AttachThreadInput activation the initial wait used, and only fall back
+    # to the detailed Assert (progress event + thrown error) if we genuinely cannot win the race.
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $window = Get-ForegroundIBGatewayCredentialWindowCandidate
+        if ($window) {
+            # Stability re-sample: confirm the window still holds the foreground a beat later so
+            # we don't start typing into a window that is about to be reclaimed by Chrome.
+            Start-Sleep -Milliseconds 150
+            if (Get-ForegroundIBGatewayCredentialWindowCandidate) {
+                return $window
+            }
+        }
+
+        $candidate = Get-IBGatewayWindowCandidate -RequireCredentialWindow
+        if ($candidate) {
+            [void](Activate-IBGatewayWindowCandidate -Window $candidate)
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    return (Assert-IBGatewayCredentialWindowForeground -Context $Context)
+}
+
 function Get-IBGatewayWindowCandidate([switch]$RequireCredentialWindow) {
     $windows = @(Get-VisibleTopLevelWindows | Where-Object {
         if ($RequireCredentialWindow) {
@@ -1968,15 +2048,61 @@ function Activate-IBGatewayWindowCandidate($Window) {
 
     try {
         Initialize-WindowApi
-        [void][PyrusWin32Window]::ShowWindowAsync($Window.Handle, 9)
+        Initialize-KeyInputApi
+        $handle = $Window.Handle
+
+        # First try a plain restore + foreground. This succeeds when the helper already owns the
+        # foreground (e.g. it just launched Gateway).
+        [void][PyrusWin32Window]::ShowWindow($handle, 9)
+        Start-Sleep -Milliseconds 120
+        [void][PyrusWin32Window]::SetForegroundWindow($handle)
         Start-Sleep -Milliseconds 150
-        if ([PyrusWin32Window]::SetForegroundWindow($Window.Handle)) {
-            Start-Sleep -Milliseconds 250
-            if (Get-ForegroundIBGatewayCredentialWindowCandidate) {
-                return $true
-            }
-            Write-Log "SetForegroundWindow reported success, but IB Gateway login window is still not foreground."
+        if (Get-ForegroundIBGatewayCredentialWindowCandidate) {
+            return $true
         }
+
+        # Windows blocks SetForegroundWindow from a process that is not already the foreground
+        # process (anti focus-stealing) — it reports success but only flashes the taskbar. The
+        # reliable workaround: attach our input thread to the current foreground thread and the
+        # target thread, tap ALT to clear the foreground lock for this thread, then force the
+        # window up.
+        $ourThread = [PyrusWin32Window]::GetCurrentThreadId()
+        $fgWindow = [PyrusWin32Window]::GetForegroundWindow()
+        $fgProc = [uint32]0
+        $fgThread = [PyrusWin32Window]::GetWindowThreadProcessId($fgWindow, [ref]$fgProc)
+        $targetProc = [uint32]0
+        $targetThread = [PyrusWin32Window]::GetWindowThreadProcessId($handle, [ref]$targetProc)
+
+        $attachedFg = $false
+        $attachedTarget = $false
+        try {
+            if ($fgThread -ne 0 -and $fgThread -ne $ourThread) {
+                $attachedFg = [PyrusWin32Window]::AttachThreadInput($ourThread, $fgThread, $true)
+            }
+            if ($targetThread -ne 0 -and $targetThread -ne $ourThread -and $targetThread -ne $fgThread) {
+                $attachedTarget = [PyrusWin32Window]::AttachThreadInput($ourThread, $targetThread, $true)
+            }
+            # ALT key tap unlocks SetForegroundWindow for the current thread.
+            [PyrusKeyInput]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [PyrusKeyInput]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            [void][PyrusWin32Window]::ShowWindow($handle, 9)
+            [void][PyrusWin32Window]::BringWindowToTop($handle)
+            [void][PyrusWin32Window]::SetForegroundWindow($handle)
+            [void][PyrusWin32Window]::ShowWindow($handle, 5)
+        } finally {
+            if ($attachedTarget) {
+                [void][PyrusWin32Window]::AttachThreadInput($ourThread, $targetThread, $false)
+            }
+            if ($attachedFg) {
+                [void][PyrusWin32Window]::AttachThreadInput($ourThread, $fgThread, $false)
+            }
+        }
+
+        Start-Sleep -Milliseconds 250
+        if (Get-ForegroundIBGatewayCredentialWindowCandidate) {
+            return $true
+        }
+        Write-Log "IB Gateway login window still not foreground after AttachThreadInput activation attempt."
     } catch {
         Write-Log "Could not activate IB Gateway window handle $($Window.Handle): $($_.Exception.Message)"
     }
@@ -2281,7 +2407,7 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         $windowWaitSeconds = 45
     }
     $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
-    [void](Assert-IBGatewayCredentialWindowForeground -Context 'before typing credentials')
+    [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before typing credentials')
     Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
     Start-Sleep -Milliseconds 700
     $clipboardText = $null
@@ -2295,14 +2421,14 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
 
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Typing IBKR credentials into IB Gateway.'
         Start-Sleep -Milliseconds 1500
-        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before username entry')
+        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before username entry')
         Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
         Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.username)
         Invoke-KeyTap -VirtualKey 0x09 -AfterMilliseconds 500
-        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before password entry')
+        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before password entry')
         Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
         Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.password)
-        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before credential submit')
+        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before credential submit')
         Invoke-KeyTap -VirtualKey 0x0D -AfterMilliseconds 250
     } finally {
         try {
