@@ -5,10 +5,14 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { AccountPositionTypeFilter } from './accountPositionTypeFilter';
 import type { EnvironmentMode } from './environmentMode';
 
 export type GetAccountPositionsAtDateParams = {
 date: Date;
-assetClass?: string;
+/**
+ * Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.
+ */
+assetClass?: AccountPositionTypeFilter;
 mode?: EnvironmentMode;
 };

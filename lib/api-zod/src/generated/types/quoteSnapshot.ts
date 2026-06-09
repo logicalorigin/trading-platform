@@ -24,6 +24,12 @@ export interface QuoteSnapshot {
   high: number | null;
   low: number | null;
   prevClose: number | null;
+  /** Verified regular-session close baseline used for pre-market and after-hours move displays. */
+  extendedBaselinePrice?: number | null;
+  /** Timestamp associated with the extended-hours baseline when known. */
+  extendedBaselineAt?: Date | null;
+  /** Source of the extended-hours baseline. */
+  extendedBaselineSource?: 'regular_close' | null;
   volume: number | null;
   /** Underlying reference price from option computations, when available. */
   underlyingPrice?: number | null;

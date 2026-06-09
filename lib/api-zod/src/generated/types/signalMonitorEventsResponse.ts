@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { SignalMonitorEvent } from './signalMonitorEvent';
+import type { SignalMonitorEventsResponseSourceStatus } from './signalMonitorEventsResponseSourceStatus';
 
 export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
@@ -16,4 +17,6 @@ export interface SignalMonitorEventsResponse {
   nextCursor: string | null;
   /** True when another page is available for the same filter set. */
   hasMore: boolean;
+  /** Source used for this event page. */
+  sourceStatus: SignalMonitorEventsResponseSourceStatus;
 }

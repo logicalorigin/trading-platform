@@ -204,6 +204,17 @@ export const AssetClass = {
   option: 'option',
 } as const;
 
+export type AccountPositionTypeFilter = typeof AccountPositionTypeFilter[keyof typeof AccountPositionTypeFilter];
+
+
+export const AccountPositionTypeFilter = {
+  all: 'all',
+  equity: 'equity',
+  stock: 'stock',
+  etf: 'etf',
+  option: 'option',
+} as const;
+
 export type OptionRight = typeof OptionRight[keyof typeof OptionRight];
 
 
@@ -2107,6 +2118,12 @@ export interface QuoteSnapshot {
   high: number | null;
   low: number | null;
   prevClose: number | null;
+  /** Verified regular-session close baseline used for pre-market and after-hours move displays. */
+  extendedBaselinePrice?: number | null;
+  /** Timestamp associated with the extended-hours baseline when known. */
+  extendedBaselineAt?: string | null;
+  /** Source of the extended-hours baseline. */
+  extendedBaselineSource?: 'regular_close' | null;
   volume: number | null;
   /** Underlying reference price from option computations, when available. */
   underlyingPrice?: number | null;
@@ -3299,6 +3316,18 @@ export interface AccountPositionRiskOverlay {
   peakPrice: number | null;
 }
 
+/**
+ * Canonical account position type used for filtering and market-data routing.
+ */
+export type AccountPositionRowPositionType = typeof AccountPositionRowPositionType[keyof typeof AccountPositionRowPositionType];
+
+
+export const AccountPositionRowPositionType = {
+  stock: 'stock',
+  etf: 'etf',
+  option: 'option',
+} as const;
+
 export type AccountPositionRowSourceType = typeof AccountPositionRowSourceType[keyof typeof AccountPositionRowSourceType];
 
 
@@ -3330,7 +3359,10 @@ export interface AccountPositionRow {
   accounts: string[];
   symbol: string;
   description: string;
+  /** Display label for the position type. */
   assetClass: string;
+  /** Canonical account position type used for filtering and market-data routing. */
+  positionType: AccountPositionRowPositionType;
   optionContract?: OptionContract | null;
   /** Canonical ticker used for quote and sparkline hydration. */
   marketDataSymbol?: string | null;
@@ -3430,6 +3462,18 @@ export const AccountTradeSource = {
   SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
 } as const;
 
+/**
+ * Canonical account position type used for filtering and grouping.
+ */
+export type AccountTradePositionType = typeof AccountTradePositionType[keyof typeof AccountTradePositionType];
+
+
+export const AccountTradePositionType = {
+  stock: 'stock',
+  etf: 'etf',
+  option: 'option',
+} as const;
+
 export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof AccountTradeSourceType];
 
 
@@ -3463,7 +3507,10 @@ export interface AccountTrade {
   accountId: string;
   symbol: string;
   side: string;
+  /** Display label for the trade position type. */
   assetClass: string;
+  /** Canonical account position type used for filtering and grouping. */
+  positionType: AccountTradePositionType;
   quantity: number;
   openDate: string | null;
   closeDate: string | null;
@@ -5339,6 +5386,17 @@ export interface SignalMonitorMatrixStreamErrorEvent {
 
 export type SignalMonitorMatrixStreamEvent = SignalMonitorMatrixStreamBootstrapEvent | SignalMonitorMatrixStreamStateDeltaEvent | SignalMonitorMatrixStreamStatusEvent | SignalMonitorMatrixStreamErrorEvent;
 
+/**
+ * Source used for this event page.
+ */
+export type SignalMonitorEventsResponseSourceStatus = typeof SignalMonitorEventsResponseSourceStatus[keyof typeof SignalMonitorEventsResponseSourceStatus];
+
+
+export const SignalMonitorEventsResponseSourceStatus = {
+  database: 'database',
+  'runtime-fallback': 'runtime-fallback',
+} as const;
+
 export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
   /**
@@ -5348,6 +5406,8 @@ export interface SignalMonitorEventsResponse {
   nextCursor: string | null;
   /** True when another page is available for the same filter set. */
   hasMore: boolean;
+  /** Source used for this event page. */
+  sourceStatus: SignalMonitorEventsResponseSourceStatus;
 }
 
 export type PineScriptStatus = typeof PineScriptStatus[keyof typeof PineScriptStatus];
@@ -6281,7 +6341,10 @@ mode?: EnvironmentMode;
 };
 
 export type GetAccountPositionsParams = {
-assetClass?: string;
+/**
+ * Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.
+ */
+assetClass?: AccountPositionTypeFilter;
 /**
  * Optional source scope for shadow ledger positions, such as `automation`.
  */
@@ -6295,7 +6358,10 @@ mode?: EnvironmentMode;
 
 export type GetAccountPositionsAtDateParams = {
 date: string;
-assetClass?: string;
+/**
+ * Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.
+ */
+assetClass?: AccountPositionTypeFilter;
 mode?: EnvironmentMode;
 };
 
@@ -6303,7 +6369,10 @@ export type GetAccountClosedTradesParams = {
 from?: string;
 to?: string;
 symbol?: string;
-assetClass?: string;
+/**
+ * Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.
+ */
+assetClass?: AccountPositionTypeFilter;
 pnlSign?: GetAccountClosedTradesPnlSign;
 holdDuration?: string;
 mode?: EnvironmentMode;

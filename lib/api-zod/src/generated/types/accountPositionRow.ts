@@ -9,6 +9,7 @@ import type { AccountPositionLot } from './accountPositionLot';
 import type { AccountPositionRiskOverlay } from './accountPositionRiskOverlay';
 import type { AccountPositionRowAttributionStatus } from './accountPositionRowAttributionStatus';
 import type { AccountPositionRowAutomationContext } from './accountPositionRowAutomationContext';
+import type { AccountPositionRowPositionType } from './accountPositionRowPositionType';
 import type { AccountPositionRowSourceType } from './accountPositionRowSourceType';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
@@ -22,7 +23,10 @@ export interface AccountPositionRow {
   accounts: string[];
   symbol: string;
   description: string;
+  /** Display label for the position type. */
   assetClass: string;
+  /** Canonical account position type used for filtering and market-data routing. */
+  positionType: AccountPositionRowPositionType;
   optionContract?: OptionContract | null;
   /** Canonical ticker used for quote and sparkline hydration. */
   marketDataSymbol?: string | null;

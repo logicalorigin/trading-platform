@@ -9,6 +9,7 @@ import type { AccountTradeFilterState } from './accountTradeFilterState';
 import type { AccountTradeMetadata } from './accountTradeMetadata';
 import type { AccountTradeOptionContract } from './accountTradeOptionContract';
 import type { AccountTradeOptionRight } from './accountTradeOptionRight';
+import type { AccountTradePositionType } from './accountTradePositionType';
 import type { AccountTradeSelectedContract } from './accountTradeSelectedContract';
 import type { AccountTradeSource } from './accountTradeSource';
 import type { AccountTradeSourceType } from './accountTradeSourceType';
@@ -19,7 +20,10 @@ export interface AccountTrade {
   accountId: string;
   symbol: string;
   side: string;
+  /** Display label for the trade position type. */
   assetClass: string;
+  /** Canonical account position type used for filtering and grouping. */
+  positionType: AccountTradePositionType;
   quantity: number;
   openDate: Date | null;
   closeDate: Date | null;

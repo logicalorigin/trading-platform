@@ -1617,7 +1617,7 @@ export const GetAccountPositionsParams = zod.object({
 })
 
 export const GetAccountPositionsQueryParams = zod.object({
-  "assetClass": zod.coerce.string().optional(),
+  "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "source": zod.coerce.string().optional().describe('Optional source scope for shadow ledger positions, such as `automation`.'),
   "liveQuotes": zod.coerce.boolean().optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
   "mode": zod.enum(['paper', 'live']).optional()
@@ -1632,7 +1632,8 @@ export const GetAccountPositionsResponse = zod.object({
   "accounts": zod.array(zod.string()),
   "symbol": zod.string(),
   "description": zod.string(),
-  "assetClass": zod.string(),
+  "assetClass": zod.string().describe('Display label for the position type.'),
+  "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and market-data routing.'),
   "optionContract": zod.union([zod.object({
   "ticker": zod.string(),
   "underlying": zod.string(),
@@ -1830,7 +1831,7 @@ export const GetAccountPositionsAtDateParams = zod.object({
 
 export const GetAccountPositionsAtDateQueryParams = zod.object({
   "date": zod.date(),
-  "assetClass": zod.coerce.string().optional(),
+  "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "mode": zod.enum(['paper', 'live']).optional()
 })
 
@@ -1847,7 +1848,8 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "accounts": zod.array(zod.string()),
   "symbol": zod.string(),
   "description": zod.string(),
-  "assetClass": zod.string(),
+  "assetClass": zod.string().describe('Display label for the position type.'),
+  "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and market-data routing.'),
   "optionContract": zod.union([zod.object({
   "ticker": zod.string(),
   "underlying": zod.string(),
@@ -2061,7 +2063,7 @@ export const GetAccountClosedTradesQueryParams = zod.object({
   "from": zod.date().optional(),
   "to": zod.date().optional(),
   "symbol": zod.coerce.string().optional(),
-  "assetClass": zod.coerce.string().optional(),
+  "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "pnlSign": zod.enum(['all', 'winners', 'losers']).optional(),
   "holdDuration": zod.coerce.string().optional(),
   "mode": zod.enum(['paper', 'live']).optional()
@@ -2076,7 +2078,8 @@ export const GetAccountClosedTradesResponse = zod.object({
   "accountId": zod.string(),
   "symbol": zod.string(),
   "side": zod.string(),
-  "assetClass": zod.string(),
+  "assetClass": zod.string().describe('Display label for the trade position type.'),
+  "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and grouping.'),
   "quantity": zod.number(),
   "openDate": zod.coerce.date().nullable(),
   "closeDate": zod.coerce.date().nullable(),
@@ -2955,6 +2958,9 @@ export const GetQuoteSnapshotsResponse = zod.object({
   "high": zod.number().nullable(),
   "low": zod.number().nullable(),
   "prevClose": zod.number().nullable(),
+  "extendedBaselinePrice": zod.number().nullish().describe('Verified regular-session close baseline used for pre-market and after-hours move displays.'),
+  "extendedBaselineAt": zod.coerce.date().nullish().describe('Timestamp associated with the extended-hours baseline when known.'),
+  "extendedBaselineSource": zod.union([zod.literal('regular_close'),zod.literal(null)]).nullish().describe('Source of the extended-hours baseline.'),
   "volume": zod.number().nullable(),
   "underlyingPrice": zod.number().nullish().describe('Underlying reference price from option computations, when available.'),
   "providerContractId": zod.string().nullable(),
@@ -5133,7 +5139,8 @@ export const ListSignalMonitorEventsResponse = zod.object({
   "payload": zod.record(zod.string(), zod.unknown())
 })),
   "nextCursor": zod.string().nullable().describe('Opaque cursor for the next page, or null when the page is complete.'),
-  "hasMore": zod.boolean().describe('True when another page is available for the same filter set.')
+  "hasMore": zod.boolean().describe('True when another page is available for the same filter set.'),
+  "sourceStatus": zod.enum(['database', 'runtime-fallback']).describe('Source used for this event page.')
 })
 
 
