@@ -134,6 +134,7 @@ import { getVolumeFootprints } from "../services/volume-footprints";
 import {
   recordSseStreamClose,
   recordSseStreamOpen,
+  serializeSseEventData,
   type SseStreamCloseReason,
 } from "../services/sse-stream-diagnostics";
 import {
@@ -152,7 +153,11 @@ import {
   testFlexToken,
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";
-import type { RuntimeMode } from "../lib/runtime";
+import { getProviderConfiguration, type RuntimeMode } from "../lib/runtime";
+import {
+  buildRealAccountUnavailableProblem,
+  shouldAdmitAccountRoute,
+} from "../services/account-route-admission";
 import {
   placeShadowOrder,
   previewShadowOrder,
@@ -165,6 +170,7 @@ import {
   cancelLegacyIbkrBridgeActivation,
   claimLegacyIbkrBridgeLoginEnvelopeWithWait,
   claimIbkrRemoteDesktopLaunchJobWithWait,
+  completeLegacyIbkrBridgeHelperUpdate,
   completeIbkrRemoteDesktopJob,
   createIbkrRemoteBridgeLaunch,
   createIbkrRemoteBridgeShutdown,
@@ -177,15 +183,41 @@ import {
   readIbkrRemoteDesktopJobStatus,
   readLegacyIbkrBridgeActivationStatus,
   readLegacyIbkrBridgeLoginKeyWithWait,
+  recordIbkrBridgeBrowserConnectionEvent,
   recordIbkrRemoteDesktopRouteAttempt,
   recordLegacyIbkrBridgeActivationProgress,
   registerIbkrRemoteDesktop,
   submitLegacyIbkrBridgeLoginEnvelope,
   submitLegacyIbkrBridgeLoginKey,
 } from "../services/ibkr-bridge-runtime";
+import { getConnectionAuditSnapshot } from "../services/ibkr-connection-audit";
+import {
+  getIbkrPerfSnapshot,
+  isIbkrPerfCaptureRunning,
+  startIbkrPerfCapture,
+  stopIbkrPerfCapture,
+} from "../services/ibkr-perf-capture";
 
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
+
+const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
+
+const admitAccountRoute = (res: Response, accountId?: unknown): boolean => {
+  if (
+    shouldAdmitAccountRoute({
+      accountId,
+      ibkrConfigured: ibkrConfiguredForRealAccounts(),
+    })
+  ) {
+    return true;
+  }
+
+  res.status(503).type("application/problem+json").json(
+    buildRealAccountUnavailableProblem(),
+  );
+  return false;
+};
 const stockAggregateStreamSessions = new Map<
   string,
   {
@@ -1235,7 +1267,7 @@ async function startSse(
     return enqueueChunk(
       `id: ${eventId}\n` +
         `event: ${event}\n` +
-        `data: ${JSON.stringify(payload)}\n\n`,
+        `data: ${serializeSseEventData(payload)}\n\n`,
     );
   };
 
@@ -1291,6 +1323,28 @@ router.get("/diagnostics/runtime", async (_req, res) => {
   res.json(await getRuntimeDiagnostics());
 });
 
+router.get("/diagnostics/ibkr-perf", async (_req, res) => {
+  res.json(getIbkrPerfSnapshot());
+});
+
+router.post("/diagnostics/ibkr-perf/control", async (req, res) => {
+  const action =
+    req.body && typeof req.body === "object"
+      ? String((req.body as Record<string, unknown>).action ?? "")
+      : "";
+  if (action === "start") {
+    startIbkrPerfCapture();
+  } else if (action === "stop") {
+    stopIbkrPerfCapture();
+  } else {
+    res
+      .status(400)
+      .json({ ok: false, error: "action must be 'start' or 'stop'" });
+    return;
+  }
+  res.json({ ok: true, running: isIbkrPerfCaptureRunning() });
+});
+
 router.get("/ibkr/bridge/launcher", async (req, res) => {
   const apiBaseUrl = getIbkrBridgeRequestOrigin(req);
   const bundleUrl =
@@ -1339,7 +1393,9 @@ router.post("/ibkr/desktop/heartbeat", async (req, res) => {
 router.post("/ibkr/desktop/jobs/claim", async (req, res) => {
   try {
     const result = await claimIbkrRemoteDesktopLaunchJobWithWait(req.body);
-    recordIbkrRemoteDesktopRouteAttempt("claim", req.body);
+    if (result.ready) {
+      recordIbkrRemoteDesktopRouteAttempt("claim", req.body);
+    }
     res.json(result);
   } catch (error) {
     recordIbkrRemoteDesktopRouteAttempt("claim", req.body, error);
@@ -1401,6 +1457,12 @@ router.post("/ibkr/activation/:activationId/cancel", async (req, res) => {
   res.json(cancelLegacyIbkrBridgeActivation(req.params.activationId, req.body));
 });
 
+router.post("/ibkr/activation/:activationId/helper-update-complete", async (req, res) => {
+  res.json(
+    completeLegacyIbkrBridgeHelperUpdate(req.params.activationId, req.body),
+  );
+});
+
 router.post("/ibkr/activation/:activationId/login-key", async (req, res) => {
   res.json(submitLegacyIbkrBridgeLoginKey(req.params.activationId, req.body));
 });
@@ -1434,6 +1496,19 @@ router.post(
 
 router.post("/ibkr/activation/:activationId/complete", async (req, res) => {
   res.json(await attachLegacyIbkrBridgeRuntime(req.params.activationId, req.body));
+});
+
+router.post(
+  "/ibkr/activation/:activationId/browser-event",
+  async (req, res) => {
+    res.json(
+      recordIbkrBridgeBrowserConnectionEvent(req.params.activationId, req.body),
+    );
+  },
+);
+
+router.get("/ibkr/connection-audit", async (_req, res) => {
+  res.json(getConnectionAuditSnapshot());
 });
 
 router.get("/ibkr/bridge/helper.ps1", async (_req, res) => {
@@ -1484,6 +1559,7 @@ router.get("/broker-connections", async (_req, res) => {
 });
 
 router.get("/accounts", async (req, res) => {
+  if (!admitAccountRoute(res)) return;
   const query = ListAccountsQueryParams.parse(req.query);
   const data = ListAccountsResponse.parse(await listAccounts(query));
 
@@ -1499,6 +1575,7 @@ router.post("/accounts/flex/test", async (_req, res) => {
 });
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountSummary({
@@ -1510,6 +1587,7 @@ router.get("/accounts/:accountId/summary", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/equity-history", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountEquityHistory({
@@ -1527,6 +1605,7 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/allocation", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountAllocation({
@@ -1538,6 +1617,7 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   const liveQuotes =
     req.query.liveQuotes === "true"
@@ -1558,6 +1638,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountPositionsAtDate({
@@ -1575,6 +1656,7 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/closed-trades", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountClosedTrades({
@@ -1602,6 +1684,7 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/orders", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountOrders({
@@ -1617,6 +1700,7 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
 });
 
 router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const body = CancelAccountOrderBody.parse(req.body);
   res.json(
     await cancelAccountOrder({
@@ -1629,6 +1713,7 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
@@ -1643,6 +1728,7 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {
+  if (!admitAccountRoute(res, req.params.accountId)) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
     await getAccountCashActivity({
@@ -3096,6 +3182,7 @@ router.get("/streams/accounts/page", async (req, res) => {
     typeof req.query.accountId === "string" && req.query.accountId.trim()
       ? req.query.accountId.trim()
       : "combined";
+  if (!admitAccountRoute(res, accountId)) return;
   const input = {
     accountId,
     mode,
@@ -3183,6 +3270,7 @@ router.get("/streams/accounts/page", async (req, res) => {
 router.get("/streams/accounts", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  if (!admitAccountRoute(res, accountId)) return;
 
   await startSse(req, res, "accounts", async ({ writeEvent }) => {
     await writeEvent(

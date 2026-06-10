@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-09.ib-async-sidecar-v19-update-only-exit'
+$HelperVersion = '2026-06-09.ib-async-sidecar-v20-direct-gateway-typing'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -2339,6 +2339,11 @@ function Invoke-SendKeysPaste($Shell, [string]$Text) {
     Start-Sleep -Milliseconds 650
 }
 
+function Invoke-SendKeysTextEntry($Shell, [string]$Text, [int]$AfterMilliseconds = 350) {
+    $Shell.SendKeys((ConvertTo-SendKeysLiteral -Value $Text))
+    Start-Sleep -Milliseconds $AfterMilliseconds
+}
+
 function ConvertTo-SendKeysLiteral([string]$Value) {
     if ($null -eq $Value) {
         return ''
@@ -2464,36 +2469,23 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
     $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
     [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before typing credentials')
     Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
-    Start-Sleep -Milliseconds 700
-    $clipboardText = $null
-    $hadClipboardText = $false
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        try {
-            $clipboardText = [System.Windows.Forms.Clipboard]::GetText()
-            $hadClipboardText = $true
-        } catch {}
+    Start-Sleep -Milliseconds 350
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Entering IBKR username into IB Gateway.'
+    [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before username entry')
+    Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 180
+    Invoke-SendKeysTextEntry -Shell $shell -Text ([string]$Credential.username)
+    Assert-ActivationNotCanceled
 
-        Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Typing IBKR credentials into IB Gateway.'
-        Start-Sleep -Milliseconds 1500
-        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before username entry')
-        Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
-        Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.username)
-        Invoke-KeyTap -VirtualKey 0x09 -AfterMilliseconds 500
-        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before password entry')
-        Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
-        Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.password)
-        [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before credential submit')
-        Invoke-KeyTap -VirtualKey 0x0D -AfterMilliseconds 250
-    } finally {
-        try {
-            if ($hadClipboardText) {
-                [System.Windows.Forms.Clipboard]::SetText($clipboardText)
-            } else {
-                [System.Windows.Forms.Clipboard]::Clear()
-            }
-        } catch {}
-    }
+    Invoke-KeyTap -VirtualKey 0x09 -AfterMilliseconds 260
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Entering IBKR password into IB Gateway.'
+    [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before password entry')
+    Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 180
+    Invoke-SendKeysTextEntry -Shell $shell -Text ([string]$Credential.password)
+    Assert-ActivationNotCanceled
+
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Submitting IBKR credentials to IB Gateway.'
+    [void](Confirm-IBGatewayCredentialWindowForeground -Context 'before credential submit')
+    Invoke-KeyTap -VirtualKey 0x0D -AfterMilliseconds 250
 
     Send-BridgeProgress -Status 'waiting_gateway' -Step 'credentials_submitted' -Message 'Submitted one-time credentials to IB Gateway.'
     Wait-IBGatewayLiveApiSocket `

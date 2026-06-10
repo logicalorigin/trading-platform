@@ -8,6 +8,8 @@ import {
   getRuntimeMode,
 } from "../lib/runtime";
 import { HttpError } from "../lib/errors";
+import { invalidateBridgeHealthCache } from "./platform-bridge-health";
+import { recordConnectionAuditEvent } from "./ibkr-connection-audit";
 import {
   getDiagnosticThresholds,
   getLatestDiagnostics,
@@ -449,6 +451,14 @@ export async function runBackendSettingsAction(actionId: string, input: unknown)
     }
 
     clearIbkrBridgeRuntimeOverride();
+    invalidateBridgeHealthCache();
+    recordConnectionAuditEvent({
+      attemptId: null,
+      actor: "pyrus",
+      step: "bridge_override_cleared",
+      status: "disconnected",
+      message: "IBKR bridge override cleared via backend action (deactivate).",
+    });
     return {
       runtimeOverrideActive: false,
       cleared: true,

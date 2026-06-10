@@ -138,6 +138,12 @@ const latencySamples = {
   totalMs: [] as number[],
 };
 const MAX_LIVE_LATENCY_SAMPLE_AGE_MS = 10_000;
+// Latency percentile stats are rolling-window summaries; refreshing them faster
+// than once per second adds no readable signal but, because the latency store is
+// bumped on every incoming aggregate message, it previously drove one full
+// HeaderStatusCluster re-render + popover-model rebuild per message while the
+// broker popover was open. Throttle flushes to one per second.
+const LATENCY_FLUSH_INTERVAL_MS = 1_000;
 const aggregateStreamStats: AggregateStreamStats = {
   activeConsumerCount: 0,
   unionSymbolCount: 0,
@@ -165,6 +171,7 @@ let eventSourceLastSignalAtMs: number | null = null;
 let storeNotifyScheduled = false;
 let symbolStoreNotifyScheduled = false;
 let latencyNotifyScheduled = false;
+let latencyLastFlushAtMs = 0;
 let streamPaused = false;
 const pendingSymbolNotifications = new Set<string>();
 
@@ -255,14 +262,20 @@ const notifyLatencyStoreListeners = () => {
   latencyNotifyScheduled = true;
   const flush = () => {
     latencyNotifyScheduled = false;
+    latencyLastFlushAtMs = Date.now();
     latencyStoreVersion += 1;
     Array.from(latencyStoreListeners).forEach((listener) => listener());
   };
-  if (typeof queueMicrotask === "function") {
-    queueMicrotask(flush);
-    return;
-  }
-  setTimeout(flush, 0);
+  // Trailing-edge throttle: collapse a burst of samples into one flush per
+  // interval. The first sample after an idle gap flushes promptly (delay 0) so
+  // the popover paints immediately on open; subsequent samples are dropped until
+  // the next interval boundary. Listeners read live data at render time, so the
+  // throttled flush always reflects the latest samples.
+  const delay = Math.max(
+    0,
+    LATENCY_FLUSH_INTERVAL_MS - (Date.now() - latencyLastFlushAtMs),
+  );
+  setTimeout(flush, delay);
 };
 
 const subscribeToLatencyStore = (listener: () => void): (() => void) => {
@@ -864,7 +877,50 @@ export const useStockMinuteAggregateSymbolsVersion = (symbols: string[]): number
   );
 };
 
-export const useIbkrLatencyStats = (enabled = true) => {
+const computeLatencyStats = () => ({
+  bridgeToApiMs: summarizeBucket(latencySamples.bridgeToApiMs),
+  apiToReactMs: summarizeBucket(latencySamples.apiToReactMs),
+  totalMs: summarizeBucket(latencySamples.totalMs),
+  sampleCount: Math.max(
+    latencySamples.bridgeToApiMs.length,
+    latencySamples.apiToReactMs.length,
+    latencySamples.totalMs.length,
+  ),
+  stream: {
+    activeConsumerCount: aggregateStreamStats.activeConsumerCount,
+    unionSymbolCount: aggregateStreamStats.unionSymbolCount,
+    reconnectCount: aggregateStreamStats.reconnectCount,
+    refreshCount: aggregateStreamStats.refreshCount,
+    eventCount: aggregateStreamStats.eventCount,
+    streamGapCount: aggregateStreamStats.streamGapCount,
+    stallReconnectCount: aggregateStreamStats.stallReconnectCount,
+    maxGapMs: aggregateStreamStats.maxGapMs,
+    lastEventAgeMs:
+      aggregateStreamStats.lastEventAtMs === null
+        ? null
+        : Math.max(0, Date.now() - aggregateStreamStats.lastEventAtMs),
+  },
+});
+
+type IbkrLatencyStats = ReturnType<typeof computeLatencyStats>;
+
+// Cache the computed stats keyed on the store version so the hook returns a
+// referentially stable object until the (throttled) latency store actually
+// changes. Without this, every unrelated HeaderStatusCluster re-render produced
+// a fresh stats object, invalidating the gatewayPopoverModel memo and rebuilding
+// the full popover model even when no latency sample had arrived.
+let latencyStatsCache: { version: number; value: IbkrLatencyStats } | null = null;
+
+const getLatencyStatsSnapshot = (): IbkrLatencyStats => {
+  if (latencyStatsCache && latencyStatsCache.version === latencyStoreVersion) {
+    return latencyStatsCache.value;
+  }
+  const value = computeLatencyStats();
+  latencyStatsCache = { version: latencyStoreVersion, value };
+  return value;
+};
+
+export const useIbkrLatencyStats = (enabled = true): IbkrLatencyStats => {
   useSyncExternalStore(
     enabled ? subscribeToLatencyStore : () => () => {},
     enabled ? getLatencyStoreSnapshot : () => 0,
@@ -875,30 +931,7 @@ export const useIbkrLatencyStats = (enabled = true) => {
     return EMPTY_IBKR_LATENCY_STATS;
   }
 
-  return {
-    bridgeToApiMs: summarizeBucket(latencySamples.bridgeToApiMs),
-    apiToReactMs: summarizeBucket(latencySamples.apiToReactMs),
-    totalMs: summarizeBucket(latencySamples.totalMs),
-    sampleCount: Math.max(
-      latencySamples.bridgeToApiMs.length,
-      latencySamples.apiToReactMs.length,
-      latencySamples.totalMs.length,
-    ),
-    stream: {
-      activeConsumerCount: aggregateStreamStats.activeConsumerCount,
-      unionSymbolCount: aggregateStreamStats.unionSymbolCount,
-      reconnectCount: aggregateStreamStats.reconnectCount,
-      refreshCount: aggregateStreamStats.refreshCount,
-      eventCount: aggregateStreamStats.eventCount,
-      streamGapCount: aggregateStreamStats.streamGapCount,
-      stallReconnectCount: aggregateStreamStats.stallReconnectCount,
-      maxGapMs: aggregateStreamStats.maxGapMs,
-      lastEventAgeMs:
-        aggregateStreamStats.lastEventAtMs === null
-          ? null
-          : Math.max(0, Date.now() - aggregateStreamStats.lastEventAtMs),
-    },
-  };
+  return getLatencyStatsSnapshot();
 };
 
 export const useBrokerStockAggregateStream = ({

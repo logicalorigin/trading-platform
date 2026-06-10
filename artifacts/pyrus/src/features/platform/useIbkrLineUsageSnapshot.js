@@ -4,6 +4,8 @@ import { platformJsonRequest } from "./platformJsonRequest";
 const normalizeLineUsageDetail = (value) =>
   value === "full" ? "full" : "compact";
 
+export const IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS = 10_000;
+
 const readLineUsageSnapshot = (detail = "compact") =>
   platformJsonRequest(
     `/api/settings/ibkr-line-usage?detail=${encodeURIComponent(
@@ -15,7 +17,7 @@ export const useIbkrLineUsageSnapshot = ({
   enabled = true,
   lineUsageSnapshot = null,
   lineUsageStreamEnabled = true,
-  lineUsagePollInterval = 2_000,
+  lineUsagePollInterval = IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS,
   lineUsageDetail = "compact",
 } = {}) => {
   const active = Boolean(enabled);

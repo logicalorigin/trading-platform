@@ -58,6 +58,7 @@ import {
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus";
 import { streamStateTokenVar } from "./streamSemantics";
+import { useToast } from "./platformContexts.jsx";
 import {
   IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
   IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS,
@@ -75,12 +76,20 @@ import {
   writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession";
 import {
+  isIbkrLoginKeyReadActivationNotFoundError,
+  isTransientIbkrLoginKeyReadError,
+} from "./ibkrLoginHandoffErrorModel";
+import {
   buildIbkrDeactivateOperationStepper,
   buildIbkrLaunchOperationStepper,
   getIbkrLaunchActionProgressLabel,
 } from "./ibkrConnectionOperationStepperModel";
 import { buildIbkrConnectionSnapshot } from "./ibkrConnectionSnapshot";
-import { resolveIbkrCredentialActionState } from "./ibkrConnectionCredentialActionModel";
+import {
+  resolveIbkrCredentialActionState,
+  shouldAutoResumeIbkrCredentials,
+  shouldClearIbkrPasswordAfterCredentialSubmit,
+} from "./ibkrConnectionCredentialActionModel";
 import { buildIbkrConnectionInsightModel } from "./ibkrConnectionInsightModel";
 import {
   buildHeaderIbkrPopoverModel,
@@ -144,9 +153,8 @@ const getIbkrInsightToneColor = (tone) => {
 
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
-const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 35_000;
-const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 30_000;
-const IBKR_LOGIN_HANDOFF_WAIT_MS = 240_000;
+const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 1_000;
+const IBKR_LOGIN_HANDOFF_WAIT_MS = 60_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
 const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 500;
@@ -224,7 +232,7 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
             managementToken,
             waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS,
           },
-          timeoutMs: IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS,
+          timeoutMs: 0,
         },
       );
       if (payload?.ready) {
@@ -238,13 +246,13 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
       }
       lastTransientError = null;
     } catch (error) {
-      if (error?.code === "ibkr_bridge_activation_not_found") {
+      if (isIbkrLoginKeyReadActivationNotFoundError(error)) {
         return {
           completedWithoutCredentials: true,
           key: null,
         };
       }
-      if (!error?.status && !error?.code) {
+      if (isTransientIbkrLoginKeyReadError(error)) {
         lastTransientError = error;
         await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
         continue;
@@ -260,6 +268,90 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
       ? `Timed out waiting for the Windows helper secure credential handoff. Last request error: ${lastTransientError.message}`
       : "Timed out waiting for the Windows helper secure credential handoff.",
   );
+};
+
+const IBKR_LOGIN_ENVELOPE_ACCEPTED_STEPS = new Set([
+  "credentials_received",
+  "credentials_sent_to_pyrus",
+  "gateway_login_window_wait",
+  "gateway_process_started",
+  "gateway_login_window_waiting",
+  "gateway_login_window_active",
+  "typing_gateway_credentials",
+  "credentials_submitted",
+  "waiting_2fa",
+  "downloading_bridge_bundle",
+  "bridge_bundle_ready",
+  "starting_sidecar",
+  "sidecar_ready",
+  "preparing_bridge",
+  "starting_bridge",
+  "waiting_bridge_gateway_api",
+  "starting_tunnel",
+  "validating_tunnel",
+]);
+
+const readIbkrActivationStatus = ({ activationId, managementToken }) =>
+  platformJsonRequest(
+    `/api/ibkr/activation/${encodeURIComponent(activationId)}/status`,
+    {
+      method: "POST",
+      body: {
+        managementToken,
+      },
+      timeoutMs: 5_000,
+    },
+  );
+
+const ibkrActivationStatusShowsAcceptedLoginEnvelope = (payload) => {
+  if (!payload || payload.canceled) {
+    return false;
+  }
+  const progress = [
+    payload.latestProgress,
+    ...(Array.isArray(payload.recentProgress) ? payload.recentProgress : []),
+  ];
+  return progress.some((event) =>
+    IBKR_LOGIN_ENVELOPE_ACCEPTED_STEPS.has(String(event?.step || "")),
+  );
+};
+
+// Fire-and-forget reporting of browser-side connection events (encrypt step, envelope-POST
+// outcome, timeouts) to the backend connection audit. Best-effort: never blocks or throws, so
+// the credential flow is unaffected if the audit endpoint is unavailable.
+const reportIbkrBrowserConnectionEvent = ({
+  activationId,
+  managementToken,
+  phase = null,
+  step,
+  status = null,
+  message = null,
+  errorCode = null,
+  errorMessage = null,
+}) => {
+  if (!activationId || !managementToken || !step) {
+    return;
+  }
+  try {
+    void platformJsonRequest(
+      `/api/ibkr/activation/${encodeURIComponent(activationId)}/browser-event`,
+      {
+        method: "POST",
+        body: {
+          managementToken,
+          phase,
+          step,
+          status,
+          message,
+          errorCode,
+          errorMessage,
+        },
+        timeoutMs: 5000,
+      },
+    ).catch(() => {});
+  } catch {
+    // best-effort
+  }
 };
 
 const waitForIbkrDesktopJob = async ({ jobId, statusToken }) => {
@@ -2427,15 +2519,18 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
   actionDisabled = false,
   actionLabel,
   busy = false,
+  credentialsOptional = false,
   inFlight = false,
   launchCancelInFlight = false,
   onCancelBridgeLaunch,
   onSubmitCredentials,
+  passwordInputRef: externalPasswordInputRef,
   secondaryActionDisabled = false,
   secondaryCancelsLaunch = false,
   usernameInputRef,
 }) {
-  const passwordInputRef = useRef(null);
+  const localPasswordInputRef = useRef(null);
+  const passwordInputRef = externalPasswordInputRef || localPasswordInputRef;
   const credentialsReadyRef = useRef(false);
   const [credentialsReady, setCredentialsReady] = useState(false);
   const syncCredentialsReady = useCallback(() => {
@@ -2447,7 +2542,7 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
       setCredentialsReady(nextReady);
     }
     return nextReady;
-  }, [usernameInputRef]);
+  }, [passwordInputRef, usernameInputRef]);
   const clearCredentials = useCallback(() => {
     if (usernameInputRef.current) {
       usernameInputRef.current.value = "";
@@ -2459,26 +2554,37 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
       credentialsReadyRef.current = false;
       setCredentialsReady(false);
     }
-  }, [usernameInputRef]);
+  }, [passwordInputRef, usernameInputRef]);
   const handleSubmit = useCallback(
     async (event) => {
       event.preventDefault();
       const username = usernameInputRef.current?.value?.trim() || "";
       const password = passwordInputRef.current?.value || "";
-      if (actionDisabled || !username || !password) {
+      if (actionDisabled || (!credentialsOptional && (!username || !password))) {
         syncCredentialsReady();
         return;
       }
+      let submitResult = null;
       try {
-        await onSubmitCredentials({ password, username });
+        submitResult = await onSubmitCredentials({ password, username });
       } finally {
-        if (passwordInputRef.current) {
+        if (
+          shouldClearIbkrPasswordAfterCredentialSubmit(submitResult) &&
+          passwordInputRef.current
+        ) {
           passwordInputRef.current.value = "";
         }
         syncCredentialsReady();
       }
     },
-    [actionDisabled, onSubmitCredentials, syncCredentialsReady, usernameInputRef],
+    [
+      actionDisabled,
+      credentialsOptional,
+      onSubmitCredentials,
+      passwordInputRef,
+      syncCredentialsReady,
+      usernameInputRef,
+    ],
   );
   const handleSecondaryAction = useCallback(() => {
     if (secondaryCancelsLaunch) {
@@ -2497,7 +2603,9 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
     secondaryCancelsLaunch,
     usernameInputRef,
   ]);
-  const submitDisabled = Boolean(actionDisabled || !credentialsReady);
+  const submitDisabled = Boolean(
+    actionDisabled || (!credentialsOptional && !credentialsReady),
+  );
 
   return (
     <form
@@ -2635,6 +2743,17 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
   );
 });
 
+// The header re-renders every second from the market clock (marketClockNow).
+// These popover-content components are heavy and receive referentially stable
+// props while connected (the popover model is memoized and the insight model is
+// null when idle), so memoizing them stops the per-second clock tick from
+// re-rendering the open broker popover subtree.
+const HeaderIbkrTriggerSummaryMemo = memo(HeaderIbkrTriggerSummary);
+const HeaderMarketDataLineUsageMemo = memo(HeaderMarketDataLineUsage);
+const HeaderIbkrConnectionSummaryMemo = memo(HeaderIbkrConnectionSummary);
+const HeaderIbkrAdvancedDetailsMemo = memo(HeaderIbkrAdvancedDetails);
+const HeaderIbkrOperationStepperMemo = memo(HeaderIbkrOperationStepper);
+
 export const HeaderStatusCluster = ({
   session,
   environment,
@@ -2653,9 +2772,12 @@ export const HeaderStatusCluster = ({
   const bridgePopoverAsSheet = mobileSheet;
   const queryClient = useQueryClient();
   const { preferences } = useUserPreferences();
+  const toast = useToast();
   const bridgeTriggerRef = useRef(null);
   const bridgePopoverRef = useRef(null);
   const autoLoginUsernameInputRef = useRef(null);
+  const autoLoginPasswordInputRef = useRef(null);
+  const bridgeCredentialAutoResumeAttemptRef = useRef(null);
   const bridgeRecognitionRefreshTimerRef = useRef(null);
   const bridgeLaunchCancelRequestedRef = useRef(false);
   const runtimeControlReloadRef = useRef(null);
@@ -2697,8 +2819,62 @@ export const HeaderStatusCluster = ({
     () => buildMarketClockState(marketClockNow, preferences),
     [marketClockNow, preferences],
   );
-  const gatewayConnection = getIbkrConnection(session, "tws");
-  const gatewayTone = getIbkrConnectionTone(gatewayConnection);
+  // getIbkrConnection returns the stable session connection when connected, but
+  // a fresh fallbackConnection literal every call when disconnected. Memoizing on
+  // session (stable across market-clock ticks) keeps gatewayConnection — a dep of
+  // the popover model memo and gatewayTone — referentially stable in BOTH states,
+  // so the popover model/children don't rebuild every tick while disconnected.
+  const gatewayConnection = useMemo(
+    () => getIbkrConnection(session, "tws"),
+    [session],
+  );
+  // getIbkrConnectionTone returns a fresh object literal each call; memoize it so
+  // the memoized trigger summary isn't re-rendered every market-clock tick.
+  const gatewayTone = useMemo(
+    () => getIbkrConnectionTone(gatewayConnection),
+    [gatewayConnection],
+  );
+  // ── Broker connection lifecycle toasts ──
+  // The connection flow was previously toast-silent. Surface the two events the user
+  // cares about: the broker reaching "online" (connected/streaming) and leaving it
+  // (disconnect/reconnect), plus any launch/credential/activation failure (all of which
+  // funnel into bridgeLauncherError). A short post-mount arming window suppresses the
+  // hydration-time flip so a page refresh while already connected doesn't toast.
+  const brokerStatusLabel = gatewayTone?.label || "offline";
+  const brokerOnline = brokerStatusLabel === "online";
+  const brokerOnlineRef = useRef(null);
+  const brokerToastArmAtRef = useRef(Date.now() + 4000);
+  useEffect(() => {
+    const prev = brokerOnlineRef.current;
+    brokerOnlineRef.current = brokerOnline;
+    if (prev === null || prev === brokerOnline) return;
+    if (Date.now() < brokerToastArmAtRef.current) return;
+    toast.push(
+      brokerOnline
+        ? {
+            kind: "success",
+            title: "IBKR broker connected",
+            body: "Live market data and trading are active.",
+          }
+        : {
+            kind: "warn",
+            title: "IBKR broker disconnected",
+            body: `Connection status: ${brokerStatusLabel}.`,
+          },
+    );
+  }, [brokerOnline, brokerStatusLabel, toast]);
+  const bridgeLauncherErrorRef = useRef(null);
+  useEffect(() => {
+    const prev = bridgeLauncherErrorRef.current;
+    bridgeLauncherErrorRef.current = bridgeLauncherError;
+    if (bridgeLauncherError && bridgeLauncherError !== prev) {
+      toast.push({
+        kind: "error",
+        title: "IBKR connection error",
+        body: bridgeLauncherError,
+      });
+    }
+  }, [bridgeLauncherError, toast]);
   const gatewayLatencyStats = useIbkrLatencyStats(bridgePopoverOpen);
   const activeGatewayLatencyStats = bridgePopoverOpen ? gatewayLatencyStats : null;
   const sessionIbkrRuntime = session?.runtime?.ibkr || null;
@@ -2752,7 +2928,7 @@ export const HeaderStatusCluster = ({
   const lineUsageControl = useIbkrLineUsageSnapshot({
     enabled: gatewayLineUsageActive,
     lineUsageStreamEnabled: gatewayLineUsageActive,
-    lineUsagePollInterval: 2_000,
+    lineUsagePollInterval: 10_000,
     lineUsageDetail: "compact",
   });
   useRuntimeWorkloadFlag(
@@ -2761,7 +2937,7 @@ export const HeaderStatusCluster = ({
     {
       kind: "poll",
       label: "Header IBKR lines",
-      detail: "2s/compact",
+      detail: "10s/compact",
       priority: 7,
     },
   );
@@ -2822,6 +2998,17 @@ export const HeaderStatusCluster = ({
   );
   const ibkrRuntimeState =
     gatewayRuntimeDiagnostics?.ibkr || sessionIbkrRuntime || null;
+  const bridgeActivationDiagnostics = ibkrRuntimeState?.activation || null;
+  const bridgeRuntimeActivationActiveCount = Number(
+    bridgeActivationDiagnostics?.activeCount ?? 0,
+  );
+  const bridgeRuntimeActivation =
+    bridgeActivationDiagnostics?.latestActivation || null;
+  const bridgeRuntimeActivationStillActive = Boolean(
+    bridgeRuntimeActivationActiveCount > 0 &&
+      bridgeRuntimeActivation &&
+      bridgeRuntimeActivation.canceled !== true,
+  );
   const desktopReconnectNeeded = Boolean(
     ibkrRuntimeState?.desktopAgentOnline && !bridgeRuntimeOverrideActive,
   );
@@ -2836,12 +3023,19 @@ export const HeaderStatusCluster = ({
   const desktopReconnectUpgradeRequired = Boolean(
     desktopReconnectNeeded && ibkrRuntimeState?.desktopAgentUpgradeRequired,
   );
+  const desktopReconnectNeedsHelperUpdate = Boolean(
+    desktopReconnectKnownBad || desktopReconnectUpgradeRequired,
+  );
   const gatewayConnectedForBridge = isIbkrGatewayBridgeAttached({
     connection: gatewayConnection,
     runtime: ibkrRuntimeState,
   });
   const bridgeLaunchInFlight = Boolean(
-    !gatewayConnectedForBridge && bridgeLaunchInFlightUntil > marketClockNow,
+    !gatewayConnectedForBridge &&
+      (bridgeLaunchInFlightUntil > marketClockNow ||
+        (bridgeActivationId &&
+          bridgeManagementToken &&
+          bridgeRuntimeActivationStillActive)),
   );
   const gatewayReconnectNeeded = Boolean(
     (session?.configured?.ibkr && !gatewayConnectedForBridge) ||
@@ -2901,9 +3095,13 @@ export const HeaderStatusCluster = ({
     : null;
   const displayedBridgeTone = bridgeDeactivatedTone || bridgeTone;
   const displayedGatewayTone = bridgeDeactivatedTone || gatewayTone;
-  const displayedGatewayPopoverModel = bridgeDeactivationComplete
-    ? buildIbkrDeactivatedPopoverModel(gatewayPopoverModel)
-    : gatewayPopoverModel;
+  const displayedGatewayPopoverModel = useMemo(
+    () =>
+      bridgeDeactivationComplete
+        ? buildIbkrDeactivatedPopoverModel(gatewayPopoverModel)
+        : gatewayPopoverModel,
+    [bridgeDeactivationComplete, gatewayPopoverModel],
+  );
   const canDeactivate = Boolean(
     !bridgeDeactivationComplete &&
       (bridgeManagementToken ||
@@ -2945,14 +3143,24 @@ export const HeaderStatusCluster = ({
     ibkrRuntimeState?.desktopAgentRegistered === true ||
       Number(ibkrRuntimeState?.desktopAgentRegisteredCount || 0) > 0,
   );
+  const desktopAgentCompatibleForLaunch =
+    ibkrRuntimeState?.desktopAgentCompatible !== false;
+  const desktopAgentUpgradeRequiredForLaunch =
+    ibkrRuntimeState?.desktopAgentUpgradeRequired === true;
   const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser({
+    desktopAgentCompatible: desktopAgentCompatibleForLaunch,
     desktopAgentOnline: desktopAgentOnlineForLaunch,
     desktopAgentRegistered: desktopAgentRegisteredForLaunch,
+    desktopAgentUpgradeRequired: desktopAgentUpgradeRequiredForLaunch,
   });
-  const bridgeRuntimeActivation =
-    ibkrRuntimeState?.activation?.latestActivation || null;
   const bridgeActivationLoginHandoffReady =
     bridgeRuntimeActivation?.loginHandoffReady === true;
+  const bridgeActivationLoginKeyReadCount = Number(
+    bridgeRuntimeActivation?.loginKeyReadCount ?? 0,
+  );
+  const bridgeActivationLoginEnvelopeSubmitAttemptCount = Number(
+    bridgeRuntimeActivation?.loginEnvelopeSubmitAttemptCount ?? 0,
+  );
   const bridgeActivationRemoteLaunchQueued = Boolean(
     bridgeRuntimeActivation?.timings?.launchJobCreatedAt,
   );
@@ -2981,13 +3189,17 @@ export const HeaderStatusCluster = ({
       bridgeDirectActivationShouldRestartLocally,
   );
   const credentialActionState = resolveIbkrCredentialActionState({
-    activationActive: bridgeActivationActive,
+    activationActive:
+      bridgeActivationActive ||
+      bridgeActivationStatus?.active === true ||
+      bridgeRuntimeActivationStillActive,
     activationId: bridgeActivationId,
     directActivationShouldReplaceCurrentLaunch:
       bridgeDirectActivationShouldReplaceCurrentLaunch,
     gatewayConnected: gatewayConnectedForBridge,
     launchInFlight: bridgeLaunchInFlight || bridgeLauncherBusy,
     managementToken: bridgeManagementToken,
+    runtimeActivationActive: bridgeRuntimeActivationStillActive,
   });
   const bridgeLaunchCancelable = credentialActionState.launchCancelable;
   const bridgeCredentialResumeAvailable =
@@ -3006,6 +3218,9 @@ export const HeaderStatusCluster = ({
       bridgeLauncherBusy ||
       autoLoginPrimaryBlockedByActiveLaunch ||
       (!bridgeLaunchCancelable && bridgeLaunchInFlight),
+  );
+  const autoLoginCredentialsOptional = Boolean(
+    desktopReconnectNeedsHelperUpdate && !bridgeLauncherBusy && !bridgeLaunchInFlight,
   );
   const autoLoginProgressActionLabel = getIbkrLaunchActionProgressLabel({
     activationStatus: bridgeActivationStatus,
@@ -3162,6 +3377,28 @@ export const HeaderStatusCluster = ({
     invalidateIbkrRuntimeQueries(queryClient);
   }, [queryClient, stopBridgeRecognitionRefresh]);
 
+  useEffect(() => {
+    if (
+      bridgeLauncherBusy ||
+      gatewayConnectedForBridge ||
+      !bridgeLaunchInFlight ||
+      !bridgeActivationDiagnostics ||
+      bridgeRuntimeActivationActiveCount !== 0
+    ) {
+      return;
+    }
+
+    setBridgeLauncherNotice(null);
+    clearBridgeLaunchSessionState();
+  }, [
+    bridgeActivationDiagnostics,
+    bridgeLaunchInFlight,
+    bridgeLauncherBusy,
+    bridgeRuntimeActivationActiveCount,
+    clearBridgeLaunchSessionState,
+    gatewayConnectedForBridge,
+  ]);
+
   const startBridgeRecognitionRefresh = useCallback(() => {
     if (typeof window === "undefined") {
       return;
@@ -3193,6 +3430,10 @@ export const HeaderStatusCluster = ({
       return undefined;
     }
     if (bridgeLaunchInFlightUntil <= Date.now()) {
+      if (bridgeRuntimeActivationStillActive) {
+        setBridgeActivationActive(true);
+        return undefined;
+      }
       const staleActivationId = bridgeActivationId;
       const staleManagementToken = bridgeManagementToken;
       clearBridgeLaunchSessionState();
@@ -3264,6 +3505,7 @@ export const HeaderStatusCluster = ({
     bridgeActivationId,
     bridgeLaunchInFlightUntil,
     bridgeManagementToken,
+    bridgeRuntimeActivationStillActive,
     clearBridgeLaunchSessionState,
     gatewayConnectedForBridge,
   ]);
@@ -3432,10 +3674,30 @@ export const HeaderStatusCluster = ({
 
   const deliverIbkrLoginCredentials = useCallback(
     async ({ activationId, managementToken, username, password }) => {
-      const handoff = await waitForIbkrLoginKey({
+      let handoff;
+      reportIbkrBrowserConnectionEvent({
         activationId,
         managementToken,
+        phase: "credentials",
+        step: "login_key_wait_started",
+        message: "Browser is waiting for the Windows helper credential key.",
       });
+      try {
+        handoff = await waitForIbkrLoginKey({
+          activationId,
+          managementToken,
+        });
+      } catch (error) {
+        reportIbkrBrowserConnectionEvent({
+          activationId,
+          managementToken,
+          phase: "credentials",
+          step: "login_key_timeout",
+          status: "error",
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
       if (handoff.completedWithoutCredentials) {
         setBridgeLauncherNotice(
           "IB Gateway was already ready or the bridge attached before credentials were needed.",
@@ -3444,36 +3706,108 @@ export const HeaderStatusCluster = ({
         return;
       }
 
+      reportIbkrBrowserConnectionEvent({
+        activationId,
+        managementToken,
+        phase: "credentials",
+        step: "login_key_ready",
+        message: "Browser received the Windows helper credential key.",
+      });
       appendBridgeActivationProgress({
         activationId,
         status: "waiting_gateway",
         step: "encrypting_credentials",
         message: "Encrypting one-time IBKR credentials in this browser.",
       });
-      const envelope = await encryptIbkrLoginEnvelope({
-        publicKeyJwk: handoff.key.publicKeyJwk,
-        payload: {
-          version: 1,
-          username,
-          password,
-          tradingMode: "live",
-        },
+      reportIbkrBrowserConnectionEvent({
+        activationId,
+        managementToken,
+        phase: "credentials",
+        step: "encrypting_credentials",
+        message: "Encrypting one-time IBKR credentials in this browser.",
       });
-      await platformJsonRequest(
-        `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-envelope`,
-        {
-          method: "POST",
-          body: {
-            managementToken,
-            helperInstanceId: handoff.key.helperInstanceId,
-            ...envelope,
+      let envelope;
+      try {
+        envelope = await encryptIbkrLoginEnvelope({
+          publicKeyJwk: handoff.key.publicKeyJwk,
+          payload: {
+            version: 1,
+            username,
+            password,
+            tradingMode: "live",
           },
-          timeoutMs: 0,
-        },
-      );
+        });
+      } catch (error) {
+        reportIbkrBrowserConnectionEvent({
+          activationId,
+          managementToken,
+          phase: "credentials",
+          step: "encrypt_failed",
+          status: "error",
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+      let envelopeAccepted = false;
+      let lastEnvelopePostError = null;
+      for (let attempt = 1; attempt <= 2 && !envelopeAccepted; attempt += 1) {
+        try {
+          await platformJsonRequest(
+            `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-envelope`,
+            {
+              method: "POST",
+              body: {
+                managementToken,
+                helperInstanceId: handoff.key.helperInstanceId,
+                ...envelope,
+              },
+              timeoutMs: 0,
+            },
+          );
+          envelopeAccepted = true;
+        } catch (error) {
+          lastEnvelopePostError = error;
+          reportIbkrBrowserConnectionEvent({
+            activationId,
+            managementToken,
+            phase: "credentials",
+            step: "envelope_post_failed",
+            status: "error",
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
+          try {
+            const status = await readIbkrActivationStatus({
+              activationId,
+              managementToken,
+            });
+            if (ibkrActivationStatusShowsAcceptedLoginEnvelope(status)) {
+              envelopeAccepted = true;
+              break;
+            }
+          } catch {
+            // The retry below is the recovery path when status is also temporarily unavailable.
+          }
+          if (attempt < 2) {
+            await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
+          }
+        }
+      }
+      if (!envelopeAccepted) {
+        throw (
+          lastEnvelopePostError ||
+          new Error("IBKR encrypted credential envelope was not accepted.")
+        );
+      }
       appendBridgeActivationProgress({
         activationId,
         status: "waiting_gateway",
+        step: "credentials_sent_to_pyrus",
+        message: "Encrypted credentials sent to Pyrus for the Windows helper.",
+      });
+      reportIbkrBrowserConnectionEvent({
+        activationId,
+        managementToken,
+        phase: "credentials",
         step: "credentials_sent_to_pyrus",
         message: "Encrypted credentials sent to Pyrus for the Windows helper.",
       });
@@ -3485,12 +3819,105 @@ export const HeaderStatusCluster = ({
     [appendBridgeActivationProgress, clearBridgeLaunchSessionState],
   );
 
+  useEffect(() => {
+    const activationId = bridgeActivationId;
+    const managementToken = bridgeManagementToken;
+    const username = autoLoginUsernameInputRef.current?.value?.trim() || "";
+    const password = autoLoginPasswordInputRef.current?.value || "";
+    const shouldResume = shouldAutoResumeIbkrCredentials({
+      activationId,
+      attemptedActivationId: bridgeCredentialAutoResumeAttemptRef.current,
+      directActivationShouldReplaceCurrentLaunch:
+        bridgeDirectActivationShouldReplaceCurrentLaunch,
+      gatewayConnected: gatewayConnectedForBridge,
+      launchCancelInFlight: bridgeLaunchCancelInFlight,
+      loginEnvelopeSubmitAttemptCount:
+        bridgeActivationLoginEnvelopeSubmitAttemptCount,
+      loginHandoffReady: bridgeActivationLoginHandoffReady,
+      loginKeyReadCount: bridgeActivationLoginKeyReadCount,
+      managementToken,
+      password,
+      runtimeActivationActive: bridgeRuntimeActivationStillActive,
+      username,
+    });
+    if (!shouldResume) {
+      return undefined;
+    }
+
+    bridgeCredentialAutoResumeAttemptRef.current = activationId;
+    let canceled = false;
+    setBridgeManualOperationModel(null);
+    setBridgePopoverOpen(true);
+    setBridgeLauncherBusy(true);
+    setBridgeLauncherError(null);
+    setBridgeLauncherNotice(
+      "Sending credentials to the active Windows helper.",
+    );
+
+    void (async () => {
+      try {
+        await waitForBridgeLaunchFeedbackPaint();
+        if (canceled) {
+          return;
+        }
+        await deliverIbkrLoginCredentials({
+          activationId,
+          managementToken,
+          username,
+          password,
+        });
+        if (!canceled && autoLoginPasswordInputRef.current) {
+          autoLoginPasswordInputRef.current.value = "";
+        }
+      } catch (error) {
+        if (canceled) {
+          return;
+        }
+        if (
+          bridgeLaunchCancelRequestedRef.current ||
+          error?.code === "ibkr_bridge_activation_canceled"
+        ) {
+          setBridgeLauncherError(null);
+          clearBridgeLaunchSessionState();
+          return;
+        }
+        setBridgeLauncherError(
+          error instanceof Error ? error.message : "IBKR auto-login failed.",
+        );
+      } finally {
+        if (!canceled) {
+          setBridgeLauncherBusy(false);
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    bridgeActivationId,
+    bridgeActivationLoginEnvelopeSubmitAttemptCount,
+    bridgeActivationLoginHandoffReady,
+    bridgeActivationLoginKeyReadCount,
+    bridgeDirectActivationShouldReplaceCurrentLaunch,
+    bridgeLaunchCancelInFlight,
+    bridgeManagementToken,
+    bridgeRuntimeActivationStillActive,
+    clearBridgeLaunchSessionState,
+    deliverIbkrLoginCredentials,
+    gatewayConnectedForBridge,
+  ]);
+
   const handleSubmitAutoLogin = useCallback(async ({ password, username }) => {
     bridgeLaunchCancelRequestedRef.current = false;
     const normalizedUsername = String(username || "").trim();
-    if (!normalizedUsername || !password) {
+    const credentialsReady = Boolean(normalizedUsername && password);
+    const helperUpdateOnly = Boolean(
+      !credentialsReady && desktopReconnectNeedsHelperUpdate,
+    );
+    if (!credentialsReady && !helperUpdateOnly) {
       setBridgeLauncherError("IBKR username and password are required.");
-      return;
+      return { credentialsDelivered: false };
     }
     setBridgeManualOperationModel(null);
 
@@ -3538,20 +3965,23 @@ export const HeaderStatusCluster = ({
         ) {
           setBridgeLauncherError(null);
           clearBridgeLaunchSessionState();
-          return;
+          return { clearPassword: true };
         }
         setBridgeLauncherError(
           error instanceof Error ? error.message : "IBKR auto-login failed.",
         );
+        return { credentialsDelivered: false };
       } finally {
         setBridgeLauncherBusy(false);
       }
-      return;
+      return { credentialsDelivered: true };
     }
 
     const initialUseRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser({
+      desktopAgentCompatible: desktopAgentCompatibleForLaunch,
       desktopAgentOnline: desktopAgentOnlineForLaunch,
       desktopAgentRegistered: desktopAgentRegisteredForLaunch,
+      desktopAgentUpgradeRequired: desktopAgentUpgradeRequiredForLaunch,
     });
     let protocolLauncher = null;
     setBridgeActivationStatus(null);
@@ -3599,11 +4029,15 @@ export const HeaderStatusCluster = ({
             : "/api/ibkr/bridge/launcher",
           {
             method: useRemoteDesktopLaunch ? "POST" : "GET",
-            body: useRemoteDesktopLaunch ? { autoLogin: true } : undefined,
+            body: useRemoteDesktopLaunch
+              ? { autoLogin: credentialsReady, helperUpdateOnly }
+              : undefined,
             timeoutMs: 0,
           },
         );
-        const selectedLaunchUrl = payload.autoLoginLaunchUrl || payload.launchUrl;
+        const selectedLaunchUrl = credentialsReady
+          ? payload.autoLoginLaunchUrl || payload.launchUrl
+          : payload.updateOnlyLaunchUrl || payload.launchUrl;
         setBridgeActivationId(payload.activationId || null);
         setBridgeManagementToken(payload.managementToken || null);
         setBridgeLaunchUrl(selectedLaunchUrl || null);
@@ -3661,7 +4095,9 @@ export const HeaderStatusCluster = ({
           String(inFlightUntil),
         );
         setBridgeLauncherNotice(
-          useRemoteDesktopLaunch
+          !credentialsReady
+            ? "Helper update launched. Re-run broker launch with credentials after PowerShell updates the helper."
+            : useRemoteDesktopLaunch
             ? "Waiting for the Windows desktop helper to claim the launch request."
             : "Waiting for the Windows helper to request encrypted credentials.",
         );
@@ -3687,12 +4123,22 @@ export const HeaderStatusCluster = ({
         }
       }
 
+      if (!credentialsReady) {
+        clearBridgeLaunchSessionState();
+        setBridgeLauncherNotice(
+          "Helper update launched in PowerShell. Re-run broker launch with credentials after the helper updates.",
+        );
+        void refreshIbkrConnectionStatus({ includeSupplementalState: true });
+        return { clearPassword: true };
+      }
+
       await deliverIbkrLoginCredentials({
         activationId: launchResult.payload.activationId,
         managementToken: launchResult.payload.managementToken,
         username: normalizedUsername,
         password,
       });
+      return { credentialsDelivered: true };
     } catch (error) {
       if (protocolLauncher) {
         closeIbkrProtocolLauncher(protocolLauncher);
@@ -3704,7 +4150,7 @@ export const HeaderStatusCluster = ({
         setBridgeLauncherNotice("IB Gateway launch canceled.");
         setBridgeLauncherError(null);
         clearBridgeLaunchSessionState();
-        return;
+        return { clearPassword: true };
       }
       if (
         isIbkrRemoteDesktopUnavailableError(error) ||
@@ -3715,11 +4161,12 @@ export const HeaderStatusCluster = ({
           error instanceof Error ? error.message : "IBKR bridge launch failed.",
         );
         clearBridgeLaunchSessionState();
-        return;
+        return { credentialsDelivered: false };
       }
       setBridgeLauncherError(
         error instanceof Error ? error.message : "IBKR auto-login failed.",
       );
+      return { credentialsDelivered: false };
     } finally {
       setBridgeLauncherBusy(false);
     }
@@ -3731,8 +4178,12 @@ export const HeaderStatusCluster = ({
     bridgeManagementToken,
     clearBridgeLaunchSessionState,
     deliverIbkrLoginCredentials,
+    desktopReconnectNeedsHelperUpdate,
+    desktopAgentCompatibleForLaunch,
     desktopAgentOnlineForLaunch,
     desktopAgentRegisteredForLaunch,
+    desktopAgentUpgradeRequiredForLaunch,
+    refreshIbkrConnectionStatus,
   ]);
 
   const handleCancelBridgeLaunch = useCallback(async () => {
@@ -4033,7 +4484,7 @@ export const HeaderStatusCluster = ({
             event.currentTarget.style.background = "transparent";
           }}
         >
-          <HeaderIbkrTriggerSummary
+          <HeaderIbkrTriggerSummaryMemo
             model={displayedGatewayPopoverModel}
             connection={gatewayConnection}
             tone={displayedGatewayTone}
@@ -4234,10 +4685,12 @@ export const HeaderStatusCluster = ({
                 actionDisabled={autoLoginActionDisabled}
                 actionLabel={autoLoginActionLabel}
                 busy={bridgeLauncherBusy}
+                credentialsOptional={autoLoginCredentialsOptional}
                 inFlight={bridgeLaunchInFlight}
                 launchCancelInFlight={bridgeLaunchCancelInFlight}
                 onCancelBridgeLaunch={handleCancelBridgeLaunch}
                 onSubmitCredentials={handleSubmitAutoLogin}
+                passwordInputRef={autoLoginPasswordInputRef}
                 secondaryActionDisabled={bridgeCredentialSecondaryActionDisabled}
                 secondaryCancelsLaunch={bridgeCredentialSecondaryCancelsLaunch}
                 usernameInputRef={autoLoginUsernameInputRef}
@@ -4267,18 +4720,18 @@ export const HeaderStatusCluster = ({
               </div>
             ) : null}
 
-            <HeaderIbkrOperationStepper
+            <HeaderIbkrOperationStepperMemo
               insightModel={bridgeConnectionInsightModel}
               model={bridgeOperationModel}
             />
 
-            <HeaderIbkrConnectionSummary model={displayedGatewayPopoverModel} />
-            <HeaderMarketDataLineUsage
+            <HeaderIbkrConnectionSummaryMemo model={displayedGatewayPopoverModel} />
+            <HeaderMarketDataLineUsageMemo
               lineUsage={displayedGatewayPopoverModel.lineUsage}
               compactLineUsage={displayedGatewayPopoverModel.compactLineUsage}
             />
 
-            <HeaderIbkrAdvancedDetails
+            <HeaderIbkrAdvancedDetailsMemo
               insightModel={bridgeConnectionInsightModel}
               model={displayedGatewayPopoverModel}
             />

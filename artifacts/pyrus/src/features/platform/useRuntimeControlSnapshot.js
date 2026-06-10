@@ -1,7 +1,10 @@
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getRuntimeDiagnostics } from "@workspace/api-client-react";
-import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot.js";
+import {
+  IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS,
+  useIbkrLineUsageSnapshot,
+} from "./useIbkrLineUsageSnapshot.js";
 import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
 import { useFlowScannerControlState } from "./marketFlowStore";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
@@ -18,7 +21,7 @@ export const useRuntimeControlSnapshot = ({
   lineUsageSnapshot = null,
   lineUsageEnabled = true,
   lineUsageStreamEnabled = true,
-  lineUsagePollInterval = 2_000,
+  lineUsagePollInterval = IBKR_LINE_USAGE_FALLBACK_POLL_INTERVAL_MS,
   lineUsageDetail = "compact",
   workloadStats = null,
   hydrationStats = null,

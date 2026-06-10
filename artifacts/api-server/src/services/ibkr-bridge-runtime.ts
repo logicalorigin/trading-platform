@@ -24,7 +24,7 @@ const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
 const BRIDGE_HELPER_VERSION =
-  "2026-06-09.ib-async-sidecar-v19-update-only-exit";
+  "2026-06-09.ib-async-sidecar-v20-direct-gateway-typing";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
