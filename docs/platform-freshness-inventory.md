@@ -261,12 +261,13 @@ Observed fallback gates:
 Current risk:
 
 - Signal Monitor is high-impact but high-cardinality. Correctness depends on environment, profile, timeframe, symbol, universe/source strategy, evaluation mode, request origin, and freshness windows.
-- A stream migration without complete identity would risk cache bleed more than it would improve latency.
+- Signal Monitor is passive in live runtime. Ticker-emitted signal events create STA/Signal Monitor history; Signal Monitor routes consume stored events/state. Reintroducing Massive/history bar evaluation through polling, Matrix hydration, or worker scans is a producer-boundary bug.
+- A stream migration without complete identity would risk cache bleed more than it would improve latency, and must not become a hidden signal producer.
 
 Target:
 
-- Keep Signal Monitor after P0 market data and account/broker foundations unless new evidence changes the ranking.
-- Require identity/freshness contract before replacing polling with streams.
+- Keep Signal Monitor reads after P0 market data and account/broker foundations unless new evidence changes the ranking.
+- Prefer event-driven invalidation from ticker-emitted signal events and stored-state reads. Require identity/freshness contract before replacing polling with streams, and verify no live path calls Massive/history bar loaders unless explicit legacy/backfill evaluation is enabled.
 
 ### Broker Runtime And Diagnostics
 

@@ -1,8 +1,15 @@
 # Signal Bubbles SSE Push Hydration Plan
 
 Generated: 2026-06-09
-Status: planning document, implementation not started in this session
-Scope: make Signal Matrix bubble state hydrate through a backend push path fed by Massive stock aggregate data, with REST matrix evaluation retained as bootstrap and stale-stream fallback.
+Status: superseded by the passive Signal Monitor/STA source boundary
+Scope: historical planning note only. Do not implement this plan as written.
+
+Supersession note: Signal Monitor is passive in live runtime. Ticker-emitted
+signal events create STA/Signal Monitor event history; Signal Monitor and Signal
+Options consume stored events/state. Live Signal Matrix/STA hydration must not
+discover signals from Massive aggregate or historical bars. Explicit
+legacy/backfill evaluation requires `PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=1`
+or `SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=true`.
 
 ## Overview
 
