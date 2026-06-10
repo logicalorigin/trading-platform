@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -7,6 +8,40 @@ use sqlx::types::Uuid;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 use crate::providers::massive::{OptionChainSnapshot, StockSnapshot};
+
+const DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 512;
+const MAX_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 2_048;
+const DEFAULT_OPTION_CHAIN_WRITE_THROTTLE_MS: u64 = 20;
+
+fn read_positive_usize_env(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
+}
+
+fn read_u64_env(name: &str, fallback: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(fallback)
+}
+
+fn option_chain_write_batch_size() -> usize {
+    read_positive_usize_env(
+        "MARKET_DATA_OPTION_CHAIN_WRITE_BATCH_SIZE",
+        DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE,
+    )
+    .min(MAX_OPTION_CHAIN_WRITE_BATCH_SIZE)
+}
+
+fn option_chain_write_throttle_ms() -> u64 {
+    read_u64_env(
+        "MARKET_DATA_OPTION_CHAIN_WRITE_THROTTLE_MS",
+        DEFAULT_OPTION_CHAIN_WRITE_THROTTLE_MS,
+    )
+}
 
 pub struct ProviderRequestLogInput<'a> {
     pub provider: &'a str,
@@ -132,30 +167,40 @@ pub async fn persist_option_chain_snapshots(
     let symbol = underlying.trim().to_uppercase();
     let unique_snapshots = unique_option_chain_snapshots(snapshots);
     let as_of = Utc::now();
+    let batch_size = option_chain_write_batch_size();
+    let throttle_ms = option_chain_write_throttle_ms();
+    let total = unique_snapshots.len();
+    let mut persisted = 0usize;
 
-    let mut tx = pool.begin().await?;
-    let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
-    let option_instrument_ids =
-        ensure_option_instruments_tx(&mut tx, &symbol, &unique_snapshots).await?;
-    let option_contract_ids = ensure_option_contracts_tx(
-        &mut tx,
-        underlying_id,
-        &option_instrument_ids,
-        &unique_snapshots,
-    )
-    .await?;
-    insert_option_chain_snapshots_tx(
-        &mut tx,
-        underlying_id,
-        provider,
-        as_of,
-        &option_contract_ids,
-        &unique_snapshots,
-    )
-    .await?;
-    tx.commit().await?;
+    for batch in unique_snapshots.chunks(batch_size) {
+        let mut tx = pool.begin().await?;
+        let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
+        let option_instrument_ids = ensure_option_instruments_tx(&mut tx, &symbol, batch).await?;
+        let option_contract_ids =
+            ensure_option_contracts_tx(&mut tx, underlying_id, &option_instrument_ids, batch)
+                .await?;
+        insert_option_chain_snapshots_tx(
+            &mut tx,
+            underlying_id,
+            provider,
+            as_of,
+            &option_contract_ids,
+            batch,
+        )
+        .await?;
+        tx.commit().await?;
 
-    Ok(unique_snapshots.len())
+        persisted += batch.len();
+        if persisted < total {
+            if throttle_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(throttle_ms)).await;
+            } else {
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+
+    Ok(persisted)
 }
 
 fn unique_option_chain_snapshots(snapshots: &[OptionChainSnapshot]) -> Vec<&OptionChainSnapshot> {

@@ -34,7 +34,11 @@ if (!resolvedDatabaseUrl) {
 
 const defaultPoolMax = (): number => {
   try {
-    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 6 : 10;
+    // A single dashboard request fans out into ~10 concurrent shadow sub-reads
+    // alongside background mark-refresh writers; a pool of 6 saturates and the
+    // resulting acquire timeouts get misread as a DB outage. helium's server
+    // max_connections has ample headroom, so allow more pooled connections.
+    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 12 : 10;
   } catch {
     return 10;
   }

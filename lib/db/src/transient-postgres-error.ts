@@ -26,6 +26,15 @@ const TRANSIENT_POSTGRES_MESSAGE_PATTERNS = [
   /no response/i,
 ];
 
+// Pool-acquire timeouts mean "all pooled connections are busy right now", not
+// "the database is down". These are a subset of the transient patterns above and
+// are classified separately so callers can choose to back off only on genuine
+// connectivity failures rather than on local pool saturation.
+const POOL_CONTENTION_MESSAGE_PATTERNS = [
+  /pool timed out while waiting for an open connection/i,
+  /timeout exceeded when trying to connect/i,
+];
+
 export const TRANSIENT_POSTGRES_BACKOFF_MS = 60_000;
 
 type WarnLogger = {
@@ -72,6 +81,22 @@ export function isTransientPostgresError(error: unknown, depth = 0): boolean {
   }
 
   return isTransientPostgresError(record["cause"], depth + 1);
+}
+
+export function isPoolContentionError(error: unknown, depth = 0): boolean {
+  if (!error || depth > 6) {
+    return false;
+  }
+
+  const text = textFromError(error);
+  if (
+    text &&
+    POOL_CONTENTION_MESSAGE_PATTERNS.some((pattern) => pattern.test(text))
+  ) {
+    return true;
+  }
+
+  return isPoolContentionError(asRecord(error)["cause"], depth + 1);
 }
 
 export function summarizeTransientPostgresError(
