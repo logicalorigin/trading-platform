@@ -9,7 +9,10 @@ import {
   type OvernightSpotSignalScanResult,
   type OvernightSpotWorkerDeployment,
 } from "./overnight-spot-execution";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import {
+  getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
+} from "./resource-pressure";
 import type { ApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   subscribeAlgoCockpitChanges,
@@ -26,6 +29,7 @@ const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
 const DEFAULT_WORKER_SCAN_TIMEOUT_MS = 45_000;
 const WORKER_SCAN_TIMEOUT_MIN_MS = 5_000;
 const WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
+const OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS = 30_000;
 export const OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY = 1_930_514_023;
 
 type ReleaseLock = () => Promise<void>;
@@ -395,6 +399,23 @@ function markSkipped(input: {
   input.runtime.skippedScanCount += 1;
 }
 
+function pauseDeploymentForResourcePressure(input: {
+  runtime: DeploymentRuntime;
+  nowMs: number;
+}) {
+  markSkipped({
+    runtime: input.runtime,
+    reason: "resource_pressure",
+    nowMs: input.nowMs,
+  });
+  input.runtime.lastCheckedAtMs = input.nowMs;
+  input.runtime.currentScanStartedAtMs = null;
+  input.runtime.timedOut = false;
+  input.runtime.unsettledAfterTimeout = false;
+  input.runtime.nextScanDueAtMs =
+    input.nowMs + OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS;
+}
+
 function dateString(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
@@ -458,6 +479,11 @@ export function createOvernightSpotWorker(
           runtime.lastCheckedAtMs !== null &&
           nowMs < runtime.nextScanDueAtMs
         ) {
+          continue;
+        }
+
+        if (isApiResourcePressureHardBlock(pressure)) {
+          pauseDeploymentForResourcePressure({ runtime, nowMs });
           continue;
         }
 

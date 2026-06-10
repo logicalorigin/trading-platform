@@ -20,6 +20,7 @@ import {
 } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 import { invalidateShadowAccountSnapshotBaseCache } from "./shadow-account-streams";
+import { normalizeAccountPositionTypeFilter } from "./account-position-type";
 
 type Unsubscribe = () => void;
 type OrderTab = "working" | "history";
@@ -261,17 +262,25 @@ function isoOrNull(value: Date | null | undefined): string | null {
     : null;
 }
 
+function normalizePositionTypeFilterValue(value: string | null | undefined): string | null {
+  const filter = normalizeAccountPositionTypeFilter(value);
+  if (filter.kind === "all") return null;
+  if (filter.kind === "equity") return "equity";
+  if (filter.kind === "single") return filter.value;
+  return filter.raw.trim() || null;
+}
+
 function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSnapshotInput> {
   return {
     accountId: input.accountId || "combined",
     mode: input.mode,
     range: input.range ?? "ALL",
     orderTab: input.orderTab ?? "working",
-    assetClass: input.assetClass ?? null,
+    assetClass: normalizePositionTypeFilterValue(input.assetClass),
     from: input.from ?? null,
     to: input.to ?? null,
     symbol: input.symbol ?? null,
-    tradeAssetClass: input.tradeAssetClass ?? null,
+    tradeAssetClass: normalizePositionTypeFilterValue(input.tradeAssetClass),
     pnlSign: input.pnlSign ?? null,
     holdDuration: input.holdDuration ?? null,
     performanceCalendarFrom: input.performanceCalendarFrom ?? null,

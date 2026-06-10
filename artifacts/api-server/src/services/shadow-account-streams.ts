@@ -13,7 +13,7 @@ import {
 } from "./shadow-account-events";
 
 type Unsubscribe = () => void;
-const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 2_000;
+const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 15_000;
 export const SHADOW_ACCOUNT_STREAM_INTERVAL_MS = 2_000;
 
 type ShadowAccountSnapshotBase = {
@@ -100,6 +100,7 @@ function createPollingStream<T>({
   let inFlight = false;
   let queued = false;
   let lastSignature = "";
+  let lastSnapshot: T | null = null;
 
   const tick = async () => {
     if (!active || inFlight) {
@@ -118,10 +119,14 @@ function createPollingStream<T>({
           return;
         }
 
-        const signature = stableStringify(snapshot);
-        const changed = signature !== lastSignature;
-        if (changed) {
+        let changed = false;
+        if (snapshot !== lastSnapshot) {
+          const signature = stableStringify(snapshot);
+          changed = signature !== lastSignature;
           lastSignature = signature;
+          lastSnapshot = snapshot;
+        }
+        if (changed) {
           onSnapshot(snapshot);
         }
         await onPollSuccess?.({ snapshot, changed });

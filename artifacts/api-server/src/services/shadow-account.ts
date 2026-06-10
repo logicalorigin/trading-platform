@@ -38,6 +38,7 @@ import { logger } from "../lib/logger";
 import { getMassiveRuntimeConfig, type RuntimeMode } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
@@ -310,6 +311,17 @@ function isShadowAccountDbBackoffActive(nowMs = Date.now()): boolean {
 }
 
 function markShadowAccountDbUnavailable(error: unknown): void {
+  // Pool-acquire timeouts mean the connection pool is momentarily saturated, not
+  // that Postgres is down. Treat them as a per-read "busy" condition and do NOT
+  // arm the global DB-unavailable backoff, which would otherwise poison every
+  // other shadow read for the full backoff window under sustained load.
+  if (isPoolContentionError(error)) {
+    logger.debug?.(
+      { err: error },
+      "Shadow read deferred on pool contention; not arming DB-unavailable backoff",
+    );
+    return;
+  }
   shadowAccountDbBackoff.markFailure({
     error,
     logger,
@@ -7912,6 +7924,182 @@ function readReusableLiveQuotedShadowPositionsResponse(input: {
   return baseResponse;
 }
 
+function shouldServeFastShadowPositionsForPressure(): boolean {
+  return getApiResourcePressureSnapshot().level !== "normal";
+}
+
+function buildFastShadowPositionsResponseFromRows(input: {
+  positions: ShadowPositionRow[];
+  account: ShadowAccountRow | null;
+  assetClassFilter: ShadowPositionTypeFilter;
+  source: ShadowSourceScope | null;
+  observedAt?: Date;
+}): ShadowAccountPositionsResponseShape {
+  const observedAt = input.observedAt ?? new Date();
+  const sourceFiltered = input.positions.filter((position) =>
+    input.source
+      ? positionMatchesShadowSource(position, input.source)
+      : isDefaultShadowLedgerAnalyticsPosition(position),
+  );
+  const filtered =
+    input.assetClassFilter && input.assetClassFilter !== "all"
+      ? sourceFiltered.filter((position) =>
+          shadowPositionMatchesAssetClass(position, input.assetClassFilter),
+        )
+      : sourceFiltered;
+  const accountCash =
+    toNumber(input.account?.cash) ??
+    toNumber(input.account?.startingBalance) ??
+    SHADOW_STARTING_BALANCE;
+  const rows = filtered.map((position) => {
+    const quantity = toNumber(position.quantity) ?? 0;
+    const averageCost = toNumber(position.averageCost) ?? 0;
+    const contract = asOptionContract(position.optionContract);
+    const multiplier = marketMultiplier({
+      assetClass: position.assetClass as ShadowAssetClass,
+      optionContract: contract,
+    });
+    const storedMark = toNumber(position.mark);
+    const mark = storedMark ?? averageCost;
+    const marketValue =
+      toNumber(position.marketValue) ??
+      (Number.isFinite(quantity) &&
+      Number.isFinite(mark) &&
+      Number.isFinite(multiplier)
+        ? quantity * mark * multiplier
+        : 0);
+    const unrealizedPnl =
+      toNumber(position.unrealizedPnl) ??
+      (Number.isFinite(mark) &&
+      Number.isFinite(averageCost) &&
+      Number.isFinite(quantity) &&
+      Number.isFinite(multiplier)
+        ? (mark - averageCost) * quantity * multiplier
+        : 0);
+    const openedAt = position.openedAt ?? position.asOf ?? observedAt;
+    const positionType = shadowPositionType(position);
+
+    return {
+      id: position.id,
+      accountId: SHADOW_ACCOUNT_ID,
+      accounts: [SHADOW_ACCOUNT_ID],
+      symbol: position.symbol,
+      marketDataSymbol: shadowPositionMarketDataSymbol(position),
+      description: positionDescription(position),
+      assetClass: assetClassLabel(position),
+      positionType,
+      optionContract: optionPayload(contract),
+      underlyingMarket: null,
+      sector: "Shadow Holdings",
+      quantity,
+      averageCost,
+      mark,
+      dayChange: null,
+      dayChangePercent: null,
+      unrealizedPnl,
+      unrealizedPnlPercent: averageCost
+        ? ((mark - averageCost) / averageCost) * 100
+        : null,
+      marketValue,
+      weightPercent: null,
+      accountWeightPercent: null,
+      scopedWeightPercent: null,
+      betaWeightedDelta: null,
+      lots: [
+        {
+          accountId: SHADOW_ACCOUNT_ID,
+          symbol: position.symbol,
+          quantity,
+          averageCost,
+          marketPrice: mark,
+          marketValue,
+          unrealizedPnl,
+          asOf: position.asOf,
+          source: "SHADOW_LEDGER",
+        },
+      ],
+      openOrders: [],
+      source: "SHADOW_LEDGER",
+      openedAt,
+      openedAtSource: "shadow_position",
+      pricingPolicy: "shadow_pressure_fallback",
+      valuationEligible: false,
+      valuationSource: "shadow_ledger",
+      valuationReason: "shadow_positions_pressure_fallback",
+      quote: null,
+      optionQuote: null,
+      stopLoss: null,
+      takeProfit: null,
+      riskOverlay: null,
+    };
+  });
+  const responseMarketValue = rows.reduce(
+    (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
+    0,
+  );
+  const responseNetLiquidation = accountCash + responseMarketValue;
+  const weightedRows = applyShadowAccountPositionWeights(rows, {
+    accountNetLiquidation: responseNetLiquidation,
+    scopedNetLiquidation: responseNetLiquidation,
+  });
+
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    currency: SHADOW_CURRENCY,
+    degraded: true,
+    stale: true,
+    reason: "shadow_positions_pressure_fallback",
+    positions: weightedRows,
+    totals: {
+      weightPercent: weightedRows.reduce(
+        (sum, row) => sum + (toNumber(row.weightPercent) ?? 0),
+        0,
+      ),
+      unrealizedPnl: weightedRows.reduce(
+        (sum, row) => sum + row.unrealizedPnl,
+        0,
+      ),
+      grossLong: responseMarketValue,
+      grossShort: 0,
+      netExposure: responseMarketValue,
+      cash: accountCash,
+      totalCash: accountCash,
+      buyingPower: Math.max(0, accountCash),
+      netLiquidation: responseNetLiquidation,
+    },
+    updatedAt: observedAt,
+  };
+}
+
+async function buildFastShadowPositionsResponse(input: {
+  assetClassFilter: ShadowPositionTypeFilter;
+  source: ShadowSourceScope | null;
+}): Promise<ShadowAccountPositionsResponseShape> {
+  return withShadowReadCache(
+    `positions-fast:${input.assetClassFilter || "all"}:${shadowSourceCacheKey(
+      input.source,
+    )}`,
+    async () => {
+      const [account, positions] = await Promise.all([
+        readShadowAccount(),
+        readOpenShadowPositions(),
+      ]);
+      return buildFastShadowPositionsResponseFromRows({
+        account,
+        positions,
+        assetClassFilter: input.assetClassFilter,
+        source: input.source,
+      });
+    },
+    {
+      allowStale: isShadowAccountPositionsResponseShape,
+      staleStrategy: "immediate",
+      ttlMs: 2_500,
+      staleTtlMs: 30_000,
+    },
+  );
+}
+
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
@@ -7936,13 +8124,12 @@ export async function getShadowAccountPositions(input: {
   if (reusableFiltered) {
     return reusableFiltered;
   }
-  return withShadowReadCache(
-    shadowPositionsReadCacheKey({
-      assetClassFilter,
-      source,
-      includeLiveQuotes,
-    }),
-    async () => {
+  const cacheKey = shadowPositionsReadCacheKey({
+    assetClassFilter,
+    source,
+    includeLiveQuotes,
+  });
+  const readFullPositions = async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
       try {
         void kickShadowPositionMarkRefresh();
@@ -7997,20 +8184,12 @@ export async function getShadowAccountPositions(input: {
             ];
         const optionQuoteByProviderContractId = new Map(cachedOptionQuotes);
         const observedAt = new Date();
-        const dayChanges = await readShadowPositionDayChanges(
-          filtered,
-          observedAt,
-          optionQuoteByProviderContractId,
-          {
-            fetchMissingOptionQuotes: includeLiveQuotes,
-            fetchOptionQuoteOptions: includeLiveQuotes
-              ? {
-                  intent: "visible-live",
-                  ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
-                }
-              : undefined,
-          },
-        );
+        // Fetch visible option quotes (batched per underlying) before computing
+        // day changes so day-change values reuse those quotes instead of firing
+        // a second, per-position missing-quote fetch in the same request. See
+        // session 019e8366: the second fetch was the cold-read latency/pressure
+        // root cause; cached quotes, visible quotes, and ledger marks already
+        // give a valid degraded response.
         if (includeLiveQuotes) {
           readCachedShadowOptionQuotes(filtered).forEach(
             (quote, providerContractId) => {
@@ -8042,6 +8221,20 @@ export async function getShadowAccountPositions(input: {
             },
           );
         }
+        const dayChanges = await readShadowPositionDayChanges(
+          filtered,
+          observedAt,
+          optionQuoteByProviderContractId,
+          {
+            fetchMissingOptionQuotes: false,
+            fetchOptionQuoteOptions: includeLiveQuotes
+              ? {
+                  intent: "visible-live",
+                  ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
+                }
+              : undefined,
+          },
+        );
         const peakMarkByPositionId =
           await readShadowPositionPeakMarkPrices(filtered);
         const rows = filtered.map((position) => {
@@ -8342,12 +8535,22 @@ export async function getShadowAccountPositions(input: {
         }
         throw error;
       }
-    },
-    {
-      allowStale: shadowReadCacheValueHasRows,
-      staleStrategy: "immediate",
-      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
-    },
+    };
+  const cacheOptions = {
+    allowStale: shadowReadCacheValueHasRows,
+    staleStrategy: "immediate" as const,
+    ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+  };
+  if (shouldServeFastShadowPositionsForPressure()) {
+    return buildFastShadowPositionsResponse({
+      assetClassFilter,
+      source,
+    });
+  }
+  return withShadowReadCache(
+    cacheKey,
+    readFullPositions,
+    cacheOptions,
   );
 }
 
@@ -9991,6 +10194,11 @@ export async function getShadowAccountOrders(input: {
   );
 }
 
+function shadowResponseReason(value: unknown): string | null {
+  const reason = readRecord(value)?.["reason"];
+  return typeof reason === "string" && reason.trim() ? reason : null;
+}
+
 export async function getShadowAccountRisk(input: {
   source?: string | null;
   totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
@@ -10049,11 +10257,20 @@ async function buildShadowAccountRisk(input: {
       (fastDetail
         ? buildDeferredShadowClosedTradesForFastRisk()
         : await getShadowAccountClosedTrades({ source }));
+    const backoffActive = isShadowAccountDbBackoffActive();
     const degraded = Boolean(
-      isShadowAccountDbBackoffActive() ||
-        positionsResponse.degraded ||
-        closedTrades.degraded,
+      backoffActive || positionsResponse.degraded || closedTrades.degraded,
     );
+    // Propagate the accurate upstream cause rather than relabeling an inherited
+    // resource-pressure / stale-cache condition as "database unavailable". Only a
+    // genuine DB-availability backoff warrants the DB-unavailable reason.
+    const degradedReason = !degraded
+      ? null
+      : backoffActive
+        ? SHADOW_ACCOUNT_DB_FALLBACK_REASON
+        : (shadowResponseReason(positionsResponse) ??
+          shadowResponseReason(closedTrades) ??
+          SHADOW_ACCOUNT_DB_FALLBACK_REASON);
     const positionRows = positionsResponse.positions.map((position) => ({
       symbol: position.symbol,
       marketValue: position.marketValue,
@@ -10161,7 +10378,7 @@ async function buildShadowAccountRisk(input: {
       accountId: SHADOW_ACCOUNT_ID,
       currency: SHADOW_CURRENCY,
       degraded,
-      reason: degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
+      reason: degradedReason,
       concentration: {
         topPositions: positionRows.slice(0, 5),
         sectors: [
@@ -13366,6 +13583,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   withShadowReadCache,
   getShadowAccountReadDiagnostics,
   resetShadowAccountReadDiagnosticsForTests,
+  buildFastShadowPositionsResponseFromRows,
   shadowClosedTradesReadCacheKey,
   buildShadowAnalysisRoundTrips,
   shadowRoundTripToClosedTrade,
@@ -13446,6 +13664,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   buildWatchlistBacktestSweepVariants,
   normalizeWatchlistBacktestEntryGateOverlay,
   applyWatchlistBacktestEntryGate,
+  markShadowAccountDbUnavailable,
+  isShadowAccountDbBackoffActive,
+  clearShadowAccountDbBackoff,
 };
 
 function watchlistBacktestOpenSymbols(fills: WatchlistBacktestFill[]) {

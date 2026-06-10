@@ -481,15 +481,46 @@ function buildEquityHistory(equityHistory: ShadowEquityHistory) {
     .filter((point): point is { t: string; nav: number } => Boolean(point.t) && point.nav !== null);
 }
 
+// These markers describe transient local conditions on fresh data — a read served
+// from a slightly-old cache, or positions served without live quotes under resource
+// pressure. They are NOT a degraded/stale-data signal and must not flip the
+// dashboard's degraded/stale flags or surface as user-facing warnings.
+const SHADOW_CONTENTION_REASONS = new Set([
+  "shadow_read_stale_cache",
+  "shadow_positions_pressure_fallback",
+]);
+
+function isContentionOnly(value: unknown): boolean {
+  const reason = warningFrom(value);
+  return reason !== null && SHADOW_CONTENTION_REASONS.has(reason);
+}
+
+function readGenuineDegraded(value: unknown): boolean {
+  return readBooleanField(value, "degraded") && !isContentionOnly(value);
+}
+
+function readGenuineStale(value: unknown): boolean {
+  return readBooleanField(value, "stale") && !isContentionOnly(value);
+}
+
 function buildWarnings(values: unknown[]): string[] {
   return Array.from(
     new Set(
       values
         .map(warningFrom)
-        .filter((value): value is string => Boolean(value)),
+        .filter(
+          (value): value is string =>
+            Boolean(value) && !SHADOW_CONTENTION_REASONS.has(value as string),
+        ),
     ),
   );
 }
+
+export const __marketingShadowDashboardInternalsForTests = {
+  readGenuineDegraded,
+  readGenuineStale,
+  buildWarnings,
+};
 
 export async function fetchMarketingShadowDashboardSnapshot(
   input: MarketingShadowDashboardInput = {},
@@ -559,18 +590,18 @@ export async function fetchMarketingShadowDashboardSnapshot(
   const stale = Boolean(
     staleByAge ||
       equityHistory.isStale ||
-      readBooleanField(positions, "stale") ||
-      readBooleanField(workingOrders, "stale") ||
-      readBooleanField(historyOrders, "stale"),
+      readGenuineStale(positions) ||
+      readGenuineStale(workingOrders) ||
+      readGenuineStale(historyOrders),
   );
   const degraded = Boolean(
-    readBooleanField(summary, "degraded") ||
-      readBooleanField(positions, "degraded") ||
-      readBooleanField(closedTrades, "degraded") ||
-      readBooleanField(workingOrders, "degraded") ||
-      readBooleanField(historyOrders, "degraded") ||
-      readBooleanField(allocation, "degraded") ||
-      readBooleanField(risk, "degraded"),
+    readGenuineDegraded(summary) ||
+      readGenuineDegraded(positions) ||
+      readGenuineDegraded(closedTrades) ||
+      readGenuineDegraded(workingOrders) ||
+      readGenuineDegraded(historyOrders) ||
+      readGenuineDegraded(allocation) ||
+      readGenuineDegraded(risk),
   );
   const warnings = buildWarnings([
     summary,

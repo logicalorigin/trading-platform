@@ -17,6 +17,7 @@ import {
   loadSignalMonitorCompletedBars,
   cappedSignalMonitorEvaluationProfile,
   getSignalMonitorTimeframeMs,
+  isSignalMonitorBarEvaluationEnabled,
   resolveSignalMonitorEvaluationBatch,
   resolveSignalMonitorProfileUniverse,
   resolveSignalMonitorTimeframe,
@@ -54,6 +55,7 @@ type WorkerDependencies = {
     typeof updateSignalMonitorProfileEvaluationMetadata;
   updateProfileLastError: (profileId: string, message: string | null) => Promise<void>;
   isStockAggregateStreamingAvailable: () => boolean;
+  isSignalMonitorBarEvaluationEnabled: () => boolean;
   hasRecentStockAggregateSourceActivity: (input: {
     symbols: string[];
     now: Date;
@@ -275,8 +277,16 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
 function defaultDependencies(
   options: TradeMonitorWorkerOptions,
 ): WorkerDependencies {
+  const barEvaluationEnabled =
+    options.isSignalMonitorBarEvaluationEnabled ??
+    isSignalMonitorBarEvaluationEnabled;
   return {
-    listProfiles: options.listProfiles ?? listEnabledSignalMonitorProfiles,
+    listProfiles:
+      options.listProfiles ??
+      (() =>
+        barEvaluationEnabled()
+          ? listEnabledSignalMonitorProfiles()
+          : Promise.resolve([])),
     resolveUniverse: options.resolveUniverse ?? resolveSignalMonitorProfileUniverse,
     loadCompletedBars: options.loadCompletedBars ?? loadSignalMonitorCompletedBars,
     evaluateSymbolFromCompletedBars:
@@ -286,9 +296,12 @@ function defaultDependencies(
       options.updateProfileEvaluationMetadata ??
       updateSignalMonitorProfileEvaluationMetadata,
     updateProfileLastError: options.updateProfileLastError ?? updateProfileLastError,
+    isSignalMonitorBarEvaluationEnabled:
+      barEvaluationEnabled,
     isStockAggregateStreamingAvailable:
       options.isStockAggregateStreamingAvailable ??
       (() =>
+        barEvaluationEnabled() &&
         process.env["SIGNAL_MONITOR_STREAM_FIRST_WORKER"] !== "0" &&
         isBackgroundStockAggregateStreamingEnabled() &&
         isStockAggregateStreamingAvailable()),
@@ -748,6 +761,12 @@ export function createTradeMonitorWorker(
   let tickRunning = false;
 
   const refreshStreamSubscription = () => {
+    if (!dependencies.isSignalMonitorBarEvaluationEnabled()) {
+      streamSubscription?.unsubscribe();
+      streamSubscription = null;
+      streamSignature = "";
+      return;
+    }
     const symbols = Array.from(
       new Set(
         Array.from(profileSymbols.values()).flatMap((profileSet) =>
@@ -911,6 +930,15 @@ export function createTradeMonitorWorker(
     if (tickRunning) {
       return;
     }
+    if (!dependencies.isSignalMonitorBarEvaluationEnabled()) {
+      profileRuntime.clear();
+      profileSymbols.clear();
+      latestProfilesById.clear();
+      activeStreamEvaluationKeys.clear();
+      pendingStreamMessagesByProfile.clear();
+      refreshStreamSubscription();
+      return;
+    }
 
     tickRunning = true;
     let releaseLock: ReleaseLock | null = null;
@@ -1023,6 +1051,12 @@ export function createTradeMonitorWorker(
   return {
     start() {
       if (started) {
+        return;
+      }
+      if (!dependencies.isSignalMonitorBarEvaluationEnabled()) {
+        dependencies.logger.info(
+          "Signal monitor worker idle; passive signal source is enabled",
+        );
         return;
       }
       started = true;

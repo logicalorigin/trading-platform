@@ -200,12 +200,12 @@ export function getApiResourcePressureCaps(
     case "high":
       return {
         signalOptions: {
-          maintenanceOnly: false,
-          skipDeploymentScans: false,
-          signalRefreshAllowed: true,
-          actionScansAllowed: true,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: true,
+          maintenanceOnly: true,
+          skipDeploymentScans: true,
+          signalRefreshAllowed: false,
+          actionScansAllowed: false,
+          positionMarksAllowed: false,
+          watchlistPrewarmAllowed: false,
         },
       };
     case "watch":
@@ -214,9 +214,9 @@ export function getApiResourcePressureCaps(
           maintenanceOnly: false,
           skipDeploymentScans: false,
           signalRefreshAllowed: true,
-          actionScansAllowed: true,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: true,
+          actionScansAllowed: false,
+          positionMarksAllowed: false,
+          watchlistPrewarmAllowed: false,
         },
       };
     default:
@@ -385,8 +385,10 @@ export function getApiResourcePressureSnapshot(): ApiResourcePressureSnapshot {
 export function isApiResourcePressureHardBlock(
   snapshot: ApiResourcePressureSnapshot = currentSnapshot,
 ): boolean {
-  void snapshot;
-  return false;
+  return (
+    snapshot.level === "high" ||
+    snapshot.caps.signalOptions.skipDeploymentScans === true
+  );
 }
 
 export function __resetApiResourcePressureForTests(): void {

@@ -13,6 +13,7 @@ import {
   listSignalOptionsAutomationState,
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 type Unsubscribe = () => void;
 
 export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
@@ -52,8 +53,11 @@ const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
 
 export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
-  void pressure;
-  return false;
+  const level =
+    typeof pressure === "object" && pressure !== null && "level" in pressure
+      ? (pressure as { level?: unknown }).level
+      : pressure;
+  return level === "high";
 }
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
@@ -131,6 +135,18 @@ export async function fetchAlgoCockpitStreamPayload(
   input: AlgoCockpitStreamInput = {},
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
+  if (shouldUsePrimaryOnlyAlgoCockpitPayload(getApiResourcePressureSnapshot())) {
+    const primary = await fetchAlgoCockpitPrimaryPayload(input, stream);
+    return {
+      ...primary,
+      phase: "full",
+      signalOptionsState: null,
+      cockpit: null,
+      performance: null,
+      signalMonitorProfile: null,
+    };
+  }
+
   const target = await resolveAlgoCockpitTarget(input);
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([

@@ -185,6 +185,65 @@ test("shadow option quote cache does not replace display quotes with empty updat
   }
 });
 
+test("shadow positions pressure fallback builds a bounded degraded snapshot from open rows", () => {
+  const observedAt = new Date("2026-06-10T02:45:00.000Z");
+  const optionContract = {
+    ticker: "SPY 20260612 600 C",
+    underlying: "SPY",
+    expirationDate: new Date("2026-06-12T00:00:00.000Z"),
+    strike: 600,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "twsopt:test-pressure",
+  };
+  const response = internals.buildFastShadowPositionsResponseFromRows({
+    account: {
+      cash: "1000",
+      startingBalance: "500",
+    } as never,
+    assetClassFilter: "option",
+    source: null,
+    observedAt,
+    positions: [
+      {
+        id: "stock-position",
+        symbol: "AAPL",
+        assetClass: "equity",
+        positionKey: "equity:AAPL",
+        quantity: "2",
+        averageCost: "100",
+        mark: "110",
+        marketValue: "220",
+        unrealizedPnl: "20",
+        asOf: observedAt,
+        openedAt: observedAt,
+      },
+      {
+        id: "option-position",
+        symbol: "SPY",
+        assetClass: "option",
+        positionKey: "option:SPY:20260612:600:C",
+        quantity: "1",
+        averageCost: "2",
+        mark: "3",
+        optionContract,
+        asOf: observedAt,
+        openedAt: observedAt,
+      },
+    ] as never,
+  });
+
+  assert.equal(response.degraded, true);
+  assert.equal(response.stale, true);
+  assert.equal(response.reason, "shadow_positions_pressure_fallback");
+  assert.equal(response.positions.length, 1);
+  assert.equal(response.positions[0]?.id, "option-position");
+  assert.equal(response.positions[0]?.marketValue, 300);
+  assert.equal(response.totals.cash, 1000);
+  assert.equal(response.totals.netLiquidation, 1300);
+});
+
 test("shadow account positions use immediate stale cache strategy", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const start = source.indexOf("export async function getShadowAccountPositions");
@@ -196,4 +255,23 @@ test("shadow account positions use immediate stale cache strategy", () => {
   assert.match(block, /allowStale:\s*shadowReadCacheValueHasRows/);
   assert.match(block, /staleStrategy:\s*"immediate"/);
   assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
+});
+
+test("shadow account positions pressure path does not start a full refresh", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function getShadowAccountPositions");
+  const end = source.indexOf("function dateFromShadowPositionResponse", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  const pressureStart = block.indexOf("if (shouldServeFastShadowPositionsForPressure())");
+  const pressureEnd = block.indexOf("return withShadowReadCache", pressureStart);
+  assert.notEqual(pressureStart, -1);
+  assert.notEqual(pressureEnd, -1);
+
+  const pressureBlock = block.slice(pressureStart, pressureEnd);
+  assert.match(pressureBlock, /return buildFastShadowPositionsResponse/);
+  assert.doesNotMatch(pressureBlock, /withShadowReadCache\(/);
+  assert.doesNotMatch(pressureBlock, /readFullPositions/);
 });
