@@ -37,6 +37,7 @@ export type SignalOptionsWorkerSnapshot = {
       | "timed_out"
       | "timed_out_unsettled"
       | "scan_running"
+      | "resource_pressure"
       | null;
     scanCount: number;
     totalFailureCount: number;

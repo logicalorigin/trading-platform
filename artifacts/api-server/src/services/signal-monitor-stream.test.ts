@@ -40,6 +40,31 @@ function streamState(symbol: string, timeframe: string, marker: string) {
   } as never;
 }
 
+function withSignalMonitorBarEvaluationEnabled<T>(run: () => T): T {
+  const previousPyrusFlag =
+    process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  const previousLegacyFlag =
+    process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] = "1";
+  delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  try {
+    return run();
+  } finally {
+    if (previousPyrusFlag === undefined) {
+      delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousPyrusFlag;
+    }
+    if (previousLegacyFlag === undefined) {
+      delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousLegacyFlag;
+    }
+  }
+}
+
 test("signal matrix stream scope treats exact cells as authoritative", () => {
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
@@ -66,80 +91,132 @@ test("signal matrix stream scope treats exact cells as authoritative", () => {
 });
 
 test("signal matrix stream aggregate evaluation only touches the aggregate symbol", () => {
-  const scope =
-    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
-      symbols: ["AAPL", "MSFT"],
-      timeframes: ["1m", "5m"],
-    });
-  const calls: string[] = [];
+  withSignalMonitorBarEvaluationEnabled(() => {
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "paper",
+        symbols: ["AAPL", "MSFT"],
+        timeframes: ["1m", "5m"],
+      });
+    const calls: string[] = [];
 
-  const states =
-    __signalMonitorInternalsForTests.evaluateSignalMonitorMatrixStreamScopeDelta({
-      scope,
-      profile: profile(),
-      symbol: "AAPL",
-      evaluatedAt,
-      evaluateState(input) {
-        calls.push(`${input.symbol}:${input.timeframe}`);
-        return streamState(input.symbol, input.timeframe, "delta");
-      },
-    });
+    const states =
+      __signalMonitorInternalsForTests.evaluateSignalMonitorMatrixStreamScopeDelta({
+        scope,
+        profile: profile(),
+        symbol: "AAPL",
+        evaluatedAt,
+        evaluateState(input) {
+          calls.push(`${input.symbol}:${input.timeframe}`);
+          return streamState(input.symbol, input.timeframe, "delta");
+        },
+      });
 
-  assert.deepEqual(calls, ["AAPL:1m", "AAPL:5m"]);
-  assert.equal(states.length, 2);
+    assert.deepEqual(calls, ["AAPL:1m", "AAPL:5m"]);
+    assert.equal(states.length, 2);
+  });
+});
+
+test("signal matrix stream aggregate evaluation runs regardless of bar-evaluation flag", () => {
+  const previousPyrusFlag =
+    process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  const previousLegacyFlag =
+    process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  try {
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "paper",
+        symbols: ["AAPL"],
+        timeframes: ["1m"],
+      });
+    const calls: string[] = [];
+
+    // The live emit path (stream -> delta) must produce signals even with
+    // bar-evaluation off; that flag now only gates legacy backfill scanning.
+    const states =
+      __signalMonitorInternalsForTests.evaluateSignalMonitorMatrixStreamScopeDelta({
+        scope,
+        profile: profile(),
+        symbol: "AAPL",
+        evaluatedAt,
+        evaluateState(input) {
+          calls.push(`${input.symbol}:${input.timeframe}`);
+          return streamState(input.symbol, input.timeframe, "delta");
+        },
+      });
+
+    assert.deepEqual(calls, ["AAPL:1m"]);
+    assert.equal(states.length, 1);
+  } finally {
+    if (previousPyrusFlag === undefined) {
+      delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousPyrusFlag;
+    }
+    if (previousLegacyFlag === undefined) {
+      delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousLegacyFlag;
+    }
+  }
 });
 
 test("signal matrix stream subscription emits changed deltas and cleans up", () => {
-  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
-  const scope =
-    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
-      symbols: ["AAPL"],
-      timeframes: ["1m"],
-    });
-  const events: { event: string; states?: unknown[] }[] = [];
-  const subscription =
-    __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
-      {
-        scope,
-        profile: profile(),
-        prime: false,
-        onEvent(event) {
-          events.push(event);
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "paper",
+        symbols: ["AAPL"],
+        timeframes: ["1m"],
+      });
+    const events: { event: string; states?: unknown[] }[] = [];
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent(event) {
+            events.push(event);
+          },
         },
+      );
+
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return streamState(input.symbol, input.timeframe, "first");
       },
-    );
+    });
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return streamState(input.symbol, input.timeframe, "first");
+      },
+    });
 
-  __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
-    message: { symbol: "AAPL" },
-    evaluatedAt,
-    evaluateState(input) {
-      return streamState(input.symbol, input.timeframe, "first");
-    },
-  });
-  __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
-    message: { symbol: "AAPL" },
-    evaluatedAt,
-    evaluateState(input) {
-      return streamState(input.symbol, input.timeframe, "first");
-    },
-  });
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.event, "state-delta");
+    assert.equal(events[0]?.states?.length, 1);
 
-  assert.equal(events.length, 1);
-  assert.equal(events[0]?.event, "state-delta");
-  assert.equal(events[0]?.states?.length, 1);
-
-  subscription.unsubscribe();
-  __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
-    message: { symbol: "AAPL" },
-    evaluatedAt,
-    evaluateState(input) {
-      return streamState(input.symbol, input.timeframe, "after-cleanup");
-    },
+    subscription.unsubscribe();
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return streamState(input.symbol, input.timeframe, "after-cleanup");
+      },
+    });
+    assert.equal(events.length, 1);
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   });
-  assert.equal(events.length, 1);
-  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
 });
 
 test("signal matrix stream bootstrap event includes coverage metadata", () => {

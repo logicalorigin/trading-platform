@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __signalOptionsAutomationInternalsForTests } from "./signal-options-automation";
+import {
+  __signalOptionsAutomationInternalsForTests,
+  runSignalOptionsShadowBackfill,
+} from "./signal-options-automation";
 
 const signalState = (
   symbol: string,
@@ -24,6 +27,44 @@ const signalState = (
     lastEvaluatedAt: signalAt,
     lastError: null,
   }) as never;
+
+test("Signal Options backfill requires explicit bar-evaluation opt-in", async () => {
+  const previousPyrusFlag =
+    process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  const previousLegacyFlag =
+    process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+  try {
+    await assert.rejects(
+      () =>
+        runSignalOptionsShadowBackfill({
+          deploymentId: "deployment-test",
+          start: "2026-06-08",
+          end: "2026-06-08",
+        }),
+      (error) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code ===
+          "signal_options_backfill_requires_bar_evaluation_opt_in",
+    );
+  } finally {
+    if (previousPyrusFlag === undefined) {
+      delete process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousPyrusFlag;
+    }
+    if (previousLegacyFlag === undefined) {
+      delete process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];
+    } else {
+      process.env["SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] =
+        previousLegacyFlag;
+    }
+  }
+});
 
 test("Signal Options cockpit treats after-hours execution gate as info", () => {
   const items = __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
@@ -154,6 +195,114 @@ test("Signal Options action states stay on configured execution timeframe", () =
     unfiltered.map((state) => state.timeframe),
     ["2m", "15m", "5m"],
   );
+});
+
+test("Signal Options action states require canonical signal monitor events", () => {
+  const states = [
+    signalState("AERO", "2026-06-09T16:35:00.000Z", "sell"),
+    signalState("BGC", "2026-06-09T16:40:00.000Z"),
+  ] as never[];
+
+  const ordered =
+    __signalOptionsAutomationInternalsForTests.orderSignalOptionsActionStates({
+      states,
+      universe: new Set(["AERO", "BGC"]),
+      timeframe: "5m",
+      canonicalSignalKeys: new Set([
+        __signalOptionsAutomationInternalsForTests.buildSignalKey(
+          states[0],
+          "2026-06-09T16:35:00.000Z",
+        ),
+      ]),
+    });
+
+  assert.deepEqual(
+    ordered.map((state) => [state.symbol, state.currentSignalDirection]),
+    [["AERO", "sell"]],
+  );
+});
+
+test("Signal Options cockpit signal snapshots require canonical event metadata", () => {
+  const state = signalState("BGC", "2026-06-09T16:40:00.000Z");
+  const signalAt = "2026-06-09T16:40:00.000Z";
+  const signalKey = __signalOptionsAutomationInternalsForTests.buildSignalKey(
+    state,
+    signalAt,
+  );
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.buildCanonicalSignalOptionsSignalSnapshot({
+      state,
+      signalAt,
+      signalKey,
+      metadata: null,
+      freshWindowBars: 3,
+    }),
+    null,
+  );
+
+  const snapshot =
+    __signalOptionsAutomationInternalsForTests.buildCanonicalSignalOptionsSignalSnapshot({
+      state,
+      signalAt,
+      signalKey,
+      metadata: {
+        eventId: "event-bgc",
+        source: "pyrus-signals",
+        filterState: { adx: 22.1 },
+      },
+      freshWindowBars: 3,
+    });
+
+  assert.equal(snapshot?.eventId, "event-bgc");
+  assert.equal(snapshot?.source, "pyrus-signals");
+  assert.deepEqual(snapshot?.filterState, { adx: 22.1 });
+});
+
+test("Signal Options cockpit signal stage counts received signals, not stale candidates", () => {
+  const signal = __signalOptionsAutomationInternalsForTests.buildSignalOptionsSignalSnapshot({
+    state: signalState("AERO", "2026-06-09T16:35:00.000Z", "sell"),
+    signalAt: "2026-06-09T16:35:00.000Z",
+    signalKey: "paper-profile:AERO:5m:sell:2026-06-09T16:35:00.000Z",
+    source: "pyrus-signals",
+    eventId: "event-aero",
+    freshWindowBars: 3,
+  });
+  const stages = __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+    deployment: {
+      symbolUniverse: ["AERO", "BGC"],
+      lastEvaluatedAt: new Date("2026-06-09T16:40:00.000Z"),
+    },
+    readiness: {
+      ready: true,
+      message: "ready",
+      reason: null,
+      diagnostics: {},
+    },
+    signals: [signal],
+    candidates: [
+      {
+        id: "stale-candidate-bgc",
+        symbol: "BGC",
+        signalAt: "2026-06-09T16:30:00.000Z",
+        action: {},
+      },
+      {
+        id: "stale-candidate-late",
+        symbol: "LATE",
+        signalAt: "2026-06-09T16:25:00.000Z",
+        action: {},
+      },
+    ],
+    activePositions: [],
+    risk: {},
+    events: [],
+  } as never);
+  const signalStage = stages.find((stage) => stage.id === "signal_detected");
+
+  assert.equal(signalStage?.label, "Signal Received");
+  assert.equal(signalStage?.count, 1);
+  assert.equal(signalStage?.latestAt, "2026-06-09T16:35:00.000Z");
 });
 
 test("Signal Options dashboard candidates use deterministic display tie-breakers", () => {

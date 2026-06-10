@@ -17,6 +17,7 @@ import {
   isMassiveStocksRealtimeConfigured,
   type MassiveRuntimeConfig,
 } from "../../lib/runtime";
+import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
 
 type BarTimeframe =
   | "1s"
@@ -108,6 +109,9 @@ export type QuoteSnapshot = {
   high: number | null;
   low: number | null;
   prevClose: number | null;
+  extendedBaselinePrice?: number | null;
+  extendedBaselineAt?: Date | null;
+  extendedBaselineSource?: "regular_close" | null;
   volume: number | null;
   updatedAt: Date;
 };
@@ -1062,6 +1066,25 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
       toDate(getNumberPath(minuteBar, ["t"])),
       toDate(getNumberPath(dayBar, ["t"])),
     ) ?? new Date();
+  const marketSession = resolveUsEquityMarketSession(updatedAt).key;
+  const prevCloseAt = firstDefined(
+    toDate(getNumberPath(prevDayBar, ["t"])),
+    toDate(getNumberPath(prevDayBar, ["timestamp"])),
+  );
+  const dayClose = firstDefined(
+    getNumberPath(dayBar, ["c"]),
+    getNumberPath(dayBar, ["close"]),
+  );
+  const dayCloseAt = firstDefined(
+    toDate(getNumberPath(dayBar, ["t"])),
+    toDate(getNumberPath(dayBar, ["timestamp"])),
+  );
+  const extendedBaselinePrice =
+    marketSession === "pre"
+      ? (prevClose ?? null)
+      : marketSession === "after"
+        ? (dayClose ?? null)
+        : null;
 
   return {
     symbol: normalizeSymbol(symbol),
@@ -1076,6 +1099,15 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
     high,
     low,
     prevClose,
+    extendedBaselinePrice,
+    extendedBaselineAt:
+      extendedBaselinePrice !== null
+        ? marketSession === "pre"
+          ? (prevCloseAt ?? null)
+          : (dayCloseAt ?? null)
+        : null,
+    extendedBaselineSource:
+      extendedBaselinePrice !== null ? "regular_close" : null,
     volume,
     updatedAt,
   };

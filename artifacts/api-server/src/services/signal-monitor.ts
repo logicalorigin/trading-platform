@@ -3341,12 +3341,6 @@ export function startSignalMonitorLocalBarCacheWarmup(): void {
   if (signalMonitorLocalBarCacheWarmupStarted) {
     return;
   }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    logger.info(
-      "Signal monitor local bar cache warmup skipped; passive signal source is enabled",
-    );
-    return;
-  }
   signalMonitorLocalBarCacheWarmupStarted = true;
   void refreshSignalMonitorLocalBarCacheWarmup();
   signalMonitorLocalBarCacheWarmupTimer = setInterval(() => {
@@ -3368,9 +3362,6 @@ function signalMonitorMatrixStockAggregateSymbols(symbols: string[]): string[] {
 }
 
 function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return;
-  }
   const normalizedSymbols = signalMonitorMatrixStockAggregateSymbols(symbols);
   if (!normalizedSymbols.length) {
     return;
@@ -6142,9 +6133,6 @@ export function evaluateSignalMonitorMatrixStreamScopeDelta(input: {
   if (!symbol || !timeframes.length) {
     return [];
   }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return [];
-  }
 
   const evaluateState =
     input.evaluateState ?? evaluateSignalMonitorMatrixStateFromStreamBars;
@@ -6170,9 +6158,6 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
 }) {
   const symbol = normalizeSymbol(input.message.symbol).toUpperCase();
   if (!symbol || !signalMonitorMatrixStreamSubscribers.size) {
-    return;
-  }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
     return;
   }
   const evaluatedAt = input.evaluatedAt ?? new Date();
@@ -6299,9 +6284,6 @@ function scheduleSignalMonitorMatrixStreamFlush() {
 function queueSignalMonitorMatrixStreamAggregate(
   message: StockMinuteAggregateMessage,
 ) {
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return;
-  }
   const symbol = normalizeSymbol(message.symbol).toUpperCase();
   if (!symbol || !signalMonitorMatrixStreamSubscribers.size) {
     return;

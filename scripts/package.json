@@ -25,6 +25,7 @@
     "pyrus-signals:signal-options-sweep": "tsx ./src/pyrus-signals-options-sweep.ts",
     "signal-options:greek-selector-smoke": "tsx ./src/signal-options-greek-selector-smoke.ts",
     "signal-options:greek-position-diagnostics": "tsx ./src/signal-options-greek-position-diagnostics.ts",
+    "signal-monitor:events-backfill": "tsx ./src/backfill-signal-monitor-events.ts",
     "pyrus:greek-scenarios": "tsx ./src/pyrus-greek-scenarios.ts",
     "pyrus:portfolio-optimization": "tsx ./src/pyrus-portfolio-optimization.ts",
     "pyrus:performance-monitor": "tsx ./src/pyrus-performance-monitor.ts",

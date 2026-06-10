@@ -57,6 +57,7 @@ import {
   getSignalMonitorState,
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
+  isSignalMonitorBarEvaluationEnabled,
   loadSignalMonitorCompletedBars,
   signalMonitorCompletedBarsQueryTo,
   resolveSignalMonitorTimeframe,
@@ -340,6 +341,12 @@ type SignalOptionsSignalSnapshot = {
   status?: string | null;
   filterState?: Record<string, unknown> | null;
   contractPreview?: SignalOptionsContractPreview | null;
+};
+
+type SignalMonitorEventMetadata = {
+  eventId: string;
+  source: string;
+  filterState: Record<string, unknown>;
 };
 
 type SignalOptionsActionMapping = {
@@ -2267,7 +2274,7 @@ function buildSignalOptionsActionMapping(
 async function readSignalMonitorEventMetadata(input: {
   state: SignalMonitorState;
   signalAt: string;
-}) {
+}): Promise<SignalMonitorEventMetadata | null> {
   if (!isUuidLike(input.state.profileId)) {
     return null;
   }
@@ -2276,22 +2283,21 @@ async function readSignalMonitorEventMetadata(input: {
   if (!signalAt || !direction) {
     return null;
   }
+  const eventKeys = resolveSignalMonitorEventLookupKeys({
+    profileId: input.state.profileId,
+    symbol: input.state.symbol,
+    timeframe: input.state.timeframe,
+    direction,
+    signalAt,
+  });
+  if (!eventKeys.length) {
+    return null;
+  }
 
   const [event] = await db
     .select()
     .from(signalMonitorEventsTable)
-    .where(
-      and(
-        eq(signalMonitorEventsTable.profileId, input.state.profileId),
-        eq(
-          signalMonitorEventsTable.symbol,
-          normalizeSymbol(input.state.symbol).toUpperCase(),
-        ),
-        eq(signalMonitorEventsTable.timeframe, input.state.timeframe),
-        eq(signalMonitorEventsTable.direction, direction),
-        eq(signalMonitorEventsTable.signalAt, signalAt),
-      ),
-    )
+    .where(inArray(signalMonitorEventsTable.eventKey, eventKeys))
     .orderBy(desc(signalMonitorEventsTable.emittedAt))
     .limit(1);
 
@@ -2306,12 +2312,35 @@ async function readSignalMonitorEventMetadata(input: {
   };
 }
 
+function buildCanonicalSignalOptionsSignalSnapshot(input: {
+  state: SignalMonitorState;
+  signalAt: string | null;
+  signalKey: string | null;
+  metadata: SignalMonitorEventMetadata | null;
+  freshWindowBars: number | null;
+  requireEventMetadata?: boolean;
+}): SignalOptionsSignalSnapshot | null {
+  if (input.requireEventMetadata !== false && !input.metadata?.eventId) {
+    return null;
+  }
+  return buildSignalOptionsSignalSnapshot({
+    state: input.state,
+    signalAt: input.signalAt,
+    signalKey: input.signalKey,
+    source: input.metadata?.source ?? null,
+    eventId: input.metadata?.eventId ?? null,
+    filterState: input.metadata?.filterState ?? null,
+    freshWindowBars: input.freshWindowBars,
+  });
+}
+
 async function listSignalOptionsSignalSnapshots(
   deployment: AlgoDeployment,
   options: {
     preferStoredMonitorState?: boolean;
     staleFast?: boolean;
     includeEventMetadata?: boolean;
+    requireEventMetadata?: boolean;
   } = {},
 ) {
   const universe = new Set(
@@ -2357,6 +2386,7 @@ async function listSignalOptionsSignalSnapshots(
   });
   const visibleStates = filteredStates.filter(isSignalOptionsVisibleSignalState);
   const freshWindowBars = signalState.freshWindowBars;
+  const requireEventMetadata = options.requireEventMetadata !== false;
 
   const snapshots = await Promise.all(
     visibleStates.map(async (state) => {
@@ -2370,19 +2400,22 @@ async function listSignalOptionsSignalSnapshots(
             () => null,
           )
         : null;
-      return buildSignalOptionsSignalSnapshot({
+      return buildCanonicalSignalOptionsSignalSnapshot({
         state,
         signalAt,
         signalKey,
-        source: metadata?.source ?? null,
-        eventId: metadata?.eventId ?? null,
-        filterState: metadata?.filterState ?? null,
+        metadata,
         freshWindowBars,
+        requireEventMetadata,
       });
     }),
   );
 
-  return snapshots.sort((left, right) => {
+  return snapshots
+    .filter((snapshot): snapshot is SignalOptionsSignalSnapshot =>
+      Boolean(snapshot),
+    )
+    .sort((left, right) => {
     const leftTime = dateOrNull(left.signalAt)?.getTime() ?? 0;
     const rightTime = dateOrNull(right.signalAt)?.getTime() ?? 0;
     return (
@@ -2718,6 +2751,7 @@ function orderSignalOptionsActionStates(input: {
   states: SignalMonitorState[];
   universe: Set<string>;
   timeframe?: SignalMonitorTimeframe | null;
+  canonicalSignalKeys?: Set<string> | null;
 }): SignalMonitorState[] {
   return input.states
     .map((state, index) => {
@@ -2734,20 +2768,30 @@ function orderSignalOptionsActionStates(input: {
         Number.isFinite(state.barsSinceSignal)
           ? state.barsSinceSignal
           : Number.POSITIVE_INFINITY;
+      const signalAt = toIsoString(state.currentSignalAt);
+      const signalKey = signalAt ? buildSignalKey(state, signalAt) : null;
+      const canonical =
+        !input.canonicalSignalKeys ||
+        (signalKey ? input.canonicalSignalKeys.has(signalKey) : false);
       return {
         state,
         index,
         inUniverse,
+        canonical,
         actionable:
           inUniverse &&
+          canonical &&
           isSignalOptionsActionableSignalState(state) &&
-          Boolean(toIsoString(state.currentSignalAt)),
+          Boolean(signalAt),
         signalAtMs,
         latestBarMs,
         barsSinceSignal,
       };
     })
-    .filter((item) => item.inUniverse)
+    .filter(
+      (item) =>
+        item.inUniverse && (!input.canonicalSignalKeys || item.canonical),
+    )
     .sort((left, right) => {
       if (left.actionable !== right.actionable) {
         return left.actionable ? -1 : 1;
@@ -2764,6 +2808,62 @@ function orderSignalOptionsActionStates(input: {
       return left.index - right.index;
     })
     .map((item) => item.state);
+}
+
+async function loadCanonicalSignalOptionsSignalKeys(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+  timeframe?: SignalMonitorTimeframe | null;
+}): Promise<Set<string>> {
+  const eventKeysBySignalKey = new Map<string, string[]>();
+  const allEventKeys = new Set<string>();
+
+  for (const state of input.states) {
+    const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    const stateTimeframe = compactString(state.timeframe);
+    if (
+      !symbol ||
+      (input.universe.size > 0 && !input.universe.has(symbol)) ||
+      (input.timeframe && stateTimeframe !== input.timeframe)
+    ) {
+      continue;
+    }
+    const signalAt = toIsoString(state.currentSignalAt);
+    const direction = signalOptionsDirectionOrNull(state.currentSignalDirection);
+    if (!signalAt || !direction || !isSignalOptionsActionableSignalState(state)) {
+      continue;
+    }
+    const eventKeys = resolveSignalMonitorEventLookupKeys({
+      profileId: state.profileId,
+      symbol,
+      timeframe: state.timeframe,
+      direction,
+      signalAt,
+    });
+    if (!eventKeys.length) {
+      continue;
+    }
+    const signalKey = buildSignalKey(state, signalAt);
+    eventKeysBySignalKey.set(signalKey, eventKeys);
+    eventKeys.forEach((eventKey) => allEventKeys.add(eventKey));
+  }
+
+  if (!allEventKeys.size) {
+    return new Set();
+  }
+
+  const events = await db
+    .select({ eventKey: signalMonitorEventsTable.eventKey })
+    .from(signalMonitorEventsTable)
+    .where(inArray(signalMonitorEventsTable.eventKey, Array.from(allEventKeys)));
+  const persistedEventKeys = new Set(events.map((event) => event.eventKey));
+  const canonicalSignalKeys = new Set<string>();
+  for (const [signalKey, eventKeys] of eventKeysBySignalKey) {
+    if (eventKeys.some((eventKey) => persistedEventKeys.has(eventKey))) {
+      canonicalSignalKeys.add(signalKey);
+    }
+  }
+  return canonicalSignalKeys;
 }
 
 function actionCursorForDeployment(deploymentId: string) {
@@ -5026,13 +5126,26 @@ async function loadSignalOptionsMonitorState(input: {
         },
       };
     }
+    const barEvaluationEnabled = isSignalMonitorBarEvaluationEnabled();
     const streamFirstMonitorAvailable =
+      barEvaluationEnabled &&
       process.env["SIGNAL_OPTIONS_STREAM_FIRST_MONITOR"] !== "0" &&
       isStockAggregateStreamingAvailable();
     const signalStabilityPolicy =
       input.source === "worker" && streamFirstMonitorAvailable
         ? "allow-partial-live-edge"
         : undefined;
+    if (!barEvaluationEnabled) {
+      return {
+        ...stored,
+        signalOptionsBatch: signalOptionsStoredMonitorBatch({
+          symbols,
+          profile,
+          forced: input.forceEvaluate === true,
+          reason: "passive_signal_source",
+        }),
+      };
+    }
     if (
       input.forceEvaluate !== true &&
       input.source === "worker" &&
@@ -7129,6 +7242,7 @@ function blockedCandidateAction(candidate: { reason?: unknown }) {
 function buildCockpitPipeline(input: {
   deployment: AlgoDeployment;
   readiness: AlgoGatewayReadiness;
+  signals?: SignalOptionsSignalSnapshot[];
   candidates: Array<
     SignalOptionsCandidate & {
       actionStatus?: SignalOptionsActionStatus;
@@ -7146,6 +7260,7 @@ function buildCockpitPipeline(input: {
   const actionMapped = input.candidates.filter(
     (candidate) => Object.keys(asRecord(candidate.action)).length > 0,
   );
+  const receivedSignals = input.signals ?? [];
   const blockedCandidates = input.candidates.filter(candidateIsBlocked);
   const referenceAt = input.deployment.lastEvaluatedAt ?? null;
   const profileUpdatedAt = latestSignalOptionsControlUpdatedAt(input.events);
@@ -7249,7 +7364,8 @@ function buildCockpitPipeline(input: {
     scanState.heavyWorkDeferred || workerState.lastHeavyWorkDeferred;
   const activeScanPhase = scanState.phase ?? workerState.lastActiveScanPhase;
   const currentResourcePressure = getApiResourcePressureSnapshot();
-  const currentResourcePressureBlocksActionWork = false;
+  const currentResourcePressureBlocksActionWork =
+    currentResourcePressure.caps.signalOptions.actionScansAllowed === false;
   const lastResourcePressureLevel = workerState.lastResourcePressureLevel;
   const resourcePressureLevel =
     lastHeavyWorkDeferred && currentResourcePressureBlocksActionWork
@@ -7376,15 +7492,15 @@ function buildCockpitPipeline(input: {
     },
     {
       id: "signal_detected",
-      label: "Signal Detected",
-      status: stageStatus({ count: input.candidates.length }),
-      count: input.candidates.length,
+      label: "Signal Received",
+      status: stageStatus({ count: receivedSignals.length }),
+      count: receivedSignals.length,
       latestAt: latestIso(
-        input.candidates.map((candidate) => candidate.signalAt),
+        receivedSignals.map((signal) => signal.signalAt),
       ),
-      detail: input.candidates.length
-        ? `${input.candidates.length} recent signal candidates`
-        : "awaiting fresh Pyrus Signals signal",
+      detail: receivedSignals.length
+        ? `${receivedSignals.length} event-backed received signals`
+        : "awaiting canonical Pyrus Signals event",
     },
     {
       id: "action_mapped",
@@ -10392,6 +10508,7 @@ async function buildAlgoDeploymentCockpitPayload(input: {
   const pipelineStages = buildCockpitPipeline({
     deployment,
     readiness,
+    signals: state.signals,
     candidates: state.candidates,
     activePositions: state.activePositions,
     risk: state.risk,
@@ -13449,6 +13566,9 @@ async function loadSignalOptionsWireContextForPosition(input: {
   evaluatedAt: Date;
   pyrusSignalsSettings: Record<string, unknown>;
 }): Promise<SignalOptionsWireContext | null> {
+  if (!isSignalMonitorBarEvaluationEnabled()) {
+    return null;
+  }
   const completedBars = await loadSignalMonitorCompletedBars({
     symbol: input.position.symbol,
     timeframe: input.position.timeframe,
@@ -15849,6 +15969,18 @@ export async function runSignalOptionsShadowBackfill(input: {
   replaceReplayRows?: boolean;
   progress?: boolean;
 }) {
+  if (!isSignalMonitorBarEvaluationEnabled()) {
+    throw new HttpError(
+      503,
+      "Signal Options backfill requires explicit Signal Monitor bar-evaluation opt-in.",
+      {
+        code: "signal_options_backfill_requires_bar_evaluation_opt_in",
+        detail:
+          "Set PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=1 or SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=true for intentional historical/backfill signal discovery.",
+        expose: true,
+      },
+    );
+  }
   if (activeScanDeploymentIds.has(input.deploymentId)) {
     throw new HttpError(409, "Signal-options scan is already running.", {
       code: "signal_options_scan_running",
@@ -16612,10 +16744,16 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const signalActionTimeframe = resolveSignalMonitorTimeframe(
     evaluatedProfile.timeframe,
   );
+  const canonicalSignalKeys = await loadCanonicalSignalOptionsSignalKeys({
+    states: evaluatedStates,
+    universe,
+    timeframe: signalActionTimeframe,
+  });
   const signalActionStates = orderSignalOptionsActionStates({
     states: evaluatedStates,
     universe,
     timeframe: signalActionTimeframe,
+    canonicalSignalKeys,
   });
   const evaluatedPyrusSignalsSettings = asRecord(
     evaluatedProfile.pyrusSignalsSettings,
@@ -17165,6 +17303,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildSignalOptionsActionMapping,
   buildSignalKey,
   buildSignalOptionsSignalSnapshot,
+  buildCanonicalSignalOptionsSignalSnapshot,
   compareSignalOptionsCandidatesForDisplay,
   candidateFromEvent,
   eventTimelineItem,
