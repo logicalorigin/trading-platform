@@ -19,6 +19,7 @@ import {
   type OverlayContent,
   type VisibleLogicalRange,
 } from "./ResearchChartSurface";
+import type { ExtendedHoursQuoteInput } from "../platform/extendedHoursQuote";
 import type { ChartFootprintContext, ChartModel, StudySpec } from "./types";
 import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 import { useChartPositionOverlays } from "./useChartPositionOverlays";
@@ -301,6 +302,7 @@ type ResearchChartFrameProps = {
   chartFlowDiagnostics?: FlowChartEventConversion | null;
   latestQuotePrice?: number | null;
   latestQuoteUpdatedAt?: string | Date | number | null;
+  latestQuoteSnapshot?: ExtendedHoursQuoteInput | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -361,6 +363,7 @@ export const ResearchChartFrame = ({
   chartFlowDiagnostics = null,
   latestQuotePrice = null,
   latestQuoteUpdatedAt = null,
+  latestQuoteSnapshot = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -479,6 +482,7 @@ export const ResearchChartFrame = ({
             chartFlowDiagnostics={chartFlowDiagnostics}
             latestQuotePrice={latestQuotePrice}
             latestQuoteUpdatedAt={latestQuoteUpdatedAt}
+            latestQuoteSnapshot={latestQuoteSnapshot}
             emptyState={emptyState}
             drawMode={drawMode}
             onAddDrawing={onAddDrawing}

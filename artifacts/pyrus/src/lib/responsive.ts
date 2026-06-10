@@ -127,6 +127,24 @@ export const useElementSize = <TElement extends HTMLElement = HTMLDivElement>():
   return [ref, size];
 };
 
+/**
+ * Smooths a measured dimension so sub-`deadbandPx` jitter does not propagate to
+ * responsive breakpoints derived from it. Without this, a breakpoint whose own
+ * layout effect nudges the measured size (e.g. tightening padding when the header
+ * goes compact, or a neighbour re-rendering under resource pressure) flips the
+ * breakpoint, which changes layout, which re-measures, which flips it back — a
+ * ResizeObserver feedback loop. The dead-band holds the last value until the new
+ * measurement differs by at least `deadbandPx`, breaking that loop while still
+ * tracking genuine resizes (which exceed the dead-band).
+ */
+export const useStableWidth = (width: number, deadbandPx = 24): number => {
+  const [stable, setStable] = useState(width);
+  useEffect(() => {
+    setStable((prev) => (Math.abs(width - prev) >= deadbandPx ? width : prev));
+  }, [width, deadbandPx]);
+  return stable;
+};
+
 export const responsiveFlags = (width: number): ResponsiveFlags => ({
   isPhone: width > 0 && width < BREAKPOINTS.phone,
   isTablet: width >= BREAKPOINTS.phone && width < BREAKPOINTS.desktop,

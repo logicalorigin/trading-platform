@@ -9,10 +9,15 @@ import {
   fs,
   sp,
 } from "../../../lib/uiTokens.jsx";
-import { getCurrentSignalDirection } from "../../../features/signals/signalStateFreshness.js";
+import {
+  getCurrentSignalDirection,
+  normalizeSignalDirection,
+  normalizeSignalStatus,
+} from "../../../features/signals/signalStateFreshness.js";
 import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
 
 const CSS_COLOR = {
+  amber: "var(--ra-amber-500)",
   blue: "var(--ra-blue-500)",
   red: "var(--ra-red-500)",
   borderLight: "var(--ra-border-light)",
@@ -20,10 +25,52 @@ const CSS_COLOR = {
   textMuted: "var(--ra-text-muted)",
 };
 
+const NON_HYDRATED_SIGNAL_DOT_STATUSES = new Set(["pending", "unknown"]);
+
+const asRecord = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const hasSignalDotHydrationMarker = (state) =>
+  Boolean(
+    state.latestBarAt ||
+      state.currentSignalAt ||
+      state.lastEvaluatedAt ||
+      state.lastError,
+  );
+
+export const resolveSignalDotHydrationMeta = (state) => {
+  const record = asRecord(state);
+  const hasState = Object.keys(record).length > 0;
+  const status = hasState ? normalizeSignalStatus(record) : "unknown";
+  const pending = !hasState || status === "pending";
+  const storedDirection = normalizeSignalDirection(record.currentSignalDirection);
+  const stale =
+    status === "stale" ||
+    Boolean(storedDirection && record.fresh === false);
+  const unhydrated = Boolean(
+    !hasState ||
+      record.active === false ||
+      NON_HYDRATED_SIGNAL_DOT_STATUSES.has(status) ||
+      !hasSignalDotHydrationMarker(record),
+  );
+  const hydrationState = unhydrated ? "unhydrated" : stale ? "stale" : "hydrated";
+  return {
+    status,
+    pending,
+    stale,
+    unhydrated,
+    attention: unhydrated || stale,
+    hydrationState,
+  };
+};
+
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const isSignalDirection = (value) => value === "buy" || value === "sell";
+
+const formatSignalDotAttentionLabel = (value) =>
+  value === "unhydrated" ? "needs hydration" : value;
 
 export const SignalDots = ({
   statesByTimeframe = {},
@@ -45,10 +92,11 @@ export const SignalDots = ({
   >
     {timeframes.map((timeframe) => {
       const state = statesByTimeframe?.[timeframe];
-      const status = state?.status || "unknown";
+      const hydrationMeta = resolveSignalDotHydrationMeta(state);
+      const status = hydrationMeta.status;
       const direction = getCurrentSignalDirection(state);
       const hasDirection = isSignalDirection(direction);
-      const pending = !state || status === "pending";
+      const pending = hydrationMeta.pending;
       const color =
         direction === "buy"
           ? CSS_COLOR.blue
@@ -59,21 +107,36 @@ export const SignalDots = ({
       const label = pending
         ? `${timeframe} pending`
         : hasDirection
-          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          ? `${timeframe} ${direction.toUpperCase()} ${
+              fresh ? "fresh" : "aged"
+            } - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
           : `${timeframe} no signal - ${status}`;
+      const attentionLabel = hydrationMeta.unhydrated
+        ? "unhydrated"
+        : hydrationMeta.stale
+          ? "stale"
+          : "";
+      const freshGlow =
+        hasDirection && fresh && !showLabels
+          ? `0 0 0 2px ${cssColorMix(color, 13)}`
+          : null;
+      const dotBorder = hydrationMeta.attention
+        ? `2px solid ${CSS_COLOR.amber}`
+        : showLabels
+          ? `1px solid ${
+              hasDirection ? cssColorMix(color, 50) : CSS_COLOR.borderLight
+            }`
+          : `1px solid ${hasDirection ? color : cssColorMix(CSS_COLOR.textDim, 58)}`;
       const dotStyle = {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        boxSizing: "border-box",
         width: showLabels ? "auto" : dim(8),
         minWidth: showLabels ? dim(18) : dim(8),
         height: showLabels ? dim(14) : dim(8),
         borderRadius: showLabels ? dim(RADII.pill) : "50%",
-        border: showLabels
-          ? `1px solid ${
-              hasDirection ? cssColorMix(color, 50) : CSS_COLOR.borderLight
-            }`
-          : `1px solid ${hasDirection ? color : cssColorMix(CSS_COLOR.textDim, 58)}`,
+        border: dotBorder,
         background: hasDirection
           ? showLabels
             ? cssColorMix(color, 10)
@@ -88,10 +151,7 @@ export const SignalDots = ({
         lineHeight: 1,
         letterSpacing: 0,
         opacity: pending ? 0.72 : hasDirection ? (fresh ? 1 : 0.76) : 0.88,
-        boxShadow:
-          hasDirection && fresh && !showLabels
-            ? `0 0 0 2px ${cssColorMix(color, 13)}`
-            : "none",
+        boxShadow: freshGlow || "none",
         cursor: hasDirection && onSelect ? "pointer" : "default",
         padding: showLabels ? sp("0 3px") : 0,
       };
@@ -100,22 +160,33 @@ export const SignalDots = ({
         "data-testid": `watchlist-signal-dot-${timeframe}`,
         "data-timeframe": timeframe,
         "data-direction": pending ? "pending" : hasDirection ? direction : "none",
+        "data-hydration-state": hydrationMeta.hydrationState,
+        "data-signal-attention": hydrationMeta.attention ? attentionLabel : undefined,
         className: [
           "ra-signal-dot",
           hasDirection ? "ra-signal-dot-active" : null,
           hasDirection && fresh ? "ra-signal-dot-fresh" : null,
           pending ? "ra-signal-dot-pending" : null,
+          hydrationMeta.attention ? "ra-signal-dot-attention" : null,
+          hydrationMeta.stale ? "ra-signal-dot-stale" : null,
+          hydrationMeta.unhydrated ? "ra-signal-dot-unhydrated" : null,
         ]
           .filter(Boolean)
           .join(" "),
-        "aria-label": label,
+        "aria-label": attentionLabel ? `${label} - ${attentionLabel}` : label,
         style: dotStyle,
       };
 
       return (
         <AppTooltip
           key={timeframe}
-          content={state?.lastError ? `${label} - ${state.lastError}` : label}
+          content={[
+            label,
+            attentionLabel ? formatSignalDotAttentionLabel(attentionLabel) : null,
+            state?.lastError || null,
+          ]
+            .filter(Boolean)
+            .join(" - ")}
         >
           {onSelect ? (
             <button

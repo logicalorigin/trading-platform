@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildAlgoOptionQuoteStreamSubscription,
   resolveAttentionSeverity,
   resolveHeaderScanWave,
 } from "./AlgoLivePage.jsx";
@@ -36,4 +37,31 @@ test("algo header still shows warning for warning-level scan blockers", () => {
 
   assert.equal(wave.badgeLabel, "warning");
   assert.equal(wave.status, "offline");
+});
+
+test("algo option quote stream aggregation opens one subscription for visible groups", () => {
+  const subscription = buildAlgoOptionQuoteStreamSubscription([
+    {
+      underlying: "NVDA",
+      owner: "algo-operations:NVDA",
+      providerContractIds: ["101", "102"],
+      requiresGreeks: true,
+    },
+    {
+      underlying: "TSLA",
+      owner: "signal-options-preview:active:TSLA",
+      providerContractIds: ["102", "201"],
+      requiresGreeks: true,
+    },
+    {
+      underlying: "",
+      providerContractIds: ["ignored"],
+      requiresGreeks: true,
+    },
+  ]);
+
+  assert.deepEqual(subscription.providerContractIds, ["101", "102", "201"]);
+  assert.equal(subscription.underlying, null);
+  assert.equal(subscription.owner, "algo-option-quotes:3-contracts");
+  assert.equal(subscription.requiresGreeks, true);
 });

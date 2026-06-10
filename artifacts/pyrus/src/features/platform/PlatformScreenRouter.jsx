@@ -57,6 +57,7 @@ export const PlatformScreenRouter = ({
   signalMonitorStateError,
   signalMonitorDataManagedByPlatform = false,
   signalMonitorEvents,
+  signalMonitorEventsSourceStatus,
   signalMonitorEventsLoaded,
   signalMatrixStates,
   signalMatrixCoverage,
@@ -252,6 +253,7 @@ export const PlatformScreenRouter = ({
           accounts={accounts}
           selectedAccountId={primaryAccountId}
           signalMonitorEvents={signalMonitorEvents}
+          signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
           signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           signalMonitorState={signalMonitorState}
           signalMatrixStates={signalMatrixStates}

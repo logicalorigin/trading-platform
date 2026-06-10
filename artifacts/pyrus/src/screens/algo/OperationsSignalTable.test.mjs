@@ -4,6 +4,8 @@ import test from "node:test";
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
   buildAlgoSignalMatrixHydrationRequest,
+  buildStaSignalSparklineBatchRequest,
+  buildStaSignalStatusSummary,
   hasUsableSparklineData,
   resolveRowTickerSnapshot,
   splitStaRowsBySignalMatrixHydration,
@@ -29,6 +31,25 @@ test("STA signal matrix hydration uses control-rail trading timeframes only", ()
     request.requestCells.map((cell) => cell.timeframe),
     ["5m", "1m", "2m"],
   );
+});
+
+test("STA status summary separates rows, received signals, actions, and history", () => {
+  const summary = buildStaSignalStatusSummary({
+    activeFilterLabel: "All",
+    visibleCount: 9,
+    totalCount: 14,
+    receivedCount: 8,
+    actionCount: 3,
+    historyCount: 5,
+    freshnessLine: "Signal 2m ago",
+    receivedHistorySourceStatus: "runtime-fallback",
+  });
+
+  assert.equal(
+    summary.statusLine,
+    "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago · Received history runtime fallback",
+  );
+  assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5 · Fallback");
 });
 
 test("STA signal matrix hydration prioritizes the row execution timeframe", () => {
@@ -145,6 +166,10 @@ test("STA normal rows wait for all selected signal bubbles to hydrate", () => {
   assert.deepEqual(
     split.pendingRows.map((row) => row.signal.symbol),
     ["ALIT"],
+  );
+  assert.deepEqual(
+    split.rows.map((row) => row.signal.symbol),
+    ["ALIT", "SPY"],
   );
   assert.deepEqual(split.pendingRows[0].matrixHydration.missingTimeframes, ["1m"]);
 
@@ -304,5 +329,26 @@ test("STA sparkline hydration ignores non-drawable fallback bars", () => {
       bars: [{ c: 99 }, { c: 100 }],
     }),
     true,
+  );
+});
+
+test("STA sparkline hydration requests compact visible batch bars", () => {
+  const request = buildStaSignalSparklineBatchRequest([" spy ", "NVDA"]);
+
+  assert.deepEqual(
+    request.requests.map((item) => item.key),
+    ["SPY", "NVDA"],
+  );
+  assert.deepEqual(
+    request.requests.map((item) => item.responseShape),
+    ["sparkline", "sparkline"],
+  );
+  assert.deepEqual(
+    request.requests.map((item) => item.timeframe),
+    ["1m", "1m"],
+  );
+  assert.deepEqual(
+    request.requests.map((item) => item.brokerRecentWindowMinutes),
+    [0, 0],
   );
 });

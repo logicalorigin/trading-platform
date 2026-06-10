@@ -273,7 +273,7 @@ export const TradeOrderTicket = ({
     ],
     queryFn: () =>
       platformJsonRequest(
-        "/api/accounts/shadow/positions?mode=paper&assetClass=Options&liveQuotes=false",
+        "/api/accounts/shadow/positions?mode=paper&assetClass=option&liveQuotes=false",
       ),
     enabled: Boolean(ticketIsOptions && selectedContractMeta && expInfo.actualDate),
     staleTime: 15_000,
@@ -1133,7 +1133,7 @@ export const TradeOrderTicket = ({
   const matchingShadowOptionPositions = (shadowExposureQuery.data?.positions || [])
     .filter(
       (position) =>
-        position.assetClass === "Options" &&
+        (position.positionType === "option" || position.assetClass === "Options") &&
         position.optionContract &&
         selectedContractMeta &&
         optionContractsMatch(position.optionContract, selectedContractMeta),

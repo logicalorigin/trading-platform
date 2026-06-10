@@ -39,6 +39,7 @@ import {
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
 const FLOW_SCANNER_AGGREGATE_QUERY_KEY = ["/api/flow/events/aggregate"];
+const FLOW_SCANNER_AGGREGATE_REFRESH_MS = 10_000;
 const FLOW_VISIBLE_REQUEST_HEADERS = Object.freeze({
   "x-pyrus-request-family": "flow-scanner-visible",
   "x-pyrus-fetch-priority": "8",
@@ -338,9 +339,9 @@ export const useLiveMarketFlow = (
         signal,
       }),
     enabled: shouldLoadMarketUniverse,
-    staleTime: 2_500,
+    staleTime: FLOW_SCANNER_AGGREGATE_REFRESH_MS,
     refetchInterval: shouldLoadMarketUniverse
-      ? Math.max(2_500, Math.min(effectiveIntervalMs, 10_000))
+      ? FLOW_SCANNER_AGGREGATE_REFRESH_MS
       : false,
     refetchOnWindowFocus: false,
     retry: false,

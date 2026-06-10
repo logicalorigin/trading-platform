@@ -1554,6 +1554,10 @@ summary,
   will-change: opacity, transform;
 }
 
+/* Price value-flash is an informational up/down color tint on a live quote
+   change — not vestibular motion — so it is intentionally kept active under
+   reduced-motion (it is how users see Massive live-quote ticks). Do NOT add
+   .ra-value-flash-up/-down back to the reduced-motion suppression blocks below. */
 .ra-value-flash-up {
   animation: raValueFlashUp 620ms var(--ra-motion-enter) both;
 }
@@ -2455,8 +2459,6 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-row-enter,
   .ra-signal-row-glow,
   .ra-signal-glyph-fresh,
-  .ra-value-flash-up,
-  .ra-value-flash-down,
   .ra-status-pulse,
   .ra-signal-cell-evaluating,
   .ra-signal-cell-ready,
@@ -2523,8 +2525,6 @@ html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
 html[data-pyrus-reduced-motion="on"] .ra-row-enter,
 html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
 html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
-html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
-html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
 html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
 html[data-pyrus-reduced-motion="on"] .ra-signal-cell-evaluating,
 html[data-pyrus-reduced-motion="on"] .ra-signal-cell-ready,
@@ -2555,8 +2555,6 @@ html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
 html[data-pyrus-reduced-motion="on"] .ra-row-enter,
 html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
 html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
-html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
-html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
 html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
 html[data-pyrus-reduced-motion="on"] .ra-signal-cell-evaluating,
 html[data-pyrus-reduced-motion="on"] .ra-signal-cell-ready,

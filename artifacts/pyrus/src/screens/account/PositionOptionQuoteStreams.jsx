@@ -129,6 +129,52 @@ export const buildPositionOptionQuoteGroups = (rows) => {
   }));
 };
 
+export const buildPositionOptionQuoteStreamSubscription = (
+  groups = [],
+  owner = "account-position-option-quotes:ui",
+) => {
+  const providerContractIds = [];
+  const seenProviderContractIds = new Set();
+  const underlyings = new Set();
+  groups.forEach((group) => {
+    const normalizedUnderlying = String(group?.underlying || "")
+      .trim()
+      .toUpperCase();
+    if (normalizedUnderlying) {
+      underlyings.add(normalizedUnderlying);
+    }
+    (Array.isArray(group?.providerContractIds)
+      ? group.providerContractIds
+      : []
+    ).forEach((providerContractId) => {
+      const normalizedProviderContractId = String(providerContractId || "").trim();
+      if (
+        !normalizedProviderContractId ||
+        seenProviderContractIds.has(normalizedProviderContractId)
+      ) {
+        return;
+      }
+      seenProviderContractIds.add(normalizedProviderContractId);
+      providerContractIds.push(normalizedProviderContractId);
+    });
+  });
+
+  if (!providerContractIds.length) {
+    return null;
+  }
+
+  const underlyingList = Array.from(underlyings).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const baseOwner =
+    String(owner || "").trim() || "account-position-option-quotes:ui";
+  return {
+    underlying: underlyingList.length === 1 ? underlyingList[0] : null,
+    providerContractIds,
+    owner: `${baseOwner}:${providerContractIds.length}-contracts`,
+  };
+};
+
 const PositionOptionQuoteStreamGroup = ({
   underlying,
   providerContractIds,
@@ -152,20 +198,20 @@ export const PositionOptionQuoteStreams = ({
   enabled = true,
   owner = "account-position-option-quotes:ui",
   intent = "account-monitor-live",
-}) => (
-  <>
-    {groups.map((group) => {
-      const streamOwner = optionQuoteStreamGroupOwner(owner, group);
-      return (
-        <PositionOptionQuoteStreamGroup
-          key={group.underlying || group.providerContractIds.join(",")}
-          underlying={group.underlying}
-          providerContractIds={group.providerContractIds}
-          enabled={enabled}
-          owner={streamOwner}
-          intent={intent}
-        />
-      );
-    })}
-  </>
-);
+}) => {
+  const subscription = buildPositionOptionQuoteStreamSubscription(groups, owner);
+  if (!subscription) {
+    return null;
+  }
+
+  return (
+    <PositionOptionQuoteStreamGroup
+      key={subscription.owner}
+      underlying={subscription.underlying}
+      providerContractIds={subscription.providerContractIds}
+      enabled={enabled}
+      owner={subscription.owner}
+      intent={intent}
+    />
+  );
+};

@@ -50,6 +50,7 @@ import {
   isSignalSparklineDirection,
 } from "../signals/signalSparklineModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
+import { resolveExtendedHoursQuoteDisplay } from "./extendedHoursQuote";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
 import {
@@ -109,6 +110,11 @@ const CSS_COLOR = Object.freeze({
 
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
+const formatSignedQuoteMove = (value) =>
+  isFiniteNumber(value)
+    ? `${value >= 0 ? "+" : "-"}${formatQuotePrice(Math.abs(value))}`
+    : MISSING_VALUE;
 
 // MicroSparkline + extractSparklineValues are exported from
 // components/platform/primitives.jsx — imported above.
@@ -344,6 +350,13 @@ const WatchlistRow = memo(
         : null;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
+    const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({ quote: snapshot });
+    const extendedHoursPositive =
+      extendedHoursDisplay?.tone === "positive"
+        ? true
+        : extendedHoursDisplay?.tone === "negative"
+          ? false
+          : null;
     const priceValue = isFiniteNumber(snapshot?.price) ? snapshot.price : null;
     const quotePriceForFlash = isFiniteNumber(snapshot?.price)
       ? snapshot.price
@@ -500,6 +513,45 @@ const WatchlistRow = memo(
         {formatSignedPercent(snapshot?.pct)}
       </span>
     );
+    const renderExtendedHoursBadge = () =>
+      extendedHoursDisplay ? (
+        <span
+          data-testid="watchlist-extended-hours"
+          title={`${extendedHoursDisplay.sessionLabel} move from regular close`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(4),
+            maxWidth: "100%",
+            color:
+              extendedHoursPositive == null
+                ? CSS_COLOR.textMuted
+                : extendedHoursPositive
+                  ? CSS_COLOR.green
+                  : CSS_COLOR.red,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1,
+            opacity:
+              extendedHoursDisplay.delayed ||
+              extendedHoursDisplay.freshness === "stale"
+                ? 0.72
+                : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{ color: CSS_COLOR.textMuted }}>
+            {extendedHoursDisplay.sessionLabel}
+          </span>
+          <span>{formatQuotePrice(extendedHoursDisplay.price)}</span>
+          <span>
+            {formatSignedQuoteMove(extendedHoursDisplay.change)} (
+            {formatSignedPercent(extendedHoursDisplay.changePercent)})
+          </span>
+        </span>
+      ) : null;
     const renderSignalPill = () =>
       hasSignal ? (
         <AppTooltip
@@ -868,6 +920,7 @@ const WatchlistRow = memo(
                 fontSize: textSize("caption"),
                 justifySelf: "end",
               })}
+              {renderExtendedHoursBadge()}
             </span>
           </div>
         </div>

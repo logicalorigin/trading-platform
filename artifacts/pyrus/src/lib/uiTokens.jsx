@@ -350,7 +350,10 @@ export const setCurrentDensity = (nextDensity) => {
   return CURRENT_DENSITY;
 };
 
-export const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
+// Floor at the smallest authored type token (micro = 7), not above it. A 10px floor
+// silently collapsed micro/label/control/tableHeader/tableCell/caption (7–9px) to a
+// single 10px size, flattening the small-text hierarchy across the app (SYS-01).
+export const fs = (n) => Math.max(7, Math.round(n * SCALE_FACTOR()));
 
 export const textSize = (role) => {
   const baseSize =

@@ -141,7 +141,7 @@ export const algoPipelineTone = (status) => {
 
 const PIPELINE_LABEL_OVERRIDES = {
   scan_universe: "Universe",
-  signal_detected: "Signals",
+  signal_detected: "Received",
   action_mapped: "Action",
   contract_selected: "Contract",
   liquidity_risk_gate: "Gate",
@@ -222,7 +222,7 @@ export const buildAlgoPipelinePhases = (stages = []) => {
     );
     const detail =
       phase.id === "signal-cycle"
-        ? `${stageCounts.scan_universe || "0"} symbols -> ${stageCounts.signal_detected || "0"} signals`
+        ? `${stageCounts.scan_universe || "0"} symbols -> ${stageCounts.signal_detected || "0"} received`
         : phase.id === "entry-path"
           ? `${stageCounts.action_mapped || "0"} actions -> ${stageCounts.contract_selected || "0"} contracts`
           : phase.id === "orders"

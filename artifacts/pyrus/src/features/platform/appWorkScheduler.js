@@ -92,6 +92,7 @@ export const buildPlatformWorkSchedule = ({
   memoryPressure = null,
   brokerConfigured = false,
   brokerAuthenticated = false,
+  massiveStockRealtimeConfigured = false,
   automationEnabled = false,
   tradingEnabled = false,
   mobileViewport = false,
@@ -114,10 +115,20 @@ export const buildPlatformWorkSchedule = ({
       memoryAllowsForeground &&
       isForegroundWorkAllowed(ibkrWorkPressure),
   );
+  const foregroundStockAggregates = Boolean(
+    runtimeEnabled &&
+      (ibkrReady || massiveStockRealtimeConfigured) &&
+      memoryAllowsForeground &&
+      (massiveStockRealtimeConfigured ||
+        isForegroundWorkAllowed(ibkrWorkPressure)),
+  );
   const realtimeIbkr = Boolean(
     runtimeEnabled &&
       ibkrReady &&
       ibkrWorkPressure !== WORK_PRESSURE_STATE.stalled,
+  );
+  const quoteStreamAvailable = Boolean(
+    runtimeEnabled && (ibkrReady || massiveStockRealtimeConfigured),
   );
   const quoteStreamIbkr = Boolean(runtimeEnabled && ibkrReady);
   const accountRealtimeIbkr = Boolean(
@@ -158,7 +169,7 @@ export const buildPlatformWorkSchedule = ({
       (foregroundAccountRealtime ||
         (!startupBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
-  const watchlistQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
+  const watchlistQuoteStream = Boolean(sessionReady && quoteStreamAvailable);
   const positionQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
   const idleCodePreloadAllowed = Boolean(
     sessionReady &&
@@ -203,7 +214,7 @@ export const buildPlatformWorkSchedule = ({
     streams: {
       watchlistQuoteStream,
       positionQuoteStream,
-      marketStockAggregates: Boolean(foregroundIbkr && market),
+      marketStockAggregates: Boolean(foregroundStockAggregates && market),
       accountRealtime,
       shadowAccountRealtime: Boolean(backgroundIbkr && account),
       sharedFlowRuntime: false,
@@ -228,7 +239,9 @@ export const buildPlatformWorkSchedule = ({
     leases: {
       activeQuotes: watchlistQuoteStream,
       activeTrading: accountRealtime,
-      activeCharting: Boolean(foregroundIbkr && (market || trade)),
+      activeCharting: Boolean(
+        (foregroundIbkr || foregroundStockAggregates) && (market || trade),
+      ),
       flowDiscovery: broadFlowAllowed,
       passiveVisuals: Boolean(pressureCaps.sparklineEnabled && memoryAllowsForeground),
       lowPriorityHistory: Boolean(

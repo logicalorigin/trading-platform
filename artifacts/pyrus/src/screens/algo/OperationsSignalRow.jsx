@@ -78,8 +78,13 @@ export const SIGNAL_TABLE_ROW_HEIGHT = 32;
 export const SIGNAL_TABLE_HEADER_HEIGHT = 22;
 
 const SIGNAL_ICON_SIZE = 12;
+export const SIGNAL_HERO_TOP_ROW_HEIGHT = 14;
+export const SIGNAL_HERO_LOWER_ROW_HEIGHT = 14;
+export const SIGNAL_HERO_SPARKLINE_MIN_WIDTH = 24;
 export const SIGNAL_HERO_SPARKLINE_WIDTH = 40;
+export const SIGNAL_HERO_SPARKLINE_MAX_WIDTH = 52;
 export const SIGNAL_HERO_SPARKLINE_HEIGHT = 14;
+export const SIGNAL_TRADE_BUTTON_SIZE = 14;
 const SIGNAL_TABLE_CELL_PADDING = "0 3px";
 const SIGNAL_TABLE_ACTION_CELL_PADDING = "0 1px";
 const SIGNAL_TABLE_BORDER = () => `1px solid ${CSS_COLOR.borderLight}`;
@@ -1486,8 +1491,12 @@ const SignalHeroCell = ({
       style={{
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr)",
+        gridTemplateRows: `${dim(SIGNAL_HERO_TOP_ROW_HEIGHT)} ${dim(
+          SIGNAL_HERO_LOWER_ROW_HEIGHT,
+        )}`,
         gap: 0,
         alignItems: "center",
+        height: dim(SIGNAL_HERO_TOP_ROW_HEIGHT + SIGNAL_HERO_LOWER_ROW_HEIGHT),
         minWidth: 0,
         overflow: "hidden",
         lineHeight: 1.12,
@@ -1495,20 +1504,15 @@ const SignalHeroCell = ({
     >
       <span
         style={{
-          display: "grid",
-          gap: 0,
-          minWidth: 0,
-          overflow: "hidden",
-        }}
-      >
-      <span
-        style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
           gap: sp(4),
+          width: "100%",
+          height: dim(SIGNAL_HERO_TOP_ROW_HEIGHT),
           minWidth: 0,
           overflow: "hidden",
           whiteSpace: "nowrap",
+          lineHeight: 1,
         }}
       >
         <BigDirectionGlyph
@@ -1528,6 +1532,7 @@ const SignalHeroCell = ({
             color: CSS_COLOR.text,
             fontSize: fs(13),
             fontWeight: FONT_WEIGHTS.medium,
+            flex: "1 1 auto",
             minWidth: 0,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -1535,23 +1540,15 @@ const SignalHeroCell = ({
         >
           {signalRecord.symbol || MISSING_VALUE}
         </span>
-        <span
-          style={{
-            color: direction.tone,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-            flex: "0 0 auto",
-          }}
-        >
-          {direction.label}
-        </span>
         {tradeButton}
       </span>
       <span
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          gap: sp(5),
+          columnGap: sp(4),
+          width: "100%",
+          height: dim(SIGNAL_HERO_LOWER_ROW_HEIGHT),
           minWidth: 0,
           overflow: "hidden",
           color: CSS_COLOR.textDim,
@@ -1564,19 +1561,13 @@ const SignalHeroCell = ({
           testId="algo-signal-dots"
           statesByTimeframe={tfMatrix}
           timeframes={timeframes}
-          style={{ minWidth: dim(36), gap: sp(4) }}
-        />
-        <span
-          className={priceFlashClassName}
           style={{
-            color: CSS_COLOR.textSec,
-            fontVariantNumeric: "tabular-nums",
-            fontWeight: FONT_WEIGHTS.medium,
-            flex: "0 0 auto",
+            flex: `0 0 ${dim(36)}`,
+            minWidth: dim(36),
+            width: dim(36),
+            gap: sp(4),
           }}
-        >
-          {price}
-        </span>
+        />
         {hasSparkline ? (
           <AppTooltip content={signalChartTitle(signalRecord) || undefined}>
             <span
@@ -1585,10 +1576,11 @@ const SignalHeroCell = ({
               aria-label={signalChartTitle(signalRecord) || undefined}
               style={{
                 width: dim(SIGNAL_HERO_SPARKLINE_WIDTH),
+                minWidth: dim(SIGNAL_HERO_SPARKLINE_MIN_WIDTH),
+                maxWidth: dim(SIGNAL_HERO_SPARKLINE_MAX_WIDTH),
                 height: dim(SIGNAL_HERO_SPARKLINE_HEIGHT),
-                minWidth: dim(SIGNAL_HERO_SPARKLINE_WIDTH),
+                flex: `0 1 ${dim(SIGNAL_HERO_SPARKLINE_WIDTH)}`,
                 overflow: "hidden",
-                flex: "0 0 auto",
               }}
             >
               <MicroSparkline
@@ -1603,8 +1595,31 @@ const SignalHeroCell = ({
             </span>
           </AppTooltip>
         ) : null}
+        <span
+          className={priceFlashClassName}
+          style={{
+            color: CSS_COLOR.textSec,
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.medium,
+            flex: `0 1 ${dim(52)}`,
+            maxWidth: dim(52),
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            textAlign: "right",
+          }}
+        >
+          {price}
+        </span>
         {showSignalMove ? (
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span
+            style={{
+              flex: "1 1 0",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
             {[
               signalMove?.label && signalMove.label !== MISSING_VALUE
                 ? signalMove.label
@@ -1614,7 +1629,6 @@ const SignalHeroCell = ({
               .join(" · ") || MISSING_VALUE}
           </span>
         ) : null}
-      </span>
       </span>
     </span>
   );
@@ -2009,9 +2023,9 @@ const SignalTradeButton = ({ symbol, onOpen }) => {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          width: dim(20),
-          height: dim(20),
-          minWidth: dim(20),
+          minWidth: dim(SIGNAL_TRADE_BUTTON_SIZE),
+          width: dim(SIGNAL_TRADE_BUTTON_SIZE),
+          height: dim(SIGNAL_TRADE_BUTTON_SIZE),
           borderRadius: dim(RADII.sm),
           border: `1px solid ${cssColorAlpha(CSS_COLOR.accent, "44")}`,
           background: cssColorAlpha(CSS_COLOR.accent, "16"),
@@ -2020,7 +2034,7 @@ const SignalTradeButton = ({ symbol, onOpen }) => {
           flex: "0 0 auto",
         }}
       >
-        <ArrowUpRight size={12} strokeWidth={1.9} aria-hidden="true" />
+        <ArrowUpRight size={10} strokeWidth={2} aria-hidden="true" />
       </button>
     </AppTooltip>
   );

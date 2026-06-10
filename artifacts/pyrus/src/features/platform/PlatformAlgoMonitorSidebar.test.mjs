@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildAlgoMonitorStaSignalRows,
   buildAlgoMonitorSignalMatrixHydrationRequest,
+  buildAlgoMonitorSignalMatrixHydrationRequestKey,
   resolveAlgoMonitorReadinessStatus,
   splitAlgoMonitorSignalRowsByMatrixHydration,
 } from "./PlatformAlgoMonitorSidebar.jsx";
@@ -62,6 +63,33 @@ test("Algo monitor sidebar hydration uses selected trading frames and execution 
   assert.deepEqual(
     request.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
     ["MU:5m", "MU:2m", "MU:15m"],
+  );
+});
+
+test("Algo monitor sidebar hydration request key is stable for duplicate requests", () => {
+  const first = buildAlgoMonitorSignalMatrixHydrationRequest({
+    rows: [{ signal: { symbol: "MU", timeframe: "5m" } }],
+    currentStates: [],
+    timeframes: ["2m", "5m", "15m"],
+  });
+  const second = buildAlgoMonitorSignalMatrixHydrationRequest({
+    rows: [{ signal: { symbol: "MU", timeframe: "5m" } }],
+    currentStates: [],
+    timeframes: ["2m", "5m", "15m"],
+  });
+  const changed = buildAlgoMonitorSignalMatrixHydrationRequest({
+    rows: [{ signal: { symbol: "NVDA", timeframe: "5m" } }],
+    currentStates: [],
+    timeframes: ["2m", "5m", "15m"],
+  });
+
+  assert.equal(
+    buildAlgoMonitorSignalMatrixHydrationRequestKey(first),
+    buildAlgoMonitorSignalMatrixHydrationRequestKey(second),
+  );
+  assert.notEqual(
+    buildAlgoMonitorSignalMatrixHydrationRequestKey(first),
+    buildAlgoMonitorSignalMatrixHydrationRequestKey(changed),
   );
 });
 

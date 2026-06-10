@@ -447,3 +447,29 @@ test("account page positions query keys request live quote hydration", () => {
     },
   );
 });
+
+test("shared option quote stream demand unions active hook subscriptions", () => {
+  const demand =
+    __liveStreamsInternalsForTests.resolveSharedOptionQuoteStreamDemand([
+      {
+        underlying: "NVDA",
+        providerContractIds: ["101", "102"],
+        owner: "visible-nvda",
+        intent: "visible-live",
+        requiresGreeks: false,
+      },
+      {
+        underlying: "TSLA",
+        providerContractIds: ["102", "201"],
+        owner: "execution-tsla",
+        intent: "execution-live",
+        requiresGreeks: true,
+      },
+    ]);
+
+  assert.deepEqual(demand.providerContractIds, ["101", "102", "201"]);
+  assert.equal(demand.underlying, null);
+  assert.equal(demand.owner, "shared-option-quotes:3-contracts");
+  assert.equal(demand.intent, "execution-live");
+  assert.equal(demand.requiresGreeks, true);
+});

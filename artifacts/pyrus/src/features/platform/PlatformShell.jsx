@@ -7,7 +7,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -58,7 +57,7 @@ import {
   ScreenLoadingFallback,
   preloadScreenModule,
 } from "./screenRegistry.jsx";
-import { useElementSize, useViewport } from "../../lib/responsive";
+import { useElementSize, useStableWidth, useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry } from "../../lib/dynamicImport";
@@ -673,8 +672,9 @@ export const PlatformShell = ({
   signalMonitorProfile,
   signalMonitorEvents,
   signalMonitorEventsLoaded = false,
-  signalMatrixStates,
-  headerSignalMatrixStates,
+  headerSignalMatrixStates = [],
+  watchlistSignalMatrixStates = [],
+  activitySignalMatrixStates = [],
   onRequestSignalMatrixHydration,
   selectedSymbol,
   sidebarCollapsed,
@@ -729,7 +729,12 @@ export const PlatformShell = ({
   const auxiliaryDrawerViewport = isPhone || isTablet;
   const headerWidth = viewport.width || 0;
   const [headerRef, headerSize] = useElementSize();
-  const headerEffectiveWidth = headerSize.width || headerWidth;
+  // Dead-band the measured header width before deriving breakpoints. headerTight
+  // changes the header's own padding (AppHeader), and resource-pressure re-renders
+  // can nudge header content — both shift the measured width by a few px, which
+  // without this would flip a breakpoint, change layout, re-measure, and flip back
+  // (a ResizeObserver feedback loop that makes the header visibly flap).
+  const headerEffectiveWidth = useStableWidth(headerSize.width || headerWidth);
   const headerTight =
     !isPhone &&
     (isNarrow || (headerEffectiveWidth > 0 && headerEffectiveWidth <= 1440));
@@ -828,13 +833,6 @@ export const PlatformShell = ({
     algoFrameRuntimeEnabled ||
       (frameAuxiliaryDataEnabled &&
         (desktopActivitySidebarVisible || mobileActivityVisible)),
-  );
-  const activitySignalMatrixStates = useMemo(
-    () => [
-      ...(Array.isArray(signalMonitorStates) ? signalMonitorStates : []),
-      ...(Array.isArray(signalMatrixStates) ? signalMatrixStates : []),
-    ],
-    [signalMatrixStates, signalMonitorStates],
   );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
@@ -1065,7 +1063,6 @@ export const PlatformShell = ({
       onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
       onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
       headerSignalMatrixStates={headerSignalMatrixStates}
-      signalMatrixStates={signalMatrixStates}
       HeaderKpiStripComponent={HeaderKpiStripComponent}
       HeaderAccountStripComponent={HeaderAccountStripComponent}
       HeaderStatusClusterComponent={HeaderStatusClusterComponent}
@@ -1146,7 +1143,7 @@ export const PlatformShell = ({
       signalMonitorStates={signalMonitorStates}
       signalMonitorProfile={signalMonitorProfile}
       signalMonitorEvents={signalMonitorEvents}
-      signalMatrixStates={signalMatrixStates}
+      signalMatrixStates={watchlistSignalMatrixStates}
       selectedSymbol={selectedSymbol}
       onSelectSymbol={onSelectSymbol}
       onFocusMarketChart={onFocusMarketChart}
@@ -1189,7 +1186,7 @@ export const PlatformShell = ({
               signalStates={signalMonitorStates}
               signalProfile={signalMonitorProfile}
               signalEvents={signalMonitorEvents}
-              signalMatrixStates={signalMatrixStates}
+              signalMatrixStates={watchlistSignalMatrixStates}
               selected={selectedSymbol}
               onSelect={onSelectSymbol}
               onChartFocus={onFocusMarketChart}

@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   Area,
@@ -166,6 +167,84 @@ import {
 } from "../features/platform/flowTapeModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const FLOW_AGE_REFRESH_MS = 1_000;
+
+const flowAgeClockSubscribers = new Set();
+let flowAgeClockTimer = null;
+let flowAgeClockSnapshot = Date.now();
+
+const emitFlowAgeClock = () => {
+  flowAgeClockSnapshot = Date.now();
+  flowAgeClockSubscribers.forEach((listener) => listener());
+};
+
+const subscribeFlowAgeClock = (listener) => {
+  flowAgeClockSubscribers.add(listener);
+  if (!flowAgeClockTimer && typeof window !== "undefined") {
+    flowAgeClockTimer = window.setInterval(emitFlowAgeClock, FLOW_AGE_REFRESH_MS);
+  }
+  return () => {
+    flowAgeClockSubscribers.delete(listener);
+    if (
+      flowAgeClockSubscribers.size === 0 &&
+      flowAgeClockTimer &&
+      typeof window !== "undefined"
+    ) {
+      window.clearInterval(flowAgeClockTimer);
+      flowAgeClockTimer = null;
+    }
+  };
+};
+
+const subscribeFlowAgeClockIdle = () => () => {};
+const getFlowAgeClockSnapshot = () => flowAgeClockSnapshot;
+
+const useFlowAgeNowMs = (active = true) =>
+  useSyncExternalStore(
+    active ? subscribeFlowAgeClock : subscribeFlowAgeClockIdle,
+    getFlowAgeClockSnapshot,
+    getFlowAgeClockSnapshot,
+  );
+
+const FlowTradeAgeLabel = ({
+  active = true,
+  appTimeZoneLabel = "",
+  colorize = false,
+  fallbackTime = "",
+  formatFlowAppTime,
+  occurredAt,
+  style,
+  testId,
+  tooltipContent,
+}) => {
+  const nowMs = useFlowAgeNowMs(active && Boolean(occurredAt));
+  const ageLabel = formatFlowTradeAge(occurredAt, nowMs);
+  const timestamp = Date.parse(occurredAt || "");
+  const ageMs = Number.isFinite(timestamp)
+    ? Math.max(0, nowMs - timestamp)
+    : Number.POSITIVE_INFINITY;
+  const ageColor =
+    ageMs < 60_000
+      ? CSS_COLOR.green
+      : ageMs < 300_000
+        ? CSS_COLOR.textSec
+        : CSS_COLOR.textDim;
+  const occurredAtLabel =
+    occurredAt && formatFlowAppTime ? formatFlowAppTime(occurredAt) : fallbackTime;
+  const resolvedTooltipContent =
+    tooltipContent ??
+    (occurredAtLabel ? `${occurredAtLabel} ${appTimeZoneLabel}` : undefined);
+  return (
+    <AppTooltip content={resolvedTooltipContent}>
+      <span
+        data-testid={testId}
+        style={colorize ? { ...style, color: ageColor } : style}
+      >
+        {ageLabel}
+      </span>
+    </AppTooltip>
+  );
+};
 
 const getDisplayableFlowError = (providerSummary) => {
   const message =
@@ -1735,7 +1814,6 @@ const FlowOverviewPanel = ({
     _initialState.flowPinnedEventId || null,
   );
   const [copiedEventId, setCopiedEventId] = useState(null);
-  const [flowNowMs, setFlowNowMs] = useState(() => Date.now());
   const showDeferredPanels = Boolean(isVisible);
   const [pausedSnapshot, setPausedSnapshot] = useState(null);
   const flowContentRef = useRef(null);
@@ -1938,12 +2016,6 @@ const FlowOverviewPanel = ({
       })),
     [rawFlowEvents],
   );
-
-  useEffect(() => {
-    if (!isVisible || !flowEvents.length) return undefined;
-    const intervalId = setInterval(() => setFlowNowMs(Date.now()), 1000);
-    return () => clearInterval(intervalId);
-  }, [flowEvents.length, isVisible]);
 
   const coverage = providerSummary.coverage || {
     totalSymbols: watchlistSymbols.length,
@@ -3004,17 +3076,17 @@ const FlowOverviewPanel = ({
     const fillSpreadMeta = resolveFlowFillSpreadMeta(event);
 
     if (columnId === "time") {
-      const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
-      const occurredAt = event.occurredAt ? formatFlowAppTime(event.occurredAt) : event.time;
-      const ageMs = Math.max(0, flowNowMs - (Date.parse(event.occurredAt || "") || flowNowMs));
-      const ageColor = ageMs < 60_000 ? CSS_COLOR.green : ageMs < 300_000 ? CSS_COLOR.textSec : CSS_COLOR.textDim;
       return (
-        <AppTooltip content={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}><span
-          data-testid="flow-tape-cell-time"
-          style={{ color: ageColor, fontWeight: FONT_WEIGHTS.regular}}
-        >
-          {ageLabel}
-        </span></AppTooltip>
+        <FlowTradeAgeLabel
+          active={isVisible && Boolean(flowEvents.length)}
+          appTimeZoneLabel={appTimeZoneLabel}
+          colorize
+          fallbackTime={event.time}
+          formatFlowAppTime={formatFlowAppTime}
+          occurredAt={event.occurredAt}
+          style={{ fontWeight: FONT_WEIGHTS.regular }}
+          testId="flow-tape-cell-time"
+        />
       );
     }
     if (columnId === "ticker") {
@@ -3987,7 +4059,6 @@ const FlowOverviewPanel = ({
         : `$${(event.premium / 1e3).toFixed(0)}K`;
     const fillSpreadMeta = resolveFlowFillSpreadMeta(event);
     const sentiment = classifyFlowSentiment(event);
-    const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
     const sentimentColor =
       sentiment === "bull" ? FLOW_BULLISH_TONE : sentiment === "bear" ? FLOW_BEARISH_TONE : CSS_COLOR.textDim;
     const sideColor =
@@ -4178,9 +4249,12 @@ const FlowOverviewPanel = ({
             scrollbarWidth: "none",
           }}
         >
-          <AppTooltip content="Trade age">
-            <span style={mobileChipStyle(CSS_COLOR.textSec, { strong: true })}>{ageLabel}</span>
-          </AppTooltip>
+          <FlowTradeAgeLabel
+            active={isVisible && Boolean(flowEvents.length)}
+            occurredAt={event.occurredAt}
+            style={mobileChipStyle(CSS_COLOR.textSec, { strong: true })}
+            tooltipContent="Trade age"
+          />
           <AppTooltip content={sentiment === "bull" ? "Bullish" : sentiment === "bear" ? "Bearish" : "Neutral"}>
             <span
               aria-label={`Flow sentiment ${sentiment}`}

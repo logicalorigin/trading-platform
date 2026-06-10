@@ -1,6 +1,7 @@
 import {
   formatPreferenceDateTime,
   formatPreferenceTimeZoneLabel,
+  getCachedPreferenceDateTimeFormatter,
   readCachedUserPreferences,
   resolvePreferenceTimeZone,
   type UserPreferences,
@@ -58,8 +59,7 @@ export const formatAppDateForPreferences = (
       ? options
       : { year: "numeric", month: "numeric", day: "numeric" };
 
-  return new Intl.DateTimeFormat(
-    "en-US",
+  return getCachedPreferenceDateTimeFormatter(
     withAppTimeZone(preferences, dateOptions),
   ).format(date);
 };
@@ -88,8 +88,7 @@ export const formatAppTimeForPreferences = (
       ? options
       : { hour: "numeric", minute: "2-digit" };
 
-  return new Intl.DateTimeFormat(
-    "en-US",
+  return getCachedPreferenceDateTimeFormatter(
     withAppTimeZone(preferences, timeOptions),
   ).format(date);
 };
@@ -123,8 +122,7 @@ export const formatAppDateTimeForPreferences = (
           minute: "2-digit",
         };
 
-  return new Intl.DateTimeFormat(
-    "en-US",
+  return getCachedPreferenceDateTimeFormatter(
     withAppTimeZone(preferences, dateTimeOptions),
   ).format(date);
 };

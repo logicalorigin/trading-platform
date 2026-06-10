@@ -55,6 +55,11 @@ import type {
   IndicatorZone,
   StudySpec,
 } from "./types";
+import {
+  resolveExtendedHoursQuoteDisplay,
+  type ExtendedHoursQuoteDisplay,
+  type ExtendedHoursQuoteInput,
+} from "../platform/extendedHoursQuote";
 import { useFootprintCandles } from "./useFootprintCandles";
 import type {
   ChartEvent,
@@ -524,6 +529,7 @@ export type ChartLegendMetadata = {
   priceLabel?: string | null;
   price?: number | null;
   changePercent?: number | null;
+  extendedHours?: ExtendedHoursQuoteDisplay | null;
   meta?: ChartLegendOhlcvMeta | null;
   studies?: ChartLegendStudyOption[];
   selectedStudies?: string[];
@@ -1507,6 +1513,7 @@ type ResearchChartSurfaceProps = {
   ) => void;
   latestQuotePrice?: number | null;
   latestQuoteUpdatedAt?: string | Date | number | null;
+  latestQuoteSnapshot?: ExtendedHoursQuoteInput | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -6367,6 +6374,7 @@ const ResearchChartSurfaceComponent = ({
   onPositionOverlaysEnabledChange,
   latestQuotePrice = null,
   latestQuoteUpdatedAt = null,
+  latestQuoteSnapshot = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -6545,6 +6553,20 @@ const ResearchChartSurfaceComponent = ({
         ? buildUsEquityExtendedSessionWindows(deferredModel.chartBars)
         : [],
     [deferredModel.chartBars, userPreferences.chart.extendedHours],
+  );
+  const extendedHoursDisplay = useMemo(
+    () => resolveExtendedHoursQuoteDisplay({ quote: latestQuoteSnapshot }),
+    [
+      latestQuoteSnapshot?.price,
+      latestQuoteSnapshot?.extendedBaselinePrice,
+      latestQuoteSnapshot?.extendedBaselineAt,
+      latestQuoteSnapshot?.extendedBaselineSource,
+      latestQuoteSnapshot?.dataUpdatedAt,
+      latestQuoteSnapshot?.updatedAt,
+      latestQuoteSnapshot?.freshness,
+      latestQuoteSnapshot?.marketDataMode,
+      latestQuoteSnapshot?.delayed,
+    ],
   );
   const marketSessionBarCounts = useMemo(
     () => countUsEquityMarketSessionBars(model.chartBars),
@@ -9786,6 +9808,23 @@ const ResearchChartSurfaceComponent = ({
         addPriceLine(referenceLine);
       });
 
+    if (extendedHoursDisplay && showRightPriceScale) {
+      const color =
+        extendedHoursDisplay.tone === "positive"
+          ? chartTheme.green
+          : extendedHoursDisplay.tone === "negative"
+            ? chartTheme.red
+            : chartTheme.textMuted;
+      addPriceLine({
+        price: extendedHoursDisplay.price,
+        color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: extendedHoursDisplay.axisLabel,
+      });
+    }
+
     if (positionOverlaysEnabled) {
       resolvedPositionOverlays.entryLines
         .filter((line) => isFiniteNumber(line.price))
@@ -9817,9 +9856,12 @@ const ResearchChartSurfaceComponent = ({
     resolvedPositionOverlays.entryLines,
     positionOverlaysEnabled,
     effectiveReferenceLines,
+    extendedHoursDisplay,
+    showRightPriceScale,
     theme.amber,
     theme.green,
     theme.red,
+    theme.textMuted,
   ]);
 
   useLayoutEffect(() => {
@@ -10382,6 +10424,13 @@ const ResearchChartSurfaceComponent = ({
   const legendCompactMode = compact || legendDetailMode === "compact";
   const legendName = legendCompactMode || legendMinimal ? null : legend?.name;
   const legendDeltaPct = displayDeltaPct ?? legend?.changePercent ?? null;
+  const legendExtendedHours = legend?.extendedHours ?? extendedHoursDisplay;
+  const legendExtendedHoursColor =
+    legendExtendedHours?.tone === "positive"
+      ? theme.green
+      : legendExtendedHours?.tone === "negative"
+        ? theme.red
+        : theme.textMuted;
   const legendShowOhlc = userPreferences.chart.showOhlc && !legendMinimal;
   const legendShowVolume = userPreferences.chart.showVolume && !legendMinimal;
   const legendShowStudies =
@@ -13679,6 +13728,25 @@ const ResearchChartSurfaceComponent = ({
               <span style={{ color: deltaColor }}>
                 {formatLegendPercent(legendDeltaPct)}
               </span>
+              {legendExtendedHours ? (
+                <span
+                  data-testid={
+                    dataTestId ? `${dataTestId}-extended-hours-legend` : undefined
+                  }
+                  title={`${legendExtendedHours.sessionLabel} move from regular close`}
+                  style={{ color: legendExtendedHoursColor }}
+                >
+                  <span style={{ color: theme.textMuted }}>
+                    {legendExtendedHours.sessionLabel}
+                  </span>{" "}
+                  {formatPrice(legendExtendedHours.price)}{" "}
+                  {formatLegendSignedNumber(
+                    legendExtendedHours.change,
+                    pricePrecision,
+                  )}{" "}
+                  ({formatLegendPercent(legendExtendedHours.changePercent)})
+                </span>
+              ) : null}
               {legendShowVolume ? (
                 <span>
                   Vol{" "}

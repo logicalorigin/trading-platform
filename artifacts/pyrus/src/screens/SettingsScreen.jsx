@@ -74,6 +74,10 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import {
+  ACCOUNT_POSITION_TYPE_SETTINGS_OPTIONS,
+  normalizeAccountPositionTypeFilter,
+} from "../features/account/accountPositionTypes";
+import {
   CSS_COLOR,
   cssColorAlpha,
   cssColorMix,
@@ -231,10 +235,7 @@ const FLOW_DENSITY_OPTIONS = ["compact", "comfortable"];
 const MARKET_GRID_LAYOUTS = ["1x1", "2x2", "2x3", "3x3"];
 const ACCOUNT_RANGE_OPTIONS = ACCOUNT_RANGES;
 const ACCOUNT_ASSET_FILTER_OPTIONS = [
-  { value: "all", label: "All positions" },
-  { value: "Stocks", label: "Stocks" },
-  { value: "ETF", label: "ETFs" },
-  { value: "Options", label: "Options" },
+  ...ACCOUNT_POSITION_TYPE_SETTINGS_OPTIONS,
 ];
 const ACCOUNT_ORDER_TAB_OPTIONS = [
   { value: "working", label: "Working orders" },
@@ -2540,9 +2541,9 @@ function WorkspaceDefaultsPanel() {
   const accountRange = ACCOUNT_RANGE_OPTIONS.includes(state.accountRange)
     ? state.accountRange
     : "ALL";
-  const accountAssetFilter = ACCOUNT_ASSET_FILTER_OPTIONS.some((option) => option.value === state.accountAssetFilter)
-    ? state.accountAssetFilter
-    : "all";
+  const accountAssetFilter = normalizeAccountPositionTypeFilter(
+    state.accountAssetFilter,
+  );
   const accountOrderTab = ACCOUNT_ORDER_TAB_OPTIONS.some((option) => option.value === state.accountOrderTab)
     ? state.accountOrderTab
     : "working";

@@ -997,6 +997,7 @@ export const TradeEquityPanel = ({
         chartFlowDiagnostics={chartEventConversion}
         latestQuotePrice={tickerInfo?.price}
         latestQuoteUpdatedAt={tickerInfo?.updatedAt}
+        latestQuoteSnapshot={tickerInfo}
         showLegend
         legend={{
           symbol: ticker,

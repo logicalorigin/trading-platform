@@ -6,6 +6,7 @@ export const PlatformRuntimeLayer = ({
   broadFlowWatchlistSymbols = watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
+  activeVisibleQuoteSymbols,
   sparklineSymbols,
   prioritySparklineSymbols = [],
   streamedQuoteSymbols,
@@ -16,6 +17,7 @@ export const PlatformRuntimeLayer = ({
   quoteStreamCoverageDiagnostics,
   marketStockAggregateStreamingEnabled,
   marketScreenActive,
+  realtimeQuoteCoverageRequired,
   lowPriorityHistoryEnabled,
   sparklineHistoryEnabled,
   sparklineConcurrency,
@@ -31,6 +33,7 @@ export const PlatformRuntimeLayer = ({
     watchlistSymbols={watchlistSymbols}
     activeWatchlistItems={activeWatchlistItems}
     quoteSymbols={quoteSymbols}
+    activeVisibleQuoteSymbols={activeVisibleQuoteSymbols}
     sparklineSymbols={sparklineSymbols}
     prioritySparklineSymbols={prioritySparklineSymbols}
     streamedQuoteSymbols={streamedQuoteSymbols}
@@ -41,6 +44,7 @@ export const PlatformRuntimeLayer = ({
     quoteStreamCoverageDiagnostics={quoteStreamCoverageDiagnostics}
     marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
     marketScreenActive={marketScreenActive}
+    realtimeQuoteCoverageRequired={realtimeQuoteCoverageRequired}
     lowPriorityHistoryEnabled={lowPriorityHistoryEnabled}
     sparklineHistoryRuntimeEnabled={sparklineHistoryEnabled}
     sparklineConcurrency={sparklineConcurrency}

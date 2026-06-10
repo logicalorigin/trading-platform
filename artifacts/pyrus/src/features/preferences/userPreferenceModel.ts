@@ -5,6 +5,8 @@ export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
 const RETIRED_WORKSPACE_STORAGE_KEY = ["ray", "algo:state:v1"].join("");
 const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
+const TIME_ZONE_VALIDATION_CACHE_LIMIT = 64;
+const DATE_TIME_FORMATTER_CACHE_LIMIT = 128;
 
 export type AccentPreset = "pyrus" | "coral" | "amber" | "green" | "aurora";
 
@@ -198,6 +200,44 @@ const stringValue = (
 };
 
 const SYMBOL_PATTERN = /^[A-Z0-9.\-:]{1,12}$/;
+const validTimeZoneCache = new Map<string, string | null>();
+const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>();
+let cachedBrowserTimeZone: string | null = null;
+
+const rememberBounded = <T>(target: Map<string, T>, key: string, value: T, limit: number) => {
+  if (!target.has(key) && target.size >= limit) {
+    const oldestKey = target.keys().next().value;
+    if (oldestKey) {
+      target.delete(oldestKey);
+    }
+  }
+  target.set(key, value);
+};
+
+const stableFormatterOptionsKey = (options: Intl.DateTimeFormatOptions): string =>
+  JSON.stringify(
+    Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+
+export const getCachedPreferenceDateTimeFormatter = (
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat => {
+  const key = stableFormatterOptionsKey(options);
+  const cached = dateTimeFormatterCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const formatter = new Intl.DateTimeFormat("en-US", options);
+  rememberBounded(
+    dateTimeFormatterCache,
+    key,
+    formatter,
+    DATE_TIME_FORMATTER_CACHE_LIMIT,
+  );
+  return formatter;
+};
 
 const symbolArrayValue = (value: unknown, max = 10): string[] => {
   if (!Array.isArray(value)) return [];
@@ -217,10 +257,26 @@ const symbolArrayValue = (value: unknown, max = 10): string[] => {
 
 const timeZoneValue = (value: unknown, fallback: string): string => {
   if (typeof value !== "string" || !value.trim()) return fallback;
+  const timeZone = value.trim();
+  if (validTimeZoneCache.has(timeZone)) {
+    return validTimeZoneCache.get(timeZone) ?? fallback;
+  }
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value.trim() }).format(new Date());
-    return value.trim();
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
+    rememberBounded(
+      validTimeZoneCache,
+      timeZone,
+      timeZone,
+      TIME_ZONE_VALIDATION_CACHE_LIMIT,
+    );
+    return timeZone;
   } catch {
+    rememberBounded(
+      validTimeZoneCache,
+      timeZone,
+      null,
+      TIME_ZONE_VALIDATION_CACHE_LIMIT,
+    );
     return fallback;
   }
 };
@@ -438,11 +494,16 @@ export const normalizePreferenceSnapshot = (
 };
 
 export const getBrowserTimeZone = (): string => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || APP_DEFAULT_TIME_ZONE;
-  } catch {
-    return APP_DEFAULT_TIME_ZONE;
+  if (cachedBrowserTimeZone) {
+    return cachedBrowserTimeZone;
   }
+  try {
+    cachedBrowserTimeZone =
+      Intl.DateTimeFormat().resolvedOptions().timeZone || APP_DEFAULT_TIME_ZONE;
+  } catch {
+    cachedBrowserTimeZone = APP_DEFAULT_TIME_ZONE;
+  }
+  return cachedBrowserTimeZone;
 };
 
 export const resolvePreferenceTimeZone = (
@@ -517,7 +578,7 @@ export const formatPreferenceDateTime = (
   if (options.weekdayStyle) {
     formatOptions.weekday = options.weekdayStyle;
   }
-  return new Intl.DateTimeFormat("en-US", formatOptions).format(date);
+  return getCachedPreferenceDateTimeFormatter(formatOptions).format(date);
 };
 
 export const formatPreferenceTimeZoneLabel = (

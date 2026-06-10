@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  SIGNAL_HERO_LOWER_ROW_HEIGHT,
   SIGNAL_HERO_SPARKLINE_HEIGHT,
+  SIGNAL_HERO_SPARKLINE_MAX_WIDTH,
+  SIGNAL_HERO_SPARKLINE_MIN_WIDTH,
   SIGNAL_HERO_SPARKLINE_WIDTH,
+  SIGNAL_HERO_TOP_ROW_HEIGHT,
+  SIGNAL_TABLE_ROW_HEIGHT,
+  SIGNAL_TRADE_BUTTON_SIZE,
   directionMeta,
   resolveSparklineData,
 } from "./OperationsSignalRow.jsx";
@@ -70,7 +76,21 @@ test("STA sparkline resolver rejects non-drawable fallback bars", () => {
   );
 });
 
-test("STA signal sparkline keeps compact visual budget", () => {
+test("STA signal sparkline uses a bounded dynamic visual budget", () => {
+  assert.equal(SIGNAL_HERO_SPARKLINE_MIN_WIDTH, 24);
   assert.equal(SIGNAL_HERO_SPARKLINE_WIDTH, 40);
+  assert.equal(SIGNAL_HERO_SPARKLINE_MAX_WIDTH, 52);
+  assert.ok(SIGNAL_HERO_SPARKLINE_MIN_WIDTH < SIGNAL_HERO_SPARKLINE_WIDTH);
+  assert.ok(SIGNAL_HERO_SPARKLINE_WIDTH < SIGNAL_HERO_SPARKLINE_MAX_WIDTH);
   assert.equal(SIGNAL_HERO_SPARKLINE_HEIGHT, 14);
+});
+
+test("STA signal hero rows fit inside the fixed table row", () => {
+  assert.equal(SIGNAL_HERO_TOP_ROW_HEIGHT, 14);
+  assert.equal(SIGNAL_HERO_LOWER_ROW_HEIGHT, 14);
+  assert.equal(SIGNAL_TRADE_BUTTON_SIZE, SIGNAL_HERO_TOP_ROW_HEIGHT);
+  assert.ok(
+    SIGNAL_HERO_TOP_ROW_HEIGHT + SIGNAL_HERO_LOWER_ROW_HEIGHT <=
+      SIGNAL_TABLE_ROW_HEIGHT,
+  );
 });

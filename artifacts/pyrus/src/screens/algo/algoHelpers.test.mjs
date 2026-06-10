@@ -273,3 +273,47 @@ test("STA source selection does not let cockpit wrapper generatedAt beat fuller 
   assert.equal(snapshot.signals.length, 2);
   assert.equal(snapshot.candidates.length, 1);
 });
+
+test("STA source selection preserves previous non-empty rows through empty refresh frames", () => {
+  const previousSnapshot = resolveStableStaActionSnapshot({
+    signalOptionsState: {
+      signals: [
+        {
+          symbol: "CRWV",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-09T19:05:00.000Z",
+        },
+      ],
+      candidates: [
+        {
+          id: "SIGOPT-paper-CRWV-buy-1781022300000",
+          symbol: "CRWV",
+          signalAt: "2026-06-09T19:05:00.000Z",
+        },
+      ],
+    },
+  });
+
+  const snapshot = resolveStableStaActionSnapshot({
+    previousSnapshot,
+    cockpit: {
+      generatedAt: "2026-06-09T19:10:00.000Z",
+      signals: [],
+      candidates: [],
+      activePositions: [],
+    },
+    signalOptionsState: {
+      updatedAt: "2026-06-09T19:10:00.000Z",
+      signals: [],
+      candidates: [],
+      activePositions: [],
+    },
+  });
+
+  assert.equal(snapshot.source, "state");
+  assert.equal(snapshot.cacheable, false);
+  assert.equal(snapshot.sourceHealth.degraded, true);
+  assert.equal(snapshot.signals.length, 1);
+  assert.equal(snapshot.candidates.length, 1);
+});

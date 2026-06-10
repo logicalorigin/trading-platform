@@ -55,6 +55,7 @@ import {
   useBrokerStreamFreshnessStatus,
   useIbkrAccountSnapshotStream,
   useIbkrOrderSnapshotStream,
+  useSignalMonitorMatrixStream,
 } from "./live-streams";
 import { MarketDataSubscriptionProvider } from "./MarketDataSubscriptionProvider.jsx";
 import { usePageVisible } from "./usePageVisible";
@@ -3414,6 +3415,20 @@ export default function PlatformApp() {
     () => signalsScreenMatrixSymbols.join(","),
     [signalsScreenMatrixSymbols],
   );
+  const handleSignalMatrixStreamStates = useCallback((incomingStates) => {
+    if (!Array.isArray(incomingStates) || incomingStates.length === 0) {
+      return;
+    }
+    setSignalMatrixSnapshot((current) => {
+      const nextStates = mergeSignalMatrixStates({
+        currentStates: current.states,
+        incomingStates,
+        knownSymbols: signalMatrixUniverseRef.current,
+      });
+      signalMatrixStatesRef.current = nextStates;
+      return { ...current, states: nextStates };
+    });
+  }, []);
   const signalsScreenMatrixPrioritySymbolsKey = useMemo(
     () => signalsScreenMatrixPrioritySymbols.join(","),
     [signalsScreenMatrixPrioritySymbols],
@@ -3825,6 +3840,19 @@ export default function PlatformApp() {
     () => signalMatrixUniverseSymbols.join(","),
     [signalMatrixUniverseSymbols],
   );
+  // Push-based signal matrix over SSE. Signal evaluation is a critical background
+  // process and must NOT pause on screen or tab visibility. EventSource delivery
+  // is not throttled while the tab is hidden (unlike the REST poll's setInterval),
+  // so the matrix stays live regardless of which screen is open or whether the tab
+  // is focused. Scoped to the always-on monitored universe (watchlist + monitored +
+  // open positions) — NOT the signals screen. Runs alongside the poll; merge is idempotent.
+  useSignalMonitorMatrixStream({
+    environment: signalMonitorEnvironment,
+    symbols: signalMatrixUniverseSymbols,
+    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    enabled: signalMatrixUniverseSymbols.length > 0,
+    onStates: handleSignalMatrixStreamStates,
+  });
   const signalMatrixPrioritySymbolsKey = useMemo(
     () => signalMatrixPrioritySymbols.join(","),
     [signalMatrixPrioritySymbols],

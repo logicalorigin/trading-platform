@@ -484,6 +484,13 @@ export const resolveStableStaActionSnapshot = ({
           !failedSources.includes(snapshot.source) && snapshot.transient,
       ),
   );
+  const emptyCurrentRefresh = Boolean(
+    hasPrevious &&
+      !currentSnapshot &&
+      [cockpitSnapshot, stateSnapshot].some(
+        (snapshot) => !failedSources.includes(snapshot.source),
+      ),
+  );
   const transientRegressiveRefresh = Boolean(
     hasPrevious &&
       currentSnapshot?.transient &&
@@ -494,6 +501,7 @@ export const resolveStableStaActionSnapshot = ({
   );
   const actionSourceDegraded = Boolean(
     failedCurrentSourceRefresh ||
+      emptyCurrentRefresh ||
       transientEmptyRefresh ||
       transientRegressiveRefresh,
   );

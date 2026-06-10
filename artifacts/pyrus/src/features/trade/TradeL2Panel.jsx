@@ -99,6 +99,7 @@ export const TradeL2Panel = ({
     slot.cp === "C" ? row?.cContract : row?.pContract;
   const brokerRuntimeEnabled = Boolean(
     isVisible &&
+      brokerConfigured &&
       brokerAuthenticated &&
       accountId &&
       selectedContractMeta?.providerContractId &&

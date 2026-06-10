@@ -73,3 +73,57 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     "Expected memory diagnostics cleanup to run once",
   );
 });
+
+test("live stock price streams are not gated behind startup hydration", () => {
+  const platformSource = readLocalSource("./PlatformApp.jsx");
+
+  assert.ok(
+    platformSource.includes(
+      [
+        "quoteStreamRuntimeEnabled={",
+        "          !safeQaMode &&",
+        "          workSchedule.streams.watchlistQuoteStream",
+        "        }",
+      ].join("\n"),
+    ),
+    "Expected watchlist quote streams to start from the realtime schedule without preload or signal hydration gates",
+  );
+  assert.ok(
+    platformSource.includes(
+      [
+        "marketStockAggregateStreamingEnabled={",
+        "          !safeQaMode &&",
+        "          workSchedule.streams.marketStockAggregates",
+        "        }",
+      ].join("\n"),
+    ),
+    "Expected stock aggregate streams to start from the realtime schedule without preload or signal hydration gates",
+  );
+  assert.ok(
+    platformSource.includes("...recentSignalMarketDataSymbols,") &&
+      platformSource.includes("...headerSignalContextSymbols,") &&
+      !platformSource.includes("[...watchlistMarketDataSymbols, ...signalMonitorSymbols]"),
+    "Expected watchlist quote stream rotation to include only bounded signal context symbols",
+  );
+  assert.equal(
+    platformSource.includes("[...watchlistSymbols, ...signalMonitorDisplaySymbols]"),
+    false,
+    "Expected watchlist quote stream rotation not to subscribe to the full signal-monitor universe",
+  );
+  assert.ok(
+    platformSource.includes("massiveStockRealtimeConfigured,") &&
+      platformSource.includes("!brokerConfigured && !massiveStockRealtimeConfigured") &&
+      platformSource.includes("!brokerAuthenticated && !massiveStockRealtimeConfigured"),
+    "Expected Massive realtime configuration to admit quote streams without IBKR authentication",
+  );
+  assert.equal(
+    platformSource.includes("brokerAccountsReadyForBoot || bootProgress.complete"),
+    false,
+    "Expected account listing not to start after boot when IBKR is unconfigured",
+  );
+  assert.ok(
+    platformSource.includes("activeVisibleQuoteSymbols={safeQaMode ? [] : activeVisibleQuoteSymbols}") &&
+      platformSource.includes("realtimeQuoteCoverageRequired={"),
+    "Expected active visible quote symbols to require realtime coverage instead of REST-primary fallback",
+  );
+});

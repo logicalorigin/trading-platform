@@ -459,6 +459,53 @@ const limitAlgoOptionQuoteGroups = (
   });
 };
 
+export const buildAlgoOptionQuoteStreamSubscription = (groups = []) => {
+  const providerContractIds = [];
+  const seenProviderContractIds = new Set();
+  const underlyings = new Set();
+  let requiresGreeks = false;
+
+  groups.forEach((group) => {
+    const groupProviderContractIds = Array.isArray(group?.providerContractIds)
+      ? group.providerContractIds
+      : [];
+    const normalizedUnderlying = String(group?.underlying || "")
+      .trim()
+      .toUpperCase();
+    if (!normalizedUnderlying) {
+      return;
+    }
+    groupProviderContractIds.forEach((providerContractId) => {
+      const normalizedProviderContractId = String(providerContractId || "").trim();
+      if (!normalizedProviderContractId || seenProviderContractIds.has(normalizedProviderContractId)) {
+        return;
+      }
+      seenProviderContractIds.add(normalizedProviderContractId);
+      providerContractIds.push(normalizedProviderContractId);
+      if (normalizedUnderlying) {
+        underlyings.add(normalizedUnderlying);
+      }
+    });
+    if (group?.requiresGreeks !== false) {
+      requiresGreeks = true;
+    }
+  });
+
+  if (!providerContractIds.length) {
+    return null;
+  }
+
+  const underlyingList = Array.from(underlyings).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  return {
+    underlying: underlyingList.length === 1 ? underlyingList[0] : null,
+    providerContractIds,
+    owner: `algo-option-quotes:${providerContractIds.length}-contracts`,
+    requiresGreeks,
+  };
+};
+
 const AlgoOptionQuoteStreamGroup = ({
   underlying,
   providerContractIds,
@@ -468,7 +515,7 @@ const AlgoOptionQuoteStreamGroup = ({
   useIbkrOptionQuoteStream({
     underlying,
     providerContractIds,
-    enabled: Boolean(underlying && providerContractIds.length),
+    enabled: Boolean(providerContractIds.length),
     owner: owner || `algo-operations:${underlying}`,
     intent: "automation-live",
     requiresGreeks,
@@ -565,6 +612,7 @@ export const AlgoLivePage = ({
   transitions,
   // Signals
   visibleSignalRows,
+  signalMonitorEventsSourceStatus = "database",
   signalOptionsCandidates,
   signalOptionsSourceHealth,
   signalMatrixStates = [],
@@ -684,6 +732,10 @@ export const AlgoLivePage = ({
     signalOptionsPositions,
     visibleSignalRows,
   ]);
+  const optionQuoteStreamSubscription = useMemo(
+    () => buildAlgoOptionQuoteStreamSubscription(optionQuoteGroups),
+    [optionQuoteGroups],
+  );
 
   useEffect(() => {
     if (!settingsDrawerOpen) return;
@@ -921,15 +973,15 @@ export const AlgoLivePage = ({
         minWidth: 0,
       }}
     >
-      {optionQuoteGroups.map((group) => (
+      {optionQuoteStreamSubscription ? (
         <AlgoOptionQuoteStreamGroup
-          key={`${group.source}:${group.underlying}`}
-          underlying={group.underlying}
-          providerContractIds={group.providerContractIds}
-          owner={group.owner}
-          requiresGreeks={group.requiresGreeks}
+          key={optionQuoteStreamSubscription.owner}
+          underlying={optionQuoteStreamSubscription.underlying}
+          providerContractIds={optionQuoteStreamSubscription.providerContractIds}
+          owner={optionQuoteStreamSubscription.owner}
+          requiresGreeks={optionQuoteStreamSubscription.requiresGreeks}
         />
-      ))}
+      ) : null}
 
       <div
         data-testid="algo-live-grid"
@@ -1290,6 +1342,7 @@ export const AlgoLivePage = ({
           <OperationsSignalTable
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
+            signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}

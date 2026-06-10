@@ -1,5 +1,6 @@
 import {
   useEffect,
+  memo,
   useMemo,
   useState,
 } from "react";
@@ -21,10 +22,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery } from "@tanstack/react-query";
-import {
-  getBars as getBarsRequest,
-  useGetQuoteSnapshots,
-} from "@workspace/api-client-react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -67,10 +64,9 @@ import {
   HEAVY_PAYLOAD_GC_MS,
   buildBarsRequestOptions,
 } from "../../features/platform/queryDefaults";
-import { applyRuntimeQuoteSnapshots } from "../../features/platform/runtimeMarketDataModel";
 import {
   publishRuntimeTickerSnapshot,
-  useRuntimeTickerSnapshots,
+  useRuntimeTickerSnapshot,
 } from "../../features/platform/runtimeTickerStore";
 import { useMemoryPressureSnapshot } from "../../features/platform/memoryPressureStore";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
@@ -117,14 +113,9 @@ const FILTER_OPTIONS = [
 const SIGNALS_PAGE_SIZE = 20;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
-const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
 const SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS = 30_000;
-const SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
-  BARS_REQUEST_PRIORITY.active,
-  "algo-signal-table",
-);
 const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
-  BARS_REQUEST_PRIORITY.favoritePrewarm,
+  BARS_REQUEST_PRIORITY.visible,
   "algo-signal-sparkline",
 );
 const SIGNAL_COLUMN_VISIBILITY_VERSION = 8;
@@ -287,31 +278,6 @@ const defaultSortDirection = (sortKey) => DEFAULT_SORT_DIRECTIONS[sortKey] || "d
 
 const toggleSortDirection = (direction) => (direction === "asc" ? "desc" : "asc");
 
-const settleWithConcurrency = async (items, concurrency, mapper) => {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(concurrency, items.length));
-
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        try {
-          results[index] = {
-            status: "fulfilled",
-            value: await mapper(items[index], index),
-          };
-        } catch (reason) {
-          results[index] = { status: "rejected", reason };
-        }
-      }
-    }),
-  );
-
-  return results;
-};
-
 const barCloseValue = (bar) => {
   const close = Number(bar?.close ?? bar?.c);
   return Number.isFinite(close) ? close : null;
@@ -337,9 +303,53 @@ export const hasUsableSparklineData = (value) =>
   extractSparklinePoints(value?.spark).length >= 2 ||
   extractSparklinePoints(value?.bars).length >= 2;
 
-const hasUsableQuoteSnapshot = (value) => {
-  const price = Number(value?.price ?? value?.last ?? value?.mark);
-  return Number.isFinite(price);
+export const buildStaSignalSparklineBatchRequest = (symbols) => ({
+  requests: (Array.isArray(symbols) ? symbols : [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean)
+    .map((symbol) => ({
+      key: symbol,
+      symbol,
+      timeframe: SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+      limit: SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT,
+      outsideRth: true,
+      assetClass: "equity",
+      source: "trades",
+      brokerRecentWindowMinutes: 0,
+      responseShape: "sparkline",
+      sparklinePointLimit: SPARKLINE_RENDER_POINT_LIMIT,
+    })),
+});
+
+const fetchStaSignalSparklineBarsBatch = async (symbols, signal) => {
+  const request = buildStaSignalSparklineBatchRequest(symbols);
+  if (!request.requests.length) return {};
+
+  const headers = new Headers(SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS?.headers);
+  headers.set("content-type", "application/json");
+  const response = await fetch("/api/bars/batch", {
+    ...SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
+    method: "POST",
+    signal,
+    headers,
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new Error(`STA row sparkline bars batch failed with ${response.status}`);
+  }
+  const payload = await response.json();
+  const next = Object.fromEntries(
+    request.requests.map((item) => [item.key, []]),
+  );
+  (Array.isArray(payload?.items) ? payload.items : []).forEach((item) => {
+    const key = String(item?.key || item?.symbol || "").trim().toUpperCase();
+    if (!key) return;
+    next[key] =
+      item?.status === "fulfilled"
+        ? thinBarsForSignalSparkline(item?.bars || [])
+        : [];
+  });
+  return next;
 };
 
 const firstPresent = (...values) => {
@@ -405,6 +415,46 @@ export const resolveRowTickerSnapshot = (
       null,
   };
 };
+
+const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
+  signal,
+  candidate,
+  auditProgression,
+  scoreBreakdown,
+  tfMatrix,
+  timeframes,
+  rowSparklineSnapshotsBySymbol = {},
+  alt,
+  columns,
+  compact,
+  scanActive,
+  onRowAction,
+}) {
+  const symbolKey = String(asRecord(signal).symbol || "").toUpperCase();
+  const runtimeTickerSnapshot = useRuntimeTickerSnapshot(symbolKey);
+  const tickerSnapshot = resolveRowTickerSnapshot(
+    runtimeTickerSnapshot,
+    null,
+    rowSparklineSnapshotsBySymbol?.[symbolKey] || null,
+  );
+
+  return (
+    <OperationsSignalRow
+      signal={signal}
+      candidate={candidate}
+      auditProgression={auditProgression}
+      scoreBreakdown={scoreBreakdown}
+      tfMatrix={tfMatrix}
+      timeframes={timeframes}
+      tickerSnapshot={tickerSnapshot}
+      alt={alt}
+      columns={columns}
+      compact={compact}
+      scanActive={scanActive}
+      onRowAction={onRowAction}
+    />
+  );
+});
 
 const timestampMs = (value) => {
   const parsed = Date.parse(value || "");
@@ -642,6 +692,43 @@ export const classifySignal = (signal, candidate) => {
 export const isHistoricalSignalRow = (row) =>
   String(asRecord(asRecord(row).signal).sourceType || "") === "signal_monitor_event";
 
+const isReceivedSignalRow = (row) => {
+  const signal = asRecord(asRecord(row).signal);
+  return Boolean(signal.eventId || signal.sourceType === "signal_monitor_event");
+};
+
+export const buildStaSignalStatusSummary = ({
+  activeFilterLabel = "All",
+  visibleCount = 0,
+  totalCount = 0,
+  receivedCount = 0,
+  actionCount = 0,
+  historyCount = 0,
+  freshnessLine = "",
+  receivedHistorySourceStatus = "database",
+} = {}) => {
+  const fallback = receivedHistorySourceStatus === "runtime-fallback";
+  const countLine = `${activeFilterLabel} ${visibleCount}/${totalCount} rows · Received ${receivedCount} · Actions ${actionCount} · History ${historyCount}`;
+  return {
+    statusLine: [
+      countLine,
+      freshnessLine,
+      fallback ? "Received history runtime fallback" : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    mobileStatusLine: [
+      `${activeFilterLabel} ${visibleCount}/${totalCount}`,
+      `Rec ${receivedCount}`,
+      `Act ${actionCount}`,
+      `Hist ${historyCount}`,
+      fallback ? "Fallback" : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  };
+};
+
 export const signalTableFilterMatches = (row, filter) => {
   if (filter === "all") return true;
   if (filter === "current") return !isHistoricalSignalRow(row);
@@ -791,6 +878,7 @@ export const splitStaRowsBySignalMatrixHydration = ({
 } = {}) => {
   const hydratedRows = [];
   const pendingRows = [];
+  const rowsWithHydration = [];
   (Array.isArray(rows) ? rows : []).forEach((row) => {
     const matrixHydration = resolveStaSignalMatrixHydration({
       row,
@@ -801,6 +889,7 @@ export const splitStaRowsBySignalMatrixHydration = ({
       ...row,
       matrixHydration,
     };
+    rowsWithHydration.push(rowWithHydration);
     if (matrixHydration.hydrated) {
       hydratedRows.push(rowWithHydration);
     } else {
@@ -808,6 +897,7 @@ export const splitStaRowsBySignalMatrixHydration = ({
     }
   });
   return {
+    rows: rowsWithHydration,
     hydratedRows,
     pendingRows,
   };
@@ -1220,6 +1310,7 @@ const OperationsSignalColumnDrawer = ({
 export const OperationsSignalTable = ({
   signals = [],
   candidates = [],
+  signalMonitorEventsSourceStatus = "database",
   signalOptionsSourceHealth = null,
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
@@ -1325,19 +1416,8 @@ export const OperationsSignalTable = ({
     events,
     signals,
   ]);
-  const signalMatrixHydrationSplit = useMemo(
-    () =>
-      splitStaRowsBySignalMatrixHydration({
-        rows: sourceRows,
-        signalMatrixBySymbol,
-        timeframes: displaySignalTimeframes,
-      }),
-    [displaySignalTimeframes, signalMatrixBySymbol, sourceRows],
-  );
-  const matrixPendingRows = signalMatrixHydrationSplit.pendingRows;
-  const matrixHydratedRows = signalMatrixHydrationSplit.hydratedRows;
-  const rows = useMemo(() => {
-    const filteredByStatus = matrixHydratedRows.filter((row) =>
+  const staFilteredRows = useMemo(() => {
+    const filteredByStatus = sourceRows.filter((row) =>
       signalTableFilterMatches(row, filter),
     );
     const normalizedQuery = normalizeSearchText(searchQuery);
@@ -1347,11 +1427,22 @@ export const OperationsSignalTable = ({
     return sortRows(filtered, sortKey, null, sortDirection);
   }, [
     filter,
-    matrixHydratedRows,
     searchQuery,
+    sourceRows,
     sortDirection,
     sortKey,
   ]);
+  const signalMatrixHydrationSplit = useMemo(
+    () =>
+      splitStaRowsBySignalMatrixHydration({
+        rows: staFilteredRows,
+        signalMatrixBySymbol,
+        timeframes: displaySignalTimeframes,
+      }),
+    [displaySignalTimeframes, signalMatrixBySymbol, staFilteredRows],
+  );
+  const matrixPendingRows = signalMatrixHydrationSplit.pendingRows;
+  const rows = signalMatrixHydrationSplit.rows;
   const paginatedRows = useMemo(
     () => paginateRows(rows, page, SIGNALS_PAGE_SIZE),
     [page, rows],
@@ -1360,11 +1451,11 @@ export const OperationsSignalTable = ({
   const signalMatrixHydrationRequest = useMemo(
     () =>
       buildAlgoSignalMatrixHydrationRequest({
-        rows: sourceRows,
+        rows: staFilteredRows,
         currentStates: signalMatrixStates,
         timeframes: displaySignalTimeframes,
       }),
-    [displaySignalTimeframes, signalMatrixStates, sourceRows],
+    [displaySignalTimeframes, signalMatrixStates, staFilteredRows],
   );
   useEffect(() => {
     if (!signalMatrixHydrationRequest) return;
@@ -1372,17 +1463,15 @@ export const OperationsSignalTable = ({
   }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
   const rowSymbols = useMemo(
     () =>
-      rows
+      pageRows
         .map(({ signal }) => String(asRecord(signal).symbol || "").toUpperCase())
         .filter(Boolean),
-    [rows],
+    [pageRows],
   );
-  const rowSymbolsKey = useMemo(() => rowSymbols.join(","), [rowSymbols]);
-  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
   const rowSignalBySymbol = useMemo(
     () =>
       Object.fromEntries(
-        rows
+        pageRows
           .map(({ signal }) => {
             const signalRecord = asRecord(signal);
             const symbol = String(signalRecord.symbol || "").toUpperCase();
@@ -1390,24 +1479,14 @@ export const OperationsSignalTable = ({
           })
           .filter(Boolean),
       ),
-    [rows],
+    [pageRows],
   );
-  const rowQuoteSymbols = useMemo(
-    () =>
-      rowSymbols.filter(
-        (symbol) => !hasUsableQuoteSnapshot(tickerSnapshotsBySymbol?.[symbol]),
-      ),
-    [rowSymbols, tickerSnapshotsBySymbol],
-  );
-  const rowQuoteSymbolsKey = useMemo(() => rowQuoteSymbols.join(","), [rowQuoteSymbols]);
   const rowSparklineSymbols = useMemo(
     () =>
       rowSymbols.filter(
-        (symbol) =>
-          !hasUsableSparklineData(tickerSnapshotsBySymbol?.[symbol]) &&
-          !hasUsableSparklineData(rowSignalBySymbol?.[symbol]),
+        (symbol) => !hasUsableSparklineData(rowSignalBySymbol?.[symbol]),
       ),
-    [rowSignalBySymbol, rowSymbols, tickerSnapshotsBySymbol],
+    [rowSignalBySymbol, rowSymbols],
   );
   const rowSparklineSymbolsKey = useMemo(
     () => rowSparklineSymbols.join(","),
@@ -1423,68 +1502,16 @@ export const OperationsSignalTable = ({
     memoryPressureSnapshot,
   );
   const rowSparklineHydrationEnabled = Boolean(
-    signalRowHydrationQueriesEnabled &&
-      rowSparklineSymbolsKey &&
-      !rowSparklinePressurePaused,
-  );
-  const rowQuotesQuery = useGetQuoteSnapshots(
-    { symbols: rowQuoteSymbolsKey },
-    {
-      query: {
-        enabled: Boolean(signalRowHydrationQueriesEnabled && rowQuoteSymbolsKey),
-        staleTime: 30_000,
-        retry: false,
-      },
-      request: SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS,
-    },
-  );
-  const rowQuoteSnapshotsBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        (rowQuotesQuery.data?.quotes || [])
-          .map((quote) => {
-            const symbol = String(quote?.symbol || "").toUpperCase();
-            return symbol && hasUsableQuoteSnapshot(quote) ? [symbol, quote] : null;
-          })
-          .filter(Boolean),
-      ),
-    [rowQuotesQuery.data],
+    signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey,
   );
   const rowSparklineQuery = useQuery({
     queryKey: ["algo-signal-row-sparklines", rowSparklineSymbolsKey],
-    queryFn: async () => {
-      const symbols = rowSparklineSymbols;
-      const results = await settleWithConcurrency(
-        symbols,
-        SIGNAL_TABLE_SPARKLINE_CONCURRENCY,
-        (symbol) =>
-          getBarsRequest(
-            {
-              symbol,
-              timeframe: SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
-              limit: SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT,
-              outsideRth: true,
-              assetClass: "equity",
-              source: "trades",
-              brokerRecentWindowMinutes: 0,
-            },
-            SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
-          ),
-      );
-
-      return Object.fromEntries(
-        results.map((result, index) => [
-          symbols[index],
-          result.status === "fulfilled"
-            ? thinBarsForSignalSparkline(result.value?.bars || [])
-            : [],
-        ]),
-      );
-    },
+    queryFn: ({ signal }) =>
+      fetchStaSignalSparklineBarsBatch(rowSparklineSymbols, signal),
     ...BARS_QUERY_DEFAULTS,
     enabled: rowSparklineHydrationEnabled,
     staleTime: 15_000,
-    refetchInterval: rowSparklineHydrationEnabled
+    refetchInterval: rowSparklineHydrationEnabled && !rowSparklinePressurePaused
       ? SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS
       : false,
     refetchOnMount: true,
@@ -1505,9 +1532,6 @@ export const OperationsSignalTable = ({
       ),
     [rowSparklineQuery.data],
   );
-  useEffect(() => {
-    applyRuntimeQuoteSnapshots(rowQuotesQuery.data?.quotes || []);
-  }, [rowQuotesQuery.dataUpdatedAt, rowQuotesQuery.data]);
   useEffect(() => {
     Object.entries(rowSparklineQuery.data || {}).forEach(([symbol, sparkBars]) => {
       if (!Array.isArray(sparkBars) || sparkBars.length < 2) return;
@@ -1535,16 +1559,27 @@ export const OperationsSignalTable = ({
 
   const counts = useMemo(() => {
     return {
-      all: matrixHydratedRows.length,
-      current: matrixHydratedRows.filter((row) => !isHistoricalSignalRow(row)).length,
-      history: matrixHydratedRows.filter((row) => isHistoricalSignalRow(row)).length,
-      ready: matrixHydratedRows.filter((row) => row.classification === "ready").length,
-      blocked: matrixHydratedRows.filter((row) => row.classification === "blocked").length,
-      unavailable: matrixHydratedRows.filter(
+      all: staFilteredRows.length,
+      current: staFilteredRows.filter((row) => !isHistoricalSignalRow(row)).length,
+      history: staFilteredRows.filter((row) => isHistoricalSignalRow(row)).length,
+      ready: staFilteredRows.filter((row) => row.classification === "ready").length,
+      blocked: staFilteredRows.filter((row) => row.classification === "blocked").length,
+      unavailable: staFilteredRows.filter(
         (row) => row.classification === "unavailable",
       ).length,
     };
-  }, [matrixHydratedRows]);
+  }, [staFilteredRows]);
+  const receivedSignalCount = useMemo(
+    () => staFilteredRows.filter(isReceivedSignalRow).length,
+    [staFilteredRows],
+  );
+  const actionMappedCount = useMemo(
+    () =>
+      (candidates || []).filter(
+        (candidate) => Object.keys(asRecord(candidate).action).length > 0,
+      ).length,
+    [candidates],
+  );
 
   const freshness = useMemo(() => {
     const latestSignalMs = (signals || []).reduce(
@@ -1676,6 +1711,11 @@ export const OperationsSignalTable = ({
           .filter(Boolean)
           .join(" ")
       : null;
+  const receivedHistorySourceFallback =
+    signalMonitorEventsSourceStatus === "runtime-fallback";
+  const receivedHistorySourceBanner = receivedHistorySourceFallback
+    ? "STA received history is using runtime fallback because the event database is unavailable."
+    : null;
   const matrixHydrationBanner = matrixPendingRows.length
     ? [
         `${matrixPendingRows.length} STA signal ${
@@ -1688,9 +1728,16 @@ export const OperationsSignalTable = ({
   const compactTools = algoIsPhone || algoIsNarrow;
   const signalTableCompact = false;
   const freshnessLine = freshnessItems.filter(Boolean).join(" · ");
-  const sourceSignalCount = sourceRows.length;
-  const statusLine = `${activeFilter.label} ${rows.length} of ${sourceSignalCount} signals · ${freshnessLine}`;
-  const mobileStatusLine = `${activeFilter.label} ${rows.length}/${sourceSignalCount} · ${freshnessLine}`;
+  const { statusLine, mobileStatusLine } = buildStaSignalStatusSummary({
+    activeFilterLabel: activeFilter.label,
+    visibleCount: rows.length,
+    totalCount: staFilteredRows.length,
+    receivedCount: receivedSignalCount,
+    actionCount: actionMappedCount,
+    historyCount: counts.history,
+    freshnessLine,
+    receivedHistorySourceStatus: signalMonitorEventsSourceStatus,
+  });
   const signalScanWave = resolveSignalScanWave(freshness);
   const sortSummary = `Sorted by ${SORT_LABELS[sortKey] || "Newest"} ${
     SORT_DIRECTION_LABELS[sortDirection] || "descending"
@@ -2004,7 +2051,10 @@ export const OperationsSignalTable = ({
             </span>
           ) : null}
         </div>
-        {staleScanBanner || sourceHealthBanner || matrixHydrationBanner ? (
+        {staleScanBanner ||
+        sourceHealthBanner ||
+        receivedHistorySourceBanner ||
+        matrixHydrationBanner ? (
           <div
             role="status"
             style={{
@@ -2036,7 +2086,12 @@ export const OperationsSignalTable = ({
                 whiteSpace: algoIsPhone ? "normal" : "nowrap",
               }}
             >
-              {[staleScanBanner, sourceHealthBanner, matrixHydrationBanner]
+              {[
+                staleScanBanner,
+                sourceHealthBanner,
+                receivedHistorySourceBanner,
+                matrixHydrationBanner,
+              ]
                 .filter(Boolean)
                 .join(" ")}
             </span>
@@ -2121,9 +2176,8 @@ export const OperationsSignalTable = ({
             ) : (
               pageRows.map(({ signal, candidate, scoreBreakdown, auditProgression }, rowIndex) => {
                 const symbol = asRecord(signal).symbol;
-                const symbolKey = String(symbol || "").toUpperCase();
                 return (
-                  <OperationsSignalRow
+                  <OperationsSignalRuntimeRow
                     key={
                       asRecord(signal).signalKey ||
                       asRecord(candidate).id ||
@@ -2136,13 +2190,7 @@ export const OperationsSignalTable = ({
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={displaySignalTimeframes}
-                    tickerSnapshot={
-                      resolveRowTickerSnapshot(
-                        tickerSnapshotsBySymbol?.[symbolKey] || null,
-                        rowQuoteSnapshotsBySymbol?.[symbolKey] || null,
-                        rowSparklineSnapshotsBySymbol?.[symbolKey] || null,
-                      )
-                    }
+                    rowSparklineSnapshotsBySymbol={rowSparklineSnapshotsBySymbol}
                     alt={rowIndex % 2 === 1}
                     columns={visibleColumns}
                     compact={signalTableCompact}

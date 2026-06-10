@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildPositionOptionQuoteGroups,
+  buildPositionOptionQuoteStreamSubscription,
   optionProviderContractIds,
   rowOptionProviderContractIds,
 } from "./PositionOptionQuoteStreams.jsx";
@@ -46,4 +47,28 @@ test("account option quote streams subscribe to structured ids and keep numeric 
       providerContractIds: subscriptionProviderContractIds,
     },
   ]);
+});
+
+test("account option quote stream groups aggregate into one subscription", () => {
+  const subscription = buildPositionOptionQuoteStreamSubscription(
+    [
+      {
+        underlying: "NVDA",
+        providerContractIds: ["twsopt:nvda", "12345"],
+      },
+      {
+        underlying: "TSLA",
+        providerContractIds: ["twsopt:tsla", "12345"],
+      },
+    ],
+    "algo-position-option-quotes",
+  );
+
+  assert.deepEqual(subscription.providerContractIds, [
+    "twsopt:nvda",
+    "12345",
+    "twsopt:tsla",
+  ]);
+  assert.equal(subscription.underlying, null);
+  assert.equal(subscription.owner, "algo-position-option-quotes:3-contracts");
 });

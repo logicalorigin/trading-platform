@@ -239,7 +239,7 @@ export const FlowScannerStatusPanel = ({
     runtimeDiagnosticsEnabled: false,
     lineUsageEnabled: enabled,
     lineUsageStreamEnabled: false,
-    lineUsagePollInterval: 5_000,
+    lineUsagePollInterval: 10_000,
   });
   const lineUsage = runtimeControl.lineUsage;
   const scannerUsed = lineUsage.flowScanner?.used;

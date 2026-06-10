@@ -36,6 +36,25 @@ test("high pressure removes passive visual work from the runtime schedule", () =
   assert.equal(schedule.leases.passiveVisuals, false);
 });
 
+test("massive stock realtime can drive market quotes and charting without broker auth", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: false,
+    brokerAuthenticated: false,
+    massiveStockRealtimeConfigured: true,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    memoryPressure: { level: "normal", observedAt: "2026-06-09T17:14:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.marketStockAggregates, true);
+  assert.equal(schedule.leases.activeCharting, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
+  assert.equal(schedule.streams.positionQuoteStream, false);
+  assert.equal(schedule.streams.accountRealtime, false);
+});
+
 test("watch pressure degrades hydration without blocking near-priority work", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,

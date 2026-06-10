@@ -50,6 +50,8 @@ import type {
   SignalOptionsPerformanceResponse,
 } from "@workspace/api-client-react";
 
+import { freshnessUnchanged, isStreamFresh } from "./streamFreshness";
+
 type StreamMode = "paper" | "live";
 
 type AccountTradeFilters = {
@@ -324,6 +326,7 @@ const optionQuoteStoreListenersByProviderContractId = new Map<
 const optionQuoteStoreVersions = new Map<string, number>();
 const pendingOptionQuoteNotifications = new Set<string>();
 let optionQuoteNotifyScheduled = false;
+let optionQuoteLastFlushAtMs = 0;
 // Hard limit on the in-memory option-quote snapshot cache. An option chain for a
 // single underlying can have ~100 contracts; a limit of 1024 fits ~10 underlyings'
 // worth of chains while protecting against unbounded growth as users browse.
@@ -331,6 +334,8 @@ const MAX_OPTION_QUOTE_SNAPSHOTS = 1_024;
 const OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE = 100;
 const OPTION_QUOTE_WEBSOCKET_ENABLED = true;
 export const OPTION_QUOTE_WEBSOCKET_STALL_MS = 45_000;
+const OPTION_QUOTE_WEBSOCKET_RECONNECT_MS = 1_000;
+const OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED = true;
 const ACCOUNT_STREAM_FRESH_MS = 7_000;
 const SHADOW_ACCOUNT_STREAM_FRESH_MS = 7_000;
 const ACCOUNT_PAGE_STREAM_FRESH_MS = 3_000;
@@ -338,6 +343,517 @@ const ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS = 35_000;
 const ALGO_COCKPIT_STREAM_FRESH_MS = 7_000;
 const ORDER_INVALIDATION_THROTTLE_MS = 2_000;
 const ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS = 10_000;
+
+type SharedOptionQuoteStreamSubscriber = {
+  id: number;
+  underlying: string | null;
+  providerContractIds: string[];
+  owner: string | null;
+  intent: OptionQuoteStreamIntent;
+  requiresGreeks: boolean;
+  onQuotes: (quotes: LiveOptionQuoteSnapshot[]) => void;
+};
+
+type SharedOptionQuoteStreamDemand = {
+  underlying: string | null;
+  providerContractIds: string[];
+  owner: string;
+  intent: OptionQuoteStreamIntent;
+  requiresGreeks: boolean;
+};
+
+const OPTION_QUOTE_INTENT_PRIORITY: Record<OptionQuoteStreamIntent, number> = {
+  historical: 0,
+  "delayed-ok": 1,
+  "visible-live": 2,
+  "account-monitor-live": 3,
+  "automation-live": 4,
+  "flow-scanner-live": 5,
+  "execution-live": 6,
+};
+
+let sharedOptionQuoteSubscriberId = 1;
+const sharedOptionQuoteSubscribers = new Map<
+  number,
+  SharedOptionQuoteStreamSubscriber
+>();
+let sharedOptionQuoteSocket: WebSocket | null = null;
+let sharedOptionQuoteSocketGeneration = 0;
+let sharedOptionQuoteReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedOptionQuoteRestFallbackTimer: ReturnType<typeof setInterval> | null = null;
+let sharedOptionQuoteStallTimer: ReturnType<typeof setInterval> | null = null;
+let sharedOptionQuoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedOptionQuoteFlushScheduled = false;
+let sharedOptionQuoteRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedOptionQuoteActiveSignature = "";
+let sharedOptionQuoteFallbackCursor = 0;
+let sharedOptionQuoteFirstQuoteStartedAt = Date.now();
+let sharedOptionQuoteFirstQuoteRecorded = false;
+let sharedOptionQuoteLastWebSocketMessageAt = Date.now();
+const sharedQueuedOptionQuotesByProviderContractId = new Map<
+  string,
+  LiveOptionQuoteSnapshot
+>();
+
+const normalizeSharedProviderContractIds = (
+  providerContractIds: string[] = [],
+): string[] => {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  providerContractIds.forEach((providerContractId) => {
+    const text = String(providerContractId || "").trim();
+    if (!text || seen.has(text)) {
+      return;
+    }
+    seen.add(text);
+    normalized.push(text);
+  });
+  return normalized;
+};
+
+export const resolveSharedOptionQuoteStreamDemand = (
+  subscribers: Iterable<
+    Pick<
+      SharedOptionQuoteStreamSubscriber,
+      "underlying" | "providerContractIds" | "intent" | "requiresGreeks"
+    >
+  >,
+): SharedOptionQuoteStreamDemand | null => {
+  const providerContractIds: string[] = [];
+  const seenProviderContractIds = new Set<string>();
+  const underlyings = new Set<string>();
+  let intent: OptionQuoteStreamIntent = "visible-live";
+  let requiresGreeks = false;
+
+  Array.from(subscribers).forEach((subscriber) => {
+    const normalizedUnderlying = String(subscriber.underlying || "")
+      .trim()
+      .toUpperCase();
+    if (normalizedUnderlying) {
+      underlyings.add(normalizedUnderlying);
+    }
+    normalizeSharedProviderContractIds(subscriber.providerContractIds).forEach(
+      (providerContractId) => {
+        if (seenProviderContractIds.has(providerContractId)) {
+          return;
+        }
+        seenProviderContractIds.add(providerContractId);
+        providerContractIds.push(providerContractId);
+      },
+    );
+    if (
+      OPTION_QUOTE_INTENT_PRIORITY[subscriber.intent] >
+      OPTION_QUOTE_INTENT_PRIORITY[intent]
+    ) {
+      intent = subscriber.intent;
+    }
+    if (subscriber.requiresGreeks) {
+      requiresGreeks = true;
+    }
+  });
+
+  if (!providerContractIds.length) {
+    return null;
+  }
+
+  const underlyingList = Array.from(underlyings).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  return {
+    underlying: underlyingList.length === 1 ? underlyingList[0] : null,
+    providerContractIds,
+    owner: `shared-option-quotes:${providerContractIds.length}-contracts`,
+    intent,
+    requiresGreeks,
+  };
+};
+
+const sharedOptionQuoteDemandSignature = (
+  demand: SharedOptionQuoteStreamDemand | null,
+): string =>
+  demand
+    ? JSON.stringify({
+        underlying: demand.underlying,
+        providerContractIds: demand.providerContractIds,
+        intent: demand.intent,
+        requiresGreeks: demand.requiresGreeks,
+      })
+    : "";
+
+const stopSharedOptionQuoteRestFallback = () => {
+  if (sharedOptionQuoteRestFallbackTimer) {
+    clearInterval(sharedOptionQuoteRestFallbackTimer);
+    sharedOptionQuoteRestFallbackTimer = null;
+  }
+};
+
+const stopSharedOptionQuoteStallWatchdog = () => {
+  if (sharedOptionQuoteStallTimer) {
+    clearInterval(sharedOptionQuoteStallTimer);
+    sharedOptionQuoteStallTimer = null;
+  }
+};
+
+const clearSharedOptionQuoteReconnectTimer = () => {
+  if (sharedOptionQuoteReconnectTimer) {
+    clearTimeout(sharedOptionQuoteReconnectTimer);
+    sharedOptionQuoteReconnectTimer = null;
+  }
+};
+
+const flushSharedQueuedOptionQuotes = () => {
+  sharedOptionQuoteFlushScheduled = false;
+  sharedOptionQuoteFlushTimer = null;
+  if (!sharedQueuedOptionQuotesByProviderContractId.size) {
+    return;
+  }
+  if (!sharedOptionQuoteFirstQuoteRecorded) {
+    sharedOptionQuoteFirstQuoteRecorded = true;
+    recordOptionHydrationMetric(
+      "firstQuoteMs",
+      Math.max(0, Date.now() - sharedOptionQuoteFirstQuoteStartedAt),
+    );
+  }
+  const cachedQuotes = Array.from(
+    sharedQueuedOptionQuotesByProviderContractId.values(),
+  ).map(cacheOptionQuoteSnapshot);
+  sharedQueuedOptionQuotesByProviderContractId.clear();
+  sharedOptionQuoteSubscribers.forEach((subscriber) => {
+    subscriber.onQuotes(cachedQuotes);
+  });
+};
+
+const scheduleSharedQueuedOptionQuoteFlush = () => {
+  if (sharedOptionQuoteFlushScheduled) {
+    return;
+  }
+  sharedOptionQuoteFlushScheduled = true;
+  sharedOptionQuoteFlushTimer = scheduleRealtimeFlush(flushSharedQueuedOptionQuotes);
+};
+
+const queueSharedOptionQuotes = (quotes: LiveOptionQuoteSnapshot[]) => {
+  quotes.forEach((quote) => {
+    const providerContractId = normalizeProviderContractId(
+      quote.providerContractId,
+    );
+    if (!providerContractId) {
+      return;
+    }
+    sharedQueuedOptionQuotesByProviderContractId.set(providerContractId, quote);
+  });
+  if (sharedQueuedOptionQuotesByProviderContractId.size) {
+    scheduleSharedQueuedOptionQuoteFlush();
+  }
+};
+
+const closeSharedOptionQuoteSocket = () => {
+  sharedOptionQuoteSocketGeneration += 1;
+  clearSharedOptionQuoteReconnectTimer();
+  stopSharedOptionQuoteRestFallback();
+  stopSharedOptionQuoteStallWatchdog();
+  if (sharedOptionQuoteFlushTimer !== null) {
+    clearTimeout(sharedOptionQuoteFlushTimer);
+    sharedOptionQuoteFlushTimer = null;
+  }
+  sharedOptionQuoteFlushScheduled = false;
+  sharedQueuedOptionQuotesByProviderContractId.clear();
+  sharedOptionQuoteActiveSignature = "";
+  if (sharedOptionQuoteSocket) {
+    const socket = sharedOptionQuoteSocket;
+    sharedOptionQuoteSocket = null;
+    socket.close();
+  }
+};
+
+const nextSharedFallbackProviderContractIds = (
+  providerContractIds: string[],
+): string[] => {
+  if (providerContractIds.length <= OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE) {
+    return providerContractIds;
+  }
+  const start = sharedOptionQuoteFallbackCursor % providerContractIds.length;
+  const end = start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE;
+  const batch =
+    end <= providerContractIds.length
+      ? providerContractIds.slice(start, end)
+      : [
+          ...providerContractIds.slice(start),
+          ...providerContractIds.slice(0, end - providerContractIds.length),
+        ];
+  sharedOptionQuoteFallbackCursor =
+    (start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE) %
+    providerContractIds.length;
+  return batch;
+};
+
+const requestSharedOptionQuoteRestSnapshot = async (
+  demand: SharedOptionQuoteStreamDemand,
+) => {
+  const providerContractIds = nextSharedFallbackProviderContractIds(
+    demand.providerContractIds,
+  );
+  if (!providerContractIds.length) {
+    return;
+  }
+  const startedAt = Date.now();
+  try {
+    const payload = await getOptionQuoteSnapshots({
+      underlying: demand.underlying,
+      providerContractIds,
+      owner: demand.owner,
+      intent: demand.intent,
+      requiresGreeks: demand.requiresGreeks,
+    });
+    recordOptionHydrationMetric(
+      "quoteSnapshotMs",
+      Math.max(0, Date.now() - startedAt),
+    );
+    setOptionHydrationDiagnostics({
+      fallbackMode: "rest-rotating",
+      providerMode: payload.debug?.providerMode ?? undefined,
+      returnedQuotes: payload.debug?.returnedCount ?? payload.quotes.length,
+      requestedQuotes: demand.providerContractIds.length,
+      acceptedQuotes: demand.providerContractIds.length,
+      rejectedQuotes: 0,
+    });
+    queueSharedOptionQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
+  } catch {
+    setOptionHydrationDiagnostics({
+      fallbackMode: "rest-rotating",
+      quoteMode: "rest-fallback-error",
+    });
+  }
+};
+
+const startSharedOptionQuoteRestFallback = (
+  demand: SharedOptionQuoteStreamDemand,
+) => {
+  if (sharedOptionQuoteRestFallbackTimer) {
+    return;
+  }
+  setOptionHydrationDiagnostics({
+    quoteMode: "rest-fallback",
+    fallbackMode: "rest-rotating",
+    requestedQuotes: demand.providerContractIds.length,
+    acceptedQuotes: demand.providerContractIds.length,
+    rejectedQuotes: 0,
+  });
+  void requestSharedOptionQuoteRestSnapshot(demand);
+  sharedOptionQuoteRestFallbackTimer = setInterval(() => {
+    void requestSharedOptionQuoteRestSnapshot(demand);
+  }, 3_000);
+};
+
+const scheduleSharedOptionQuoteWebSocketReconnect = (
+  demand: SharedOptionQuoteStreamDemand,
+) => {
+  if (sharedOptionQuoteReconnectTimer) {
+    return;
+  }
+  setOptionHydrationDiagnostics({
+    wsState: "reconnecting",
+    quoteMode: "websocket",
+    fallbackMode: null,
+  });
+  sharedOptionQuoteReconnectTimer = setTimeout(() => {
+    sharedOptionQuoteReconnectTimer = null;
+    startSharedOptionQuoteWebSocket(demand);
+  }, OPTION_QUOTE_WEBSOCKET_RECONNECT_MS);
+};
+
+const startSharedOptionQuoteWebSocket = (
+  demand: SharedOptionQuoteStreamDemand,
+) => {
+  const webSocketUrl = OPTION_QUOTE_WEBSOCKET_ENABLED
+    ? buildWebSocketUrl("/api/ws/options/quotes")
+    : null;
+  const signature = sharedOptionQuoteDemandSignature(demand);
+  if (
+    sharedOptionQuoteSocket &&
+    sharedOptionQuoteActiveSignature === signature &&
+    (sharedOptionQuoteSocket.readyState === WebSocket.OPEN ||
+      sharedOptionQuoteSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  closeSharedOptionQuoteSocket();
+  sharedOptionQuoteActiveSignature = signature;
+  sharedOptionQuoteFirstQuoteStartedAt = Date.now();
+  sharedOptionQuoteFirstQuoteRecorded = false;
+  sharedOptionQuoteLastWebSocketMessageAt = Date.now();
+
+  if (!webSocketUrl || typeof window === "undefined" || typeof window.WebSocket === "undefined") {
+    startSharedOptionQuoteRestFallback(demand);
+    return;
+  }
+
+  let ready = false;
+  const generation = ++sharedOptionQuoteSocketGeneration;
+  setOptionHydrationDiagnostics({
+    wsState: "connecting",
+    quoteMode: "websocket",
+    fallbackMode: null,
+    requestedQuotes: demand.providerContractIds.length,
+  });
+
+  const socket = new WebSocket(webSocketUrl);
+  sharedOptionQuoteSocket = socket;
+  sharedOptionQuoteStallTimer = setInterval(() => {
+    if (
+      generation !== sharedOptionQuoteSocketGeneration ||
+      !ready
+    ) {
+      return;
+    }
+    const ageMs = Date.now() - sharedOptionQuoteLastWebSocketMessageAt;
+    if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
+      return;
+    }
+    setOptionHydrationDiagnostics({
+      wsState: "stalled",
+      quoteMode: "websocket-stalled",
+      degraded: true,
+    });
+    socket.close();
+  }, Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)));
+
+  socket.addEventListener("open", () => {
+    if (generation !== sharedOptionQuoteSocketGeneration) {
+      socket.close();
+      return;
+    }
+    setOptionHydrationDiagnostics({ wsState: "open" });
+    socket.send(
+      JSON.stringify({
+        type: "subscribe",
+        underlying: demand.underlying,
+        providerContractIds: demand.providerContractIds,
+        owner: demand.owner,
+        intent: demand.intent,
+        requiresGreeks: demand.requiresGreeks,
+      }),
+    );
+  });
+
+  socket.addEventListener("message", (event: MessageEvent<string>) => {
+    if (generation !== sharedOptionQuoteSocketGeneration) {
+      return;
+    }
+    sharedOptionQuoteLastWebSocketMessageAt = Date.now();
+    const payload = parseJsonPayload<OptionQuoteWebSocketPayload>(event.data);
+    if (!payload) {
+      return;
+    }
+    if (payload.type === "ready") {
+      ready = true;
+      setOptionHydrationDiagnostics({
+        wsState: "ready",
+        requestedQuotes:
+          payload.requestedCount ?? demand.providerContractIds.length,
+        acceptedQuotes:
+          payload.acceptedCount ?? demand.providerContractIds.length,
+        rejectedQuotes: payload.rejectedCount ?? 0,
+      });
+      return;
+    }
+    if (payload.type === "status") {
+      setOptionHydrationDiagnostics({
+        wsState: ready ? "ready" : "connecting",
+        providerMode: payload.providerMode ?? undefined,
+        requestedQuotes:
+          payload.requestedCount ?? demand.providerContractIds.length,
+        acceptedQuotes: payload.acceptedCount,
+        rejectedQuotes: payload.rejectedCount,
+        returnedQuotes: payload.returnedCount,
+        bufferedAmount: payload.bufferedAmount,
+        degraded: payload.degraded,
+      });
+      return;
+    }
+    if (payload.type === "heartbeat") {
+      setOptionHydrationDiagnostics({
+        bufferedAmount: payload.bufferedAmount,
+        degraded: payload.degraded,
+      });
+      return;
+    }
+    if (payload.type === "quotes" && payload.quotes?.length) {
+      queueSharedOptionQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
+      return;
+    }
+    if (payload.type === "error" && !ready) {
+      socket.close();
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    if (generation !== sharedOptionQuoteSocketGeneration || ready) {
+      return;
+    }
+    setOptionHydrationDiagnostics({
+      wsState: "failed-before-ready",
+      quoteMode: "websocket",
+      fallbackMode: null,
+    });
+  });
+
+  socket.addEventListener("close", (event) => {
+    if (generation !== sharedOptionQuoteSocketGeneration) {
+      return;
+    }
+    stopSharedOptionQuoteStallWatchdog();
+    if (sharedOptionQuoteSocket === socket) {
+      sharedOptionQuoteSocket = null;
+    }
+    setOptionHydrationDiagnostics({
+      wsState: ready ? "closed" : "failed-before-ready",
+      pauseReason: event.reason || null,
+    });
+    if (!ready) {
+      scheduleSharedOptionQuoteWebSocketReconnect(demand);
+      return;
+    }
+    scheduleSharedOptionQuoteWebSocketReconnect(demand);
+  });
+};
+
+const refreshSharedOptionQuoteStream = () => {
+  sharedOptionQuoteRefreshTimer = null;
+  const demand = resolveSharedOptionQuoteStreamDemand(
+    sharedOptionQuoteSubscribers.values(),
+  );
+  if (!demand) {
+    closeSharedOptionQuoteSocket();
+    return;
+  }
+  startSharedOptionQuoteWebSocket(demand);
+};
+
+const scheduleSharedOptionQuoteStreamRefresh = () => {
+  if (sharedOptionQuoteRefreshTimer) {
+    return;
+  }
+  sharedOptionQuoteRefreshTimer = setTimeout(refreshSharedOptionQuoteStream, 0);
+};
+
+const subscribeSharedOptionQuoteStream = (
+  input: Omit<SharedOptionQuoteStreamSubscriber, "id">,
+) => {
+  const id = sharedOptionQuoteSubscriberId++;
+  sharedOptionQuoteSubscribers.set(id, {
+    id,
+    ...input,
+    providerContractIds: normalizeSharedProviderContractIds(
+      input.providerContractIds,
+    ),
+  });
+  scheduleSharedOptionQuoteStreamRefresh();
+  return () => {
+    sharedOptionQuoteSubscribers.delete(id);
+    scheduleSharedOptionQuoteStreamRefresh();
+  };
+};
 
 type BrokerStreamFreshnessSnapshot = {
   accountLastEventAt: number | null;
@@ -744,6 +1260,7 @@ const getOptionQuoteSnapshotVersion = (providerContractId: string): number =>
 
 const flushOptionQuoteNotifications = () => {
   optionQuoteNotifyScheduled = false;
+  optionQuoteLastFlushAtMs = Date.now();
   const providerContractIds = Array.from(pendingOptionQuoteNotifications);
   pendingOptionQuoteNotifications.clear();
 
@@ -768,7 +1285,18 @@ const scheduleOptionQuoteNotification = (providerContractId: string) => {
   }
 
   optionQuoteNotifyScheduled = true;
-  scheduleRealtimeFlush(flushOptionQuoteNotifications);
+  // Trailing-edge throttle (mirrors the IBKR latency store). The shared
+  // scheduleRealtimeFlush coalesces only within a microtask, which drains
+  // between every "quotes" WS message — so a fast option chain drove one React
+  // commit per message for each subscribed contract. Cap notifications to one
+  // per QUOTE_STREAM_CACHE_FLUSH_MS; the first quote after an idle gap still
+  // flushes promptly (delay 0). pendingOptionQuoteNotifications keeps deduping
+  // contracts within the window, and listeners read live snapshots at render.
+  const delay = Math.max(
+    0,
+    QUOTE_STREAM_CACHE_FLUSH_MS - (Date.now() - optionQuoteLastFlushAtMs),
+  );
+  setTimeout(flushOptionQuoteNotifications, delay);
 };
 
 const cacheOptionQuoteSnapshot = (
@@ -1039,6 +1567,7 @@ const optionQuoteDisplayMark = (
 
 type OptionPricedPosition = {
   assetClass?: unknown;
+  positionType?: unknown;
   optionContract?: {
     multiplier?: unknown;
     sharesPerContract?: unknown;
@@ -1054,6 +1583,7 @@ type OptionPricedPosition = {
 
 const isOptionPricedPosition = (position: OptionPricedPosition): boolean =>
   Boolean(position.optionContract) ||
+  normalizeAccountAssetClass(position.positionType) === "option" ||
   ["option", "options"].includes(String(position.assetClass || "").toLowerCase());
 
 const optionPositionMultiplier = (position: OptionPricedPosition): number => {
@@ -1820,15 +2350,23 @@ const normalizeAccountAssetClass = (value: unknown): string | null => {
   if (!normalized) return null;
   if (normalized === "all") return "all";
   if (normalized === "option" || normalized === "options" || normalized === "opt") {
-    return "options";
+    return "option";
+  }
+  if (normalized === "etf" || normalized === "etfs" || normalized === "fund") {
+    return "etf";
   }
   if (
     normalized === "stock" ||
     normalized === "stocks" ||
+    normalized === "stk"
+  ) {
+    return "stock";
+  }
+  if (
     normalized === "equity" ||
     normalized === "equities"
   ) {
-    return "stocks";
+    return "equity";
   }
   return normalized;
 };
@@ -3271,18 +3809,98 @@ export const useBrokerFreshnessFor = (
 };
 
 const ETF_SYMBOLS = new Set([
-  "SPY",
-  "QQQ",
-  "IWM",
+  "AGG",
+  "ARKK",
+  "BND",
   "DIA",
-  "TLT",
-  "IEF",
+  "EEM",
+  "EFA",
   "GLD",
-  "USO",
+  "GOVT",
+  "HYG",
+  "IAU",
+  "IEF",
+  "IWM",
+  "IVV",
+  "IYR",
+  "LQD",
+  "QQQ",
+  "SHY",
+  "SLV",
   "SOXX",
+  "SPY",
+  "SQQQ",
+  "TLT",
+  "TQQQ",
+  "UNG",
+  "USO",
+  "UUP",
+  "VEA",
+  "VNQ",
+  "VOO",
+  "VTI",
+  "VWO",
   "VXX",
   "VIXY",
+  "XLB",
+  "XLC",
+  "XLE",
+  "XLF",
+  "XLI",
+  "XLK",
+  "XLP",
+  "XLU",
+  "XLV",
+  "XLY",
+  "XRT",
 ]);
+
+type AccountPositionAssetClassLike = {
+  assetClass?: unknown;
+  positionType?: unknown;
+  symbol?: unknown;
+  optionContract?: unknown;
+};
+
+const streamAccountPositionType = (
+  position: AccountPositionAssetClassLike,
+): "stock" | "etf" | "option" => {
+  const storedType = normalizeAccountAssetClass(position.positionType);
+  if (
+    storedType === "stock" ||
+    storedType === "etf" ||
+    storedType === "option"
+  ) {
+    return storedType;
+  }
+  if (position.optionContract) {
+    return "option";
+  }
+  const assetClass = normalizeAccountAssetClass(position.assetClass);
+  if (assetClass === "option" || assetClass === "etf") {
+    return assetClass;
+  }
+  const symbol = String(position.symbol ?? "").trim().toUpperCase();
+  if (symbol && ETF_SYMBOLS.has(symbol)) {
+    return "etf";
+  }
+  return "stock";
+};
+
+const accountPositionTypeMatchesAssetClass = (
+  position: AccountPositionAssetClassLike,
+  requestedAssetClass: unknown,
+): boolean => {
+  const requested = normalizeAccountAssetClass(requestedAssetClass);
+  if (!requested || requested === "all") {
+    return true;
+  }
+  const positionType = streamAccountPositionType(position);
+  if (requested === "equity") {
+    return positionType === "stock" || positionType === "etf";
+  }
+  return positionType === requested;
+};
 
 const toIsoTimestamp = (value: unknown): string => {
   const timestamp = parseAccountTimestampMs(value);
@@ -3319,10 +3937,14 @@ const streamPositionDescription = (position: StreamPosition): string => {
 };
 
 const streamPositionAssetClassLabel = (position: StreamPosition): string => {
-  if (position.assetClass === "option") {
+  const positionType = streamAccountPositionType(position);
+  if (positionType === "option") {
     return "Options";
   }
-  return ETF_SYMBOLS.has(position.symbol.toUpperCase()) ? "ETF" : "Stocks";
+  if (positionType === "etf") {
+    return "ETF";
+  }
+  return "Stocks";
 };
 
 const weightPercentFromNav = (
@@ -3571,18 +4193,13 @@ const accountPositionTotalsFromStreamRows = (
 };
 
 const accountPositionMatchesAssetClass = (
-  position: Pick<AccountPositionRow, "assetClass">,
+  position: Pick<AccountPositionRow, "assetClass" | "positionType" | "symbol" | "optionContract">,
   queryKey: unknown,
 ): boolean => {
   const params = readQueryParams(queryKey);
   const requestedAssetClass =
     typeof params?.assetClass === "string" ? params.assetClass : null;
-  return (
-    !requestedAssetClass ||
-    requestedAssetClass === "all" ||
-    String(position.assetClass || "").toLowerCase() ===
-      requestedAssetClass.toLowerCase()
-  );
+  return accountPositionTypeMatchesAssetClass(position, requestedAssetClass);
 };
 
 const sortPatchedAccountPositions = (
@@ -3634,6 +4251,7 @@ const accountPositionRowFromStream = (
     symbol: position.symbol,
     description: current?.description ?? streamPositionDescription(position),
     assetClass: current?.assetClass ?? streamPositionAssetClassLabel(position),
+    positionType: current?.positionType ?? streamAccountPositionType(position),
     optionContract: position.optionContract ?? null,
     sector: current?.sector ?? "",
     quantity: position.quantity,
@@ -3777,6 +4395,8 @@ const patchCombinedAccountPositions = (
             currentRow?.description ?? streamPositionDescription(group.first),
           assetClass:
             currentRow?.assetClass ?? streamPositionAssetClassLabel(group.first),
+          positionType:
+            currentRow?.positionType ?? streamAccountPositionType(group.first),
           optionContract: group.first.optionContract ?? null,
           sector: currentRow?.sector ?? "",
           quantity: group.quantity,
@@ -3952,9 +4572,8 @@ const shadowPositionsForQuery = (
 
   return {
     ...positionsResponse,
-    positions: openPositions.filter(
-      (position) =>
-        normalizeAccountAssetClass(position.assetClass) === requestedAssetClass,
+    positions: openPositions.filter((position) =>
+      accountPositionTypeMatchesAssetClass(position, requestedAssetClass),
     ),
   };
 };
@@ -4078,7 +4697,7 @@ const closedTradeParamsMatch = (
   optionalParamMatches(params, "symbol", filters.symbol) &&
   optionalParamMatches(params, "pnlSign", filters.pnlSign) &&
   optionalParamMatches(params, "holdDuration", filters.holdDuration) &&
-  optionalParamMatches(params, "assetClass", filters.assetClass);
+  assetClassParamMatches(params, filters.assetClass);
 
 const performanceCalendarParamsMatch = (
   params: Record<string, unknown> | null,
@@ -5475,11 +6094,49 @@ export const useAccountPageSnapshotStream = ({
   enabled?: boolean;
 }) => {
   const queryClient = useQueryClient();
-  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [lastPrimaryEventAt, setLastPrimaryEventAt] = useState<number | null>(null);
-  const [lastLiveEventAt, setLastLiveEventAt] = useState<number | null>(null);
-  const [lastDerivedEventAt, setLastDerivedEventAt] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // Event timestamps live in refs, not state: they only feed the staleness
+  // comparison, so mutating them must NOT itself re-render. The once-per-second
+  // staleness check (recomputeFreshness) is what decides whether to commit, and
+  // it only updates state when a fresh/stale boolean actually flips — so the host
+  // re-renders on a flip instead of every second.
+  const lastEventAtRef = useRef<number | null>(null);
+  const lastPrimaryEventAtRef = useRef<number | null>(null);
+  const lastLiveEventAtRef = useRef<number | null>(null);
+  const lastDerivedEventAtRef = useRef<number | null>(null);
+  const [freshness, setFreshness] = useState(() => ({
+    accountLastEventAt: null as number | null,
+    accountFresh: false,
+    accountPrimaryFresh: false,
+    accountLiveFresh: false,
+    accountDerivedFresh: false,
+  }));
+  const recomputeFreshness = useCallback(() => {
+    const nowMs = Date.now();
+    const lastEventAt = lastEventAtRef.current;
+    const lastPrimaryEventAt = lastPrimaryEventAtRef.current;
+    const lastLiveEventAt = lastLiveEventAtRef.current;
+    const lastDerivedEventAt = lastDerivedEventAtRef.current;
+    const next = {
+      accountLastEventAt: lastEventAt,
+      accountFresh: isStreamFresh(lastEventAt, nowMs, ACCOUNT_PAGE_STREAM_FRESH_MS),
+      accountPrimaryFresh: isStreamFresh(
+        lastPrimaryEventAt,
+        nowMs,
+        ACCOUNT_PAGE_STREAM_FRESH_MS,
+      ),
+      accountLiveFresh: isStreamFresh(
+        lastLiveEventAt,
+        nowMs,
+        ACCOUNT_PAGE_STREAM_FRESH_MS,
+      ),
+      accountDerivedFresh: isStreamFresh(
+        lastDerivedEventAt,
+        nowMs,
+        ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS,
+      ),
+    };
+    setFreshness((prev) => (freshnessUnchanged(prev, next) ? prev : next));
+  }, []);
   const streamUrl = useMemo(
     () =>
       getAccountPageStreamUrl({
@@ -5509,15 +6166,16 @@ export const useAccountPageSnapshotStream = ({
 
   useEffect(() => {
     if (!enabled) {
-      setLastEventAt(null);
-      setLastPrimaryEventAt(null);
-      setLastLiveEventAt(null);
-      setLastDerivedEventAt(null);
+      lastEventAtRef.current = null;
+      lastPrimaryEventAtRef.current = null;
+      lastLiveEventAtRef.current = null;
+      lastDerivedEventAtRef.current = null;
+      recomputeFreshness();
       return undefined;
     }
-    const interval = setInterval(() => setNow(Date.now()), 1_000);
+    const interval = setInterval(recomputeFreshness, 1_000);
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, [enabled, recomputeFreshness]);
 
   useEffect(() => {
     if (
@@ -5529,24 +6187,25 @@ export const useAccountPageSnapshotStream = ({
       return undefined;
     }
 
-    setLastEventAt(null);
-    setLastPrimaryEventAt(null);
-    setLastLiveEventAt(null);
-    setLastDerivedEventAt(null);
+    lastEventAtRef.current = null;
+    lastPrimaryEventAtRef.current = null;
+    lastLiveEventAtRef.current = null;
+    lastDerivedEventAtRef.current = null;
+    recomputeFreshness();
 
     const markFresh = (kind: "primary" | "live" | "derived" | "both" = "both") => {
       const timestamp = Date.now();
-      setLastEventAt(timestamp);
+      lastEventAtRef.current = timestamp;
       if (kind === "primary" || kind === "live" || kind === "both") {
-        setLastPrimaryEventAt(timestamp);
+        lastPrimaryEventAtRef.current = timestamp;
       }
       if (kind === "live" || kind === "both") {
-        setLastLiveEventAt(timestamp);
+        lastLiveEventAtRef.current = timestamp;
       }
       if (kind === "derived" || kind === "both") {
-        setLastDerivedEventAt(timestamp);
+        lastDerivedEventAtRef.current = timestamp;
       }
-      setNow(timestamp);
+      recomputeFreshness();
     };
     const source = new EventSource(streamUrl);
     const handleBootstrap = (event: MessageEvent<string>) => {
@@ -5618,21 +6277,110 @@ export const useAccountPageSnapshotStream = ({
       source.removeEventListener("freshness", handleFreshness as EventListener);
       source.close();
     };
-  }, [enabled, queryClient, streamUrl]);
+  }, [enabled, queryClient, streamUrl, recomputeFreshness]);
 
-  return {
-    accountLastEventAt: lastEventAt,
-    accountFresh:
-      lastEventAt != null && now - lastEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
-    accountPrimaryFresh:
-      lastPrimaryEventAt != null &&
-      now - lastPrimaryEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
-    accountLiveFresh:
-      lastLiveEventAt != null && now - lastLiveEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
-    accountDerivedFresh:
-      lastDerivedEventAt != null &&
-      now - lastDerivedEventAt <= ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS,
-  };
+  return freshness;
+};
+
+type SignalMatrixStreamState = Record<string, unknown> & {
+  symbol?: string;
+  timeframe?: string;
+};
+
+type SignalMatrixStreamPayload = {
+  stream?: string;
+  event?: string;
+  states?: SignalMatrixStreamState[];
+};
+
+export const getSignalMonitorMatrixStreamUrl = ({
+  environment,
+  symbols,
+  timeframes,
+}: {
+  environment?: string | null;
+  symbols?: readonly string[];
+  timeframes?: readonly string[];
+}): string | null => {
+  if (!symbols || symbols.length === 0) {
+    return null;
+  }
+  return buildStreamUrl("/api/signal-monitor/matrix/stream", {
+    environment: environment ?? undefined,
+    symbols: symbols.join(","),
+    timeframes: timeframes && timeframes.length ? timeframes.join(",") : undefined,
+    requestOrigin: "signal-matrix-stream",
+  });
+};
+
+// Push-based signal matrix feed. EventSource delivery is not throttled by the
+// browser while the tab is backgrounded (unlike setInterval polling), so the
+// signal matrix stays current while hidden and paints instantly on return —
+// no freeze-then-catch-up. Runs alongside the REST poll; the merge in the host
+// is idempotent (keyed by symbol/timeframe, newest wins).
+export const useSignalMonitorMatrixStream = ({
+  environment,
+  symbols,
+  timeframes,
+  enabled = true,
+  onStates,
+}: {
+  environment?: string | null;
+  symbols?: readonly string[];
+  timeframes?: readonly string[];
+  enabled?: boolean;
+  onStates: (
+    states: SignalMatrixStreamState[],
+    kind: "bootstrap" | "state-delta",
+  ) => void;
+}): void => {
+  const onStatesRef = useRef(onStates);
+  useEffect(() => {
+    onStatesRef.current = onStates;
+  }, [onStates]);
+
+  const symbolsKey = (symbols ?? []).join(",");
+  const timeframesKey = (timeframes ?? []).join(",");
+  const streamUrl = useMemo(
+    () => getSignalMonitorMatrixStreamUrl({ environment, symbols, timeframes }),
+    // symbols/timeframes are arrays; the joined keys are the stable identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [environment, symbolsKey, timeframesKey],
+  );
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+    const source = new EventSource(streamUrl);
+    const handleStates =
+      (kind: "bootstrap" | "state-delta") =>
+      (event: MessageEvent<string>) => {
+        const payload = parseJsonPayload<SignalMatrixStreamPayload>(event.data);
+        if (
+          !payload ||
+          payload.stream !== "signal-matrix" ||
+          !Array.isArray(payload.states)
+        ) {
+          return;
+        }
+        onStatesRef.current(payload.states, kind);
+      };
+    const handleBootstrap = handleStates("bootstrap");
+    const handleDelta = handleStates("state-delta");
+    source.addEventListener("bootstrap", handleBootstrap as EventListener);
+    source.addEventListener("state-delta", handleDelta as EventListener);
+    return () => {
+      source.removeEventListener("bootstrap", handleBootstrap as EventListener);
+      source.removeEventListener("state-delta", handleDelta as EventListener);
+      source.close();
+    };
+  }, [enabled, streamUrl]);
 };
 
 export const applyAlgoCockpitPayloadToCache = (
@@ -5699,10 +6447,39 @@ export const useAlgoCockpitStream = ({
   ) => void;
 }) => {
   const queryClient = useQueryClient();
-  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [lastPrimaryEventAt, setLastPrimaryEventAt] = useState<number | null>(null);
-  const [lastFullEventAt, setLastFullEventAt] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // See useAccountPageSnapshotStream: timestamps in refs (mutating them must not
+  // re-render); the once-per-second recomputeFreshness commits only when a
+  // fresh/stale boolean flips, so the host re-renders on a flip, not every second.
+  const lastEventAtRef = useRef<number | null>(null);
+  const lastPrimaryEventAtRef = useRef<number | null>(null);
+  const lastFullEventAtRef = useRef<number | null>(null);
+  const [freshness, setFreshness] = useState(() => ({
+    algoLastEventAt: null as number | null,
+    algoFresh: false,
+    algoPrimaryFresh: false,
+    algoFullFresh: false,
+  }));
+  const recomputeFreshness = useCallback(() => {
+    const nowMs = Date.now();
+    const lastEventAt = lastEventAtRef.current;
+    const lastPrimaryEventAt = lastPrimaryEventAtRef.current;
+    const lastFullEventAt = lastFullEventAtRef.current;
+    const next = {
+      algoLastEventAt: lastEventAt,
+      algoFresh: isStreamFresh(lastEventAt, nowMs, ALGO_COCKPIT_STREAM_FRESH_MS),
+      algoPrimaryFresh: isStreamFresh(
+        lastPrimaryEventAt,
+        nowMs,
+        ALGO_COCKPIT_STREAM_FRESH_MS,
+      ),
+      algoFullFresh: isStreamFresh(
+        lastFullEventAt,
+        nowMs,
+        ALGO_COCKPIT_STREAM_FRESH_MS,
+      ),
+    };
+    setFreshness((prev) => (freshnessUnchanged(prev, next) ? prev : next));
+  }, []);
   const onLiveEventsRef = useRef(onLiveEvents);
   const streamUrl = useMemo(
     () => getAlgoCockpitStreamUrl({ deploymentId, mode, eventLimit }),
@@ -5715,14 +6492,15 @@ export const useAlgoCockpitStream = ({
 
   useEffect(() => {
     if (!enabled) {
-      setLastEventAt(null);
-      setLastPrimaryEventAt(null);
-      setLastFullEventAt(null);
+      lastEventAtRef.current = null;
+      lastPrimaryEventAtRef.current = null;
+      lastFullEventAtRef.current = null;
+      recomputeFreshness();
       return undefined;
     }
-    const interval = setInterval(() => setNow(Date.now()), 1_000);
+    const interval = setInterval(recomputeFreshness, 1_000);
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, [enabled, recomputeFreshness]);
 
   useEffect(() => {
     if (
@@ -5734,20 +6512,21 @@ export const useAlgoCockpitStream = ({
       return undefined;
     }
 
-    setLastEventAt(null);
-    setLastPrimaryEventAt(null);
-    setLastFullEventAt(null);
+    lastEventAtRef.current = null;
+    lastPrimaryEventAtRef.current = null;
+    lastFullEventAtRef.current = null;
+    recomputeFreshness();
 
     const markFresh = (kind: "primary" | "full" | "heartbeat" = "heartbeat") => {
       const timestamp = Date.now();
-      setLastEventAt(timestamp);
+      lastEventAtRef.current = timestamp;
       if (kind === "primary" || kind === "full") {
-        setLastPrimaryEventAt(timestamp);
+        lastPrimaryEventAtRef.current = timestamp;
       }
       if (kind === "full") {
-        setLastFullEventAt(timestamp);
+        lastFullEventAtRef.current = timestamp;
       }
-      setNow(timestamp);
+      recomputeFreshness();
     };
     const source = new EventSource(streamUrl);
     const applyPayload = (
@@ -5810,19 +6589,16 @@ export const useAlgoCockpitStream = ({
       source.removeEventListener("ready", handleReady as EventListener);
       source.close();
     };
-  }, [enabled, queryClient, streamUrl]);
+  }, [enabled, queryClient, streamUrl, recomputeFreshness]);
 
-  return {
-    deploymentId: deploymentId ?? null,
-    deploymentScoped: Boolean(deploymentId),
-    algoLastEventAt: lastEventAt,
-    algoFresh:
-      lastEventAt != null && now - lastEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
-    algoPrimaryFresh:
-      lastPrimaryEventAt != null && now - lastPrimaryEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
-    algoFullFresh:
-      lastFullEventAt != null && now - lastFullEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
-  };
+  return useMemo(
+    () => ({
+      deploymentId: deploymentId ?? null,
+      deploymentScoped: Boolean(deploymentId),
+      ...freshness,
+    }),
+    [deploymentId, freshness],
+  );
 };
 
 export const useIbkrOrderSnapshotStream = ({
@@ -6101,11 +6877,14 @@ export const useIbkrOptionQuoteStream = ({
     let socketGeneration = 0;
     let fallbackCursor = 0;
 
-    const applyQuotesNow = (quotes: LiveOptionQuoteSnapshot[]) => {
+    const applyQuotesNow = (
+      quotes: LiveOptionQuoteSnapshot[],
+      options: { alreadyCached?: boolean } = {},
+    ) => {
       if (!quotes.length) {
         return;
       }
-      if (!firstQuoteRecorded) {
+      if (!options.alreadyCached && !firstQuoteRecorded) {
         firstQuoteRecorded = true;
         recordOptionHydrationMetric(
           "firstQuoteMs",
@@ -6113,7 +6892,9 @@ export const useIbkrOptionQuoteStream = ({
         );
       }
 
-      const cachedQuotes = quotes.map(cacheOptionQuoteSnapshot);
+      const cachedQuotes = options.alreadyCached
+        ? quotes
+        : quotes.map(cacheOptionQuoteSnapshot);
       queryClient
         .getQueryCache()
         .findAll({
@@ -6132,6 +6913,17 @@ export const useIbkrOptionQuoteStream = ({
           );
         });
     };
+
+    if (OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED) {
+      return subscribeSharedOptionQuoteStream({
+        underlying: normalizedUnderlying || null,
+        providerContractIds: normalizedProviderContractIds,
+        owner: normalizedOwner || null,
+        intent,
+        requiresGreeks,
+        onQuotes: (quotes) => applyQuotesNow(quotes, { alreadyCached: true }),
+      });
+    }
 
     const flushQueuedQuotes = () => {
       quoteFlushScheduled = false;
@@ -6454,4 +7246,5 @@ export const __liveStreamsInternalsForTests = {
   patchAccountPositionRowFromOptionQuote,
   primaryAccountPositionsUseLiveQuotes,
   resolveAlgoDeploymentsStreamCacheUpdate,
+  resolveSharedOptionQuoteStreamDemand,
 };

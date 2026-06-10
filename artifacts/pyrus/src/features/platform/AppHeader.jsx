@@ -274,8 +274,7 @@ const AppHeaderInner = ({
   onChangeSignalMonitorTimeframe,
   onChangeSignalMonitorFreshWindowBars,
   onChangeSignalMonitorMaxSymbols,
-  headerSignalMatrixStates,
-  signalMatrixStates,
+  headerSignalMatrixStates = [],
   HeaderKpiStripComponent,
   HeaderAccountStripComponent,
   HeaderStatusClusterComponent,
@@ -776,9 +775,7 @@ const AppHeaderInner = ({
         onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
         onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
         safeQaMode={safeQaMode}
-        signalMatrixStates={
-          headerSignalMatrixStates?.length ? headerSignalMatrixStates : signalMatrixStates
-        }
+        signalMatrixStates={headerSignalMatrixStates}
       />
       )}
 
