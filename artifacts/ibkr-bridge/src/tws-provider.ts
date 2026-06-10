@@ -1867,6 +1867,7 @@ export function toQuoteSnapshot(
       0,
     ) ?? 0;
   const prevClose = getTickValue(ticks, TickType.CLOSE, TickType.DELAYED_CLOSE);
+  const extendedBaselinePrice = prevClose;
   const open = getTickValue(ticks, TickType.OPEN, TickType.DELAYED_OPEN);
   const high = getTickValue(ticks, TickType.HIGH, TickType.DELAYED_HIGH);
   const low = getTickValue(ticks, TickType.LOW, TickType.DELAYED_LOW);
@@ -1927,6 +1928,11 @@ export function toQuoteSnapshot(
     high,
     low,
     prevClose,
+    extendedBaselinePrice,
+    extendedBaselineAt:
+      extendedBaselinePrice !== null ? dataUpdatedAt : null,
+    extendedBaselineSource:
+      extendedBaselinePrice !== null ? "regular_close" : null,
     volume,
     openInterest,
     optionCallVolume,

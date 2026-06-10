@@ -135,6 +135,12 @@ const buildRuntimeQuotePatch = (quote, current = {}) => ({
   high: quote?.high ?? current.high ?? null,
   low: quote?.low ?? current.low ?? null,
   prevClose: quote?.prevClose ?? current.prevClose ?? null,
+  extendedBaselinePrice:
+    quote?.extendedBaselinePrice ?? current.extendedBaselinePrice ?? null,
+  extendedBaselineAt:
+    quote?.extendedBaselineAt ?? current.extendedBaselineAt ?? null,
+  extendedBaselineSource:
+    quote?.extendedBaselineSource ?? current.extendedBaselineSource ?? null,
   volume: quote?.volume ?? current.volume ?? null,
   updatedAt: quote?.updatedAt ?? current.updatedAt ?? null,
   dataUpdatedAt: quote?.dataUpdatedAt ?? current.dataUpdatedAt ?? null,

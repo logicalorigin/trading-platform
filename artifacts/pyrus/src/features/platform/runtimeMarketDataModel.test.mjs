@@ -37,3 +37,35 @@ test("runtime market-data sync rejects non-drawable sparkline bars", () => {
 
   delete TRADE_TICKER_INFO.FFAI_TEST;
 });
+
+test("runtime market-data sync carries extended-hours baseline fields", () => {
+  delete TRADE_TICKER_INFO.EXT_TEST;
+
+  syncRuntimeMarketData(
+    ["EXT_TEST"],
+    [],
+    [
+      {
+        symbol: "EXT_TEST",
+        price: 101,
+        updatedAt: "2026-06-09T21:00:00.000Z",
+        dataUpdatedAt: "2026-06-09T21:00:00.000Z",
+        extendedBaselinePrice: 100,
+        extendedBaselineAt: "2026-06-09T20:00:00.000Z",
+        extendedBaselineSource: "regular_close",
+      },
+    ],
+  );
+
+  assert.equal(TRADE_TICKER_INFO.EXT_TEST.extendedBaselinePrice, 100);
+  assert.equal(
+    TRADE_TICKER_INFO.EXT_TEST.extendedBaselineAt,
+    "2026-06-09T20:00:00.000Z",
+  );
+  assert.equal(
+    TRADE_TICKER_INFO.EXT_TEST.extendedBaselineSource,
+    "regular_close",
+  );
+
+  delete TRADE_TICKER_INFO.EXT_TEST;
+});

@@ -11,6 +11,9 @@ type QuoteDayChangeFields = Pick<
   | "high"
   | "low"
   | "prevClose"
+  | "extendedBaselinePrice"
+  | "extendedBaselineAt"
+  | "extendedBaselineSource"
   | "volume"
   | "updatedAt"
 >;
@@ -24,6 +27,9 @@ type DayChangeContext = {
   high: number | null;
   low: number | null;
   prevClose: number | null;
+  extendedBaselinePrice: number | null;
+  extendedBaselineAtMs: number | null;
+  extendedBaselineSource: "regular_close" | null;
   volume: number | null;
   updatedAtMs: number;
   recordedAtMs: number;
@@ -62,12 +68,27 @@ function hasUsablePrevClose(value: unknown): value is number {
   return number !== null && number !== 0;
 }
 
+function hasUsableRegularCloseBaseline(value: unknown): value is number {
+  const number = finiteNumber(value);
+  return number !== null && number > 0;
+}
+
+function hasUsableExtendedBaselineContext(
+  quote: QuoteDayChangeFields,
+): boolean {
+  return (
+    quote.extendedBaselineSource === "regular_close" &&
+    hasUsableRegularCloseBaseline(quote.extendedBaselinePrice)
+  );
+}
+
 function hasUsableDayChangeContext(quote: QuoteDayChangeFields): boolean {
   return (
     hasUsablePrevClose(quote.prevClose) ||
     finiteNumber(quote.open) !== null ||
     finiteNumber(quote.high) !== null ||
     finiteNumber(quote.low) !== null ||
+    hasUsableExtendedBaselineContext(quote) ||
     finiteNumber(quote.volume) !== null
   );
 }
@@ -86,6 +107,27 @@ export function recordStockQuoteDayChangeContext(
   if (existing && updatedAtMs < existing.updatedAtMs) {
     return false;
   }
+  const quoteExtendedBaselinePrice =
+    quote.extendedBaselineSource === "regular_close"
+      ? finiteNumber(quote.extendedBaselinePrice)
+      : null;
+  const quoteExtendedBaselineAtMs =
+    quote.extendedBaselineSource === "regular_close"
+      ? timestampMs(quote.extendedBaselineAt)
+      : null;
+  const extendedBaselinePrice =
+    (quoteExtendedBaselinePrice !== null && quoteExtendedBaselinePrice > 0
+      ? quoteExtendedBaselinePrice
+      : null) ??
+    existing?.extendedBaselinePrice ??
+    null;
+  const extendedBaselineAtMs =
+    quoteExtendedBaselineAtMs ?? existing?.extendedBaselineAtMs ?? null;
+  const extendedBaselineSource =
+    quote.extendedBaselineSource === "regular_close" &&
+    extendedBaselinePrice !== null
+      ? "regular_close"
+      : (existing?.extendedBaselineSource ?? null);
 
   contextBySymbol.set(symbol, {
     symbol,
@@ -97,6 +139,9 @@ export function recordStockQuoteDayChangeContext(
     high: finiteNumber(quote.high) ?? existing?.high ?? null,
     low: finiteNumber(quote.low) ?? existing?.low ?? null,
     prevClose: finiteNumber(quote.prevClose) ?? existing?.prevClose ?? null,
+    extendedBaselinePrice,
+    extendedBaselineAtMs,
+    extendedBaselineSource,
     volume: finiteNumber(quote.volume) ?? existing?.volume ?? null,
     updatedAtMs,
     recordedAtMs,
@@ -170,6 +215,15 @@ export function enrichStockQuoteWithDayChangeContext<
     high,
     low,
     prevClose: quote.prevClose ?? context.prevClose,
+    extendedBaselinePrice:
+      quote.extendedBaselinePrice ?? context.extendedBaselinePrice,
+    extendedBaselineAt:
+      quote.extendedBaselineAt ??
+      (context.extendedBaselineAtMs !== null
+        ? new Date(context.extendedBaselineAtMs)
+        : null),
+    extendedBaselineSource:
+      quote.extendedBaselineSource ?? context.extendedBaselineSource,
     volume: quote.volume ?? context.volume,
   };
 }

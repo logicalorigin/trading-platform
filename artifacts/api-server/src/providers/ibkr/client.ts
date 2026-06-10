@@ -810,9 +810,7 @@ export function parseSnapshotQuote(
     toDate(payload["_updated"]) ?? toDate(payload["updatedAt"]) ?? new Date();
   const marketSession = resolveUsEquityMarketSession(updatedAt).key;
   const extendedBaselinePrice =
-    (marketSession === "pre" || marketSession === "after") && prevClose !== null
-      ? prevClose
-      : null;
+    marketSession === "pre" && prevClose !== null ? prevClose : null;
 
   return {
     symbol,
