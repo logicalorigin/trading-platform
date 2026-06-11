@@ -4735,6 +4735,12 @@ async function recordSignalOptionsShadowMarkExit(input: {
   if (quantity <= 0 || entryPrice <= 0) {
     return null;
   }
+  // Use the real contract multiplier (matches premiumAtRisk) instead of a
+  // hardcoded 100 so realized exit P&L is correct for adjusted/mini contracts.
+  const multiplier = marketMultiplier({
+    assetClass: "option",
+    optionContract: input.contract,
+  });
   const positionPayload = signalOptionsShadowMarkExitPositionPayload({
     position: input.position,
     contract: input.contract,
@@ -4757,7 +4763,9 @@ async function recordSignalOptionsShadowMarkExit(input: {
     enforcementSource: "shadow_mark",
     exitPrice: input.exitPrice,
     markPrice: input.markPrice,
-    pnl: Number(((input.exitPrice - entryPrice) * quantity * 100).toFixed(2)),
+    pnl: Number(
+      ((input.exitPrice - entryPrice) * quantity * multiplier).toFixed(2),
+    ),
     position: positionPayload,
     selectedContract: optionPayload(input.contract),
     quote: signalOptionsShadowQuotePayload({

@@ -5803,6 +5803,30 @@ function latestSignalOptionsControlUpdatedAt(events: ExecutionEvent[]) {
   }, null);
 }
 
+// Single source of truth for the option contract multiplier used in P&L. Standard
+// equity options are 100, but adjusted/mini contracts are not — realized and
+// unrealized P&L must use the SAME multiplier or the daily P&L (and the
+// daily-loss halt it feeds) is incoherent for non-100 contracts. Mirrors the
+// stored `multiplier` the worker ingests; defaults to 100 when absent.
+function signalOptionsContractMultiplier(selectedContract: unknown): number {
+  return finiteNumber(asRecord(selectedContract).multiplier) ?? 100;
+}
+
+function signalOptionsRealizedPnl(
+  exitPrice: number,
+  entryPrice: number,
+  quantity: number,
+  selectedContract: unknown,
+): number {
+  return Number(
+    (
+      (exitPrice - entryPrice) *
+      quantity *
+      signalOptionsContractMultiplier(selectedContract)
+    ).toFixed(2),
+  );
+}
+
 function isSameUtcDate(left: Date, right: Date) {
   return (
     left.getUTCFullYear() === right.getUTCFullYear() &&
@@ -5839,8 +5863,9 @@ function computeSignalOptionsOpenUnrealizedPnl(
     if (markPrice == null) {
       return sum;
     }
-    const multiplier =
-      finiteNumber(asRecord(position.selectedContract).multiplier) ?? 100;
+    const multiplier = signalOptionsContractMultiplier(
+      position.selectedContract,
+    );
     return (
       sum + (markPrice - position.entryPrice) * position.quantity * multiplier
     );
@@ -11233,12 +11258,11 @@ async function refreshActivePosition(input: {
         reason: exitReason,
         exitPrice,
         markPrice,
-        pnl: Number(
-          (
-            (exitPrice - input.position.entryPrice) *
-            input.position.quantity *
-            100
-          ).toFixed(2),
+        pnl: signalOptionsRealizedPnl(
+          exitPrice,
+          input.position.entryPrice,
+          input.position.quantity,
+          input.position.selectedContract,
         ),
         position: positionPatch,
         selectedContract: input.position.selectedContract,
@@ -12716,12 +12740,11 @@ async function closePositionForOppositeSignal(input: {
       action: input.candidate.action ?? null,
       candidate: input.candidate,
       exitPrice,
-      pnl: Number(
-        (
-          (exitPrice - input.position.entryPrice) *
-          input.position.quantity *
-          100
-        ).toFixed(2),
+      pnl: signalOptionsRealizedPnl(
+        exitPrice,
+        input.position.entryPrice,
+        input.position.quantity,
+        input.position.selectedContract,
       ),
       position: input.position,
       selectedContract: input.position.selectedContract,
@@ -15033,7 +15056,10 @@ function dailyPnlForBackfill(input: {
   let pnl = input.realizedByDay.get(input.dayKey) ?? 0;
   for (const position of input.openPositions) {
     const mark = finiteNumber(position.lastMarkPrice) ?? position.entryPrice;
-    pnl += (mark - position.entryPrice) * position.quantity * 100;
+    pnl +=
+      (mark - position.entryPrice) *
+      position.quantity *
+      signalOptionsContractMultiplier(position.selectedContract);
   }
   return pnl;
 }
@@ -15095,12 +15121,11 @@ async function closeBackfillPosition(input: {
   });
   const exitMarkPrice = input.exitPrice;
   const exitPrice = Number((exitTrade?.price ?? exitMarkPrice).toFixed(2));
-  const pnl = Number(
-    (
-      (exitPrice - input.position.entryPrice) *
-      input.position.quantity *
-      100
-    ).toFixed(2),
+  const pnl = signalOptionsRealizedPnl(
+    exitPrice,
+    input.position.entryPrice,
+    input.position.quantity,
+    input.position.selectedContract,
   );
   const dayKey = input.occurredAt.toISOString().slice(0, 10);
   input.realizedByDay.set(dayKey, (input.realizedByDay.get(dayKey) ?? 0) + pnl);
@@ -17296,6 +17321,8 @@ export async function updateSignalOptionsExecutionProfile(input: {
 }
 
 export const __signalOptionsAutomationInternalsForTests = {
+  signalOptionsContractMultiplier,
+  signalOptionsRealizedPnl,
   buildCandidateFromSignal,
   candidateFromSignalSnapshot,
   buildSignalOptionsCandidateShellsFromSignals,

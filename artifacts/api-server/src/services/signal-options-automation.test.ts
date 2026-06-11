@@ -437,6 +437,29 @@ test("Signal Options stale position mark summary names stale quote", () => {
   );
 });
 
+test("realized P&L uses the contract multiplier, not a hardcoded 100", () => {
+  const { signalOptionsContractMultiplier, signalOptionsRealizedPnl } =
+    __signalOptionsAutomationInternalsForTests;
+
+  // Standard equity option (multiplier 100) — behavior unchanged.
+  assert.equal(
+    signalOptionsContractMultiplier({ multiplier: 100 }),
+    100,
+  );
+  assert.equal(signalOptionsRealizedPnl(3, 2, 1, { multiplier: 100 }), 100);
+
+  // Missing/invalid multiplier falls back to 100 (matches the unrealized path).
+  assert.equal(signalOptionsContractMultiplier({}), 100);
+  assert.equal(signalOptionsContractMultiplier(null), 100);
+  assert.equal(signalOptionsRealizedPnl(3, 2, 1, undefined), 100);
+
+  // Adjusted/mini contract (multiplier 10) — realized P&L must scale by 10,
+  // not 100, so it agrees with unrealized P&L and the daily-loss halt.
+  assert.equal(signalOptionsContractMultiplier({ multiplier: 10 }), 10);
+  assert.equal(signalOptionsRealizedPnl(3, 2, 1, { multiplier: 10 }), 10);
+  assert.equal(signalOptionsRealizedPnl(3.0, 2.0, 5, { multiplier: 10 }), 50);
+});
+
 test("Signal Options keeps fresh signals visible past the 1-bar action age (regression)", () => {
   const {
     isSignalOptionsActionableSignalState,
