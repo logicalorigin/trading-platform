@@ -446,19 +446,38 @@ export function getRuntimeMode(): RuntimeMode {
   return process.env["TRADING_MODE"] === "live" ? "live" : "paper";
 }
 
-export function getMassiveRuntimeConfig(): MassiveRuntimeConfig | null {
-  const apiKey = getOptionalEnv(MASSIVE_API_KEY_ENV_NAMES);
+// Provider configs derive only from immutable provider env (API key + base
+// URL), but are re-resolved per stock-aggregate fetch on the hot path
+// (getCurrentStockMinuteAggregates → getPreferredStockAggregateStreamSource).
+// Memoize the env read once per process; reset hook provided for tests.
+let massiveRuntimeConfigCache: MassiveRuntimeConfig | null | undefined;
+let fmpRuntimeConfigCache: FmpRuntimeConfig | null | undefined;
+let massiveStocksRecencyCache: MassiveStocksRecency | undefined;
 
-  if (!apiKey) {
-    return null;
+export function __resetProviderRuntimeConfigCacheForTests(): void {
+  massiveRuntimeConfigCache = undefined;
+  fmpRuntimeConfigCache = undefined;
+  massiveStocksRecencyCache = undefined;
+}
+
+export function getMassiveRuntimeConfig(): MassiveRuntimeConfig | null {
+  if (massiveRuntimeConfigCache !== undefined) {
+    return massiveRuntimeConfigCache;
   }
 
-  return {
-    apiKey,
-    baseUrl: stripTrailingSlash(
-      getOptionalEnv(MASSIVE_API_BASE_URL_ENV_NAMES) ?? "https://api.massive.com",
-    ),
-  };
+  const apiKey = getOptionalEnv(MASSIVE_API_KEY_ENV_NAMES);
+
+  massiveRuntimeConfigCache = apiKey
+    ? {
+        apiKey,
+        baseUrl: stripTrailingSlash(
+          getOptionalEnv(MASSIVE_API_BASE_URL_ENV_NAMES) ??
+            "https://api.massive.com",
+        ),
+      }
+    : null;
+
+  return massiveRuntimeConfigCache;
 }
 
 export function getMassiveProviderIdentity(
@@ -471,10 +490,16 @@ export function getMassiveProviderIdentity(
 }
 
 export function getMassiveStocksRecency(): MassiveStocksRecency {
+  if (massiveStocksRecencyCache !== undefined) {
+    return massiveStocksRecencyCache;
+  }
+
   const normalized = (process.env["MASSIVE_STOCKS_RECENCY"] ?? "")
     .trim()
     .toLowerCase();
-  return normalized === "delayed" ? "delayed" : "realtime";
+  massiveStocksRecencyCache =
+    normalized === "delayed" ? "delayed" : "realtime";
+  return massiveStocksRecencyCache;
 }
 
 export function isMassiveStocksRealtimeConfigured(
@@ -487,18 +512,23 @@ export function isMassiveStocksRealtimeConfigured(
 }
 
 export function getFmpRuntimeConfig(): FmpRuntimeConfig | null {
-  const apiKey = getOptionalEnv(FMP_API_KEY_ENV_NAMES);
-
-  if (!apiKey) {
-    return null;
+  if (fmpRuntimeConfigCache !== undefined) {
+    return fmpRuntimeConfigCache;
   }
 
-  return {
-    apiKey,
-    baseUrl: stripTrailingSlash(
-      getOptionalEnv(FMP_BASE_URL_ENV_NAMES) ?? "https://financialmodelingprep.com/stable",
-    ),
-  };
+  const apiKey = getOptionalEnv(FMP_API_KEY_ENV_NAMES);
+
+  fmpRuntimeConfigCache = apiKey
+    ? {
+        apiKey,
+        baseUrl: stripTrailingSlash(
+          getOptionalEnv(FMP_BASE_URL_ENV_NAMES) ??
+            "https://financialmodelingprep.com/stable",
+        ),
+      }
+    : null;
+
+  return fmpRuntimeConfigCache;
 }
 
 export function getIbkrTwsRuntimeConfig(): IbkrTwsRuntimeConfig | null {
