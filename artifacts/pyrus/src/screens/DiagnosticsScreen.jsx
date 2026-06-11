@@ -1231,7 +1231,7 @@ export default function DiagnosticsScreen({
         <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
           {statusLabel(latest?.status)}
         </span>
-        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
+        <span role="status" aria-live="polite" style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
         </span>
         {WINDOW_OPTIONS.map((option) => {

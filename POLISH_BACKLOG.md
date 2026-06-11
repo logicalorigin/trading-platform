@@ -337,4 +337,38 @@ Source audit (4 dims) of `BacktestScreen.jsx` (134 LOC shell) + `features/backte
 _(Tier 2 COMPLETE: Flow · GEX · Research · Algo · Backtest all audited.)_
 
 ## Tier 3 — Diagnostics · Settings  _(lower "functional-and-clean" bar)_
-_(pending)_
+
+### Diagnostics + Settings — full audit (2026-06-11)
+Source audit (4 dims, a11y/state-weighted per the Tier-3 bar) of `DiagnosticsScreen.jsx` (1.9k LOC) + `SettingsScreen.jsx` (3.7k LOC) + `settings/{DiagnosticThresholdSettingsPanel,IbkrLaneArchitecturePanel}.jsx` via 2 parallel agents, fact-checked. **Completes the screen-by-screen audit sweep (Tier 1 + Tier 2 + Tier 3).**
+
+**Strengths verified (recon hypothesis corrected):**
+- **Keyboard reachability is GOOD** — both agents confirmed essentially every `onClick` is on a native `<button>`/`<input>`/`<label>` (the recon's "35/19 div-onClick" was a grep artifact — same-line `<button` filtering). **No keyboard-dead clickable cluster** (unlike Research/Backtest). Native `button:focus-visible` ring covers them (SYS-09).
+- **Fully tokenized** — 0 raw hex/rgba; 0 `transition: all`; weights mostly `FONT_WEIGHTS.*` (Diagnostics 0 raw; Settings has some). The ~96 `CSS_COLOR.green` are **operational health** (connected/synced/healthy/enabled), doctrine-correct on config screens; the `"green"` literal (SettingsScreen:2047) is a theme-option value. No directional drift.
+- **Settings state coverage strong** — mutation error/saving/success(toast) paths surfaced; 2 destructive actions already `window.confirm`-gated; contextual empty states.
+
+**Fixed this pass** (typecheck green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| DIAG-01 | Live-updating stream-state indicator (`LIVE/RECONNECTING/POLLING/ERROR` + age) was a bare `<span>` → SSE state changes silent to screen readers. Added `role="status" aria-live="polite"`. | DiagnosticsScreen.jsx:1234 | a11y | P2 | done |
+
+**Open — Settings state coverage (highest product value — destructive data loss):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| SET-01 | **Irreversible destructive actions fire immediately with no confirmation/undo** — "Reset defaults" (wipes ~20 workspace keys), Clear ticker/trade/flow history, Clear storage prefs, Reset synced prefs, Reset alerts, Clear dismissals. Some are styled `danger`=red but none confirm. The screen **already uses `window.confirm`** twice (storage prune 1778, bridge override 3052) → reuse that pattern. | SettingsScreen.jsx:2559,2741-2780,1909-1947,2012,2488,2526 | state | P2 | open (behavior change — wants greenlight) |
+| SET-02 | **Storage-clear errors swallowed** (`catch {}`) with no toast/feedback — user clicks "Clear chart scale prefs" and gets zero success/failure signal. | SettingsScreen.jsx:1168-1190 | state | P2 | open |
+
+**Open — systematic a11y (both screens; 0 `aria-*` in-file except 1; recommend folding into the cross-screen a11y sub-pass w/ live SR):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| DIAG-02 | Audio diagnostic alerts + the Active-Alerts list have **no SR-equivalent live region** (audio chime is the only new-alert cue); also no `role="status"` on the alerts container. | DiagnosticsScreen.jsx:1300-1364 | a11y | P2 | open (needs live SR) |
+| TIER3-A11Y | **Hand-rolled tab rails lack `role="tab"`/`aria-selected`/`tablist`** (Diagnostics 1273, Settings 3466 — both have the accessible `SegmentedControl` primitive available); **Settings panel titles render as `<div>` not headings** (SurfacePanel, ~30 panels → no heading outline); **IbkrLane inputs unlabeled** (select/number/list/add-symbol next to `<div>` labels, no `<label>`/`aria-label`: IbkrLane 198/214/222/370/548); settings search input placeholder-only (587); toggle-button groups lack `aria-pressed` (Settings 3204-3252, 2450, 2805); checkbox-switches lack `role="switch"` (optional, Tier-3 floor met by labeled checkbox). | see ids | a11y | P2/P3 | open |
+| TIER3-TOUCH | `.ra-touch-target` used **0×** across all Tier-3 files → hand-rolled `smallButton` (~17–30px) + tab buttons (~23px) below the 44px touch floor (~25+ buttons each screen). Shared `Button` already floors correctly → route through it or add the class (needs touch-width live check). | DiagnosticsScreen smallButton 1844 + tabs 1272; SettingsScreen smallButton 376 + tabs 3466; panels | a11y | P2 | open (needs touch shoot) |
+
+**Open — Diagnostics state coverage + responsive (mostly needs-live):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| DIAG-03 | Fetch errors swallowed (`.catch(()=>{})`) on history/events/detail/poll → render as empty/neutral, no error tone or retry though `loadHistoryAndEvents` refetch exists. No loading skeletons (value pop-in) and no amber stale cue when the snapshot ages out during reconnect. | DiagnosticsScreen.jsx:878-883,945-998,1366-1389,1234 | state | P3 | open (needs live) |
+| DIAG-04 | Storage + Events tabs use fixed 2-col grids that don't collapse on phone (others use `auto-fit minmax`). | DiagnosticsScreen.jsx:1806-1818,1820-1834 | responsive | P3 | open |
+| SET-03 | Stale-while-loading without "refreshing" cue (SignalMonitor 2841, ThresholdPanel 257, Lane 937); IbkrLane fixed multi-col grids don't stack (239,590,751); fontWeight raw 500/600 → `FONT_WEIGHTS.*` (376,3476); hand-rolled `SettingCard` inside `Panel` = borderline nested-card mosaic (680-734). | see ids | state/responsive/ds | P3 | open |
+
+_(Tier 3 COMPLETE → **all screens audited**: Tier 1 (Market/Signals/Trade/Account) · Tier 2 (Flow/GEX/Research/Algo/Backtest) · Tier 3 (Diagnostics/Settings).)_
