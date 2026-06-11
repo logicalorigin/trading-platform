@@ -3577,9 +3577,22 @@ export const HeaderStatusCluster = ({
       }
     };
 
+    // Scrolling *inside* the popover never moves the trigger anchor, but the
+    // capture-phase scroll listener fires for those scrolls too — and each call
+    // forces a getBoundingClientRect (layout) + setBridgePopoverPosition (full
+    // re-render). That made popover scrolling far jankier than the rest of the
+    // app. Reposition only for scrolls that originate outside the popover.
+    const handleScrollReposition = (event) => {
+      const target = event.target;
+      if (target instanceof Node && bridgePopoverRef.current?.contains(target)) {
+        return;
+      }
+      updateBridgePopoverPosition();
+    };
+
     if (!bridgePopoverAsSheet) {
       window.addEventListener("resize", updateBridgePopoverPosition);
-      window.addEventListener("scroll", updateBridgePopoverPosition, true);
+      window.addEventListener("scroll", handleScrollReposition, true);
     }
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -3587,7 +3600,7 @@ export const HeaderStatusCluster = ({
     return () => {
       if (!bridgePopoverAsSheet) {
         window.removeEventListener("resize", updateBridgePopoverPosition);
-        window.removeEventListener("scroll", updateBridgePopoverPosition, true);
+        window.removeEventListener("scroll", handleScrollReposition, true);
       }
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
