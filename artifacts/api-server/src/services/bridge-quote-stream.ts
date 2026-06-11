@@ -159,6 +159,20 @@ function isBridgeWorkBackoffError(error: unknown): boolean {
   return isHttpError(error) && error.code === "ibkr_bridge_work_backoff";
 }
 
+// Pre-connect / not-yet-attached snapshot bootstrap failures: our own bootstrap
+// timeout (AbortController) fires, or the bridge upstream is unreachable (502/504).
+// These are expected on every boot before the bridge attaches and are non-fatal
+// (already recorded in lastError/lastErrorAt) — so they don't warrant a warn+stack.
+function isExpectedBridgeUnavailableError(error: unknown): boolean {
+  if (isHttpError(error)) {
+    return error.statusCode === 502 || error.statusCode === 504;
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
 let bridgeRuntimeConfiguredForTests: boolean | null = null;
 let nextSubscriberId = 1;
 let streamSignature = "";
@@ -1096,7 +1110,10 @@ export async function fetchBridgeQuoteSnapshots(
     const now = nowProvider();
     lastError = readErrorMessage(error);
     lastErrorAt = now;
-    if (isBridgeWorkBackoffError(error)) {
+    if (
+      isBridgeWorkBackoffError(error) ||
+      isExpectedBridgeUnavailableError(error)
+    ) {
       logger.debug(
         { err: error, symbols: hydrateSymbols },
         "IBKR bridge quote snapshot bootstrap skipped",
