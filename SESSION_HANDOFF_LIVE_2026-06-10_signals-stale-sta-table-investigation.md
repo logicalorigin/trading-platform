@@ -333,3 +333,38 @@ defers heavy action work only, not lightweight canonical persistence.
 Phase 4 VERIFY+COMMIT: tests (passive bar-close write w/o UI client; SSE hydrate+delta;
 gate passes once events exist) + runtime (stale ratio drop, events populated, SSE-fresh STA)
 + commit the undocumented migration in isolated coherent slices.
+
+## SIGNAL BUBBLE HYDRATION — ROOT CAUSE + LATCH FIX (2026-06-10)
+
+User symptom: "SPY/TSLA/MSFT have no 5m signal" / bubbles not hydrated. User rule:
+a signal is ALWAYS buy or sell, and the last direction REMAINS until an opposite
+signal replaces it. The signal matrix is a memory/latch.
+
+ROOT CAUSE (evidence): the matrix cache does NOT latch. When a cell re-evaluates and
+finds no new tradeable signal, the eval emits direction=null with a newer latestBarAt,
+and the cache overwrites the stored buy/sell with null:
+- backend upsertSymbolState -> shouldPreserveExistingSignalMonitorSymbolState ranks by
+  activity timestamp; the directionless-but-newer state wins and erases the direction.
+- frontend preferSignalMatrixCellState (signalMatrixStateMerge.js:111) same flaw.
+Runtime data confirmed the gradient: 1m/2m 100% null, 5m ~76% null, 1h 0%, 1d ~1%
+(short TFs rarely have a *fresh* tradeable signal in-window, so they kept getting wiped).
+Backend serves data correctly on BOTH /state REST and the SSE stream; not a backend-data,
+SSE-merge, or render-gate bug. signalEvents (filtered tradeable) is empty on short TFs;
+that's expected — the fix is to LATCH the last received signal, not re-derive direction.
+
+FIX (latch the cache; no evaluator/algorithm change):
+- artifacts/api-server/src/services/signal-monitor.ts: added applyStoredSignalDirectionLatch();
+  wired into upsertSymbolState. If a re-eval has no direction but the cached row has one,
+  keep the cached direction/signalAt/price/barsSinceSignal, set fresh=false, still refresh
+  latestBarAt/lastEvaluatedAt/status. A real signal (same or opposite) replaces normally.
+  New tickers with no cached signal stay null until their first signal (rare, per user).
+- artifacts/pyrus/src/features/signals/signalMatrixStateMerge.js: preferSignalMatrixCellState
+  now keeps a directional cell over a directionless update (a directional update still wins).
+- Reverted an earlier over-engineered approach (deriving direction from structureEvents in
+  the evaluator) per user feedback — the correct fix is the cache latch.
+
+Tests: signal-monitor-completed-bars.test.ts (latch holds; opposite flips; new ticker null);
+signalMatrixStateMerge.test.mjs (directionless newer doesn't clobber; opposite replaces).
+
+VALIDATION: api-server + pyrus typecheck; backend + frontend merge unit tests. Live-verify
+after market open: 1m/2m/5m null-direction counts should collapse as cells latch received signals.
