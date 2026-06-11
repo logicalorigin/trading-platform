@@ -1,9 +1,4 @@
-import { T, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  text: "var(--ra-text-primary)",
-  textDim: "var(--ra-text-dim)",
-};
+import { CSS_COLOR, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 /**
  * SectionHeader — the canonical in-card section title.

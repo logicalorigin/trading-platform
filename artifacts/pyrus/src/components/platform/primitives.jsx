@@ -1,29 +1,9 @@
 import React, { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
 import { ContainerLoadingStatus } from "./ContainerLoadingStatus.jsx";
-
-const CSS_COLOR = Object.freeze({
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  bg3: "var(--ra-surface-3)",
-  border: "var(--ra-border-default)",
-  borderLight: "var(--ra-border-light)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  green: "var(--ra-green-500)",
-  red: "var(--ra-red-500)",
-  amber: "var(--ra-amber-500)",
-  blue: "var(--ra-blue-500)",
-});
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const readSparklineValue = (point) => {
   if (typeof point === "number" && Number.isFinite(point)) {
@@ -820,7 +800,8 @@ export const Pill = ({
         fontWeight: FONT_WEIGHTS.medium,
         borderRadius: dim(RADII.pill),
         cursor: onClick ? "pointer" : "default",
-        transition: "all 0.18s ease",
+        transition:
+          "background-color var(--ra-motion-standard) var(--ra-motion-ease), border-color var(--ra-motion-standard) var(--ra-motion-ease), color var(--ra-motion-standard) var(--ra-motion-ease), box-shadow var(--ra-motion-standard) var(--ra-motion-ease)",
         ...surface,
       }}
     >
@@ -1523,6 +1504,34 @@ export const Skeleton = ({
   />
 );
 
+/**
+ * surfaceStyle — single source of truth for the card/panel surface recipe.
+ * (SYS-04) `Card`, `SurfacePanel`, and — incrementally, during per-screen
+ * polish passes — the ~71 hand-rolled `bg1` surfaces all derive their
+ * background / border / radius / elevation from here, so the surface
+ * contract lives in one place instead of drifting per file.
+ *
+ *   border:   "default" | "light" | "none"   (1px solid, or none)
+ *   elevated: true → ELEVATION.sm shadow (panel) instead of a border
+ *
+ * Returns a plain style object; spread it first, then layer component-specific
+ * keys (padding, transition, layout) and caller overrides on top.
+ */
+export const surfaceStyle = ({
+  radius = RADII.md,
+  border = "default",
+  elevated = false,
+} = {}) => ({
+  background: CSS_COLOR.bg1,
+  border:
+    border === "none"
+      ? "none"
+      : `1px solid ${border === "light" ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
+  borderRadius: dim(radius),
+  ...(elevated ? { boxShadow: ELEVATION.sm } : null),
+  overflow: "hidden",
+});
+
 export const Card = ({
   children,
   style = {},
@@ -1543,11 +1552,11 @@ export const Card = ({
       {...props}
       className={composedClassName}
       style={{
-        background: CSS_COLOR.bg1,
-        border: `1px solid ${dataZone ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
-        borderRadius: dim(dataZone ? RADII.sm : RADII.md),
+        ...surfaceStyle({
+          radius: dataZone ? RADII.sm : RADII.md,
+          border: dataZone ? "light" : "default",
+        }),
         padding: noPad ? 0 : sp("6px 8px"),
-        overflow: "hidden",
         transition:
           "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease), box-shadow var(--ra-motion-fast) var(--ra-motion-ease)",
         ...style,
@@ -1575,13 +1584,9 @@ export const SurfacePanel = ({
     {...props}
     className={className || "ra-panel-enter"}
     style={{
-      background: CSS_COLOR.bg1,
-      border: "none",
-      borderRadius: dim(RADII.md),
-      boxShadow: ELEVATION.sm,
+      ...surfaceStyle({ border: "none", elevated: true }),
       minWidth: 0,
       alignSelf: "start",
-      overflow: "hidden",
       ...style,
     }}
   >
@@ -1983,7 +1988,8 @@ export const TableExpandableRow = ({
         background: expanded ? cssColorMix(selectionAccent, 6) : "transparent",
         paddingLeft: expanded ? 0 : 3,
         minWidth: 0,
-        transition: "background 120ms ease, border-color 120ms ease",
+        transition:
+          "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease)",
         ...rowStyle,
       }}
     >
@@ -1993,7 +1999,7 @@ export const TableExpandableRow = ({
       style={{
         overflow: "hidden",
         maxHeight: expanded ? expandedHeight : 0,
-        transition: "max-height 180ms ease",
+        transition: "max-height var(--ra-motion-standard) var(--ra-motion-ease)",
         borderTop: expanded ? `1px solid ${borderTone}` : "none",
         background: cssColorMix(selectionAccent, 2),
       }}

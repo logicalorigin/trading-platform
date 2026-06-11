@@ -826,7 +826,16 @@ optgroup {
   }
 }
 
-.ra-shell[data-viewport="phone"] .ra-touch-target {
+/* Touch-target floor. The name promised a guarantee it only gave on phone
+   (SYS-05). Now every viewport gets at least the WCAG 2.2 24px minimum, and
+   the touch viewports (phone + tablet) get the full 44px comfortable target. */
+.ra-touch-target {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.ra-shell[data-viewport="phone"] .ra-touch-target,
+.ra-shell[data-viewport="tablet"] .ra-touch-target {
   min-width: 44px;
   min-height: 44px;
 }
@@ -1757,6 +1766,46 @@ summary,
   transition-duration: 60ms;
 }
 
+/* Chrome hover affordances (GC-04). Replace per-element JS style mutation
+   (onMouseEnter/Leave writing event.currentTarget.style.*) with declarative
+   CSS hover. Rest state stays in each control's inline base style; :hover
+   snaps to the shared accent tokens these chrome controls use. */
+.ra-hover-accent-bg,
+.ra-hover-accent-bgfg,
+.ra-hover-accent-bgbd,
+.ra-hover-accent-pill,
+.ra-hover-brighten {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease);
+}
+.ra-hover-accent-bg:hover {
+  background: var(--ra-accent-hover-bg);
+}
+.ra-hover-accent-bgfg:hover {
+  background: var(--ra-accent-hover-bg);
+  color: var(--ra-color-accent);
+}
+.ra-hover-accent-bgbd:hover {
+  background: var(--ra-accent-hover-bg);
+  border-color: var(--ra-color-accent);
+}
+.ra-hover-accent-pill:hover {
+  background: var(--ra-accent-hover-bg);
+  color: var(--ra-color-accent);
+  border-color: var(--ra-color-accent);
+}
+.ra-hover-brighten:hover {
+  color: var(--ra-text-primary);
+}
+/* Toast hover uses per-instance tone via inline `--toast-h-*` custom props. */
+.ra-h-toast:hover {
+  background: var(--toast-h-bg);
+  border-color: var(--toast-h-bd);
+  transform: translateX(-2px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ra-interactive,
   .ra-interactive:hover,
@@ -1953,14 +2002,19 @@ textarea:focus-visible {
   border-color: var(--ra-border-focus, var(--ra-color-accent));
 }
 
+/* Focus affordance for buttons and arbitrary focusable elements uses a solid,
+   offset outline rather than the box-shadow ring: box-shadow is clipped by
+   ancestor overflow:hidden (cards, rows) and the prior 0.34-alpha ring was
+   low-contrast. outline is never clipped and outline-offset lifts it clear of
+   the element border. (SYS-09) */
 button:focus-visible {
-  outline: none;
-  box-shadow: var(--ra-focus-ring);
+  outline: 2px solid var(--ra-color-accent);
+  outline-offset: 2px;
 }
 
 [tabindex]:focus-visible:not(button):not(input):not(select):not(textarea) {
-  outline: none;
-  box-shadow: var(--ra-focus-ring);
+  outline: 2px solid var(--ra-color-accent);
+  outline-offset: 2px;
 }
 
 button[disabled],
@@ -1987,7 +2041,6 @@ textarea[disabled]:not([data-ra-keep-opacity]),
 textarea:disabled:not([data-ra-keep-opacity]) {
   opacity: 0.55;
 }
-
 
 .ra-sparkline polyline,
 .ra-sparkline path {

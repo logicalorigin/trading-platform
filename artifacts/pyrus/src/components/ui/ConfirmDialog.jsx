@@ -1,20 +1,6 @@
-import React, { Fragment, useEffect } from "react";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import React, { Fragment, useEffect, useRef } from "react";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { Button } from "./Button.jsx";
-
-const CSS_COLOR = {
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  borderLight: "var(--ra-border-light)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  red: "var(--ra-red-500)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 export const ConfirmDialog = ({
   open,
@@ -34,7 +20,43 @@ export const ConfirmDialog = ({
   errorTestId = "confirm-dialog-error",
 }) => {
   const resolvedTone = confirmTone || (destructive ? CSS_COLOR.red : CSS_COLOR.accent);
+  const dialogRef = useRef(null);
+  const restoreFocusRef = useRef(null);
 
+  const getFocusables = () => {
+    const node = dialogRef.current;
+    if (!node) return [];
+    return Array.from(
+      node.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el instanceof HTMLElement && el.offsetParent !== null);
+  };
+
+  // Modal a11y (focus): on open, remember the trigger and move focus into the
+  // dialog (onto Cancel, the least-destructive control, so the user never lands
+  // pre-focused on a live-order confirm); restore focus to the trigger on close.
+  // Keyed on `open` only so a mid-dialog `pending` toggle never bounces focus
+  // out of the dialog. (WCAG 2.1)
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    restoreFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const initial = getFocusables();
+    if (initial.length) {
+      initial[0].focus();
+    } else {
+      dialogRef.current?.focus();
+    }
+    return () => {
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [open]);
+
+  // Modal a11y (keys): Escape to cancel (unless pending), Tab/Shift+Tab trapped
+  // within the dialog.
   useEffect(() => {
     if (!open) {
       return undefined;
@@ -42,6 +64,19 @@ export const ConfirmDialog = ({
     const handleKeyDown = (event) => {
       if (event.key === "Escape" && !pending) {
         onCancel?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = getFocusables();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -74,10 +109,12 @@ export const ConfirmDialog = ({
       }}
     >
       <div
+        ref={dialogRef}
         data-testid={dialogTestId}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${dialogTestId}-title`}
+        tabIndex={-1}
         style={{
           width: "min(100%, 520px)",
           background: CSS_COLOR.bg1,

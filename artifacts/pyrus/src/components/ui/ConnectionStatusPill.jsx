@@ -1,16 +1,8 @@
 import React from "react";
-import { FONT_WEIGHTS, T, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, fs, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { StatusPill } from "../platform/primitives.jsx";
 import { PulseDot } from "./PulseDot.jsx";
-
-const CSS_COLOR = {
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  green: "var(--ra-green-500)",
-  amber: "var(--ra-amber-500)",
-  red: "var(--ra-red-500)",
-};
 
 const STATUS_META = {
   disconnected: {

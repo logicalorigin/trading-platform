@@ -1,10 +1,4 @@
-import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  text: "var(--ra-text-primary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-};
+import { CSS_COLOR, dim, FONT_WEIGHTS, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const SIZES = {
   sm: { label: "caption", value: "paragraphMuted", pad: "2px 0", gap: 2 },

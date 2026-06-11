@@ -9,7 +9,7 @@ import {
   cn,
 } from "@/lib/utils";
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const CSS_COLOR = {
   bg1: "var(--ra-surface-1)",
@@ -18,9 +18,6 @@ const CSS_COLOR = {
   textMuted: "var(--ra-text-muted)",
   accent: "var(--ra-color-accent)",
 }
-
-const cssColorMix = (color: string, percent: number) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`
 
 const contentSurfaceStyle: React.CSSProperties = {
   zIndex: 1000,

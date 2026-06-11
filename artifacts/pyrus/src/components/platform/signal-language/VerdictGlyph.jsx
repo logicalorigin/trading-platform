@@ -1,13 +1,10 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Ban, CheckCircle2, Clock } from "lucide-react";
-import { MISSING_VALUE, RADII, dim } from "../../../lib/uiTokens.jsx";
+import { cssColorMix, dim, MISSING_VALUE, RADII } from "../../../lib/uiTokens.jsx";
 import { SCORE_TRY } from "./thresholds.js";
 import { verdictTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const isReadyStatusMeta = (statusMeta) =>
   statusMeta?.tone === getTone("buy") ||

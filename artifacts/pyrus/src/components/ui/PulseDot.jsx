@@ -1,16 +1,6 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { RADII, dim } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  pulseLive: "var(--ra-green-500)",
-  pulseAlert: "var(--ra-amber-500)",
-  pulseLoss: "var(--ra-red-500)",
-  textMuted: "var(--ra-text-muted)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+import { CSS_COLOR, cssColorMix, dim, RADII } from "../../lib/uiTokens.jsx";
 
 const PULSE_CSS = `
 @keyframes pyrusPulse {

@@ -1,19 +1,8 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { formatEnumLabel } from "../../../lib/formatters";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../../lib/uiTokens.jsx";
 import { strategyTooltip } from "./tooltips.js";
-
-const CSS_COLOR = {
-  textSec: "var(--ra-text-secondary)",
-  amber: "var(--ra-amber-500)",
-  blue: "var(--ra-blue-500)",
-  cyan: "var(--ra-cyan-500)",
-  pink: "var(--ra-pink-500)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};

@@ -1,11 +1,5 @@
 import { useId } from "react";
-import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  bg1: "var(--ra-surface-1)",
-  border: "var(--ra-border-default)",
-  text: "var(--ra-text-primary)",
-};
+import { CSS_COLOR, dim, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const clamp = (value, min, max) => {
   let next = value;

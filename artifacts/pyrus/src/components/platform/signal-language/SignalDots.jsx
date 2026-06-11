@@ -1,29 +1,12 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import {
-  FONT_WEIGHTS,
-  MISSING_VALUE,
-  RADII,
-  T,
-  dim,
-  fs,
-  sp,
-} from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T } from "../../../lib/uiTokens.jsx";
 import {
   getCurrentSignalDirection,
   normalizeSignalDirection,
   normalizeSignalStatus,
 } from "../../../features/signals/signalStateFreshness.js";
 import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
-
-const CSS_COLOR = {
-  amber: "var(--ra-amber-500)",
-  blue: "var(--ra-blue-500)",
-  red: "var(--ra-red-500)",
-  borderLight: "var(--ra-border-light)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-};
 
 const NON_HYDRATED_SIGNAL_DOT_STATUSES = new Set(["pending", "unknown"]);
 
@@ -63,9 +46,6 @@ export const resolveSignalDotHydrationMeta = (state) => {
     hydrationState,
   };
 };
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const isSignalDirection = (value) => value === "buy" || value === "sell";
 

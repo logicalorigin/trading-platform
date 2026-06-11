@@ -1,15 +1,5 @@
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
-
-const CSS_COLOR = {
-  bg0: "var(--ra-surface-0)",
-  textSec: "var(--ra-text-secondary)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const HIDE_SCROLLBAR_STYLE = {
   scrollbarWidth: "none",
@@ -71,7 +61,8 @@ export const TabBar = ({
               display: "inline-flex",
               alignItems: "center",
               gap: sp(6),
-              transition: "background 0.18s ease, color 0.18s ease",
+              transition:
+                "background-color var(--ra-motion-standard) var(--ra-motion-ease), color var(--ra-motion-standard) var(--ra-motion-ease)",
             }}
           >
             <span>{tab.label}</span>

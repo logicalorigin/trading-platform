@@ -1,14 +1,5 @@
 import * as RadixSlider from "@radix-ui/react-slider";
-import { RADII, dim } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  bg0: "var(--ra-surface-0)",
-  bg2: "var(--ra-surface-2)",
-  accent: "var(--ra-color-accent)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+import { CSS_COLOR, cssColorMix, dim, RADII } from "../../lib/uiTokens.jsx";
 
 const LOG_POSITION_RESOLUTION = 1000;
 
@@ -114,7 +105,8 @@ export const Slider = ({
           border: `1.5px solid ${CSS_COLOR.accent}`,
           boxShadow: `0 0 0 0 ${cssColorMix(CSS_COLOR.accent, 0)}`,
           outline: "none",
-          transition: "box-shadow 120ms ease, transform 120ms ease",
+          transition:
+            "box-shadow var(--ra-motion-fast) var(--ra-motion-ease), transform var(--ra-motion-fast) var(--ra-motion-ease)",
           cursor: disabled ? "not-allowed" : "grab",
         }}
         onFocus={(event) => {

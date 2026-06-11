@@ -1,17 +1,8 @@
 import { RotateCcw } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T } from "../../lib/uiTokens.jsx";
 import { Button } from "./Button.jsx";
-
-const CSS_COLOR = {
-  textSec: "var(--ra-text-secondary)",
-  textMuted: "var(--ra-text-muted)",
-  red: "var(--ra-red-500)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const toTimestamp = (value) => {
   if (!value) return null;
@@ -40,7 +31,6 @@ export const ActionButton = ({
   variant = "secondary",
   size = "sm",
   style,
-  onMouseLeave,
   dataTestId,
   ...rest
 }) => {
@@ -131,22 +121,6 @@ export const ActionButton = ({
             }
           : null),
         ...style,
-      }}
-      onMouseLeave={(event) => {
-        if (style?.background) {
-          event.currentTarget.style.background = style.background;
-        }
-        if (style?.border) {
-          event.currentTarget.style.border = style.border;
-        }
-        if (style?.color) {
-          event.currentTarget.style.color = style.color;
-        }
-        if (errorActive) {
-          event.currentTarget.style.border = `1px solid ${cssColorMix(CSS_COLOR.red, 33)}`;
-          event.currentTarget.style.color = CSS_COLOR.red;
-        }
-        onMouseLeave?.(event);
       }}
     >
       <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5) }}>

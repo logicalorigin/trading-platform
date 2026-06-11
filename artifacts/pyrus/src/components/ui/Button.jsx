@@ -1,18 +1,5 @@
 import React, { forwardRef } from "react";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  bg1: "var(--ra-surface-1)",
-  border: "var(--ra-border-default)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  accent: "var(--ra-color-accent)",
-  red: "var(--ra-red-500)",
-  onAccent: "var(--ra-on-accent)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const SIZES = {
   xs: { padding: "3px 9px", font: "caption", icon: 11, gap: 4 },
@@ -82,13 +69,25 @@ const BUTTON_CSS = `
 @keyframes pyrusBtnSpin {
   to { transform: rotate(360deg); }
 }
-.ra-btn { transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease; }
+.ra-btn {
+  background: var(--ra-btn-bg);
+  color: var(--ra-btn-color);
+  transition:
+    background-color var(--ra-motion-standard) var(--ra-motion-ease),
+    color var(--ra-motion-standard) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-standard) var(--ra-motion-ease),
+    transform var(--ra-motion-micro) var(--ra-motion-ease);
+}
+.ra-btn:hover:not(:disabled) {
+  background: var(--ra-btn-bg-hover, var(--ra-btn-bg));
+  color: var(--ra-btn-color-hover, var(--ra-btn-color));
+}
 .ra-btn:active:not(:disabled) { transform: translateY(0.5px); }
 @media (prefers-reduced-motion: reduce) {
   .ra-btn { transition: none; }
   .ra-btn:active:not(:disabled) { transform: none; }
-	}
-	`;
+}
+`;
 
 const renderButtonIcon = (IconSlot, size) => {
   if (!IconSlot) return null;
@@ -109,8 +108,6 @@ export const Button = forwardRef(function Button(
     fullWidth = false,
     children,
     style,
-    onMouseEnter,
-    onMouseLeave,
     dataTestId,
     type = "button",
     ...rest
@@ -131,20 +128,6 @@ export const Button = forwardRef(function Button(
         disabled={isDisabled}
         data-testid={dataTestId}
         className="ra-btn ra-touch-target"
-        onMouseEnter={(event) => {
-          if (!isDisabled) {
-            event.currentTarget.style.background = v.hoverBackground;
-            if (v.hoverColor) event.currentTarget.style.color = v.hoverColor;
-          }
-          onMouseEnter?.(event);
-        }}
-        onMouseLeave={(event) => {
-          if (!isDisabled) {
-            event.currentTarget.style.background = v.background;
-            event.currentTarget.style.color = v.color;
-          }
-          onMouseLeave?.(event);
-        }}
         style={{
           display: fullWidth ? "flex" : "inline-flex",
           width: fullWidth ? "100%" : undefined,
@@ -152,8 +135,12 @@ export const Button = forwardRef(function Button(
           justifyContent: "center",
           gap: sp(dims.gap),
           padding: sp(dims.padding),
-          background: v.background,
-          color: v.color,
+          "--ra-btn-bg": v.background,
+          "--ra-btn-bg-hover": v.hoverBackground,
+          "--ra-btn-color": v.color,
+          "--ra-btn-color-hover": v.hoverColor || v.color,
+          background: "var(--ra-btn-bg)",
+          color: "var(--ra-btn-color)",
           border: v.border,
           borderRadius: dim(RADII.pill),
           boxShadow: v.boxShadow,

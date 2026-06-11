@@ -1,12 +1,6 @@
 import { Info } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-};
+import { CSS_COLOR, dim, FONT_WEIGHTS, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const formatTooltipBody = (entry) => {
   if (!entry) return null;

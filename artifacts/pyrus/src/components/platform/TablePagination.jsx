@@ -1,9 +1,5 @@
 import { Button } from "../ui/Button.jsx";
-import { T, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const CSS_COLOR = {
-  textDim: "var(--ra-text-dim)",
-};
+import { CSS_COLOR, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 const normalizePageSize = (pageSize) => {
   const numeric = Math.floor(Number(pageSize));

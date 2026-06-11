@@ -120,6 +120,7 @@ export const Drawer = ({
           <button
             ref={closeButtonRef}
             type="button"
+            className="ra-touch-target"
             aria-label={`Close ${title}`}
             onClick={onClose}
             style={{

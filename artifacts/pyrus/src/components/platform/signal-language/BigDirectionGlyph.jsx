@@ -82,7 +82,7 @@ export const BigDirectionGlyph = ({
             strokeDasharray={circumference}
             strokeDashoffset={circumference * (1 - freshness)}
             strokeLinecap="round"
-            style={{ transition: "stroke-dashoffset 260ms ease" }}
+            style={{ transition: "stroke-dashoffset var(--ra-motion-slow) ease" }}
           />
           {normalizedDirection ? (
             <path d={trianglePath} fill={color} />

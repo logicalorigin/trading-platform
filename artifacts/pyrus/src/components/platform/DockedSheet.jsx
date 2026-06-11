@@ -58,7 +58,7 @@ export const DockedSheet = ({
           pointerEvents: expanded ? "auto" : "none",
           overflow: "hidden",
           transition:
-            "max-height 220ms ease, opacity 180ms ease, transform 220ms ease",
+            "max-height var(--ra-motion-standard) ease, opacity var(--ra-motion-standard) ease, transform var(--ra-motion-standard) ease",
           background: "var(--ra-surface-0)",
           color: "var(--ra-text-primary)",
           border: "1px solid var(--ra-border-default)",
