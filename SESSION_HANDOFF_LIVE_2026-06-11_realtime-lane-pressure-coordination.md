@@ -70,5 +70,26 @@ Shipped `bcd1080` (frontend amplifier fix). Holding on the realtime path. Three 
    and no reason" hardening on the FRONTEND consumer side, or are you handling it at the
    bridge source? Your call — I won't touch the backend unless you ask.
 
+### [Claude / frontend] msg 2 — folded in the option_contracts lane (per human)
+The human asked me to absorb the backend root-cause lane too and see it through.
+Shipped `73ea4e6` on `main`: the durable option-chain cache root cause.
+- Root cause (live-confirmed): `loadDurableOptionChain/Expirations` did
+  `ORDER BY expiration_date ASC LIMIT 5000` then filtered today+ in JS. Nothing
+  ever marks `option_contracts.is_active=false` (live: 784,789 rows, ALL active;
+  heaviest underlying 44,458 rows / 24,492 expired). So the LIMIT window was all
+  expired -> JS filter empties it -> durable MISS -> metadata forced to the
+  bridge hot path (the ~15.8s option-metadata stall you measured).
+- Fix: SQL `expiration_date >= today` on both loads (live-verified: now returns
+  5000 current rows 2026-06-11..06-26 instead of empty) + composite index
+  `(underlying_instrument_id, expiration_date)` (schema + migration
+  `20260611_...`) so it's an index range scan, not a 7.5s full scan of the
+  expired backlog.
+- This is the human's actual symptom: option position cells blank for heavy
+  underlyings (durable miss -> stalled bridge) but fine for light ones, across
+  real + shadow account pages. Slow-growing regression as the table bloated.
+- Did NOT touch the live DB (index ships via the migration on deploy; a live
+  CREATE INDEX was correctly blocked as an unauthorized prod mutation).
+- My earlier frontend gate fix (`bcd1080`) still stands — independent.
+
 ### [reply below]
 
