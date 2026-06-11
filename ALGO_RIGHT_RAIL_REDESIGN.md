@@ -26,7 +26,7 @@ All files under `artifacts/pyrus/`. Package `@workspace/pyrus`. Single global st
 - **Settings structure:** unify the two tiers into one — each setting appears once, as a **dense compact cell** (inputs + toggles only, **no sliders**), all sections open, **impact chips kept**.
 - **Sections (top → bottom):** `HaltStrip` board (top), then settings: **Signal · Risk · Gates · Contract · Fills · Exits · Quality Exits** (Overnight folds into Exits).
 - **Bespoke visuals:** strike ladder, horizontal exit track, halt status board.
-- **Strike ladder:** schematic slot ladder (no live quotes), **two radio columns** (CALL/PUT), ATM divider, **6 slots kept**, DTE folded in. **Green calls / red puts.**
+- **Strike ladder:** schematic slot ladder (no live quotes), **two radio columns** (CALL/PUT), ATM divider, **6 slots kept**, DTE folded in. **Blue calls / red puts** (reconciled 2026-06-11: original spec said green calls, but per DESIGN.md call-side = directional-intent blue; superseded by doctrine — see backlog ALG-03).
 - **Exit track:** horizontal PnL axis for %-positioned levels; non-axis fields as compact cells below; markers edit via **click → inline numeric input**.
 - **Halt board:** always-expanded, clearer; active/forced rows pop.
 - **Diagnostics frame & save bar:** polish only.
@@ -151,7 +151,7 @@ Spans `.algo-cell--full`. Controls six `optionSelection.*` fields (no schema cha
 - **ATM divider:** between slot 3 (`ATM upper`) and slot 2 (`ATM lower`): full-width `1px` `borderLight` line with centered `─── ATM ───` micro caption; ATM rows (3,2) get `background:cssColorMix(text,3)`.
 - **Radio cell (CALL / PUT):** `role="radio"` button, `dim(18)` hit area centered in the column.
   - Unselected: `dim(10)` ring (`1px solid border`).
-  - **Selected:** filled disc — **CALL = `green`**, **PUT = `red`** (`background:tone`, `box-shadow:0 0 0 2px cssColorMix(tone,18)`).
+  - **Selected:** filled disc — **CALL = `blue`** (directional-intent, via `toneForDirectionalIntent("bullish")`), **PUT = `red`** (`background:tone`, `box-shadow:0 0 0 2px cssColorMix(tone,18)`). _(2026-06-11: was green; reconciled to doctrine — ALG-03.)_
   - Hover: ring → `cssColorMix(tone,50)`; row bg `bg2`. Focus-visible: outline (B2). Disabled: opacity 0.55.
   - Click patches `optionSelection.callStrikeSlot` / `putStrikeSlot` (mutually exclusive per column).
 - **A11y:** each column `role="radiogroup"` with `aria-label="Call strike slot"/"Put strike slot"`; arrow-key navigation moves selection within the column; `aria-checked` on cells.

@@ -16,6 +16,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { toneForDirectionalIntent } from "../../features/platform/semanticToneModel.js";
 import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
@@ -1296,9 +1297,9 @@ export const ContractSelectionCell = ({
           gap: sp(2),
           color:
             label === "CALLS"
-              ? CSS_COLOR.green
+              ? toneForDirectionalIntent("bullish")
               : label === "PUTS"
-                ? CSS_COLOR.red
+                ? toneForDirectionalIntent("bearish")
                 : CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("micro"),
@@ -1351,7 +1352,7 @@ export const ContractSelectionCell = ({
           selected={selected}
           order={selectedIndex + 1}
           disabled={disabled}
-          tone={isCall ? CSS_COLOR.green : CSS_COLOR.red}
+          tone={isCall ? toneForDirectionalIntent("bullish") : toneForDirectionalIntent("bearish")}
           onSelect={(nextSlot) =>
             patchStrikeSlots({
               slotsField,
@@ -2582,7 +2583,7 @@ const buildSectionSummaryItem = ({
         })
         .join(" / "),
       dirty: summaryItemDirty(item, dirtyFieldKeys),
-      tone: isCall ? CSS_COLOR.green : CSS_COLOR.red,
+      tone: isCall ? toneForDirectionalIntent("bullish") : toneForDirectionalIntent("bearish"),
     };
   }
   return null;

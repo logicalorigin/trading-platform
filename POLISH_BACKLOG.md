@@ -279,10 +279,10 @@ Source audit (4 dims) of the Algo tree — `AlgoScreen.jsx` (2k LOC) + `screens/
 | ALG-01 | **Directional-green drift (Flow FLOW-01 family)** — the signal-direction tone helpers hardcoded **bull/buy/long → `CSS_COLOR.green`** (sell/short → red) on the screen's directional read; DESIGN.md requires directional intent = **blue (buy/bull)** / red (sell/bear). Routed through the canonical `toneForDirectionalIntent` (`semanticToneModel.js`, same helper GEX/Flow use): bull→blue is the fix, bear→red a visual no-op (`directionSell===CSS_COLOR.red`). Multi-cue-safe (BULL/BEAR/BUY/SELL text labels everywhere). 3 sites across 2 files: `signalDirectionMeta` (sidebar:362,365), `directionMeta` (OperationsSignalRow:305,313), `actionIntentTokenTone` (OperationsSignalRow:1166,1167). | see ids | ds/semantic | P2 | done |
 | ALG-02 | AlgoAuditPanel event-disclosure toggle `<button>`s (×2) lacked `aria-expanded` → added `aria-expanded={isExpanded}`. | AlgoAuditPanel.jsx:564,688 | a11y | P3 | done |
 
-**Open — directional-color CONFLICT (needs doctrine decision, do NOT silently convert):**
+**Resolved — directional-color conflict (doctrine decision 2026-06-11):**
 | id | finding | evidence | dim | sev | status |
 |----|---------|----------|-----|-----|--------|
-| ALG-03 | **Strike ladder colors calls green / puts red** (CALLS header, slot tone, save-summary tone). Per DESIGN.md call-side = **blue**, so this is the same drift as ALG-01 — **but** the approved feeder `ALGO_RIGHT_RAIL_REDESIGN.md` Part E **explicitly specified green calls / red puts**. Source-of-truth conflict (feeder spec vs doctrine) on a dense interactive ladder → flagged for a doctrine call + screenshot rather than unilateral conversion (cf. FLOW-02). | AlgoSettingsRegion.jsx:1298,1354,2585 | ds/semantic | P2 | open (conflict — needs decision) |
+| ALG-03 | **Strike ladder colored calls green / puts red** (CALLS header, slot tone, save-summary tone). Per DESIGN.md call-side = **blue**, same drift as ALG-01 — **but** the approved feeder `ALGO_RIGHT_RAIL_REDESIGN.md` Part E specified green calls / red puts. **Decision: doctrine wins** → converted calls green→blue via `toneForDirectionalIntent("bullish")` (puts→red no-op); feeder spec reconciled to blue calls (lines 29, 154, dated note). 3 sites, all multi-cue (CALL/PUT text + slot labels). | AlgoSettingsRegion.jsx:1298,1354,2585 | ds/semantic | P2 | done |
 
 **Open — DS / SYS-04 (surfaceStyle migration — NOT a no-op here, like Research):**
 | id | finding | evidence | dim | sev | status |
