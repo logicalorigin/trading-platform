@@ -28,7 +28,7 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 | signal-state | 5 | ❌ non-blocking |
 | screen-preload-{flow,trade,algo,backtest} | 5–6 | ❌ non-blocking |
 
-**Runtime override:** current source already calls `reclassifyBootBlocking([...BOOT_INFRA_TASK_IDS, ...initialScreenBootDataDeps])` on mount (`PlatformApp.jsx:931-936`). The screen dependency matrix lives in `SCREEN_BOOT_DATA_DEPS` (`screenRegistry.jsx:309-321`): Market blocks on `session`; Flow/GEX/Trade block on `session + watchlists`; Account blocks on `session + accounts`; Algo blocks on `session + accounts + signal-profile`.
+**Runtime override (verified 2026-06-11):** current source builds `initialBootBlockingTaskIds` via `useMemo` (`PlatformApp.jsx:857`) and calls `reclassifyBootBlocking(initialBootBlockingTaskIds)` on mount (`PlatformApp.jsx:929`; `reclassifyBootBlocking` defined `bootProgress.ts:282`). The screen dependency matrix lives in `SCREEN_BOOT_DATA_DEPS` (`bootPolicy.js:9-20`, re-exported via `screenRegistry.jsx:11`): Market / Research / Backtest / Diagnostics / Settings → `[session]`; Signals → `[session, signal-profile]`; Flow / GEX / Trade → `[session, watchlists]`; Account → `[session, accounts]`; Algo → `[session, accounts, signal-profile]`.
 
 ---
 
@@ -46,7 +46,7 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 ## 3. Errant waiting — the real launch levers
 
 1. **The remaining blocker is overlay policy + first-screen readiness, not shell render.** `session-not-ready` belongs to `resolveQuoteStreamGateReason` (`PlatformApp.jsx:689-705`), so it gates quote streams, not the shell render path. The user-visible boot overlay stays until `bootProgress.complete` (`PlatformApp.jsx:5831-5843`), and `first-screen` completes when the active screen reports `primaryReady` (`PlatformApp.jsx:1359-1371`).
-2. **Screen data gates are already screen-specific.** Runtime boot classification keeps `watchlists` blocking only for Flow/GEX/Trade; Market intentionally blocks only on `session` (`screenRegistry.jsx:309-321`). Do not blindly mark `watchlists` globally non-blocking or add it back to Market without a product decision.
+2. **Screen data gates are already screen-specific.** Runtime boot classification keeps `watchlists` blocking only for Flow/GEX/Trade; Market intentionally blocks only on `session` (`bootPolicy.js:9-20`). Do not blindly mark `watchlists` globally non-blocking or add it back to Market without a product decision.
 3. **`first-screen` is still the main correctness lever.** Several screens report `primaryReady` as mere visibility, which can dismiss the overlay before their primary data is actually fresh. Account and Algo already have richer local readiness booleans (`accountPrimaryReady`, `algoPrimaryDataReady`) that should feed the `primaryReady` callback before changing Market/Flow semantics.
 4. **NOT errant (verified):** `signal-state` is static-default non-blocking (`bootProgress.ts:74`) and should stay out of the launch gate unless a specific initial screen truly requires it. `accounts` and `signal-profile` are non-blocking by default but are restored as blockers for Account/Algo by `SCREEN_BOOT_DATA_DEPS`.
 5. **Backend latency still amplifies every gate:** when `session`, Account, Algo, or Flow dependencies are slow, the overlay remains up longer for screens that legitimately depend on them. Current source shows the bridge governor still has constrained account/orders/health lanes (`bridge-governor.ts:57-62`), and `fetchMarketingShadowDashboardSnapshot` is already `Promise.all`-parallel (`marketing-shadow-dashboard.ts:540`), so downstream slowness should not be misdiagnosed as a serial-await bug.
@@ -62,7 +62,7 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 
 ## 5. Backend "each request is slow" (blocks the gated loads)
 - DB pool default is now **12 on helium / 10 otherwise**, with a 30s helium acquire timeout (`lib/db/src/index.ts:35-64`). Older "6/10" notes are stale, but queueing remains a launch risk under concurrent dashboard fanout.
-- Per-tick synchronous SSE `JSON.stringify` (`routes/platform.ts:1238`).
+- Per-tick synchronous SSE serialization — **the `:1238` citation does NOT verify** (that line is an SSE drain-timeout, `SSE_DRAIN_TIMEOUT_MS`). Actual `JSON.stringify` sites in `routes/platform.ts` are `:462`, `:2849`, `:3132`; re-resolve the exact per-tick event-serialization line before acting (carried over from a stale earlier audit).
 - Bridge defaults are currently quotes 8 / bars 4 / options 4, but account 2 / orders 1 / health 1 with category backoffs (`bridge-governor.ts:57-62`).
 - Hot endpoint references from older audits need re-resolving before editing; current `routes/platform.ts` is 3,475 lines, so older `platform.ts:5045` / `:12488` citations are invalid.
 - API event-loop saturation was separately found & fixed in `c6d8cac` (brand-normalizer + provider-config memoization).
@@ -79,4 +79,5 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 ## 7. Caveats / honesty
 - Frontend "load weight" here is from **source line counts + live API latency**, not measured prod-bundle KB (no prod build present; dev serves unbundled ESM). Build `pnpm --filter @workspace/pyrus run build` to get exact chunk sizes.
 - I confirmed `session` participates in the boot overlay gate, not a hard shell render gate. I did **not** instrument a live boot timeline (DevTools Performance) — that would quantify which blocking task dominates wall-clock.
-- Two earlier hypotheses were disproven mid-investigation and corrected above (no-code-splitting; signal-state gating boot). Reads were taken while a shared git tree was branch-flipping; structural findings are stable but re-confirm exact line numbers before editing.
+- Two earlier hypotheses were disproven mid-investigation and corrected above (no-code-splitting; signal-state gating boot).
+- **Verification pass (2026-06-11, against `main`):** every symbol/line reference re-checked. Corrected three that were wrong — the `reclassifyBootBlocking` call site (`PlatformApp.jsx:929`, memo `:857`), the `SCREEN_BOOT_DATA_DEPS` location (`bootPolicy.js:9-20`, not `screenRegistry.jsx`), and the SSE-serialization citation (does not verify at `platform.ts:1238`). All other claims confirmed; a few remaining line numbers are within ±5 lines of the cited ranges and the underlying claims hold. One open item: the exact per-tick SSE event-serialization line still needs resolution.
