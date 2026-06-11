@@ -300,7 +300,41 @@ Source audit (4 dims) of the Algo tree — `AlgoScreen.jsx` (2k LOC) + `screens/
 
 **GC-06 (deferred tail) — RESOLVED:** PlatformAlgoMonitorSidebar signal-row directional gradient (764) is **multi-cue** (`BigDirectionGlyph` + BULL/BEAR + action label, not color-only) ✔; its tone is fixed by ALG-01 (green→blue). `CompactMetric` (898) + `WireTrailStatusBand` cells are **control/metric-tile surfaces** (bg1 @ `RADII.xs`, no shadow) → correct SYS-04 opt-out, no conversion. GC-06 closed.
 
-_(Backtest — pending)_
+### Backtest — full audit (2026-06-11)
+Source audit (4 dims) of `BacktestScreen.jsx` (134 LOC shell) + `features/backtesting/BacktestingPanels.tsx` (7.3k LOC, THE surface) via 2 parallel dimension agents, fact-checked. **Completes Tier 2.**
+
+**Conventions confirmed:** colors flow through a passed **`theme: ThemeTokens`** object (`theme.bg0`/`text`/`green`…) + `cssColorAlpha` — that IS the tokenized system here (not global `CSS_COLOR`). Charts = recharts wrapped in shared `ResearchChartFrame`.
+
+**Strengths verified:**
+- **Color tokenized** — only 1 raw literal (`#ffffff`, BT-04); 0 rgba/hex elsewhere. `getStatusColor` (887) is correct operational health; all P&L/Best/Worst greens are financial-outcome + numeric sign co-cue; **direction (long/short) is rendered neutral, not green/red** — no directional drift.
+- **Empty states exemplary** — every list/table/chart has contextual zero-state copy (not bare "No data"); dense trade ledger is `overflowX:auto` + `minWidth` + stable `<thead>`; 5-stage execution-phase stepper for long runs; spot-chart has full loading/error/empty branches.
+- **Motion clean** — 0 inline transition/animation durations (delegated to shared CSS classes).
+
+**Fixed this pass** (typecheck green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| BT-01 | Draft-strategy **"Return" metric hardcoded `theme.green` unconditionally** → a negative total return rendered green (decorative green on a sign-bearing financial outcome). Made sign-aware (`>=0 ? green : red`), mirroring the Net-PnL headline pattern (4258). Neighboring Max DD (`theme.red`, always loss-framed) + Sharpe (`theme.accent`) are correct. | BacktestingPanels.tsx:1287 | ds/semantic | P2 | done |
+
+**Open — systematic a11y (this surface has ZERO in-file a11y: 0 `aria-*`/`role`/`tabIndex`/`.ra-touch-target`; the 24 aria refs are inside the imported `ResearchChartFrame`, not here). Recommend a focused a11y sub-pass w/ live keyboard+SR:**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| BT-02 | **Keyboard-dead interactions (P1)** — trade-row selection `<tr onClick>` (5856, the primary trades interaction) and the **error/info banner** `<div onClick={setBanner(null)}>` (2930, the ONLY surface for every mutation error: study/run/sweep/promote/cancel/pine) both lack `role`/`tabIndex`/`onKeyDown` → not keyboard-activatable, no focus ring. Banner also lacks a `role="status"`/`alert` live region. | BacktestingPanels.tsx:5856,2930 | a11y | P1 | open |
+| BT-03 | **7 charts lack accessible names** — 5 recharts BarCharts (P&L-by-hour 4742, trade-waterfall 5389, P&L-distribution 5455, exit-reasons 5520, hold-profile 5589) + 2 `ResearchChartFrame`s (spot 3653, options 3794) have no `aria-label`/`role="img"`, none `aria-hidden`; adjacent headings are unassociated siblings. | see ids | a11y | P2 | open |
+| BT-04 | Segmented toggles convey selection by background color only (no `aria-pressed`): universeMode (3282/3293), summaryTradeLens (4634), indicator library (3554), spotHistoryMode (3472). Plus `#ffffff` raw button text color (987 → wants a `theme.onAccent` token). Touch: `.ra-touch-target` used 0×; shared `buttonStyle` (~24–28px) under the 44px floor across ~23 buttons. | see ids | a11y | P3 | open |
+
+**Open — state coverage (queries swallow error+loading):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| BT-05 | **8 queries consumed as `.data ?? []` with no `isError`/`isLoading`** (runs/jobs/studies/runDetail/runChart/studyPreview/strategies/drafts) → a failed fetch collapses into the same empty copy (indistinguishable from genuinely empty, no retry though refetch exists), and loading shows empty copy then pops in (layout jump, no skeleton). Also: the mutation error banner is dismiss-only with no retry though each mutation is re-invokable; no amber "refreshing" cue on background refetch though timestamps are shown. | BacktestingPanels.tsx:1624-1748,2677-2905 | state | P2 | open (error/loading need live to see) |
+
+**Open — DS / responsive:**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| BT-06 | **SYS-04 real gap (not no-op)** — hand-rolls `cardStyle()` (bg2 + border + ~RADII.sm, no shadow/luminous) used **34×** instead of the shared `surfaceStyle()`/`Card` (bg1 + RADII.md) the other screens use → token AND visual (bg2 vs bg1) divergence on true panel bands (leave the bg0 cell/row/empty-state opt-outs). | BacktestingPanels.tsx:1005 (def)+34 sites | ds (SYS-04) | P2 | open |
+| BT-07 | `fontWeight` hardcoded `400` at **56 sites** (no FONT_WEIGHTS import); every weight is 400 → no weight-based hierarchy. Sweep: import FONT_WEIGHTS, consider `.label`/`.medium` for section titles/values. Also raw sticky-toolbar shadow (2973 → `ELEVATION.md`). | BacktestingPanels.tsx (56 sites)+2973 | visual/ds | P3 | open |
+| BT-08 | Two-column `minmax(0,1fr) minmax(320px,0.95fr)` grids (Logs/Execution-Phases 6166, Persisted-Results/Compare 6333) don't collapse on phone though `backtestIsPhone` exists (only drives root padding) → 320px min overflows 390px viewport; other 2-col grids (4434,6296,6711) render cramped two-up with no collapse. | see ids | responsive | P2 | open (needs 390 shoot) |
+
+_(Tier 2 COMPLETE: Flow · GEX · Research · Algo · Backtest all audited.)_
 
 ## Tier 3 — Diagnostics · Settings  _(lower "functional-and-clean" bar)_
 _(pending)_

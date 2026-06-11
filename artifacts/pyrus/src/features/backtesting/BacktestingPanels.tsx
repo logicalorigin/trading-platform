@@ -1284,7 +1284,11 @@ function DraftStrategiesList({
               value={formatPercent(
                 metricFromDraft(draft, "totalReturnPercent"),
               )}
-              accent={theme.green}
+              accent={
+                (metricFromDraft(draft, "totalReturnPercent") ?? 0) >= 0
+                  ? theme.green
+                  : theme.red
+              }
               theme={theme}
               scale={scale}
             />
