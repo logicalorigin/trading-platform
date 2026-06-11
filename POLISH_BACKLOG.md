@@ -222,7 +222,50 @@ Source audit (4 dims) of `GexScreen.jsx` (2.3k LOC) + `features/gex/*` via paral
 
 **SYS-04 (surfaces):** no-op (like Market/Flow) — card panels already use `<Card>` (→ `surfaceStyle()` SoT for free); remaining `bg1` surfaces are table-headers/tooltips/metric-tiles/progress-tracks, not card recipes. 0 conversions warranted.
 
-_(Research · Algo · Backtest — pending)_
+### Research — full audit (2026-06-11)
+Source audit (4 dims) of `screens/ResearchScreen.jsx` (clean shell) + `features/research/PhotonicsObservatory.jsx` (4.8k LOC) + `features/research/components/*` + `lib/researchApi.js`, via 3 parallel dimension agents, all fact-checked against source. Fixes verified by source + typecheck (green); live re-shoot pending (full stack).
+
+**Strengths verified:**
+- **Semantic color clean — no directional-intent drift (unlike Flow).** Line-by-line: every `CSS_COLOR.green`/`red` encodes **financial outcome** (DCF/return/growth/EPS-beat/off-52w), **operational health** (live-source dots, `dataStatus="live"`, prefetch-done, copy-success), or **diverging data-viz scales** (peScale/grScale/aiScale, growth & macro heatmaps). Research's primary read = "market context / analysis conclusion," not buy/sell pressure — no surface to mis-color. Confirmed no blue mis-use.
+- **Color tokenized in .jsx** — 0 raw hex/`rgba()` in the 6 `.jsx` files (the one `rgb()` is a runtime brightness-shade helper; `toneAlpha` wraps the sanctioned `cssColorMix`). The ~249 hex in `data/research{Themes,Graph,Symbols}.js` are **categorical sector/theme palettes** (consumed as `vc.c` chart strokes / graph node colors) — data-viz, doctrine-allowed, out of scope.
+- **font-size / font-weight** all tokenized (`fs()`/`textSize()`, `FONT_WEIGHTS.*`); 0 raw stragglers.
+
+**Fixed this pass** (typecheck green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| RES-01 | **Real CSS bug** — the root reset rule inside the `<style>` template literal read `padding: sp(0)` with no `${}` interpolation, so the browser received the literal string `sp(0)` and dropped the declaration → the intended `padding: 0` reset silently failed across the entire Research subtree. Fixed to `padding: 0`. | PhotonicsObservatory.jsx:4583 | ds(bug) | P1 | done |
+| RES-02 | **SYS-06 edge (closes workplan "PhotonicsObservatory template-CSS block")** — 4 nodes carried `className="ra-panel-enter"` **and** an inline `animation: "fadeIn 0.2–0.3s ease"`; the inline shorthand overrode the class's tokenized entrance (`raPanelEnter` @ `--ra-motion-standard` 190ms) **and** bypassed the `.ra-panel-enter` reduced-motion overrides in index.css, substituting an off-scale 300ms fade. Dropped the inline `animation` so the class carries the tokenized, reduced-motion-aware entrance. | PhotonicsObservatory.jsx:4208,4784,4816,4823 | motion | P2 | done |
+| RES-03 | Root `<style>` button transition used raw `0.12s` ×4 props (off the `--ra-motion-*` scale) → replaced with `var(--ra-motion-fast)` (140ms). | PhotonicsObservatory.jsx:4605 | ds/motion | P3 | done |
+| RES-04 | Search-clear button was glyph-only (`✕`) with no accessible name → added `aria-label="Clear search"`. | PhotonicsObservatory.jsx:4699 | a11y | P3 | done |
+
+**Open — systematic a11y clusters (recommend one focused sub-pass w/ live keyboard + screen-reader verification):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| RES-05 | **Keyboard-unreachable clickables (~16)** — table rows + chips + cards + graph-filter blocks use `<div>/<tr> onClick` with no `role`/`tabIndex`/`onKeyDown`; with the global focus ring covering only `<button>`/`[tabindex]` (SYS-09), all are keyboard-dead and focus-ringless. The screen's dominant a11y gap (zero coverage). Several sit inside d3-graph interaction zones → convert to `<button>` or add `role="button" tabIndex={0}`+`onKeyDown` carefully, live-verify graph interactions don't regress. | PhotonicsObservatory.jsx:994,4112,2086,2097,2232,2249,3138,3191,3322,3343,3407,3431,3450,3465,3523,4189; ResearchCalendarView.jsx:246 | a11y | P1 | open |
+| RES-06 | **Charts lack accessible labels (8 of 9)** — recharts price/revenue/EPS/valuation charts + Sankey/donut/force-graph SVGs + macro heatmap grid have no `aria-label`/`role="img"` and aren't `aria-hidden` (DESIGN.md: charts get aria-label or explicit hide). Only `MicroSparkline` is handled (correctly `aria-hidden`). | PhotonicsObservatory.jsx:1357,2121,2297,3485,2972,3394,4048,4161 | a11y | P2 | open |
+| RES-07 | Touch targets below floor lack `.ra-touch-target`: search-clear (16px, nested in input overlay → **needs live check** that a 44px touch min doesn't break the overlay), settings gear (28px), GraphToolbar mode buttons (`padding:1px 4px`). | PhotonicsObservatory.jsx:4699,4681,3606-3624 | a11y | P3 | open (needs live) |
+
+**Open — state coverage (DESIGN.md table; several need live data):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| RES-08 | **Header KPI/status pill swallows `error`** — `refreshData` can set `dataStatus="error"` but the pill only branches `live`/`loading`/else → an error renders the neutral grey "STATIC" label, no red tone, no retry at the strip (retry exists behind the gear → SettingsPanel, so recovery is reachable but unsurfaced). Add an `error` branch (red + retry). | PhotonicsObservatory.jsx:4541,4544,4650-4652 | state | P2 | open |
+| RES-09 | **Error conflated with empty (no retry)** — `fetchSECFilings`/`fetchTranscript`/calendar fetch return `null` on failure and `[]`/`null` on genuine absence; both collapse to the same "No … data returned" copy, so a network error is indistinguishable from "none exists," with no retry though refetch fns exist. | PhotonicsObservatory.jsx:1599,1706-1710,1792-1795; researchApi.js:199-214 | state | P2 | open |
+| RES-10 | **PeerTable "1M trend" stuck on "loading…" permanently** — column renders `liveHist[t]?.length>=2 ? <Sparkline> : "loading…"`, but parent `liveHist` is `{}` and never populated (`backgroundPrefetchHist` is a no-op early-return) → every peer shows an indefinite spinner that never resolves. Render a real "—"/empty state or wire/remove the column. (Touches data plumbing — beyond a pure design quick-win.) | PhotonicsObservatory.jsx:1557-1564; researchApi.js:164-166 | state | P2 | open |
+| RES-11 | No screen-wide **amber stale/freshness cue** — live quotes refresh on 300s and caches carry `fetchedAt`, but no "as of HH:MM" / amber tone is ever surfaced (incl. the Detail headline price at 2461, which shows no live/authored/stale indicator though freshness is known and shown in the stats grid). Same residual class as GEX-04/ACC-02. | PhotonicsObservatory.jsx:2461-2466 + screen-wide | state/stale | P3 | open (needs live) |
+| RES-12 | Filter-to-zero (Comps/Graph) within a populated universe renders bare "0 companies" + empty table/canvas, no "clear filters" recovery (CalendarView does this well at ResearchCalendarView.jsx:208-212 — reuse pattern). PriceChart loading shows no skeleton inside its stable 240px frame. | PhotonicsObservatory.jsx:4097-4099,4815-4819,1356-1400 | state | P3 | open |
+
+**Open — visual / DS (judgment or M-effort tails):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| RES-13 | **Decorative orb/gradient layers** — root paints two radial-gradient accent/blue washes (4581) + a second absolutely-positioned header orb (4619, also a raw hex-alpha concat `${currentTheme.accent}14` → should be `toneAlpha(…, 0.08)`). DESIGN.md rejects "decorative gradient/orb/blob layers," but opacities are ultra-low (0.015–0.08) so removal-vs-keep is a **live screenshot call** (like FLOW-02). | PhotonicsObservatory.jsx:4581,4619 | visual/ds | P2 | open (needs screenshot) |
+| RES-14 | **SYS-04 NOT a no-op here** (unlike Market/Flow/GEX) — a hand-rolled card recipe (`bg1` + 1px border + `RADII.md` + `ELEVATION.sm`) is declared as `STYLE_CARD` and re-inlined ~8×; this is the exact `surfaceStyle({elevated:true})`/`Card` contract, and the file imports neither. Route true framed-tool card surfaces through `surfaceStyle()`/`Card`. | PhotonicsObservatory.jsx:134 (STYLE_CARD)+744,777,1304,3222,4046,4183,4789; ResearchSettingsPanel.jsx:5 | ds (SYS-04) | P3 | open |
+| RES-15 | Emoji used as icons (📅 tab, 📋 ↗ ✕ ✓) alongside the lucide `Settings` icon + `Icon` primitive → inconsistent icon language. Replace with lucide via `<Icon>`. | PhotonicsObservatory.jsx:4730,2493,2535,2539,4805; ResearchSettingsPanel.jsx:32 | visual | P3 | open |
+| RES-16 | Raw-px `gap` (76×) and `width`/`height` dot/swatch sizes (~48×) not run through `sp()`/`dim()` while `padding`/`fontSize` are tokenized — density-scale inconsistency. **App-wide pattern, not Research-specific** → candidate SYS-level item, not a per-screen blind sweep. | PhotonicsObservatory.jsx (throughout) | ds | P3 | open (defer to SYS) |
+| RES-17 | Responsive: fixed `repeat(3|4,1fr)` grids without `minmax`/collapse (1047,3178,3284,3426,3461), Detail `1.2fr .8fr` two-col with no phone stack (4253), graph tooltips `minWidth:320–480` (overflow at 390), empty-state `margin:"60px auto"` (4764), macro heatmap fixed label-col grids without scroll wrapper (3519,4161). | PhotonicsObservatory.jsx (see ids) | responsive | P2 | open (needs 834/390 shoot) |
+
+**SYS-06 edge:** the "PhotonicsObservatory template-CSS block" deferred edge is **closed** by RES-02/RES-03 (remaining `slideUp`/`shimmer`/`researchObservatoryPulse`/`researchWorkspaceSpin` are decorative/loading loops in the GC-08 won't-fix class — outside the 90–260ms transition scale, not competing with live numeric data).
+
+_(Algo · Backtest — pending)_
 
 ## Tier 3 — Diagnostics · Settings  _(lower "functional-and-clean" bar)_
 _(pending)_

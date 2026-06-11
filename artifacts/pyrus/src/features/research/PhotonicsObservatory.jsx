@@ -4205,7 +4205,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 
 function ResearchLoadingState({ theme }) {
   return (
-    <div className="ra-panel-enter" style={{ animation: "fadeIn 0.2s ease", maxWidth: 760, margin: "24px auto 0" }}>
+    <div className="ra-panel-enter" style={{ maxWidth: 760, margin: "24px auto 0" }}>
       <style>
         {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
       </style>
@@ -4580,7 +4580,7 @@ export default function PhotonicsObservatory({
   return (
     <div data-testid="research-screen" className="photonics-research-root" style={{ background: CSS_COLOR.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: CSS_COLOR.text, backgroundImage: `radial-gradient(circle at 20% 50%, ${toneAlpha(CSS_COLOR.accent, 0.02)} 0%, transparent 50%), radial-gradient(circle at 80% 20%, ${toneAlpha(CSS_COLOR.blue, 0.015)} 0%, transparent 50%)` }}>
       <style>{`
-        .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: sp(0); }
+        .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .photonics-research-root { font-family: var(--ra-font-sans); }
         .photonics-research-root button,
         .photonics-research-root input,
@@ -4602,7 +4602,7 @@ export default function PhotonicsObservatory({
         .photonics-research-root input[type=range] { -webkit-appearance: none; background: color-mix(in srgb, var(--ra-text-primary) 6%, transparent); border-radius: 3px; height: 3px; }
         .photonics-research-root input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--ra-surface-1); cursor: pointer; box-shadow: var(--ra-elevation-sm); border: 2px solid color-mix(in srgb, var(--ra-color-accent) 40%, transparent); }
         .photonics-research-root input[type=range]::-webkit-slider-thumb:hover { border-color: color-mix(in srgb, var(--ra-color-accent) 80%, transparent); }
-        .photonics-research-root button { transition: transform 0.12s ease, border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease; }
+        .photonics-research-root button { transition: transform var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, background-color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease; }
         .photonics-research-root button:hover { transform: translateY(-1px); }
         .photonics-research-root button:active { transform: scale(0.97); }
         .photonics-research-root button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ra-color-accent) 45%, transparent); outline-offset: 2px; }
@@ -4696,7 +4696,7 @@ export default function PhotonicsObservatory({
           />
           {q && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
-            <button onClick={() => setQ("")} style={{ background: toneAlpha(CSS_COLOR.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: CSS_COLOR.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
+            <button aria-label="Clear search" onClick={() => setQ("")} style={{ background: toneAlpha(CSS_COLOR.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: CSS_COLOR.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
           </span>}
         </div>
 
@@ -4781,7 +4781,7 @@ export default function PhotonicsObservatory({
           </div>
         ) : (<>
         {view === "graph" && (
-          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter">
             <div ref={graphRef}><Graph cos={cos} sel={sel} onSel={setSel} vFilter={vf} searchQuery={q} theme={currentTheme} liveData={liveData} liveFund={liveFund} /></div>
             {selCo ? (
               <div ref={detailRef}>
@@ -4813,14 +4813,14 @@ export default function PhotonicsObservatory({
         )}
 
         {view === "comps" && (
-          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter">
             <Comps cos={cos} sel={sel} onSel={setSel} />
             {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
 
         {view === "macro" && (
-          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter">
             <Heatmap cos={cos} sel={sel} onSel={setSel} onFilterVertical={setVf} theme={currentTheme} />
             {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
