@@ -41,6 +41,19 @@ if (typeof window !== "undefined") {
     retries: 4,
     retryDelayMs: 500,
   });
+  // Warm the workspace route chunk (PlatformApp) in parallel with AppContent so
+  // its download overlaps instead of waiting for AppContent to finish loading —
+  // the cold-launch critical path is two serial lazy boundaries otherwise. Same
+  // module specifier AppContent uses, so Vite serves the one shared chunk.
+  preloadDynamicImport(
+    () =>
+      // @ts-expect-error JSX module has no declaration file in this TS config
+      import("../features/platform/PlatformApp.jsx"),
+    {
+      label: "PlatformApp-warm",
+      retries: 1,
+    },
+  );
 }
 
 const AppContent = lazyWithRetry(async () => {

@@ -1430,9 +1430,15 @@ const AccountScreenInner = ({
     }
   }, [isVisible]);
   useEffect(() => {
+    // Arm the primary-ready fallback whenever the live stream is not fresh, even
+    // while the account section is still pending. Gating this on
+    // accountSectionPending used to wedge the boot overlay open forever on a cold
+    // launch: if the section never settled (bridge still connecting, no warm
+    // cache), the timer never armed, accountPrimaryReady stayed false, and
+    // first-screen never completed. Matches AlgoScreen's fallback, which only
+    // resets on freshness/visibility.
     if (
       !accountPageStreamEnabled ||
-      accountSectionPending ||
       accountPageStreamFreshness.accountPrimaryFresh
     ) {
       setAccountPrimaryFallbackReady(false);
@@ -1446,7 +1452,6 @@ const AccountScreenInner = ({
     accountPageStreamEnabled,
     accountPageStreamFreshness.accountPrimaryFresh,
     accountPrimaryFallbackDelayMs,
-    accountSectionPending,
   ]);
   useEffect(() => {
     if (

@@ -19,7 +19,6 @@ import {
   getListBacktestDraftStrategiesQueryOptions,
   getListSignalMonitorEventsQueryKey,
   getListWatchlistsQueryKey,
-  evaluateSignalMonitorMatrix,
   listSignalMonitorEvents,
   useEvaluateSignalMonitor,
   useGetSignalMonitorProfile,
@@ -91,13 +90,8 @@ import {
   getRuntimeTickerStoreEntryCount,
 } from "./runtimeTickerStore";
 import {
-  buildSignalMatrixExactRequestPlan,
-  buildSignalMatrixPendingStates,
-  buildSignalMatrixRequestPlan,
-  buildSignalMatrixStoredStateBootstrapRequest,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
-  reconcileSignalMatrixPendingStates,
   resolveSignalMatrixActiveScreenRequestTaskLimit,
   resolveSignalMatrixActiveScreenRequestSymbolLimit,
   resolveSignalMatrixBusyQueueDelayMs,
@@ -212,6 +206,7 @@ import {
   BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
   completeBootProgressTask,
   failBootProgressTask,
+  getBootProgressSnapshot,
   reclassifyBootBlocking,
   skipBootProgressTasks,
   startBootProgressTask,
@@ -321,6 +316,10 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 
 const SESSION_QUERY_KEY = getGetSessionQueryKey();
 const SESSION_REFETCH_INTERVAL_MS = 20_000;
+// Hard cap on the boot overlay: if a blocking task never settles (e.g. a screen's
+// primaryReady hangs on a cold launch with no warm cache), force the overlay to
+// dismiss to a usable shell instead of looping forever.
+const BOOT_OVERLAY_WATCHDOG_MS = 8_000;
 const WATCHLISTS_QUERY_KEY = getListWatchlistsQueryKey();
 const PLATFORM_FRESHNESS_FAMILY = Object.freeze({
   session: "session",
@@ -1392,6 +1391,33 @@ export default function PlatformApp() {
       detail: `${screen} screen ready`,
     });
   }, [activeScreenPrimaryReady, markWarmupTimeline, screen]);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      if (getBootProgressSnapshot().complete) {
+        return;
+      }
+      // Boot watchdog: a blocking task never settled — most often a screen whose
+      // primaryReady stayed false on a cold launch (no warm cache to fall back
+      // on). Force the overlay to dismiss to a usable shell instead of looping
+      // forever; each screen renders its own inline loading state from here.
+      if (!firstScreenBootCompleteRef.current) {
+        firstScreenBootCompleteRef.current = true;
+        setFirstScreenReady(true);
+        setScreenWarmupPhase("ready");
+        markWarmupTimeline("firstScreenReadyAtMs");
+        markWarmupTimeline("screenWarmupReadyAtMs");
+      }
+      initialBootBlockingTaskIds.forEach((taskId) =>
+        completeBootProgressTask(taskId, {
+          detail: "Boot watchdog dismissed the loading overlay",
+        }),
+      );
+    }, BOOT_OVERLAY_WATCHDOG_MS);
+    return () => window.clearTimeout(timer);
+  }, [initialBootBlockingTaskIds, markWarmupTimeline]);
   useEffect(() => {
     if (
       auxiliarySurfacesReadyRef.current ||
@@ -3358,19 +3384,14 @@ export default function PlatformApp() {
   const signalMatrixEvaluationStartedAtRef = useRef(0);
   const signalMatrixRotationCursorRef = useRef(0);
   const signalMatrixLastPlanRef = useRef(null);
-  const signalMatrixAutomaticRunCountRef = useRef(0);
   const signalMatrixUniverseRef = useRef([]);
   const signalMatrixStatesRef = useRef(signalMatrixSnapshot.states || []);
   const signalMatrixQueuedEvaluationRef = useRef(false);
   const signalMatrixQueuedEvaluationDelayMsRef = useRef(null);
   const signalMatrixQueuedTimerRef = useRef(null);
-  const signalMatrixRunRef = useRef(null);
   const signalMatrixAbortControllerRef = useRef(null);
   const signalMatrixRequestEpochRef = useRef(0);
-  const signalMatrixLastCatchupQueuedAtRef = useRef(0);
   const signalMatrixRequestOwnerRef = useRef(null);
-  const signalMatrixRejectedExactCellLimitRef = useRef(null);
-  const signalMatrixStoredStateBootstrapKeyRef = useRef(null);
   if (!signalMatrixRequestOwnerRef.current) {
     signalMatrixRequestOwnerRef.current = `platform-${Date.now()}-${Math.random()
       .toString(36)
@@ -4359,607 +4380,6 @@ export default function PlatformApp() {
     signalMonitorStateBootstrapComplete,
     signalMonitorStateBootstrapUsable,
   ]);
-  const scheduleSignalMatrixEvaluation = useCallback((delayMs = 0) => {
-    const resolvedDelayMs = Math.max(0, Number(delayMs) || 0);
-    signalMatrixQueuedEvaluationRef.current = true;
-    signalMatrixQueuedEvaluationDelayMsRef.current = resolvedDelayMs;
-    if (signalMatrixQueuedTimerRef.current != null) {
-      window.clearTimeout(signalMatrixQueuedTimerRef.current);
-    }
-    signalMatrixQueuedTimerRef.current = window.setTimeout(() => {
-      signalMatrixQueuedTimerRef.current = null;
-      signalMatrixQueuedEvaluationRef.current = false;
-      signalMatrixQueuedEvaluationDelayMsRef.current = null;
-      signalMatrixRunRef.current?.({ queueIfBusy: true });
-    }, resolvedDelayMs);
-  }, []);
-  const evaluateSignalMonitorMatrixMutation = useMutation({
-    mutationFn: ({ data, signal }) =>
-      evaluateSignalMonitorMatrix(data, {
-        signal,
-        timeoutMs: SIGNAL_MATRIX_REQUEST_TIMEOUT_MS,
-      }),
-    onSuccess: (data, variables) => {
-      if (variables?.epoch !== signalMatrixRequestEpochRef.current) {
-        return;
-      }
-	        signalMatrixRejectedExactCellLimitRef.current = null;
-	        const lastPlan = signalMatrixLastPlanRef.current;
-        const skippedSymbols = Array.isArray(data?.skippedSymbols)
-          ? data.skippedSymbols
-          : [];
-        const responsePendingCells = Array.isArray(data?.pendingCells)
-          ? data.pendingCells
-          : null;
-        const materializePendingCells = variables?.materializePendingCells === true;
-        const responsePendingCellsForState =
-          materializePendingCells && responsePendingCells
-            ? responsePendingCells
-            : responsePendingCells
-              ? []
-              : null;
-        const profileDisabled = data?.profile?.enabled === false;
-        if (profileDisabled) {
-          signalMatrixQueuedEvaluationRef.current = false;
-          signalMatrixQueuedEvaluationDelayMsRef.current = null;
-          signalMatrixRotationCursorRef.current = 0;
-          signalMatrixLastCatchupQueuedAtRef.current = 0;
-          if (signalMatrixQueuedTimerRef.current != null) {
-            window.clearTimeout(signalMatrixQueuedTimerRef.current);
-            signalMatrixQueuedTimerRef.current = null;
-          }
-        }
-        const expectedStateCount =
-          (lastPlan?.requestSymbols?.length || 0) *
-          (lastPlan?.timeframes?.length || SIGNAL_MATRIX_TIMEFRAMES.length);
-        const responseTaskCount = Number(data?.coverage?.taskCount);
-        const expectedResponseStateCount =
-          Number.isFinite(responseTaskCount) && responseTaskCount > 0
-            ? responseTaskCount
-            : expectedStateCount;
-        const responseRequestedSymbols = Number(data?.coverage?.requestedSymbols);
-        const storedStateBootstrapResponse = Boolean(
-          lastPlan?.coverage?.storedStateBootstrap,
-        );
-        const partialStatePayload =
-          !profileDisabled &&
-          !storedStateBootstrapResponse &&
-          expectedResponseStateCount > 0 &&
-          (!Number.isFinite(responseRequestedSymbols) ||
-            responseRequestedSymbols > 0) &&
-          (Array.isArray(data?.states) ? data.states.length : 0) <
-            expectedResponseStateCount;
-        const activeSignalsCatchupPending = Boolean(
-          !profileDisabled &&
-            signalMatrixEffectiveCatchupDelayMs != null &&
-          signalsScreenMatrixSymbols.length > 0 &&
-            (lastPlan?.coverage?.missingTaskCount ??
-              lastPlan?.coverage?.missingSymbols ??
-              0) >
-              (lastPlan?.coverage?.requestTaskCount ??
-                lastPlan?.requestSymbols?.length ??
-                0),
-        );
-        const progressiveMatrixCatchupPending = Boolean(
-          !profileDisabled &&
-            signalMatrixEffectiveCatchupDelayMs != null &&
-            (lastPlan?.coverage?.pendingTaskCount ??
-              lastPlan?.coverage?.pendingSymbols ??
-              0) > 0 &&
-            (lastPlan?.requestSymbols?.length || 0) > 0,
-        );
-        const storedStateBootstrapCatchupPending = Boolean(
-          !profileDisabled &&
-            signalMatrixEffectiveCatchupDelayMs != null &&
-            lastPlan?.coverage?.storedStateBootstrap &&
-            (lastPlan?.coverage?.missingTaskCount ??
-              lastPlan?.coverage?.missingSymbols ??
-              0) > 0,
-        );
-        const responseStateCount = Array.isArray(data?.states)
-          ? data.states.length
-          : 0;
-        if (
-          progressiveMatrixCatchupPending &&
-          !lastPlan?.coverage?.exactCellRequest &&
-          responseStateCount > 0 &&
-          !partialStatePayload
-        ) {
-          signalMatrixRotationCursorRef.current = 0;
-        }
-
-        if (
-          !profileDisabled &&
-          signalMatrixEffectiveCatchupDelayMs != null &&
-          (data?.truncated || skippedSymbols.length || partialStatePayload)
-        ) {
-          if (!lastPlan?.coverage?.exactCellRequest) {
-            signalMatrixRotationCursorRef.current = 0;
-          }
-          const nowMs = Date.now();
-          if (
-            nowMs - signalMatrixLastCatchupQueuedAtRef.current >=
-            SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS
-          ) {
-            signalMatrixLastCatchupQueuedAtRef.current = nowMs;
-            signalMatrixQueuedEvaluationRef.current = true;
-            signalMatrixQueuedEvaluationDelayMsRef.current =
-              data?.truncated || skippedSymbols.length
-                ? Math.max(
-                    SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS,
-                    signalMatrixEffectiveCatchupDelayMs ?? 0,
-                  )
-                : Math.max(
-                    SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
-                    signalMatrixEffectiveCatchupDelayMs ?? 0,
-                  );
-          }
-        } else if (activeSignalsCatchupPending) {
-          signalMatrixQueuedEvaluationRef.current = true;
-          signalMatrixQueuedEvaluationDelayMsRef.current =
-            signalMatrixEffectiveCatchupDelayMs;
-        } else if (storedStateBootstrapCatchupPending) {
-          signalMatrixQueuedEvaluationRef.current = true;
-          signalMatrixQueuedEvaluationDelayMsRef.current =
-            signalMatrixEffectiveCatchupDelayMs;
-        } else if (progressiveMatrixCatchupPending) {
-          signalMatrixQueuedEvaluationRef.current = true;
-          signalMatrixQueuedEvaluationDelayMsRef.current =
-            signalMatrixEffectiveCatchupDelayMs;
-        }
-
-        setSignalMatrixSnapshot((current) => {
-          const incomingStates = Array.isArray(data?.states) ? data.states : [];
-          const reconciledCurrentStates = reconcileSignalMatrixPendingStates({
-            currentStates: current.states,
-            incomingStates,
-            requestCells: lastPlan?.requestCells || [],
-            pendingCells: responsePendingCellsForState,
-            clearUnconfirmedPendingStates: Boolean(responsePendingCells),
-          });
-          const pendingMatrixStates = responsePendingCellsForState
-            ? buildSignalMatrixPendingStates({
-                requestCells: responsePendingCellsForState,
-                currentStates: [...reconciledCurrentStates, ...incomingStates],
-                evaluatedAt:
-                  data?.evaluatedAt ||
-                  new Date(signalMatrixEvaluationStartedAtRef.current || Date.now())
-                    .toISOString(),
-              })
-            : [];
-          const nextStates = mergeSignalMatrixStates({
-            currentStates: reconciledCurrentStates,
-            incomingStates: [...incomingStates, ...pendingMatrixStates],
-            knownSymbols: signalMatrixUniverseRef.current,
-          });
-          signalMatrixStatesRef.current = nextStates;
-
-          return {
-            states: nextStates,
-            timeframes:
-              data?.timeframes || current.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
-            evaluatedAt: data?.evaluatedAt || current.evaluatedAt || null,
-            skippedSymbols,
-            truncated: Boolean(data?.truncated),
-            coverage: {
-              ...(lastPlan?.coverage || {}),
-              ...(data?.coverage || {}),
-              planCoverage: lastPlan?.coverage || null,
-              cacheStatus: data?.cacheStatus || null,
-              refreshing: Boolean(data?.refreshing),
-              warming: Boolean(data?.warming),
-              pendingCellCount:
-                responsePendingCells?.length ??
-                data?.coverage?.pendingCellCount ??
-                current.coverage?.pendingCellCount ??
-                null,
-              backgroundPaused: Boolean(lastPlan?.backgroundPaused),
-            },
-          };
-	        });
-    },
-    onError: (error, variables) => {
-      if (variables?.epoch !== signalMatrixRequestEpochRef.current) {
-        return;
-      }
-	        const rejection = getSignalMatrixExactCellLimitRejection(error);
-	        if (!rejection) {
-	          return;
-	        }
-	        signalMatrixRejectedExactCellLimitRef.current = {
-	          ...rejection,
-	          observedAt: Date.now(),
-	        };
-	        signalMatrixQueuedEvaluationRef.current = true;
-	        signalMatrixQueuedEvaluationDelayMsRef.current = 0;
-    },
-    onSettled: (_data, _error, variables) => {
-      if (variables?.epoch !== signalMatrixRequestEpochRef.current) {
-        return;
-      }
-        releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
-        signalMatrixEvaluationInFlightRef.current = false;
-        signalMatrixEvaluationStartedAtRef.current = 0;
-        signalMatrixAbortControllerRef.current = null;
-        if (!signalMatrixQueuedEvaluationRef.current) {
-          return;
-        }
-
-        signalMatrixQueuedEvaluationRef.current = false;
-        const delayMs = signalMatrixQueuedEvaluationDelayMsRef.current ?? 0;
-        signalMatrixQueuedEvaluationDelayMsRef.current = null;
-        scheduleSignalMatrixEvaluation(delayMs);
-      },
-  });
-  const runSignalMatrixEvaluation = useCallback((options = {}) => {
-    if (
-      !signalMonitorWorkVisible ||
-      signalMatrixStartupProtectionActive ||
-      !signalMatrixUniverseSymbols.length ||
-      !signalMonitorDisplayReady ||
-      !(signalMatrixPriorityReady || signalMatrixBackgroundReady)
-    ) {
-      return;
-    }
-    const nowMs = Date.now();
-    if (signalMatrixEvaluationInFlightRef.current) {
-      if (options.queueIfBusy) {
-        signalMatrixQueuedEvaluationRef.current = true;
-        signalMatrixQueuedEvaluationDelayMsRef.current = Math.max(
-          signalMatrixQueuedEvaluationDelayMsRef.current ?? 0,
-          signalMatrixBusyQueueDelayMs,
-        );
-      }
-      return;
-    }
-    const globalRequestInFlight = hasActiveSignalMatrixRequestLease(nowMs);
-    if (globalRequestInFlight) {
-      scheduleSignalMatrixEvaluation(
-        options.queueIfBusy
-          ? Math.max(
-              signalMatrixBusyQueueDelayMs,
-              SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
-            )
-          : SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
-        );
-      return;
-    }
-    const liveMemoryPressureSignal = getMemoryPressureSnapshot();
-    const liveSignalMatrixPressureLevel = resolveSignalMatrixPressureLevel({
-      memoryPressureLevel:
-        liveMemoryPressureSignal?.level || signalMatrixPressureLevel,
-      server: liveMemoryPressureSignal?.server || memoryPressureSignal?.server,
-    });
-    const liveSignalMatrixServerPressureObserved = Boolean(
-      liveMemoryPressureSignal?.server?.effectivePressureLevel ||
-        liveMemoryPressureSignal?.server?.apiPressureLevel ||
-        liveMemoryPressureSignal?.server?.pressureLevel ||
-        memoryPressureSignal?.server?.effectivePressureLevel ||
-        memoryPressureSignal?.server?.apiPressureLevel ||
-        memoryPressureSignal?.server?.pressureLevel,
-    );
-    const liveActiveSignalMatrixPressureLevel =
-      liveSignalMatrixServerPressureObserved
-        ? liveSignalMatrixPressureLevel
-        : "normal";
-    const rejectedExactCellLimit =
-      signalMatrixRejectedExactCellLimitRef.current &&
-      nowMs - signalMatrixRejectedExactCellLimitRef.current.observedAt <=
-        SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS
-        ? signalMatrixRejectedExactCellLimitRef.current.maxCells
-        : null;
-    if (
-      signalMatrixRejectedExactCellLimitRef.current &&
-      rejectedExactCellLimit == null
-    ) {
-      signalMatrixRejectedExactCellLimitRef.current = null;
-    }
-    const baseLiveSignalMatrixRequestExactCellLimit =
-      signalMatrixRequestExactCellLimit == null
-        ? null
-        : resolveSignalMatrixExactCellLimit(liveActiveSignalMatrixPressureLevel);
-    const liveSignalMatrixRequestExactCellLimit =
-      baseLiveSignalMatrixRequestExactCellLimit == null
-        ? null
-        : rejectedExactCellLimit == null
-          ? baseLiveSignalMatrixRequestExactCellLimit
-          : Math.min(
-              baseLiveSignalMatrixRequestExactCellLimit,
-              rejectedExactCellLimit,
-            );
-    const baseLiveSignalMatrixRequestTaskLimit =
-      signalMatrixRequestTaskLimit == null
-        ? null
-        : resolveSignalMatrixActiveScreenRequestTaskLimit(
-            liveActiveSignalMatrixPressureLevel,
-          );
-    const liveSignalMatrixRequestTaskLimit =
-      baseLiveSignalMatrixRequestTaskLimit == null ||
-      liveSignalMatrixRequestExactCellLimit == null
-        ? baseLiveSignalMatrixRequestTaskLimit
-        : Math.min(
-            baseLiveSignalMatrixRequestTaskLimit,
-            liveSignalMatrixRequestExactCellLimit,
-          );
-    if (!claimSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current, nowMs)) {
-      scheduleSignalMatrixEvaluation(
-        options.queueIfBusy
-          ? Math.max(
-              signalMatrixBusyQueueDelayMs,
-              SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
-            )
-          : SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
-      );
-      return;
-    }
-    const exactSignalsRequestPlan =
-      signalsScreenMatrixRequestCells.length
-        ? buildSignalMatrixExactRequestPlan({
-            cells: signalsScreenMatrixRequestCells,
-            symbols: signalsScreenMatrixSymbols.length
-              ? signalsScreenMatrixSymbols
-              : signalMatrixUniverseSymbols,
-            prioritySymbols: signalsScreenMatrixPrioritySymbols.length
-              ? signalsScreenMatrixPrioritySymbols
-              : signalMatrixPrioritySymbols,
-            timeframes: signalsScreenMatrixTimeframes,
-            pressureLevel: liveActiveSignalMatrixPressureLevel,
-            backgroundReady: signalMatrixBackgroundReady,
-            startupProtectionActive: signalMatrixStartupProtectionActive,
-            cursor: signalMatrixRotationCursorRef.current,
-            requestSymbolLimit: signalMatrixRequestSymbolLimit,
-            requestTaskLimit: liveSignalMatrixRequestTaskLimit,
-            requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
-          })
-        : null;
-    const storedStateBootstrapRequest =
-      exactSignalsRequestPlan?.requestSymbols?.length
-        ? null
-        : buildSignalMatrixStoredStateBootstrapRequest({
-            symbols: signalMatrixUniverseSymbols,
-            currentStates: signalMatrixStatesRef.current,
-            timeframes: signalMatrixRequestTimeframes,
-            lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
-          });
-    const plan = storedStateBootstrapRequest
-      ? {
-          requestSymbols: storedStateBootstrapRequest.symbols,
-          prioritySymbols: storedStateBootstrapRequest.symbols,
-          backgroundSymbols: [],
-          timeframes: storedStateBootstrapRequest.timeframes,
-          matrixTimeframes: storedStateBootstrapRequest.timeframes,
-          requestCells: [],
-          missingCells: [],
-          nextCursor: signalMatrixRotationCursorRef.current,
-          backgroundReady: signalMatrixBackgroundReady,
-          backgroundPaused: false,
-          startupProtectionActive: false,
-          pressureLevel: liveActiveSignalMatrixPressureLevel,
-          coverage: storedStateBootstrapRequest.coverage,
-        }
-      : exactSignalsRequestPlan
-        ? exactSignalsRequestPlan
-        : buildSignalMatrixRequestPlan({
-            symbols: signalMatrixUniverseSymbols,
-            prioritySymbols: signalMatrixPrioritySymbols,
-            currentStates: signalMatrixStatesRef.current,
-            timeframes: signalMatrixRequestTimeframes,
-            pressureLevel: liveActiveSignalMatrixPressureLevel,
-            backgroundReady: signalMatrixBackgroundReady,
-            startupProtectionActive: signalMatrixStartupProtectionActive,
-            cursor: signalMatrixRotationCursorRef.current,
-            pollMs: signalMatrixPollMs,
-            nowMs,
-            requestSymbolLimit: signalMatrixRequestSymbolLimit,
-            requestTaskLimit: liveSignalMatrixRequestTaskLimit,
-            requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
-          });
-    if (!plan.requestSymbols.length) {
-      releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
-      if (signalMatrixSurfaceRequestActive && !signalMatrixRouteRequestActive) {
-        setSignalsScreenMatrixRequest((current) =>
-          current.symbols.length
-            ? {
-                clientRole: null,
-                materializePendingCells: false,
-                prioritySymbols: [],
-                reason: null,
-                requestCells: [],
-                requestOrigin: null,
-                symbols: [],
-                timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-                revision: current.revision + 1,
-              }
-            : current,
-        );
-      }
-      return;
-    }
-    if (storedStateBootstrapRequest) {
-      signalMatrixStoredStateBootstrapKeyRef.current =
-        storedStateBootstrapRequest.key;
-    } else {
-      signalMatrixRotationCursorRef.current = plan.nextCursor;
-    }
-    signalMatrixLastPlanRef.current = plan;
-    signalMatrixEvaluationInFlightRef.current = true;
-    signalMatrixEvaluationStartedAtRef.current = Date.now();
-    const materializePendingCells = Boolean(
-      !storedStateBootstrapRequest &&
-        exactSignalsRequestPlan?.requestCells?.length &&
-        signalsScreenMatrixMaterializePendingCells,
-    );
-    const optimisticPendingRequestCells =
-      materializePendingCells &&
-      plan.requestCells.length > SIGNAL_MATRIX_OPTIMISTIC_PENDING_CELL_LIMIT
-        ? plan.requestCells.slice(0, SIGNAL_MATRIX_OPTIMISTIC_PENDING_CELL_LIMIT)
-        : materializePendingCells
-          ? plan.requestCells
-          : [];
-    const pendingMatrixStates = buildSignalMatrixPendingStates({
-      requestCells: optimisticPendingRequestCells,
-      currentStates: signalMatrixStatesRef.current,
-      evaluatedAt: new Date(signalMatrixEvaluationStartedAtRef.current).toISOString(),
-    });
-    if (pendingMatrixStates.length) {
-      setSignalMatrixSnapshot((current) => {
-        const nextStates = mergeSignalMatrixStates({
-          currentStates: current.states,
-          incomingStates: pendingMatrixStates,
-          knownSymbols: signalMatrixUniverseRef.current,
-        });
-        if (signalMatrixStatesEqual(current.states, nextStates)) {
-          return current;
-        }
-        signalMatrixStatesRef.current = nextStates;
-        return {
-          ...current,
-          states: nextStates,
-          timeframes: current.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
-          coverage: {
-            ...(current.coverage || {}),
-            optimisticPendingCellCount: pendingMatrixStates.length,
-            pendingCellCount: plan.requestCells.length,
-          },
-        };
-      });
-    }
-    const automaticRequestOrigin =
-      signalMatrixAutomaticRunCountRef.current === 0 ? "startup" : "poll";
-    signalMatrixAutomaticRunCountRef.current += 1;
-    const requestEpoch = signalMatrixRequestEpochRef.current + 1;
-    signalMatrixRequestEpochRef.current = requestEpoch;
-    const abortController =
-      typeof AbortController !== "undefined" ? new AbortController() : null;
-    signalMatrixAbortControllerRef.current = abortController;
-    evaluateSignalMonitorMatrixMutation.mutate({
-      epoch: requestEpoch,
-      signal: abortController?.signal,
-      data: {
-        environment: signalMonitorEnvironment,
-        watchlistId: null,
-        cells: storedStateBootstrapRequest ? undefined : plan.requestCells,
-        symbols: storedStateBootstrapRequest
-          ? storedStateBootstrapRequest.symbols
-          : plan.requestSymbols,
-        timeframes: storedStateBootstrapRequest
-          ? storedStateBootstrapRequest.timeframes
-          : plan.timeframes,
-        clientRole: signalsScreenMatrixClientRole || signalMatrixRequestClientRole,
-        requestOrigin:
-          signalsScreenMatrixRequestOrigin || automaticRequestOrigin,
-      },
-      materializePendingCells,
-    });
-  }, [
-    evaluateSignalMonitorMatrixMutation.mutate,
-    signalMatrixPressureLevel,
-    signalMatrixRequestSymbolLimit,
-    signalMatrixRequestTaskLimit,
-    signalMatrixRequestExactCellLimit,
-    signalMatrixRequestTimeframes,
-    signalMatrixRequestTimeframesKey,
-    signalMatrixBusyQueueDelayMs,
-    signalMatrixEffectiveCatchupDelayMs,
-    scheduleSignalMatrixEvaluation,
-    memoryPressureSignal?.server?.apiPressureLevel,
-    memoryPressureSignal?.server?.effectivePressureLevel,
-    memoryPressureSignal?.server?.pressureLevel,
-    signalMonitorWorkVisible,
-    signalMonitorEnvironment,
-    signalMatrixBackgroundReady,
-    signalMatrixPrioritySymbols,
-    signalMatrixPrioritySymbolsKey,
-    signalMatrixPriorityReady,
-    signalMatrixPollMs,
-    signalMatrixSymbolsKey,
-    signalMatrixUniverseSymbols,
-    signalMonitorDisplayReady,
-    signalMatrixRequestActive,
-    signalMatrixRequestClientRole,
-    signalMatrixRouteRequestActive,
-    signalMatrixStartupProtectionActive,
-    signalMatrixSurfaceRequestActive,
-    signalsScreenMatrixRequestCells,
-    signalsScreenMatrixRequestCellsKey,
-    signalsScreenMatrixClientRole,
-    signalsScreenMatrixMaterializePendingCells,
-    signalsScreenMatrixRequestOrigin,
-    signalsScreenMatrixPrioritySymbols,
-    signalsScreenMatrixPrioritySymbolsKey,
-    signalsScreenMatrixSymbols,
-    signalsScreenMatrixSymbolsKey,
-    signalsScreenMatrixTimeframes,
-    signalsScreenMatrixTimeframesKey,
-    screen,
-  ]);
-  useEffect(() => {
-    signalMatrixRunRef.current = runSignalMatrixEvaluation;
-  }, [runSignalMatrixEvaluation]);
-  useEffect(() => {
-    if (!signalMatrixRuntimeReady || !signalMatrixPrioritySymbols.length) {
-      return;
-    }
-    signalMatrixRunRef.current?.({ queueIfBusy: true });
-  }, [
-    signalMatrixRuntimeReady,
-    signalMatrixPrioritySymbols.length,
-    signalMatrixPrioritySymbolsKey,
-    signalMatrixSymbolsKey,
-    signalsScreenMatrixRequest.revision,
-  ]);
-  useEffect(
-    () => () => {
-      if (signalMatrixQueuedTimerRef.current != null) {
-        window.clearTimeout(signalMatrixQueuedTimerRef.current);
-      }
-    },
-    [],
-  );
-  useEffect(() => {
-    if (!signalMatrixRuntimeReady || typeof window === "undefined") {
-      return undefined;
-    }
-
-    const watchdogMs =
-      SIGNAL_MATRIX_REQUEST_TIMEOUT_MS + SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS;
-    const interval = window.setInterval(() => {
-      if (!signalMatrixEvaluationInFlightRef.current) {
-        return;
-      }
-      const startedAt = signalMatrixEvaluationStartedAtRef.current;
-      if (!startedAt || Date.now() - startedAt < watchdogMs) {
-        return;
-      }
-
-      signalMatrixEvaluationInFlightRef.current = false;
-      signalMatrixEvaluationStartedAtRef.current = 0;
-      releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
-      signalMatrixQueuedEvaluationRef.current = false;
-      signalMatrixQueuedEvaluationDelayMsRef.current = null;
-      signalMatrixRunRef.current?.();
-    }, 5_000);
-    return () => window.clearInterval(interval);
-  }, [signalMatrixRuntimeReady]);
-  useEffect(() => {
-    if (!signalMatrixRuntimeReady) {
-      return undefined;
-    }
-
-    runSignalMatrixEvaluation({ queueIfBusy: true });
-    const interval = window.setInterval(
-      runSignalMatrixEvaluation,
-      signalMatrixPollMs,
-    );
-    return () => window.clearInterval(interval);
-  }, [
-    runSignalMatrixEvaluation,
-    signalMatrixRuntimeReady,
-    signalMatrixPrioritySymbolsKey,
-    signalMatrixPollMs,
-    signalMatrixSymbolsKey,
-    signalMatrixUniverseSymbols.length,
-  ]);
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental", { notify = false } = {}) => {
       if (signalMonitorEvaluationInFlightRef.current) {
@@ -5442,7 +4862,6 @@ export default function PlatformApp() {
           });
           if (profile?.enabled) {
             runSignalMonitorEvaluation("incremental");
-            signalMatrixRunRef.current?.({ queueIfBusy: true });
           }
         },
       },
