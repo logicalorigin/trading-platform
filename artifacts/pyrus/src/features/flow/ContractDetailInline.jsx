@@ -788,7 +788,8 @@ export const ContractDetailInline = ({
         data-testid="flow-inline-execution-quality"
         style={{
           display: "grid",
-          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(110)}px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(110)}px), max-content))`,
+          justifyContent: "start",
           gap: sp(6),
           marginBottom: sp(6),
         }}

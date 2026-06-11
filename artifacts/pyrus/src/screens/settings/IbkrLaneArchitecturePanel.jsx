@@ -537,7 +537,15 @@ function LaneMembershipCard({
         <div style={{ height: "100%", width: `${Math.round(usage * 100)}%`, background: tone }} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(86)}px, 1fr))`, gap: sp(7) }}>
+      <div
+        data-testid={`settings-ibkr-lane-mini-metrics-${lane.laneId}`}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(86)}px), max-content))`,
+          justifyContent: "start",
+          gap: sp(7),
+        }}
+      >
         <LaneMiniMetric label={activeLabel} value={formatCount(active)} tone={active > 0 ? CSS_COLOR.green : CSS_COLOR.textSec} />
         <LaneMiniMetric label="ADMITTED" value={`${formatCount(admittedCount)}/${formatCount(desiredCount)}`} tone={admittedCount ? CSS_COLOR.green : CSS_COLOR.textSec} />
         <LaneMiniMetric label="LIMIT" value={formatCount(cap)} />

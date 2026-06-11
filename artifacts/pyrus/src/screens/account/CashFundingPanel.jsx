@@ -83,9 +83,11 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
       ) : (
       <div style={{ display: "grid", gap: sp(5) }}>
         <div
+          data-testid="account-cash-summary-grid"
           style={{
             display: "grid",
-            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(120)}px, 1fr))`,
+            gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(120)}px), max-content))`,
+            justifyContent: "start",
             gap: sp("3px 8px"),
             paddingBottom: sp(4),
             borderBottom: `1px solid ${CSS_COLOR.border}`,

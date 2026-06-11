@@ -1675,7 +1675,7 @@ export default function DiagnosticsScreen({
                       {scope.role || "chart"} / {scope.timeframe || MISSING_VALUE}
                     </span>
                   </div>
-                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(110)}px, 1fr))`, gap: sp(6), fontFamily: T.sans, fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>
+                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(110)}px), max-content))`, justifyContent: "start", gap: sp(6), fontFamily: T.sans, fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>
                     <span>bars {formatCount(scope.hydratedBaseCount)} / {formatCount(scope.renderedBarCount)}</span>
                     <span>oldest {scope.oldestLoadedAt ? formatAgo(scope.oldestLoadedAt) : MISSING_VALUE}</span>
                     <span>pages {formatCount(scope.olderHistoryPageCount)}</span>
