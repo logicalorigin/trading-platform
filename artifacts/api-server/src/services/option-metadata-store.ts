@@ -632,6 +632,15 @@ export async function loadDurableOptionExpirations(input: {
         and(
           eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
           eq(optionContractsTable.isActive, true),
+          // Only current/future expirations. Contracts are never deactivated, so
+          // expired rows accumulate forever; without this filter, ORDER BY
+          // expiration_date ASC LIMIT N returns the OLDEST (expired) rows and the
+          // downstream today+ filter drops them all -> empty load -> cache miss ->
+          // slow bridge metadata hot path. (option_contracts grows unbounded.)
+          gte(
+            optionContractsTable.expirationDate,
+            dateKey(input.now ?? new Date()),
+          ),
         ),
       )
       .orderBy(optionContractsTable.expirationDate)
@@ -729,6 +738,13 @@ export async function loadDurableOptionChain(input: {
         and(
           eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
           eq(optionContractsTable.isActive, true),
+          // Current/future expirations only — see loadDurableOptionExpirations.
+          // Without this, the LIMIT window fills with expired contracts and the
+          // today+ filter empties the result -> cache miss -> bridge hot path.
+          gte(
+            optionContractsTable.expirationDate,
+            dateKey(input.now ?? new Date()),
+          ),
         ),
       )
       .orderBy(

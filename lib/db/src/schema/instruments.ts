@@ -84,6 +84,13 @@ export const optionContractsTable = pgTable(
     ),
     index("option_contracts_underlying_idx").on(table.underlyingInstrumentId),
     index("option_contracts_expiration_idx").on(table.expirationDate),
+    // Durable option-chain cache loads filter by underlying + expiration_date>=today
+    // and order by expiration_date; this composite keeps that an index range scan
+    // instead of a full per-underlying scan + sort over the expired backlog.
+    index("option_contracts_underlying_expiration_idx").on(
+      table.underlyingInstrumentId,
+      table.expirationDate,
+    ),
   ],
 );
 
