@@ -7,3 +7,8 @@
 -- starves live option-quote lines.
 create index if not exists option_contracts_underlying_expiration_idx
   on option_contracts (underlying_instrument_id, expiration_date);
+
+-- Refresh planner stats so the new composite index is actually chosen. On a
+-- bloated/under-vacuumed table the planner otherwise BitmapAnds the two stale
+-- single-column indexes (measured: 28s) instead of an index range scan (17ms).
+analyze option_contracts;
