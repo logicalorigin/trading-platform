@@ -594,6 +594,7 @@ function SettingsSearchInput({ value, onCommit }) {
     <input
       data-testid="settings-search-input"
       type="search"
+      aria-label="Search settings"
       {...inputProps}
       placeholder="Search settings"
       style={inputStyle()}
@@ -3468,6 +3469,7 @@ export default function SettingsScreen({
                 key={tab.id}
                 data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
                 type="button"
+                aria-pressed={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 style={{
                   border: "none",

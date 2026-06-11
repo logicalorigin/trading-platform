@@ -198,6 +198,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
   } else if (control.kind === "select") {
     input = (
       <select
+        aria-label={control.label}
         value={value ?? ""}
         onChange={(event) => onChange(control.id, event.target.value)}
         style={commonStyle}
@@ -213,6 +214,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
     input = (
       <input
         type="text"
+        aria-label={control.label}
         value={Array.isArray(value) ? value.join(", ") : value ?? ""}
         onChange={(event) => onChange(control.id, event.target.value)}
         style={commonStyle}
@@ -222,6 +224,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
     input = (
       <input
         type="number"
+        aria-label={control.label}
         value={value ?? ""}
         min={control.min}
         max={control.max}
@@ -369,6 +372,7 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
         {!disabled && (
           <input
             type="text"
+            aria-label="Add symbols"
             value={draft}
             onChange={(event) => {
               setDraft(event.target.value);
@@ -547,6 +551,7 @@ function LaneMembershipCard({
             <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>Symbol Limit</span>
             <input
               type="number"
+              aria-label="Symbol Limit"
               min={1}
               max={lane.laneId === "flow-scanner" ? 2000 : 500}
               value={mergedPolicy.maxSymbols ?? lane.maxSymbols}

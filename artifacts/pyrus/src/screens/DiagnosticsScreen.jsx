@@ -1274,6 +1274,7 @@ export default function DiagnosticsScreen({
             key={tab}
             data-testid={`diagnostics-tab-${tab.toLowerCase().replace(/\s+/g, "-")}`}
             type="button"
+            aria-pressed={activeTab === tab}
             className={joinMotionClasses(
               "ra-interactive",
               activeTab === tab && "ra-focus-rail",
