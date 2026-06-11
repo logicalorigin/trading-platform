@@ -1269,7 +1269,7 @@ export const buildIbkrGatewayTitle = ({
   return details.join(" | ");
 };
 
-export const IbkrStatusWave = ({
+const IbkrStatusWaveImpl = ({
   status,
   tone = {},
   color,
@@ -1372,6 +1372,37 @@ export const IbkrStatusWave = ({
     </span>
   );
 };
+
+const shallowStyleEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => a[key] === b[key]);
+};
+
+// Isolate the wave: the header re-renders every second off marketClockNow, and
+// IbkrPingWavelength rebuilds a fresh {...tone, color} object each tick, so a plain
+// memo wouldn't help. Compare only the props that change the rendered wave —
+// state, duration, and color — so a parent re-render can no longer reconcile (or
+// restart the SMIL animation in) this subtree. (Wave-stutter fix, robustness step.)
+const waveRenderPropsEqual = (prev, next) =>
+  prev.status === next.status &&
+  prev.wave === next.wave &&
+  prev.active === next.active &&
+  prev.duration === next.duration &&
+  prev.color === next.color &&
+  (prev.tone?.color ?? null) === (next.tone?.color ?? null) &&
+  prev.width === next.width &&
+  prev.height === next.height &&
+  prev.decorative === next.decorative &&
+  prev.ariaLabel === next.ariaLabel &&
+  prev.dataTestId === next.dataTestId &&
+  shallowStyleEqual(prev.style, next.style);
+
+export const IbkrStatusWave = React.memo(IbkrStatusWaveImpl, waveRenderPropsEqual);
+IbkrStatusWave.displayName = "IbkrStatusWave";
 
 export const IbkrPingWavelength = ({ connection, tone = {} }) => {
   const duration = resolveWaveDuration(connection, tone);
