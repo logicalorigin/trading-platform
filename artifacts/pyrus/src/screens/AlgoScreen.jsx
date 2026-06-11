@@ -637,12 +637,13 @@ export const AlgoScreen = ({
   );
   useEffect(() => {
     onReadinessChange?.({
-      primaryReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible && algoPrimaryDataReady),
       derivedReady: algoDerivedReady,
       backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
     });
   }, [
     algoDerivedReady,
+    algoPrimaryDataReady,
     isVisible,
     onReadinessChange,
     safeQaMode,

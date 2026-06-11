@@ -23,3 +23,16 @@ test("shadow account mode does not prewarm real account streams when broker rout
     /const inactiveAccountPrewarmEnabled = Boolean\(\s*isVisible &&\s*accountQueriesEnabled &&\s*inactiveAccountSection &&/s,
   );
 });
+
+test("account first-screen readiness waits for primary account data", () => {
+  const source = readLocalSource("./AccountScreen.jsx");
+
+  assert.match(
+    source,
+    /primaryReady: Boolean\(isVisible && accountPrimaryReady\),/,
+  );
+  assert.doesNotMatch(
+    source,
+    /primaryReady: Boolean\(isVisible\),\s*derivedReady: Boolean\(isVisible && accountDerivedReady\),/,
+  );
+});

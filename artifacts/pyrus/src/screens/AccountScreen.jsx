@@ -1544,12 +1544,13 @@ const AccountScreenInner = ({
   );
   useEffect(() => {
     onReadinessChange?.({
-      primaryReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible && accountPrimaryReady),
       derivedReady: Boolean(isVisible && accountDerivedReady),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
     });
   }, [
     accountDerivedReady,
+    accountPrimaryReady,
     isVisible,
     onReadinessChange,
     safeQaMode,

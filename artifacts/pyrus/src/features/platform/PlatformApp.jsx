@@ -126,13 +126,15 @@ import {
 import {
   BOOT_SCREEN_MODULE_PRELOAD_ORDER,
   SCREENS,
-  SCREEN_BOOT_DATA_DEPS,
   SCREEN_MODULE_PRELOAD_ORDER,
   SCREEN_SHELL_WARM_MOUNT_ORDER,
   buildMountedScreenState,
   getScreenModulePreloadSnapshot,
   preloadScreenModule,
 } from "./screenRegistry.jsx";
+import {
+  resolveBootBlockingTaskIds,
+} from "./bootPolicy.js";
 import {
   getMarketFlowStoreEntryCount,
 } from "./marketFlowStore";
@@ -212,13 +214,6 @@ import {
 } from "../../app/bootProgress";
 
 const SCREEN_ID_SET = new Set(SCREENS.map(({ id }) => id));
-const BOOT_INFRA_TASK_IDS = [
-  "static-html",
-  "react-root",
-  "app-content-chunk",
-  "workspace-route-chunk",
-  "first-screen",
-];
 const SIGNAL_MONITOR_EVENT_PAGE_SIZE = 1_000;
 const SIGNAL_MONITOR_EVENT_LOOKBACK_MS = 36 * 60 * 60 * 1000;
 const SIGNAL_MONITOR_EVENT_LOOKAHEAD_MS = 5 * 60 * 1000;
@@ -859,8 +854,10 @@ export default function PlatformApp() {
   const startupRefreshQueuedRef = useRef(false);
   const initialScreenRef = useRef(resolveInitialPlatformScreen(_initialState.screen));
   const initialScreen = initialScreenRef.current;
-  const initialScreenBootDataDeps =
-    SCREEN_BOOT_DATA_DEPS[initialScreen] || SCREEN_BOOT_DATA_DEPS.market;
+  const initialBootBlockingTaskIds = useMemo(
+    () => resolveBootBlockingTaskIds(initialScreen),
+    [initialScreen],
+  );
   const latencyDebugEnabled = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -929,11 +926,8 @@ export default function PlatformApp() {
     setScreen(normalizedScreen);
   }, []);
   useEffect(() => {
-    reclassifyBootBlocking([
-      ...BOOT_INFRA_TASK_IDS,
-      ...initialScreenBootDataDeps,
-    ]);
-  }, [initialScreenBootDataDeps]);
+    reclassifyBootBlocking(initialBootBlockingTaskIds);
+  }, [initialBootBlockingTaskIds]);
   useEffect(() => {
     [
       "session",

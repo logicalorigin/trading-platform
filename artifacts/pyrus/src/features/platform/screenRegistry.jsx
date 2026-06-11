@@ -8,6 +8,7 @@ import {
   preloadScreenModule,
 } from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
+export { SCREEN_BOOT_DATA_DEPS } from "./bootPolicy.js";
 
 export const ScreenLoadingFallback = ({ screenId, error = null }) => (
   <ScreenRouteShell screenId={screenId} error={error} />
@@ -305,20 +306,6 @@ export const SCREENS = [
   { id: "diagnostics", label: "Diagnostics", icon: "▤" },
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
-
-export const SCREEN_BOOT_DATA_DEPS = {
-  market: ["session"],
-  signals: ["session", "signal-profile"],
-  flow: ["session", "watchlists"],
-  gex: ["session", "watchlists"],
-  trade: ["session", "watchlists"],
-  account: ["session", "accounts"],
-  algo: ["session", "accounts", "signal-profile"],
-  research: ["session"],
-  backtest: ["session"],
-  diagnostics: ["session"],
-  settings: ["session"],
-};
 
 export const SCREEN_MODULE_PRELOAD_ORDER = [
   "market",

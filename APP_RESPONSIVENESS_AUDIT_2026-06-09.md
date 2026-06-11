@@ -46,8 +46,8 @@ There is 100ms quote batching (`live-streams.ts:70`), but per-symbol store liste
 ### A5. Heavy synchronous compute on the main thread
 Indicator math (EMA/SMA/stddev/RSI) is unmemoized O(n)–O(n·p) and runs on the render path; `computeStandardDeviation` re-slices the array each iteration — `artifacts/pyrus/src/features/charting/indicators.ts:88`. Flow event processing does repeated `.sort()`/`.reduce()` over large arrays — `artifacts/pyrus/src/features/charting/flowChartEvents.ts`.
 
-### A6. No route-level code splitting → slow first interaction
-Screens are imported synchronously in `PlatformApp.jsx` (~21K lines of screen code parsed/executed at startup regardless of landing screen). Reinforced by `PYRUS_LOADING_POLICY_ASSESSMENT.md` ("boot loader blocks until 4 other screens' JS chunks load") and `LOADER_RING_AND_BOOT_FIX.md` ("double boot loader").
+### A6. Route-level code splitting is now present; boot policy remains the launch lever
+The older "no route-level code splitting" diagnosis is stale. Current source lazy-loads `PlatformApp` and individual screens through `lazyWithRetry` / `screenRegistry.jsx`; app-content startup preloads the initial screen plus the priority Account screen (`artifacts/pyrus/src/app/AppContent.tsx:193-195`) without making those screen preloads boot blockers. The remaining launch issue is whether the full-screen boot overlay waits on the right active-screen data, tracked in `LOADING_LAUNCH_AUDIT_2026-06-11.md`.
 
 ### A7. Known stutter: broker-connection sine wave (currently open)
 The connection-status wave rebuilds every 1000ms tied to `marketClockNow`, restarting the SMIL animation each second; flapping ping/state makes it worse. Source: `SESSION_HANDOFF_LIVE_2026-06-08_broker-connection-wave-stutter.md` (files: `HeaderStatusCluster.jsx`, `IbkrConnectionStatus.jsx`). **Status: not yet fixed.**
@@ -59,20 +59,17 @@ Tooltips measure `scrollWidth`/`getBoundingClientRect()` on every open with no m
 
 ## B. Backend: why each request is slow (and slower under load)
 
-### B1. Small DB connection pool + long acquire timeout (highest backend impact)
-Pool max is **6 (helium) / 10 (default)**, with a **30s** connection timeout on helium — `lib/db/src/index.ts:35-56`. The recent commit `f3ada41` ("classify postgres pool acquire timeouts") confirms acquire timeouts happen in practice (`lib/db/src/pool-error-handler.ts`). Under concurrent screen loads, requests queue on pool acquisition → multi-second waits.
+### B1. DB connection pool + long acquire timeout (highest backend impact)
+Pool max is currently **12 on helium / 10 otherwise**, with a **30s** connection timeout on helium — `lib/db/src/index.ts:35-64`. The older **6/10** pool note is stale, but the risk remains: concurrent dashboard fanout can still queue on pool acquisition and turn active-screen requests into multi-second waits.
 
 ### B2. Per-tick synchronous `JSON.stringify` on every SSE event
 Each SSE event is serialized synchronously per tick with no batching — `artifacts/api-server/src/routes/platform.ts:1238`. At many ticks/sec × many clients this blocks the event loop. (Earlier RSS investigation, `memory/2026-05-28...`, traced a 967k events/min Massive stream that saturated the main thread — same class of problem.)
 
 ### B3. Low bridge concurrency on account/orders/health
-Bridge governor per-category concurrency — `artifacts/api-server/src/services/bridge-governor.ts:57-62`: quotes 8, bars 4, options 4, **account 2, orders 1, health 1**, with **15–45s backoff** on failure. (Note: the old "all lanes concurrency 1" claim in `PAGE_LOAD_PERFORMANCE_AUDIT.md` is **stale** — quotes/bars/options are higher now — but account/orders/health are still serialized and the long backoff can blackout a category for 30–45s after a transient error.)
+Bridge governor per-category concurrency — `artifacts/api-server/src/services/bridge-governor.ts:57-62`: quotes 8, bars 4, options 4, **account 2, orders 1, health 1**, with category backoffs of quotes 30s, bars 30s, health 10s, account 15s, orders 2s, and options 45s. (Note: the old "all lanes concurrency 1" claim in `PAGE_LOAD_PERFORMANCE_AUDIT.md` is **stale**.)
 
 ### B4. Hot endpoints recompute instead of caching
-- Quote snapshot cache keys on the **entire symbol list**, so `[AAPL,MSFT]` and `[AAPL,MSFT,GOOGL]` never share cached symbols — `artifacts/api-server/src/services/platform.ts:5045`.
-- Quote cache is **fully iterated to prune on every miss** — `platform.ts:5030`.
-- Flow events endpoint does **full dedupe + sort + filter per request** — `platform.ts:12488`.
-- Universe search recomputes (multi-provider fetch + merge + `scoreUniverseTicker` twice per sort comparison) with only a 30s cache — `platform.ts:7054`, `:5307`.
+This section still describes a valid class of risk, but the old `platform.ts:5045` / `:12488` line citations are no longer valid because the current `artifacts/api-server/src/routes/platform.ts` is 3,475 lines. Re-resolve these endpoints from source before editing or using the old line numbers as evidence.
 
 ### B5. Pressure-driven degradation cascade
 Under RSS/latency pressure the system throttles scanners and serves cache-only, which makes data stale and triggers more client retries. Documented repeatedly: `APP_DEFICIENCY_REPORT_2026-05-26.md` (p95 2378ms, p99 6163ms, `/algo/.../cockpit` p95 9877ms, event-loop max ~9.9s), and the historical-farm-freeze memory (`memory/ibkr-historical-farm-freeze.md`) where an inactive HMDS farm jams the historical-bars lane and freezes the app.
@@ -100,7 +97,7 @@ Per the handoff docs, these were resolved and shouldn't be re-opened: RSS thresh
 9. Memoize indicator math / move to a worker (`indicators.ts:88`).
 
 **Tier 3 — larger (weeks):**
-10. Route-level code splitting + decouple boot loader from non-active-screen data (`PYRUS_LOADING_POLICY_ASSESSMENT.md` phased plan).
+10. Preserve current route-level code splitting and harden the boot policy guardrails: test `reclassifyBootBlocking` plus `SCREEN_BOOT_DATA_DEPS`, then tighten Account/Algo `primaryReady` to active-screen primary data readiness (`LOADING_LAUNCH_AUDIT_2026-06-11.md`).
 11. Move AccountScreen from polling to SSE.
 
 ---
