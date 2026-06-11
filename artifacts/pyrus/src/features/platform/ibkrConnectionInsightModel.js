@@ -70,15 +70,12 @@ export const formatIbkrInsightElapsed = (elapsedMs) => {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 };
 
-const getElapsedMs = ({ insight, now }) => {
-  const startedAtMs =
+const getPhaseStartedAtMs = (insight) => {
+  const ms =
     typeof insight?.currentPhaseStartedAt === "string"
       ? new Date(insight.currentPhaseStartedAt).getTime()
       : Number.NaN;
-  if (Number.isFinite(startedAtMs)) {
-    return Math.max(0, now - startedAtMs);
-  }
-  return normalizeFiniteNumber(insight?.currentPhaseElapsedMs);
+  return Number.isFinite(ms) ? ms : null;
 };
 
 const getOwnerLabel = (owner) =>
@@ -103,11 +100,16 @@ const normalizeTimelineRows = (rows = []) =>
         }))
     : [];
 
-const buildFromInsight = ({ insight, now }) => {
+const buildFromInsight = ({ insight }) => {
   const ownerLabel = getOwnerLabel(insight.currentOwner);
   const phaseLabel = getPhaseLabel(insight.currentPhase);
-  const elapsedMs = getElapsedMs({ insight, now });
-  const elapsedLabel = formatIbkrInsightElapsed(elapsedMs);
+  // currentPhaseStartedAtMs is used by the leaf IbkrInsightElapsedLabel component to
+  // compute elapsed in its own interval — keeping it out of the model prevents the
+  // entire insight model (and stepper subtree) from rebuilding every second.
+  const currentPhaseStartedAtMs = getPhaseStartedAtMs(insight);
+  const staticElapsedLabel = currentPhaseStartedAtMs === null
+    ? formatIbkrInsightElapsed(normalizeFiniteNumber(insight?.currentPhaseElapsedMs))
+    : null;
   const waiting = Boolean(
     ownerLabel &&
       insight.severity !== "idle" &&
@@ -117,8 +119,9 @@ const buildFromInsight = ({ insight, now }) => {
 
   return {
     action: insight.recommendedAction || null,
+    currentPhaseStartedAtMs,
     detail: insight.detail || "",
-    elapsedLabel,
+    elapsedLabel: staticElapsedLabel,
     ownerLabel,
     phaseLabel,
     stale: Boolean(insight.stale),
@@ -196,7 +199,6 @@ export const buildIbkrConnectionInsightModel = ({
   error = null,
   gatewayConnected = false,
   inFlight = false,
-  now = Date.now(),
 } = {}) => {
   const insight = activationStatus?.insight;
   if (
@@ -213,7 +215,7 @@ export const buildIbkrConnectionInsightModel = ({
   }
 
   if (insight && typeof insight === "object") {
-    return buildFromInsight({ insight, now });
+    return buildFromInsight({ insight });
   }
 
   return buildFallback({

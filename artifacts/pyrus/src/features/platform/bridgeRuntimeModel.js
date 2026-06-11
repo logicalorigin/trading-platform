@@ -1,12 +1,5 @@
 import { getIbkrStreamStateMeta } from "./IbkrConnectionStatus";
-
-const CSS_COLOR = {
-  textDim: "var(--ra-text-dim)",
-  accent: "var(--ra-color-accent)",
-  green: "var(--ra-green-500)",
-  amber: "var(--ra-amber-500)",
-  red: "var(--ra-red-500)",
-};
+import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 
 const STREAM_LIFECYCLE_ONLY_STATES = new Set(["checking", "reconnecting"]);
 const GATEWAY_DISCONNECT_REASONS = new Set([

@@ -6,7 +6,7 @@ import {
   CircleOff,
   PlugZap,
 } from "lucide-react";
-import { FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorAlpha, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import {
   STREAM_STATE_LABEL,
@@ -17,24 +17,13 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
 import { buildIbkrConnectionFailurePoint } from "./failurePointModel.js";
+import {
+  advanceWaveMotion,
+  initWaveMotionState,
+  WAVE_MOTION_DWELL_MS,
+} from "./ibkrWaveMotionModel.js";
 
 const EMPTY_ACCOUNTS = [];
-
-const CSS_COLOR = {
-  bg1: "var(--ra-surface-1)",
-  border: "var(--ra-border-default)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  textSec: "var(--ra-text-secondary)",
-  accent: "var(--ra-color-accent)",
-  green: "var(--ra-green-500)",
-  amber: "var(--ra-amber-500)",
-  red: "var(--ra-red-500)",
-  redBg: "var(--ra-red-bg)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 export const formatIbkrPingMs = (value) => {
   if (!Number.isFinite(value)) {
@@ -1013,6 +1002,27 @@ const usePrefersReducedMotion = () => {
   return prefersReducedMotion;
 };
 
+// Holds the wave's animation inputs steady through sub-second ping / stream-state flaps
+// so the main-thread SMIL `<animate>` does not restart ("skip"). Drives the pure
+// `advanceWaveMotion` state machine; a change only commits after it survives the dwell.
+const useStableWaveMotion = (animated, duration) => {
+  const [state, setState] = React.useState(() =>
+    initWaveMotionState({ animated, duration }),
+  );
+
+  React.useEffect(() => {
+    // Fold the latest inputs in now (may open a pending change), then re-evaluate once
+    // the dwell has elapsed so a sustained change actually commits.
+    setState((prev) => advanceWaveMotion(prev, { animated, duration }, Date.now()));
+    const timer = setTimeout(() => {
+      setState((prev) => advanceWaveMotion(prev, { animated, duration }, Date.now()));
+    }, WAVE_MOTION_DWELL_MS + 32);
+    return () => clearTimeout(timer);
+  }, [animated, duration]);
+
+  return state.committed;
+};
+
 const buildSineWavePoints = (phase = 0) => {
   const pointCount = 33;
   const startX = 1;
@@ -1276,7 +1286,12 @@ export const IbkrStatusWave = ({
   const profile = resolveIbkrStatusWaveProfile({ status, wave });
   const prefersReducedMotion = usePrefersReducedMotion();
   const resolvedDuration = duration ?? profile.duration;
-  const animated = Boolean(active ?? profile.active) && Boolean(resolvedDuration) && !prefersReducedMotion;
+  const requestedAnimated =
+    Boolean(active ?? profile.active) && Boolean(resolvedDuration) && !prefersReducedMotion;
+  // Stabilize the SMIL inputs so transient ping/stream flaps don't restart the wave.
+  const stableMotion = useStableWaveMotion(requestedAnimated, resolvedDuration);
+  const animated = stableMotion.animated;
+  const animationDuration = stableMotion.duration;
   const resolvedColor = color || tone.color || CSS_COLOR.textMuted;
 
   return (
@@ -1318,7 +1333,7 @@ export const IbkrStatusWave = ({
             >
               <animate
                 attributeName="points"
-                dur={resolvedDuration}
+                dur={animationDuration}
                 repeatCount="indefinite"
                 values={SINE_WAVE_VALUES}
               />
@@ -1335,7 +1350,7 @@ export const IbkrStatusWave = ({
             >
               <animate
                 attributeName="points"
-                dur={resolvedDuration}
+                dur={animationDuration}
                 repeatCount="indefinite"
                 values={SINE_WAVE_VALUES}
               />

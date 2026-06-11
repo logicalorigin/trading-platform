@@ -5,6 +5,7 @@ import {
   buildHeaderIbkrPopoverModel,
   buildHeaderIbkrTriggerModel,
 } from "./ibkrPopoverModel.js";
+import { normalizeAdmissionDiagnostics } from "./runtimeControlModel.js";
 
 const readyConnection = {
   configured: true,
@@ -81,6 +82,89 @@ test("closed IBKR trigger model exposes compact line usage when a snapshot is av
   assert.equal(model.health.status, "healthy");
   assert.equal(model.lineUsage?.summary, "12 of 200");
   assert.equal(model.compactLineUsage?.summary, "12 of 200");
+});
+
+test("line usage rows display shared app headroom instead of per-pool ceilings", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 30,
+    accountMonitorLineCount: 5,
+    flowScannerLineCount: 25,
+    automationExecutionLineCount: 0,
+    automationLineCount: 0,
+    accountMonitor: {
+      neededLineCount: 5,
+      coveredLineCount: 5,
+    },
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 200,
+    },
+    poolUsage: {
+      automation: {
+        id: "automation",
+        activeLineCount: 0,
+        maxLines: 200,
+        effectiveMaxLines: 200,
+        remainingLineCount: 200,
+      },
+      "account-monitor": {
+        id: "account-monitor",
+        activeLineCount: 5,
+        maxLines: 200,
+        effectiveMaxLines: 200,
+        remainingLineCount: 195,
+      },
+      visible: {
+        id: "visible",
+        activeLineCount: 0,
+        maxLines: 200,
+        effectiveMaxLines: 200,
+        remainingLineCount: 200,
+      },
+      "flow-scanner": {
+        id: "flow-scanner",
+        activeLineCount: 25,
+        maxLines: 200,
+        effectiveMaxLines: 195,
+        remainingLineCount: 170,
+      },
+    },
+  });
+
+  const rows = Object.fromEntries(normalized.rows.map((row) => [row.id, row]));
+
+  assert.deepEqual(
+    {
+      active: rows["account-monitor"].displayActive,
+      usable: rows["account-monitor"].displayAvailable,
+      headroom: rows["account-monitor"].displayFree,
+    },
+    { active: 5, usable: 5, headroom: 0 },
+  );
+  assert.deepEqual(
+    {
+      active: rows.visible.displayActive,
+      usable: rows.visible.displayAvailable,
+      headroom: rows.visible.displayFree,
+    },
+    { active: 0, usable: 170, headroom: 170 },
+  );
+  assert.deepEqual(
+    {
+      active: rows["flow-scanner"].displayActive,
+      usable: rows["flow-scanner"].displayAvailable,
+      headroom: rows["flow-scanner"].displayFree,
+    },
+    { active: 25, usable: 195, headroom: 170 },
+  );
+  assert.deepEqual(
+    {
+      active: rows.total.displayActive,
+      usable: rows.total.displayAvailable,
+      headroom: rows.total.displayFree,
+    },
+    { active: 30, usable: 200, headroom: 170 },
+  );
 });
 
 test("closed IBKR trigger model surfaces live Massive provider status", () => {

@@ -1186,6 +1186,12 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
   const shadowAccount = normalizeShadowAccountLineUsage(admission, lineUsageSnapshot);
+  const totalUsed = firstFiniteNumber(admission.activeLineCount);
+  const totalCap = firstFiniteNumber(budget.maxLines);
+  const totalFree =
+    Number.isFinite(Number(totalUsed)) && Number.isFinite(Number(totalCap))
+      ? Math.max(0, Number(totalCap) - Number(totalUsed))
+      : null;
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -1254,6 +1260,26 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           ? Math.max(0, (effectiveCap ?? cap) - rawUsed)
           : null
         : Number(pool.remainingLineCount);
+    const displayActive =
+      id === "account-monitor"
+        ? firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0)
+        : rawUsed;
+    const laneDemandCap =
+      id === "account-monitor"
+        ? firstFiniteNumber(accountDetails.neededLineCount, displayActive, 0)
+        : firstFiniteNumber(effectiveCap, cap);
+    const displayAvailable =
+      Number.isFinite(displayActive) && Number.isFinite(totalFree)
+        ? Number.isFinite(laneDemandCap)
+          ? Math.min(Number(laneDemandCap), Number(displayActive) + Number(totalFree))
+          : Number(displayActive) + Number(totalFree)
+        : Number.isFinite(laneDemandCap)
+          ? Number(laneDemandCap)
+          : null;
+    const displayFree =
+      Number.isFinite(displayAvailable) && Number.isFinite(displayActive)
+        ? Math.max(0, Number(displayAvailable) - Number(displayActive))
+        : null;
     const streamState = lineUsageState(
       rawUsed,
       effectiveCap ?? cap,
@@ -1282,6 +1308,9 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       cap,
       effectiveCap,
       free,
+      displayActive,
+      displayAvailable,
+      displayFree,
       activeLineCount,
       detail:
         id === "account-monitor"
@@ -1305,13 +1334,12 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const total = {
     id: "total",
     label: "Total app",
-    used: firstFiniteNumber(admission.activeLineCount),
-    cap: firstFiniteNumber(budget.maxLines),
-    free:
-      Number.isFinite(Number(admission.activeLineCount)) &&
-      Number.isFinite(Number(budget.maxLines))
-        ? Math.max(0, Number(budget.maxLines) - Number(admission.activeLineCount))
-        : null,
+    used: totalUsed,
+    cap: totalCap,
+    free: totalFree,
+    displayActive: totalUsed,
+    displayAvailable: totalCap,
+    displayFree: totalFree,
     strict: false,
     source: "diagnostics",
     legacyNormalized: false,
