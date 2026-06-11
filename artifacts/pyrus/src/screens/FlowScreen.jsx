@@ -3561,7 +3561,7 @@ const FlowOverviewPanel = ({
     padding: sp("4px 10px"),
     fontSize: textSize("caption"),
     fontFamily: T.sans,
-    fontWeight: active ? 600 : 500,
+    fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
     letterSpacing: "0.02em",
     border: "none",
     background: active ? cssColorAlpha(accent, "18") : CSS_COLOR.bg2,
