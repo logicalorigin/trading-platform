@@ -74,7 +74,10 @@ const DEFAULT_VARIANT_TIMEOUT_MS = 20 * 60_000;
 const RISK_CAP_PATCH = {
   riskCaps: {
     maxOpenSymbols: 10,
-    maxPremiumPerEntry: ACCOUNT_SIZE * 0.05,
+    maxPremiumPerEntry: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_MAX_PREMIUM_PER_ENTRY",
+      ACCOUNT_SIZE * 0.05,
+    ),
   },
 };
 const WINNING_COMBO_EXIT_POLICY = {

@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-09.ib-async-sidecar-v20-direct-gateway-typing'
+$HelperVersion = '2026-06-10.ib-async-sidecar-v21-continuous-claim'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -558,12 +558,23 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
     Set-Content -Path $DesktopAgentPidFile -Value $PID -ErrorAction SilentlyContinue
     Write-Log "Pyrus IBKR desktop agent polling $baseUrl."
 
+    # Keep the claim long-poll the agent's dominant activity. Register/heartbeat
+    # run on their own ~30s cadence instead of between every claim, so the claim
+    # runs back-to-back and a queued launch job is caught immediately by the
+    # in-flight claim's server-side notify — rather than waiting out a slow
+    # register/heartbeat round-trip under API pressure (the initial-launch lag).
+    $heartbeatIntervalSeconds = 30
+    $lastHeartbeatUtc = [DateTime]::MinValue
+
     while ($true) {
         try {
-            $registration = Register-DesktopAgent -BaseUrl $baseUrl
-            Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
-            $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
-            Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $heartbeat
+            if (($lastHeartbeatUtc -eq [DateTime]::MinValue) -or ((([DateTime]::UtcNow) - $lastHeartbeatUtc).TotalSeconds -ge $heartbeatIntervalSeconds)) {
+                $registration = Register-DesktopAgent -BaseUrl $baseUrl
+                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
+                $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
+                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $heartbeat
+                $lastHeartbeatUtc = [DateTime]::UtcNow
+            }
             $job = Claim-DesktopAgentLaunchJob -BaseUrl $baseUrl
             if ($job -and $job.ready -eq $true) {
                 $jobAction = [string]$job.action
