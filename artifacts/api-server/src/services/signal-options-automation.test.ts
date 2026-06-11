@@ -436,3 +436,38 @@ test("Signal Options stale position mark summary names stale quote", () => {
     "The option quote was stale or unavailable for the open shadow position.",
   );
 });
+
+test("Signal Options keeps fresh signals visible past the 1-bar action age (regression)", () => {
+  const {
+    isSignalOptionsActionableSignalState,
+    isSignalOptionsSignalAgeActionable,
+  } = __signalOptionsAutomationInternalsForTests;
+
+  // The age gate alone blocks signals older than 1 bar...
+  assert.equal(isSignalOptionsSignalAgeActionable(6), false);
+  // ...but a fresh signal must bypass it (consistent with snapshot/actionable checks).
+  assert.equal(isSignalOptionsSignalAgeActionable(6, { fresh: true }), true);
+
+  // A fresh, directional universe cell 6 bars old must stay visible in the STA
+  // table — the algo is still tracking it on its timeframe. Regression: it was
+  // dropped because the visibility filter didn't pass { fresh } to the age gate.
+  const freshAgedState = {
+    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    barsSinceSignal: 6,
+  } as never;
+  assert.equal(isSignalOptionsActionableSignalState(freshAgedState), true);
+
+  // A non-fresh cell of the same age is still correctly excluded.
+  const staleAgedState = {
+    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    barsSinceSignal: 6,
+    fresh: false,
+  } as never;
+  assert.equal(isSignalOptionsActionableSignalState(staleAgedState), false);
+});
