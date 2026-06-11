@@ -134,7 +134,12 @@ import {
 } from "./screenRegistry.jsx";
 import {
   resolveBootBlockingTaskIds,
+  resolveScreenBootDataDeps,
 } from "./bootPolicy.js";
+import {
+  readBootWarmStart,
+  writeBootWarmStart,
+} from "./bootWarmStartCache.js";
 import {
   getMarketFlowStoreEntryCount,
 } from "./marketFlowStore";
@@ -845,9 +850,9 @@ export default function PlatformApp() {
     // Footer Massive/IBKR source bars read provider status from line usage
     // (/api/settings/ibkr-line-usage carries providers.massive). Keep it enabled —
     // disabling it left the footer with no Massive data source ("No checks yet").
-    // Stream stays off; poll at a relaxed 10s cadence to keep footer load low.
-    lineUsageStreamEnabled: false,
-    lineUsagePollInterval: 10_000,
+    // Keep footer/header IBKR line counts on the same stream; polling is fallback.
+    lineUsageStreamEnabled: true,
+    lineUsagePollInterval: 2_000,
     memoryPressure: memoryPressureSignal,
   });
   const userPreferences = useUserPreferences();
@@ -937,6 +942,30 @@ export default function PlatformApp() {
       "signal-state",
       "first-screen",
     ].forEach((taskId) => startBootProgressTask(taskId));
+  }, []);
+  useEffect(() => {
+    if (safeQaMode) {
+      return;
+    }
+    const warmStart = readBootWarmStart();
+    if (!warmStart) {
+      return;
+    }
+    // Warm reload: the heavy screen data is already hydrated from localStorage /
+    // IndexedDB caches, so dismiss the boot overlay immediately instead of
+    // blocking on the cold session/watchlists round-trips. The live queries still
+    // fetch and their settle effects reconcile; bootProgress ignores status
+    // changes once a task is settled, so a later live failure cannot re-block the
+    // overlay. Live trading/quote gates keep using live session state.
+    const screenDeps = resolveScreenBootDataDeps(initialScreen);
+    ["session", "watchlists"]
+      .filter((taskId) => screenDeps.includes(taskId))
+      .forEach((taskId) =>
+        completeBootProgressTask(taskId, {
+          detail: "Restored from last session",
+        }),
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -1782,6 +1811,33 @@ export default function PlatformApp() {
   }, [
     watchlistsQuery.data,
     watchlistsQuery.error,
+    watchlistsQuery.isError,
+    watchlistsQuery.isFetched,
+  ]);
+  useEffect(() => {
+    // Record a successful boot so the next warm reload can dismiss the overlay
+    // optimistically (see the warm-start effect near mount). Only stamp once both
+    // blocking data tasks have settled without error; re-stamping on refetch keeps
+    // the warm window anchored to recent activity.
+    if (safeQaMode) {
+      return;
+    }
+    if (sessionQuery.isError || watchlistsQuery.isError) {
+      return;
+    }
+    if (!sessionQuery.data || !sessionMetadataSettled) {
+      return;
+    }
+    if (!watchlistsQuery.data && !watchlistsQuery.isFetched) {
+      return;
+    }
+    writeBootWarmStart({ environment: sessionQuery.data?.environment });
+  }, [
+    safeQaMode,
+    sessionMetadataSettled,
+    sessionQuery.data,
+    sessionQuery.isError,
+    watchlistsQuery.data,
     watchlistsQuery.isError,
     watchlistsQuery.isFetched,
   ]);
