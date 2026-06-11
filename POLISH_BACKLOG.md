@@ -265,7 +265,42 @@ Source audit (4 dims) of `screens/ResearchScreen.jsx` (clean shell) + `features/
 
 **SYS-06 edge:** the "PhotonicsObservatory template-CSS block" deferred edge is **closed** by RES-02/RES-03 (remaining `slideUp`/`shimmer`/`researchObservatoryPulse`/`researchWorkspaceSpin` are decorative/loading loops in the GC-08 won't-fix class — outside the 90–260ms transition scale, not competing with live numeric data).
 
-_(Algo · Backtest — pending)_
+### Algo — full audit (2026-06-11)
+Source audit (4 dims) of the Algo tree — `AlgoScreen.jsx` (2k LOC) + `screens/algo/*` + `features/platform/PlatformAlgoMonitorSidebar.jsx`, ~19k LOC across 23 `.jsx` files (the largest screen) — via 2 cluster-partitioned dimension agents (signal table/row/drill; shell/strips/rail/settings/sidebar), all fact-checked against source. Fixes verified by source + typecheck + unit tests (28/28 algo tests pass via `node --import tsx --test`; bare `node --test` can't load `.jsx`).
+
+**Strengths verified — Algo is the most-developed screen (like Market/Signals):**
+- **Both feeder redesigns substantially APPLIED.** `SIGNALS_TO_ACTION_AUDIT.md` (decision pill + inline action col + sort affordance + symbol search + verdict-toned "fresh&hot" gradient + mobile metric grid) and `ALGO_RIGHT_RAIL_REDESIGN.md` (container-query frames, CompactSettingCell/Switch/SegmentedControl, HaltStrip board, ContractSelectionCell + strike ladder, ExitLadderTrack, SaveBar) are all implemented. The redesign docs are now largely historical — verify against, don't re-derive.
+- **Near-fully tokenized** — across 19k LOC only 4 raw `rgba()` (shadows/scrim, below) + 0 `transition: all` + 0 non-token motion durations. Color flows through `CSS_COLOR`/`cssColorMix`/`cssColorAlpha`.
+- **a11y baseline strong** (unlike Research) — no keyboard-dead `<div onClick>`; interactive elements are native `<button>/<select>/<input>` with `aria-label`s; decorative glyphs `aria-hidden`; rich contextual empty states; consolidated amber stale/error `role="status"` banner.
+
+**Fixed this pass** (typecheck + 28 unit tests green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| ALG-01 | **Directional-green drift (Flow FLOW-01 family)** — the signal-direction tone helpers hardcoded **bull/buy/long → `CSS_COLOR.green`** (sell/short → red) on the screen's directional read; DESIGN.md requires directional intent = **blue (buy/bull)** / red (sell/bear). Routed through the canonical `toneForDirectionalIntent` (`semanticToneModel.js`, same helper GEX/Flow use): bull→blue is the fix, bear→red a visual no-op (`directionSell===CSS_COLOR.red`). Multi-cue-safe (BULL/BEAR/BUY/SELL text labels everywhere). 3 sites across 2 files: `signalDirectionMeta` (sidebar:362,365), `directionMeta` (OperationsSignalRow:305,313), `actionIntentTokenTone` (OperationsSignalRow:1166,1167). | see ids | ds/semantic | P2 | done |
+| ALG-02 | AlgoAuditPanel event-disclosure toggle `<button>`s (×2) lacked `aria-expanded` → added `aria-expanded={isExpanded}`. | AlgoAuditPanel.jsx:564,688 | a11y | P3 | done |
+
+**Open — directional-color CONFLICT (needs doctrine decision, do NOT silently convert):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| ALG-03 | **Strike ladder colors calls green / puts red** (CALLS header, slot tone, save-summary tone). Per DESIGN.md call-side = **blue**, so this is the same drift as ALG-01 — **but** the approved feeder `ALGO_RIGHT_RAIL_REDESIGN.md` Part E **explicitly specified green calls / red puts**. Source-of-truth conflict (feeder spec vs doctrine) on a dense interactive ladder → flagged for a doctrine call + screenshot rather than unilateral conversion (cf. FLOW-02). | AlgoSettingsRegion.jsx:1298,1354,2585 | ds/semantic | P2 | open (conflict — needs decision) |
+
+**Open — DS / SYS-04 (surfaceStyle migration — NOT a no-op here, like Research):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| ALG-04 | Hand-rolled card recipes (border + `RADII.md` + bg1, ± manual shadow) that match the `surfaceStyle()`/`Card` contract; files don't import it. ExitLadderTrack edit popover also hand-rolls a `0 12px 28px` shadow = `ELEVATION.lg`. | AlgoSettingsRegion.jsx:1751-1769; AlgoLivePage.jsx:100-108; AlgoAuditPanel.jsx:336-339 | ds (SYS-04) | P2 | open |
+| ALG-05 | Raw `fontWeight: 600` should be `FONT_WEIGHTS.label` (AlgoLivePage doesn't import FONT_WEIGHTS → small sweep, batch). | AlgoLivePage.jsx:283,1048,1109; HaltStrip.jsx:626; OperationsStatusOrb.jsx:151; PipelineStrip.jsx:257 | visual | P3 | open |
+| ALG-06 | Raw `rgba(0,0,0,…)` shadows/scrim: AlgoSaveBar:52 (upward bar shadow — no matching ELEVATION token, legitimately bespoke), AlgoSaveBar:112 (popover ≈ `ELEVATION.lg` → tokenize), AlgoLivePage:1407 (scrim — no token), 1417 (bottom-sheet upward shadow — bespoke). Mostly leave; only 112 is a clean tokenize. Consider `ELEVATION.bar`/`CSS_COLOR.scrim` if these recur. | see ids | ds | P3 | open |
+
+**Open — a11y / state coverage:**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| ALG-07 | `EmptyOperationsState` form controls strip the focus ring (`border:none`+`outline:none`) → no visible keyboard focus. | AlgoLivePage.jsx:161-205 | a11y | P2 | open |
+| ALG-08 | **Dead focus affordance + orphaned drill** — every signal row `<div role="row">` carries the `.ra-signal-row-focus` `:focus-visible` styling but has no `tabIndex`/`onClick`/`onKeyDown` so it can never focus; and `OperationsSignalDrill` (620 LOC) is imported nowhere — the table renders no row-select/drill path. Product/arch question: wire the row→drill path (add keyboard-activatable row) or remove the dead class + orphaned drill. | OperationsSignalRow.jsx:2362-2363,2864 + index.css:1677-1700; OperationsSignalDrill.jsx (whole) | a11y/state | P2 | open |
+| ALG-09 | AlgoAuditPanel "table" is a div-grid with no table ARIA roles (header↔cell association visual-only); STATE: assumes `events` always settled — no loading/error/stale branch (pending vs zero-events indistinguishable). AlgoSettingsRegion `!controlBaselineReady` renders dimmed stale controls (opacity 0.55) with no skeleton → "loading" looks identical to "no deployment focused". | AlgoAuditPanel.jsx:466-499,447-462; AlgoSettingsRegion.jsx:2706-2710 | a11y/state | P3 | open (state items need live data) |
+
+**GC-06 (deferred tail) — RESOLVED:** PlatformAlgoMonitorSidebar signal-row directional gradient (764) is **multi-cue** (`BigDirectionGlyph` + BULL/BEAR + action label, not color-only) ✔; its tone is fixed by ALG-01 (green→blue). `CompactMetric` (898) + `WireTrailStatusBand` cells are **control/metric-tile surfaces** (bg1 @ `RADII.xs`, no shadow) → correct SYS-04 opt-out, no conversion. GC-06 closed.
+
+_(Backtest — pending)_
 
 ## Tier 3 — Diagnostics · Settings  _(lower "functional-and-clean" bar)_
 _(pending)_

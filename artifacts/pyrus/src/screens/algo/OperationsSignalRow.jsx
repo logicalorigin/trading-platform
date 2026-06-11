@@ -22,6 +22,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { toneForDirectionalIntent } from "../../features/platform/semanticToneModel.js";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { formatAppTime } from "../../lib/timeZone";
 import {
@@ -302,7 +303,7 @@ export const directionMeta = (direction) => {
     return {
       label: "BUY",
       trend: "BULLISH",
-      tone: CSS_COLOR.green,
+      tone: toneForDirectionalIntent("bullish"),
       primitive: "buy",
     };
   }
@@ -310,7 +311,7 @@ export const directionMeta = (direction) => {
     return {
       label: "SELL",
       trend: "BEARISH",
-      tone: CSS_COLOR.red,
+      tone: toneForDirectionalIntent("bearish"),
       primitive: "sell",
     };
   }
@@ -1161,8 +1162,8 @@ const actionIntentTokens = (label) =>
 
 const actionIntentTokenTone = (token) => {
   const normalized = String(token || "").toUpperCase();
-  if (normalized === "BUY" || normalized === "CALL") return CSS_COLOR.green;
-  if (normalized === "SELL" || normalized === "PUT") return CSS_COLOR.red;
+  if (normalized === "BUY" || normalized === "CALL") return toneForDirectionalIntent("bullish");
+  if (normalized === "SELL" || normalized === "PUT") return toneForDirectionalIntent("bearish");
   return CSS_COLOR.textDim;
 };
 

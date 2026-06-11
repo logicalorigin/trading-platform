@@ -46,6 +46,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { toneForDirectionalIntent } from "./semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { OperationsAttentionStrip } from "../../screens/algo/OperationsAttentionStrip";
 import { OperationsStatusOrb } from "../../screens/algo/OperationsStatusOrb";
@@ -359,10 +360,10 @@ const readSignalActionLabel = (signal, candidate) => {
 const signalDirectionMeta = (direction) => {
   const value = String(direction || "").toLowerCase();
   if (value === "buy" || value === "long" || value === "bullish") {
-    return { label: "BULL", primitive: "buy", tone: CSS_COLOR.green };
+    return { label: "BULL", primitive: "buy", tone: toneForDirectionalIntent("bullish") };
   }
   if (value === "sell" || value === "short" || value === "bearish") {
-    return { label: "BEAR", primitive: "sell", tone: CSS_COLOR.red };
+    return { label: "BEAR", primitive: "sell", tone: toneForDirectionalIntent("bearish") };
   }
   return { label: MISSING_VALUE, primitive: null, tone: CSS_COLOR.textDim };
 };

@@ -563,6 +563,7 @@ export const AlgoAuditPanel = ({
                   </div>
                   <button
                     type="button"
+                    aria-expanded={isExpanded}
                     onClick={() => setExpandedEventId(isExpanded ? null : rowKey)}
                     style={{
                       display: "flex",
@@ -687,6 +688,7 @@ export const AlgoAuditPanel = ({
                 <Cell>
                   <button
                     type="button"
+                    aria-expanded={isExpanded}
                     onClick={() => setExpandedEventId(isExpanded ? null : rowKey)}
                     style={{
                       display: "flex",
