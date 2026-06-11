@@ -1391,6 +1391,7 @@ const NetIntensityMeter = ({ netKilo, maxAbsNetKilo }) => {
   return (
     <div
       data-testid="flow-premium-net-intensity-meter"
+      role="img"
       aria-label={`Net premium intensity ${formatSignedPremium(netKilo * 1_000)}`}
       style={{
         position: "relative",
@@ -3488,6 +3489,7 @@ const FlowOverviewPanel = ({
         >
           <AppTooltip content={isPinned ? "Unpin row" : "Pin row"}><button
             type="button"
+            className="ra-touch-target"
             aria-label={isPinned ? "Unpin flow row" : "Pin flow row"}
             onClick={(clickEvent) => handleTogglePinned(clickEvent, event)}
             style={{
@@ -3507,6 +3509,7 @@ const FlowOverviewPanel = ({
           </button></AppTooltip>
           <AppTooltip content={copied ? "Copied" : "Copy contract"}><button
             type="button"
+            className="ra-touch-target"
             aria-label="Copy flow contract"
             onClick={(clickEvent) => handleCopyContract(clickEvent, event)}
             style={{
@@ -3526,6 +3529,7 @@ const FlowOverviewPanel = ({
           </button></AppTooltip>
           <AppTooltip content="Open in Trade"><button
             type="button"
+            className="ra-touch-target"
             aria-label="Open flow row in Trade"
             onClick={(clickEvent) => {
               clickEvent.stopPropagation();
@@ -3564,7 +3568,7 @@ const FlowOverviewPanel = ({
     color: active ? accent : CSS_COLOR.textSec,
     cursor: "pointer",
     borderRadius: dim(RADII.pill),
-    transition: "background 120ms ease, color 120ms ease",
+    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
   });
 
   const panelLabelStyle = {
@@ -3860,7 +3864,17 @@ const FlowOverviewPanel = ({
             {savedScans.map((scan) => (
               <AppTooltip key={scan.id} content={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}><div
                 key={scan.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Load preset ${scan.name}`}
+                aria-pressed={activeScanId === scan.id}
                 onClick={() => loadScan(scan)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    loadScan(scan);
+                  }
+                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -3881,9 +3895,15 @@ const FlowOverviewPanel = ({
                 <span>{scan.name}</span>
                 <button
                   type="button"
+                  className="ra-touch-target"
+                  aria-label={`Delete preset ${scan.name}`}
+                  title={`Delete preset ${scan.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     deleteScan(scan.id);
+                  }}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
                   }}
                   style={{
                     background: "transparent",
@@ -4209,7 +4229,7 @@ const FlowOverviewPanel = ({
             </span>
             {event.golden ? (
               <AppTooltip content="Golden setup">
-                <span aria-label="Golden setup" style={{ color: CSS_COLOR.amber, lineHeight: 1 }}>
+                <span role="img" aria-label="Golden setup" style={{ color: CSS_COLOR.amber, lineHeight: 1 }}>
                   ★
                 </span>
               </AppTooltip>
@@ -4257,6 +4277,7 @@ const FlowOverviewPanel = ({
           />
           <AppTooltip content={sentiment === "bull" ? "Bullish" : sentiment === "bear" ? "Bearish" : "Neutral"}>
             <span
+              role="img"
               aria-label={`Flow sentiment ${sentiment}`}
               style={{
                 width: dim(7),
@@ -4389,7 +4410,7 @@ const FlowOverviewPanel = ({
 	              color: active ? presetColor : CSS_COLOR.textSec,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: active ? 600 : 500,
+              fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
               letterSpacing: "0.02em",
               cursor: "pointer",
             }}
@@ -4924,6 +4945,7 @@ const FlowOverviewPanel = ({
                         <button
                           key={key}
                           type="button"
+                          className="ra-touch-target"
                           aria-label={`Sort Flow tape by ${label}`}
                           onClick={() => applyFlowSort(key)}
                           style={{
@@ -5377,6 +5399,7 @@ const FlowOverviewPanel = ({
                           <button
                             key={`lens_exp_${expiry.label}`}
                             type="button"
+                            aria-label={`${expiry.label}: ${Math.round(callPct)}% calls, ${Math.round(100 - callPct)}% puts, ${fmtM(expiry.premium)} premium`}
                             onClick={() => {
                               const match = selectedTickerEvents.find(
                                 (event) =>
@@ -5400,7 +5423,7 @@ const FlowOverviewPanel = ({
                             <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
                               {expiry.label}
                             </span>
-                            <span style={{ display: "flex", height: dim(6), background: CSS_COLOR.bg1, overflow: "hidden" }}>
+                            <span aria-hidden="true" style={{ display: "flex", height: dim(6), background: CSS_COLOR.bg1, overflow: "hidden" }}>
                               <span style={{ width: `${callPct}%`, background: FLOW_BUY_TONE }} />
                               <span style={{ flex: 1, background: CSS_COLOR.red }} />
                             </span>
@@ -5792,7 +5815,7 @@ const FlowOverviewPanel = ({
               ))}
             </div>
             <div
-              style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: 6 }}
+              style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: sp(6) }}
             >
               <div
                 style={{
@@ -5996,7 +6019,16 @@ const FlowOverviewPanel = ({
                             return (
                               <AppTooltip key={`${ticker.sym}_${contract.key}`} content={`${ticker.sym} ${contract.strike}${contract.cp} · ${fmtM(contract.premium)}`}><div
                                 key={`${ticker.sym}_${contract.key}`}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`View ${ticker.sym} ${contract.strike}${contract.cp} flow detail`}
                                 onClick={() => setSelectedEvt(contract.biggestEvt)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    setSelectedEvt(contract.biggestEvt);
+                                  }
+                                }}
                                 style={{
                                   display: "flex",
                                   alignItems: "center",
@@ -6450,7 +6482,7 @@ const FlowOverviewPanel = ({
                 <FlowPlaceholderCard key={`summary_${index}`} title="Loading" rows={2} dense />
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: sp(6) }}>
               <FlowPlaceholderCard title="Premium Tide" rows={6} />
               <FlowPlaceholderCard title="Ticker Leaders" rows={6} />
             </div>

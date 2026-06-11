@@ -31,17 +31,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  ELEVATION,
-  FONT_WEIGHTS,
-  MISSING_VALUE,
-  RADII,
-  T,
-  dim,
-  fs,
-  sp,
-  textSize,
-} from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
@@ -90,7 +80,7 @@ import {
   shouldAutoResumeIbkrCredentials,
   shouldClearIbkrPasswordAfterCredentialSubmit,
 } from "./ibkrConnectionCredentialActionModel";
-import { buildIbkrConnectionInsightModel } from "./ibkrConnectionInsightModel";
+import { buildIbkrConnectionInsightModel, formatIbkrInsightElapsed } from "./ibkrConnectionInsightModel";
 import {
   buildHeaderIbkrPopoverModel,
   buildHeaderIbkrTriggerModel,
@@ -103,45 +93,6 @@ import { platformJsonRequest } from "./platformJsonRequest";
 import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
-
-const CSS_COLOR = Object.freeze({
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  bg3: "var(--ra-surface-3)",
-  bg4: "var(--ra-surface-4)",
-  border: "var(--ra-border-default)",
-  borderLight: "var(--ra-border-light)",
-  borderFocus: "var(--ra-border-focus)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  accentDim: "var(--ra-accent-dim)",
-  accentHoverBg: "var(--ra-accent-hover-bg)",
-  accentActiveBg: "var(--ra-accent-active-bg)",
-  blue: "var(--ra-blue-500)",
-  purple: "var(--ra-purple-500)",
-  cyan: "var(--ra-cyan-500)",
-  pink: "var(--ra-pink-500)",
-  green: "var(--ra-green-500)",
-  greenDim: "var(--ra-green-dim)",
-  greenBg: "var(--ra-green-bg)",
-  red: "var(--ra-red-500)",
-  redDim: "var(--ra-red-dim)",
-  redBg: "var(--ra-red-bg)",
-  amber: "var(--ra-amber-500)",
-  amberDim: "var(--ra-amber-dim)",
-  amberBg: "var(--ra-amber-bg)",
-  pulseLive: "var(--ra-green-500)",
-  pulseAlert: "var(--ra-amber-500)",
-  pulseLoss: "var(--ra-red-500)",
-  onAccent: "var(--ra-on-accent)",
-});
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const getIbkrInsightToneColor = (tone) => {
   if (tone === "success") return CSS_COLOR.green;
@@ -219,10 +170,27 @@ const encryptIbkrLoginEnvelope = async ({ publicKeyJwk, payload }) => {
   };
 };
 
-const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
+const IBKR_BRIDGE_ACTIVATION_CANCELED_CODE = "ibkr_bridge_activation_canceled";
+
+// Sentinel raised when the user cancels mid-handoff. Carries the same code the
+// backend uses for a server-side cancel so every credential-delivery caller
+// already treats it as a clean cancel (clear state, no error toast) rather than
+// a failure — and, critically, so we never POST credentials after a cancel.
+const createIbkrLaunchCanceledError = () => {
+  const error = new Error(
+    "IB Gateway launch was canceled before credentials were delivered.",
+  );
+  error.code = IBKR_BRIDGE_ACTIVATION_CANCELED_CODE;
+  return error;
+};
+
+const waitForIbkrLoginKey = async ({ activationId, managementToken, shouldAbort }) => {
   const deadline = Date.now() + IBKR_LOGIN_HANDOFF_WAIT_MS;
   let lastTransientError = null;
   while (Date.now() < deadline) {
+    if (shouldAbort?.()) {
+      throw createIbkrLaunchCanceledError();
+    }
     try {
       const payload = await platformJsonRequest(
         `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-key/read`,
@@ -1177,7 +1145,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
             style={{
               display: "inline-block",
               transform: breakdownOpen ? "rotate(180deg)" : "rotate(-90deg)",
-              transition: "transform 0.12s ease",
+              transition: "transform var(--ra-motion-fast) ease",
               verticalAlign: "-1px",
             }}
           />
@@ -1253,8 +1221,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
           >
             <span>Lane</span>
             <span style={{ textAlign: "right" }}>Active</span>
-            <span style={{ textAlign: "right" }}>Available</span>
-            <span style={{ textAlign: "right" }}>Free</span>
+            <span style={{ textAlign: "right" }}>Usable</span>
+            <span style={{ textAlign: "right" }}>Headroom</span>
           </div>
           {lineUsage.rows.map((row, index) => (
             <div
@@ -1308,8 +1276,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(row.covered ?? row.used)
-                  ? Math.round(row.covered ?? row.used)
+                {Number.isFinite(row.displayActive ?? row.covered ?? row.used)
+                  ? Math.round(row.displayActive ?? row.covered ?? row.used)
                   : MISSING_VALUE}
               </span>
               <span
@@ -1319,8 +1287,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(row.effectiveCap ?? row.cap)
-                  ? Math.round(row.effectiveCap ?? row.cap)
+                {Number.isFinite(row.displayAvailable ?? row.effectiveCap ?? row.cap)
+                  ? Math.round(row.displayAvailable ?? row.effectiveCap ?? row.cap)
                   : MISSING_VALUE}
               </span>
               <span
@@ -1330,8 +1298,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(row.free)
-                  ? Math.round(row.free)
+                {Number.isFinite(row.displayFree ?? row.free)
+                  ? Math.round(row.displayFree ?? row.free)
                   : MISSING_VALUE}
               </span>
             </div>
@@ -1934,7 +1902,7 @@ const HeaderIbkrAdvancedDetails = ({ insightModel, model }) => {
           strokeWidth={2.2}
           style={{
             transform: open ? "rotate(180deg)" : "rotate(0deg)",
-            transition: "transform 0.12s ease",
+            transition: "transform var(--ra-motion-fast) ease",
           }}
         />
       </button>
@@ -2477,17 +2445,10 @@ const HeaderIbkrOperationStepper = ({ insightModel, model }) => {
             >
               {insightModel.statusLine}
             </span>
-            {insightModel.elapsedLabel ? (
-              <span
-                style={{
-                  flex: "0 0 auto",
-                  color: CSS_COLOR.textMuted,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {insightModel.elapsedLabel}
-              </span>
-            ) : null}
+            <IbkrInsightElapsedLabel
+              startedAtMs={insightModel.currentPhaseStartedAtMs}
+              fallbackLabel={insightModel.elapsedLabel}
+            />
           </div>
           {showInsightDetail ? (
             <div
@@ -2514,6 +2475,30 @@ const HeaderIbkrOperationStepper = ({ insightModel, model }) => {
     </div>
   );
 };
+
+// Isolated elapsed-time label so the stepper doesn't re-render every second.
+// The parent insight model no longer carries `now` — this leaf owns the 1s tick.
+const IbkrInsightElapsedLabel = memo(function IbkrInsightElapsedLabel({ startedAtMs, fallbackLabel }) {
+  const [label, setLabel] = React.useState(() =>
+    startedAtMs != null ? formatIbkrInsightElapsed(Date.now() - startedAtMs) : fallbackLabel,
+  );
+  React.useEffect(() => {
+    if (startedAtMs == null) {
+      setLabel(fallbackLabel);
+      return undefined;
+    }
+    const update = () => setLabel(formatIbkrInsightElapsed(Date.now() - startedAtMs));
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, [startedAtMs, fallbackLabel]);
+  if (!label) return null;
+  return (
+    <span style={{ flex: "0 0 auto", color: CSS_COLOR.textMuted, fontVariantNumeric: "tabular-nums" }}>
+      {label}
+    </span>
+  );
+});
 
 const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
   actionDisabled = false,
@@ -2879,14 +2864,10 @@ export const HeaderStatusCluster = ({
   const activeGatewayLatencyStats = bridgePopoverOpen ? gatewayLatencyStats : null;
   const sessionIbkrRuntime = session?.runtime?.ibkr || null;
   const bridgeLaunchSessionInFlight = bridgeLaunchInFlightUntil > marketClockNow;
-  const brokerSnapshotClockActive = Boolean(
-    bridgeActivationId ||
-      bridgeManagementToken ||
-      bridgeLaunchInFlightUntil > 0 ||
-      bridgeLauncherBusy ||
-      bridgeLaunchCancelInFlight,
-  );
-  const brokerSnapshotNowMs = brokerSnapshotClockActive ? marketClockNow : 0;
+  // The snapshot is NOT a function of the 1s market clock (its launch-activity
+  // gate is carried by the stable `inFlight` boolean below). Keep the raw clock
+  // out of the memo so the connection snapshot — which feeds the SMIL ping wave —
+  // does not rebuild every second during a launch and restart the animation.
   const gatewayBrokerSnapshot = useMemo(
     () =>
       buildIbkrConnectionSnapshot({
@@ -2901,7 +2882,6 @@ export const HeaderStatusCluster = ({
           busy: bridgeLauncherBusy,
           cancelInFlight: bridgeLaunchCancelInFlight,
         },
-        nowMs: brokerSnapshotNowMs,
       }),
     [
       bridgeActivationId,
@@ -2910,7 +2890,6 @@ export const HeaderStatusCluster = ({
       bridgeLaunchInFlightUntil,
       bridgeLauncherBusy,
       bridgeManagementToken,
-      brokerSnapshotNowMs,
       gatewayConnection,
       session,
       sessionIbkrRuntime,
@@ -3121,7 +3100,6 @@ export const HeaderStatusCluster = ({
       error: bridgeLauncherError,
       gatewayConnected: gatewayConnectedForBridge,
       inFlight: bridgeLaunchInFlight,
-      now: marketClockNow,
     });
   }, [
     bridgeActivationStatus,
@@ -3131,7 +3109,6 @@ export const HeaderStatusCluster = ({
     bridgeLauncherError,
     bridgeOperationModel,
     gatewayConnectedForBridge,
-    marketClockNow,
   ]);
   const popoverLatencyMs = Number.isFinite(gatewayConnection?.lastPingMs)
     ? gatewayConnection.lastPingMs
@@ -3206,7 +3183,12 @@ export const HeaderStatusCluster = ({
     credentialActionState.resumeAvailable;
   const autoLoginPrimaryBlockedByActiveLaunch =
     credentialActionState.primaryBlockedByActiveLaunch;
-  const bridgeCredentialSecondaryCancelsLaunch = bridgeLaunchCancelable;
+  // Show "Cancel launch" whenever a launch is in flight, even before the API
+  // returns an activationId. handleCancelBridgeLaunch already handles the
+  // no-activationId case (clears client state, skips the server cancel POST).
+  const bridgeCredentialSecondaryCancelsLaunch =
+    bridgeLaunchCancelable ||
+    (!gatewayConnectedForBridge && (bridgeLauncherBusy || bridgeLaunchInFlight));
   const bridgeCredentialSecondaryActionDisabled = Boolean(
     bridgeCredentialSecondaryCancelsLaunch
       ? bridgeLaunchCancelInFlight
@@ -3262,7 +3244,7 @@ export const HeaderStatusCluster = ({
     borderRadius: 0,
     overflow: "visible",
     flex: "0 0 max-content",
-    transition: "background 0.12s ease, color 0.12s ease",
+    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
   };
   const microLabelStyle = {
     fontSize: textSize(compressed ? "micro" : "caption"),
@@ -3674,6 +3656,9 @@ export const HeaderStatusCluster = ({
 
   const deliverIbkrLoginCredentials = useCallback(
     async ({ activationId, managementToken, username, password }) => {
+      // The user-cancel signal. Read live (not captured) so a cancel that lands
+      // mid-handoff is observed by the key-wait loop and the pre-POST guard.
+      const shouldAbort = () => bridgeLaunchCancelRequestedRef.current;
       let handoff;
       reportIbkrBrowserConnectionEvent({
         activationId,
@@ -3686,6 +3671,7 @@ export const HeaderStatusCluster = ({
         handoff = await waitForIbkrLoginKey({
           activationId,
           managementToken,
+          shouldAbort,
         });
       } catch (error) {
         reportIbkrBrowserConnectionEvent({
@@ -3703,7 +3689,10 @@ export const HeaderStatusCluster = ({
           "IB Gateway was already ready or the bridge attached before credentials were needed.",
         );
         clearBridgeLaunchSessionState();
-        return;
+        // No credentials were actually delivered (the activation vanished/was
+        // already attached). Report not-delivered so callers do NOT wipe the
+        // typed password — the user may still need it to retry.
+        return { delivered: false, completedWithoutCredentials: true };
       }
 
       reportIbkrBrowserConnectionEvent({
@@ -3747,6 +3736,12 @@ export const HeaderStatusCluster = ({
           errorMessage: error instanceof Error ? error.message : String(error),
         });
         throw error;
+      }
+      // Last gate before the credentials leave the browser: if the user
+      // canceled while we were waiting for the key or encrypting, never POST
+      // the envelope to an activation they abandoned.
+      if (shouldAbort()) {
+        throw createIbkrLaunchCanceledError();
       }
       let envelopeAccepted = false;
       let lastEnvelopePostError = null;
@@ -3815,6 +3810,7 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherNotice(
         "Encrypted credentials delivered. Approve the IBKR Mobile/2FA prompt.",
       );
+      return { delivered: true };
     },
     [appendBridgeActivationProgress, clearBridgeLaunchSessionState],
   );
@@ -3845,6 +3841,10 @@ export const HeaderStatusCluster = ({
     }
 
     bridgeCredentialAutoResumeAttemptRef.current = activationId;
+    // Auto-resume is an intentional (re)start of delivery, like a manual submit,
+    // so clear any stale user-cancel flag from a prior flow before delivering —
+    // otherwise the new deliver's abort guard would suppress a legitimate resume.
+    bridgeLaunchCancelRequestedRef.current = false;
     let canceled = false;
     setBridgeManualOperationModel(null);
     setBridgePopoverOpen(true);
@@ -3860,13 +3860,17 @@ export const HeaderStatusCluster = ({
         if (canceled) {
           return;
         }
-        await deliverIbkrLoginCredentials({
+        const deliveryResult = await deliverIbkrLoginCredentials({
           activationId,
           managementToken,
           username,
           password,
         });
-        if (!canceled && autoLoginPasswordInputRef.current) {
+        if (
+          !canceled &&
+          deliveryResult?.delivered &&
+          autoLoginPasswordInputRef.current
+        ) {
           autoLoginPasswordInputRef.current.value = "";
         }
       } catch (error) {
@@ -3950,9 +3954,10 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherNotice(
         "Sending credentials to the active Windows helper.",
       );
+      let resumeDeliveryResult = null;
       try {
         await waitForBridgeLaunchFeedbackPaint();
-        await deliverIbkrLoginCredentials({
+        resumeDeliveryResult = await deliverIbkrLoginCredentials({
           activationId: bridgeActivationId,
           managementToken: bridgeManagementToken,
           username: normalizedUsername,
@@ -3974,7 +3979,9 @@ export const HeaderStatusCluster = ({
       } finally {
         setBridgeLauncherBusy(false);
       }
-      return { credentialsDelivered: true };
+      return {
+        credentialsDelivered: Boolean(resumeDeliveryResult?.delivered),
+      };
     }
 
     const initialUseRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser({
@@ -4132,13 +4139,13 @@ export const HeaderStatusCluster = ({
         return { clearPassword: true };
       }
 
-      await deliverIbkrLoginCredentials({
+      const deliveryResult = await deliverIbkrLoginCredentials({
         activationId: launchResult.payload.activationId,
         managementToken: launchResult.payload.managementToken,
         username: normalizedUsername,
         password,
       });
-      return { credentialsDelivered: true };
+      return { credentialsDelivered: Boolean(deliveryResult?.delivered) };
     } catch (error) {
       if (protocolLauncher) {
         closeIbkrProtocolLauncher(protocolLauncher);
@@ -4462,6 +4469,7 @@ export const HeaderStatusCluster = ({
           aria-label="Open IB Gateway connection details"
           aria-expanded={bridgePopoverOpen}
           onClick={() => setBridgePopoverOpen((current) => !current)}
+          className="ra-hover-accent-bg"
           style={{
             ...surfaceStyle,
             display: "grid",
@@ -4476,12 +4484,6 @@ export const HeaderStatusCluster = ({
             appearance: "none",
             font: "inherit",
             cursor: "pointer",
-          }}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.background = "transparent";
           }}
         >
           <HeaderIbkrTriggerSummaryMemo
@@ -4742,6 +4744,7 @@ export const HeaderStatusCluster = ({
 
       {compact ? null : (
       <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.timeLabel} · ${marketClock.label}`}><div
+        className="ra-hover-accent-bg"
         style={{
           ...surfaceStyle,
           flexDirection: "row",
@@ -4754,12 +4757,6 @@ export const HeaderStatusCluster = ({
           overflow: "visible",
           paddingLeft: sp(compressed ? 5 : 8),
           borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
-        }}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.background = "transparent";
         }}
       >
         <div
@@ -4786,6 +4783,8 @@ export const HeaderStatusCluster = ({
         }><button
         type="button"
         onClick={onToggleTheme}
+        aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        className="ra-hover-accent-bgfg"
         style={{
           width: dim(compressed ? 22 : 34),
           minHeight: dim(compressed ? 22 : 34),
@@ -4799,15 +4798,7 @@ export const HeaderStatusCluster = ({
           lineHeight: 1,
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
-          transition: "background 0.12s ease, color 0.12s ease",
-        }}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-          event.currentTarget.style.color = CSS_COLOR.accent;
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.background = "transparent";
-          event.currentTarget.style.color = CSS_COLOR.textSec;
+          transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
         }}
       >
         {theme === "dark" ? "☼" : "☾"}

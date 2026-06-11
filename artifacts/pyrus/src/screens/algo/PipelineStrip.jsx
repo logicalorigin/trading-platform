@@ -113,7 +113,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
           ? cssColorAlpha(color, "28")
           : `linear-gradient(180deg, ${CSS_COLOR.bg2} 0%, ${CSS_COLOR.bg1} 100%)`,
         cursor: "pointer",
-        transition: "all 0.18s",
+        transition: "background-color var(--ra-motion-standard) ease, border-color var(--ra-motion-standard) ease, color var(--ra-motion-standard) ease, box-shadow var(--ra-motion-standard) ease, transform var(--ra-motion-standard) ease",
       }}
     >
       <div

@@ -6,35 +6,13 @@ import {
   XCircle,
 } from "lucide-react";
 import React from "react";
-import {
-  ELEVATION,
-  FONT_WEIGHTS,
-  RADII,
-  T,
-  dim,
-  sp,
-  textSize,
-} from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "../../components/ui/tooltip";
 import {
   isAlertToastKind,
   normalizeToastKind,
   TOAST_OVERLAY_Z_INDEX,
 } from "./toastModel.js";
-
-const CSS_COLOR = Object.freeze({
-  bg1: "var(--ra-surface-1)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  green: "var(--ra-green-500)",
-  red: "var(--ra-red-500)",
-  amber: "var(--ra-amber-500)",
-});
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 export const resolveToastVisuals = (kind) => {
   const normalizedKind = normalizeToastKind(kind);
@@ -80,9 +58,12 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
               role={isAlertToastKind(kind) ? "alert" : "status"}
               aria-atomic="true"
               onClick={() => onDismiss?.(toast.id)}
+              className="ra-h-toast"
               style={{
                 background: CSS_COLOR.bg1,
                 border: `1px solid ${cssColorMix(color, 20)}`,
+                "--toast-h-bg": cssColorMix(color, 6),
+                "--toast-h-bd": cssColorMix(color, 33),
                 borderRadius: dim(RADII.xs),
                 padding: sp("8px 10px"),
                 minWidth: dim(244),
@@ -94,17 +75,7 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                 pointerEvents: "auto",
                 cursor: "pointer",
                 transition:
-                  "background 0.12s ease, transform 0.12s ease, border-color 0.12s ease",
-              }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.background = `${cssColorMix(color, 6)}`;
-                event.currentTarget.style.borderColor = `${cssColorMix(color, 33)}`;
-                event.currentTarget.style.transform = "translateX(-2px)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = CSS_COLOR.bg1;
-                event.currentTarget.style.borderColor = `${cssColorMix(color, 20)}`;
-                event.currentTarget.style.transform = "translateX(0)";
+                  "background var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
               }}
             >
               <div

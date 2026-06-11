@@ -217,7 +217,7 @@ export const CompactSwitch = ({
       boxSizing: "border-box",
       lineHeight: 0,
       flex: "0 0 auto",
-      transition: "border-color 140ms ease, background 140ms ease",
+      transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease",
     }}
   >
     <span
@@ -228,7 +228,7 @@ export const CompactSwitch = ({
         borderRadius: dim(RADII.pill),
         background: checked ? CSS_COLOR.accent : CSS_COLOR.textMuted,
         display: "block",
-        transition: "transform 140ms ease",
+        transition: "transform var(--ra-motion-fast) ease",
       }}
     />
   </button>
@@ -271,7 +271,7 @@ const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
             background: CSS_COLOR.accent,
             flex: "0 0 auto",
             opacity: 1,
-            transition: "opacity 120ms ease",
+            transition: "opacity var(--ra-motion-fast) ease",
           }}
         />
       </AppTooltip>
@@ -947,7 +947,7 @@ const DteTimelineEditor = ({
             fontWeight: FONT_WEIGHTS.label,
             padding: sp("0 9px"),
             textTransform: "uppercase",
-            transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
+            transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
           }}
         >
           0DTE {zeroDteValue ? "ON" : "OFF"}
@@ -1029,7 +1029,7 @@ const DteTimelineEditor = ({
               fontWeight: FONT_WEIGHTS.label,
               lineHeight: 1,
               padding: 0,
-              transition: "border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease",
+              transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease",
             }}
           >
             {marker.value}
@@ -1166,7 +1166,7 @@ const ChainStrikeButton = ({
       fontWeight: FONT_WEIGHTS.label,
       lineHeight: 1,
       whiteSpace: "nowrap",
-      transition: "border-color 140ms ease, background 140ms ease, color 140ms ease, transform 120ms ease",
+      transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease",
     }}
     >
     {selected ? (

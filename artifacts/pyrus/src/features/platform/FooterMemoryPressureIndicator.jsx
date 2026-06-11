@@ -7,50 +7,11 @@ import {
 } from "@/components/ui/popover";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 import { buildMemoryPressureFailurePoint } from "./failurePointModel.js";
-
-const CSS_COLOR = Object.freeze({
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  bg3: "var(--ra-surface-3)",
-  bg4: "var(--ra-surface-4)",
-  border: "var(--ra-border-default)",
-  borderLight: "var(--ra-border-light)",
-  borderFocus: "var(--ra-border-focus)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  accentDim: "var(--ra-accent-dim)",
-  accentHoverBg: "var(--ra-accent-hover-bg)",
-  accentActiveBg: "var(--ra-accent-active-bg)",
-  blue: "var(--ra-blue-500)",
-  purple: "var(--ra-purple-500)",
-  cyan: "var(--ra-cyan-500)",
-  pink: "var(--ra-pink-500)",
-  green: "var(--ra-green-500)",
-  greenDim: "var(--ra-green-dim)",
-  greenBg: "var(--ra-green-bg)",
-  red: "var(--ra-red-500)",
-  redDim: "var(--ra-red-dim)",
-  redBg: "var(--ra-red-bg)",
-  amber: "var(--ra-amber-500)",
-  amberDim: "var(--ra-amber-dim)",
-  amberBg: "var(--ra-amber-bg)",
-  pulseLive: "var(--ra-green-500)",
-  pulseAlert: "var(--ra-amber-500)",
-  pulseLoss: "var(--ra-red-500)",
-  onAccent: "var(--ra-on-accent)",
-});
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
@@ -207,7 +168,7 @@ const miniFillStyle = (bar) => ({
   minWidth: bar.fillPercent > 0 ? dim(2) : 0,
   background: pressureTone(bar.level),
   opacity: 0.92,
-  transition: "width 180ms ease, opacity 180ms ease",
+  transition: "width var(--ra-motion-standard) ease, opacity var(--ra-motion-standard) ease",
 });
 
 const miniLabelStyle = (bar, showLabels) => ({

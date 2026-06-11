@@ -25,8 +25,8 @@ import {
   BARS_QUERY_DEFAULTS,
   BARS_REQUEST_PRIORITY,
   HEAVY_PAYLOAD_GC_MS,
-  buildBarsRequestOptions,
 } from "./queryDefaults";
+import { useHydrationGate } from "./hydrationCoordinator";
 import {
   applyRuntimeQuoteSnapshots,
   syncRuntimeMarketData,
@@ -258,6 +258,19 @@ export const MarketDataSubscriptionProvider = ({
   const sparklineHistoryEnabled = Boolean(
     sparklineHistoryRuntimeEnabled && historySparklineSymbols.length > 0,
   );
+  const sparklineHydrationGate = useHydrationGate({
+    enabled: sparklineHistoryEnabled,
+    priority: BARS_REQUEST_PRIORITY.background,
+    family: "sparkline",
+  });
+  const marketBaselineHydrationGate = useHydrationGate({
+    enabled:
+      lowPriorityHistoryEnabled &&
+      marketScreenActive &&
+      MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    priority: BARS_REQUEST_PRIORITY.background,
+    family: "market-baseline",
+  });
   const eventSourceAvailable =
     typeof window === "undefined" || typeof window.EventSource !== "undefined";
   const quoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
@@ -461,7 +474,7 @@ export const MarketDataSubscriptionProvider = ({
       SPARKLINE_RENDER_POINT_LIMIT,
       historySparklineSymbols,
     ],
-    enabled: sparklineHistoryEnabled,
+    enabled: sparklineHydrationGate.enabled,
     queryFn: async () => {
       const results = await settleWithConcurrency(
         historySparklineSymbols,
@@ -475,10 +488,7 @@ export const MarketDataSubscriptionProvider = ({
               outsideRth: true,
               source: "trades",
             },
-            buildBarsRequestOptions(
-              BARS_REQUEST_PRIORITY.background,
-              "sparkline",
-            ),
+            sparklineHydrationGate.requestOptions,
           ),
       );
 
@@ -518,10 +528,7 @@ export const MarketDataSubscriptionProvider = ({
   );
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
-    enabled:
-      lowPriorityHistoryEnabled &&
-      marketScreenActive &&
-      MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    enabled: marketBaselineHydrationGate.enabled,
     queryFn: async () => {
       const results = await settleWithConcurrency(
         MARKET_PERFORMANCE_SYMBOLS,
@@ -535,10 +542,7 @@ export const MarketDataSubscriptionProvider = ({
               outsideRth: false,
               source: "trades",
             },
-            buildBarsRequestOptions(
-              BARS_REQUEST_PRIORITY.background,
-              "market-baseline",
-            ),
+            marketBaselineHydrationGate.requestOptions,
           ),
       );
 

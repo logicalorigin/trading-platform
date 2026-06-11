@@ -774,7 +774,23 @@ export const buildVisibleSignalRows = ({
     });
   }
 
-  return rows;
+  // Collapse to one row per (symbol, timeframe): the STA table shows the current
+  // signal per cell. Order is current signals -> candidates -> history
+  // (newest-first), so the first row kept per cell is the most relevant one.
+  // This drops history rows for cells that already have a signal, and older
+  // same-cell events, which otherwise render as "multiples of each signal".
+  const cellSeen = new Set();
+  const collapsed = [];
+  rows.forEach((row) => {
+    const symbol = normalizeMatchToken(row.symbol);
+    const timeframe = normalizeMatchToken(row.timeframe);
+    const cell = symbol && timeframe ? `${symbol}|${timeframe}` : "";
+    if (cell && cellSeen.has(cell)) return;
+    if (cell) cellSeen.add(cell);
+    collapsed.push(row);
+  });
+
+  return collapsed;
 };
 
 export const findSignalOptionsCandidateForSignal = (candidates, signal) => {

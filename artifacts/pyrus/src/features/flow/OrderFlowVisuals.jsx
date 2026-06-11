@@ -63,7 +63,13 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   });
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      role="img"
+      aria-label={`Net order flow ${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(0)}M, buy $${totalBuy.toFixed(0)}M versus sell $${totalSell.toFixed(0)}M`}
+    >
       {paths}
       <text
         x={cx}
@@ -111,6 +117,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         {Number.isFinite(buy) ? `$${buy.toFixed(1)}M` : MISSING_VALUE}
       </span>
       <div
+        aria-hidden="true"
         style={{ display: "flex", justifyContent: "flex-end", height: dim(8) }}
       >
         <div
@@ -127,6 +134,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         {label}
       </span>
       <div
+        aria-hidden="true"
         style={{
           display: "flex",
           justifyContent: "flex-start",

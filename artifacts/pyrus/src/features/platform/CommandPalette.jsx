@@ -334,7 +334,7 @@ const CommandPaletteInner = ({
                     fontWeight: FONT_WEIGHTS.medium,
                     textAlign: "left",
                     cursor: "pointer",
-                    transition: "background 0.12s ease, color 0.12s ease",
+                    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
                   }}
                 >
                   <Icon

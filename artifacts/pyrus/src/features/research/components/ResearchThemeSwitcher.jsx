@@ -26,7 +26,7 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
                 fontSize: fs(11), color: active ? t.accent : unavailable ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
                 cursor: unavailable ? "not-allowed" : "pointer", fontWeight: FONT_WEIGHTS.regular,
                 boxShadow: active ? `0 1px 4px ${t.accent}22` : "none",
-                transition: "all 0.12s ease", letterSpacing: 0.2,
+                transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", letterSpacing: 0.2,
                 opacity: unavailable ? 0.6 : 1,
               }}>
               <span style={{ fontSize: fs(11), color: active ? t.accent : unavailable ? CSS_COLOR.textMuted : CSS_COLOR.textDim }}>{t.icon}</span>

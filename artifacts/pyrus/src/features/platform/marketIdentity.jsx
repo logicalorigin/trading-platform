@@ -9,22 +9,8 @@ import {
   Globe2,
   Landmark,
 } from "lucide-react";
-import { FONT_WEIGHTS, T, dim, fs, sp } from "../../lib/uiTokens";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, sp, T } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
-
-const CSS_COLOR = {
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  border: "var(--ra-border-default)",
-  text: "var(--ra-text-primary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  onAccent: "var(--ra-on-accent)",
-};
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const EXCHANGE_COUNTRY_BY_KEY = {
   AMEX: "US",

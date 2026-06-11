@@ -49,6 +49,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
     type="button"
     data-testid={testId}
     onClick={onClick}
+    className="ra-hover-accent-bgbd"
     style={{
       minHeight: dim(44),
       display: "grid",
@@ -63,15 +64,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
       textAlign: "left",
       cursor: "pointer",
       fontFamily: T.sans,
-      transition: "background 0.12s ease, border-color 0.12s ease",
-    }}
-    onMouseEnter={(event) => {
-      event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-      event.currentTarget.style.borderColor = `${cssColorMix(CSS_COLOR.accent, 20)}`;
-    }}
-    onMouseLeave={(event) => {
-      event.currentTarget.style.background = CSS_COLOR.bg1;
-      event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
+      transition: "background var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
     }}
   >
     <Icon size={16} strokeWidth={2.1} style={{ color: CSS_COLOR.accent }} />

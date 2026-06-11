@@ -890,7 +890,7 @@ const MarketScreenInner = ({
                                 );
                                 if (match?.sym) onSymClick?.(match.sym);
                               }}
-                              className="ra-row-enter ra-interactive"
+                              className="ra-row-enter ra-interactive ra-touch-target"
                               style={{
                                 ...motionRowStyle(index, 10, 100),
                                 display: "grid",

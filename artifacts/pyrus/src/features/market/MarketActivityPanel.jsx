@@ -461,7 +461,7 @@ const MarketIconToolButton = ({
       opacity: disabled ? 0.78 : 1,
       borderRadius: dim(RADII.xs),
       padding: 0,
-      transition: "background 0.12s ease, color 0.12s ease",
+      transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
     }}
     onMouseEnter={(event) => {
       if (disabled) return;

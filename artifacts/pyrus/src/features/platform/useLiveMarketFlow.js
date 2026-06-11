@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 import { useQuery } from "@tanstack/react-query";
 import {
   getFlowUniverse as getFlowUniverseRequest,
@@ -68,14 +69,6 @@ const EMPTY_FLOW_ANALYTICS = Object.freeze({
     puts: 0,
   }),
 });
-
-const CSS_COLOR = {
-  accent: "var(--ra-color-accent)",
-  amber: "var(--ra-amber-500)",
-  cyan: "var(--ra-cyan-500)",
-  red: "var(--ra-red-500)",
-  textMuted: "var(--ra-text-muted)",
-};
 
 const normalizeFlowUniverseSymbols = (symbols = []) => [
   ...new Set(

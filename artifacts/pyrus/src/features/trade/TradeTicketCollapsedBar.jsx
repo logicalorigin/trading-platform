@@ -105,7 +105,7 @@ export const TradeTicketCollapsedBar = ({
           color={CSS_COLOR.textDim}
           style={{
             flexShrink: 0,
-            transition: "transform 200ms ease",
+            transition: "transform var(--ra-motion-standard) ease",
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
           }}
         />

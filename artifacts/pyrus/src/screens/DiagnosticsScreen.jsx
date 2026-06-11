@@ -495,7 +495,7 @@ const EventList = ({ events, onSelect }) => (
               alignItems: "center",
               textAlign: "left",
               cursor: "pointer",
-              transition: "background 0.12s ease, border-color 0.12s ease",
+              transition: "background var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
             }}
             onMouseEnter={(pointerEvent) => {
               pointerEvent.currentTarget.style.background = alertToneHoverBackground(event.severity);

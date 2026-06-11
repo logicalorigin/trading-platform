@@ -6302,13 +6302,21 @@ export const getSignalMonitorMatrixStreamUrl = ({
   symbols?: readonly string[];
   timeframes?: readonly string[];
 }): string | null => {
-  if (!symbols || symbols.length === 0) {
+  const normalizedSymbols = (symbols ?? [])
+    .map((symbol) => String(symbol || "").trim())
+    .filter(Boolean);
+  if (!normalizedSymbols.length) {
     return null;
   }
+  const normalizedTimeframes = (timeframes ?? [])
+    .map((timeframe) => String(timeframe || "").trim())
+    .filter(Boolean);
   return buildStreamUrl("/api/signal-monitor/matrix/stream", {
     environment: environment ?? undefined,
-    symbols: symbols.join(","),
-    timeframes: timeframes && timeframes.length ? timeframes.join(",") : undefined,
+    symbols: normalizedSymbols.join(","),
+    timeframes: normalizedTimeframes.length
+      ? normalizedTimeframes.join(",")
+      : undefined,
     requestOrigin: "signal-matrix-stream",
   });
 };

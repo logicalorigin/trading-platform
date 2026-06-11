@@ -854,7 +854,7 @@ export const TradeOrderTicket = ({
               fontWeight: FONT_WEIGHTS.medium,
               letterSpacing: "0.04em",
               cursor: "pointer",
-              transition: "border-color 0.12s ease, background 0.12s ease",
+              transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease",
             }}
           >
             {value}

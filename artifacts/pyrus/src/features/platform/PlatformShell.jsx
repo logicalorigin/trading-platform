@@ -28,17 +28,7 @@ import {
   Tv,
   WalletCards,
 } from "lucide-react";
-import {
-  ELEVATION,
-  FONT_WEIGHTS,
-  MISSING_VALUE,
-  RADII,
-  T,
-  dim,
-  fs,
-  sp,
-  textSize,
-} from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppHeader } from "./AppHeader.jsx";
 import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
@@ -64,46 +54,6 @@ import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
   markScreenSwitchStart,
 } from "./performanceMetrics";
-
-
-const CSS_COLOR = Object.freeze({
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  bg3: "var(--ra-surface-3)",
-  bg4: "var(--ra-surface-4)",
-  border: "var(--ra-border-default)",
-  borderLight: "var(--ra-border-light)",
-  borderFocus: "var(--ra-border-focus)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  accentDim: "var(--ra-accent-dim)",
-  accentHoverBg: "var(--ra-accent-hover-bg)",
-  accentActiveBg: "var(--ra-accent-active-bg)",
-  blue: "var(--ra-blue-500)",
-  purple: "var(--ra-purple-500)",
-  cyan: "var(--ra-cyan-500)",
-  pink: "var(--ra-pink-500)",
-  green: "var(--ra-green-500)",
-  greenDim: "var(--ra-green-dim)",
-  greenBg: "var(--ra-green-bg)",
-  red: "var(--ra-red-500)",
-  redDim: "var(--ra-red-dim)",
-  redBg: "var(--ra-red-bg)",
-  amber: "var(--ra-amber-500)",
-  amberDim: "var(--ra-amber-dim)",
-  amberBg: "var(--ra-amber-bg)",
-  pulseLive: "var(--ra-green-500)",
-  pulseAlert: "var(--ra-amber-500)",
-  pulseLoss: "var(--ra-red-500)",
-  onAccent: "var(--ra-on-accent)",
-});
-
-const cssColorMix = (color, percent) =>
-  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "signals", "trade", "account"];
@@ -617,7 +567,7 @@ const FrameSidebar = ({
       data-collapsed="false"
       style={{
         width,
-        transition: resizing ? "none" : "width 0.2s",
+        transition: resizing ? "none" : "width var(--ra-motion-standard) var(--ra-motion-ease)",
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",

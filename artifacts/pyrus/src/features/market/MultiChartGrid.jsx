@@ -69,6 +69,7 @@ import {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   RADII,
   T,
+  cssColorMix,
   dim,
   fs,
   sp,
@@ -1353,7 +1354,7 @@ export const MultiChartGrid = ({
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
-                background: gridScaleResetDisabled ? CSS_COLOR.bg3 : "rgba(255,255,255,0.08)",
+                background: gridScaleResetDisabled ? CSS_COLOR.bg3 : cssColorMix(CSS_COLOR.text, 8),
                 color: gridScaleResetDisabled ? CSS_COLOR.textMuted : CSS_COLOR.text,
                 border: "none",
                 borderRadius: dim(RADII.xs),
@@ -1374,7 +1375,7 @@ export const MultiChartGrid = ({
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              background: "rgba(255,255,255,0.08)",
+              background: cssColorMix(CSS_COLOR.text, 8),
               color: CSS_COLOR.text,
               border: "none",
               borderRadius: dim(RADII.xs),
@@ -1672,7 +1673,7 @@ export const MultiChartGrid = ({
                           : "none",
                       opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
                       transition:
-                        "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                        "opacity var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease",
                     }}
                   />
                 </button></AppTooltip>
@@ -1750,7 +1751,7 @@ export const MultiChartGrid = ({
                           : "none",
                       opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
                       transition:
-                        "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                        "opacity var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease",
                     }}
                   />
                 </button></AppTooltip>
@@ -1827,7 +1828,7 @@ export const MultiChartGrid = ({
                             : `0 0 0 1px rgba(0,0,0,0.28)`,
                         opacity: isActive ? 1 : isHovered ? 0.92 : 0.8,
                         transition:
-                          "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                          "opacity var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease",
                       }}
                     />
                   </button></AppTooltip>

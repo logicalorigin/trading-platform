@@ -147,7 +147,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
               fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
               color: rangeFilter === k ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer",
               boxShadow: rangeFilter === k ? ELEVATION.sm : "none",
-              transition: "all .12s",
+              transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease",
             }}>{lb}</button>
           ))}
         </div>
@@ -252,7 +252,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                       borderBottom: i < group.rows.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
                       background: i % 2 ? CSS_COLOR.bg2 : "transparent",
                       cursor: "pointer",
-                      transition: "background .12s",
+                      transition: "background var(--ra-motion-fast)",
                     }}
                     onMouseEnter={e => e.currentTarget.style.background = vc.bg}
                     onMouseLeave={e => e.currentTarget.style.background = i % 2 ? CSS_COLOR.bg2 : "transparent"}

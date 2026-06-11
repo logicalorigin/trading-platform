@@ -4113,7 +4113,7 @@ export default function SignalsScreen({
                   color: expanded ? toneForStatus(item.status) : CSS_COLOR.textDim,
                   flex: "0 0 auto",
                   transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-                  transition: "transform 160ms ease-out, color 160ms ease-out",
+                  transition: "transform var(--ra-motion-fast) ease-out, color var(--ra-motion-fast) ease-out",
                 }}
               />
               <span
@@ -4856,7 +4856,7 @@ export default function SignalsScreen({
                               : "transparent",
                       boxShadow: directionRailTone,
                       cursor: "pointer",
-                      transition: "background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out",
+                      transition: "background-color var(--ra-motion-fast) ease-out, border-color var(--ra-motion-fast) ease-out, box-shadow var(--ra-motion-fast) ease-out",
                     },
                   };
                 }}

@@ -193,7 +193,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.02em",
         whiteSpace: "nowrap",
-        transition: "background-color 0.18s ease",
+        transition: "background-color var(--ra-motion-standard) ease",
       }}
     >
       <span>{symbol}</span>

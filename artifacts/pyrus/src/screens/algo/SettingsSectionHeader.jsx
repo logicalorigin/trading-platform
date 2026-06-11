@@ -15,7 +15,7 @@ const HeaderChevron = ({ open }) => (
     style={{
       flex: "0 0 auto",
       transform: open ? "rotate(90deg)" : "rotate(0deg)",
-      transition: "transform 140ms ease",
+      transition: "transform var(--ra-motion-fast) ease",
     }}
   />
 );

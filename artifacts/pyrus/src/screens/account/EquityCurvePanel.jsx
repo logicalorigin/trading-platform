@@ -188,7 +188,7 @@ const PinOverlay = ({ chart, timestampMs, compact, visible = true }) => {
         width: 1,
         background: CSS_COLOR.accent,
         opacity: visible ? 1 : 0,
-        transition: "opacity 200ms ease-out",
+        transition: "opacity var(--ra-motion-standard) ease-out",
         pointerEvents: "none",
         transform: "translateX(-0.5px)",
       }}

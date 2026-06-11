@@ -286,7 +286,7 @@ export const denseButtonStyle = (active = false) => ({
   cursor: "pointer",
   letterSpacing: "0.04em",
   textTransform: "uppercase",
-  transition: "background 120ms ease, color 120ms ease",
+  transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
 });
 
 export const primaryButtonStyle = {
@@ -752,7 +752,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
               width: 10,
               display: "inline-block",
               transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-              transition: "transform 120ms ease",
+              transition: "transform var(--ra-motion-fast) ease",
             }}
           >
             ▾

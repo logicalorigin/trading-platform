@@ -135,6 +135,57 @@ test("visible signal rows overlay current action rows on received history", () =
   assert.deepEqual(rows[1].filterState, { adx: 21.1, sessionPass: true });
 });
 
+test("visible signal rows collapse to one row per cell (no signal multiples)", () => {
+  const rows = buildVisibleSignalRows({
+    now: Date.parse("2026-06-09T14:00:00.000Z"),
+    includeSignalHistory: true,
+    universeSymbols: ["USO"],
+    signals: [
+      {
+        profileId: "profile-1",
+        symbol: "USO",
+        timeframe: "1m",
+        direction: "buy",
+        signalAt: "2026-06-09T13:25:00.000Z",
+        fresh: false,
+      },
+    ],
+    candidates: [],
+    // Same cell fired buy three times over the day — must NOT become three rows.
+    signalEvents: [
+      {
+        id: "uso-1",
+        profileId: "profile-1",
+        symbol: "USO",
+        timeframe: "1m",
+        direction: "buy",
+        signalAt: "2026-06-09T13:25:00.000Z",
+      },
+      {
+        id: "uso-2",
+        profileId: "profile-1",
+        symbol: "USO",
+        timeframe: "1m",
+        direction: "buy",
+        signalAt: "2026-06-09T12:17:00.000Z",
+      },
+      {
+        id: "uso-3",
+        profileId: "profile-1",
+        symbol: "USO",
+        timeframe: "1m",
+        direction: "buy",
+        signalAt: "2026-06-08T19:34:00.000Z",
+      },
+    ],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, "USO");
+  assert.equal(rows[0].timeframe, "1m");
+  assert.equal(rows[0].signalAt, "2026-06-09T13:25:00.000Z");
+});
+
 test("STA candidate lookup does not attach newer candidates to historical signal rows", () => {
   const candidate = {
     id: "SIGOPT-paper-AVAV-buy-1780930800000",

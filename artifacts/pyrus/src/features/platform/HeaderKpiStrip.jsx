@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, dim, FONT_WEIGHTS, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatQuotePrice,
   formatSignedPercent,
@@ -8,43 +8,6 @@ import {
 import { useNumberTick } from "../../lib/numberTick.js";
 import { useRuntimeTickerSnapshot } from "./runtimeTickerStore";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
-
-
-const CSS_COLOR = Object.freeze({
-  bg0: "var(--ra-surface-0)",
-  bg1: "var(--ra-surface-1)",
-  bg2: "var(--ra-surface-2)",
-  bg3: "var(--ra-surface-3)",
-  bg4: "var(--ra-surface-4)",
-  border: "var(--ra-border-default)",
-  borderLight: "var(--ra-border-light)",
-  borderFocus: "var(--ra-border-focus)",
-  text: "var(--ra-text-primary)",
-  textSec: "var(--ra-text-secondary)",
-  textDim: "var(--ra-text-dim)",
-  textMuted: "var(--ra-text-muted)",
-  accent: "var(--ra-color-accent)",
-  accentDim: "var(--ra-accent-dim)",
-  accentHoverBg: "var(--ra-accent-hover-bg)",
-  accentActiveBg: "var(--ra-accent-active-bg)",
-  blue: "var(--ra-blue-500)",
-  purple: "var(--ra-purple-500)",
-  cyan: "var(--ra-cyan-500)",
-  pink: "var(--ra-pink-500)",
-  green: "var(--ra-green-500)",
-  greenDim: "var(--ra-green-dim)",
-  greenBg: "var(--ra-green-bg)",
-  red: "var(--ra-red-500)",
-  redDim: "var(--ra-red-dim)",
-  redBg: "var(--ra-red-bg)",
-  amber: "var(--ra-amber-500)",
-  amberDim: "var(--ra-amber-dim)",
-  amberBg: "var(--ra-amber-bg)",
-  pulseLive: "var(--ra-green-500)",
-  pulseAlert: "var(--ra-amber-500)",
-  pulseLoss: "var(--ra-red-500)",
-  onAccent: "var(--ra-on-accent)",
-});
 
 export const DEFAULT_HEADER_KPI_CONFIG = [
   { symbol: "SPY", label: "S&P 500" },
@@ -103,7 +66,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
     <button
       type="button"
       onClick={() => onSelect?.(symbol)}
-      className="ra-header-kpi"
+      className="ra-header-kpi ra-hover-accent-bgfg"
       style={{
         flex: "0 0 max-content",
         width: "max-content",
@@ -121,15 +84,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
         color: CSS_COLOR.text,
         cursor: "pointer",
         overflow: "visible",
-        transition: "background 0.12s ease, color 0.12s ease",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-        event.currentTarget.style.color = CSS_COLOR.accent;
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.background = "transparent";
-        event.currentTarget.style.color = CSS_COLOR.text;
+        transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
       }}
     >
       <span

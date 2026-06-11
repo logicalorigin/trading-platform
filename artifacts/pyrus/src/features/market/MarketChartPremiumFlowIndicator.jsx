@@ -179,7 +179,7 @@ export const MarketChartPremiumFlowIndicator = ({
         gridTemplateRows: dense || compact ? "1fr 5px" : "1fr 6px 1fr",
         gap: dense ? 2 : 3,
         alignItems: "center",
-        padding: dense ? "3px 6px" : "4px 8px",
+        padding: sp(dense ? "3px 6px" : "4px 8px"),
         fontFamily: T.sans,
         overflow: "hidden",
       }}

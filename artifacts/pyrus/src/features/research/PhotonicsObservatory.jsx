@@ -610,7 +610,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                     whiteSpace: "nowrap",
                   }}>
                     {row.expandable && (
-                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: CSS_COLOR.textDim, transition: "transform 0.15s" }}>
+                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: CSS_COLOR.textDim, transition: "transform var(--ra-motion-fast)" }}>
                         {expanded.has(row.k) ? "\u25BC" : "\u25B6"}
                       </span>
                     )}
@@ -1510,7 +1510,7 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
               background: rowBg,
               cursor: clickable ? "pointer" : "default",
               opacity: r.status === "ok" ? 1 : 0.55,
-              transition: "background .12s",
+              transition: "background var(--ra-motion-fast)",
             };
             const leftCell = { ...cellBase, textAlign: "left", fontWeight: FONT_WEIGHTS.regular, color: r.focal ? CSS_COLOR.text : CSS_COLOR.text };
             return (
@@ -1721,7 +1721,7 @@ function FilingsTab({ co, apiKey }) {
                      borderBottom: i < filteredFilings.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
                      background: i % 2 ? toneAlpha(CSS_COLOR.text, 0.008) : "transparent",
                      textDecoration: "none", color: "inherit", cursor: "pointer",
-                     transition: "background .12s",
+                     transition: "background var(--ra-motion-fast)",
                    }}
                    onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.accent, 0.06)}
                    onMouseLeave={e => e.currentTarget.style.background = i % 2 ? toneAlpha(CSS_COLOR.text, 0.008) : "transparent"}>
@@ -2528,7 +2528,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                 color: copyStatus === "copied" ? CSS_COLOR.green : copyStatus === "error" ? CSS_COLOR.red : CSS_COLOR.textSec,
                 cursor: "pointer",
                 display: "inline-flex", alignItems: "center", gap: 5,
-                transition: "all .2s ease",
+                transition: "background-color var(--ra-motion-standard) ease, border-color var(--ra-motion-standard) ease, color var(--ra-motion-standard) ease, box-shadow var(--ra-motion-standard) ease, transform var(--ra-motion-standard) ease",
               }}
             >
               {copyStatus === "copied" ? (
@@ -2986,7 +2986,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     return (
                       <path key={i} d={r.d} fill={r.color} fillOpacity={op}
                         stroke={r.color} strokeWidth={lit ? 0.8 : 0} strokeOpacity={0.3}
-                        style={{ cursor: "pointer", transition: "fill-opacity 0.3s ease" }}
+                        style={{ cursor: "pointer", transition: "fill-opacity var(--ra-motion-slow) ease" }}
                         onMouseEnter={() => { if (!focused && !focGrpId) setHoverTicker(r.ticker); }}
                         onMouseLeave={() => { if (!focused) setHoverTicker(null); }}
                         onClick={e => { e.stopPropagation(); setFocused(focused === r.ticker ? null : r.ticker); }}>
@@ -3012,14 +3012,14 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           fill={g.bc} fillOpacity={dimmed ? 0.15 : 0.92}
                           stroke={isGrpFocus ? CSS_COLOR.text : gHasActive ? activeBrand : toneAlpha(CSS_COLOR.text, 0.08)}
                           strokeWidth={isGrpFocus || gHasActive ? 1.5 : 0.5}
-                          style={{ transition: "fill-opacity 0.3s ease" }} />
+                          style={{ transition: "fill-opacity var(--ra-motion-slow) ease" }} />
                         {/* Two-line external label with percentage */}
                         {(() => {
                           const isRight = stageIdx < 6;
                           const lx = isRight ? g.cx + nodeW + 7 : g.cx - 7;
                           const anchor = isRight ? "start" : "end";
                           return (
-                            <g opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity 0.3s ease", pointerEvents: "none" }}>
+                            <g opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity var(--ra-motion-slow) ease", pointerEvents: "none" }}>
                               <text x={lx} y={g.y + g.h / 2 - 4} fontSize={fs(11)} textAnchor={anchor}
                                 fontFamily={T.display} fill={CSS_COLOR.text} fontWeight={FONT_WEIGHTS.regular}
                                 dominantBaseline="middle">{g.label}</text>
@@ -3345,7 +3345,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                           flex: `${pct} 0 0`, minWidth: 22, background: bg,
                           borderRadius: RADII.xs, display: "flex", flexDirection: "column",
                           justifyContent: "center", padding: sp("0 3px"), cursor: "pointer",
-                          overflow: "hidden", transition: "all 0.12s", position: "relative",
+                          overflow: "hidden", transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", position: "relative",
                         }}
                         onMouseEnter={e => { e.currentTarget.style.outline = "1.5px solid " + v.color; e.currentTarget.style.zIndex = "5"; e.currentTarget.style.transform = "scale(1.03)"; }}
                         onMouseLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.zIndex = "0"; e.currentTarget.style.transform = "none"; }}>
@@ -3394,7 +3394,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                 <svg width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
                   {arcs.map(d => (
                     <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={CSS_COLOR.bg1} strokeWidth={1.5}
-                      style={{ cursor: "pointer", transition: "fill-opacity 0.15s" }}
+                      style={{ cursor: "pointer", transition: "fill-opacity var(--ra-motion-fast)" }}
                       onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
                       onMouseEnter={e => e.target.setAttribute("fill-opacity", "1")}
                       onMouseLeave={e => e.target.setAttribute("fill-opacity", "0.7")} />
@@ -3429,7 +3429,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
               <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                style={{ ...card, padding: sp(8), cursor: "pointer", transition: "border-color 0.15s" }}
+                style={{ ...card, padding: sp(8), cursor: "pointer", transition: "border-color var(--ra-motion-fast)" }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(CSS_COLOR.text, 0.05)}>
                 <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(6) }}>
@@ -4109,7 +4109,7 @@ function Comps({ cos, sel, onSel }) {
           const vc = VX[c.v];
           const gr = c.fin?.rg?.[4] || 0;
           return (
-            <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background 0.1s" }}
+            <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background var(--ra-motion-micro)" }}
               onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.025); }}
               onMouseLeave={e => { if (c.t !== sel) e.currentTarget.style.background = "transparent"; }}>
               <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
@@ -4705,7 +4705,7 @@ export default function PhotonicsObservatory({
         <div className="photonics-research-filter-row" style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
           <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? CSS_COLOR.bg1 : "transparent", border: !vf ? `1px solid ${CSS_COLOR.borderLight}` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? ELEVATION.sm : "none" }}>ALL</button>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
-            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? CSS_COLOR.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "all 0.15s" }}>
+            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? CSS_COLOR.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease" }}>
               {v.n}
             </button>
           ))}

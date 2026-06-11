@@ -102,8 +102,7 @@ const MarketChartPanelFallback = ({ dataTestId }) => (
       style={{
         minHeight: 0,
         borderRadius: dim(RADII.xs),
-        background:
-          "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018))",
+        background: cssColorMix(CSS_COLOR.text, 3),
       }}
     />
   </div>
@@ -525,7 +524,7 @@ export const MarketChartCell = ({
         boxSizing: "border-box",
         border: `1px solid ${isActive ? CSS_COLOR.accent : "transparent"}`,
         cursor: "default",
-        transition: "border-color 0.15s, box-shadow 0.15s",
+        transition: "border-color var(--ra-motion-fast), box-shadow var(--ra-motion-fast)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

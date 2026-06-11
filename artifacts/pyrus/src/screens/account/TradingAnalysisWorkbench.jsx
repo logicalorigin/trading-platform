@@ -1817,7 +1817,7 @@ const MobileFilterDrawer = ({ open, onClose, children }) => {
         gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)",
       }}
     >
-      <div style={{ background: CSS_COLOR.bg1, boxShadow: `0 0 0 1px ${CSS_COLOR.border}, 0 24px 64px rgba(0,0,0,0.35)`, overflowY: "auto" }}>
+      <div style={{ background: CSS_COLOR.bg1, boxShadow: `0 0 0 1px ${CSS_COLOR.border}, 0 24px 64px ${cssColorMix(CSS_COLOR.bg0, 35)}`, overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp(4), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
           <div style={{ color: CSS_COLOR.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>Filters</div>
           <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
@@ -1828,7 +1828,7 @@ const MobileFilterDrawer = ({ open, onClose, children }) => {
         type="button"
         aria-label="Close filters"
         onClick={onClose}
-        style={{ border: "none", background: "rgba(0,0,0,0.35)" }}
+        style={{ border: "none", background: cssColorMix(CSS_COLOR.bg0, 35) }}
       />
     </div>
   );

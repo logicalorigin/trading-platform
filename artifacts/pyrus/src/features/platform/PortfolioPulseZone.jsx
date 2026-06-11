@@ -108,7 +108,7 @@ const PulseChip = ({ icon: Icon, value, tone = CSS_COLOR.text, title, accent, on
         key={pulseToken ? `pulse-${pulseToken}` : undefined}
         type={interactive ? "button" : undefined}
         onClick={onClick}
-        className={interactive ? "ra-interactive" : undefined}
+        className={interactive ? "ra-interactive ra-hover-accent-bg" : undefined}
         data-pulse-hit={pulseToken ? "1" : undefined}
         style={{
           display: "inline-flex",
@@ -126,17 +126,9 @@ const PulseChip = ({ icon: Icon, value, tone = CSS_COLOR.text, title, accent, on
           fontSize: textSize("body"),
           whiteSpace: "nowrap",
           cursor: interactive ? "pointer" : "default",
-          transition: "background 0.12s ease, color 0.12s ease",
+          transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
           animation: pulseToken ? "raPulseHit 0.45s ease-out" : undefined,
           transformOrigin: "center",
-        }}
-        onMouseEnter={(event) => {
-          if (!interactive) return;
-          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-        }}
-        onMouseLeave={(event) => {
-          if (!interactive) return;
-          event.currentTarget.style.background = "transparent";
         }}
       >
         <Icon
@@ -469,7 +461,7 @@ const PortfolioPulseZoneInner = ({
         >
           <button
             type="button"
-            className="ra-interactive"
+            className="ra-interactive ra-hover-accent-pill"
             onClick={onToggleScrollers}
             aria-label={scrollersCollapsed ? "Show live event scrollers" : "Hide live event scrollers"}
             aria-pressed={!scrollersCollapsed}
@@ -486,17 +478,7 @@ const PortfolioPulseZoneInner = ({
               borderRadius: dim(RADII.xs),
               color: CSS_COLOR.textSec,
               cursor: "pointer",
-              transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
-            }}
-            onMouseEnter={(event) => {
-              event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-              event.currentTarget.style.color = CSS_COLOR.accent;
-              event.currentTarget.style.borderColor = CSS_COLOR.accent;
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.background = "transparent";
-              event.currentTarget.style.color = CSS_COLOR.textSec;
-              event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
+              transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
             }}
           >
             {scrollersCollapsed ? (

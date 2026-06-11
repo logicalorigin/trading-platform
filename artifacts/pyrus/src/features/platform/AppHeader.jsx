@@ -517,6 +517,7 @@ const AppHeaderInner = ({
                     key={screen.id}
                     className={joinMotionClasses(
                       "ra-interactive",
+                      "ra-hover-brighten",
                       activeScreen === screen.id && "ra-focus-rail",
                     )}
                     onClick={() => handleSetScreen(screen.id)}
@@ -541,21 +542,12 @@ const AppHeaderInner = ({
                         activeScreen === screen.id
                           ? `inset 0 -1px 0 ${CSS_COLOR.accent}`
                           : "none",
-                      transition: "color 0.18s ease, box-shadow 0.18s ease",
+                      transition: "color var(--ra-motion-standard) ease, box-shadow var(--ra-motion-standard) ease",
                       position: "relative",
                       whiteSpace: "nowrap",
                       display: "inline-flex",
                       alignItems: "center",
                       gap: sp(2),
-                    }}
-                    onMouseEnter={(event) => {
-                      handleScreenIntent(screen.id);
-                      if (activeScreen === screen.id) return;
-                      event.currentTarget.style.color = CSS_COLOR.text;
-                    }}
-                    onMouseLeave={(event) => {
-                      if (activeScreen === screen.id) return;
-                      event.currentTarget.style.color = CSS_COLOR.textSec;
                     }}
                   >
                     {isIconized ? (
@@ -591,7 +583,7 @@ const AppHeaderInner = ({
                 <button
                   type="button"
                   data-testid="header-command-palette-trigger"
-                  className="ra-interactive"
+                  className="ra-interactive ra-hover-accent-pill"
                   onClick={openCommandPalette}
                   aria-label="Open command palette"
                   style={{
@@ -608,17 +600,7 @@ const AppHeaderInner = ({
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.medium,
-                    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
-                  }}
-                  onMouseEnter={(event) => {
-                    event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-                    event.currentTarget.style.color = CSS_COLOR.accent;
-                    event.currentTarget.style.borderColor = CSS_COLOR.accent;
-                  }}
-                  onMouseLeave={(event) => {
-                    event.currentTarget.style.background = "transparent";
-                    event.currentTarget.style.color = CSS_COLOR.textSec;
-                    event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
+                    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
                   }}
                 >
                   <Search size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
@@ -640,7 +622,7 @@ const AppHeaderInner = ({
                 <button
                   type="button"
                   data-testid="header-notifications-trigger"
-                  className="ra-interactive"
+                  className="ra-interactive ra-hover-accent-pill"
                   onClick={() => setNotificationsOpen && setNotificationsOpen(true)}
                   aria-label={
                     unseenNotifications > 0
@@ -660,17 +642,7 @@ const AppHeaderInner = ({
                     borderRadius: dim(RADII.xs),
                     color: unseenNotifications > 0 ? CSS_COLOR.accent : CSS_COLOR.textSec,
                     cursor: "pointer",
-                    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
-                  }}
-                  onMouseEnter={(event) => {
-                    event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
-                    event.currentTarget.style.color = CSS_COLOR.accent;
-                    event.currentTarget.style.borderColor = CSS_COLOR.accent;
-                  }}
-                  onMouseLeave={(event) => {
-                    event.currentTarget.style.background = "transparent";
-                    event.currentTarget.style.color = unseenNotifications > 0 ? CSS_COLOR.accent : CSS_COLOR.textSec;
-                    event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
+                    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
                   }}
                 >
                   <Bell size={dim(13)} strokeWidth={2.2} aria-hidden="true" />

@@ -1700,7 +1700,7 @@ export const TradePositionsPanel = ({
                       borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
                       cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
-                      transition: "background 0.1s",
+                      transition: "background var(--ra-motion-micro)",
                       background: rowBackground,
                       boxShadow: p._isUser ? `inset 1px 0 0 ${CSS_COLOR.accent}` : "none",
                     }}
