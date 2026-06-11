@@ -436,3 +436,32 @@ test("Signal Options stale position mark summary names stale quote", () => {
     "The option quote was stale or unavailable for the open shadow position.",
   );
 });
+
+test("Signal Options keeps fresh signals visible past the 1-bar action age (regression)", () => {
+  const {
+    isSignalOptionsActionableSignalState,
+    isSignalOptionsSignalAgeActionable,
+  } = __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(isSignalOptionsSignalAgeActionable(6), false);
+  assert.equal(isSignalOptionsSignalAgeActionable(6, { fresh: true }), true);
+
+  const freshAgedState = {
+    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    barsSinceSignal: 6,
+  } as never;
+  assert.equal(isSignalOptionsActionableSignalState(freshAgedState), true);
+
+  const staleAgedState = {
+    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    barsSinceSignal: 6,
+    fresh: false,
+  } as never;
+  assert.equal(isSignalOptionsActionableSignalState(staleAgedState), false);
+});
