@@ -2559,7 +2559,8 @@ function WorkspaceDefaultsPanel() {
         action={
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              if (!window.confirm("Reset all workspace defaults? This clears your saved layout, filters, and view preferences across every screen and cannot be undone.")) return;
               workspace.resetKeys([
                 "activitySidebarCollapsed",
                 "activitySidebarWidth",
@@ -2583,8 +2584,8 @@ function WorkspaceDefaultsPanel() {
                 "accountOrderTab",
                 "accountSection",
                 "tradeChainHeatmapEnabled",
-              ])
-            }
+              ]);
+            }}
             style={smallButton({ danger: true })}
           >
             Reset defaults
@@ -2768,13 +2769,14 @@ function WorkspaceDefaultsPanel() {
           </button>
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              if (!window.confirm("Clear all saved Flow scans? Your saved scans and presets will be permanently removed.")) return;
               workspace.resetKeys([
                 "flowSavedScans",
                 "flowActiveScanId",
                 "flowActivePresetId",
-              ])
-            }
+              ]);
+            }}
             style={smallButton()}
           >
             Clear Flow saved scans

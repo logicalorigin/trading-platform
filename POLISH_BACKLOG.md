@@ -354,7 +354,7 @@ Source audit (4 dims, a11y/state-weighted per the Tier-3 bar) of `DiagnosticsScr
 **Open — Settings state coverage (highest product value — destructive data loss):**
 | id | finding | evidence | dim | sev | status |
 |----|---------|----------|-----|-----|--------|
-| SET-01 | **Irreversible destructive actions fire immediately with no confirmation/undo** — "Reset defaults" (wipes ~20 workspace keys), Clear ticker/trade/flow history, Clear storage prefs, Reset synced prefs, Reset alerts, Clear dismissals. Some are styled `danger`=red but none confirm. The screen **already uses `window.confirm`** twice (storage prune 1778, bridge override 3052) → reuse that pattern. | SettingsScreen.jsx:2559,2741-2780,1909-1947,2012,2488,2526 | state | P2 | open (behavior change — wants greenlight) |
+| SET-01 | **Irreversible destructive actions fire immediately with no confirmation** → **✅ DONE (2026-06-11, user greenlit).** Added `window.confirm` (existing in-file pattern) to the two actions that lose **meaningful user-created data**: "Reset defaults" (wipes ~20 workspace prefs) + "Clear Flow saved scans" (user scans/presets). **Deliberately NOT confirmed** (per the "calm workspace" doctrine — avoid confirm-fatigue on low-stakes, auto-regenerating state): Clear ticker/trade recents, Clear chart-scale/hydration/grid caches, Reset alert prefs, Clear dismissals. | SettingsScreen.jsx:2562,2772 | state | P2 | done |
 | SET-02 | **Storage-clear errors swallowed** (`catch {}`) with no toast/feedback — user clicks "Clear chart scale prefs" and gets zero success/failure signal. | SettingsScreen.jsx:1168-1190 | state | P2 | open |
 
 **Open — systematic a11y (both screens; 0 `aria-*` in-file except 1; recommend folding into the cross-screen a11y sub-pass w/ live SR):**
