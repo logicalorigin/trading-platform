@@ -45,10 +45,10 @@ export const AlgoOverviewMetric = ({
           ? `${dim(16)}px minmax(0, 1fr)`
           : "minmax(0, 1fr)",
         alignItems: "center",
-        gap: sp(dense ? 3 : 4),
+        gap: sp(dense ? 2 : 3),
         minWidth: 0,
-        minHeight: dim(dense ? 30 : 34),
-        padding: sp(dense ? "3px 5px" : "4px 6px"),
+        minHeight: dim(dense ? 28 : 32),
+        padding: sp(dense ? "2px 4px" : "3px 5px"),
         borderRadius: dim(RADII.xs),
         background: overviewSeverityBackground(severity),
       }}
@@ -240,6 +240,18 @@ export const buildAlgoPipelinePhases = (stages = []) => {
   }).filter(Boolean);
 };
 
+export const resolveAlgoPipelineGridTemplate = ({
+  pocket = false,
+  dense = false,
+} = {}) => {
+  if (pocket) {
+    return "repeat(auto-fit, minmax(150px, 1fr))";
+  }
+  return dense
+    ? "repeat(auto-fit, minmax(104px, max-content))"
+    : "repeat(auto-fit, minmax(120px, max-content))";
+};
+
 export const AlgoPipelineOverview = ({
   stages,
   selectedStageId,
@@ -257,11 +269,11 @@ export const AlgoPipelineOverview = ({
       data-algo-pocket-grid={pocket ? "pipeline" : undefined}
       style={{
         display: "grid",
-        gridTemplateColumns: pocket
-          ? "repeat(auto-fit, minmax(150px, 1fr))"
-          : dense
-            ? "repeat(auto-fit, minmax(108px, 1fr))"
-            : "repeat(auto-fit, minmax(132px, 1fr))",
+        gridTemplateColumns: resolveAlgoPipelineGridTemplate({
+          pocket,
+          dense,
+        }),
+        justifyContent: pocket ? undefined : "start",
         gap: sp(3),
         minWidth: 0,
       }}
@@ -302,16 +314,8 @@ export const AlgoPipelineOverview = ({
               alignItems: "center",
               gap: sp(grouped ? 1 : 4),
               minWidth: 0,
-              minHeight: dim(grouped ? (dense ? 32 : 36) : dense ? 28 : 32),
-              padding: sp(
-                grouped
-                  ? dense
-                    ? "4px 6px"
-                    : "5px 7px"
-                  : dense
-                    ? "4px 6px"
-                    : "5px 7px",
-              ),
+              minHeight: dim(grouped ? (dense ? 30 : 34) : dense ? 26 : 30),
+              padding: sp(dense ? "3px 5px" : "4px 6px"),
               border: `1px solid ${selected ? tone : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               background: selected ? cssColorAlpha(tone, "18") : CSS_COLOR.bg1,

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAlgoPipelinePhases } from "./AlgoOperationsPrimitives.jsx";
+import {
+  buildAlgoPipelinePhases,
+  resolveAlgoPipelineGridTemplate,
+} from "./AlgoOperationsPrimitives.jsx";
 
 test("Signal Cycle phase describes received signals", () => {
   const phases = buildAlgoPipelinePhases([
@@ -16,4 +19,19 @@ test("Signal Cycle phase describes received signals", () => {
 
   assert.equal(signalCycle?.detail, "28 symbols -> 8 received");
   assert.equal(entryPath?.detail, "3 actions -> 2 contracts");
+});
+
+test("algo pipeline overview uses packed intrinsic tracks outside phone layouts", () => {
+  assert.equal(
+    resolveAlgoPipelineGridTemplate({ pocket: false, dense: false }),
+    "repeat(auto-fit, minmax(120px, max-content))",
+  );
+  assert.equal(
+    resolveAlgoPipelineGridTemplate({ pocket: false, dense: true }),
+    "repeat(auto-fit, minmax(104px, max-content))",
+  );
+  assert.equal(
+    resolveAlgoPipelineGridTemplate({ pocket: true, dense: true }),
+    "repeat(auto-fit, minmax(150px, 1fr))",
+  );
 });

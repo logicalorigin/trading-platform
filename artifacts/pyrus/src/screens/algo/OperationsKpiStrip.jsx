@@ -35,9 +35,9 @@ const Cell = ({
           alignItems: "baseline",
           justifyContent: "space-between",
           gap: sp(4),
-          padding: sp("3px 7px"),
+          padding: sp("2px 6px"),
           minWidth: 0,
-          minHeight: dim(28),
+          minHeight: dim(26),
           background: CSS_COLOR.bg1,
         }}
       >
@@ -108,9 +108,9 @@ const Cell = ({
         flexDirection: "column",
         justifyContent: "center",
         gap: sp(1),
-        padding: sp("6px 10px"),
+        padding: sp("5px 8px"),
         minWidth: 0,
-        minHeight: dim(64),
+        minHeight: dim(58),
       }}
     >
       <span
@@ -233,8 +233,9 @@ export const OperationsKpiStrip = ({
         gridTemplateColumns: algoIsPocketWidth
           ? "repeat(2, minmax(0, 1fr))"
           : dense
-            ? "repeat(auto-fit, minmax(145px, 1fr))"
-            : "repeat(auto-fit, minmax(170px, 1fr))",
+            ? "repeat(auto-fit, minmax(132px, max-content))"
+            : "repeat(auto-fit, minmax(156px, max-content))",
+        justifyContent: algoIsPocketWidth ? undefined : "start",
         gap: 1,
         background: CSS_COLOR.border,
         border: `1px solid ${CSS_COLOR.border}`,

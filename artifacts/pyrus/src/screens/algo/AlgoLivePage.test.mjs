@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildAlgoOptionQuoteStreamSubscription,
+  resolveAlgoOverviewMetricGridTemplate,
   resolveAttentionSeverity,
   resolveHeaderScanWave,
 } from "./AlgoLivePage.jsx";
@@ -64,4 +65,42 @@ test("algo option quote stream aggregation opens one subscription for visible gr
   assert.equal(subscription.underlying, null);
   assert.equal(subscription.owner, "algo-option-quotes:3-contracts");
   assert.equal(subscription.requiresGreeks, true);
+});
+
+test("algo overview metrics use packed intrinsic tracks outside phone layouts", () => {
+  assert.equal(
+    resolveAlgoOverviewMetricGridTemplate({
+      algoIsPhone: false,
+      algoIsPocketWidth: false,
+      denseOperationsLayout: false,
+    }),
+    "repeat(auto-fit, minmax(128px, max-content))",
+  );
+
+  assert.equal(
+    resolveAlgoOverviewMetricGridTemplate({
+      algoIsPhone: false,
+      algoIsPocketWidth: false,
+      denseOperationsLayout: true,
+    }),
+    "repeat(auto-fit, minmax(104px, max-content))",
+  );
+
+  assert.equal(
+    resolveAlgoOverviewMetricGridTemplate({
+      algoIsPhone: true,
+      algoIsPocketWidth: true,
+      denseOperationsLayout: true,
+    }),
+    "repeat(2, minmax(0, 1fr))",
+  );
+
+  assert.equal(
+    resolveAlgoOverviewMetricGridTemplate({
+      algoIsPhone: true,
+      algoIsPocketWidth: false,
+      denseOperationsLayout: true,
+    }),
+    "repeat(auto-fit, minmax(104px, max-content))",
+  );
 });

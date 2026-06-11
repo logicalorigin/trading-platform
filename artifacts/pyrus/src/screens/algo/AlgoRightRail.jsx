@@ -60,8 +60,8 @@ const WireTrailStatusBand = ({ profile, positions }) => {
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(6),
-        padding: `${sp(8)}px ${sp(10)}px`,
+        gap: sp(4),
+        padding: `${sp(6)}px ${sp(8)}px`,
         background: cssColorMix(tone, summary.status === "off" ? 5 : 8),
         borderBottom: `1px solid ${CSS_COLOR.border}`,
         boxShadow: `inset 0 1px 0 ${cssColorMix(tone, 12)}`,
@@ -72,7 +72,7 @@ const WireTrailStatusBand = ({ profile, positions }) => {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: sp(8),
+          gap: sp(6),
           minWidth: 0,
         }}
       >
@@ -106,8 +106,9 @@ const WireTrailStatusBand = ({ profile, positions }) => {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
-          gap: sp(4),
+          gridTemplateColumns: "repeat(auto-fit, minmax(56px, max-content))",
+          justifyContent: "start",
+          gap: sp(3),
           minWidth: 0,
         }}
       >
@@ -119,7 +120,7 @@ const WireTrailStatusBand = ({ profile, positions }) => {
                 border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: RADII.xs,
                 background: CSS_COLOR.bg1,
-                padding: `${sp(4)}px ${sp(5)}px`,
+                padding: `${sp(3)}px ${sp(4)}px`,
               }}
             >
               <div

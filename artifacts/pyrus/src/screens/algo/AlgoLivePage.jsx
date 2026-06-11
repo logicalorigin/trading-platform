@@ -244,6 +244,19 @@ const EmptyOperationsState = ({
   );
 };
 
+export const resolveAlgoOverviewMetricGridTemplate = ({
+  algoIsPhone = false,
+  algoIsPocketWidth = false,
+  denseOperationsLayout = false,
+} = {}) => {
+  if (algoIsPhone && algoIsPocketWidth) {
+    return "repeat(2, minmax(0, 1fr))";
+  }
+  return denseOperationsLayout
+    ? "repeat(auto-fit, minmax(104px, max-content))"
+    : "repeat(auto-fit, minmax(128px, max-content))";
+};
+
 const compactDeploymentName = (deployment) => {
   const normalized = normalizeLegacyAlgoBrandText(deployment?.name || "");
   let compact = normalized
@@ -1263,16 +1276,22 @@ export const AlgoLivePage = ({
           >
             <div
               data-testid="algo-snapshot-details"
-              data-algo-pocket-grid={algoIsPhone ? "metrics" : algoIsPocketWidth ? "two" : undefined}
+              data-algo-pocket-grid={
+                algoIsPhone && algoIsPocketWidth
+                  ? "metrics"
+                  : algoIsPocketWidth
+                    ? "two"
+                    : undefined
+              }
               style={{
                 display: "grid",
-                gridTemplateColumns: algoIsPhone
-                  ? "repeat(2, minmax(0, 1fr))"
-                  : algoIsPocketWidth
-                  ? "repeat(2, minmax(0, 1fr))"
-                  : denseOperationsLayout
-                    ? "repeat(auto-fit, minmax(140px, 1fr))"
-                    : "repeat(auto-fit, minmax(160px, 1fr))",
+                gridTemplateColumns: resolveAlgoOverviewMetricGridTemplate({
+                  algoIsPhone,
+                  algoIsPocketWidth,
+                  denseOperationsLayout,
+                }),
+                justifyContent:
+                  algoIsPhone && algoIsPocketWidth ? undefined : "start",
                 gap: sp(algoIsPhone ? 2 : 4),
                 minWidth: 0,
               }}
@@ -1295,7 +1314,7 @@ export const AlgoLivePage = ({
               stages={cockpitStageItems}
               selectedStageId={selectedStage?.id}
               onSelectStage={(id) => setSelectedPipelineStageId(id)}
-              pocket={algoIsPhone || algoIsPocketWidth}
+              pocket={algoIsPhone && algoIsPocketWidth}
               dense={denseOperationsLayout}
               grouped
             />
