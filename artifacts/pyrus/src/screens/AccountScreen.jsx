@@ -491,6 +491,11 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
   },
 };
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
+// Max time the account section may stay "pending" (summary query stuck on
+// placeholder) before we settle it anyway. Without this, a slow/failing summary
+// query keeps accountSectionPending true, which blocks the readiness fallback
+// and hangs the launch boot overlay indefinitely.
+const ACCOUNT_SECTION_SETTLE_FALLBACK_MS = 6_000;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -1911,7 +1916,16 @@ const AccountScreenInner = ({
     }
     if (summaryQuery.data && !summaryQuery.isPlaceholderData) {
       setSettledAccountSection(accountSection);
+      return;
     }
+    // Safety net: if the summary query is stuck on placeholder (slow/failing
+    // bridge), settle the section anyway after a bounded delay. Otherwise
+    // accountSectionPending stays true forever, which blocks the readiness
+    // fallback (ACCOUNT_PRIMARY_FALLBACK_DELAY_MS) and hangs the launch overlay.
+    const settleTimer = window.setTimeout(() => {
+      setSettledAccountSection(accountSection);
+    }, ACCOUNT_SECTION_SETTLE_FALLBACK_MS);
+    return () => window.clearTimeout(settleTimer);
   }, [
     accountSection,
     isVisible,
