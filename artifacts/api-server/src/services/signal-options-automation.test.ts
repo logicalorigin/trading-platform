@@ -488,3 +488,34 @@ test("Signal Options keeps fresh signals visible past the 1-bar action age (regr
   } as never;
   assert.equal(isSignalOptionsActionableSignalState(staleAgedState), false);
 });
+
+test("a position's exit can only be claimed once (duplicate-exit race guard)", () => {
+  const internals = __signalOptionsAutomationInternalsForTests;
+  internals.__resetSignalOptionsClaimedExitsForTests();
+  const now = 1_700_000_000_000;
+  const key = "deployment-1:position-1";
+
+  // First concurrent caller (e.g. tick manager) claims the exit and emits.
+  assert.equal(internals.tryClaimSignalOptionsPositionExit(key, now), true);
+  // Second concurrent caller (e.g. worker scan) for the SAME position is
+  // blocked, so it cannot emit a duplicate SIGNAL_OPTIONS_EXIT_EVENT and the
+  // realized P&L / daily-loss halt are not double-counted.
+  assert.equal(internals.tryClaimSignalOptionsPositionExit(key, now), false);
+  assert.equal(
+    internals.tryClaimSignalOptionsPositionExit(key, now + 5_000),
+    false,
+  );
+
+  // A different position is independent.
+  assert.equal(
+    internals.tryClaimSignalOptionsPositionExit("deployment-1:position-2", now),
+    true,
+  );
+
+  // After the TTL the claim is pruned (memory bound); a real re-exit is still
+  // prevented by the persisted exit event, so re-claimability here is safe.
+  assert.equal(
+    internals.tryClaimSignalOptionsPositionExit(key, now + 11 * 60 * 1000),
+    true,
+  );
+});

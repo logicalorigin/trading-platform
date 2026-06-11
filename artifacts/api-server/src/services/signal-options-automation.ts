@@ -10784,6 +10784,33 @@ export function isSignalOptionsPositionInLiveOptionSession(input: {
   );
 }
 
+// Guards against duplicate exit events for the same position. The worker scan
+// (startSignalOptionsWorker) and the position tick manager
+// (startSignalOptionsPositionTickManager) both run at boot (index.ts:262-263)
+// and both call refreshActivePosition on the same open positions with no shared
+// lock. Without this guard, a stop hit during an overlapping evaluation window
+// emits two SIGNAL_OPTIONS_EXIT_EVENTs, and computeSignalOptionsDailyRealizedPnl
+// double-counts the realized P&L feeding the daily-loss halt. The check-and-set
+// below is synchronous, so in Node's single-threaded loop only one concurrent
+// caller can claim a given position's exit. Claims are TTL-pruned to bound
+// memory; the window only needs to span the seconds-long race because a position
+// exits once and the event log prevents re-exit across scans and restarts.
+const SIGNAL_OPTIONS_EXIT_CLAIM_TTL_MS = 10 * 60 * 1000;
+const signalOptionsClaimedExits = new Map<string, number>();
+
+function tryClaimSignalOptionsPositionExit(key: string, nowMs: number): boolean {
+  for (const [claimedKey, claimedAt] of signalOptionsClaimedExits) {
+    if (nowMs - claimedAt > SIGNAL_OPTIONS_EXIT_CLAIM_TTL_MS) {
+      signalOptionsClaimedExits.delete(claimedKey);
+    }
+  }
+  if (signalOptionsClaimedExits.has(key)) {
+    return false;
+  }
+  signalOptionsClaimedExits.set(key, nowMs);
+  return true;
+}
+
 export type SignalOptionsActivePositionQuoteManageResult = {
   managed: boolean;
   reason?: string;
@@ -11248,35 +11275,55 @@ async function refreshActivePosition(input: {
         },
       });
     }
-    await insertSignalOptionsEvent({
-      deployment: input.deployment,
-      symbol: input.position.symbol,
-      eventType: SIGNAL_OPTIONS_EXIT_EVENT,
-      summary: `${input.position.symbol} shadow exit ${exitReason} at ${exitPrice.toFixed(2)}`,
-      occurredAt: markAt,
-      payload: {
-        reason: exitReason,
-        exitPrice,
-        markPrice,
-        pnl: signalOptionsRealizedPnl(
-          exitPrice,
-          input.position.entryPrice,
-          input.position.quantity,
-          input.position.selectedContract,
-        ),
+    // Dedup guard: if a concurrent evaluation (worker scan vs. tick manager)
+    // already claimed this position's exit, skip emitting a second exit event so
+    // realized P&L and the daily-loss halt aren't double-counted. Synchronous
+    // check-and-set => atomic within the single-threaded event loop.
+    const exitClaimKey = `${input.deployment.id}:${input.position.id}`;
+    if (!tryClaimSignalOptionsPositionExit(exitClaimKey, markAt.getTime())) {
+      return {
+        managed: true,
+        usedShadowMarkFallback,
         position: positionPatch,
-        selectedContract: input.position.selectedContract,
-        quote: quoteToPayload(quote),
-        liquidity,
-        markResolution: {
-          source: markSource,
-          attempts: markAttempts,
-          shadowPositionMarkFallback: shadowMarkFallback,
+      };
+    }
+    try {
+      await insertSignalOptionsEvent({
+        deployment: input.deployment,
+        symbol: input.position.symbol,
+        eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+        summary: `${input.position.symbol} shadow exit ${exitReason} at ${exitPrice.toFixed(2)}`,
+        occurredAt: markAt,
+        payload: {
+          reason: exitReason,
+          exitPrice,
+          markPrice,
+          pnl: signalOptionsRealizedPnl(
+            exitPrice,
+            input.position.entryPrice,
+            input.position.quantity,
+            input.position.selectedContract,
+          ),
+          position: positionPatch,
+          selectedContract: input.position.selectedContract,
+          quote: quoteToPayload(quote),
+          liquidity,
+          markResolution: {
+            source: markSource,
+            attempts: markAttempts,
+            shadowPositionMarkFallback: shadowMarkFallback,
+          },
+          stop: stopPayload,
+          overnight,
         },
-        stop: stopPayload,
-        overnight,
-      },
-    });
+      });
+    } catch (error) {
+      // Emit failed: release the claim so a later evaluation can retry the exit
+      // immediately instead of waiting out the TTL — a failed stop must not be
+      // delayed.
+      signalOptionsClaimedExits.delete(exitClaimKey);
+      throw error;
+    }
     return {
       managed: true,
       usedShadowMarkFallback,
@@ -17323,6 +17370,9 @@ export async function updateSignalOptionsExecutionProfile(input: {
 export const __signalOptionsAutomationInternalsForTests = {
   signalOptionsContractMultiplier,
   signalOptionsRealizedPnl,
+  tryClaimSignalOptionsPositionExit,
+  __resetSignalOptionsClaimedExitsForTests: () =>
+    signalOptionsClaimedExits.clear(),
   buildCandidateFromSignal,
   candidateFromSignalSnapshot,
   buildSignalOptionsCandidateShellsFromSignals,
