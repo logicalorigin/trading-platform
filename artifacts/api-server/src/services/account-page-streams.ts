@@ -107,6 +107,12 @@ export type AccountPageLivePayload = {
   orderTab: OrderTab;
   assetClass: string | null;
   updatedAt: string;
+  /**
+   * True when this is the last-known cached payload served immediately while a
+   * fresh broker fetch is in flight. The UI paints it right away and shows a
+   * small refresh spinner until the live payload replaces it.
+   */
+  refreshing?: boolean;
   summary: AccountPageSnapshotPayload["summary"];
   intradayEquity: AccountPageSnapshotPayload["intradayEquity"];
   allocation: AccountPageSnapshotPayload["allocation"];
@@ -337,7 +343,48 @@ export function clearAccountPageSnapshotCache() {
   accountPagePrimaryInflight.clear();
   accountPageLiveInflight.clear();
   accountPageDerivedInflight.clear();
+  accountPageLastLiveCache.clear();
   accountPageSnapshotCacheVersion += 1;
+}
+
+// Cache-first first-emit: retain the most recent live payload per input so a
+// reconnect / re-navigation / multi-tab subscribe can paint real (recent)
+// account data immediately (tagged `refreshing`) instead of waiting on the slow
+// IBKR bridge. The live poll then overwrites it with fresh data.
+const ACCOUNT_PAGE_LAST_LIVE_TTL_MS = 5 * 60_000;
+const ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES = 64;
+const accountPageLastLiveCache = new Map<
+  string,
+  { payload: AccountPageLivePayload; at: number }
+>();
+
+function readCachedAccountPageLivePayload(
+  input: AccountPageSnapshotInput,
+): AccountPageLivePayload | null {
+  const key = cacheKeyForInput(input);
+  const entry = accountPageLastLiveCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.at > ACCOUNT_PAGE_LAST_LIVE_TTL_MS) {
+    accountPageLastLiveCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function writeCachedAccountPageLivePayload(
+  input: AccountPageSnapshotInput,
+  payload: AccountPageLivePayload,
+): void {
+  const key = cacheKeyForInput(input);
+  // delete+set so re-writes move the key to most-recent insertion order,
+  // making the size-cap eviction below behave roughly LRU.
+  accountPageLastLiveCache.delete(key);
+  accountPageLastLiveCache.set(key, { payload, at: Date.now() });
+  while (accountPageLastLiveCache.size > ACCOUNT_PAGE_LAST_LIVE_MAX_ENTRIES) {
+    const oldest = accountPageLastLiveCache.keys().next().value;
+    if (oldest === undefined) break;
+    accountPageLastLiveCache.delete(oldest);
+  }
 }
 
 function livePayloadFromBootstrap(
@@ -883,6 +930,7 @@ export function subscribeAccountPageSnapshots(
         if (!active) {
           return;
         }
+        writeCachedAccountPageLivePayload(input, snapshot);
         const signature = stableStringify(snapshot);
         const changed = signature !== lastLiveSignature;
         if (changed) {
@@ -921,6 +969,22 @@ export function subscribeAccountPageSnapshots(
       derivedInFlight = false;
     }
   };
+
+  // Cache-first: if a recent live payload is cached and the caller didn't seed
+  // an initial payload, paint it immediately (tagged `refreshing`) so real
+  // account data shows without waiting on the bridge. The first live poll then
+  // replaces it (the cached signature isn't recorded, so the fresh payload is
+  // always treated as changed and clears the spinner). Deferred to a microtask
+  // so the subscribe call returns first.
+  if (!options.initialLivePayload && !options.initialPayload) {
+    queueMicrotask(() => {
+      if (!active) return;
+      const cachedLivePayload = readCachedAccountPageLivePayload(input);
+      if (cachedLivePayload) {
+        onLive({ ...cachedLivePayload, refreshing: true });
+      }
+    });
+  }
 
   let liveTimer: ReturnType<typeof setInterval> | null = null;
   let derivedTimer: ReturnType<typeof setInterval> | null = null;
