@@ -37,6 +37,38 @@ test("Signals rows sort by universe rank", () => {
   );
 });
 
+test("recency ordering ranks by signal-fire time, not bar/eval activity", () => {
+  const ms = (iso) => new Date(iso).getTime();
+  // SPY: stale 5m signal (17:25) but constantly-ticking bars -> high activityMs.
+  // AES: fresh signal (20:20) with a slightly older latest bar.
+  const spy = {
+    symbol: "SPY",
+    universeRank: 1,
+    statusWeight: 0,
+    direction: "buy",
+    activityMs: ms("2026-06-11T20:40:00.000Z"),
+    signalActivityMs: ms("2026-06-11T17:25:00.000Z"),
+  };
+  const aes = {
+    symbol: "AES",
+    universeRank: 2,
+    statusWeight: 0,
+    direction: "buy",
+    activityMs: ms("2026-06-11T20:39:00.000Z"),
+    signalActivityMs: ms("2026-06-11T20:20:00.000Z"),
+  };
+  // "Latest" sort: the fresher signal wins despite SPY's newer bar activity.
+  assert.deepEqual(
+    sortSignalsRows([spy, aes], { sortKey: "latest" }).map((item) => item.symbol),
+    ["AES", "SPY"],
+  );
+  // Default priority sort tiebreaker (same status + direction) also uses signal time.
+  assert.deepEqual(
+    sortSignalsRows([spy, aes], { sortKey: "priority" }).map((item) => item.symbol),
+    ["AES", "SPY"],
+  );
+});
+
 const matrixState = (timeframe, direction) => ({
   symbol: "MU",
   timeframe,

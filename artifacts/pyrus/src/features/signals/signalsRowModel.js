@@ -144,6 +144,13 @@ const matrixSortState = (row, timeframe) =>
 const eventActivityMs = (event) =>
   Math.max(timestampMs(event?.emittedAt), timestampMs(event?.signalAt));
 
+// Signal-fire recency: when the signal actually fired, ignoring bar/eval churn.
+// "Most recent" ordering must rank by this, NOT stateActivityMs (which folds in
+// latestBarAt/lastEvaluatedAt and lets a constantly-ticking but stale symbol,
+// e.g. SPY, outrank a fresher signal, e.g. AES).
+const stateSignalMs = (state) => timestampMs(state?.currentSignalAt);
+const eventSignalMs = (event) => timestampMs(event?.signalAt);
+
 const preferLatestState = (left, right) => {
   if (!left) return right || null;
   if (!right) return left;
@@ -943,6 +950,11 @@ export const buildSignalsRows = ({
         eventActivityMs(latestEvent),
         ...Object.values(matrixStatesByTimeframe).map(stateActivityMs),
       );
+      const signalActivityMs = Math.max(
+        stateSignalMs(primaryState),
+        eventSignalMs(latestEvent),
+        ...Object.values(matrixStatesByTimeframe).map(stateSignalMs),
+      );
       const membership = watchlistMembership.get(symbol) || {
         watchlistIds: [],
         watchlistLabels: [],
@@ -1017,6 +1029,7 @@ export const buildSignalsRows = ({
             ?.lastError ||
           null,
         activityMs,
+        signalActivityMs,
       };
     }),
   );
@@ -1035,7 +1048,8 @@ export const sortSignalsRows = (
       (DIRECTION_SORT_WEIGHT[left.direction] ?? 9) -
       (DIRECTION_SORT_WEIGHT[right.direction] ?? 9);
     if (directionDelta) return directionDelta;
-    const latestDelta = (right.activityMs || 0) - (left.activityMs || 0);
+    const latestDelta =
+      (right.signalActivityMs || 0) - (left.signalActivityMs || 0);
     if (latestDelta) return latestDelta;
     return (
       (left.universeRank ?? Number.POSITIVE_INFINITY) -
@@ -1167,7 +1181,10 @@ export const sortSignalsRows = (
       );
     }
     if (sortKey === "latest") {
-      return multiplier * ((right.activityMs || 0) - (left.activityMs || 0));
+      return (
+        multiplier *
+        ((right.signalActivityMs || 0) - (left.signalActivityMs || 0))
+      );
     }
     if (sortKey === "coverage") {
       return (
