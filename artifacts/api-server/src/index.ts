@@ -27,7 +27,11 @@ import {
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
-import { startSignalMonitorLocalBarCacheWarmup } from "./services/signal-monitor";
+import {
+  startSignalMonitorLocalBarCacheWarmup,
+  startSignalMonitorServerOwnedProducer,
+  startSignalMonitorDirectionSeed,
+} from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-usage";
@@ -249,6 +253,8 @@ server.listen(port, () => {
   startTradeMonitorWorker();
   startIbkrLineUsageGenerationCoordinator();
   startSignalMonitorLocalBarCacheWarmup();
+  startSignalMonitorServerOwnedProducer();
+  startSignalMonitorDirectionSeed();
   void startPythonComputeRuntime().catch((err) => {
     logger.warn({ err }, "Failed to start Python compute runtime");
   });

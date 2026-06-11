@@ -106,6 +106,16 @@ export const preferSignalMatrixCellState = (current, candidate) => {
     return currentPending ? candidate : current;
   }
 
+  // Latch the cached signal: keep a buy/sell cell over a directionless update
+  // (a re-evaluation with no new signal) even when that update is more recent.
+  // A directional candidate always replaces a directionless current. The cached
+  // direction only changes when a new signal arrives.
+  const currentHasDirection = hasSignalDirection(current);
+  const candidateHasDirection = hasSignalDirection(candidate);
+  if (currentHasDirection !== candidateHasDirection) {
+    return currentHasDirection ? current : candidate;
+  }
+
   const currentActivity = readSignalMatrixStateActivityMs(current);
   const candidateActivity = readSignalMatrixStateActivityMs(candidate);
   if (candidateActivity !== currentActivity) {

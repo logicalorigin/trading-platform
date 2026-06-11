@@ -4182,6 +4182,54 @@ function shouldPersistSignalMonitorStateEvent(input: {
   );
 }
 
+// Latch the cached signal direction. The signal matrix is a memory: once a
+// buy/sell signal is received for a cell it must stay until an opposite signal
+// replaces it. A re-evaluation that found no new signal (direction null) must
+// not erase the cached direction; it only refreshes freshness/bar metadata.
+// A cell that has never received a signal (e.g. a brand-new ticker) stays null
+// until its first signal.
+function applyStoredSignalDirectionLatch<
+  V extends {
+    currentSignalDirection: SignalMonitorDirection | null;
+    currentSignalAt: Date | null;
+    currentSignalPrice: string | null;
+    barsSinceSignal: number | null;
+    fresh: boolean;
+  },
+>(input: {
+  existing: Pick<
+    DbSignalMonitorSymbolState,
+    | "currentSignalDirection"
+    | "currentSignalAt"
+    | "currentSignalPrice"
+    | "barsSinceSignal"
+  > | null;
+  values: V;
+}): V {
+  if (input.values.currentSignalDirection) {
+    // A real signal this evaluation: replace (flip on opposite, refresh on same).
+    return input.values;
+  }
+  const existingDirection =
+    input.existing?.currentSignalDirection === "buy" ||
+    input.existing?.currentSignalDirection === "sell"
+      ? input.existing.currentSignalDirection
+      : null;
+  if (!existingDirection) {
+    return input.values;
+  }
+  return {
+    ...input.values,
+    currentSignalDirection: existingDirection,
+    currentSignalAt: input.existing?.currentSignalAt ?? input.values.currentSignalAt,
+    currentSignalPrice:
+      input.existing?.currentSignalPrice ?? input.values.currentSignalPrice,
+    barsSinceSignal:
+      input.existing?.barsSinceSignal ?? input.values.barsSinceSignal,
+    fresh: false,
+  };
+}
+
 async function upsertSymbolState(input: {
   profileId: string;
   symbol: string;
@@ -4219,20 +4267,24 @@ async function upsertSymbolState(input: {
     symbol: input.symbol,
     timeframe: input.timeframe,
   });
-  if (existing && shouldPreserveExistingSignalMonitorSymbolState(existing, values)) {
+  const effectiveValues = applyStoredSignalDirectionLatch({ existing, values });
+  if (
+    existing &&
+    shouldPreserveExistingSignalMonitorSymbolState(existing, effectiveValues)
+  ) {
     return existing;
   }
 
   const [state] = await db
     .insert(signalMonitorSymbolStatesTable)
-    .values(values)
+    .values(effectiveValues)
     .onConflictDoUpdate({
       target: [
         signalMonitorSymbolStatesTable.profileId,
         signalMonitorSymbolStatesTable.symbol,
         signalMonitorSymbolStatesTable.timeframe,
       ],
-      set: values,
+      set: effectiveValues,
     })
     .returning();
 
@@ -6233,7 +6285,19 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
   });
 }
 
-function flushSignalMonitorMatrixStreamAggregates() {
+// Signal evaluation is synchronous CPU work; many symbols evaluated back-to-back
+// block the single event loop and starve HTTP. These helpers chunk the work and
+// yield the loop between chunks so requests interleave instead of queueing behind
+// one long burst.
+const SIGNAL_MONITOR_EVAL_YIELD_EVERY = 8;
+
+function yieldSignalMonitorEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+async function flushSignalMonitorMatrixStreamAggregates(): Promise<void> {
   if (signalMonitorMatrixStreamFlushInFlight) {
     return;
   }
@@ -6251,8 +6315,12 @@ function flushSignalMonitorMatrixStreamAggregates() {
   signalMonitorMatrixStreamFlushInFlight = true;
   try {
     const evaluatedAt = new Date();
-    pending.forEach((symbols, environment) => {
-      symbols.forEach((symbol) => {
+    // Bar closes arrive for the whole universe on the same minute boundary, so a
+    // single flush can evaluate hundreds of symbols. Yield every few symbols so
+    // the event loop stays responsive instead of blocking for the whole burst.
+    let sinceYield = 0;
+    for (const [environment, symbols] of pending) {
+      for (const symbol of symbols) {
         emitSignalMonitorMatrixStreamAggregateDelta({
           message: {
             symbol,
@@ -6260,8 +6328,13 @@ function flushSignalMonitorMatrixStreamAggregates() {
           environment,
           evaluatedAt,
         });
-      });
-    });
+        sinceYield += 1;
+        if (sinceYield >= SIGNAL_MONITOR_EVAL_YIELD_EVERY) {
+          sinceYield = 0;
+          await yieldSignalMonitorEventLoop();
+        }
+      }
+    }
   } finally {
     signalMonitorMatrixStreamFlushInFlight = false;
     if (pendingSignalMonitorMatrixStreamSymbolsByEnvironment.size) {
@@ -6276,7 +6349,7 @@ function scheduleSignalMonitorMatrixStreamFlush() {
   }
   signalMonitorMatrixStreamFlushTimer = setTimeout(() => {
     signalMonitorMatrixStreamFlushTimer = null;
-    flushSignalMonitorMatrixStreamAggregates();
+    void flushSignalMonitorMatrixStreamAggregates();
   }, SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS);
   signalMonitorMatrixStreamFlushTimer.unref?.();
 }
@@ -6370,6 +6443,260 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Server-owned signal-matrix producer
+//
+// The live matrix producer (evaluate Massive bar-close ticks -> persist
+// canonical signalMonitorEventsTable rows) historically only ran while a UI SSE
+// client was connected: emit/queue bail when there are no subscribers and the
+// eval+persist loop is keyed on subscriber scopes, so the STA table went stale
+// whenever no browser was open (the keystone gap).
+//
+// This registers a server-owned synthetic subscriber per enabled profile whose
+// scope is the profile's (capped) universe and whose onEvent is a no-op. The
+// existing loop then evaluates + persists on every bar-close with no UI client,
+// while real client deltas still only push to real subscribers. A keepalive
+// interval re-resolves the universe and re-primes the Massive subscription so it
+// is not dropped by the idle keepalive release timer. Gated on aggregate
+// streaming availability; when streaming is unavailable the legacy REST/flag
+// path still covers signal refresh.
+// ---------------------------------------------------------------------------
+const SIGNAL_MONITOR_SERVER_OWNED_PRODUCER_REFRESH_MS = 60_000;
+const signalMonitorServerOwnedProducers = new Map<
+  RuntimeMode,
+  { subscription: SignalMonitorMatrixStreamSubscription; symbolKey: string }
+>();
+let signalMonitorServerOwnedProducerTimer: ReturnType<typeof setInterval> | null =
+  null;
+let signalMonitorServerOwnedProducerStarted = false;
+let signalMonitorServerOwnedProducerRefreshInFlight = false;
+
+function buildSignalMonitorServerOwnedProducerScope(input: {
+  environment: RuntimeMode;
+  symbols: string[];
+  timeframes: SignalMonitorMatrixTimeframe[];
+  truncated?: boolean;
+}): SignalMonitorMatrixStreamScope {
+  const symbols = Array.from(
+    new Set(
+      input.symbols
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+  return {
+    environment: input.environment,
+    symbols,
+    timeframes: input.timeframes,
+    cells: [],
+    exactCells: false,
+    requestedSymbolCount: symbols.length,
+    skippedSymbols: [],
+    truncated: Boolean(input.truncated),
+  };
+}
+
+function registerSignalMonitorServerOwnedProducer(input: {
+  environment: RuntimeMode;
+  profile: DbSignalMonitorProfile;
+  scope: SignalMonitorMatrixStreamScope;
+}): void {
+  const symbolKey = input.scope.symbols.join(",");
+  const existing = signalMonitorServerOwnedProducers.get(input.environment);
+  if (existing && existing.symbolKey === symbolKey) {
+    // Universe unchanged: just re-prime to defeat the idle keepalive release.
+    primeSignalMonitorMatrixStockAggregateStream(input.scope.symbols);
+    return;
+  }
+  existing?.subscription.unsubscribe();
+  const subscription = createSignalMonitorMatrixStreamSubscriptionForTests({
+    scope: input.scope,
+    profile: input.profile,
+    onEvent: () => {},
+  });
+  signalMonitorServerOwnedProducers.set(input.environment, {
+    subscription,
+    symbolKey,
+  });
+}
+
+function clearSignalMonitorServerOwnedProducers(): void {
+  signalMonitorServerOwnedProducers.forEach((entry) => {
+    entry.subscription.unsubscribe();
+  });
+  signalMonitorServerOwnedProducers.clear();
+}
+
+async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
+  if (signalMonitorServerOwnedProducerRefreshInFlight) {
+    return;
+  }
+  signalMonitorServerOwnedProducerRefreshInFlight = true;
+  try {
+    if (!isStockAggregateStreamingAvailable()) {
+      clearSignalMonitorServerOwnedProducers();
+      return;
+    }
+    const timeframes = resolveSignalMonitorActiveTimeframes();
+    if (!timeframes.length) {
+      clearSignalMonitorServerOwnedProducers();
+      return;
+    }
+    let profiles: DbSignalMonitorProfile[];
+    try {
+      profiles = await listEnabledSignalMonitorProfiles();
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Server-owned signal matrix producer profile load failed",
+      );
+      return;
+    }
+    const activeEnvironments = new Set<RuntimeMode>();
+    for (const profile of profiles) {
+      try {
+        const universe = await resolveSignalMonitorProfileUniverse(profile, {
+          ensureWatchlist: false,
+        });
+        const capped = cappedSignalMonitorEvaluationProfile(universe.profile);
+        const maxSymbols = positiveInteger(
+          capped.profile.maxSymbols,
+          SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+          1,
+          SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+        );
+        const universeSymbols = Array.from(
+          new Set(
+            universe.symbols
+              .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+              .filter(Boolean),
+          ),
+        );
+        const symbols = universeSymbols.slice(0, maxSymbols);
+        if (!symbols.length) {
+          continue;
+        }
+        const scope = buildSignalMonitorServerOwnedProducerScope({
+          environment: universe.profile.environment,
+          symbols,
+          timeframes,
+          truncated:
+            universe.truncated || universeSymbols.length > symbols.length,
+        });
+        registerSignalMonitorServerOwnedProducer({
+          environment: universe.profile.environment,
+          profile: universe.profile,
+          scope,
+        });
+        activeEnvironments.add(universe.profile.environment);
+      } catch (error) {
+        logger.warn(
+          { err: error, profileId: profile.id },
+          "Server-owned signal matrix producer universe resolution failed",
+        );
+      }
+    }
+    // Drop producers for environments that are no longer enabled.
+    signalMonitorServerOwnedProducers.forEach((entry, environment) => {
+      if (!activeEnvironments.has(environment)) {
+        entry.subscription.unsubscribe();
+        signalMonitorServerOwnedProducers.delete(environment);
+      }
+    });
+  } finally {
+    signalMonitorServerOwnedProducerRefreshInFlight = false;
+  }
+}
+
+export function startSignalMonitorServerOwnedProducer(): void {
+  if (signalMonitorServerOwnedProducerStarted) {
+    return;
+  }
+  signalMonitorServerOwnedProducerStarted = true;
+  void refreshSignalMonitorServerOwnedProducers();
+  signalMonitorServerOwnedProducerTimer = setInterval(() => {
+    void refreshSignalMonitorServerOwnedProducers();
+  }, SIGNAL_MONITOR_SERVER_OWNED_PRODUCER_REFRESH_MS);
+  signalMonitorServerOwnedProducerTimer.unref?.();
+}
+
+// ---------------------------------------------------------------------------
+// Direction seed from received signals
+//
+// The matrix cache (signal_monitor_symbol_states) is the live view; the durable
+// record of received signals is signal_monitor_events. A cell whose last signal
+// fired before the row was last written (or that was wiped by the prior
+// latch bug) shows no direction even though a signal WAS received. This seeds
+// each null cell's direction from its most recent canonical event so the bubble
+// reflects the last received signal. fresh stays false (display only — does not
+// mark the signal actionable). The latch holds it; new signals update it on
+// receipt. Cells with no event ever (e.g. brand-new tickers) stay null.
+// ---------------------------------------------------------------------------
+const SIGNAL_MONITOR_DIRECTION_SEED_REFRESH_MS = 5 * 60_000;
+let signalMonitorDirectionSeedTimer: ReturnType<typeof setInterval> | null = null;
+let signalMonitorDirectionSeedStarted = false;
+let signalMonitorDirectionSeedInFlight = false;
+
+async function seedSignalMonitorDirectionsFromLatestEvents(): Promise<void> {
+  if (signalMonitorDirectionSeedInFlight) {
+    return;
+  }
+  signalMonitorDirectionSeedInFlight = true;
+  try {
+    let profiles: DbSignalMonitorProfile[];
+    try {
+      profiles = await listEnabledSignalMonitorProfiles();
+    } catch (error) {
+      logger.warn({ err: error }, "Signal direction seed: profile load failed");
+      return;
+    }
+    for (const profile of profiles) {
+      try {
+        await db.execute(sql`
+          UPDATE signal_monitor_symbol_states AS s
+          SET current_signal_direction = e.direction,
+              current_signal_at = e.signal_at,
+              fresh = false,
+              updated_at = now()
+          FROM (
+            SELECT DISTINCT ON (symbol, timeframe)
+              symbol, timeframe, direction, signal_at
+            FROM signal_monitor_events
+            WHERE profile_id = ${profile.id}
+            ORDER BY symbol, timeframe, signal_at DESC, id DESC
+          ) AS e
+          WHERE s.profile_id = ${profile.id}
+            AND s.symbol = e.symbol
+            AND s.timeframe = e.timeframe
+            AND s.active = true
+            AND (s.current_signal_direction IS NULL
+              OR s.current_signal_direction = '')
+        `);
+        invalidateSignalMonitorStateCache(profile.environment);
+      } catch (error) {
+        logger.warn(
+          { err: error, profileId: profile.id },
+          "Signal direction seed failed",
+        );
+      }
+    }
+  } finally {
+    signalMonitorDirectionSeedInFlight = false;
+  }
+}
+
+export function startSignalMonitorDirectionSeed(): void {
+  if (signalMonitorDirectionSeedStarted) {
+    return;
+  }
+  signalMonitorDirectionSeedStarted = true;
+  void seedSignalMonitorDirectionsFromLatestEvents();
+  signalMonitorDirectionSeedTimer = setInterval(() => {
+    void seedSignalMonitorDirectionsFromLatestEvents();
+  }, SIGNAL_MONITOR_DIRECTION_SEED_REFRESH_MS);
+  signalMonitorDirectionSeedTimer.unref?.();
+}
+
 export async function subscribeSignalMonitorMatrixStream(input: {
   scope: SignalMonitorMatrixStreamScope;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
@@ -6386,6 +6713,7 @@ export async function subscribeSignalMonitorMatrixStream(input: {
 
 function resetSignalMonitorMatrixStreamForTests() {
   signalMonitorMatrixStreamSubscribers.clear();
+  signalMonitorServerOwnedProducers.clear();
   pendingSignalMonitorMatrixStreamSymbolsByEnvironment.clear();
   if (signalMonitorMatrixStreamFlushTimer) {
     clearTimeout(signalMonitorMatrixStreamFlushTimer);
@@ -6438,6 +6766,11 @@ async function evaluateSymbolsInBatches(input: {
     );
     throwIfSignalMonitorAborted(input.signal);
     states.push(...batchStates);
+    if (index + concurrency < input.symbols.length) {
+      // Yield between batches so the whole-universe refresh doesn't hold the
+      // event loop across consecutive cache-hit batches.
+      await yieldSignalMonitorEventLoop();
+    }
   }
 
   return states;
@@ -7927,8 +8260,12 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
       const states: SignalMonitorMatrixStateResult[] = [];
       let sourceRequestCount = 0;
 
-      for (let index = 0; index < symbols.length; index += concurrency) {
-        const batch = symbols.slice(index, index + concurrency);
+      const step = Math.min(
+        Math.max(1, concurrency),
+        SIGNAL_MONITOR_EVAL_YIELD_EVERY,
+      );
+      for (let index = 0; index < symbols.length; index += step) {
+        const batch = symbols.slice(index, index + step);
         const batchResults = await Promise.all(
           batch.map((symbol) => {
             const requestedTimeframes = cellsBySymbol?.get(symbol) ?? timeframes;
@@ -7952,6 +8289,9 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
           states.push(...result.states);
           sourceRequestCount += result.sourceRequestCount;
         });
+        if (index + step < symbols.length) {
+          await yieldSignalMonitorEventLoop();
+        }
       }
 
       return {
@@ -8144,8 +8484,12 @@ export async function evaluateSignalMonitorMatrix(input: {
     const states: SignalMonitorMatrixStateResult[] = [];
     let sourceRequestCount = 0;
 
-    for (let index = 0; index < symbols.length; index += concurrency) {
-      const batch = symbols.slice(index, index + concurrency);
+    // Bound the synchronous batch so a high (soft-bypass) concurrency doesn't run
+    // the whole universe's CPU-bound eval in one event-loop-blocking burst; yield
+    // between chunks so HTTP stays responsive.
+    const step = Math.min(Math.max(1, concurrency), SIGNAL_MONITOR_EVAL_YIELD_EVERY);
+    for (let index = 0; index < symbols.length; index += step) {
+      const batch = symbols.slice(index, index + step);
       const batchResults = await Promise.all(
         batch.map((symbol) => {
           const requestedTimeframes = cellsBySymbol?.get(symbol) ?? timeframes;
@@ -8169,6 +8513,9 @@ export async function evaluateSignalMonitorMatrix(input: {
         states.push(...result.states);
         sourceRequestCount += result.sourceRequestCount;
       });
+      if (index + step < symbols.length) {
+        await yieldSignalMonitorEventLoop();
+      }
     }
 
     const response = {
@@ -8562,6 +8909,7 @@ export const __signalMonitorInternalsForTests = {
   stableSignalMonitorPyrusBarEntries,
   selectSignalMonitorSignalEvent,
   selectStableSignalMonitorSignalEvent,
+  applyStoredSignalDirectionLatch,
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
@@ -8569,6 +8917,8 @@ export const __signalMonitorInternalsForTests = {
   evaluateSignalMonitorMatrixStreamScopeDelta,
   emitSignalMonitorMatrixStreamAggregateDelta,
   createSignalMonitorMatrixStreamSubscriptionForTests,
+  buildSignalMonitorServerOwnedProducerScope,
+  registerSignalMonitorServerOwnedProducer,
   buildSignalMonitorMatrixStreamBootstrapEvent,
   getSignalMonitorMatrixStreamStatus,
   resetSignalMonitorMatrixStreamForTests,

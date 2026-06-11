@@ -55,6 +55,68 @@ test("active-session completed bars still require the expected live edge", () =>
   );
 });
 
+type LatchValues = {
+  currentSignalDirection: "buy" | "sell" | null;
+  currentSignalAt: Date | null;
+  currentSignalPrice: string | null;
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  latestBarAt: Date;
+  status: string;
+};
+const latchValues = (overrides: Partial<LatchValues> = {}): LatchValues => ({
+  currentSignalDirection: null,
+  currentSignalAt: null,
+  currentSignalPrice: null,
+  barsSinceSignal: null,
+  fresh: false,
+  latestBarAt: new Date("2026-06-10T22:00:00.000Z"),
+  status: "ok",
+  ...overrides,
+});
+const latchExisting = {
+  currentSignalDirection: "sell",
+  currentSignalAt: new Date("2026-06-09T15:00:00.000Z"),
+  currentSignalPrice: "12.5",
+  barsSinceSignal: 21,
+} as never;
+
+test("matrix cache latches the last signal when a re-eval finds no new signal", () => {
+  const result = __signalMonitorInternalsForTests.applyStoredSignalDirectionLatch({
+    existing: latchExisting,
+    values: latchValues(),
+  });
+  // No new signal this eval -> keep the cached sell, refresh freshness/bars meta.
+  assert.equal(result.currentSignalDirection, "sell");
+  assert.equal(result.currentSignalPrice, "12.5");
+  assert.equal(result.fresh, false);
+  // Bar metadata still advances.
+  assert.equal(result.latestBarAt.toISOString(), "2026-06-10T22:00:00.000Z");
+});
+
+test("matrix cache flips direction when an opposite signal arrives", () => {
+  const result = __signalMonitorInternalsForTests.applyStoredSignalDirectionLatch({
+    existing: latchExisting,
+    values: latchValues({
+      currentSignalDirection: "buy",
+      currentSignalPrice: "13.1",
+      fresh: true,
+    }),
+  });
+  // A real buy signal replaces the cached sell.
+  assert.equal(result.currentSignalDirection, "buy");
+  assert.equal(result.currentSignalPrice, "13.1");
+  assert.equal(result.fresh, true);
+});
+
+test("matrix cache leaves a never-signaled cell directionless", () => {
+  const result = __signalMonitorInternalsForTests.applyStoredSignalDirectionLatch({
+    existing: null,
+    values: latchValues(),
+  });
+  assert.equal(result.currentSignalDirection, null);
+});
+
 test("signal monitor bar evaluation is passive by default", () => {
   assert.equal(
     __signalMonitorInternalsForTests.isSignalMonitorBarEvaluationEnabled({}),

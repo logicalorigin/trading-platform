@@ -5,8 +5,66 @@ import { buildSignalMatrixBySymbol } from "../platform/watchlistModel.js";
 import { getCurrentSignalDirection } from "./signalStateFreshness.js";
 import {
   mergeSignalEventsIntoMatrixStates,
+  preferSignalMatrixCellState,
   signalMonitorEventToMatrixState,
 } from "./signalMatrixStateMerge.js";
+
+test("a directionless newer update does not clobber a cached signal direction", () => {
+  const cached = {
+    symbol: "SPY",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "sell",
+    currentSignalAt: "2026-06-09T15:00:00.000Z",
+    latestBarAt: "2026-06-09T20:00:00.000Z",
+    lastEvaluatedAt: "2026-06-09T20:00:00.000Z",
+    fresh: false,
+  };
+  const directionlessNewer = {
+    symbol: "SPY",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    latestBarAt: "2026-06-10T22:00:00.000Z",
+    lastEvaluatedAt: "2026-06-10T22:00:00.000Z",
+    fresh: false,
+  };
+  // Even though the directionless state is newer, the cached sell is kept.
+  assert.equal(
+    preferSignalMatrixCellState(cached, directionlessNewer).currentSignalDirection,
+    "sell",
+  );
+  assert.equal(
+    preferSignalMatrixCellState(directionlessNewer, cached).currentSignalDirection,
+    "sell",
+  );
+});
+
+test("an opposite directional update still replaces the cached direction", () => {
+  const cachedSell = {
+    symbol: "SPY",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "sell",
+    currentSignalAt: "2026-06-09T15:00:00.000Z",
+    latestBarAt: "2026-06-09T20:00:00.000Z",
+    fresh: false,
+  };
+  const freshBuy = {
+    symbol: "SPY",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-10T21:00:00.000Z",
+    latestBarAt: "2026-06-10T21:00:00.000Z",
+    fresh: true,
+  };
+  assert.equal(
+    preferSignalMatrixCellState(cachedSell, freshBuy).currentSignalDirection,
+    "buy",
+  );
+});
 
 test("signal monitor events hydrate stale matrix cells for shared signal bubbles", () => {
   const merged = mergeSignalEventsIntoMatrixStates({

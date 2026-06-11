@@ -219,6 +219,74 @@ test("signal matrix stream subscription emits changed deltas and cleans up", () 
   });
 });
 
+test("server-owned producer scope normalizes and dedupes universe symbols", () => {
+  const scope =
+    __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope({
+      environment: "paper",
+      symbols: ["aapl", "AAPL", " msft ", ""],
+      timeframes: ["1m", "5m"],
+    });
+
+  assert.deepEqual(scope.symbols, ["AAPL", "MSFT"]);
+  assert.equal(scope.exactCells, false);
+  assert.deepEqual(scope.timeframes, ["1m", "5m"]);
+  assert.equal(scope.requestedSymbolCount, 2);
+});
+
+test("server-owned producer evaluates bar-close ticks with no UI subscriber", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope(
+        {
+          environment: "paper",
+          symbols: ["AAPL", "MSFT"],
+          timeframes: ["1m"],
+        },
+      );
+    // Register the server-owned producer (no UI client connected).
+    __signalMonitorInternalsForTests.registerSignalMonitorServerOwnedProducer({
+      environment: "paper",
+      profile: profile(),
+      scope,
+    });
+
+    const evalCalls: string[] = [];
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        evalCalls.push(`${input.symbol}:${input.timeframe}`);
+        return streamState(input.symbol, input.timeframe, "server-owned");
+      },
+    });
+
+    // The producer evaluated the universe symbol despite zero UI subscribers,
+    // and only for the tick's symbol (keystone gap fixed).
+    assert.deepEqual(evalCalls, ["AAPL:1m"]);
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
+test("matrix producer still bails when neither client nor server-owned producer is present", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const evalCalls: string[] = [];
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        evalCalls.push(`${input.symbol}:${input.timeframe}`);
+        return streamState(input.symbol, input.timeframe, "noop");
+      },
+    });
+
+    // No subscriber and no server-owned producer => no evaluation work.
+    assert.equal(evalCalls.length, 0);
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
 test("signal matrix stream bootstrap event includes coverage metadata", () => {
   __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   const scope =

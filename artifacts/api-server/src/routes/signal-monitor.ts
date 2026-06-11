@@ -16,7 +16,6 @@ import {
   UpdateSignalMonitorProfileBody,
   UpdateSignalMonitorProfileResponse,
 } from "@workspace/api-zod";
-import { HttpError } from "../lib/errors";
 import {
   buildSignalMonitorMatrixStreamBootstrapEvent,
   evaluateSignalMonitor,
@@ -171,11 +170,8 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
   });
 
   if (!scope.symbols.length) {
-    throw new HttpError(400, "Signal Matrix stream requires symbols or cells.", {
-      code: "signal_monitor_matrix_stream_scope_required",
-      detail:
-        "Provide symbols=AAPL,MSFT or cells=AAPL:1m,MSFT:5m when opening the stream.",
-    });
+    res.status(204).end();
+    return;
   }
 
   await startSignalMonitorMatrixSse(req, res, async ({ writeEvent }) => {
