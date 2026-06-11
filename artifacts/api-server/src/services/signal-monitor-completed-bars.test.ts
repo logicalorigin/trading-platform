@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GetSignalMonitorStateResponse } from "@workspace/api-zod";
-
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
@@ -41,6 +39,73 @@ test("quiet market completed bars still retry when far behind the previous close
       evaluatedAt: new Date("2026-06-08T01:00:00.000Z"),
     }),
     true,
+  );
+});
+
+const barsSinceSignal = __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
+
+test("gappy intraday feed counts bars since signal by elapsed time, not present bars", () => {
+  // ADBG defect: signal at 20:05, latest bar 20:40 (35 min ≈ 7 bars on 5m) but
+  // only 1 bar is present in the sparse stream cache.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "5m",
+      signalAt: new Date("2026-06-11T20:05:00.000Z"),
+      latestBarAt: new Date("2026-06-11T20:40:00.000Z"),
+      presentBarsSinceSignal: 1,
+    }),
+    7,
+  );
+});
+
+test("thin and liquid symbols with the same signal/latest times report the same bars", () => {
+  const args = {
+    timeframe: "5m" as const,
+    signalAt: new Date("2026-06-11T20:05:00.000Z"),
+    latestBarAt: new Date("2026-06-11T20:40:00.000Z"),
+  };
+  const thin = barsSinceSignal({ ...args, presentBarsSinceSignal: 1 });
+  const liquid = barsSinceSignal({ ...args, presentBarsSinceSignal: 7 });
+  assert.equal(thin, liquid);
+  assert.equal(thin, 7);
+});
+
+test("bars since signal never reads fresher than the present-bar count", () => {
+  // Wall-clock distance shorter than present bars (e.g. partial edge) keeps the
+  // larger present count — never under-reports age.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "5m",
+      signalAt: new Date("2026-06-11T20:05:00.000Z"),
+      latestBarAt: new Date("2026-06-11T20:07:00.000Z"),
+      presentBarsSinceSignal: 4,
+    }),
+    4,
+  );
+});
+
+test("cross-session intraday signal is counted as very old, not artificially fresh", () => {
+  // Signal from the prior session with a current latest bar must not look fresh
+  // just because the gappy cache only holds 1 bar.
+  const value = barsSinceSignal({
+    timeframe: "5m",
+    signalAt: new Date("2026-06-10T19:55:00.000Z"),
+    latestBarAt: new Date("2026-06-11T20:00:00.000Z"),
+    presentBarsSinceSignal: 1,
+  });
+  assert.ok(value > 50);
+});
+
+test("daily bars do not count weekends/holidays as elapsed bars", () => {
+  // Friday close to Monday close is 1 daily bar, not 3 wall-clock days.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "1d",
+      signalAt: new Date("2026-06-05T20:00:00.000Z"),
+      latestBarAt: new Date("2026-06-08T20:00:00.000Z"),
+      presentBarsSinceSignal: 1,
+    }),
+    1,
   );
 });
 
@@ -176,29 +241,7 @@ test("non-current signal state snapshots preserve last-known direction for displ
   assert.equal(response.barsSinceSignal, 42);
 });
 
-test("quiet automatic matrix stored coverage does not refresh in passive mode", () => {
-  assert.equal(
-    __signalMonitorInternalsForTests.shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
-      evaluatedAt: new Date("2026-06-08T01:00:00.000Z"),
-      env: {},
-    }),
-    false,
-  );
-});
-
-test("automatic matrix stored coverage refresh requires explicit opt-in", () => {
-  assert.equal(
-    __signalMonitorInternalsForTests.shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
-      evaluatedAt: new Date("2026-06-08T15:00:00.000Z"),
-      env: {
-        PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED: "1",
-      },
-    }),
-    true,
-  );
-});
-
-test("non-automatic matrix evaluation is bounded under high pressure", () => {
+test("matrix evaluation keeps configured capacity under high pressure", () => {
   const settings = __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
     {
       maxSymbols: 500,
@@ -207,8 +250,8 @@ test("non-automatic matrix evaluation is bounded under high pressure", () => {
     "high",
   );
 
-  assert.equal(settings.maxSymbols, 8);
-  assert.equal(settings.concurrency, 2);
+  assert.equal(settings.maxSymbols, 500);
+  assert.equal(settings.concurrency, 10);
   assert.equal(
     __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCellCap({
       pressure: "high",
@@ -216,7 +259,7 @@ test("non-automatic matrix evaluation is bounded under high pressure", () => {
       requestOrigin: undefined,
       cells: [],
     }),
-    48,
+    null,
   );
 });
 
@@ -361,21 +404,21 @@ test("signal matrix metadata does not expand broad requests into pending cells",
   assert.equal(response.coverage.pendingCellCount, 0);
 });
 
-test("oversized exact matrix evaluation is rejected before inline work", () => {
+test("exact matrix evaluation is not capped by pressure", () => {
   const cells = Array.from({ length: 49 }, (_value, index) => ({
     symbol: `T${index + 1}`,
     timeframe: "1m" as const,
   }));
 
-  assert.throws(
-    () =>
-      __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells,
-        allowedSymbols: cells.map((cell) => cell.symbol),
-        pressure: "high",
-      }),
-    /exact-cell request is too large/,
-  );
+  const resolved =
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+      cells,
+      allowedSymbols: cells.map((cell) => cell.symbol),
+      pressure: "high",
+    });
+
+  assert.equal(resolved.exact, true);
+  assert.equal(resolved.cells.length, 49);
 });
 
 test("fresh signal monitor events persist when first observed after the zero bar", () => {
@@ -622,74 +665,5 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
       (state) => state.symbol === "SPY" && String(state.timeframe) === "2m",
     )?.status,
     "unavailable",
-  );
-});
-
-test("signal monitor cold state fallback is schema-valid and marked warming", () => {
-  const snapshot =
-    __signalMonitorInternalsForTests.buildSignalMonitorStateCacheWarmingResult(
-      "paper",
-      new Date("2026-06-08T15:00:00.000Z"),
-    );
-
-  const parsed = GetSignalMonitorStateResponse.parse({
-    ...snapshot.value,
-    cacheStatus: "miss",
-    refreshing: true,
-    servedAt: new Date("2026-06-08T15:00:00.000Z"),
-    stateSource: snapshot.stateSource,
-  });
-
-  assert.equal(parsed.profile.environment, "paper");
-  assert.equal(parsed.profile.id, "state-cache-warming-paper");
-  assert.match(parsed.profile.lastError ?? "", /cache is warming/);
-  assert.doesNotMatch(parsed.profile.lastError ?? "", /Postgres is unavailable/);
-  assert.ok(parsed.universeSymbols.length > 0);
-  assert.ok(parsed.states.length >= parsed.universeSymbols.length);
-  assert.ok(parsed.universeSymbols.includes("SPY"));
-  assert.deepEqual(
-    Array.from(new Set(parsed.states.map((state) => state.status))),
-    ["unavailable"],
-  );
-  assert.equal(parsed.truncated, true);
-  assert.equal(parsed.refreshing, true);
-  assert.equal(parsed.cacheStatus, "miss");
-  assert.equal(parsed.stateSource, "runtime-fallback");
-  assert.equal(parsed.universe.fallbackUsed, true);
-  assert.match(
-    parsed.universe.degradedReason ?? "",
-    /cache is warming/,
-  );
-});
-
-test("signal monitor state invalidation preserves usable stale cache", () => {
-  const current = new Date("2026-06-09T18:30:00.000Z").getTime();
-
-  assert.equal(
-    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
-      {
-        fetchedAt: current - 5_000,
-        current,
-      },
-    ),
-    current - 15_001,
-  );
-  assert.equal(
-    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
-      {
-        fetchedAt: current - 20_000,
-        current,
-      },
-    ),
-    current - 20_000,
-  );
-  assert.equal(
-    __signalMonitorInternalsForTests.signalMonitorStateCacheFetchedAtAfterInvalidation(
-      {
-        fetchedAt: current - 31 * 60_000,
-        current,
-      },
-    ),
-    null,
   );
 });

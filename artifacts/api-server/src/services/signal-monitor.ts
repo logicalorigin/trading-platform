@@ -312,8 +312,6 @@ const SIGNAL_MONITOR_MATRIX_AUTOMATIC_DEBOUNCE_MS = 2_000;
 const SIGNAL_MONITOR_STATE_CACHE_TTL_MS = 15_000;
 const SIGNAL_MONITOR_STATE_STALE_TTL_MS = 30 * 60_000;
 const SIGNAL_MONITOR_STATE_IN_FLIGHT_MAX_AGE_MS = 60_000;
-const SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS = 5_000;
-const SIGNAL_MONITOR_STATE_REFRESH_TIMEOUT_WARNING_COOLDOWN_MS = 60_000;
 const SIGNAL_MONITOR_STATE_CACHE_WARMING_MESSAGE =
   "Signal monitor state cache is warming; returning fallback unavailable coverage while the stored state refresh runs in the background.";
 const SIGNAL_MONITOR_EVENTS_DB_RETRY_DELAY_MS = 250;
@@ -348,74 +346,7 @@ const SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT = 10;
 const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
 const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
-const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
-  ApiResourcePressureLevel,
-  { maxSymbols: number; concurrency: number }
-> = {
-  normal: {
-    maxSymbols: 40,
-    concurrency: 8,
-  },
-  watch: {
-    maxSymbols: 16,
-    concurrency: 4,
-  },
-  high: {
-    maxSymbols: 8,
-    concurrency: 2,
-  },
-};
-const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
-  ApiResourcePressureLevel,
-  { maxSymbols: number; concurrency: number }
-> = {
-  normal: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-  watch: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-  high: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-};
 const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
-const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
-  ApiResourcePressureLevel,
-  number | null
-> = {
-  normal: 240,
-  watch: 96,
-  high: 48,
-};
-const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
-  ApiResourcePressureLevel,
-  number | null
-> = {
-  normal: 240,
-  watch: 96,
-  high: 48,
-};
-const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
-  ApiResourcePressureLevel,
-  { maxSymbols: number; concurrency: number }
-> = {
-  normal: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-  watch: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-  high: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-};
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<
   RuntimeMode,
@@ -780,10 +711,8 @@ function resolveSignalMonitorMatrixExactCellCap(input: {
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
   cells?: readonly SignalMonitorMatrixCellRequest[];
 }) {
-  if (isForegroundExactCellLeaderSignalMonitorMatrixRequest(input)) {
-    return SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS[input.pressure];
-  }
-  return SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS[input.pressure];
+  void input;
+  return null;
 }
 
 function shouldAwaitSignalMonitorMatrixExactCellRefresh(input: {
@@ -792,20 +721,10 @@ function shouldAwaitSignalMonitorMatrixExactCellRefresh(input: {
   clientRole?: SignalMonitorMatrixClientRole;
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
 }) {
-  if (!input.exactCells) {
-    return false;
-  }
-  if (input.pressure === "normal") {
-    return true;
-  }
-  if (
-    input.pressure === "watch" &&
-    input.clientRole === "leader" &&
-    (input.requestOrigin === "startup" || input.requestOrigin === "poll")
-  ) {
-    return true;
-  }
-  return false;
+  void input.pressure;
+  void input.clientRole;
+  void input.requestOrigin;
+  return input.exactCells;
 }
 
 function shouldAllowSignalMonitorMatrixHistoricalFallback(input: {
@@ -861,12 +780,7 @@ function cappedSignalMatrixSettings(
 ) {
   const resourcePressureLevel =
     pressureLevel ?? getApiResourcePressureSnapshot().level;
-  const foregroundExactCellLeader =
-    options.request &&
-    isForegroundExactCellLeaderSignalMonitorMatrixRequest(options.request);
-  const caps = options.automatic && !foregroundExactCellLeader
-    ? SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS[resourcePressureLevel]
-    : SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS[resourcePressureLevel];
+  void options;
   const configuredMaxSymbols = positiveInteger(
     profile.maxSymbols,
     DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
@@ -881,8 +795,8 @@ function cappedSignalMatrixSettings(
   );
   return {
     pressure: resourcePressureLevel,
-    maxSymbols: Math.min(configuredMaxSymbols, caps.maxSymbols),
-    concurrency: Math.min(configuredConcurrency, caps.concurrency),
+    maxSymbols: configuredMaxSymbols,
+    concurrency: configuredConcurrency,
   };
 }
 
@@ -1003,7 +917,6 @@ export function cappedSignalMonitorEvaluationProfile(
 ) {
   const resourcePressureLevel =
     pressureLevel ?? getApiResourcePressureSnapshot().level;
-  const caps = SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS[resourcePressureLevel];
   const configuredMaxSymbols = positiveInteger(
     profile.maxSymbols,
     DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
@@ -1016,21 +929,14 @@ export function cappedSignalMonitorEvaluationProfile(
     1,
     SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   );
-  const maxSymbols = Math.min(configuredMaxSymbols, caps.maxSymbols);
-  const evaluationConcurrency = Math.min(
-    configuredConcurrency,
-    caps.concurrency,
-  );
 
   return {
     pressure: resourcePressureLevel,
-    capped:
-      maxSymbols < configuredMaxSymbols ||
-      evaluationConcurrency < configuredConcurrency,
+    capped: false,
     profile: {
       ...profile,
-      maxSymbols,
-      evaluationConcurrency,
+      maxSymbols: configuredMaxSymbols,
+      evaluationConcurrency: configuredConcurrency,
     },
   };
 }
@@ -1869,55 +1775,6 @@ function isAutomaticSignalMonitorMatrixRequest(input: {
   );
 }
 
-function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
-  clientRole?: SignalMonitorMatrixClientRole;
-  requestOrigin?: SignalMonitorMatrixRequestOrigin;
-  cells?: SignalMonitorMatrixCellRequest[];
-}) {
-  const pressureLevel = getApiResourcePressureSnapshot().level;
-  const startupOrPoll =
-    input.requestOrigin === "startup" || input.requestOrigin === "poll";
-  const pressured = pressureLevel === "watch" || pressureLevel === "high";
-  if (input.clientRole === "follower" && startupOrPoll) {
-    return true;
-  }
-  if (
-    input.clientRole === "leader" &&
-    startupOrPoll
-  ) {
-    if (
-      pressured &&
-      isForegroundExactCellLeaderSignalMonitorMatrixRequest(input)
-    ) {
-      return pressureLevel !== "watch";
-    }
-    return pressured;
-  }
-  return false;
-}
-
-function shouldServeSignalMonitorMatrixFromStoredStateFast(input: {
-  clientRole?: SignalMonitorMatrixClientRole;
-  requestOrigin?: SignalMonitorMatrixRequestOrigin;
-  states?: unknown[];
-}) {
-  return (
-    isAutomaticSignalMonitorMatrixRequest(input) &&
-    Array.isArray(input.states) &&
-    input.states.length > 0
-  );
-}
-
-function shouldRefreshSignalMonitorMatrixStoredCoverageInBackground(input: {
-  evaluatedAt: Date;
-  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
-}): boolean {
-  // Stored coverage refresh creates signal state from bars, so it is only legal
-  // during explicit legacy/backfill evaluation runs.
-  void input.evaluatedAt;
-  return isSignalMonitorBarEvaluationEnabled(input.env);
-}
-
 function markAutomaticSignalMonitorMatrixRequest(
   key: string,
   input: {
@@ -1979,7 +1836,6 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
   factory: () => Promise<T>,
   options: {
     nowMs?: number;
-    awaitStaleRefresh?: boolean;
     onCacheStatus?: (status: SignalMonitorMatrixCacheStatus) => void;
   } = {},
 ): Promise<T> {
@@ -1993,14 +1849,6 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
 
   const inFlight = signalMonitorMatrixEvaluationInFlight.get(key);
   if (inFlight) {
-    if (
-      cached &&
-      cached.staleUntil > nowMs &&
-      options.awaitStaleRefresh !== true
-    ) {
-      options.onCacheStatus?.("stale");
-      return cached.value as T;
-    }
     options.onCacheStatus?.("inflight");
     return inFlight as Promise<T>;
   }
@@ -2024,21 +1872,6 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
       }
     });
   signalMonitorMatrixEvaluationInFlight.set(key, request);
-
-  if (
-    cached &&
-    cached.staleUntil > nowMs &&
-    options.awaitStaleRefresh !== true
-  ) {
-    options.onCacheStatus?.("stale");
-    void request.catch((error) => {
-      logger.warn(
-        { err: error },
-        "Signal monitor matrix background refresh failed",
-      );
-    });
-    return cached.value as T;
-  }
 
   options.onCacheStatus?.(
     cached && cached.staleUntil > nowMs ? "inflight" : "miss",
@@ -5142,6 +4975,36 @@ export async function evaluateSignalMonitorSymbol(input: {
   }
 }
 
+// barsSinceSignal must reflect how long ago the signal fired in timeframe bars.
+// The raw `chartBars.length - 1 - signal.barIndex` counts only the bars PRESENT
+// in the series, which under-reports for thin/gappy intraday feeds: quiet minutes
+// produce no aggregate, so a 35-minute-old 5m signal can read "1 bar" (the ADBG
+// defect) while a liquid symbol with the same signal time reads the true count.
+// For intraday timeframes we take the larger of the present-bar distance and the
+// wall-clock interval distance, so a stale signal can never read fresher than it
+// actually is (the safe direction for freshness/eligibility). 1d stays on the
+// present-bar count so weekends/holidays are not counted as elapsed daily bars.
+function signalMonitorBarsSinceSignal(input: {
+  timeframe: SignalMonitorMatrixTimeframe;
+  signalAt: Date;
+  latestBarAt: Date;
+  presentBarsSinceSignal: number;
+}): number {
+  const presentBars = Math.max(0, input.presentBarsSinceSignal);
+  if (input.timeframe === "1d") {
+    return presentBars;
+  }
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  if (!Number.isFinite(timeframeMs) || timeframeMs <= 0) {
+    return presentBars;
+  }
+  const elapsedMs = input.latestBarAt.getTime() - input.signalAt.getTime();
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return presentBars;
+  }
+  return Math.max(presentBars, Math.round(elapsedMs / timeframeMs));
+}
+
 export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
@@ -5230,11 +5093,20 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     };
   }
 
-  const barsSinceSignal = Math.max(0, chartBars.length - 1 - signal.barIndex);
+  const presentBarsSinceSignal = Math.max(
+    0,
+    chartBars.length - 1 - signal.barIndex,
+  );
   const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
   const signalBarAt = signalBarEntry?.anchorAt ?? new Date(signal.time * 1000);
   const signalAt = signalBarEntry?.closedAt ?? signalBarAt;
   const sourceBarPartial = signalBarEntry?.sourceBar.partial === true;
+  const barsSinceSignal = signalMonitorBarsSinceSignal({
+    timeframe: input.timeframe,
+    signalAt,
+    latestBarAt,
+    presentBarsSinceSignal,
+  });
   if (stale) {
     return {
       ...base,
@@ -7746,14 +7618,6 @@ function disabledSignalMonitorProfileEvaluationResponse(input: {
   };
 }
 
-function scheduleSignalMonitorMatrixBackgroundRefresh(callback: () => void): void {
-  const handle =
-    typeof setImmediate === "function"
-      ? setImmediate(callback)
-      : setTimeout(callback, 0);
-  handle.unref?.();
-}
-
 async function readCurrentSignalMonitorMatrixStates(input: {
   profile: DbSignalMonitorProfile;
   requestedSymbols: string[];
@@ -8304,54 +8168,6 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
         sourceRequestCount,
       };
     };
-  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
-    ? getRuntimeSignalMonitorEvaluationCacheValue<MatrixRuntimeResponse>(
-        cacheKey,
-      )
-    : null;
-  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
-    const response = cacheOnlyCached?.value ?? {
-      profile: profileToResponse(profile),
-      states: [],
-      evaluatedAt: new Date(),
-      timeframes,
-      truncated,
-      skippedSymbols,
-      sourceRequestCount: 0,
-    };
-    return withSignalMonitorMatrixMetadata(response, {
-      cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
-      requestedSymbols: symbols,
-      requestedCells: exactCells.exact ? exactCells.cells : undefined,
-      totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: exactCells.exact ? exactCells.cells.length : symbols.length * timeframes.length,
-      startedAt,
-      automaticRequest,
-    });
-  }
-
-  if (automaticMatrixRequest && !exactCells.exact) {
-    return withSignalMonitorMatrixMetadata(
-      {
-        profile: profileToResponse(profile),
-        states: [],
-        evaluatedAt: new Date(),
-        timeframes,
-        truncated,
-        skippedSymbols,
-        sourceRequestCount: 0,
-      },
-      {
-        cacheStatus: "miss",
-        requestedSymbols: symbols,
-        totalSymbols: symbols.length + skippedSymbols.length,
-        taskCount: symbols.length * timeframes.length,
-        startedAt,
-        automaticRequest,
-      },
-    );
-  }
-
   const response = await withRuntimeSignalMonitorEvaluationCache(
     cacheKey,
     buildFreshRuntimeMatrixResponse,
@@ -8550,19 +8366,6 @@ export async function evaluateSignalMonitorMatrix(input: {
       requestedCells: exactCells.exact ? exactCells.cells : undefined,
       evaluatedAt,
     });
-  const refreshMatrixInBackground = () => {
-    scheduleSignalMonitorMatrixBackgroundRefresh(() => {
-      void withSignalMonitorMatrixEvaluationCache(
-        cacheKey,
-        buildFreshMatrixResponse,
-      ).catch((error) => {
-        logger.warn(
-          { err: error, profileId: profile.id, requestedSymbols: symbols },
-          "Signal monitor matrix stored-state background refresh failed",
-        );
-      });
-    });
-  };
 
   if (!profile.enabled) {
     const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
@@ -8593,34 +8396,11 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
   }
 
-  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
-    ? getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey)
-    : null;
-  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
-    const hydratedResponse = await hydrateFromStoredStates(
-      cacheOnlyCached?.value ?? buildEmptyMatrixResponse(),
-    );
-    return withSignalMonitorMatrixMetadata(hydratedResponse, {
-      cacheStatus:
-        cacheOnlyCached?.cacheStatus ??
-        (hydratedResponse.states.length ? "hit" : "miss"),
-      requestedSymbols: symbols,
-      requestedCells: exactCells.exact ? exactCells.cells : undefined,
-      totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: exactCells.exact
-        ? exactCells.cells.length
-        : symbols.length * timeframes.length,
-      startedAt,
-      automaticRequest,
-    });
-  }
-
   const cachedMatrix =
     getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey);
   if (
     cachedMatrix &&
-    (cachedMatrix.cacheStatus === "hit" ||
-      (automaticRequest.debounced && !awaitExactCellRefresh))
+    cachedMatrix.cacheStatus === "hit"
   ) {
     const hydratedResponse = await hydrateFromStoredStates(cachedMatrix.value);
     return withSignalMonitorMatrixMetadata(hydratedResponse, {
@@ -8636,85 +8416,14 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
   }
 
-  if (isAutomaticSignalMonitorMatrixRequest(input)) {
-    const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
-    if (!exactCells.exact) {
-      return withSignalMonitorMatrixMetadata(storedResponse, {
-        cacheStatus: shouldServeSignalMonitorMatrixFromStoredStateFast({
-          ...input,
-          states: storedResponse.states,
-        })
-          ? "stale"
-          : "miss",
-        requestedSymbols: symbols,
-        totalSymbols: symbols.length + skippedSymbols.length,
-        taskCount: symbols.length * timeframes.length,
-        startedAt,
-        automaticRequest,
-      });
-    }
-    const hasCompleteStoredCoverage = hasCompleteSignalMonitorMatrixCoverage({
-      states: storedResponse.states,
-      timeframes,
-      requestedSymbols: symbols,
-      requestedCells: exactCells.cells,
-    });
-    if (!hasCompleteStoredCoverage) {
-      const response = await withSignalMonitorMatrixEvaluationCache(
-        cacheKey,
-        buildFreshMatrixResponse,
+  const response = await withSignalMonitorMatrixEvaluationCache(
+    cacheKey,
+    buildFreshMatrixResponse,
         {
-          awaitStaleRefresh: awaitExactCellRefresh,
           onCacheStatus: (status) => {
             cacheStatus = status;
           },
         },
-      );
-      const hydratedResponse = await hydrateFromStoredStates(response);
-      return withSignalMonitorMatrixMetadata(hydratedResponse, {
-        cacheStatus,
-        requestedSymbols: symbols,
-        requestedCells: exactCells.cells,
-        totalSymbols: symbols.length + skippedSymbols.length,
-        taskCount: exactCells.cells.length,
-        startedAt,
-        automaticRequest,
-      });
-    }
-    if (
-      shouldRefreshSignalMonitorMatrixStoredCoverageInBackground({
-        evaluatedAt,
-      })
-    ) {
-      refreshMatrixInBackground();
-    }
-    return withSignalMonitorMatrixMetadata(storedResponse, {
-      cacheStatus: shouldServeSignalMonitorMatrixFromStoredStateFast({
-        ...input,
-        states: storedResponse.states,
-      })
-        ? "stale"
-        : "miss",
-      requestedSymbols: symbols,
-      requestedCells: exactCells.exact ? exactCells.cells : undefined,
-      totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: exactCells.exact
-        ? exactCells.cells.length
-        : symbols.length * timeframes.length,
-      startedAt,
-      automaticRequest,
-    });
-  }
-
-  const response = await withSignalMonitorMatrixEvaluationCache(
-    cacheKey,
-    buildFreshMatrixResponse,
-    {
-      awaitStaleRefresh: awaitExactCellRefresh,
-      onCacheStatus: (status) => {
-        cacheStatus = status;
-      },
-    },
   );
   const hydratedResponse = await hydrateFromStoredStates(response);
   return withSignalMonitorMatrixMetadata(hydratedResponse, {
@@ -8906,6 +8615,7 @@ export const __signalMonitorInternalsForTests = {
   shouldPersistSignalMonitorStateEvent,
   shouldPreserveExistingSignalMonitorSymbolState,
   loadSignalMonitorStreamCompletedBars,
+  signalMonitorBarsSinceSignal,
   stableSignalMonitorPyrusBarEntries,
   selectSignalMonitorSignalEvent,
   selectStableSignalMonitorSignalEvent,
@@ -8936,9 +8646,6 @@ export const __signalMonitorInternalsForTests = {
   withSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixMetadata,
   markAutomaticSignalMonitorMatrixRequest,
-  shouldServeSignalMonitorMatrixFromCacheOnly,
-  shouldServeSignalMonitorMatrixFromStoredStateFast,
-  shouldRefreshSignalMonitorMatrixStoredCoverageInBackground,
   isSignalMonitorBarEvaluationEnabled,
   SIGNAL_MONITOR_PASSIVE_SIGNAL_SOURCE_MESSAGE,
   getDebouncedSignalMonitorMatrixCacheValue,
@@ -8975,7 +8682,6 @@ export const __signalMonitorInternalsForTests = {
   },
 };
 
-type SignalMonitorStateCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorStateSource =
   | "database"
   | "runtime-fallback"
@@ -9251,7 +8957,6 @@ const signalMonitorStateInFlight = new Map<
   string,
   SignalMonitorStateInFlightEntry
 >();
-let signalMonitorStateRefreshTimeoutWarningUntilMs = 0;
 
 function signalMonitorStateCacheKey(environment: RuntimeMode): string {
   return environment;
@@ -9365,62 +9070,6 @@ function getSignalMonitorStateInFlight(
   return null;
 }
 
-async function waitForSignalMonitorStateRefresh(
-  entry: SignalMonitorStateInFlightEntry,
-  input: { cacheKey: string; environment: RuntimeMode; startedAt: number },
-): Promise<SignalMonitorStateReadResult | null> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<null>((resolve) => {
-    timeout = setTimeout(() => {
-      resolve(null);
-    }, SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS);
-    timeout.unref?.();
-  });
-
-  try {
-    const result = await Promise.race([entry.promise, timeoutPromise]);
-    if (result === null) {
-      const nowMs = Date.now();
-      if (nowMs >= signalMonitorStateRefreshTimeoutWarningUntilMs) {
-        signalMonitorStateRefreshTimeoutWarningUntilMs =
-          nowMs + SIGNAL_MONITOR_STATE_REFRESH_TIMEOUT_WARNING_COOLDOWN_MS;
-        logger.warn(
-          {
-            cacheKey: input.cacheKey,
-            environment: input.environment,
-            waitMs: SIGNAL_MONITOR_STATE_REFRESH_WAIT_TIMEOUT_MS,
-            refreshAgeMs: nowMs - input.startedAt,
-          },
-          "Signal monitor state refresh exceeded route budget; serving warming fallback",
-        );
-      }
-    }
-    return result;
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
-function attachSignalMonitorStateCacheMetadata(
-  value: SignalMonitorStateValue,
-  input: {
-    cacheStatus: SignalMonitorStateCacheStatus;
-    refreshing: boolean;
-    servedAt: number;
-    stateSource: SignalMonitorStateSource;
-  },
-) {
-  return {
-    ...value,
-    cacheStatus: input.cacheStatus,
-    refreshing: input.refreshing,
-    servedAt: new Date(input.servedAt),
-    stateSource: input.stateSource,
-  };
-}
-
 function startSignalMonitorStateRefresh(
   environment: RuntimeMode,
   current = Date.now(),
@@ -9462,115 +9111,14 @@ function startSignalMonitorStateRefresh(
 
 export async function getSignalMonitorState(input: {
   environment?: RuntimeMode;
-  staleFast?: boolean;
 }) {
   const environment = resolveEnvironment(input.environment);
-  if (!input.staleFast) {
-    const fresh = await readSignalMonitorStateFresh({
-      environment,
-      includeNonCurrent: true,
-      markNonCurrentStale: true,
-    });
-    return fresh.value;
-  }
-
-  const cacheKey = signalMonitorStateCacheKey(environment);
-  const current = Date.now();
-  const cached = signalMonitorStateCache.get(cacheKey);
-  const inFlight = getSignalMonitorStateInFlight(cacheKey, current);
-  const startOrReuseRefresh = () => {
-    const refresh =
-      inFlight ?? startSignalMonitorStateRefresh(environment, current);
-    if (!inFlight) {
-      void refresh.promise.catch((error) => {
-        logger.warn(
-          { err: error, environment },
-          "Signal monitor state background refresh failed",
-        );
-      });
-    }
-    return refresh;
-  };
-
-  if (
-    cached &&
-    current - cached.fetchedAt <= SIGNAL_MONITOR_STATE_CACHE_TTL_MS
-  ) {
-    return attachSignalMonitorStateCacheMetadata(cached.value, {
-      cacheStatus: "hit",
-      refreshing: Boolean(inFlight),
-      servedAt: current,
-      stateSource: "memory-cache",
-    });
-  }
-
-  if (
-    cached &&
-    current - cached.fetchedAt <= SIGNAL_MONITOR_STATE_STALE_TTL_MS
-  ) {
-    startOrReuseRefresh();
-    return attachSignalMonitorStateCacheMetadata(cached.value, {
-      cacheStatus: inFlight ? "inflight" : "stale",
-      refreshing: true,
-      servedAt: current,
-      stateSource: "memory-cache",
-    });
-  }
-
-  const refresh = startOrReuseRefresh();
-  let waitedFresh: SignalMonitorStateReadResult | null | undefined;
-  if (inFlight) {
-    waitedFresh = await waitForSignalMonitorStateRefresh(refresh, {
-      cacheKey,
-      environment,
-      startedAt: refresh.startedAt,
-    });
-    if (waitedFresh) {
-      return attachSignalMonitorStateCacheMetadata(waitedFresh.value, {
-        cacheStatus: "inflight",
-        refreshing: false,
-        servedAt: current,
-        stateSource: waitedFresh.stateSource,
-      });
-    }
-  }
-
-  if (cached) {
-    return attachSignalMonitorStateCacheMetadata(cached.value, {
-      cacheStatus: "stale",
-      refreshing: true,
-      servedAt: current,
-      stateSource: "memory-cache",
-    });
-  }
-
-  const fresh =
-    waitedFresh === null
-      ? null
-      : await waitForSignalMonitorStateRefresh(refresh, {
-          cacheKey,
-          environment,
-          startedAt: refresh.startedAt,
-        });
-  if (!fresh) {
-    const warming = buildSignalMonitorStateCacheWarmingResult(
-      environment,
-      new Date(current),
-    );
-    return attachSignalMonitorStateCacheMetadata(warming.value, {
-      cacheStatus: "miss",
-      refreshing: true,
-      servedAt: current,
-      stateSource: warming.stateSource,
-    });
-  }
-
-  return attachSignalMonitorStateCacheMetadata(fresh.value, {
-    cacheStatus: inFlight ? "inflight" : "miss",
-    refreshing: false,
-    servedAt: current,
-    stateSource: fresh.stateSource,
+  const fresh = await readSignalMonitorStateFresh({
+    environment,
+    includeNonCurrent: true,
+    markNonCurrentStale: true,
   });
+  return fresh.value;
 }
 
 export function startSignalMonitorStateCacheWarmup(
