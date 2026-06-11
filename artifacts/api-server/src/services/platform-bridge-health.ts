@@ -266,7 +266,6 @@ function annotateBridgeHealth(
     options.forceStale === true
       ? false
       : healthAgeMs !== null && healthAgeMs <= bridgeHealthFreshMs();
-  const bridgeReachable = healthFresh && options.forceStale !== true;
   const subscriptions =
     health.diagnostics &&
     typeof health.diagnostics === "object" &&
@@ -289,7 +288,17 @@ function annotateBridgeHealth(
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
-  const socketConnected = healthFresh && Boolean(health.connected);
+  // A fresh data stream is positive proof the bridge/gateway is connected: live
+  // quotes cannot flow if it were not. When the /healthz probe is stale or
+  // erroring (e.g. a transient cloudflared 502 on the health route) but the
+  // stream is fresh, trust the stream and keep the connection live instead of
+  // flipping the UI to disconnected on a false-negative health probe. If the
+  // gateway genuinely drops, the stream goes stale and this correctly reverts.
+  const streamVouchesForConnection =
+    streamFresh && Boolean(health.connected) && options.forceStale !== true;
+  const connectionProofFresh = healthFresh || streamVouchesForConnection;
+  const bridgeReachable = connectionProofFresh && options.forceStale !== true;
+  const socketConnected = connectionProofFresh && Boolean(health.connected);
   const authenticated = socketConnected && Boolean(health.authenticated);
   const brokerServerConnected =
     socketConnected && (health.brokerServerConnected ?? Boolean(health.connected));

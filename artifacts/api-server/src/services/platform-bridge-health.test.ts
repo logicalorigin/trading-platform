@@ -153,6 +153,49 @@ test("stale connected bridge health is not reported as usable", async () => {
   assert.equal(health.strictReason, "health_stale");
 });
 
+test("stale health with a fresh data stream stays connected (health-probe false negative)", async () => {
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+
+  const staleButStreamingHealth = {
+    ...bridgeHealth(new Date(Date.now() - 60_000).toISOString()),
+    accounts: ["U123"],
+    authenticated: true,
+    brokerServerConnected: true,
+    connected: true,
+    liveMarketDataAvailable: true,
+    marketDataMode: "live",
+    // Fresh stream evidence: a recent quote age proves the gateway is live even
+    // though the cached health snapshot is 60s stale and /healthz is erroring.
+    diagnostics: { subscriptions: { lastQuoteAgeMs: 5_000, quoteListenerCount: 3 } },
+  };
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          await delay(75);
+          return staleButStreamingHealth;
+        },
+      }) as never,
+  );
+  primeBridgeHealthForSession(staleButStreamingHealth);
+
+  const health = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  });
+
+  assert(health, "expected cached bridge health");
+  assert.equal(health.healthFresh, false, "health probe is still stale");
+  assert.equal(health.streamFresh, true, "stream is fresh");
+  assert.equal(health.connected, true, "a fresh stream keeps the connection live");
+  assert.equal(health.socketConnected, true);
+  assert.equal(health.bridgeReachable, true);
+  assert.equal(health.authenticated, true);
+});
+
 test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconnected immediately", async () => {
   setIbkrBridgeRuntimeOverride({
     apiToken: "test-token",

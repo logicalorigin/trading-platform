@@ -447,3 +447,47 @@ test("credential envelope submission is idempotent after server acceptance", () 
     null,
   );
 });
+
+test("claimed login envelope can be re-claimed by the same helper within the window", () => {
+  const launcher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+  const callbackSecret = readCallbackSecret(launcher.launchUrl);
+
+  submitLegacyIbkrBridgeLoginKey(launcher.activationId, {
+    algorithm: "RSA-OAEP-256-CHUNKED",
+    callbackSecret,
+    helperInstanceId: "helper-reclaim",
+    publicKeyJwk: { kty: "RSA", n: "test", e: "AQAB" },
+  });
+
+  submitLegacyIbkrBridgeLoginEnvelope(launcher.activationId, {
+    algorithm: "RSA-OAEP-256-CHUNKED",
+    ciphertextChunks: ["chunk-a", "chunk-b"],
+    helperInstanceId: "helper-reclaim",
+    managementToken: launcher.managementToken,
+  });
+
+  const firstClaim = claimLegacyIbkrBridgeLoginEnvelope(launcher.activationId, {
+    callbackSecret,
+    helperInstanceId: "helper-reclaim",
+  });
+  assert.equal(firstClaim.ready, true);
+  assert.deepEqual(firstClaim.envelope?.ciphertextChunks, ["chunk-a", "chunk-b"]);
+
+  // A helper that claimed but failed to deliver the credentials to IB Gateway
+  // can re-claim the same envelope and retry. Before the fix, the one-time
+  // handoff was consumed on first claim (ready:false on re-claim), stranding the
+  // activation with no recovery path short of a brand-new activation.
+  const reclaim = claimLegacyIbkrBridgeLoginEnvelope(launcher.activationId, {
+    callbackSecret,
+    helperInstanceId: "helper-reclaim",
+  });
+  assert.equal(reclaim.ready, true);
+  assert.deepEqual(reclaim.envelope?.ciphertextChunks, ["chunk-a", "chunk-b"]);
+
+  // The first claim timestamp is preserved as the two-factor phase anchor.
+  const diagnostics = getIbkrBridgeActivationDiagnostics();
+  assert.ok(diagnostics.latestActivation?.timings.loginEnvelopeClaimedAt);
+});

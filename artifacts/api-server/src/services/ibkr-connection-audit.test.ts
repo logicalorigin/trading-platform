@@ -121,6 +121,63 @@ test("classifies a stalled attempt when a new attempt supersedes it", () => {
   assert.equal(stalled.stalledAtPhase, "credentials");
 });
 
+test("ambient live-state connect does not terminally close an in-flight attempt", () => {
+  __resetConnectionAuditForTests();
+  const t0 = Date.parse("2026-06-09T20:00:00.000Z");
+
+  // An activation is mid-handshake (still in the credentials phase).
+  recordConnectionAuditEvent({
+    attemptId: "act-h3",
+    actor: "pyrus",
+    phase: "request",
+    step: "queued_on_pyrus",
+    at: t0,
+  });
+  recordConnectionAuditEvent({
+    attemptId: "act-h3",
+    actor: "helper",
+    phase: "credentials",
+    step: "credential_key_published",
+    at: t0 + 2000,
+  });
+
+  // A background bridge-health read flips connected -> true (ambient, attemptId:null).
+  recordConnectionLiveState({ connected: false, streamState: "offline" }); // prior obs
+  recordConnectionLiveState({ connected: true, streamState: "live" }); // flip -> system "connected"
+
+  const midSnapshot = getConnectionAuditSnapshot();
+  const midAttempt = midSnapshot.recentAttempts.find(
+    (a) => a.attemptId === "act-h3",
+  );
+  assert(midAttempt, "expected the in-flight attempt to be retained");
+  assert.equal(
+    midAttempt.outcome,
+    "in_progress",
+    "an ambient/system connect must not close the attempt",
+  );
+  assert.equal(
+    midSnapshot.activeAttemptId,
+    "act-h3",
+    "the attempt must remain active after an ambient connect",
+  );
+
+  // The real activation-scoped attach still closes it as connected.
+  recordConnectionAuditEvent({
+    attemptId: "act-h3",
+    actor: "pyrus",
+    phase: "tunnel",
+    step: "bridge_attached",
+    status: "connected",
+    at: t0 + 5000,
+  });
+  assert.equal(
+    getConnectionAuditSnapshot().recentAttempts.find(
+      (a) => a.attemptId === "act-h3",
+    )?.outcome,
+    "connected",
+  );
+});
+
 test("live-state recording is change-gated", () => {
   __resetConnectionAuditForTests();
   recordConnectionLiveState({ connected: true, streamState: "live" }); // first obs: no event

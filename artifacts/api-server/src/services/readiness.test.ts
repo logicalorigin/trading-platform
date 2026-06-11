@@ -7,6 +7,7 @@ import { buildApiReadinessPayload } from "./readiness";
 
 const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
   level: "normal",
+  resourceLevel: "normal",
   observedAt: "2026-06-09T03:32:46.000Z",
   drivers: [],
   scannerPressure: {
@@ -29,6 +30,7 @@ const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
     apiHeapUsedPercent: null,
     apiP95LatencyMs: null,
     dominantSlowRouteP95Ms: null,
+    eventLoopDelayP95Ms: null,
     clientLevel: null,
     cacheLevel: null,
     automationActiveLongScanCount: null,

@@ -22,9 +22,16 @@ const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
 const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
+// Window during which a helper that already claimed the login envelope may
+// re-claim it. Lets a helper instance that claimed but failed to deliver the
+// credentials to IB Gateway (a transient typing/socket error and its own retry)
+// recover, instead of consuming the one-time handoff on first claim and
+// stranding the activation. The envelope stays RSA-encrypted to the helper's
+// ephemeral key, so Pyrus cannot read it during this window.
+const LEGACY_LOGIN_ENVELOPE_RECLAIM_TTL_MS = 3 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
 const BRIDGE_HELPER_VERSION =
-  "2026-06-09.ib-async-sidecar-v20-direct-gateway-typing";
+  "2026-06-10.ib-async-sidecar-v21-continuous-claim";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
@@ -2224,12 +2231,18 @@ export function createIbkrRemoteBridgeShutdown(input: {
   };
   ibkrRemoteLaunchJobs.set(jobId, job);
   notifyWaiters(remoteDesktopJobWaiters, desktop.desktopId);
+  // A shutdown is a user-initiated teardown: drop the cached bridge health so
+  // status stops serving a stale "connected" snapshot (operational health is
+  // otherwise fresh for up to ~120s on the diagnostics path) while the helper
+  // tears the bridge down asynchronously. Mirrors the detach path.
+  invalidateBridgeHealthCache();
   recordConnectionAuditEvent({
     attemptId: null,
     actor: "pyrus",
     step: "shutdown_requested",
     status: "shutdown",
-    message: "IBKR shutdown job queued for the Windows desktop.",
+    message:
+      "IBKR shutdown job queued for the Windows desktop; bridge-health cache invalidated.",
     fields: { jobId, desktopId: desktop.desktopId, force },
   });
 
@@ -3067,9 +3080,24 @@ export function claimLegacyIbkrBridgeLoginEnvelope(
     return { ready: false };
   }
 
+  const now = Date.now();
+  // Past the re-claim window the one-time handoff is consumed for good: drop it
+  // so a stale/duplicate claim can no longer re-deliver credentials.
+  if (
+    activation.loginEnvelopeClaimedAt != null &&
+    now - activation.loginEnvelopeClaimedAt > LEGACY_LOGIN_ENVELOPE_RECLAIM_TTL_MS
+  ) {
+    activation.loginHandoff = null;
+    notifyLegacyActivationWaiters(activationId);
+    return { ready: false };
+  }
+
   const envelope = handoff.envelope;
-  activation.loginEnvelopeClaimedAt = Date.now();
-  activation.loginHandoff = null;
+  // Record the first claim for two-factor phase timing, but retain the handoff
+  // so the same helper instance can re-claim within the window above.
+  if (activation.loginEnvelopeClaimedAt == null) {
+    activation.loginEnvelopeClaimedAt = now;
+  }
   notifyLegacyActivationWaiters(activationId);
   return {
     envelope: {

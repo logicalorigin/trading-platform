@@ -2698,6 +2698,7 @@ function buildResourcePressureMetrics(
     apiHeapUsedPercent: heapUsedPercent,
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
+    eventLoopDelayP95Ms: numeric(api["eventLoopP95Ms"]),
     clientLevel: clientLevel
       ? normalizeApiResourcePressureLevel(clientLevel)
       : null,

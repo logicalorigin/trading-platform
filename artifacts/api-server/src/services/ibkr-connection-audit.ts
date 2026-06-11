@@ -257,7 +257,13 @@ export function recordConnectionAuditEvent(input: ConnectionAuditEventInput): vo
     }
 
     const terminal = classifyTerminal(event);
-    if (terminal) {
+    // Only an event that explicitly names its attempt may terminally close it.
+    // Ambient/system signals (e.g. a change-gated connection_state_change from a
+    // background bridge-health read, attemptId:null) are still recorded on the
+    // active attempt's timeline for context, but must never close it — otherwise
+    // a stale "connected" health flip during a mid-handshake activation would
+    // prematurely mark that attempt connected and drop the active attempt.
+    if (terminal && activationScoped) {
       attempt.outcome = terminal;
       attempt.endedAt = ts;
       if (activeAttemptId === attemptId) {

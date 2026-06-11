@@ -19,7 +19,7 @@ test("route latency between one and ten seconds is watch pressure", () => {
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-latency")?.level, "watch");
 });
 
-test("route latency at ten seconds or higher is high pressure", () => {
+test("request latency raises overall level but does not freeze trading", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -27,11 +27,16 @@ test("route latency at ten seconds or higher is high pressure", () => {
     dominantSlowRouteP95Ms: 10_000,
   });
 
+  // Request latency still raises the overall level (general shedding/display)...
   assert.equal(snapshot.level, "high");
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-latency")?.level, "high");
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, true);
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
-  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+  // ...but it is external I/O, not server saturation, so trading is not frozen.
+  assert.equal(snapshot.resourceLevel, "normal");
+  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+  assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
 });
 
 test("rss pressure can still force high pressure", () => {
@@ -51,7 +56,7 @@ test("rss pressure can still force high pressure", () => {
   __resetApiResourcePressureForTests();
 });
 
-test("watch pressure defers signal-options action work without blocking signal refresh", () => {
+test("request latency watch does not defer signal-options action work", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -59,12 +64,47 @@ test("watch pressure defers signal-options action work without blocking signal r
     dominantSlowRouteP95Ms: 6_000,
   });
 
+  // A slow external/broker route inflates latency but does not saturate the
+  // server, so signal/action work keeps running.
   assert.equal(snapshot.level, "watch");
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
+  assert.equal(snapshot.resourceLevel, "normal");
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
   assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
-  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, false);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("event-loop saturation freezes trading action scans", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    eventLoopDelayP95Ms: 300,
+  });
+
+  // Real server saturation (the loop is blocked) DOES shed trading work.
+  assert.equal(snapshot.resourceLevel, "high");
+  assert.equal(
+    snapshot.drivers.find((driver) => driver.kind === "api-event-loop")?.level,
+    "high",
+  );
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
+  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, true);
+  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("event-loop watch defers action scans but keeps signal refresh", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    eventLoopDelayP95Ms: 100,
+  });
+
+  assert.equal(snapshot.resourceLevel, "watch");
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
+  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
 
   __resetApiResourcePressureForTests();
 });

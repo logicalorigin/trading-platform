@@ -3286,7 +3286,12 @@ async function readShadowLedgerBundleForSource(
       };
     },
     {
-      staleStrategy: "never",
+      // Serve the last bundle immediately and rebuild in the background instead
+      // of blocking the request on a fresh rebuild every TTL (observed ~950ms
+      // cache-miss stalls that drive API pressure "high"). Shadow/paper ledger
+      // analytics tolerate one stale cycle — same tradeoff already adopted for
+      // shadow positions.
+      staleStrategy: "immediate",
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
@@ -7576,6 +7581,12 @@ function buildShadowAccountAllocationResponse(input: {
 export async function getShadowAccountAllocation(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
   kickSignalOptionsAutomationMirrorRepairForRead(source);
+  const reusableFromPositions = readReusableShadowAllocationFromPositions({
+    source,
+  });
+  if (reusableFromPositions) {
+    return reusableFromPositions;
+  }
   return withShadowReadCache(
     `allocation:${shadowSourceCacheKey(source)}`,
     async () => {
@@ -7922,6 +7933,47 @@ function readReusableLiveQuotedShadowPositionsResponse(input: {
     );
   }
   return baseResponse;
+}
+
+function readReusableShadowAllocationFromPositions(input: {
+  source: ShadowSourceScope | null;
+}) {
+  const now = Date.now();
+  const allocationKey = `allocation:${shadowSourceCacheKey(input.source)}`;
+  for (const includeLiveQuotes of [true, false]) {
+    const cached = shadowReadCache.get(
+      shadowPositionsReadCacheKey({
+        assetClassFilter: "all",
+        source: input.source,
+        includeLiveQuotes,
+      }),
+    );
+    if (!cached || cached.staleExpiresAt <= now) {
+      continue;
+    }
+    const cacheIsFresh = cached.expiresAt > now;
+    if (!cacheIsFresh && getApiResourcePressureSnapshot().level !== "high") {
+      continue;
+    }
+    if (!isShadowAccountPositionsResponseShape(cached.value)) {
+      continue;
+    }
+    const positionsResponse = cacheIsFresh
+      ? cached.value
+      : markShadowReadValueStale(cached.value, {
+          cachedAt: cached.cachedAt,
+          now,
+        });
+    recordShadowReadDiagnostic({
+      key: allocationKey,
+      status: "cache_hit",
+      startedAt: now,
+      servedStale: !cacheIsFresh,
+      cacheAgeMs: now - cached.cachedAt,
+    });
+    return getShadowAccountAllocationFromPositions({ positionsResponse });
+  }
+  return null;
 }
 
 function shouldServeFastShadowPositionsForPressure(): boolean {

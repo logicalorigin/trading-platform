@@ -23,6 +23,12 @@ export type ApiResourcePressureCaps = {
 
 export type ApiResourcePressureSnapshot = {
   level: ApiResourcePressureLevel;
+  // Server-saturation level: rss + heap + event-loop delay only. Trading caps
+  // gate on this, NOT on request latency — a slow external (broker) route
+  // inflates request latency without saturating the server, and must not freeze
+  // signal/action work. `level` (which includes request latency) still drives
+  // general shedding (deferred analytics) and display.
+  resourceLevel: ApiResourcePressureLevel;
   observedAt: string;
   drivers: ApiResourcePressureDriver[];
   scannerPressure: {
@@ -36,6 +42,7 @@ export type ApiResourcePressureSnapshot = {
     apiHeapUsedPercent: number | null;
     apiP95LatencyMs: number | null;
     dominantSlowRouteP95Ms: number | null;
+    eventLoopDelayP95Ms: number | null;
     clientLevel: ApiResourcePressureLevel | null;
     cacheLevel: ApiResourcePressureLevel | null;
     automationActiveLongScanCount: number | null;
@@ -55,6 +62,7 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   apiHeapUsedPercent: null,
   apiP95LatencyMs: null,
   dominantSlowRouteP95Ms: null,
+  eventLoopDelayP95Ms: null,
   clientLevel: null,
   cacheLevel: null,
   automationActiveLongScanCount: null,
@@ -66,6 +74,11 @@ const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
 } as const;
 const API_ROUTE_LATENCY_WATCH_MS = 1_000;
 const API_ROUTE_LATENCY_HIGH_MS = 10_000;
+// Event-loop delay thresholds: the direct measure of server CPU/loop saturation
+// (unlike request latency, which external I/O waits inflate). Cooperative yields
+// keep steady-state delay well under the watch line.
+const API_EVENT_LOOP_DELAY_WATCH_MS = 60;
+const API_EVENT_LOOP_DELAY_HIGH_MS = 250;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 
@@ -172,6 +185,12 @@ function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   return value >= API_ROUTE_LATENCY_WATCH_MS ? "watch" : "normal";
 }
 
+function eventLoopDelayLevel(value: number | null): ApiResourcePressureLevel {
+  if (value === null) return "normal";
+  if (value >= API_EVENT_LOOP_DELAY_HIGH_MS) return "high";
+  return value >= API_EVENT_LOOP_DELAY_WATCH_MS ? "watch" : "normal";
+}
+
 function driver(input: {
   kind: string;
   label: string;
@@ -251,6 +270,9 @@ function buildSnapshot(
   const slowRouteLevel = routeLatencyLevel(
     slowRouteMs > 0 ? slowRouteMs : null,
   );
+  const eventLoopLevel = eventLoopDelayLevel(
+    inputs.eventLoopDelayP95Ms ?? null,
+  );
   const rawClientLevel = inputs.clientLevel ?? "normal";
   const clientLevel = capLevel(rawClientLevel, "watch");
   const rawCacheLevel = inputs.cacheLevel ?? "normal";
@@ -264,6 +286,9 @@ function buildSnapshot(
     clientLevel,
     cacheLevel,
   );
+  // Actual server saturation: memory + event-loop only. Request latency is
+  // excluded so a slow external (broker) route can't freeze signal/action work.
+  const resourceLevel = maxLevel(rssLevel, heapLevel, eventLoopLevel);
 
   const drivers = [
     driver({
@@ -289,6 +314,16 @@ function buildSnapshot(
       level: slowRouteLevel,
       detail: slowRouteMs > 0 ? `${Math.round(slowRouteMs)} ms` : null,
       score: slowRouteMs > 0 ? slowRouteMs : null,
+    }),
+    driver({
+      kind: "api-event-loop",
+      label: "API event loop",
+      level: eventLoopLevel,
+      detail:
+        inputs.eventLoopDelayP95Ms === null
+          ? null
+          : `${Math.round(inputs.eventLoopDelayP95Ms)} ms`,
+      score: inputs.eventLoopDelayP95Ms,
     }),
     driver({
       kind: "client-pressure",
@@ -318,6 +353,7 @@ function buildSnapshot(
 
   return {
     level,
+    resourceLevel,
     observedAt: new Date().toISOString(),
     drivers,
     scannerPressure: {
@@ -325,7 +361,8 @@ function buildSnapshot(
       drivers: scannerDrivers,
       activeLongScanCount: inputs.automationActiveLongScanCount,
     },
-    caps: getApiResourcePressureCaps(level),
+    // Trading caps gate on server saturation (resourceLevel), not request latency.
+    caps: getApiResourcePressureCaps(resourceLevel),
     inputs: { ...inputs },
   };
 }
@@ -356,6 +393,7 @@ export function updateApiResourcePressure(
           key === "apiHeapUsedPercent" ||
           key === "apiP95LatencyMs" ||
           key === "dominantSlowRouteP95Ms" ||
+          key === "eventLoopDelayP95Ms" ||
           key === "automationActiveLongScanCount"
         ) {
           return [key, normalizeNumber(value)];
@@ -386,7 +424,7 @@ export function isApiResourcePressureHardBlock(
   snapshot: ApiResourcePressureSnapshot = currentSnapshot,
 ): boolean {
   return (
-    snapshot.level === "high" ||
+    snapshot.resourceLevel === "high" ||
     snapshot.caps.signalOptions.skipDeploymentScans === true
   );
 }
