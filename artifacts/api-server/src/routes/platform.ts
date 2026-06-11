@@ -2162,7 +2162,15 @@ router.get("/options/chains", async (req, res) => {
   const query = GetOptionChainQueryParams.parse(
     coerceDateQueryFields(req.query as Record<string, unknown>, ["expirationDate"]),
   );
-  const raw = await getOptionChainWithDebug(query);
+  // These public /options/* routes are user-facing (the Trade screen). The
+  // bridge "options" backoff exists to throttle the broad flow scanner, which
+  // calls these services internally WITHOUT bypass and stays throttled. A user
+  // actively waiting on their option chain gets a priority attempt past a
+  // scanner-induced backoff instead of a 45s silent-empty response.
+  const raw = await getOptionChainWithDebug({
+    ...query,
+    bypassBridgeBackoff: true,
+  });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionChainResponse.parse(raw);
 
@@ -2171,7 +2179,8 @@ router.get("/options/chains", async (req, res) => {
 
 router.post("/options/chains/batch", async (req, res) => {
   const body = BatchOptionChainsBody.parse(req.body);
-  const raw = await batchOptionChains(body);
+  // User-facing route — see note on GET /options/chains.
+  const raw = await batchOptionChains({ ...body, bypassBridgeBackoff: true });
   setRequestDebugHeaders(res, raw.debug);
   const data = BatchOptionChainsResponse.parse(raw);
 
@@ -2182,9 +2191,13 @@ router.get("/options/expirations", async (req, res) => {
   const query = GetOptionExpirationsQueryParams.parse(
     req.query as Record<string, unknown>,
   );
+  // User-facing route — see note on GET /options/chains. Expirations are the
+  // first thing the Trade chain loads; a scanner-induced options backoff here
+  // is what leaves the chain stuck "waiting for expirations".
   const raw = await getOptionExpirationsWithDebug({
     ...query,
     foregroundWaitMs: OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
+    bypassBridgeBackoff: true,
   });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionExpirationsResponse.parse(raw);
