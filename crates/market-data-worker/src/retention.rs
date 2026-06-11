@@ -49,7 +49,7 @@ pub async fn run_retention(pool: &PgPool, config: &WorkerConfig, execute: bool) 
         },
     ];
 
-    for result in apply_targets(pool, &targets, execute).await? {
+    for result in apply_targets(pool, &targets, execute, config.retention_batch_size).await? {
         info!(
             table = result.table,
             retention_days = result.retention_days,
@@ -66,17 +66,36 @@ async fn apply_targets(
     pool: &PgPool,
     targets: &[RetentionTarget],
     execute: bool,
+    batch_size: i64,
 ) -> Result<Vec<RetentionResult>> {
+    let batch_size = batch_size.max(1);
     let mut results = Vec::with_capacity(targets.len());
     for target in targets {
         let cutoff = retention_cutoff(Utc::now(), target.retention_days);
         let affected_rows = if execute {
-            let sql = format!("delete from {} where {} < $1", target.table, target.column);
-            sqlx::query(&sql)
-                .bind(cutoff)
-                .execute(pool)
-                .await?
-                .rows_affected()
+            // Delete in bounded chunks so each transaction stays small (locks/WAL
+            // bounded), letting autovacuum keep pace on hot tables. cutoff is fixed
+            // for the sweep, so the loop is finite.
+            let sql = format!(
+                "delete from {table} where ctid in \
+                 (select ctid from {table} where {column} < $1 limit {limit})",
+                table = target.table,
+                column = target.column,
+                limit = batch_size,
+            );
+            let mut total: u64 = 0;
+            loop {
+                let removed = sqlx::query(&sql)
+                    .bind(cutoff)
+                    .execute(pool)
+                    .await?
+                    .rows_affected();
+                total += removed;
+                if removed == 0 {
+                    break;
+                }
+            }
+            total
         } else {
             let sql = format!(
                 "select count(*)::bigint as count from {} where {} < $1",

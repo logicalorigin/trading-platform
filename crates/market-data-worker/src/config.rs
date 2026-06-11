@@ -14,6 +14,8 @@ pub struct WorkerConfig {
     pub bar_retention_days: i64,
     pub gex_retention_days: i64,
     pub provider_log_retention_days: i64,
+    pub retention_interval_secs: u64,
+    pub retention_batch_size: i64,
     pub market_data_provider: Option<MarketDataProviderConfig>,
 }
 
@@ -44,12 +46,16 @@ impl WorkerConfig {
             option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
             quote_retention_days: read_i64_env("MARKET_DATA_QUOTE_RETENTION_DAYS", 7),
             option_chain_retention_days: read_i64_env("MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS", 7),
-            bar_retention_days: read_i64_env("MARKET_DATA_BAR_RETENTION_DAYS", 30),
+            bar_retention_days: read_i64_env("MARKET_DATA_BAR_RETENTION_DAYS", 90),
             gex_retention_days: read_i64_env("MARKET_DATA_GEX_RETENTION_DAYS", 30),
             provider_log_retention_days: read_i64_env(
                 "MARKET_DATA_PROVIDER_LOG_RETENTION_DAYS",
                 14,
             ),
+            // Background retention sweep cadence + chunk size. 6h keeps each sweep's
+            // backlog small; 20k-row batches keep locks/WAL bounded on the hot tables.
+            retention_interval_secs: read_u64_env("MARKET_DATA_RETENTION_INTERVAL_SECS", 21_600),
+            retention_batch_size: read_i64_env("MARKET_DATA_RETENTION_BATCH_SIZE", 20_000),
             market_data_provider: read_market_data_provider_config(),
         })
     }

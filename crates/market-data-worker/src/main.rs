@@ -256,6 +256,26 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
         "market-data worker started"
     );
 
+    // Background retention sweep: keeps cache tables (bar_cache, option_chain_snapshots,
+    // quote_cache, gex_snapshots, provider_request_log) bounded so they don't bloat and
+    // stall queries / starve the API event loop (which otherwise gets the dev workflow
+    // killed and restarted by Replit). Runs concurrently with job processing and deletes
+    // in small batches. Only in the long-running worker, not the bounded drain mode.
+    if max_jobs.is_none() {
+        let pool = pool.clone();
+        let config = config.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(120)).await;
+            loop {
+                match retention::run_retention(&pool, &config, true).await {
+                    Ok(()) => info!("scheduled retention sweep complete"),
+                    Err(error) => warn!(err = %error, "scheduled retention sweep failed"),
+                }
+                tokio::time::sleep(Duration::from_secs(config.retention_interval_secs)).await;
+            }
+        });
+    }
+
     let mut completed_jobs = 0usize;
     loop {
         if max_jobs.is_some_and(|limit| completed_jobs >= limit) {
