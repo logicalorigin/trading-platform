@@ -174,7 +174,55 @@ Source audit (4 dims, ~15 panels) + live capture (screen renders fully). Dense m
 _Note: ACC-02/03/04/05 are the genuine next-touch work on Account — a shared "stale freshness Pill" + loading-skeleton pattern would close them together. Deferred because they need stale/pending data states to build+verify safely._
 
 ## Tier 2 — Flow · GEX · Research · Algo · Backtest
-_(pending)_
+
+### Flow — full audit (2026-06-11)
+Source audit (4 dims) of `FlowScreen.jsx` (6.5k LOC) + `features/flow/*`. Dev server was up; fixes verified by source + typecheck (live re-shoot pending — see note). Feeder doc `AUDIT_FINDINGS_2026-05-13.md` is a runtime/DB bug report, not design — no design items to fold in.
+
+**Strengths verified:**
+- **Colors fully tokenized** — 0 hardcoded `rgba()`/hex across all Flow files.
+- **Direction is multi-cue** — `toneForOptionSide` + "C"/"P" badges + "Call flow"/"Put flow" / "Bull"/"Bear" / "BID/MID/ASK" text labels everywhere → hue is never the only cue.
+- **Established directional system** — screen defines `FLOW_BUY_TONE`/`FLOW_BULLISH_TONE` (= blue via `toneForDirectionalIntent`) + `FLOW_SELL_TONE`/`FLOW_BEARISH_TONE` (red) and routes ~25 sites through them; `toneForOptionSide` (blue/red) used ~10×.
+
+**Fixed this pass** (typecheck green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| FLOW-01 | **Directional-green drift** — a cluster of inline sites hardcoded `green` for **call/buy/bull** directional intent, violating DESIGN.md (directional buy/call/bullish = **blue**, green is "banned only when reading directional market intent") **and** bypassing the screen's own `FLOW_BULLISH_TONE`/`FLOW_BUY_TONE`/`toneForOptionSide` (already blue, used ~35× on the same screen). Not the rejected "color-only" pattern — this is **wrong-hue + internal inconsistency** on the screen's **primary read** (directional pressure). All sites carry text cues ("Bull"/"Bear"/"C"/"P"/"BUY"/"Ask·buy"), so hue change is multi-cue-safe. Routed every site through the canonical constants (symmetric pairs; red conversions are visual no-ops since `FLOW_BEARISH_TONE===red`). 11 sites: ContractDetailInline `cpColor`:479, ask-spread:554/557/559, SIDE:908; FlowScreen call/put-premium:5211, netColor:1556, "Bullish balance":2849, "Bull/Bear" summary:4804, net:4808, Bull/Bear/Net spans:4853/4859/4868, "Ask/buy" exec:5510. ContractDetailInline gained the `semanticToneModel` import. | see ids | ds/semantic (visual) | P2 | done |
+
+**Open (deferred — lower confidence / ambiguous data-viz, needs live visual judgment):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| FLOW-02 | Bid/ask **quote-ladder** coloring uses green-for-call at the ask while **bid is hardcoded red** regardless of side → ambiguous (book-side ladder vs direction). Converting to blue is plausibly correct but the anchored-red bid makes semantics unclear; left for live visual judgment. | FlowScreen.jsx:3253 (ask price), 3271 (spread gradient end-stop) | ds/semantic | P3 | open (needs screenshot) |
+| FLOW-03 | **News-sentiment** score uses green(+)/red(−). Distinct axis from order-flow direction (external news tone, not buy/sell pressure) → intentionally **not** recolored to blue to avoid over-reach; flag for a doctrine call on whether news sentiment counts as "directional market intent". | FlowScreen.jsx:5632; ContractDetailInline.jsx:966 | ds/semantic | P3 | open |
+| FLOW-04 | `ProgressBar` fill uses `transition: width 0.4s ease` — non-token duration (no `--ra-motion-*` token > 260ms). One-shot fill inside `overflow:hidden` (no reflow); a progress-fill **data motion**, not a UI state transition. Same class as GC-08 won't-fix loop durations → leave unless a >260ms motion-token tier is introduced. This resolves the SYS-06 "FlowScannerStatusPanel width 0.4s" deferred edge case. | FlowScannerStatusPanel.jsx:89 | motion | P3 | wontfix(noted) → closes SYS-06 edge |
+
+**SYS-04 (surfaces):** down-payment **no-op** (like Market) — Flow's `bg1` usages are control/bar/chart surfaces (ProgressBar track, `ScannerMetric` at `RADII.sm`), not card recipes; 0 `surfaceStyle()` conversions warranted.
+**State coverage:** loading/empty/error idioms present across FlowScreen (29 refs), ContractDetailInline (16), FlowDistributionScannerPanel (9) — no high-confidence gap found source-side; per-row stale cue would need live stale data (same residual as ACC-03/SIG-03).
+
+### GEX — full audit (2026-06-11)
+Source audit (4 dims) of `GexScreen.jsx` (2.3k LOC) + `features/gex/*` via parallel dimension agents, all fact-checked against source. Feeder doc `GEX_*` n/a. Fixes verified by source + typecheck (green).
+
+**Strengths verified (3 of 4 dims clean):**
+- **Colors fully tokenized** — 0 raw hex/`rgba()` literals across all GEX files. Call/bullish = blue (`GEX_CALL_TONE`/`GEX_BULLISH_TONE` via `toneForDirectionalIntent`), put/bearish = red; no directional-green drift (unlike Flow). Squeeze-factor green/amber/red is a **quality/readiness meter** (not a directional-intent read) and the heatmap green↔red is a **diverging data-viz scale** (legend swatches are `aria-hidden` + text-labelled) — both doctrine-allowed, confirmed.
+- **Motion / DS-adherence clean** — 0 inline `transition:`/`transition: all` stragglers; Recharts animations explicitly disabled; spacing via `sp()`, weights via `FONT_WEIGHTS`, radii via `RADII`, surfaces via `Card`/`surfaceStyle()` (control/header/tooltip surfaces correctly opt out). No rework.
+
+**Fixed this pass** (typecheck green):
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| GEX-01 | Heatmap **Expand/Collapse** button (`height: dim(26)`) and **"view all"** inline button (`padding: 0`, no min target) lacked `.ra-touch-target` → no 44px touch floor (SYS-05). Added the class to both (desktop unchanged — 26px > 24px floor; touch floors to 44px). | GexScreen.jsx:815, 942 | a11y | P2 | done |
+| GEX-02 | Decorative `<Zap>` score icon not `aria-hidden` (score already rendered as `{score}/100` text adjacent) → added `aria-hidden="true"` (matches SignalsScreen lucide convention). | GexScreen.jsx:1162 | a11y | P3 | done |
+
+**Open (deferred — state coverage; most need live stale/empty/pending data to build+verify safely, per ACC-02/03 pattern):**
+| id | finding | evidence | dim | sev | status |
+|----|---------|----------|-----|-----|--------|
+| GEX-03 | **Error state has no inline retry** — `chainError` renders `DataUnavailableState variant="error"` (`role=alert`) but no recovery action, though `DataUnavailableState` has an `action` prop and `gexQuery.refetch` is available. Doctrine: error states get inline retry. Recommended fix = pass `action={<retry button onClick={gexQuery.refetch}>}`; deferred because GEX imports no Button primitive and the retry-button styling wants visual judgment (would be the app's first `action=` on this component; `InlineError` is account-scoped so not reusable here). | GexScreen.jsx:2010-2015 | state | P2 | open |
+| GEX-04 | **KPI strip** shows "Updated {label}" timestamp but no amber stale tone when `sourceLastUpdatedAt` is old (DESIGN.md: timestamp + amber tone). | GexScreen.jsx:1999 | state | P1 | open (needs stale data) |
+| GEX-05 | **Strike-profile dense table** has no row-level stale/data-issue cue though rows carry `updatedAt`/`quoteFreshness` (DESIGN.md dense-table row cue — same residual as ACC-03/SIG-03). | GexScreen.jsx:1335-1459 | state | P2 | open (needs mixed-age data) |
+| GEX-06 | Strike-profile / expiry / OI **charts + heatmap** lack an explicit empty-state message when their row arrays are `[]` (top-level guards cover most paths; per-chart empty would show blank inside a ready frame). | GexScreen.jsx:549,632,696,769 | state | P3 | open (needs empty data) |
+| GEX-07 | `backgroundLoading` (`isFetching && !isPending`) is computed (1684) but unused → no "refreshing" affordance on background refetch (DESIGN.md: label refreshing, preserve last values). | GexScreen.jsx:1684 | state | P3 | open (needs refetch state) |
+
+**SYS-04 (surfaces):** no-op (like Market/Flow) — card panels already use `<Card>` (→ `surfaceStyle()` SoT for free); remaining `bg1` surfaces are table-headers/tooltips/metric-tiles/progress-tracks, not card recipes. 0 conversions warranted.
+
+_(Research · Algo · Backtest — pending)_
 
 ## Tier 3 — Diagnostics · Settings  _(lower "functional-and-clean" bar)_
 _(pending)_

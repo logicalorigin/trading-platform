@@ -1555,9 +1555,9 @@ const PremiumDistributionWidget = ({
 
   const netColor =
     widget.netPremium > 0
-      ? CSS_COLOR.green
+      ? FLOW_BULLISH_TONE
       : widget.netPremium < 0
-        ? CSS_COLOR.red
+        ? FLOW_BEARISH_TONE
         : CSS_COLOR.textDim;
   const netKilo = premiumToKiloUsd(widget.netPremium);
   const rows = buildPremiumDistributionRows(widget);
@@ -2846,7 +2846,7 @@ const FlowOverviewPanel = ({
       label: "Net Premium",
       value: `${netPrem >= 0 ? "+" : "-"}${fmtM(Math.abs(netPrem))}`,
       sub: netPrem >= 0 ? "Bullish balance" : "Bearish balance",
-      color: netPrem >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+      color: netPrem >= 0 ? FLOW_BULLISH_TONE : FLOW_BEARISH_TONE,
     },
     {
       label: "0DTE",
@@ -4801,15 +4801,15 @@ const FlowOverviewPanel = ({
                     }}
                   >
                     {[
-                      ["Bull", flowSentimentSummary.bullPremium, CSS_COLOR.green],
-                      ["Bear", flowSentimentSummary.bearPremium, CSS_COLOR.red],
+                      ["Bull", flowSentimentSummary.bullPremium, FLOW_BULLISH_TONE],
+                      ["Bear", flowSentimentSummary.bearPremium, FLOW_BEARISH_TONE],
                       [
                         "Net",
                         flowSentimentSummary.netPremium,
                         flowSentimentSummary.netPremium > 0
-                          ? CSS_COLOR.green
+                          ? FLOW_BULLISH_TONE
                           : flowSentimentSummary.netPremium < 0
-                            ? CSS_COLOR.red
+                            ? FLOW_BEARISH_TONE
                             : CSS_COLOR.textDim,
                       ],
                     ].map(([label, value, color]) => (
@@ -4850,13 +4850,13 @@ const FlowOverviewPanel = ({
                   >
                     <span>
                       Bull{" "}
-                      <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
+                      <span style={{ color: FLOW_BULLISH_TONE, fontWeight: FONT_WEIGHTS.regular }}>
                         {fmtM(flowSentimentSummary.bullPremium)}
                       </span>
                     </span>
                     <span>
                       Bear{" "}
-                      <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
+                      <span style={{ color: FLOW_BEARISH_TONE, fontWeight: FONT_WEIGHTS.regular }}>
                         {fmtM(flowSentimentSummary.bearPremium)}
                       </span>
                     </span>
@@ -4866,9 +4866,9 @@ const FlowOverviewPanel = ({
                         style={{
                           color:
                             flowSentimentSummary.netPremium > 0
-                              ? CSS_COLOR.green
+                              ? FLOW_BULLISH_TONE
                               : flowSentimentSummary.netPremium < 0
-                                ? CSS_COLOR.red
+                                ? FLOW_BEARISH_TONE
                                 : CSS_COLOR.textDim,
                           fontWeight: FONT_WEIGHTS.regular,
                         }}
@@ -5208,7 +5208,7 @@ const FlowOverviewPanel = ({
                   {
                     label: "Call / put",
                     value: `${fmtM(selectedCallPremium)} / ${fmtM(selectedPutPremium)}`,
-                    tone: selectedCallPremium >= selectedPutPremium ? CSS_COLOR.green : CSS_COLOR.red,
+                    tone: toneForOptionSide(selectedCallPremium >= selectedPutPremium ? "C" : "P"),
                   },
                   {
                     label: "Unusual",
@@ -5507,8 +5507,8 @@ const FlowOverviewPanel = ({
                 style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", minWidth: 0 }}
               >
                 {[
-                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: CSS_COLOR.green },
-                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: CSS_COLOR.red },
+                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: FLOW_BUY_TONE },
+                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: FLOW_SELL_TONE },
                   { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), tone: CSS_COLOR.textDim },
                   { label: "Sweep / block", value: `${executionStats.sweepCount} / ${executionStats.blockCount}`, sub: `${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`, tone: CSS_COLOR.text },
                   { label: "Avg size / top exp", value: isFiniteNumber(executionStats.avgSize) ? fmtCompactNumber(executionStats.avgSize) : MISSING_VALUE, sub: executionStats.topExpiration, tone: CSS_COLOR.text },

@@ -814,6 +814,7 @@ const HeatmapCard = ({ rows, spot }) => {
           <HeatmapColorLegend compact />
           <button
             type="button"
+            className="ra-touch-target"
             onClick={() => setExpanded((value) => !value)}
             style={{
               ...fieldStyle,
@@ -941,6 +942,7 @@ const HeatmapCard = ({ rows, spot }) => {
             </span>
             <button
               type="button"
+              className="ra-touch-target"
               onClick={() => setExpanded(true)}
               style={heatmapInlineButtonStyle}
             >
@@ -1159,7 +1161,7 @@ const SqueezeCard = ({ squeeze, source }) => {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(7) }}>
-          <Zap size={15} color={CSS_COLOR.amber} />
+          <Zap size={15} color={CSS_COLOR.amber} aria-hidden="true" />
           <span style={{ color, fontSize: fs(18), fontWeight: FONT_WEIGHTS.emphasis }}>
             {squeeze.score || 0}
           </span>

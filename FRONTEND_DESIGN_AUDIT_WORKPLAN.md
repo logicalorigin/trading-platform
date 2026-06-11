@@ -46,13 +46,16 @@ Run the repeatable unit (below) for each screen. Feeder redesign docs are the fi
 - **Tier 1: ✅ DONE (2026-06-10)** — ~~Market~~ · ~~Signals~~ · ~~Trade~~ · ~~Account~~
   - Market: MKT-01/03/06/07 fixed. Signals: compliant, no fixes (3 agent P0s false). Trade: TRD-01 ConfirmDialog focus trap fixed (3 false-positives rejected). Account: ACC-01 modal rgba→token (5 state-coverage items logged open).
   - **Recurring pattern:** agent audits over-flag "color-only P&L/direction" — the app uses signed formatters (`+$/−$`, `formatSignedPercent`) + arrow glyphs consistently → multi-cue → compliant. SYS-15 largely mitigated.
-  - **Next: Tier 2 → Flow.**
+  - **Next: Tier 2 → Research** (Flow + GEX done — see below).
 - **Tier 1 (original list):** ~~Market~~ · ~~Signals~~ · ~~Trade~~ · ~~Account~~
   - **Market: ✅ DONE (2026-06-10)** — full 4-dim audit; fixed MKT-01/03/06/07 (decorative gradient→token, padding→`sp()`, hardcoded rgba→token, sector-flow touch target); 6 P2/P3 findings logged open (MKT-02/04/05/08/09/10). SYS-04 down-payment confirmed no-op. See POLISH_BACKLOG Tier 1 Market.
   - Feeder docs: Market→`WATCHLIST_CARD_REDESIGN.md`; Account/Trade positions→`POSITIONS_TABLE_REDESIGN.md`.
   - **Screenshots: WORKING** (corrected 2026-06-10). Plain `browse screenshot <path>` captures real PNGs (uses CDP, not sharp). Sharp's native lib (`libstdc++.so.6`) fails to load so **annotated (`-a`) and `responsive` (stitched multi-width) are broken** — workaround: set `viewport WxH` then plain `screenshot` per width. To fully fix sharp: relaunch the browse daemon with `LD_LIBRARY_PATH=/nix/store/04344hrpsbjzy7wq7vhwgcyarpbliz1l-gcc-14.2.1.20250322-lib/lib` (the persistent daemon resisted a clean restart this session). Capture flow: `goto` → poll until `.ra-shell` + buttons>50 → `screenshot`.
-- **Tier 2:** Flow · GEX · Research · Algo · Backtest
-  - Feeder docs: Algo right rail→`ALGO_RIGHT_RAIL_REDESIGN.md`; Algo signal table→`SIGNALS_TO_ACTION_AUDIT.md`; Flow→`AUDIT_FINDINGS_2026-05-13.md`; perf→`APP_RESPONSIVENESS_AUDIT_2026-06-09.md` + `PAGE_LOAD_PERFORMANCE_AUDIT.md`.
+- **Tier 2:** ~~Flow~~ · ~~GEX~~ · **Research (next)** · Algo · Backtest
+  - **Flow: ✅ DONE (2026-06-11)** — full 4-dim source audit of `FlowScreen.jsx` (6.5k LOC) + `features/flow/*`. Fixed FLOW-01 (**directional-green→blue drift, 11 sites** routed through canonical `FLOW_*_TONE`/`toneForOptionSide`; multi-cue-safe). FLOW-02/03 left open for **live screenshot judgment** (quote-ladder book-side red, news-sentiment doctrine call); FLOW-04 wontfix (ProgressBar `width 0.4s` data-motion → **closes SYS-06 FlowScannerStatusPanel edge**). SYS-04 no-op. Feeder doc `AUDIT_FINDINGS_2026-05-13.md` is a runtime/DB bug report, **not design** — nothing to fold. See POLISH_BACKLOG Tier 2 Flow.
+  - **GEX: ✅ DONE (2026-06-11)** — full 4-dim audit of `GexScreen.jsx` (2.3k LOC) + `features/gex/*`. No directional-green drift (already blue). Fixed GEX-01 (touch targets), GEX-02 (decorative icon `aria-hidden`). GEX-03–07 logged **open** — error-retry wants visual judgment, the rest **need live stale/empty/refetch data** to verify. SYS-04 no-op. See POLISH_BACKLOG Tier 2 GEX.
+  - Feeder docs: Algo right rail→`ALGO_RIGHT_RAIL_REDESIGN.md`; Algo signal table→`SIGNALS_TO_ACTION_AUDIT.md`; perf→`APP_RESPONSIVENESS_AUDIT_2026-06-09.md` + `PAGE_LOAD_PERFORMANCE_AUDIT.md`.
+  - **Live-state tail (Flow + GEX):** FLOW-02/03, GEX-03/04/05/06/07 all need a live browser session (stale/empty/error/refetch states) to close — batch them when the full stack is up.
 - **Tier 3:** Diagnostics · Settings (lower "functional-and-clean" bar)
 - Platform-wide UX: `CONNECTION_ACTION_UX_PLAN.md` (note: `ConfirmDialog`/`ConnectionStatusPill` already exist — verify against spec, don't rebuild).
 

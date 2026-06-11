@@ -67,6 +67,10 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { flowProviderColor } from "./flowPresentation";
+import {
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../platform/semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -476,7 +480,7 @@ export const ContractDetailInline = ({
   if (!evt) return null;
 
   const isCall = evt.cp === "C";
-  const cpColor = isCall ? CSS_COLOR.green : CSS_COLOR.red;
+  const cpColor = toneForOptionSide(evt.cp);
   const typeColor =
     evt.type === "SWEEP" ? CSS_COLOR.amber : evt.type === "BLOCK" ? CSS_COLOR.accent : CSS_COLOR.purple;
   const isSnapshotFlow = evt.basis === "snapshot";
@@ -551,12 +555,12 @@ export const ContractDetailInline = ({
       return { label: "Mid", shortLabel: "MID", spread, spreadPct, color: CSS_COLOR.textDim };
     }
     if (position <= 0.9) {
-      return { label: "Ask side", shortLabel: "ASK", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
+      return { label: "Ask side", shortLabel: "ASK", spread, spreadPct, color: toneForOptionSide(evt.cp) };
     }
     if (position <= 1) {
-      return { label: "At ask", shortLabel: "ASK", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
+      return { label: "At ask", shortLabel: "ASK", spread, spreadPct, color: toneForOptionSide(evt.cp) };
     }
-    return { label: "Above ask", shortLabel: "ASK+", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
+    return { label: "Above ask", shortLabel: "ASK+", spread, spreadPct, color: toneForOptionSide(evt.cp) };
   })();
 
   const Stat = ({ label, value, color = CSS_COLOR.text, mono = true }) => (
@@ -905,7 +909,7 @@ export const ContractDetailInline = ({
                 gap: sp(4),
               }}
             >
-              <Stat label="SIDE" value={evt.side} color={evt.side === "BUY" ? CSS_COLOR.green : evt.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim} />
+              <Stat label="SIDE" value={evt.side} color={toneForDirectionalIntent(evt.side, CSS_COLOR.textDim)} />
               <Stat label="TYPE" value={evt.type} color={typeColor} />
               <Stat label="VOL" value={fmtCompactNumber(evt.vol)} />
               <Stat label="OI" value={fmtCompactNumber(evt.oi)} />
