@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __liveStreamsInternalsForTests } from "./live-streams.ts";
+import {
+  __liveStreamsInternalsForTests,
+  getSignalMonitorMatrixStreamUrl,
+} from "./live-streams.ts";
 
 const queryKeyText = (key) => JSON.stringify(key);
 
@@ -472,4 +475,27 @@ test("shared option quote stream demand unions active hook subscriptions", () =>
   assert.equal(demand.owner, "shared-option-quotes:3-contracts");
   assert.equal(demand.intent, "execution-live");
   assert.equal(demand.requiresGreeks, true);
+});
+
+test("signal matrix stream url omits requestOrigin (backend rejects unknown origins with 400)", () => {
+  const url = getSignalMonitorMatrixStreamUrl({
+    environment: "paper",
+    symbols: ["AAPL", "MSFT"],
+    timeframes: ["1d"],
+  });
+
+  assert.ok(url, "expected a stream url for non-empty symbols");
+  const params = new URLSearchParams(url.split("?")[1]);
+  // The backend StreamSignalMonitorMatrixQueryParams enum only accepts
+  // startup|poll|manual|test; sending anything else (or the old
+  // "signal-matrix-stream") is a hard 400. Omitting it keeps the request valid
+  // and avoids foreground-leader exact-cell work.
+  assert.equal(params.has("requestOrigin"), false);
+  assert.equal(params.get("symbols"), "AAPL,MSFT");
+  assert.equal(params.get("timeframes"), "1d");
+});
+
+test("signal matrix stream url is null when no symbols are supplied", () => {
+  assert.equal(getSignalMonitorMatrixStreamUrl({ symbols: [] }), null);
+  assert.equal(getSignalMonitorMatrixStreamUrl({ symbols: ["", "  "] }), null);
 });

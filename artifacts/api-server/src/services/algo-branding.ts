@@ -40,32 +40,59 @@ const LEGACY_BRANDING_PATTERNS: RegExp[] = [
   /\bray[-_]?algo\b/i,
 ];
 
+// Every legacy pattern above contains "ray" (case-insensitive). A single cheap
+// scan lets us skip the 14 regex replacements for the overwhelmingly common
+// case of strings that have no legacy branding at all.
+const LEGACY_BRAND_HINT = /ray/i;
+
 export function normalizeLegacyAlgoBrandText(value: string): string {
+  if (!LEGACY_BRAND_HINT.test(value)) {
+    return value;
+  }
   return LEGACY_TEXT_REPLACEMENTS.reduce(
     (current, [pattern, replacement]) => current.replace(pattern, replacement),
     value,
   );
 }
 
+// Walks strings/arrays/objects and renames legacy brand tokens. Uses structural
+// sharing: when a subtree contains no legacy branding it is returned by
+// reference instead of being rebuilt, so clean payloads (the common case on
+// streaming/poll paths) cost a shallow traversal with no allocation. Output is
+// JSON-identical to a full rebuild; callers only ever serialize the result.
 export function normalizeLegacyAlgoBranding<T>(value: T): T {
   if (typeof value === "string") {
     return normalizeLegacyAlgoBrandText(value) as T;
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeLegacyAlgoBranding(item)) as T;
+    let changed = false;
+    const next = value.map((item) => {
+      const normalized = normalizeLegacyAlgoBranding(item);
+      if (normalized !== item) {
+        changed = true;
+      }
+      return normalized;
+    });
+    return (changed ? next : value) as T;
   }
 
   if (!value || typeof value !== "object" || value instanceof Date) {
     return value;
   }
 
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-      normalizeLegacyAlgoBrandText(key),
-      normalizeLegacyAlgoBranding(item),
-    ]),
-  ) as T;
+  let changed = false;
+  const nextEntries = Object.entries(value as Record<string, unknown>).map(
+    ([key, item]) => {
+      const nextKey = normalizeLegacyAlgoBrandText(key);
+      const nextItem = normalizeLegacyAlgoBranding(item);
+      if (nextKey !== key || nextItem !== item) {
+        changed = true;
+      }
+      return [nextKey, nextItem] as const;
+    },
+  );
+  return (changed ? Object.fromEntries(nextEntries) : value) as T;
 }
 
 export function hasLegacyAlgoBranding(value: unknown): boolean {

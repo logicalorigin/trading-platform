@@ -6311,13 +6311,16 @@ export const getSignalMonitorMatrixStreamUrl = ({
   const normalizedTimeframes = (timeframes ?? [])
     .map((timeframe) => String(timeframe || "").trim())
     .filter(Boolean);
+  // No requestOrigin: the SSE stream runs alongside the REST poll and must NOT
+  // be classified as a foreground-leader poll (that gate triggers extra exact-
+  // cell evaluation server-side). The backend schema rejects unknown origins
+  // with a 400, and "signal-matrix-stream" is not in its enum — so omit it.
   return buildStreamUrl("/api/signal-monitor/matrix/stream", {
     environment: environment ?? undefined,
     symbols: normalizedSymbols.join(","),
     timeframes: normalizedTimeframes.length
       ? normalizedTimeframes.join(",")
       : undefined,
-    requestOrigin: "signal-matrix-stream",
   });
 };
 
