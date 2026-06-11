@@ -1356,7 +1356,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       {/* Chart body */}
       <div style={{ position: "relative", height: 240 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={priceHistory} margin={{ top: 8, right: showRefs ? 42 : 8, bottom: 4, left: -2 }}>
+          <AreaChart role="img" aria-label="Price history chart" data={priceHistory} margin={{ top: 8, right: showRefs ? 42 : 8, bottom: 4, left: -2 }}>
             <defs>
               <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={vc.c} stopOpacity={0.28} />
@@ -2119,7 +2119,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
         <div style={STYLE_SECTION}>
           <div style={STYLE_LABEL}>Annual Revenue</div>
           <ResponsiveContainer width="100%" height={75}>
-            <BarChart data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
+            <BarChart role="img" aria-label="Annual revenue chart" data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
               <XAxis dataKey="year" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: fs(11), fill: CSS_COLOR.textMuted }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={chartTooltipContentStyle} formatter={(v) => [fmtMC(v), "Revenue"]} />
@@ -2295,7 +2295,7 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
             </div>
             <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("8px 10px") }}>
 	              <ResponsiveContainer width="100%" height={140}>
-	                <BarChart data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
+	                <BarChart role="img" aria-label="Quarterly EPS beat/miss chart" data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
 	                  <XAxis dataKey="label" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} />
 	                  <YAxis tick={{ fontSize: fs(10), fill: CSS_COLOR.textMuted }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
 	                  <Tooltip contentStyle={chartTooltipContentStyle}
@@ -2969,7 +2969,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   }}>✕ Back</button>
                 )}
 
-                <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: 540 }}
+                <svg role="img" aria-label="Value-stream Sankey diagram" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: 540 }}
                   onClick={() => { setFocused(null); setHoverTicker(null); }}>
                   <defs>
                     <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%">
@@ -3391,7 +3391,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             <div key={title} style={{ ...card, padding: sp(10) }}>
               <div style={{ ...lbl, marginBottom: sp(6) }}>{title}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <svg width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
+                <svg role="img" aria-label="Composition donut chart" width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
                   {arcs.map(d => (
                     <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={CSS_COLOR.bg1} strokeWidth={1.5}
                       style={{ cursor: "pointer", transition: "fill-opacity var(--ra-motion-fast)" }}
@@ -3483,7 +3483,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={lbl}>Valuation spectrum: P/E vs growth</div>
         <div style={{ ...card, padding: sp("8px 4px") }}>
           <ResponsiveContainer width="100%" height={200}>
-            <ScatterChart margin={{ top: 14, right: 16, bottom: 8, left: 0 }}>
+            <ScatterChart role="img" aria-label="Valuation scatter: P/E versus growth" margin={{ top: 14, right: 16, bottom: 8, left: 0 }}>
               <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false}
                 label={{ value: "P/E Ratio", position: "bottom", fontSize: fs(10), fill: CSS_COLOR.textMuted, offset: -2 }} />
               <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false}
@@ -4045,7 +4045,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   return (
     <div style={{ position: "relative", background: CSS_COLOR.bg1, borderRadius: RADII.md, overflow: "hidden", border: `1px solid ${CSS_COLOR.border}`, boxShadow: ELEVATION.sm }}>
       <GraphToolbar colorMode={colorMode} setColorMode={setColorMode} nodesRef={nodesRef} simRef={simRef} />
-      <svg ref={ref} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
+      <svg ref={ref} role="img" aria-label="Sector relationship network graph" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
 
       {/* Hover tooltip */}
       <div ref={tipRef} style={{
@@ -4158,7 +4158,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Macro sensitivity by vertical
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: sp(16) }}>
+      <div role="img" aria-label="Macro sensitivity heatmap by vertical" style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: sp(16) }}>
         <div />
         {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
         {vertSummary.map(v => [

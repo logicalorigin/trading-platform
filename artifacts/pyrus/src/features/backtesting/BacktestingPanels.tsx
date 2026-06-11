@@ -3283,6 +3283,7 @@ export function BacktestWorkspace({
               >
                 <button
                   type="button"
+                  aria-pressed={universeMode === "watchlist"}
                   onClick={() => setUniverseMode("watchlist")}
                   style={buttonStyle(
                     theme,
@@ -3294,6 +3295,7 @@ export function BacktestWorkspace({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={universeMode === "symbols"}
                   onClick={() => setUniverseMode("symbols")}
                   style={buttonStyle(
                     theme,
@@ -3555,6 +3557,7 @@ export function BacktestWorkspace({
                   <button
                     key={study.id}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => handleToggleIndicator(study.id)}
                     style={{
                       ...buttonStyle(
@@ -4635,6 +4638,7 @@ export function BacktestWorkspace({
                         <button
                           key={value}
                           type="button"
+                          aria-pressed={summaryTradeLens === value}
                           onClick={() => setSummaryTradeLens(value)}
                           style={{
                             ...buttonStyle(
@@ -4745,6 +4749,8 @@ export function BacktestWorkspace({
                     {pnlByHour.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
+                          role="img"
+                          aria-label="Profit and loss by hour of day"
                           data={pnlByHour}
                           margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                         >
@@ -5392,6 +5398,8 @@ export function BacktestWorkspace({
                   {tradeWaterfall.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
+                        role="img"
+                        aria-label="Trade P&L waterfall"
                         data={tradeWaterfall}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
@@ -5458,6 +5466,8 @@ export function BacktestWorkspace({
                   {pnlDistribution.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
+                        role="img"
+                        aria-label="P&L distribution histogram"
                         data={pnlDistribution}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
@@ -5523,6 +5533,8 @@ export function BacktestWorkspace({
                   {exitReasonBreakdown.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
+                        role="img"
+                        aria-label="Exit reasons breakdown"
                         data={exitReasonBreakdown.map((row) => ({
                           reason: row.reason,
                           count: row.count,
@@ -5592,6 +5604,8 @@ export function BacktestWorkspace({
                   {holdProfile.some((bucket) => bucket.count > 0) ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
+                        role="img"
+                        aria-label="Hold-time profile"
                         data={holdProfile}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
