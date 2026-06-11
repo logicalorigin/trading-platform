@@ -2437,14 +2437,7 @@ function isSignalOptionsActionableSignalState(state: SignalMonitorState) {
     state.fresh === true &&
       state.currentSignalDirection &&
       state.currentSignalAt &&
-      // Fresh signals are within the monitor's freshness window already; do not
-      // additionally age-block them here (consistent with the snapshot/actionable
-      // checks, which pass { fresh }). Without this, fresh cells older than
-      // SIGNAL_OPTIONS_MAX_ACTIONABLE_BARS_SINCE_SIGNAL were dropped from the STA
-      // table even though the algo is still tracking them on its timeframe.
-      isSignalOptionsSignalAgeActionable(state.barsSinceSignal, {
-        fresh: state.fresh === true,
-      }),
+      isSignalOptionsSignalAgeActionable(state.barsSinceSignal),
   );
 }
 

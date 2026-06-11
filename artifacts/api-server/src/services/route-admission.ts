@@ -96,6 +96,8 @@ const activeRequestFamilies = new Set([
   "flow-scanner-visible",
   "flow-tape-visible",
   "option-chart-visible",
+  "trade-option-chain",
+  "trade-option-chain-batch",
   "signal-matrix",
   "signals-row-chart",
   "trade-visible",
