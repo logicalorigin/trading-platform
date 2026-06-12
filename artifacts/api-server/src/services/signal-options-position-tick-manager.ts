@@ -281,6 +281,11 @@ export class SignalOptionsPositionTickManager {
           existing.pyrusSignalsSettings = pyrusSignalsSettings;
           continue;
         }
+        // Greek-demand change: resubscribe. unsubscribe→subscribe runs in one
+        // synchronous turn so no callback can land in between; the only loss
+        // path is an undelivered pendingQuote on the old runtime — carry it
+        // across the swap so a buffered stop-trigger tick is never dropped.
+        const carriedQuote = existing?.pendingQuote ?? null;
         if (existing) {
           this.releaseRuntime(key);
         }
@@ -294,6 +299,13 @@ export class SignalOptionsPositionTickManager {
           recentEvents: activeSnapshot.events,
           requiresGreeks: greekDemand,
         });
+        if (carriedQuote) {
+          const installed = this.runtimes.get(key);
+          if (installed && !installed.pendingQuote) {
+            installed.pendingQuote = carriedQuote;
+            void this.drainQuoteQueue(key);
+          }
+        }
       }
     }
 
