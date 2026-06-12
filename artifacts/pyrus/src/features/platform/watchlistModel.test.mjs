@@ -61,7 +61,12 @@ test("signal matrix display index keeps the latest comparable state", () => {
   assert.equal(bySymbol.MSFT["5m"].currentSignalDirection, "buy");
 });
 
-test("signal matrix display index uses evaluated no-signal state over older signal", () => {
+test("signal matrix display index keeps the latched signal over a no-signal copy", () => {
+  // The signal matrix is a memory: a directionless evaluation never displaces
+  // a latched buy/sell (the backend latches in eval/wire/DB; this pins the
+  // same rule client-side). The directional copy wins wholesale — its bar
+  // metadata updates on the next backend delta, never by client-side merging,
+  // which is what used to fabricate impossible age/bar combinations.
   const states = [
     {
       symbol: "TSLA",
@@ -86,8 +91,8 @@ test("signal matrix display index uses evaluated no-signal state over older sign
 
   const bySymbol = buildSignalMatrixBySymbol(states, ["5m"]);
 
-  assert.equal(bySymbol.TSLA["5m"].currentSignalDirection, null);
-  assert.equal(bySymbol.TSLA["5m"].latestBarAt, "2026-06-08T13:00:00.000Z");
+  assert.equal(bySymbol.TSLA["5m"].currentSignalDirection, "buy");
+  assert.equal(bySymbol.TSLA["5m"].latestBarAt, "2026-06-08T12:00:00.000Z");
 });
 
 test("watchlist rows still use broad signal states for monitored-only discovery", () => {

@@ -147,14 +147,15 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   const shellCallSource = source.slice(shellCallStart, shellCallEnd);
 
   assert.equal(source.includes("signalMatrixStates={signalMatrixSnapshot.states}"), false);
+  // Matrix truth is states only: the backend latches identity and reconciles
+  // stored states from canonical events, so the client never overlays events
+  // onto matrix cells.
   assert.match(
     source,
-    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalEventsIntoMatrixStates\(\{/s,
+    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
   );
-  assert.match(
-    source,
-    /states:\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
-  );
+  assert.doesNotMatch(source, /mergeSignalEventsIntoMatrixStates/);
+  assert.doesNotMatch(source, /canonicalSignalMonitorEventsForMatrixMerge/);
   assert.match(
     source,
     /const signalMonitorStateRuntimeFallback = Boolean\(\s*signalMonitorStateQuery\.data\?\.stateSource === "runtime-fallback",?\s*\);/s,
@@ -162,18 +163,6 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   assert.match(
     source,
     /const signalMonitorStates =\s*signalMonitorStateRuntimeFallback\s*\?\s*EMPTY_SIGNAL_MONITOR_STATES\s*:\s*signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES;/s,
-  );
-  assert.match(
-    source,
-    /const canonicalSignalMonitorEvents = useMemo\(/,
-  );
-  assert.match(
-    source,
-    /canonicalSignalMonitorEventsForMatrixMerge\(\{\s*events:\s*signalMonitorEvents,\s*sourceStatus:\s*signalMonitorEventsSourceStatus/s,
-  );
-  assert.match(
-    source,
-    /events:\s*canonicalSignalMonitorEvents/,
   );
   assert.match(
     source,

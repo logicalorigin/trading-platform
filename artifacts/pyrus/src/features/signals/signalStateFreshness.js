@@ -6,6 +6,11 @@ const NON_CURRENT_SIGNAL_STATUSES = new Set([
   "unknown",
 ]);
 
+// A latched buy/sell stays displayed through a data gap (status "stale");
+// staleness styles the signal, it does not hide it. Only data problems
+// (error/unavailable) or not-yet-evaluated cells hide the direction.
+const SIGNAL_DIRECTION_DISPLAY_STATUSES = new Set(["ok", "stale"]);
+
 export const normalizeSignalDirection = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "buy" || normalized === "sell" ? normalized : "";
@@ -21,7 +26,10 @@ export const isSignalStateCurrent = (state) => {
 
 export const getCurrentSignalDirection = (state) => {
   const direction = normalizeSignalDirection(state?.currentSignalDirection);
-  return direction && isSignalStateCurrent(state) ? direction : "";
+  if (!direction || !state || state.active === false) return "";
+  return SIGNAL_DIRECTION_DISPLAY_STATUSES.has(normalizeSignalStatus(state))
+    ? direction
+    : "";
 };
 
 export const hasCurrentSignalDirection = (state) =>

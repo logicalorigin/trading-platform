@@ -98,10 +98,6 @@ import {
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 import {
-  canonicalSignalMonitorEventsForMatrixMerge,
-  mergeSignalEventsIntoMatrixStates,
-} from "../signals/signalMatrixStateMerge.js";
-import {
   WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
   WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
   WATCHLIST_QUOTE_STREAM_ROTATION_MS,
@@ -3316,24 +3312,17 @@ export default function PlatformApp() {
     signalMonitorEventsQuery.data?.events || EMPTY_SIGNAL_MONITOR_EVENTS;
   const signalMonitorEventsSourceStatus =
     signalMonitorEventsQuery.data?.sourceStatus || "database";
-  const canonicalSignalMonitorEvents = useMemo(
-    () =>
-      canonicalSignalMonitorEventsForMatrixMerge({
-        events: signalMonitorEvents,
-        sourceStatus: signalMonitorEventsSourceStatus,
-      }),
-    [signalMonitorEvents, signalMonitorEventsSourceStatus],
-  );
+  // Matrix truth is states only (SSE snapshot as base, REST as fill). Events
+  // are history: the backend reconciles stored states from canonical events
+  // at startup and latches identity in transport, so overlaying events onto
+  // matrix cells client-side would only re-derive what the states already say.
   const signalMonitorPublishedStates = useMemo(
     () =>
-      mergeSignalEventsIntoMatrixStates({
-        states: mergeSignalMatrixStates({
-          currentStates: signalMatrixSnapshot.states,
-          incomingStates: signalMonitorStates,
-        }),
-        events: canonicalSignalMonitorEvents,
+      mergeSignalMatrixStates({
+        currentStates: signalMatrixSnapshot.states,
+        incomingStates: signalMonitorStates,
       }),
-    [canonicalSignalMonitorEvents, signalMatrixSnapshot.states, signalMonitorStates],
+    [signalMatrixSnapshot.states, signalMonitorStates],
   );
   // Memoized so the empty/undefined case returns a STABLE array reference. A fresh
   // [] every render cascaded through quoteStreamRotationSymbols into a setState

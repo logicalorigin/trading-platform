@@ -213,9 +213,12 @@ test("Signal matrix state index keeps received signal over newer no-signal state
     bySymbol.get("TSLA")["5m"].currentSignalAt,
     "2026-06-08T12:00:00.000Z",
   );
+  // The directional copy wins wholesale: bar metadata is never merged in from
+  // a directionless copy (that merging is what fabricated impossible
+  // age/bar combinations); the next backend delta advances it.
   assert.equal(
     bySymbol.get("TSLA")["5m"].latestBarAt,
-    "2026-06-08T13:00:00.000Z",
+    "2026-06-08T12:00:00.000Z",
   );
 });
 

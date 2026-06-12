@@ -44,8 +44,10 @@ export const selectPreferredSignalMonitorState = (
     }
   }
 
-  if (Boolean(current?.fresh) !== Boolean(candidate?.fresh)) {
-    return candidate?.fresh ? candidate : current;
+  // Prefer the timeframe the backend marked actionable (replaces the old
+  // frontend `fresh` heuristic — actionability is backend-authored).
+  if (Boolean(current?.actionEligible) !== Boolean(candidate?.actionEligible)) {
+    return candidate?.actionEligible ? candidate : current;
   }
 
   return stateTimeMs(candidate) >= stateTimeMs(current) ? candidate : current;
