@@ -66,7 +66,10 @@ import {
   type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
-import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
+import {
+  buildSignalMonitorActionability,
+  signalMonitorSignalAgeBlocker,
+} from "./signal-monitor-actionability";
 import {
   getBars,
   getHistoricalOptionTrades,
@@ -2234,9 +2237,18 @@ function buildSignalOptionsSignalSnapshot(input: {
   );
   const direction = input.state.currentSignalDirection ?? null;
   const fresh = input.state.fresh === true;
-  const actionBlocker = signalOptionsSignalAgeBlocker(barsSinceSignal);
-  const withinExecutionWindow =
-    isSignalOptionsWithinExecutionWindow(barsSinceSignal);
+  const status = compactString(input.state.status);
+  // Seatbelt: callers normally pre-filter to status="ok" rows, but this is
+  // the last gate before candidate exploration, so actionability must not
+  // depend on every caller remembering that. The shared rule blocks non-ok
+  // statuses (data_stale) and ages in one place.
+  const actionability = buildSignalMonitorActionability({
+    direction,
+    signalAt,
+    barsSinceSignal,
+    stale: (status ?? "ok").toLowerCase() !== "ok",
+    freshWindowBars: optionalFiniteNumber(input.freshWindowBars) ?? 0,
+  });
   return {
     profileId: input.state.profileId,
     signalKey: input.signalKey ?? null,
@@ -2255,14 +2267,9 @@ function buildSignalOptionsSignalSnapshot(input: {
     barsSinceSignal,
     freshWindowBars: optionalFiniteNumber(input.freshWindowBars),
     fresh,
-    actionEligible: Boolean(
-      signalAt &&
-        direction &&
-        withinExecutionWindow &&
-        !actionBlocker,
-    ),
-    actionBlocker,
-    status: compactString(input.state.status),
+    actionEligible: actionability.actionEligible,
+    actionBlocker: actionability.actionBlocker,
+    status,
     filterState: Object.keys(filterState).length ? filterState : null,
   };
 }

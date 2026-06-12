@@ -106,11 +106,13 @@ Close out the verified defects from the bug hunt (eligibility-field wobble betwe
 | Task 3 double-subscribe during make-before-break trips admission line budget | Med | Overlap is per-position and momentary; assert lease counts in test; fall back to buffering approach if admission complains |
 | Tasks 5-7 "fixes" for claims that aren't real | Low | Characterization-test-first: a passing test closes the claim with zero code change |
 
-## Open Questions (need user input)
+## Open Questions — RESOLVED by user interview (2026-06-12)
 
-1. **openapi entanglement (blocks Task 8):** the spec + generated clients hold another session's uncommitted quote-snapshot changes. Options: (a) you land/approve that slice first, (b) I commit spec changes scoped to my hunks only (fiddly but doable), (c) I commit the whole spec diff acknowledging the other slice's spec change rides along. Preference?
-2. **Stop policy (Task 4):** OK that stops will NOT fire from fallback marks older than 60s (with a visible diagnostic), waiting for a fresh tick instead? Alternative: keep 3-minute window but flag exits triggered from fallback marks.
-3. **1d repair (Task 2):** confirm "blocked-until-next-daily-eval" is acceptable for reconciled 1d signals (recommended, fails safe) vs. computing trading-day ages with the market calendar (more code, duplicate logic).
+1. **openapi entanglement (Task 8):** RESOLVED — commit surgically **scoped hunks** of the spec + generated clients (signal-monitor fields only); other sessions' dirty spec changes stay uncommitted and untouched.
+2. **Stop policy (Task 4):** RESOLVED — **wait for fresh data**: no stop fires from a mark older than 60s; skipped enforcement records a visible diagnostic; the next fresh tick enforces. User explicitly rejected firing on stale data.
+3. **1d repair (Task 2):** RESOLVED — keep the fail-safe: reconciled 1d signals stay trade-blocked until their next daily evaluation; no trading-day age math.
+
+Context from interview: system is paper today, headed live with **no timeline — the gate is confidence**. Fix properly over fix fast. Out of scope: other sessions' workstreams, sparkline/latency perf, live-trading enablement.
 
 ## Parallelization
 

@@ -260,6 +260,31 @@ test("Signal Options keeps one-bar monitor signals executable even after matrix 
   assert.equal(previewCandidate?.optionRight, "put");
 });
 
+test("Signal Options snapshot blocks non-ok signal states regardless of bar age", () => {
+  // Seatbelt: callers pre-filter to status="ok", but the snapshot itself must
+  // never mark a stale/error state actionable — even at zero bars of age.
+  const { buildSignalOptionsSignalSnapshot } =
+    __signalOptionsAutomationInternalsForTests;
+  const staleSignal = {
+    ...(signalState("TSM", "2026-06-11T17:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    latestBarAt: "2026-06-11T17:05:00.000Z",
+    barsSinceSignal: 0,
+    fresh: false,
+    status: "stale",
+  } as never;
+
+  const snapshot = buildSignalOptionsSignalSnapshot({
+    state: staleSignal,
+    signalAt: "2026-06-11T17:05:00.000Z",
+    freshWindowBars: 8,
+  });
+  assert.equal(snapshot.actionEligible, false);
+  assert.equal(snapshot.actionBlocker, "data_stale");
+});
+
 test("Signal Options still rejects signals outside the one-bar execution window", () => {
   const {
     candidateFromSignalSnapshot,
