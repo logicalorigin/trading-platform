@@ -2,7 +2,6 @@ import {
   computeOptionGreeksFromPrice,
   resolveSignalOptionsExecutionProfile,
   scoreOptionGreekCandidate,
-  signalOptionsAvailableMtfTimeframes,
   signalOptionsDefaultMtfTimeframes,
   signalOptionsStrikeSlotsForRight,
   timeToExpirationYears,
@@ -51,7 +50,6 @@ import type { OptionChainContract } from "../providers/ibkr/client";
 import {
   cappedSignalMonitorEvaluationProfile,
   evaluateSignalMonitor,
-  evaluateSignalMonitorMatrix,
   evaluateSignalMonitorProfileSymbols,
   getSignalMonitorProfileRow,
   getSignalMonitorState,
@@ -68,6 +66,7 @@ import {
   type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
+import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
 import {
   getBars,
   getHistoricalOptionTrades,
@@ -181,9 +180,6 @@ const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6;
 const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12;
-const SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES = [
-  ...signalOptionsAvailableMtfTimeframes,
-] as const;
 const SIGNAL_OPTIONS_ACTION_ITEM_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS = 9_000;
 const SIGNAL_OPTIONS_CONTRACT_SELECTION_LEASE_TTL_MS = 60_000;
@@ -228,7 +224,6 @@ const SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS = 30_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS = 300_000;
 const SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS = 120_000;
 const SIGNAL_OPTIONS_PERFORMANCE_IN_FLIGHT_MAX_AGE_MS = 120_000;
-const SIGNAL_OPTIONS_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 1;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_LIMIT = 12;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_TIMEOUT_MS = 2_000;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_STATE_BUDGET_MS = 2_000;
@@ -2205,11 +2200,9 @@ function signalOptionsBarsSinceSignal(value: unknown): number | null {
 function signalOptionsSignalAgeBlocker(
   barsSinceSignal: unknown,
 ): string | null {
-  const bars = signalOptionsBarsSinceSignal(barsSinceSignal);
-  if (bars == null) return "signal_age_unavailable";
-  return bars <= SIGNAL_OPTIONS_MAX_ACTIONABLE_BARS_SINCE_SIGNAL
-    ? null
-    : "signal_too_old";
+  return signalMonitorSignalAgeBlocker(
+    signalOptionsBarsSinceSignal(barsSinceSignal),
+  );
 }
 
 function isSignalOptionsSignalAgeActionable(
@@ -4112,126 +4105,6 @@ function signalOptionsMtfAlignmentReason(
   return null;
 }
 
-function signalOptionsMatrixDirectionSign(value: unknown): number | null {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "bullish" || normalized === "buy") {
-    return 1;
-  }
-  if (normalized === "bearish" || normalized === "sell") {
-    return -1;
-  }
-  return null;
-}
-
-function signalOptionsMatrixMtfDirection(state: unknown): number {
-  const record = asRecord(state);
-  if (!Object.keys(record).length || record.active === false) {
-    return 0;
-  }
-  const status = compactString(record.status) ?? "ok";
-  if (status !== "ok") {
-    return 0;
-  }
-  const indicator = asRecord(record.indicatorSnapshot);
-  return (
-    signalOptionsMatrixDirectionSign(indicator.trendDirection) ??
-    signalOptionsMatrixDirectionSign(record.currentSignalDirection) ??
-    0
-  );
-}
-
-function buildSignalOptionsMatrixMtfDirections(
-  matrixStatesByTimeframe: Map<string, Record<string, unknown>> | undefined,
-) {
-  if (!matrixStatesByTimeframe) {
-    return null;
-  }
-  const mtfDirections = SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES.map((timeframe) =>
-    signalOptionsMatrixMtfDirection(matrixStatesByTimeframe.get(timeframe)),
-  );
-  return mtfDirections.every((direction) => direction !== 0)
-    ? mtfDirections
-    : null;
-}
-
-function enrichSignalOptionsCandidateWithMatrixMtf(
-  candidate: SignalOptionsCandidate,
-  matrixBySymbol: Map<string, Map<string, Record<string, unknown>>>,
-) {
-  const symbol = normalizeSymbol(candidate.symbol).toUpperCase();
-  const mtfDirections = buildSignalOptionsMatrixMtfDirections(
-    matrixBySymbol.get(symbol),
-  );
-  if (!mtfDirections) {
-    return candidate;
-  }
-  const signal = asRecord(candidate.signal);
-  const filterState = asRecord(signal.filterState);
-  const legacyMtfDirections = numericArray(filterState.mtfDirections);
-  return {
-    ...candidate,
-    signal: {
-      ...signal,
-      filterState: {
-        ...filterState,
-        mtfDirections,
-        mtfTimeframes: [...SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES],
-        mtfSource: "signal_matrix",
-        legacyMtfDirections,
-      },
-    },
-  };
-}
-
-function selectSignalOptionsMtfMatrixSymbols(input: {
-  states: SignalMonitorState[];
-  universe: Set<string>;
-  seenSignals?: Set<string>;
-  startIndex?: number;
-  maxSymbols?: number | null;
-}) {
-  const maxSymbols =
-    input.maxSymbols == null
-      ? Number.POSITIVE_INFINITY
-      : Math.max(0, Math.floor(input.maxSymbols));
-  if (maxSymbols <= 0) {
-    return [];
-  }
-
-  const symbols: string[] = [];
-  const seenSymbols = new Set<string>();
-  const startIndex = clampActionCursorIndex(
-    input.startIndex ?? 0,
-    input.states.length,
-  );
-  for (let index = startIndex; index < input.states.length; index += 1) {
-    if (symbols.length >= maxSymbols) {
-      break;
-    }
-    const state = input.states[index];
-    if (!state || !isSignalOptionsActionableSignalState(state)) {
-      continue;
-    }
-    const symbol = normalizeSymbol(state.symbol).toUpperCase();
-    if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
-      continue;
-    }
-    if (seenSymbols.has(symbol)) {
-      continue;
-    }
-    const signalAt = toIsoString(state.currentSignalAt);
-    if (
-      signalAt &&
-      input.seenSignals?.has(buildSignalKey(state, signalAt))
-    ) {
-      continue;
-    }
-    seenSymbols.add(symbol);
-    symbols.push(symbol);
-  }
-  return symbols;
-}
-
 function evaluateSignalOptionsEntryGate(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
@@ -5221,64 +5094,6 @@ async function loadSignalOptionsMonitorState(input: {
     mode: "incremental",
     barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
   });
-}
-
-async function loadSignalOptionsMtfMatrixBySymbol(input: {
-  deployment: AlgoDeployment;
-  states: SignalMonitorState[];
-  universe: Set<string>;
-  source: "manual" | "worker";
-  seenSignals?: Set<string>;
-  startIndex?: number;
-  maxSymbols?: number | null;
-}) {
-  const symbols = selectSignalOptionsMtfMatrixSymbols({
-    states: input.states,
-    universe: input.universe,
-    seenSignals: input.seenSignals,
-    startIndex: input.startIndex,
-    maxSymbols: input.maxSymbols,
-  });
-  if (!symbols.length) {
-    return new Map<string, Map<string, Record<string, unknown>>>();
-  }
-
-  try {
-    const matrix = await evaluateSignalMonitorMatrix({
-      environment: input.deployment.mode,
-      symbols,
-      timeframes: [...SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES],
-      clientRole: "manual",
-      requestOrigin: input.source === "worker" ? "poll" : "manual",
-    });
-    const states = Array.isArray(asRecord(matrix).states)
-      ? (asRecord(matrix).states as unknown[])
-      : [];
-    const validTimeframes = new Set<string>(SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES);
-    const bySymbol = new Map<string, Map<string, Record<string, unknown>>>();
-
-    states.forEach((state) => {
-      const record = asRecord(state);
-      const rawSymbol = compactString(record.symbol);
-      const symbol = rawSymbol ? normalizeSymbol(rawSymbol).toUpperCase() : "";
-      const timeframe = compactString(record.timeframe);
-      if (!symbol || !timeframe || !validTimeframes.has(timeframe)) {
-        return;
-      }
-      const symbolStates =
-        bySymbol.get(symbol) ?? new Map<string, Record<string, unknown>>();
-      symbolStates.set(timeframe, record);
-      bySymbol.set(symbol, symbolStates);
-    });
-
-    return bySymbol;
-  } catch (error) {
-    logger.warn?.(
-      { err: error, deploymentId: input.deployment.id, symbols },
-      "Failed to load signal-options five-frame matrix MTF snapshot",
-    );
-    return new Map<string, Map<string, Record<string, unknown>>>();
-  }
 }
 
 function candidateFromEvent(
@@ -17027,25 +16842,6 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     now: signalScanCompletedAt,
   });
   const positionMarkHaltActive = degradedPositionSymbols.length > 0;
-  const signalMtfMatrixSymbolLimit =
-    source === "worker" && signalActionWorkBudget.itemLimit !== null
-      ? Math.max(
-          0,
-          signalActionWorkBudget.itemLimit -
-            signalActionWorkBudget.processedItems,
-        )
-      : null;
-  const signalMtfMatrixBySymbol = hasPendingActionableSignals
-    ? await loadSignalOptionsMtfMatrixBySymbol({
-        deployment,
-        states: signalActionStates,
-        universe,
-        source,
-        seenSignals,
-        startIndex: nextSignalIndex,
-        maxSymbols: signalMtfMatrixSymbolLimit,
-      })
-    : new Map<string, Map<string, Record<string, unknown>>>();
   throwIfSignalOptionsScanAborted(input.signal);
 
   for (
@@ -17087,17 +16883,14 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       signalAt,
     }).catch(() => null);
     throwIfSignalOptionsScanAborted(input.signal);
-    const candidate = enrichSignalOptionsCandidateWithMatrixMtf(
-      buildCandidateFromSignal({
-        deployment,
-        state,
-        signalAt,
-        signalKey,
-        freshWindowBars: optionalFiniteNumber(evaluatedProfile.freshWindowBars),
-        signalMetadata,
-      }),
-      signalMtfMatrixBySymbol,
-    );
+    const candidate = buildCandidateFromSignal({
+      deployment,
+      state,
+      signalAt,
+      signalKey,
+      freshWindowBars: optionalFiniteNumber(evaluatedProfile.freshWindowBars),
+      signalMetadata,
+    });
     candidateCount += 1;
     recordSignalOptionsActionWorkItem(signalActionWorkBudget);
     const currentPosition = activePositionsBySymbol.get(symbol);
@@ -17348,8 +17141,6 @@ export const __signalOptionsAutomationInternalsForTests = {
   isLiveOptionTradingSession,
   isLiveOvernightExitWindow,
   evaluateSignalOptionsEntryGate,
-  enrichSignalOptionsCandidateWithMatrixMtf,
-  selectSignalOptionsMtfMatrixSymbols,
   signalOptionsExecutionBlocker,
   resolveSignalOptionsDegradedPositionSymbols,
   signalOptionsGatewayExecutionBlocker,

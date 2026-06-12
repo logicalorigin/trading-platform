@@ -57,6 +57,7 @@ import {
   getHighBetaUniversePreview,
 } from "./high-beta-universe";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
+import { signalMonitorFresh } from "./signal-monitor-actionability";
 import { recordSignalMonitorDbFallback } from "./signal-monitor-diagnostics";
 import {
   getApiResourcePressureSnapshot,
@@ -4823,7 +4824,11 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       latestBarAt,
       presentBarsSinceSignal,
     });
-    const fresh = barsSinceSignal <= input.profile.freshWindowBars && !stale;
+    const fresh = signalMonitorFresh({
+      barsSinceSignal,
+      freshWindowBars: input.profile.freshWindowBars,
+      stale,
+    });
 
     if (
       shouldPersistSignalMonitorStateEvent({
@@ -5102,7 +5107,11 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     currentSignalPrice: signal.price,
     latestBarAt,
     barsSinceSignal,
-    fresh: barsSinceSignal <= input.profile.freshWindowBars && !stale,
+    fresh: signalMonitorFresh({
+      barsSinceSignal,
+      freshWindowBars: input.profile.freshWindowBars,
+      stale,
+    }),
     status: stale ? ("stale" as const) : ("ok" as const),
     lastError: delayedLatestBarError,
     indicatorSnapshot,
@@ -5395,7 +5404,11 @@ function signalMonitorMatrixStateFromPython(input: {
     currentSignalPrice: signal.price,
     latestBarAt,
     barsSinceSignal,
-    fresh: barsSinceSignal <= input.profile.freshWindowBars && !stale,
+    fresh: signalMonitorFresh({
+      barsSinceSignal,
+      freshWindowBars: input.profile.freshWindowBars,
+      stale,
+    }),
     status: "ok" as const,
     canonicalSignalEvent: {
       signal: pyrusSignalEvent,
@@ -5513,6 +5526,19 @@ function signalMonitorStoredStateActivityMs(input: {
   );
 }
 
+function signalMonitorStoredStateSignalMs(input: {
+  currentSignalAt?: Date | string | null;
+  currentSignalDirection?: string | null;
+}): number {
+  if (
+    input.currentSignalDirection !== "buy" &&
+    input.currentSignalDirection !== "sell"
+  ) {
+    return 0;
+  }
+  return dateOrNull(input.currentSignalAt)?.getTime() ?? 0;
+}
+
 function signalMonitorStoredStateQuality(input: {
   currentSignalAt?: Date | string | null;
   currentSignalDirection?: string | null;
@@ -5552,6 +5578,15 @@ function shouldPreserveExistingSignalMonitorSymbolState(
 ): boolean {
   if (!existing) {
     return false;
+  }
+  // Signal identity outranks bar-metadata recency: a row carrying a newer real
+  // signal must never lose to a row whose only claim is a newer latestBarAt
+  // (and an older signal must never displace a newer one). Activity recency
+  // only breaks ties between rows with the same signal identity.
+  const existingSignalMs = signalMonitorStoredStateSignalMs(existing);
+  const incomingSignalMs = signalMonitorStoredStateSignalMs(incoming);
+  if (existingSignalMs !== incomingSignalMs) {
+    return existingSignalMs > incomingSignalMs;
   }
   const existingActivityMs = signalMonitorStoredStateActivityMs(existing);
   const incomingActivityMs = signalMonitorStoredStateActivityMs(incoming);

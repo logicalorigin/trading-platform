@@ -255,6 +255,93 @@ test("matrix cache leaves a never-signaled cell directionless", () => {
   assert.equal(result.currentSignalDirection, null);
 });
 
+const shouldPreserveState =
+  __signalMonitorInternalsForTests.shouldPreserveExistingSignalMonitorSymbolState;
+
+test("a newer real signal is not rejected by an existing row with newer bar metadata", () => {
+  // CEG defect class: the stored row's latestBarAt outruns its signal, then a
+  // re-eval carrying a genuinely newer signal loses the activity comparison.
+  assert.equal(
+    shouldPreserveState(
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T17:20:00.000Z"),
+        status: "ok",
+      },
+      {
+        currentSignalDirection: "sell",
+        currentSignalAt: new Date("2026-06-12T16:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T16:30:00.000Z"),
+        status: "ok",
+      },
+    ),
+    false,
+  );
+});
+
+test("an incoming older signal cannot replace a newer stored signal", () => {
+  assert.equal(
+    shouldPreserveState(
+      {
+        currentSignalDirection: "sell",
+        currentSignalAt: new Date("2026-06-12T16:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T16:30:00.000Z"),
+        status: "ok",
+      },
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T17:20:00.000Z"),
+        status: "ok",
+      },
+    ),
+    true,
+  );
+});
+
+test("a latched metadata refresh with newer bars still writes", () => {
+  // Post-latch, a directionless re-eval carries the same signal identity with a
+  // newer latestBarAt; it must not be preserved away.
+  assert.equal(
+    shouldPreserveState(
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T17:20:00.000Z"),
+        status: "ok",
+      },
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T17:25:00.000Z"),
+        status: "ok",
+      },
+    ),
+    false,
+  );
+});
+
+test("an incoming row with the same signal but older bars is preserved away", () => {
+  assert.equal(
+    shouldPreserveState(
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T17:20:00.000Z"),
+        status: "ok",
+      },
+      {
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-12T13:25:00.000Z"),
+        latestBarAt: new Date("2026-06-12T16:00:00.000Z"),
+        status: "stale",
+      },
+    ),
+    true,
+  );
+});
+
 test("signal monitor bar evaluation is passive by default", () => {
   assert.equal(
     __signalMonitorInternalsForTests.isSignalMonitorBarEvaluationEnabled({}),
