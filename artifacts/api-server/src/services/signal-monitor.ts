@@ -6659,79 +6659,171 @@ export function startSignalMonitorServerOwnedProducer(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Direction seed from received signals
+// Stored-state reconciliation against canonical events
 //
-// The matrix cache (signal_monitor_symbol_states) is the live view; the durable
-// record of received signals is signal_monitor_events. A cell whose last signal
-// fired before the row was last written (or that was wiped by the prior
-// latch bug) shows no direction even though a signal WAS received. This seeds
-// each null cell's direction from its most recent canonical event so the bubble
-// reflects the last received signal. fresh stays false (display only — does not
-// mark the signal actionable). The latch holds it; new signals update it on
-// receipt. Cells with no event ever (e.g. brand-new tickers) stay null.
+// signal_monitor_symbol_states is the live view; signal_monitor_events is the
+// durable record of received signals. Historical producer bugs left rows whose
+// signal identity lags the latest canonical event and rows whose
+// bars_since_signal undercounts elapsed timeframe bars (sparse feeds). One
+// set-based pass per enabled profile repairs both; the (now identity-safe)
+// live producers keep rows correct from then on. This supersedes the old
+// 5-minute direction seed, which only filled null directions.
+//
+// Safety directions: identity only moves FORWARD to a newer canonical event;
+// bar age only INCREASES; fresh only turns OFF. Adopted identities get
+// bars_since_signal reset to null first so the elapsed recompute does not
+// inherit the previous signal's bar count.
 // ---------------------------------------------------------------------------
-const SIGNAL_MONITOR_DIRECTION_SEED_REFRESH_MS = 5 * 60_000;
-let signalMonitorDirectionSeedTimer: ReturnType<typeof setInterval> | null = null;
-let signalMonitorDirectionSeedStarted = false;
-let signalMonitorDirectionSeedInFlight = false;
+export type SignalMonitorStateReconciliationCounts = {
+  profileId: string;
+  identityAdopted: number;
+  barsRecomputed: number;
+  freshCleared: number;
+};
 
-async function seedSignalMonitorDirectionsFromLatestEvents(): Promise<void> {
-  if (signalMonitorDirectionSeedInFlight) {
-    return;
+const SIGNAL_MONITOR_INTRADAY_BAR_SECONDS_SQL = sql`
+  CASE s.timeframe
+    WHEN '1m' THEN 60
+    WHEN '2m' THEN 120
+    WHEN '5m' THEN 300
+    WHEN '15m' THEN 900
+    WHEN '1h' THEN 3600
+  END`;
+
+async function reconcileSignalMonitorSymbolStatesForProfile(
+  profile: DbSignalMonitorProfile,
+  dryRun: boolean,
+): Promise<SignalMonitorStateReconciliationCounts> {
+  const countOf = async (query: ReturnType<typeof sql>): Promise<number> => {
+    const result = await db.execute(query);
+    return Number(result.rows?.[0]?.["count"] ?? 0);
+  };
+
+  const identityLagJoin = sql`
+    (
+      SELECT DISTINCT ON (symbol, timeframe)
+        symbol, timeframe, direction, signal_at, signal_price
+      FROM signal_monitor_events
+      WHERE profile_id = ${profile.id}
+      ORDER BY symbol, timeframe, signal_at DESC, id DESC
+    ) AS e
+    WHERE s.profile_id = ${profile.id}
+      AND s.symbol = e.symbol
+      AND s.timeframe = e.timeframe
+      AND s.active = true
+      AND (s.current_signal_at IS NULL
+        OR s.current_signal_direction IS NULL
+        OR s.current_signal_direction = ''
+        OR e.signal_at > s.current_signal_at)`;
+  const identityAdopted = await countOf(
+    sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${identityLagJoin}`,
+  );
+  if (!dryRun && identityAdopted > 0) {
+    await db.execute(sql`
+      UPDATE signal_monitor_symbol_states AS s
+      SET current_signal_direction = e.direction,
+          current_signal_at = e.signal_at,
+          current_signal_price = e.signal_price,
+          bars_since_signal = NULL,
+          fresh = false,
+          updated_at = now()
+      FROM ${identityLagJoin}
+    `);
   }
-  signalMonitorDirectionSeedInFlight = true;
-  try {
-    let profiles: DbSignalMonitorProfile[];
-    try {
-      profiles = await listEnabledSignalMonitorProfiles();
-    } catch (error) {
-      logger.warn({ err: error }, "Signal direction seed: profile load failed");
-      return;
-    }
-    for (const profile of profiles) {
-      try {
-        await db.execute(sql`
-          UPDATE signal_monitor_symbol_states AS s
-          SET current_signal_direction = e.direction,
-              current_signal_at = e.signal_at,
-              fresh = false,
-              updated_at = now()
-          FROM (
-            SELECT DISTINCT ON (symbol, timeframe)
-              symbol, timeframe, direction, signal_at
-            FROM signal_monitor_events
-            WHERE profile_id = ${profile.id}
-            ORDER BY symbol, timeframe, signal_at DESC, id DESC
-          ) AS e
-          WHERE s.profile_id = ${profile.id}
-            AND s.symbol = e.symbol
-            AND s.timeframe = e.timeframe
-            AND s.active = true
-            AND (s.current_signal_direction IS NULL
-              OR s.current_signal_direction = '')
-        `);
-      } catch (error) {
-        logger.warn(
-          { err: error, profileId: profile.id },
-          "Signal direction seed failed",
-        );
-      }
-    }
-  } finally {
-    signalMonitorDirectionSeedInFlight = false;
+
+  const elapsedBars = sql`
+    ROUND(
+      EXTRACT(EPOCH FROM (s.latest_bar_at - s.current_signal_at)) /
+        ${SIGNAL_MONITOR_INTRADAY_BAR_SECONDS_SQL}
+    )::int`;
+  const barsUndercountWhere = sql`
+    WHERE s.profile_id = ${profile.id}
+      AND s.active = true
+      AND s.timeframe IN ('1m', '2m', '5m', '15m', '1h')
+      AND s.current_signal_direction IN ('buy', 'sell')
+      AND s.current_signal_at IS NOT NULL
+      AND s.latest_bar_at IS NOT NULL
+      AND s.latest_bar_at > s.current_signal_at
+      AND GREATEST(COALESCE(s.bars_since_signal, 0), ${elapsedBars})
+        IS DISTINCT FROM s.bars_since_signal`;
+  const barsRecomputed = await countOf(
+    sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${barsUndercountWhere}`,
+  );
+  if (!dryRun && barsRecomputed > 0) {
+    await db.execute(sql`
+      UPDATE signal_monitor_symbol_states AS s
+      SET bars_since_signal =
+            GREATEST(COALESCE(s.bars_since_signal, 0), ${elapsedBars}),
+          updated_at = now()
+      ${barsUndercountWhere}
+    `);
   }
+
+  const freshClearWhere = sql`
+    WHERE s.profile_id = ${profile.id}
+      AND s.fresh = true
+      AND (s.status <> 'ok'
+        OR s.bars_since_signal IS NULL
+        OR s.bars_since_signal > ${profile.freshWindowBars})`;
+  const freshCleared = await countOf(
+    sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${freshClearWhere}`,
+  );
+  if (!dryRun && freshCleared > 0) {
+    await db.execute(sql`
+      UPDATE signal_monitor_symbol_states AS s
+      SET fresh = false, updated_at = now()
+      ${freshClearWhere}
+    `);
+  }
+
+  return { profileId: profile.id, identityAdopted, barsRecomputed, freshCleared };
 }
 
-export function startSignalMonitorDirectionSeed(): void {
-  if (signalMonitorDirectionSeedStarted) {
+export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents(
+  input: { dryRun?: boolean } = {},
+): Promise<SignalMonitorStateReconciliationCounts[]> {
+  const dryRun = input.dryRun === true;
+  let profiles: DbSignalMonitorProfile[];
+  try {
+    profiles = await listEnabledSignalMonitorProfiles();
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Signal monitor state reconciliation: profile load failed",
+    );
+    return [];
+  }
+  const results: SignalMonitorStateReconciliationCounts[] = [];
+  for (const profile of profiles) {
+    try {
+      results.push(
+        await reconcileSignalMonitorSymbolStatesForProfile(profile, dryRun),
+      );
+    } catch (error) {
+      logger.warn(
+        { err: error, profileId: profile.id },
+        "Signal monitor state reconciliation failed",
+      );
+    }
+  }
+  return results;
+}
+
+let signalMonitorStateReconciliationStarted = false;
+
+export function startSignalMonitorStateReconciliation(): void {
+  if (signalMonitorStateReconciliationStarted) {
     return;
   }
-  signalMonitorDirectionSeedStarted = true;
-  void seedSignalMonitorDirectionsFromLatestEvents();
-  signalMonitorDirectionSeedTimer = setInterval(() => {
-    void seedSignalMonitorDirectionsFromLatestEvents();
-  }, SIGNAL_MONITOR_DIRECTION_SEED_REFRESH_MS);
-  signalMonitorDirectionSeedTimer.unref?.();
+  signalMonitorStateReconciliationStarted = true;
+  void reconcileSignalMonitorSymbolStatesFromCanonicalEvents().then(
+    (results) => {
+      logger.info(
+        { results },
+        "Signal monitor stored-state reconciliation complete",
+      );
+    },
+  );
 }
 
 export async function subscribeSignalMonitorMatrixStream(input: {

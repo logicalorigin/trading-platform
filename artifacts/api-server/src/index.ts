@@ -30,7 +30,7 @@ import { startSignalOptionsPositionTickManager } from "./services/signal-options
 import {
   startSignalMonitorLocalBarCacheWarmup,
   startSignalMonitorServerOwnedProducer,
-  startSignalMonitorDirectionSeed,
+  startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
@@ -254,7 +254,7 @@ server.listen(port, () => {
   startIbkrLineUsageGenerationCoordinator();
   startSignalMonitorLocalBarCacheWarmup();
   startSignalMonitorServerOwnedProducer();
-  startSignalMonitorDirectionSeed();
+  startSignalMonitorStateReconciliation();
   void startPythonComputeRuntime().catch((err) => {
     logger.warn({ err }, "Failed to start Python compute runtime");
   });
