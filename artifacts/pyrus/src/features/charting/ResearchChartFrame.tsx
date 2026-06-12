@@ -1,5 +1,6 @@
 import {
   createContext,
+  memo,
   useContext,
   useMemo,
   useState,
@@ -823,6 +824,111 @@ const barButtonStyle = ({
   flexShrink: 0,
 });
 
+type ChartSymbolSearchTriggerProps = {
+  theme: WidgetTheme;
+  palette: PanelPalette;
+  symbol: string;
+  canSearch: boolean;
+  hasAnchoredSearch: boolean;
+  searchOpen?: boolean;
+  onOpenSearch?: () => void;
+  onSearchOpenChange?: (open: boolean) => void;
+  searchContent?: ReactNode;
+  chromeDense: boolean;
+  minimalChrome: boolean;
+  iconOnlyChrome: boolean;
+  identitySlot?: ReactNode;
+};
+
+const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
+  theme,
+  palette,
+  symbol,
+  canSearch,
+  hasAnchoredSearch,
+  searchOpen,
+  onOpenSearch,
+  onSearchOpenChange,
+  searchContent,
+  chromeDense,
+  minimalChrome,
+  iconOnlyChrome,
+  identitySlot = null,
+}: ChartSymbolSearchTriggerProps) {
+  const triggerStyle = {
+    ...barButtonStyle({ theme, palette, dense: chromeDense }),
+    color: theme.text,
+    cursor: canSearch ? "pointer" : "default",
+    maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
+    minWidth: 0,
+  } satisfies CSSProperties;
+  const triggerContent = (
+    <>
+      {identitySlot ??
+        (canSearch ? <Search style={iconStyle(chromeDense)} /> : null)}
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          fontWeight: FONT_WEIGHTS.regular,
+        }}
+      >
+        {symbol}
+      </span>
+      {canSearch ? <ChevronDown style={iconStyle(chromeDense)} /> : null}
+    </>
+  );
+
+  if (hasAnchoredSearch) {
+    return (
+      <Popover open={Boolean(searchOpen)} onOpenChange={onSearchOpenChange}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Search ${symbol}`}
+            data-testid="chart-symbol-search-button"
+            style={triggerStyle}
+          >
+            {triggerContent}
+          </button>
+        </PopoverTrigger>
+        {searchContent != null ? (
+          <PopoverContent
+            align="start"
+            sideOffset={6}
+            style={{
+              width: chromeDense ? 340 : 430,
+              maxWidth: "calc(100vw - 24px)",
+              padding: 0,
+              borderRadius: RADII.none,
+              border: "none",
+              background: "transparent",
+              boxShadow: "none",
+            }}
+          >
+            {searchContent}
+          </PopoverContent>
+        ) : null}
+      </Popover>
+    );
+  }
+
+  return (
+    <AppTooltip content={canSearch ? `Search ${symbol}` : symbol}>
+      <button
+        type="button"
+        aria-label={canSearch ? `Search ${symbol}` : symbol}
+        data-testid={canSearch ? "chart-symbol-search-button" : undefined}
+        onClick={canSearch ? onOpenSearch : undefined}
+        style={triggerStyle}
+      >
+        {triggerContent}
+      </button>
+    </AppTooltip>
+  );
+});
+
 const railButtonStyle = ({
   theme,
   palette,
@@ -1267,7 +1373,7 @@ export const ResearchChartWidgetHeader = ({
   const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const iconOnlyChrome = isIconChartFrameDensity(frameDensity);
   const minimalChrome = frameDensity === "minimal";
-  const palette = getPanelPalette(theme);
+  const palette = useMemo(() => getPanelPalette(theme), [theme]);
   const headerHeight = chromeDense ? 28 : 40;
   const timeframes = commonTimeframes(timeframeOptions);
   const selectTimeframe = (nextTimeframe: string) => {
@@ -1281,8 +1387,7 @@ export const ResearchChartWidgetHeader = ({
     [favoriteTimeframes],
   );
   const resolvedChartType = resolveChartType(controls.chartDisplayType);
-  const hasAnchoredSearch =
-    typeof onSearchOpenChange === "function" && searchContent != null;
+  const hasAnchoredSearch = typeof onSearchOpenChange === "function";
   const canSearch = typeof onOpenSearch === "function" || hasAnchoredSearch;
   const activeBar = controls.activeBar;
   const resolvedRightSlot =
@@ -1395,80 +1500,21 @@ export const ResearchChartWidgetHeader = ({
           pointerEvents: "auto",
         }}
       >
-        {hasAnchoredSearch ? (
-          <Popover open={Boolean(searchOpen)} onOpenChange={onSearchOpenChange}>
-            <AppTooltip content={`Search ${symbol}`}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  data-testid="chart-symbol-search-button"
-                  style={{
-                    ...barButtonStyle({ theme, palette, dense: chromeDense }),
-                    color: theme.text,
-                    cursor: "pointer",
-                    maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
-                    minWidth: 0,
-                  }}
-                >
-                  {identitySlot ?? <Search style={iconStyle(chromeDense)} />}
-                  <span
-                    style={{
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      fontWeight: FONT_WEIGHTS.regular,
-                    }}
-                  >
-                    {symbol}
-                  </span>
-                  <ChevronDown style={iconStyle(chromeDense)} />
-                </button>
-              </PopoverTrigger>
-            </AppTooltip>
-            <PopoverContent
-              align="start"
-              sideOffset={6}
-              style={{
-                width: chromeDense ? 340 : 430,
-                maxWidth: "calc(100vw - 24px)",
-                padding: 0,
-                borderRadius: RADII.none,
-                border: "none",
-                background: "transparent",
-                boxShadow: "none",
-              }}
-            >
-              {searchContent}
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <AppTooltip content={canSearch ? `Search ${symbol}` : symbol}><button
-            type="button"
-            data-testid={canSearch ? "chart-symbol-search-button" : undefined}
-            onClick={canSearch ? onOpenSearch : undefined}
-            style={{
-              ...barButtonStyle({ theme, palette, dense: chromeDense }),
-              color: theme.text,
-              cursor: canSearch ? "pointer" : "default",
-              maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
-              minWidth: 0,
-            }}
-          >
-            {identitySlot ??
-              (canSearch ? <Search style={iconStyle(chromeDense)} /> : null)}
-            <span
-              style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                fontWeight: FONT_WEIGHTS.regular,
-              }}
-            >
-              {symbol}
-            </span>
-            {canSearch ? <ChevronDown style={iconStyle(chromeDense)} /> : null}
-          </button></AppTooltip>
-        )}
+        <ChartSymbolSearchTrigger
+          theme={theme}
+          palette={palette}
+          symbol={symbol}
+          canSearch={canSearch}
+          hasAnchoredSearch={hasAnchoredSearch}
+          searchOpen={searchOpen}
+          onOpenSearch={onOpenSearch}
+          onSearchOpenChange={onSearchOpenChange}
+          searchContent={searchContent}
+          chromeDense={chromeDense}
+          minimalChrome={minimalChrome}
+          iconOnlyChrome={iconOnlyChrome}
+          identitySlot={identitySlot}
+        />
 
         {showContextSlot ? (
           <div

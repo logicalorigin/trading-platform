@@ -185,8 +185,7 @@ export const TradeEquityPanel = ({
     }),
     [gexOverlay?.zeroGammaLine, gexProjection.overlay],
   );
-  const hasAnchoredTickerSearch =
-    typeof onSearchOpenChange === "function" && searchContent != null;
+  const hasAnchoredTickerSearch = typeof onSearchOpenChange === "function";
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const [tf, setTf] = useState(workspaceChart?.timeframe || "5m");

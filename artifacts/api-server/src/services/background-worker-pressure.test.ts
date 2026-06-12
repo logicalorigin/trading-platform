@@ -17,11 +17,10 @@ const noopLogger = {
   warn() {},
 };
 
-function highPressureSnapshot() {
+function highResourcePressureSnapshot() {
   __resetApiResourcePressureForTests();
   return updateApiResourcePressure({
-    apiP95LatencyMs: 12_000,
-    dominantSlowRouteP95Ms: 12_000,
+    eventLoopDelayP95Ms: 300,
   });
 }
 
@@ -33,8 +32,8 @@ function normalPressureSnapshot() {
   });
 }
 
-test("signal-options worker pauses deployment scans under high API pressure", async () => {
-  const pressure = highPressureSnapshot();
+test("signal-options worker refreshes signals under high resource pressure", async () => {
+  highResourcePressureSnapshot();
   let scanCount = 0;
   const releaseLock = async () => {};
   const deployment = {
@@ -54,14 +53,37 @@ test("signal-options worker pauses deployment scans under high API pressure", as
     listDeployments: async () => [deployment],
     scanDeployment: async () => {
       scanCount += 1;
-      return {};
+      return {
+        summary: {
+          signalCount: 3,
+          freshSignalCount: 1,
+          staleSignalCount: 0,
+          unavailableSignalCount: 0,
+          latestSignalBarAt: "2026-06-09T18:40:00.000Z",
+          oldestSignalBarAt: "2026-06-09T18:35:00.000Z",
+          lastSignalScanAt: "2026-06-09T18:41:00.000Z",
+          signalSourcePolicy: "stored_state",
+          heavyWorkDeferred: false,
+          activeScanPhase: "action_scan",
+          candidateCount: 0,
+          blockedCandidateCount: 0,
+          activePositionCount: 0,
+          batch: {
+            symbols: ["SPY"],
+            universeCount: 1,
+            batchSize: 1,
+            startIndex: 0,
+            nextIndex: 0,
+            capacity: 1,
+            fullUniverse: true,
+          },
+        },
+      };
     },
     runMaintenance: async () => ({}),
-    getResourcePressure: () => pressure,
     acquireTickLock: async () => releaseLock,
     now: () => new Date("2026-06-09T18:41:00.000Z"),
     logger: noopLogger,
-    scanTimeoutMs: null,
     subscribeCockpitChanges: () => () => {},
     isAggregateStreamingAvailable: () => true,
     subscribeAggregates: () => ({
@@ -74,16 +96,18 @@ test("signal-options worker pauses deployment scans under high API pressure", as
   await worker.runOnce();
 
   const snapshot = worker.getRuntimeSnapshot();
-  assert.equal(scanCount, 0);
-  assert.equal(snapshot.deployments[0]?.lastSkipReason, "resource_pressure");
-  assert.equal(snapshot.deployments[0]?.pressurePaused, true);
-  assert.equal(snapshot.deployments[0]?.lastResourcePressureLevel, "high");
+  assert.equal(scanCount, 1);
+  assert.equal(snapshot.deployments[0]?.lastSkipReason, null);
+  assert.equal(snapshot.deployments[0]?.lastScanOutcome, "success");
+  assert.equal(snapshot.deployments[0]?.lastSignalScanAt, "2026-06-09T18:41:00.000Z");
+  assert.equal(snapshot.deployments[0]?.lastSignalCount, 3);
+  assert.equal(snapshot.deployments[0]?.lastHeavyWorkDeferred, false);
 
   __resetApiResourcePressureForTests();
 });
 
 test("signal-options worker does not subscribe to aggregate signal evaluation in passive mode", async () => {
-  const pressure = normalPressureSnapshot();
+  normalPressureSnapshot();
   let scanCount = 0;
   let subscribeCount = 0;
   let streamEvaluationCount = 0;
@@ -108,11 +132,9 @@ test("signal-options worker does not subscribe to aggregate signal evaluation in
       return {};
     },
     runMaintenance: async () => ({}),
-    getResourcePressure: () => pressure,
     acquireTickLock: async () => releaseLock,
     now: () => new Date("2026-06-09T18:41:00.000Z"),
     logger: noopLogger,
-    scanTimeoutMs: null,
     subscribeCockpitChanges: () => () => {},
     isSignalMonitorBarEvaluationEnabled: () => false,
     isAggregateStreamingAvailable: () => true,
@@ -163,8 +185,8 @@ test("signal monitor worker stays idle in passive mode", async () => {
   assert.equal(subscribeCount, 0);
 });
 
-test("overnight spot worker pauses deployment scans under high API pressure", async () => {
-  const pressure = highPressureSnapshot();
+test("overnight spot worker pauses deployment scans under high resource pressure", async () => {
+  const pressure = highResourcePressureSnapshot();
   let scanCount = 0;
   const releaseLock = async () => {};
   const deployment = {

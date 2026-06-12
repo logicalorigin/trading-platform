@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { classifyApiRoute, resolveApiRouteAdmission } from "./route-admission";
 
-test("Signal Options performance is active-screen so service cache fallback can run", () => {
+test("Signal Options performance is active-screen", () => {
   assert.equal(
     classifyApiRoute({
       method: "GET",
@@ -13,13 +13,13 @@ test("Signal Options performance is active-screen so service cache fallback can 
   );
 });
 
-test("Signal Options full state remains deferred analytics", () => {
+test("Signal Options full state remains active-screen", () => {
   assert.equal(
     classifyApiRoute({
       method: "GET",
       path: "/algo/deployments/paper-id/signal-options/state?view=full",
     }),
-    "deferred-analytics",
+    "active-screen",
   );
 });
 

@@ -11,12 +11,15 @@ import {
 
 test("Algo monitor sidebar includes received signal history rows", () => {
   const rows = buildAlgoMonitorStaSignalRows({
-    signals: [
+    signals: [],
+    signalMatrixStates: [
       {
         symbol: "VRT",
         timeframe: "5m",
-        direction: "buy",
-        signalAt: "2026-06-09T14:05:00.000Z",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-09T14:05:00.000Z",
+        fresh: true,
+        status: "ok",
       },
     ],
     candidates: [],
@@ -38,11 +41,48 @@ test("Algo monitor sidebar includes received signal history rows", () => {
   assert.deepEqual(
     rows.map((row) => [row.symbol, row.signalAt, row.sourceType]),
     [
-      ["VRT", "2026-06-09T14:05:00.000Z", undefined],
+      ["VRT", "2026-06-09T14:05:00.000Z", "signal_matrix_state"],
       ["ALIT", "2026-06-08T20:05:00.000Z", "signal_monitor_event"],
     ],
   );
 });
+
+test("Algo monitor sidebar includes pushed Signal Matrix rows before options snapshots", () => {
+  const rows = buildAlgoMonitorStaSignalRows({
+    signals: [],
+    candidates: [],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "TSM",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-11T16:55:00.000Z",
+        currentSignalPrice: 177.25,
+        latestBarAt: "2026-06-11T16:55:00.000Z",
+        fresh: true,
+        status: "ok",
+      },
+      {
+        profileId: "profile-15m",
+        symbol: "TSM",
+        timeframe: "15m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-11T16:45:00.000Z",
+        fresh: true,
+        status: "ok",
+      },
+    ],
+    signalTimeframes: ["5m"],
+    universeSymbols: ["TSM"],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, "TSM");
+  assert.equal(rows[0].timeframe, "5m");
+  assert.equal(rows[0].sourceType, "signal_matrix_state");
+});
+
 
 test("Algo monitor sidebar hydration uses selected trading frames and execution priority", () => {
   const request = buildAlgoMonitorSignalMatrixHydrationRequest({
@@ -93,24 +133,28 @@ test("Algo monitor sidebar hydration request key is stable for duplicate request
   );
 });
 
-test("Algo monitor sidebar withholds action rows until all selected signal bubbles are hydrated", () => {
+test("Algo monitor sidebar does not withhold action rows for companion bubbles", () => {
   const hydratedRow = {
     id: "sta-hydrated",
     signal: {
       symbol: "ABFL",
       timeframe: "5m",
+      direction: "buy",
+      signalAt: "2026-06-09T14:25:00.000Z",
     },
   };
-  const pendingRow = {
-    id: "sta-pending",
+  const companionMissingRow = {
+    id: "sta-companion-missing",
     signal: {
       symbol: "ACIU",
       timeframe: "5m",
+      direction: "sell",
+      signalAt: "2026-06-09T14:25:00.000Z",
     },
   };
 
   const split = splitAlgoMonitorSignalRowsByMatrixHydration({
-    rows: [hydratedRow, pendingRow],
+    rows: [hydratedRow, companionMissingRow],
     timeframes: ["2m", "5m", "15m"],
     signalMatrixBySymbol: {
       ABFL: {
@@ -136,16 +180,15 @@ test("Algo monitor sidebar withholds action rows until all selected signal bubbl
           active: true,
           latestBarAt: "2026-06-09T14:30:00.000Z",
         },
-        "5m": {
-          status: "pending",
-          active: true,
-        },
       },
     },
   });
 
-  assert.deepEqual(split.hydratedRows.map((row) => row.id), ["sta-hydrated"]);
-  assert.deepEqual(split.pendingRows.map((row) => row.id), ["sta-pending"]);
+  assert.deepEqual(
+    split.hydratedRows.map((row) => row.id),
+    ["sta-hydrated", "sta-companion-missing"],
+  );
+  assert.deepEqual(split.pendingRows, []);
 });
 
 test("Algo monitor sidebar treats evaluated diagnostic signal bubbles as hydrated", () => {

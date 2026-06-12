@@ -4123,6 +4123,16 @@ const TradeScreenInner = ({
       tradeRecentTickerRows,
     ],
   );
+  const equityTickerSearchOpen = tradeTickerSearchAnchor === "equity";
+  const tabsTickerSearchOpen = tradeTickerSearchAnchor === "tabs";
+  const equityTickerSearchContent = useMemo(
+    () => renderTradeTickerSearch(equityTickerSearchOpen),
+    [equityTickerSearchOpen, renderTradeTickerSearch],
+  );
+  const tabsTickerSearchContent = useMemo(
+    () => renderTradeTickerSearch(tabsTickerSearchOpen, false),
+    [renderTradeTickerSearch, tabsTickerSearchOpen],
+  );
 
   useEffect(() => {
     if (isVisible) {
@@ -4224,11 +4234,9 @@ const TradeScreenInner = ({
       historicalDataEnabled={tradePrimaryChartDataEnabled}
       stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
       onOpenSearch={openEquitySearch}
-      searchOpen={tradeTickerSearchAnchor === "equity"}
+      searchOpen={equityTickerSearchOpen}
       onSearchOpenChange={handleEquitySearchOpenChange}
-      searchContent={renderTradeTickerSearch(
-        tradeTickerSearchAnchor === "equity",
-      )}
+      searchContent={equityTickerSearchContent}
       workspaceChart={activeWorkspace.equityChart}
       onWorkspaceChartChange={(patch) =>
         upsertTradeWorkspace(activeTicker, {
@@ -4406,7 +4414,7 @@ const TradeScreenInner = ({
           onAddNew={toggleTabSearch}
           onReorder={reorderTradeTickers}
         />
-        {renderTradeTickerSearch(tradeTickerSearchAnchor === "tabs", false)}
+        {tabsTickerSearchContent}
       </div>
       <TradeQuoteRuntime
         ticker={activeTicker}

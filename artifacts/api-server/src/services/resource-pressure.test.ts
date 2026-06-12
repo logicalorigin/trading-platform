@@ -39,7 +39,7 @@ test("request latency raises overall level but does not freeze trading", () => {
   __resetApiResourcePressureForTests();
 });
 
-test("rss pressure can still force high pressure", () => {
+test("rss pressure can still force high pressure without blocking signal refresh", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -50,7 +50,10 @@ test("rss pressure can still force high pressure", () => {
 
   assert.equal(snapshot.level, "high");
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-rss")?.level, "high");
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, true);
+  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
+  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), true);
 
   __resetApiResourcePressureForTests();
@@ -75,27 +78,28 @@ test("request latency watch does not defer signal-options action work", () => {
   __resetApiResourcePressureForTests();
 });
 
-test("event-loop saturation freezes trading action scans", () => {
+test("event-loop saturation does not suppress signal-options work", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
     eventLoopDelayP95Ms: 300,
   });
 
-  // Real server saturation (the loop is blocked) DOES shed trading work.
   assert.equal(snapshot.resourceLevel, "high");
   assert.equal(
     snapshot.drivers.find((driver) => driver.kind === "api-event-loop")?.level,
     "high",
   );
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, true);
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
+  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), true);
 
   __resetApiResourcePressureForTests();
 });
 
-test("event-loop watch defers action scans but keeps signal refresh", () => {
+test("event-loop watch does not defer signal-options action work", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -103,7 +107,8 @@ test("event-loop watch defers action scans but keeps signal refresh", () => {
   });
 
   assert.equal(snapshot.resourceLevel, "watch");
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, false);
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
   assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
 
   __resetApiResourcePressureForTests();

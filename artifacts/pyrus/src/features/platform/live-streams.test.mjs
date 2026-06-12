@@ -449,6 +449,17 @@ test("account page positions query keys request live quote hydration", () => {
       liveQuotes: true,
     },
   );
+  assert.deepEqual(
+    __liveStreamsInternalsForTests.accountPositionsParams({
+      mode: "paper",
+      assetClass: "Options",
+    }),
+    {
+      mode: "paper",
+      assetClass: "option",
+      liveQuotes: true,
+    },
+  );
 });
 
 test("shared option quote stream demand unions active hook subscriptions", () => {

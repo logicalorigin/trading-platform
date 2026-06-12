@@ -11,6 +11,13 @@ import {
   resolveBootBlockingTaskIds,
 } from "../features/platform/bootPolicy.js";
 
+const FRAME_TASK_IDS = [
+  "app-content-chunk",
+  "react-root",
+  "static-html",
+  "workspace-route-chunk",
+];
+
 const sortedBlockingIds = () =>
   getBootProgressSnapshot()
     .tasks
@@ -24,87 +31,35 @@ const completeTasks = (taskIds) => {
   }
 };
 
-test("runtime boot classification lets Market complete without watchlists", () => {
+test("boot overlay completes once the frame chunks load — no data gate", () => {
   resetBootProgressForTests();
   reclassifyBootBlocking(resolveBootBlockingTaskIds("market"));
 
-  assert.deepEqual(sortedBlockingIds(), [
-    "app-content-chunk",
-    "first-screen",
-    "react-root",
-    "session",
-    "static-html",
-    "workspace-route-chunk",
-  ]);
+  assert.deepEqual(sortedBlockingIds(), FRAME_TASK_IDS);
 
   completeTasks([
     "static-html",
     "react-root",
     "app-content-chunk",
     "workspace-route-chunk",
-    "session",
-    "first-screen",
   ]);
 
+  // session / watchlists / first-screen are NOT required to dismiss the overlay.
   assert.equal(getBootProgressSnapshot().complete, true);
 });
 
-test("runtime boot classification restores account blockers for Account", () => {
-  resetBootProgressForTests();
-  reclassifyBootBlocking(resolveBootBlockingTaskIds("account"));
-
-  assert.deepEqual(sortedBlockingIds(), [
-    "accounts",
-    "app-content-chunk",
-    "first-screen",
-    "react-root",
-    "session",
-    "static-html",
-    "workspace-route-chunk",
-  ]);
-
-  completeTasks([
-    "static-html",
-    "react-root",
-    "app-content-chunk",
-    "workspace-route-chunk",
-    "session",
-    "first-screen",
-  ]);
-  assert.equal(getBootProgressSnapshot().complete, false);
-
-  completeBootProgressTask("accounts");
-  assert.equal(getBootProgressSnapshot().complete, true);
+test("no screen adds a data blocker to the overlay", () => {
+  for (const screenId of ["market", "account", "algo", "flow", "signals"]) {
+    resetBootProgressForTests();
+    reclassifyBootBlocking(resolveBootBlockingTaskIds(screenId));
+    assert.deepEqual(sortedBlockingIds(), FRAME_TASK_IDS);
+  }
 });
 
-test("runtime boot classification restores account and signal profile blockers for Algo", () => {
-  resetBootProgressForTests();
-  reclassifyBootBlocking(resolveBootBlockingTaskIds("algo"));
-
-  assert.deepEqual(sortedBlockingIds(), [
-    "accounts",
-    "app-content-chunk",
-    "first-screen",
-    "react-root",
-    "session",
-    "signal-profile",
-    "static-html",
-    "workspace-route-chunk",
-  ]);
-});
-
-test("reset restores the static boot task defaults", () => {
+test("reset defaults block only on the frame chunks", () => {
   resetBootProgressForTests();
   reclassifyBootBlocking(resolveBootBlockingTaskIds("market"));
   resetBootProgressForTests();
 
-  assert.deepEqual(sortedBlockingIds(), [
-    "app-content-chunk",
-    "first-screen",
-    "react-root",
-    "session",
-    "static-html",
-    "watchlists",
-    "workspace-route-chunk",
-  ]);
+  assert.deepEqual(sortedBlockingIds(), FRAME_TASK_IDS);
 });

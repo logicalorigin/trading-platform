@@ -10907,14 +10907,14 @@ const OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED = readBooleanEnv(
   true,
 );
 const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
-const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 1;
+const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
 const OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET",
   OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
-  OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET,
+  8,
 );
 const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 8;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
@@ -11153,6 +11153,36 @@ function resolveOptionsFlowScannerTickerLineBudget(input: {
     ),
   );
 }
+
+function resolveOptionsFlowScannerTargetTickerSlots(input: {
+  scannerTargetLineBudget: number;
+  perTickerLineBudget: number;
+  eligibleOptionableTickerCount: number;
+}): number {
+  const scannerTargetLineBudget = Math.max(
+    0,
+    Math.floor(input.scannerTargetLineBudget || 0),
+  );
+  const perTickerLineBudget = Math.max(
+    1,
+    Math.floor(input.perTickerLineBudget || 1),
+  );
+  const eligibleOptionableTickerCount = Math.max(
+    0,
+    Math.floor(input.eligibleOptionableTickerCount || 0),
+  );
+  const scannerTargetTickerCount =
+    scannerTargetLineBudget <= 0
+      ? 0
+      : Math.ceil(scannerTargetLineBudget / perTickerLineBudget);
+  return Math.max(
+    0,
+    Math.min(scannerTargetTickerCount, eligibleOptionableTickerCount),
+  );
+}
+
+export const __resolveOptionsFlowScannerTargetTickerSlotsForTests =
+  resolveOptionsFlowScannerTargetTickerSlots;
 
 function syncOptionsFlowScannerEffectiveConcurrency(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
@@ -13114,20 +13144,6 @@ export function getOptionsFlowScannerDiagnostics() {
     config.scannerLineBudget,
     schedulableFlowScannerLineCap,
   );
-  const eligibleOptionableTickerCount = Math.max(
-    0,
-    coverage.activeTargetSize ?? coverage.selectedSymbols ?? 0,
-  );
-  const targetActiveTickerSlots = Math.max(
-    0,
-    Math.min(scannerTargetLineBudget, eligibleOptionableTickerCount),
-  );
-  const activeTickerSlotCount =
-    admissionDiagnostics.flowScannerTickerSlots.activeTickerSlotCount;
-  const tickerSlotShortfall = Math.max(
-    0,
-    targetActiveTickerSlots - activeTickerSlotCount,
-  );
   const seedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
     phaseLineCap: OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
@@ -13136,6 +13152,21 @@ export function getOptionsFlowScannerDiagnostics() {
     config,
     phaseLineCap: OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
   });
+  const eligibleOptionableTickerCount = Math.max(
+    0,
+    coverage.activeTargetSize ?? coverage.selectedSymbols ?? 0,
+  );
+  const targetActiveTickerSlots = resolveOptionsFlowScannerTargetTickerSlots({
+    scannerTargetLineBudget,
+    perTickerLineBudget: expandedLineBudget,
+    eligibleOptionableTickerCount,
+  });
+  const activeTickerSlotCount =
+    admissionDiagnostics.flowScannerTickerSlots.activeTickerSlotCount;
+  const tickerSlotShortfall = Math.max(
+    0,
+    targetActiveTickerSlots - activeTickerSlotCount,
+  );
   const maxDeepScanLines =
     effectiveConcurrency <= 0
       ? 0
@@ -13168,14 +13199,14 @@ export function getOptionsFlowScannerDiagnostics() {
           ? lastSkippedReason
           : effectiveFlowScannerLineCap <= 0 ||
               schedulableFlowScannerLineCap <= 0
-            ? "protected-app-demand"
+            ? "protected-trade-options-chain-demand"
             : eligibleOptionableTickerCount <= activeTickerSlotCount
               ? "insufficient-eligible-tickers"
               : deepQueueBacklog > 0 || deepScanner.draining || deepScanner.activeCount > 0
                 ? "metadata-workers-filling-slots"
                 : coverage.degradedReason
                   ? "optionability-filtering"
-                  : "scanner-awaiting-next-cycle";
+                  : "scanner-refill-needed";
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
@@ -13229,8 +13260,7 @@ export function getOptionsFlowScannerDiagnostics() {
       targetActiveTickerSlots,
       activeTickerSlotCount,
       eligibleOptionableTickerCount,
-      perTickerLiveContractLimit:
-        admissionDiagnostics.flowScannerTickerSlots.perTickerLiveContractLimit,
+      perTickerLiveContractLimit: expandedLineBudget,
       tickerSlotShortfall,
       shortfallReason,
       duplicateActiveUnderlyingCount:

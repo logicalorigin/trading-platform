@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -34,10 +35,14 @@ import {
   resolveSignalMatrixVerdict,
   signalPrimaryStateForMatrix,
 } from "../../features/signals/signalsRowModel.js";
+import {
+  buildSignalSparklinePointColors,
+  defaultSignalSparklineColorForDirection,
+  isSignalSparklineDirection,
+} from "../../features/signals/signalSparklineModel.js";
 import { getStoredOptionQuoteSnapshot } from "../../features/platform/live-streams";
 import { useValueFlash } from "../../lib/motion.jsx";
 import {
-  BigDirectionGlyph,
   FRESHNESS_BAR_DENOM,
   SCORE_FRESH_ROW_GLOW,
   SignalDots,
@@ -1083,6 +1088,32 @@ export const resolveSparklineData = (tickerSnapshot, signal) => {
   return [];
 };
 
+export const resolveStaSparklineSignalTreatment = (
+  direction,
+  { hasTimeline = false } = {},
+) => {
+  const primitive = directionMeta(direction).primitive;
+  if (!isSignalSparklineDirection(primitive)) {
+    return {
+      color: null,
+      mode: "price",
+      direction: null,
+    };
+  }
+  if (hasTimeline) {
+    return {
+      color: null,
+      mode: "timeline",
+      direction: primitive,
+    };
+  }
+  return {
+    color: defaultSignalSparklineColorForDirection(primitive),
+    mode: "current",
+    direction: primitive,
+  };
+};
+
 const resolveFreshnessRatio = (signal) => {
   const bars = finiteNumberOrNull(signal?.barsSinceSignal);
   if (bars != null) {
@@ -1473,13 +1504,15 @@ const signalChartTitle = (signalRecord) => {
 const SignalHeroCell = ({
   signalRecord,
   candidate,
-  direction,
   tfMatrix,
   timeframes,
-  freshnessRatio,
   price,
   priceFlashClassName,
   sparklineData,
+  sparklinePoints,
+  sparklinePointColors,
+  sparklineSignalEventCount = 0,
+  sparklineSignalTreatment,
   signalMove,
   tradeButton = null,
   showSignalMove = true,
@@ -1516,17 +1549,6 @@ const SignalHeroCell = ({
           lineHeight: 1,
         }}
       >
-        <BigDirectionGlyph
-          direction={direction.primitive}
-          freshnessRatio={freshnessRatio}
-          freshnessBars={signalRecord.barsSinceSignal}
-          tone={CSS_COLOR.textSec}
-          className={
-            signalRecord.fresh && signalRecord.actionEligible !== false
-              ? "ra-signal-glyph-fresh"
-              : undefined
-          }
-        />
         <StrategyTag candidate={candidate} signal={signalRecord} />
         <span
           style={{
@@ -1573,6 +1595,11 @@ const SignalHeroCell = ({
           <AppTooltip content={signalChartTitle(signalRecord) || undefined}>
             <span
               data-testid="algo-signal-hero-sparkline"
+              data-sparkline-signal-mode={sparklineSignalTreatment.mode}
+              data-sparkline-signal-events={sparklineSignalEventCount}
+              data-sparkline-signal-direction={
+                sparklineSignalTreatment.direction || undefined
+              }
               role="img"
               aria-label={signalChartTitle(signalRecord) || undefined}
               style={{
@@ -1586,7 +1613,10 @@ const SignalHeroCell = ({
             >
               <MicroSparkline
                 data={sparklineData}
-                positive={direction.primitive === "buy"}
+                points={sparklinePoints}
+                positive={sparklineSignalTreatment.direction === "buy"}
+                color={sparklineSignalTreatment.color}
+                pointColors={sparklinePointColors}
                 width={SIGNAL_HERO_SPARKLINE_WIDTH}
                 height={SIGNAL_HERO_SPARKLINE_HEIGHT}
                 className="ra-sparkline"
@@ -2168,6 +2198,7 @@ export const OperationsSignalRow = ({
   timeframes = undefined,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
+  signalEvents = [],
   onRowAction,
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   scanActive = false,
@@ -2322,7 +2353,6 @@ export const OperationsSignalRow = ({
   const signalAge = resolveSignalAge(signalRecord);
   const since = signalSinceDisplay(signalRecord, signalAge);
   const signalMove = resolveSignalMove(signalRecord, tickerSnapshot, candidate);
-  const freshnessRatio = resolveFreshnessRatio(signalRecord);
   const signalAgeBlocked =
     signalRecord.actionEligible === false || Boolean(signalRecord.actionBlocker);
   const signalAgeTone =
@@ -2334,6 +2364,45 @@ export const OperationsSignalRow = ({
       actionabilityScore >= SCORE_FRESH_ROW_GLOW,
   );
   const sparklineData = resolveSparklineData(tickerSnapshot, signalRecord);
+  const sparklinePoints = useMemo(
+    () => extractSparklinePoints(sparklineData),
+    [sparklineData],
+  );
+  const sparklinePointColors = useMemo(
+    () =>
+      buildSignalSparklinePointColors({
+        points: sparklinePoints,
+        row: {
+          timeframe: signalRecord.timeframe,
+          direction: direction.primitive,
+          currentSignalAt: signalRecord.currentSignalAt || signalRecord.signalAt,
+          status:
+            signalRecord.fresh === true
+              ? "active-fresh"
+              : direction.primitive
+                ? "active-stale"
+                : signalRecord.status,
+        },
+        signalEvents,
+      }),
+    [
+      signalEvents,
+      direction.primitive,
+      signalRecord.fresh,
+      signalRecord.currentSignalAt,
+      signalRecord.signalAt,
+      signalRecord.status,
+      signalRecord.timeframe,
+      sparklinePoints,
+    ],
+  );
+  const sparklineSignalTreatment = resolveStaSparklineSignalTreatment(
+    signalRecord.direction,
+    { hasTimeline: Array.isArray(sparklinePointColors) },
+  );
+  const sparklineSignalEventCount = Array.isArray(signalEvents)
+    ? signalEvents.length
+    : 0;
   const spreadGauge = quoteGaugeInput(effectiveQuote, effectiveLiquidity);
   const verdict = resolveSignalVerdict({
     signal: actionabilitySignalRecord,
@@ -2518,13 +2587,15 @@ export const OperationsSignalRow = ({
       <SignalHeroCell
         signalRecord={signalRecord}
         candidate={candidate}
-        direction={direction}
         tfMatrix={resolvedTfMatrix}
         timeframes={timeframes}
-        freshnessRatio={freshnessRatio}
         price={underlyingPrice}
         priceFlashClassName={priceFlashClassName}
         sparklineData={sparklineData}
+        sparklinePoints={sparklinePoints}
+        sparklinePointColors={sparklinePointColors}
+        sparklineSignalEventCount={sparklineSignalEventCount}
+        sparklineSignalTreatment={sparklineSignalTreatment}
         signalMove={signalMove}
         tradeButton={
           <SignalTradeButton

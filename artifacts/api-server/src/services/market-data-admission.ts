@@ -166,7 +166,7 @@ const INTENT_POOL: Record<MarketDataIntent, MarketDataPoolId> = {
 const POOL_LABELS: Record<MarketDataPoolId, string> = {
   execution: "Execution",
   "account-monitor": "Account monitor",
-  visible: "Visible",
+  visible: "Trade Options Chain",
   automation: "Automation",
   "flow-scanner": "Flow scanner",
 };
@@ -221,7 +221,7 @@ const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
 const OWNER_CLASS_LABELS: Record<MarketDataOwnerClass, string> = {
   execution: "Execution",
   "account-monitor": "Account monitor",
-  visible: "Visible",
+  visible: "Trade Options Chain",
   automation: "Automation",
   "signal-options": "Signal automation",
   "shadow-account": "Shadow account",
@@ -920,7 +920,11 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
     scannerRemainingLineCount: flowScannerDynamic.scannerRemainingLineCount,
     optionBudgetLineCount: flowScannerDynamic.optionBudgetLineCount,
     nonScannerOptionLineCount: flowScannerDynamic.nonScannerOptionLineCount,
+    tradeOptionsChainReserveLineCount:
+      flowScannerDynamic.tradeOptionsChainReserveLineCount,
     optionReserveLineCount: flowScannerDynamic.optionReserveLineCount,
+    protectedPriorityLineCount:
+      flowScannerDynamic.protectedPriorityLineCount,
     activeLineCount: activeLineIds.size,
     remainingToTargetLineCount: Math.max(
       0,
@@ -1781,11 +1785,16 @@ function buildFlowScannerDynamicLineCap(
     Array.from(scannerLineIds).filter((id) => !nonScannerLineIds.has(id)),
   );
   const optionBudgetLineCount = budget.targetFillLines;
-  const optionReserveLineCount = 0;
+  const tradeOptionsChainReserveLineCount =
+    budget.visibleOptionQuoteLineReserve;
   const protectedPriorityLineCount = nonScannerLineIds.size;
+  const optionReserveLineCount = Math.max(
+    tradeOptionsChainReserveLineCount,
+    protectedPriorityLineCount,
+  );
   const dynamicScannerLineCap = Math.max(
     0,
-    optionBudgetLineCount - protectedPriorityLineCount,
+    optionBudgetLineCount - optionReserveLineCount,
   );
   const effectiveScannerLineCap = Math.max(
     0,
@@ -1794,7 +1803,9 @@ function buildFlowScannerDynamicLineCap(
   return {
     optionBudgetLineCount,
     nonScannerOptionLineCount: nonScannerOptionLineIds.size,
+    tradeOptionsChainReserveLineCount,
     optionReserveLineCount,
+    protectedPriorityLineCount,
     dynamicScannerLineCap,
     scannerStaticLineCap: budget.flowScannerLineCap,
     scannerEffectiveLineCap: effectiveScannerLineCap,
@@ -1914,7 +1925,11 @@ export function getMarketDataLinePressureSnapshot() {
     scannerDynamicLineCap: flowScannerDynamic.dynamicScannerLineCap,
     optionBudgetLineCount: flowScannerDynamic.optionBudgetLineCount,
     nonScannerOptionLineCount: flowScannerDynamic.nonScannerOptionLineCount,
+    tradeOptionsChainReserveLineCount:
+      flowScannerDynamic.tradeOptionsChainReserveLineCount,
     optionReserveLineCount: flowScannerDynamic.optionReserveLineCount,
+    protectedPriorityLineCount:
+      flowScannerDynamic.protectedPriorityLineCount,
     nonScannerOptionLineSample: flowScannerDynamic.nonScannerOptionLineSample,
     scannerActiveLineCount: flowScannerLines.size,
     scannerChargedLineCount: flowScannerChargedLines.size,

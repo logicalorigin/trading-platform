@@ -2154,26 +2154,6 @@ async function buildAutomationMetrics(): Promise<{
   ).length;
   const activeMaxScanAgeMs =
     activeScanAges.length > 0 ? Math.max(...activeScanAges) : null;
-  const timedOutDeploymentCount = deployments.filter((deployment) => {
-    const record = asJsonRecord(deployment);
-    return (
-      record["timedOut"] === true ||
-      record["lastScanOutcome"] === "timed_out" ||
-      record["lastScanOutcome"] === "timed_out_unsettled"
-    );
-  }).length;
-  const unsettledAfterTimeoutCount = deployments.filter(
-    (deployment) => asJsonRecord(deployment)["unsettledAfterTimeout"] === true,
-  ).length;
-  const pressurePausedDeployments = deployments.filter((deployment) => {
-    const record = asJsonRecord(deployment);
-    return record["pressurePaused"] === true;
-  });
-  const pressurePauseAges = pressurePausedDeployments
-    .map((deployment) => numeric(asJsonRecord(deployment)["pressurePauseAgeMs"]))
-    .filter((value): value is number => value !== null);
-  const pressurePausedMaxAgeMs =
-    pressurePauseAges.length > 0 ? Math.max(...pressurePauseAges) : null;
   const skippedScanCount = deployments.reduce(
     (sum, deployment) =>
       sum + (numeric(asJsonRecord(deployment)["skippedScanCount"]) ?? 0),
@@ -2331,10 +2311,6 @@ async function buildAutomationMetrics(): Promise<{
       inactiveStaleScanCount,
       activeLongScanCount,
       activeMaxScanAgeMs,
-      timedOutDeploymentCount,
-      unsettledAfterTimeoutCount,
-      pressurePausedDeploymentCount: pressurePausedDeployments.length,
-      pressurePausedMaxAgeMs,
       skippedScanCount,
       lastSkippedAt:
         latestSkippedAt === null ? null : new Date(latestSkippedAt).toISOString(),
@@ -2381,7 +2357,6 @@ async function buildAutomationMetrics(): Promise<{
       priorExpirationOpenShadowOptionCount: optionExpirationCounts.prior,
       expirationMaintenanceDueCount: optionExpirationCounts.due,
       expirationMaintenanceMarketCloseReached: marketCloseReached,
-      pressurePausedDeploymentCount: pressurePausedDeployments.length,
       recentEventCount: automationEvents.length,
       recentEvents: automationEvents.slice(0, 20).map((event) => ({
         eventType: event.eventType,
@@ -2406,18 +2381,12 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
   const activeMaxScanAgeMs = numeric(metrics["activeMaxScanAgeMs"]);
-  const timedOutDeploymentCount =
-    numeric(metrics["timedOutDeploymentCount"]) ?? 0;
-  const unsettledAfterTimeoutCount =
-    numeric(metrics["unsettledAfterTimeoutCount"]) ?? 0;
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
   const staleScanCount = numeric(metrics["staleScanCount"]) ?? 0;
   const inactiveStaleScanCount =
     numeric(metrics["inactiveStaleScanCount"]) ?? staleScanCount;
   const activeLongScanCount = numeric(metrics["activeLongScanCount"]) ?? 0;
-  const pressurePausedDeploymentCount =
-    numeric(metrics["pressurePausedDeploymentCount"]) ?? 0;
   const signalCount = numeric(metrics["signalCount"]) ?? 0;
   const staleSignalCount = numeric(metrics["staleSignalCount"]) ?? 0;
   const unavailableSignalCount = numeric(metrics["unavailableSignalCount"]) ?? 0;
@@ -2435,10 +2404,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (
     gatewayBlockedCount >= 3 ||
     failureCount >= 3 ||
-    timedOutDeploymentCount > 0 ||
-    unsettledAfterTimeoutCount > 0 ||
-    (pressurePausedDeploymentCount === 0 &&
-      activeLongScanCount === 0 &&
+    (activeLongScanCount === 0 &&
       enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
       latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
@@ -2453,7 +2419,6 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       activeLongScanCount > 0 ||
       latestScanAgeMs === null ||
       latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS ||
-      pressurePausedDeploymentCount > 0 ||
       (signalCount > 0 &&
         degradedSignalInputCount > 0 &&
         degradedSignalInputRatio >= 0.1) ||
@@ -4045,32 +4010,11 @@ export async function collectDiagnosticSnapshot(
     0;
   const activeLongScanCount =
     numeric(automation.metrics["activeLongScanCount"]) ?? 0;
-  const pressurePausedDeploymentCount =
-    numeric(automation.metrics["pressurePausedDeploymentCount"]) ?? 0;
-
-  if (enabledAutomationDeployments > 0 && pressurePausedDeploymentCount > 0) {
-    activeEvents.push({
-      subsystem: "automation",
-      category: "resource-pressure",
-      code: "signal_options_scan_pressure_paused",
-      severity: "warning",
-      message: "Signal-options scans are paused by API resource pressure.",
-      dimensions: withBridgeRootCause({
-        pressurePausedDeploymentCount,
-        pressurePausedMaxAgeMs: automation.metrics["pressurePausedMaxAgeMs"],
-        skippedScanCount: automation.metrics["skippedScanCount"],
-        lastSkippedAt: automation.metrics["lastSkippedAt"],
-        lastSkipReason: automation.metrics["lastSkipReason"],
-        latestScanAgeMs: automation.metrics["latestScanAgeMs"],
-      }),
-      raw: automation.raw,
-    });
-  }
 
   if (
     enabledAutomationDeployments > 0 &&
     (automation.metrics["workerRunning"] !== true ||
-      (inactiveStaleScanCount > 0 && pressurePausedDeploymentCount === 0))
+      inactiveStaleScanCount > 0)
   ) {
     activeEvents.push({
       subsystem: "automation",
@@ -4085,7 +4029,6 @@ export async function collectDiagnosticSnapshot(
         workerRunning: automation.metrics["workerRunning"],
         tickRunning: automation.metrics["tickRunning"],
         activeDeploymentCount: automation.metrics["activeDeploymentCount"],
-        pressurePausedDeploymentCount,
       }),
       raw: automation.raw,
     });
@@ -4257,9 +4200,6 @@ export async function collectDiagnosticSnapshot(
     suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
     suppressedThresholdMetricKeys.add("automation.gateway_blocked_count");
     suppressedThresholdMetricKeys.add("automation.failure_count");
-  }
-  if ((numeric(automation.metrics["pressurePausedDeploymentCount"]) ?? 0) > 0) {
-    suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
   }
   if (numeric(resourceMetrics["browserMemoryLimitMb"]) !== null) {
     suppressedThresholdMetricKeys.add("resource_pressure.browser_memory_mb");

@@ -28,11 +28,6 @@ import {
 } from "../services/route-admission";
 
 const router: IRouter = Router();
-const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 7_500;
-const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
-const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
-const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000;
-const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4;
 const OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS = 30_000;
 
 type ContinuingSignalOptionsRouteTimeoutPolicy = {
@@ -50,60 +45,16 @@ type SignalOptionsRouteTimeoutPolicy =
   | AbortableSignalOptionsRouteTimeoutPolicy;
 
 const SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES = {
-  cockpit: {
-    continuation: "continue-in-background",
-    reason: "cockpit builds refresh shared caches",
-  },
-  shadowScan: {
-    continuation: "abort-at-route-budget",
-    reason: "manual Signal Options scans can trigger side-effectful action work",
-  },
   overnightSpotScan: {
     continuation: "abort-at-route-budget",
     reason: "manual Overnight Spot scans can trigger side-effectful action work",
   },
 } as const satisfies Record<string, SignalOptionsRouteTimeoutPolicy>;
 
-function signalOptionsAdmissionCacheMode(admission: ReturnType<typeof getApiRouteAdmission>) {
-  return admission.cacheOnly ? "cache-only" : undefined;
-}
-
 function signalOptionsRequestCacheMode(
   value: unknown,
-  admission: ReturnType<typeof getApiRouteAdmission>,
 ) {
-  return value === "cache-only"
-    ? "cache-only"
-    : signalOptionsAdmissionCacheMode(admission);
-}
-
-function withContinuingSignalOptionsRouteTimeout<T>(
-  promise: Promise<T>,
-  input: {
-    timeoutMs: number;
-    code: string;
-    detail: string;
-    policy: ContinuingSignalOptionsRouteTimeoutPolicy;
-  },
-): Promise<T> {
-  promise.catch(() => {});
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      reject(
-        new HttpError(504, "Signal Options route timed out.", {
-          code: input.code,
-          detail: `${input.detail} Timed-out work may continue in the background because ${input.policy.reason}.`,
-        }),
-      );
-    }, input.timeoutMs);
-    timeout.unref?.();
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  });
+  return value === "cache-only" ? "cache-only" : undefined;
 }
 
 function withAbortableSignalOptionsRouteTimeout<T>(
@@ -262,9 +213,9 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
     withRouteAdmissionMetadata(
       await listSignalOptionsAutomationState({
         deploymentId: req.params.deploymentId,
-        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
+        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode),
         view,
-        refreshSignalsFromMonitorState: true,
+        refreshSignalsFromMonitorState: req.query.refreshSignals === "true",
       }),
       admission,
     ),
@@ -274,26 +225,13 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
-  const timeoutMs =
-    view === "full"
-      ? SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS
-      : SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
-      await withContinuingSignalOptionsRouteTimeout(
-        getAlgoDeploymentCockpit({
-          deploymentId: req.params.deploymentId,
-          cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
-          view,
-        }),
-        {
-          timeoutMs,
-          code: "signal_options_cockpit_route_timeout",
-          detail:
-            "Signal Options cockpit did not respond within the route budget.",
-          policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.cockpit,
-        },
-      ),
+      await getAlgoDeploymentCockpit({
+        deploymentId: req.params.deploymentId,
+        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode),
+        view,
+      }),
       admission,
     ),
   );
@@ -305,7 +243,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/performance", async (
     withRouteAdmissionMetadata(
       await getSignalOptionsPerformance({
         deploymentId: req.params.deploymentId,
-        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
+        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode),
       }),
       admission,
     ),
@@ -327,27 +265,16 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
     false;
 
   res.json(
-    await withAbortableSignalOptionsRouteTimeout(
-      (signal) =>
-        runSignalOptionsShadowScan({
-          deploymentId: req.params.deploymentId,
-          forceEvaluate,
-          preferStoredMonitorState: forceEvaluate !== true,
-          responseMode: "summary",
-          skipActionWork: runActions !== true,
-          source: "manual",
-          actionWorkBudgetMs: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS,
-          actionWorkItemLimit: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT,
-          signal,
-        }),
-      {
-        timeoutMs: SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS,
-        code: "signal_options_shadow_scan_route_timeout",
-        detail:
-          "Signal Options shadow scan did not finish within the route budget.",
-        policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.shadowScan,
-      },
-    ),
+    await runSignalOptionsShadowScan({
+      deploymentId: req.params.deploymentId,
+      forceEvaluate,
+      preferStoredMonitorState: forceEvaluate !== true,
+      responseMode: "summary",
+      skipActionWork: runActions !== true,
+      source: "manual",
+      actionWorkBudgetMs: null,
+      actionWorkItemLimit: null,
+    }),
   );
 });
 

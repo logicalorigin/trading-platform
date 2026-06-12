@@ -23,7 +23,6 @@ import {
   useListBacktestDraftStrategies,
   useListExecutionEvents,
   usePauseAlgoDeployment,
-  useRunSignalOptionsShadowScan,
   useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
@@ -57,6 +56,7 @@ import {
   mergeSignalOptionsProfile,
   numberFrom,
   normalizeSignalOptionsMtfTimeframes,
+  normalizeStrategySignalTimeframes,
   parseChaseSteps,
   resolveStrategySignalSettings,
   resolveStableStaActionSnapshot,
@@ -86,7 +86,6 @@ import {
 } from "../features/platform/bridgeRuntimeModel";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
-import { describeUserFacingRuntimeError } from "../features/platform/userFacingRuntimeError.js";
 import {
   formatEnumLabel,
   formatOptionContractLabel,
@@ -405,7 +404,7 @@ export const AlgoScreen = ({
   });
   const [algoPrimaryFallbackReady, setAlgoPrimaryFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
-  const autoInitialScanDeploymentIdsRef = useRef(new Set());
+  const autoSignalMatrixHydrationKeysRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
       algoTimingStagesRef.current = new Set();
@@ -456,8 +455,7 @@ export const AlgoScreen = ({
   const algoSetupQueriesEnabled = Boolean(isVisible);
   const algoPrimaryQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
   const algoDerivedRestQueriesEnabled = Boolean(
-    algoLiveDataQueriesEnabled &&
-      !algoCockpitStreamFreshness.algoFullFresh,
+    algoLiveDataQueriesEnabled,
   );
   const algoBackgroundQueriesEnabled = Boolean(
     algoDerivedRestQueriesEnabled && !safeQaMode,
@@ -507,8 +505,12 @@ export const AlgoScreen = ({
     },
   );
   const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
-  const deploymentListUnavailable =
-    deploymentsQuery.data?.cacheStatus === "unavailable";
+  const deploymentListEmptyUnavailable = Boolean(
+    deploymentsQuery.data?.cacheStatus === "unavailable" && !deployments.length,
+  );
+  const deploymentListUnavailable = Boolean(
+    deploymentListEmptyUnavailable && !deploymentsQuery.isFetching,
+  );
   const candidateDrafts = useMemo(() => {
     const drafts = draftsQuery.data?.drafts || EMPTY_ALGO_DRAFTS;
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
@@ -543,7 +545,6 @@ export const AlgoScreen = ({
         ...QUERY_DEFAULTS,
         enabled: Boolean(algoPrimaryQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoRoutineRefetchInterval,
-        placeholderData: retainPreviousData,
         retry: false,
       },
     },
@@ -553,7 +554,6 @@ export const AlgoScreen = ({
       ...QUERY_DEFAULTS,
       enabled: Boolean(algoDerivedRestQueriesEnabled && focusedDeployment?.id),
       refetchInterval: algoDerivedRefetchInterval,
-      placeholderData: retainPreviousData,
       retry: false,
     },
   });
@@ -604,8 +604,9 @@ export const AlgoScreen = ({
     },
   );
   const deploymentsSettled = Boolean(
-    deploymentsQuery.data ||
-      deploymentsQuery.isFetched ||
+    deploymentListUnavailable ||
+      (!deploymentListEmptyUnavailable &&
+        (deploymentsQuery.data || deploymentsQuery.isFetched)) ||
       deploymentsQuery.isError,
   );
   const draftsSettled = Boolean(
@@ -637,7 +638,7 @@ export const AlgoScreen = ({
   );
   useEffect(() => {
     onReadinessChange?.({
-      primaryReady: Boolean(isVisible && algoPrimaryDataReady),
+      primaryReady: Boolean(isVisible),
       derivedReady: algoDerivedReady,
       backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
     });
@@ -678,7 +679,6 @@ export const AlgoScreen = ({
     transitionsStoreRef.current = buildTransitionsBufferStore();
   }
   const prevCockpitSignalsRef = useRef(null);
-  const previousStaActionSnapshotRef = useRef(null);
   const [recentTransitions, setRecentTransitions] = useState([]);
   const [transitionsNow, setTransitionsNow] = useState(() => Date.now());
   const prevActivitySnapshotRef = useRef(null);
@@ -694,9 +694,6 @@ export const AlgoScreen = ({
   const signalScanReady = !signalScanPausedReason;
   const signalScanProfileCheckSettled = Boolean(
     signalMonitorProfileSettled || algoCockpitStreamFreshness.algoFullFresh,
-  );
-  const signalScanReadyForAuto = Boolean(
-    signalScanReady && signalScanProfileCheckSettled,
   );
   const deploymentSignalOptionsBaselineAvailable = useMemo(() => {
     const config = asRecord(focusedDeployment?.config);
@@ -727,7 +724,6 @@ export const AlgoScreen = ({
       resolveStableStaActionSnapshot({
         cockpit,
         signalOptionsState,
-        previousSnapshot: previousStaActionSnapshotRef.current,
         cockpitFailed: cockpitQuery.isError,
         signalOptionsStateFailed: signalOptionsStateQuery.isError,
       }),
@@ -738,11 +734,6 @@ export const AlgoScreen = ({
       signalOptionsStateQuery.isError,
     ],
   );
-  useEffect(() => {
-    if (staActionSnapshot.cacheable) {
-      previousStaActionSnapshotRef.current = staActionSnapshot;
-    }
-  }, [staActionSnapshot]);
   const signalOptionsCandidates =
     staActionSnapshot.candidates || EMPTY_SIGNAL_OPTIONS_CANDIDATES;
   const signalOptionsSignals =
@@ -1043,6 +1034,10 @@ export const AlgoScreen = ({
       ),
     [profileDraft?.entryGate?.mtfAlignment?.timeframes],
   );
+  const staActionSignalTimeframes = useMemo(
+    () => normalizeStrategySignalTimeframes(strategySettingsDraft?.signalTimeframe),
+    [strategySettingsDraft?.signalTimeframe],
+  );
 
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
@@ -1108,49 +1103,6 @@ export const AlgoScreen = ({
       });
     }
   };
-
-  const runShadowScanMutation = useRunSignalOptionsShadowScan({
-    mutation: {
-      onSuccess: (state, variables) => {
-        const requestedByAuto = variables?.requestSource === "auto";
-        refreshAlgoQueries();
-        if (
-          state?.status === "already_running" ||
-          state?.reason === "signal_options_scan_running"
-        ) {
-          if (!requestedByAuto) {
-            toast.push({
-              kind: "info",
-              title: "Algo & Execution scan already running",
-              body: "The active options strategy scan will finish before another one starts.",
-            });
-          }
-          return;
-        }
-        setSelectedCandidateId(state?.candidates?.[0]?.id || null);
-        if (!requestedByAuto) {
-          toast.push({
-            kind: "success",
-            title: "Options strategy scan complete",
-            body: `${state?.candidates?.length || 0} options strategy candidates in the queue.`,
-          });
-        }
-      },
-      onError: (error) => {
-        const errorCopy = describeUserFacingRuntimeError(error, {
-          title: "Options strategy scan failed",
-          detail: "The Algo & Execution options scan could not finish.",
-          rateLimitedTitle: "Options strategy scan delayed",
-          safeQaTitle: "Options strategy scan paused",
-        });
-        toast.push({
-          kind: "error",
-          title: errorCopy.title,
-          body: errorCopy.detail,
-        });
-      },
-    },
-  });
 
   const updateProfileMutation = useUpdateSignalOptionsExecutionProfile({
     mutation: {
@@ -1396,26 +1348,41 @@ export const AlgoScreen = ({
     enableDeploymentMutation.mutate({ deploymentId: deployment.id });
   };
 
-  const handleRunShadowScan = () => {
+  const handleRefreshSignals = () => {
     if (!focusedDeployment?.id) {
       toast.push({
         kind: "warn",
         title: "No deployment selected",
-        body: "Select a deployment before running the signal-options scan.",
+        body: "Select a deployment before refreshing Signal Matrix states.",
       });
       return;
     }
-    if (!signalScanReady) {
+    const symbols = Array.isArray(focusedDeployment.symbolUniverse)
+      ? focusedDeployment.symbolUniverse
+          .map((symbol) => String(symbol || "").trim().toUpperCase())
+          .filter(Boolean)
+      : [];
+    if (!symbols.length) {
       toast.push({
         kind: "warn",
-        title: "Signal scan unavailable",
-        body:
-          signalScanPausedReason ||
-          "Signal Monitor is not ready to run a fresh scan yet.",
+        title: "No signal universe",
+        body: "Add symbols to the deployment before refreshing Signal Matrix states.",
       });
       return;
     }
-    runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
+    onRequestSignalMatrixHydration?.({
+      symbols,
+      prioritySymbols: symbols,
+      timeframes: staSignalTimeframes,
+      materializePendingCells: true,
+      reason: "algo-signal-table",
+      force: true,
+    });
+    toast.push({
+      kind: "info",
+      title: "Signal Matrix refresh queued",
+      body: `${symbols.length} symbols · ${staSignalTimeframes.join(", ")}`,
+    });
   };
 
   const patchProfileDraftPath = (path, value) => {
@@ -1660,7 +1627,20 @@ export const AlgoScreen = ({
   const staActionRowsAvailable = Boolean(
     signalOptionsSignals.length ||
       signalOptionsCandidates.length ||
-      signalOptionsPositions.length,
+      signalOptionsPositions.length ||
+      (Array.isArray(signalMatrixStates) &&
+        signalMatrixStates.some((state) => {
+          const record = asRecord(state);
+          const direction = String(
+            record.currentSignalDirection || record.direction || "",
+          )
+            .trim()
+            .toLowerCase();
+          return (
+            (direction === "buy" || direction === "sell") &&
+            (record.currentSignalAt || record.signalAt)
+          );
+        })),
   );
   const staActionSourcesSettled = Boolean(
     algoCockpitStreamFreshness.algoFullFresh ||
@@ -1676,6 +1656,9 @@ export const AlgoScreen = ({
       buildVisibleSignalRows({
         signals: signalOptionsSignals,
         candidates: signalOptionsCandidates,
+        signalMatrixStates,
+        signalTimeframes: staSignalTimeframes,
+        signalActionTimeframes: staActionSignalTimeframes,
         signalEvents: includeStaSignalHistory ? signalMonitorEvents : [],
         universeSymbols: focusedDeployment?.symbolUniverse || [],
         includeSignalHistory: includeStaSignalHistory,
@@ -1683,9 +1666,12 @@ export const AlgoScreen = ({
     [
       focusedDeployment?.symbolUniverse,
       includeStaSignalHistory,
+      signalMatrixStates,
       signalMonitorEvents,
       signalOptionsCandidates,
       signalOptionsSignals,
+      staActionSignalTimeframes,
+      staSignalTimeframes,
     ],
   );
   const signalTableScanFallback = useMemo(() => {
@@ -1765,13 +1751,6 @@ export const AlgoScreen = ({
     cockpitStageItems.find((stage) => stage.id === selectedPipelineStageId) ||
     cockpitStageItems[0] ||
     null;
-  const algoSignalSurfaceSettled = Boolean(
-    focusedDeployment?.id &&
-      (signalOptionsStateSettled || cockpitSettled),
-  );
-  const algoSignalAutoScanSourcesSettled = Boolean(
-    algoSignalSurfaceSettled && signalMonitorEventsLoaded,
-  );
   const algoSignalSurfaceEmpty = Boolean(
     focusedDeployment?.id &&
       visibleSignalRows.length === 0 &&
@@ -1779,34 +1758,43 @@ export const AlgoScreen = ({
   );
   useEffect(() => {
     const deploymentId = focusedDeployment?.id || null;
+    const symbols = Array.isArray(focusedDeployment?.symbolUniverse)
+      ? focusedDeployment.symbolUniverse
+          .map((symbol) => String(symbol || "").trim().toUpperCase())
+          .filter(Boolean)
+      : [];
+    const hydrationKey = deploymentId
+      ? `${deploymentId}:${staSignalTimeframes.join(",")}`
+      : "";
     if (
       !isVisible ||
       safeQaMode ||
       !deploymentId ||
+      !symbols.length ||
       !focusedDeployment?.enabled ||
-      !signalScanReadyForAuto ||
-      !algoSignalAutoScanSourcesSettled ||
       !algoSignalSurfaceEmpty ||
-      algoExecutionScanRunning ||
-      runShadowScanMutation.isPending ||
-      autoInitialScanDeploymentIdsRef.current.has(deploymentId)
+      autoSignalMatrixHydrationKeysRef.current.has(hydrationKey)
     ) {
       return;
     }
 
-    autoInitialScanDeploymentIdsRef.current.add(deploymentId);
-    runShadowScanMutation.mutate({ deploymentId, requestSource: "auto" });
+    autoSignalMatrixHydrationKeysRef.current.add(hydrationKey);
+    onRequestSignalMatrixHydration?.({
+      symbols,
+      prioritySymbols: symbols,
+      timeframes: staSignalTimeframes,
+      materializePendingCells: true,
+      reason: "algo-signal-table",
+    });
   }, [
-    algoExecutionScanRunning,
-    algoSignalAutoScanSourcesSettled,
     algoSignalSurfaceEmpty,
     focusedDeployment?.enabled,
     focusedDeployment?.id,
+    focusedDeployment?.symbolUniverse,
     isVisible,
-    runShadowScanMutation,
-    runShadowScanMutation.isPending,
+    onRequestSignalMatrixHydration,
     safeQaMode,
-    signalScanReadyForAuto,
+    staSignalTimeframes,
   ]);
 
   return (
@@ -1940,10 +1928,9 @@ export const AlgoScreen = ({
             environment={environment}
             bridgeTone={bridgeTone}
             handleToggleDeployment={handleToggleDeployment}
-            handleRunShadowScan={handleRunShadowScan}
+            handleRefreshSignals={handleRefreshSignals}
             enableDeploymentMutation={enableDeploymentMutation}
             pauseDeploymentMutation={pauseDeploymentMutation}
-            runShadowScanMutation={runShadowScanMutation}
             algoExecutionScanRunning={algoExecutionScanRunning}
             algoIsPhone={algoIsPhone}
             algoIsNarrow={algoIsNarrow}

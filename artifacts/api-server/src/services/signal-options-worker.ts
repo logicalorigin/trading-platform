@@ -30,36 +30,23 @@ import {
   getSignalOptionsWorkerSnapshot,
   registerSignalOptionsWorkerSnapshotGetter,
 } from "./signal-options-worker-state";
-import {
-  getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
-  type ApiResourcePressureSnapshot,
-} from "./resource-pressure";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 
 const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 4;
-const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
-const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
-const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
-const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = null;
+const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = null;
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
 const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS = 250;
-const SIGNAL_OPTIONS_RESOURCE_PRESSURE_RETRY_MS = 30_000;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
 type SignalOptionsWorkerScanOutcome =
   | "success"
   | "failed"
-  | "timed_out"
-  | "timed_out_unsettled"
   | "scan_running"
-  | "resource_pressure"
   | null;
 
 type WorkerDependencies = {
@@ -69,18 +56,16 @@ type WorkerDependencies = {
     forceEvaluate: boolean;
     preferStoredMonitorState?: boolean;
     source: "worker";
-    actionWorkBudgetMs: number;
-    actionWorkItemLimit: number;
+    actionWorkBudgetMs: number | null;
+    actionWorkItemLimit: number | null;
     signal?: AbortSignal;
   }) => Promise<unknown>;
   runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
-  getResourcePressure: () => ApiResourcePressureSnapshot;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
   logger: WorkerLogger;
-  scanTimeoutMs: number | null;
   subscribeCockpitChanges: typeof subscribeAlgoCockpitChanges;
   isSignalMonitorBarEvaluationEnabled: () => boolean;
   isAggregateStreamingAvailable: () => boolean;
@@ -94,7 +79,6 @@ type WorkerDependencies = {
 
 export type SignalOptionsWorkerOptions = Partial<WorkerDependencies> & {
   wakeupMs?: number;
-  scanTimeoutMs?: number | null;
 };
 
 type DeploymentRuntime = {
@@ -106,13 +90,8 @@ type DeploymentRuntime = {
   lastSkippedAtMs: number | null;
   lastSkipReason: string | null;
   skippedScanCount: number;
-  pressurePaused: boolean;
-  pressurePauseStartedAtMs: number | null;
   currentScanStartedAtMs: number | null;
   lastScanDurationMs: number | null;
-  timedOut: boolean;
-  timeoutReason: string | null;
-  unsettledAfterTimeout: boolean;
   lastScanOutcome: SignalOptionsWorkerScanOutcome;
   scanCount: number;
   totalFailureCount: number;
@@ -128,7 +107,6 @@ type DeploymentRuntime = {
   lastSignalSourcePolicy: string | null;
   lastHeavyWorkDeferred: boolean;
   lastActiveScanPhase: string | null;
-  lastResourcePressureLevel: string | null;
   lastCandidateCount: number;
   lastBlockedCandidateCount: number;
   lastActivePositionCount: number;
@@ -240,10 +218,6 @@ function summarizeScanResult(result: unknown) {
         typeof summary["activeScanPhase"] === "string"
           ? summary["activeScanPhase"]
           : null,
-      resourcePressureLevel:
-        typeof summary["resourcePressureLevel"] === "string"
-          ? summary["resourcePressureLevel"]
-          : null,
       batch: summarizeScanBatch(summary["batch"]),
     };
   }
@@ -288,7 +262,6 @@ function summarizeScanResult(result: unknown) {
     signalSourcePolicy: null,
     heavyWorkDeferred: false,
     activeScanPhase: null,
-    resourcePressureLevel: null,
     batch: null,
   };
 }
@@ -316,45 +289,6 @@ function positiveInteger(value: unknown, fallback: number, min: number, max: num
   return Number.isFinite(resolved)
     ? Math.min(max, Math.max(min, Math.round(resolved)))
     : fallback;
-}
-
-function resolveWorkerScanTimeoutMs(value: unknown): number | null {
-  if (value === null || value === false) {
-    return null;
-  }
-  const configured =
-    value === undefined
-      ? process.env.SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS
-      : value;
-  if (configured === null || configured === "" || configured === "0") {
-    return null;
-  }
-  return positiveInteger(
-    configured,
-    DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS,
-    SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS,
-    SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS,
-  );
-}
-
-class SignalOptionsWorkerScanTimeoutError extends Error {
-  readonly timeoutMs: number;
-  readonly scanPromise: Promise<unknown>;
-
-  constructor(input: { deploymentId: string; timeoutMs: number; scanPromise: Promise<unknown> }) {
-    super(
-      `Signal-options worker scan timed out for ${input.deploymentId} after ${input.timeoutMs}ms.`,
-    );
-    this.name = "SignalOptionsWorkerScanTimeoutError";
-    this.timeoutMs = input.timeoutMs;
-    this.scanPromise = input.scanPromise;
-  }
-}
-
-function isWorkerScanTimeoutError(
-  error: unknown,
-): error is SignalOptionsWorkerScanTimeoutError {
-  return error instanceof SignalOptionsWorkerScanTimeoutError;
 }
 
 function deploymentSignature(deployment: AlgoDeployment): string {
@@ -392,13 +326,8 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastSkippedAtMs: null,
     lastSkipReason: null,
     skippedScanCount: 0,
-    pressurePaused: false,
-    pressurePauseStartedAtMs: null,
     currentScanStartedAtMs: null,
     lastScanDurationMs: null,
-    timedOut: false,
-    timeoutReason: null,
-    unsettledAfterTimeout: false,
     lastScanOutcome: null,
     scanCount: 0,
     totalFailureCount: 0,
@@ -414,7 +343,6 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastSignalSourcePolicy: null,
     lastHeavyWorkDeferred: false,
     lastActiveScanPhase: null,
-    lastResourcePressureLevel: null,
     lastCandidateCount: 0,
     lastBlockedCandidateCount: 0,
     lastActivePositionCount: 0,
@@ -428,27 +356,6 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     pollIntervalMs: 60_000,
     nextScanDueAtMs: null,
   };
-}
-
-function pauseDeploymentForResourcePressure(input: {
-  runtime: DeploymentRuntime;
-  pressure: ApiResourcePressureSnapshot;
-  nowMs: number;
-}) {
-  const { runtime, pressure, nowMs } = input;
-  runtime.lastCheckedAtMs = nowMs;
-  runtime.lastSkippedAtMs = nowMs;
-  runtime.lastSkipReason = "resource_pressure";
-  runtime.skippedScanCount += 1;
-  runtime.pressurePaused = true;
-  runtime.pressurePauseStartedAtMs ??= nowMs;
-  runtime.currentScanStartedAtMs = null;
-  runtime.timedOut = false;
-  runtime.timeoutReason = null;
-  runtime.unsettledAfterTimeout = false;
-  runtime.lastScanOutcome = "resource_pressure";
-  runtime.lastResourcePressureLevel = pressure.level;
-  runtime.nextScanDueAtMs = nowMs + SIGNAL_OPTIONS_RESOURCE_PRESSURE_RETRY_MS;
 }
 
 async function evaluateSignalOptionsStreamSignalSymbols(input: {
@@ -557,14 +464,11 @@ function defaultDependencies(
       options.listDeployments ?? listEnabledSignalOptionsDeployments,
     scanDeployment: options.scanDeployment ?? runSignalOptionsShadowScan,
     runMaintenance: options.runMaintenance ?? runShadowOptionMaintenance,
-    getResourcePressure:
-      options.getResourcePressure ?? getApiResourcePressureSnapshot,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
-    scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
     subscribeCockpitChanges:
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
     isSignalMonitorBarEvaluationEnabled:
@@ -585,47 +489,19 @@ function defaultDependencies(
   };
 }
 
-async function runDeploymentScanWithTimeout(input: {
+async function runDeploymentScan(input: {
   deployment: AlgoDeployment;
   dependencies: WorkerDependencies;
 }): Promise<unknown> {
   const { deployment, dependencies } = input;
-  const controller = new AbortController();
-  const scanPromise = dependencies.scanDeployment({
+  return dependencies.scanDeployment({
     deploymentId: deployment.id,
     forceEvaluate: false,
     preferStoredMonitorState: true,
     source: "worker",
     actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
     actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
-    signal: controller.signal,
   });
-  const timeoutMs = dependencies.scanTimeoutMs;
-  if (timeoutMs === null) {
-    return scanPromise;
-  }
-
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = dependencies.setTimer(() => {
-      const error = new SignalOptionsWorkerScanTimeoutError({
-        deploymentId: deployment.id,
-        timeoutMs,
-        scanPromise,
-      });
-      controller.abort(error);
-      reject(error);
-    }, timeoutMs);
-    timeout.unref?.();
-  });
-
-  try {
-    return await Promise.race([scanPromise, timeoutPromise]);
-  } finally {
-    if (timeout) {
-      dependencies.clearTimer(timeout);
-    }
-  }
 }
 
 async function runDeployment(input: {
@@ -635,8 +511,7 @@ async function runDeployment(input: {
 }) {
   const { deployment, runtime, dependencies } = input;
   if (activeDeploymentIds.has(deployment.id)) {
-    runtime.lastScanOutcome =
-      runtime.unsettledAfterTimeout ? "timed_out_unsettled" : "scan_running";
+    runtime.lastScanOutcome = "scan_running";
     dependencies.logger.debug?.(
       { deploymentId: deployment.id },
       "Signal-options deployment scan already running",
@@ -646,15 +521,10 @@ async function runDeployment(input: {
 
   const scanStartedAtMs = dependencies.now().getTime();
   let resumeActionWorkNextTick = false;
-  let leaveActiveUntilSettled = false;
-  let timedOutScanPromise: Promise<unknown> | null = null;
   activeDeploymentIds.add(deployment.id);
   runtime.currentScanStartedAtMs = scanStartedAtMs;
-  runtime.timedOut = false;
-  runtime.timeoutReason = null;
-  runtime.unsettledAfterTimeout = false;
   try {
-    const scanResult = await runDeploymentScanWithTimeout({
+    const scanResult = await runDeploymentScan({
       deployment,
       dependencies,
     });
@@ -674,9 +544,6 @@ async function runDeployment(input: {
     runtime.lastError = null;
     runtime.failedUntilMs = 0;
     runtime.failureCount = 0;
-    runtime.timedOut = false;
-    runtime.timeoutReason = null;
-    runtime.unsettledAfterTimeout = false;
     runtime.lastScanOutcome = "success";
     runtime.lastSignalCount = scanSummary.signalCount;
     runtime.lastFreshSignalCount = scanSummary.freshSignalCount;
@@ -688,7 +555,6 @@ async function runDeployment(input: {
     runtime.lastSignalSourcePolicy = scanSummary.signalSourcePolicy;
     runtime.lastHeavyWorkDeferred = scanSummary.heavyWorkDeferred;
     runtime.lastActiveScanPhase = scanSummary.activeScanPhase;
-    runtime.lastResourcePressureLevel = scanSummary.resourcePressureLevel;
     resumeActionWorkNextTick =
       scanSummary.heavyWorkDeferred && scanSummary.activeScanPhase === "action_scan";
     runtime.lastCandidateCount = scanSummary.candidateCount;
@@ -703,21 +569,11 @@ async function runDeployment(input: {
     runtime.lastBatchFullUniverse = scanSummary.batch?.fullUniverse === true;
   } catch (error) {
     const failedAt = dependencies.now();
-    const timedOut = isWorkerScanTimeoutError(error);
     const message =
       error instanceof Error && error.message
         ? error.message
         : "Signal-options shadow worker scan failed.";
-    if (timedOut) {
-      leaveActiveUntilSettled = true;
-      timedOutScanPromise = error.scanPromise;
-      runtime.timedOut = true;
-      runtime.timeoutReason = SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON;
-      runtime.unsettledAfterTimeout = true;
-      runtime.lastScanOutcome = "timed_out_unsettled";
-    } else {
-      runtime.lastScanOutcome = "failed";
-    }
+    runtime.lastScanOutcome = "failed";
     runtime.totalFailureCount += 1;
     runtime.failureCount += 1;
     runtime.lastFailureAt = failedAt.toISOString();
@@ -740,23 +596,8 @@ async function runDeployment(input: {
     runtime.nextScanDueAtMs = resumeActionWorkNextTick
       ? scanEndedAtMs
       : scanEndedAtMs + nextIntervalMs;
-    runtime.pressurePaused = false;
-    runtime.pressurePauseStartedAtMs = null;
-    if (leaveActiveUntilSettled && timedOutScanPromise) {
-      timedOutScanPromise
-        .finally(() => {
-          if (runtime.unsettledAfterTimeout) {
-            runtime.unsettledAfterTimeout = false;
-            runtime.lastScanOutcome = "timed_out";
-            runtime.currentScanStartedAtMs = null;
-          }
-          activeDeploymentIds.delete(deployment.id);
-        })
-        .catch(() => {});
-    } else {
-      runtime.currentScanStartedAtMs = null;
-      activeDeploymentIds.delete(deployment.id);
-    }
+    runtime.currentScanStartedAtMs = null;
+    activeDeploymentIds.delete(deployment.id);
   }
 }
 
@@ -822,12 +663,7 @@ export function createSignalOptionsWorker(
       const now = dependencies.now();
       const nowMs = now.getTime();
       const deployments = await dependencies.listDeployments();
-      const pressure = dependencies.getResourcePressure();
-      if (isApiResourcePressureHardBlock(pressure)) {
-        clearStreamSignalEvaluator();
-      } else {
-        syncStreamSignalEvaluator(deployments);
-      }
+      syncStreamSignalEvaluator(deployments);
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
 
       try {
@@ -886,11 +722,6 @@ export function createSignalOptionsWorker(
           runtime.lastCheckedAtMs > 0 &&
           nowMs < runtime.nextScanDueAtMs
         ) {
-          continue;
-        }
-
-        if (isApiResourcePressureHardBlock(pressure)) {
-          pauseDeploymentForResourcePressure({ runtime, pressure, nowMs });
           continue;
         }
 
@@ -1020,15 +851,8 @@ export function createSignalOptionsWorker(
     }
     streamEvaluationRunning = true;
     const dueKeys = Array.from(pendingStreamSignalEvaluations);
-    let rescheduleDelayMs = 0;
-
     try {
       if (!dueKeys.length) {
-        return;
-      }
-
-      if (isApiResourcePressureHardBlock(dependencies.getResourcePressure())) {
-        rescheduleDelayMs = SIGNAL_OPTIONS_RESOURCE_PRESSURE_RETRY_MS;
         return;
       }
 
@@ -1061,7 +885,7 @@ export function createSignalOptionsWorker(
     } finally {
       streamEvaluationRunning = false;
       if (pendingStreamSignalEvaluations.size > 0) {
-        scheduleStreamSignalEvaluation(rescheduleDelayMs);
+        scheduleStreamSignalEvaluation(0);
       }
     }
   };
@@ -1163,15 +987,6 @@ export function createSignalOptionsWorker(
               : new Date(runtime.lastSkippedAtMs).toISOString(),
           lastSkipReason: runtime.lastSkipReason,
           skippedScanCount: runtime.skippedScanCount,
-          pressurePaused: runtime.pressurePaused,
-          pressurePauseStartedAt:
-            runtime.pressurePauseStartedAtMs === null
-              ? null
-              : new Date(runtime.pressurePauseStartedAtMs).toISOString(),
-          pressurePauseAgeMs:
-            runtime.pressurePauseStartedAtMs === null
-              ? null
-              : Math.max(0, snapshotNowMs - runtime.pressurePauseStartedAtMs),
           currentScanStartedAt:
             runtime.currentScanStartedAtMs === null
               ? null
@@ -1181,9 +996,6 @@ export function createSignalOptionsWorker(
               ? null
               : Math.max(0, snapshotNowMs - runtime.currentScanStartedAtMs),
           lastScanDurationMs: runtime.lastScanDurationMs,
-          timedOut: runtime.timedOut,
-          timeoutReason: runtime.timeoutReason,
-          unsettledAfterTimeout: runtime.unsettledAfterTimeout,
           lastScanOutcome: runtime.lastScanOutcome,
           scanCount: runtime.scanCount,
           totalFailureCount: runtime.totalFailureCount,
@@ -1199,7 +1011,6 @@ export function createSignalOptionsWorker(
           lastSignalSourcePolicy: runtime.lastSignalSourcePolicy,
           lastHeavyWorkDeferred: runtime.lastHeavyWorkDeferred,
           lastActiveScanPhase: runtime.lastActiveScanPhase,
-          lastResourcePressureLevel: runtime.lastResourcePressureLevel,
           lastCandidateCount: runtime.lastCandidateCount,
           lastBlockedCandidateCount: runtime.lastBlockedCandidateCount,
           lastActivePositionCount: runtime.lastActivePositionCount,

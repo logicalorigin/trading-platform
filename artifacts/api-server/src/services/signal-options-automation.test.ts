@@ -222,6 +222,126 @@ test("Signal Options action states require canonical signal monitor events", () 
   );
 });
 
+test("Signal Options keeps one-bar monitor signals executable even after matrix freshness flips false", () => {
+  const {
+    buildSignalOptionsSignalSnapshot,
+    candidateFromSignalSnapshot,
+    isSignalOptionsActionableSignalState,
+    previewCandidateFromSignalSnapshot,
+  } = __signalOptionsAutomationInternalsForTests;
+  const oneBarSignal = {
+    ...(signalState("TSM", "2026-06-11T17:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    latestBarAt: "2026-06-11T17:10:00.000Z",
+    barsSinceSignal: 1,
+    fresh: false,
+  } as never;
+
+  assert.equal(isSignalOptionsActionableSignalState(oneBarSignal), true);
+
+  const snapshot = buildSignalOptionsSignalSnapshot({
+    state: oneBarSignal,
+    signalAt: "2026-06-11T17:05:00.000Z",
+    signalKey: "paper-profile:TSM:5m:sell:2026-06-11T17:05:00.000Z",
+    source: "pyrus-signals",
+    eventId: "event-tsm",
+    freshWindowBars: 8,
+  });
+  assert.equal(snapshot.fresh, false);
+  assert.equal(snapshot.actionEligible, true);
+  assert.equal(snapshot.actionBlocker, null);
+
+  const candidate = candidateFromSignalSnapshot({
+    deployment: {
+      id: "deployment-test",
+      name: "Signal Options Test",
+    },
+    signal: snapshot,
+  } as never);
+  assert.equal(candidate?.symbol, "TSM");
+  assert.equal(candidate?.optionRight, "put");
+
+  const previewCandidate = previewCandidateFromSignalSnapshot({
+    deployment: {
+      id: "deployment-test",
+      name: "Signal Options Test",
+    },
+    signal: snapshot,
+  } as never);
+  assert.equal(previewCandidate?.symbol, "TSM");
+  assert.equal(previewCandidate?.optionRight, "put");
+});
+
+test("Signal Options still rejects signals outside the one-bar execution window", () => {
+  const {
+    candidateFromSignalSnapshot,
+    isSignalOptionsActionableSignalState,
+    previewCandidateFromSignalSnapshot,
+  } = __signalOptionsAutomationInternalsForTests;
+  const agedSignal = {
+    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
+      string,
+      unknown
+    >),
+    barsSinceSignal: 6,
+    fresh: true,
+  } as never;
+
+  assert.equal(isSignalOptionsActionableSignalState(agedSignal), false);
+  assert.equal(
+    candidateFromSignalSnapshot({
+      deployment: { id: "deployment-test", name: "Signal Options Test" },
+      signal: {
+        profileId: "paper-profile",
+        signalKey: "paper-profile:DIA:5m:sell:2026-06-11T15:05:00.000Z",
+        source: "pyrus-signals",
+        eventId: "event-dia",
+        symbol: "DIA",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-11T15:05:00.000Z",
+        signalPrice: 100,
+        latestBarAt: "2026-06-11T15:35:00.000Z",
+        barsSinceSignal: 6,
+        freshWindowBars: 8,
+        fresh: true,
+        actionEligible: false,
+        actionBlocker: null,
+        status: "ok",
+        filterState: null,
+      },
+    } as never),
+    null,
+  );
+  assert.equal(
+    previewCandidateFromSignalSnapshot({
+      deployment: { id: "deployment-test", name: "Signal Options Test" },
+      signal: {
+        profileId: "paper-profile",
+        signalKey: "paper-profile:DIA:5m:sell:2026-06-11T15:05:00.000Z",
+        source: "pyrus-signals",
+        eventId: "event-dia",
+        symbol: "DIA",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-11T15:05:00.000Z",
+        signalPrice: 100,
+        latestBarAt: "2026-06-11T15:35:00.000Z",
+        barsSinceSignal: 6,
+        freshWindowBars: 8,
+        fresh: true,
+        actionEligible: false,
+        actionBlocker: null,
+        status: "ok",
+        filterState: null,
+      },
+    } as never),
+    null,
+  );
+});
+
 test("Signal Options cockpit signal snapshots require canonical event metadata", () => {
   const state = signalState("BGC", "2026-06-09T16:40:00.000Z");
   const signalAt = "2026-06-09T16:40:00.000Z";
@@ -343,40 +463,6 @@ test("Signal Options dashboard candidates use deterministic display tie-breakers
   );
 });
 
-test("Signal Options forced signal refresh fallback preserves cached state", () => {
-  const state = {
-    deployment: { id: "deployment-paper" },
-    profile: { id: "paper-profile" },
-    mode: "shadow",
-    signals: [{ symbol: "SPY" }],
-    candidates: [{ symbol: "SPY" }],
-    dataQuality: {},
-    activePositions: [],
-    risk: {},
-    events: [],
-  };
-  const fallback =
-    __signalOptionsAutomationInternalsForTests.signalOptionsSignalRefreshFallbackState({
-      deployment: { id: "deployment-paper" },
-      profile: { id: "paper-profile" },
-      events: [],
-      state,
-      cachedAt: "2026-06-08T14:20:00.000Z",
-      expiresAt: 0,
-      staleExpiresAt: 0,
-    } as never) as Record<string, unknown>;
-
-  assert.equal(fallback["cacheStatus"], "stale");
-  assert.equal(fallback["degraded"], true);
-  assert.equal(fallback["stale"], true);
-  assert.equal(
-    fallback["reason"],
-    "signal_options_state_signal_refresh_failed_fallback",
-  );
-  assert.deepEqual(fallback["signals"], state.signals);
-  assert.deepEqual(fallback["candidates"], state.candidates);
-});
-
 test("Signal Options position mark keeps stale quote distinct from missing bid/ask", () => {
   const resolution =
     __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
@@ -458,35 +544,6 @@ test("realized P&L uses the contract multiplier, not a hardcoded 100", () => {
   assert.equal(signalOptionsContractMultiplier({ multiplier: 10 }), 10);
   assert.equal(signalOptionsRealizedPnl(3, 2, 1, { multiplier: 10 }), 10);
   assert.equal(signalOptionsRealizedPnl(3.0, 2.0, 5, { multiplier: 10 }), 50);
-});
-
-test("Signal Options keeps fresh signals visible past the 1-bar action age (regression)", () => {
-  const {
-    isSignalOptionsActionableSignalState,
-    isSignalOptionsSignalAgeActionable,
-  } = __signalOptionsAutomationInternalsForTests;
-
-  assert.equal(isSignalOptionsSignalAgeActionable(6), false);
-  assert.equal(isSignalOptionsSignalAgeActionable(6, { fresh: true }), true);
-
-  const freshAgedState = {
-    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
-      string,
-      unknown
-    >),
-    barsSinceSignal: 6,
-  } as never;
-  assert.equal(isSignalOptionsActionableSignalState(freshAgedState), true);
-
-  const staleAgedState = {
-    ...(signalState("DIA", "2026-06-11T15:05:00.000Z", "sell") as Record<
-      string,
-      unknown
-    >),
-    barsSinceSignal: 6,
-    fresh: false,
-  } as never;
-  assert.equal(isSignalOptionsActionableSignalState(staleAgedState), false);
 });
 
 test("a position's exit can only be claimed once (duplicate-exit race guard)", () => {

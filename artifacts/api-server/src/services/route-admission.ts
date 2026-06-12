@@ -308,6 +308,10 @@ export function classifyApiRoute(input: {
   if (
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
+    path === "/algo/events" ||
+    /^\/algo\/deployments\/[^/]+\/cockpit$/.test(path) ||
+    /^\/algo\/deployments\/[^/]+\/signal-options\/state$/.test(path) ||
+    /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path) ||
     path === "/diagnostics/latest" ||
     path === "/diagnostics/history" ||
     path === "/diagnostics/events" ||
@@ -317,12 +321,6 @@ export function classifyApiRoute(input: {
     path === "/diagnostics/client-metrics" ||
     path === "/diagnostics/market-data/gex-universe-refresh" ||
     (method === "GET" && path === "/diagnostics/thresholds")
-  ) {
-    return "active-screen";
-  }
-
-  if (
-    /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path)
   ) {
     return "active-screen";
   }
@@ -351,13 +349,7 @@ export function classifyApiRoute(input: {
     path === "/bars" ||
     path === "/bars/batch" ||
     path.startsWith("/options/") ||
-    path.startsWith("/flow/") ||
-    (/^\/algo\/deployments\/[^/]+\/signal-options\/state$/.test(path) &&
-      query.get("view") === "full") ||
-    (/^\/algo\/deployments\/[^/]+\/cockpit$/.test(path) &&
-      query.get("view") === "full") ||
-    (path === "/algo/events" && query.get("includePayload") === "true") ||
-    (path === "/algo/events" && query.get("view") === "full")
+    path.startsWith("/flow/")
   ) {
     return "deferred-analytics";
   }
@@ -447,7 +439,14 @@ export function apiRouteAdmissionMiddleware(
       path: req.originalUrl || req.url || req.path,
       ...readApiRouteRequestContext(req),
     }),
-    pressureLevel: pressure.level,
+    // Shed deferred-analytics (sparklines, chart bars, quote snapshots) on TRUE
+    // server saturation (resourceLevel = rss + heap + event-loop), NOT on `level`,
+    // which folds in request-latency p95. A slow EXTERNAL broker route (IBKR
+    // /positions, equity-history at 9-16s) inflates that p95 to "high" while the
+    // server is idle, so gating on `level` errantly 429-sheds the sparklines and
+    // move-column quotes. Trading caps already gate on resourceLevel for the same
+    // reason; the route admission now matches.
+    pressureLevel: pressure.resourceLevel,
     qaMode,
   });
 

@@ -11,8 +11,8 @@ test("algo row sparklines stay enabled under normal and watch pressure", () => {
   assert.equal(shouldPauseAlgoSignalRowSparklines({ level: "watch" }), false);
 });
 
-test("algo row sparklines pause under direct high pressure", () => {
-  assert.equal(shouldPauseAlgoSignalRowSparklines({ level: "high" }), true);
+test("algo row sparklines stay enabled under direct high pressure", () => {
+  assert.equal(shouldPauseAlgoSignalRowSparklines({ level: "high" }), false);
 });
 
 test("algo row sparklines stay enabled for API-latency pressure alone", () => {
@@ -28,7 +28,7 @@ test("algo row sparklines stay enabled for API-latency pressure alone", () => {
   assert.equal(shouldPauseAlgoSignalRowSparklines(snapshot), false);
 });
 
-test("algo row sparklines pause when memory pressure is high", () => {
+test("algo row sparklines stay enabled when memory pressure is high", () => {
   const snapshot = {
     level: "normal",
     server: {
@@ -43,5 +43,5 @@ test("algo row sparklines pause when memory pressure is high", () => {
   };
 
   assert.equal(resolveAlgoSignalSparklinePressureLevel(snapshot), "high");
-  assert.equal(shouldPauseAlgoSignalRowSparklines(snapshot), true);
+  assert.equal(shouldPauseAlgoSignalRowSparklines(snapshot), false);
 });

@@ -9,31 +9,32 @@ import {
   resolveScreenBootDataDeps,
 } from "./bootPolicy.js";
 
-test("boot policy keeps Market independent from watchlist hydration", () => {
-  assert.deepEqual(resolveScreenBootDataDeps("market"), ["session"]);
-  assert.deepEqual(resolveBootBlockingTaskIds("market"), [
-    ...BOOT_INFRA_TASK_IDS,
-    "session",
+test("boot overlay blocks only on the frame chunks, never on data", () => {
+  assert.deepEqual(BOOT_INFRA_TASK_IDS, [
+    "static-html",
+    "react-root",
+    "app-content-chunk",
+    "workspace-route-chunk",
   ]);
+  assert.equal(BOOT_INFRA_TASK_IDS.includes("first-screen"), false);
 });
 
-test("boot policy restores account and algo data blockers only for those screens", () => {
-  assert.deepEqual(resolveScreenBootDataDeps("account"), ["session", "accounts"]);
-  assert.deepEqual(resolveScreenBootDataDeps("algo"), [
-    "session",
-    "accounts",
-    "signal-profile",
-  ]);
-  assert.equal(resolveScreenBootDataDeps("account").includes("signal-profile"), false);
-  assert.equal(resolveScreenBootDataDeps("algo").includes("watchlists"), false);
-});
-
-test("boot policy keeps watchlists scoped to flow-style screens", () => {
-  for (const screenId of ["flow", "gex", "trade"]) {
-    assert.deepEqual(resolveScreenBootDataDeps(screenId), [
-      "session",
-      "watchlists",
-    ]);
+test("no screen gates the boot overlay on data", () => {
+  for (const screenId of [
+    "market",
+    "signals",
+    "flow",
+    "gex",
+    "trade",
+    "account",
+    "algo",
+    "research",
+    "backtest",
+    "diagnostics",
+    "settings",
+  ]) {
+    assert.deepEqual(resolveScreenBootDataDeps(screenId), []);
+    assert.deepEqual(resolveBootBlockingTaskIds(screenId), [...BOOT_INFRA_TASK_IDS]);
   }
 });
 
@@ -43,7 +44,5 @@ test("boot policy normalizes legacy unusual screen to flow", () => {
 });
 
 test("unknown boot screens fall back to the market policy", () => {
-  assert.deepEqual(resolveScreenBootDataDeps("unknown-screen"), [
-    "session",
-  ]);
+  assert.deepEqual(resolveScreenBootDataDeps("unknown-screen"), []);
 });

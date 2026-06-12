@@ -152,7 +152,11 @@ export const buildPlatformWorkSchedule = ({
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
   const broadFlowAllowed = Boolean(
-    sessionReady &&
+    // Only run the heavy broad-flow scanner where flow is actually shown. It used
+    // to run on Account/Signals/Algo too, burning API/CPU for data those screens
+    // never render.
+    (market || flow || trade) &&
+      sessionReady &&
       runtimeEnabled &&
       firstScreenReady &&
       !startupProtected &&

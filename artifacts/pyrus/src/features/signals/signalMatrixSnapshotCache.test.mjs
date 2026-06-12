@@ -87,8 +87,8 @@ test("signal matrix snapshot cache preserves retained warm-start states aged aft
 
   assert.equal(cached.cacheStatus, "warm-start-stale");
   assert.equal(cached.states.length, 1);
-  assert.equal(cached.states[0].status, "ok");
-  assert.equal(cached.states[0].fresh, true);
+  assert.equal(cached.states[0].status, "stale");
+  assert.equal(cached.states[0].fresh, false);
   assert.equal(cached.states[0].currentSignalDirection, "buy");
 });
 

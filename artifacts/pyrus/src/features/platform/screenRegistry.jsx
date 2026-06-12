@@ -1,5 +1,4 @@
 import { memo, useEffect, useState } from "react";
-import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import LogoLoader from "../../components/LogoLoader";
 import {
   getPreloadedScreenComponent,
@@ -95,16 +94,9 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
       />
     );
   }
-  const routeWaitItems = [
-    {
-      id: `${screenId}:route-module`,
-      label: `${shell.title} route module`,
-      status: error ? "retrying" : "loading",
-      detail: error ? "Screen bundle fetch failed" : shell.detail,
-      blocking: true,
-    },
-  ];
-
+  // Show the page's structural layout directly — no "Loading <X> route module"
+  // takeover header/status. We know each page's shape, so render it immediately
+  // and let the real screen swap in the instant its chunk is ready.
   return (
     <section
       data-testid="screen-loading-fallback"
@@ -122,58 +114,11 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
         fontFamily: "var(--ra-font-sans)",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "baseline",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              color: "var(--ra-text-muted)",
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 0,
-              textTransform: "uppercase",
-            }}
-          >
-            {shell.eyebrow}
-          </div>
-          <div
-            role="heading"
-            aria-level={2}
-            style={{
-              margin: "3px 0 0",
-              color: "var(--ra-text-primary)",
-              fontSize: 18,
-              fontWeight: 500,
-              letterSpacing: 0,
-              lineHeight: 1.1,
-            }}
-          >
-            {shell.title}
-          </div>
+      {error ? (
+        <div style={{ color: "var(--ra-color-status-warn)", fontSize: 13, lineHeight: 1.35 }}>
+          {shell.title} failed to load; retrying…
         </div>
-        <span
-          style={{
-            color: error ? "var(--ra-color-status-warn)" : "var(--ra-text-dim)",
-            fontSize: 12,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {error ? "Retrying" : "Loading"}
-        </span>
-      </div>
-      <div style={{ color: "var(--ra-text-secondary)", fontSize: 13, lineHeight: 1.35 }}>
-        {error ? "The route module failed to load; retrying the screen bundle." : shell.detail}
-      </div>
-      <ContainerLoadingStatus
-        items={routeWaitItems}
-        testId="screen-loading-waits"
-      />
+      ) : null}
       <div
         style={{
           display: "grid",

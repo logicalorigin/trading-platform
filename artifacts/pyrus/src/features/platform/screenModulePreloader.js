@@ -65,8 +65,11 @@ export const loadScreenModule = (
     label,
     reloadOnFailure,
   })
-    .then(async (mod) => {
-      await preloadNestedScreenModules(mod);
+    .then((mod) => {
+      // Render the screen as soon as its own chunk is ready. Sub-modules warm in
+      // the background and load through the screen's own lazy boundaries — gating
+      // the screen behind nested preloads just made every page slower to appear.
+      void preloadNestedScreenModules(mod);
       if (mod?.default) {
         SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
       }

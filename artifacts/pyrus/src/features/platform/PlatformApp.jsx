@@ -315,6 +315,7 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 `;
 
 const SESSION_QUERY_KEY = getGetSessionQueryKey();
+const EMPTY_UNIVERSE_SYMBOLS = Object.freeze([]);
 const SESSION_REFETCH_INTERVAL_MS = 20_000;
 // Hard cap on the boot overlay: if a blocking task never settles (e.g. a screen's
 // primaryReady hangs on a cold launch with no warm cache), force the overlay to
@@ -342,16 +343,16 @@ const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "signals", "algo"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 1_500;
-const LAUNCH_AUXILIARY_SURFACE_DELAY_MS = 30_000;
+const LAUNCH_AUXILIARY_SURFACE_DELAY_MS = 500;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
 const ACTIVITY_SIDEBAR_WIDTH_DEFAULT = 220;
 const ACTIVITY_SIDEBAR_WIDTH_MIN = 196;
 const ACTIVITY_SIDEBAR_WIDTH_MAX = 320;
-const STARTUP_PROTECTION_COOLDOWN_MS = 8_000;
-const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 3_000;
-const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
+const STARTUP_PROTECTION_COOLDOWN_MS = 250;
+const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 250;
+const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 750;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
@@ -851,7 +852,11 @@ export default function PlatformApp() {
     // disabling it left the footer with no Massive data source ("No checks yet").
     // Keep footer/header IBKR line counts on the same stream; polling is fallback.
     lineUsageStreamEnabled: true,
-    lineUsagePollInterval: 2_000,
+    // The SSE stream already carries live line-usage updates; the REST poll is only
+    // a fallback. Hammering /api/settings/ibkr-line-usage every 2s on every screen
+    // was steady backend load competing with page loads. Back it off, and stop
+    // entirely when the tab is hidden.
+    lineUsagePollInterval: pageVisible ? 15_000 : false,
     memoryPressure: memoryPressureSignal,
   });
   const userPreferences = useUserPreferences();
@@ -881,17 +886,18 @@ export default function PlatformApp() {
     revision: 0,
   }));
   const signalMatrixRouteRequestActive = screen === "signals" || screen === "algo";
-  const signalMatrixShellRequestActive = true;
   const signalMatrixSurfaceRequestActive = Boolean(
     signalsScreenMatrixRequest.symbols.length &&
       SIGNAL_MATRIX_SURFACE_REQUEST_REASONS.has(
         signalsScreenMatrixRequest.reason,
       ),
   );
+  // The signal-matrix evaluation container claims a global single-owner lease and
+  // drives heavy work; only run it where the matrix is actually shown (Signals /
+  // Algo, or when a surface explicitly requests it). It used to be hardcoded on
+  // for every screen, so it ran on Account/Market/Trade and starved their loading.
   const signalMatrixRequestActive =
-    signalMatrixRouteRequestActive ||
-    signalMatrixSurfaceRequestActive ||
-    signalMatrixShellRequestActive;
+    signalMatrixRouteRequestActive || signalMatrixSurfaceRequestActive;
   const signalsScreenSafeWorkVisible = Boolean(
     safeQaMode && workspaceLeader && screen === "signals",
   );
@@ -1444,7 +1450,7 @@ export default function PlatformApp() {
         auxiliarySurfacesReadyRef.current = true;
         setAuxiliarySurfacesReady(true);
         markWarmupTimeline("auxiliarySurfacesReadyAtMs");
-      }, 8_000);
+      }, 1_000);
     }, LAUNCH_AUXILIARY_SURFACE_DELAY_MS);
 
     return () => {
@@ -1795,8 +1801,7 @@ export default function PlatformApp() {
   );
   const accountsQueryEnabled = Boolean(
     sessionQuery.data &&
-      !safeQaMode &&
-      brokerAccountsReadyForBoot,
+      !safeQaMode,
   );
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },
@@ -3120,7 +3125,7 @@ export default function PlatformApp() {
   );
   const signalMonitorDisplayReady = Boolean(
     signalMonitorWorkVisible &&
-      (firstScreenReady || signalMonitorForegroundReady) &&
+      firstScreenReady &&
       signalMonitorProfileAllowsDisplay,
   );
   const signalMonitorEventsReady = signalMonitorDisplayReady;
@@ -3428,10 +3433,17 @@ export default function PlatformApp() {
       }),
     [signalMatrixSnapshot.states, signalMonitorEvents, signalMonitorStates],
   );
-  const signalMonitorStateUniverseSymbols =
-    Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
-      ? signalMonitorStateQuery.data.universeSymbols
-      : [];
+  // Memoized so the empty/undefined case returns a STABLE array reference. A fresh
+  // [] every render cascaded through quoteStreamRotationSymbols into a setState
+  // effect that re-fired every render — an infinite render loop ("Maximum update
+  // depth exceeded") that kept the page re-rendering and never let it settle.
+  const signalMonitorStateUniverseSymbols = useMemo(
+    () =>
+      Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
+        ? signalMonitorStateQuery.data.universeSymbols
+        : EMPTY_UNIVERSE_SYMBOLS,
+    [signalMonitorStateQuery.data?.universeSymbols],
+  );
   const headerSignalContextSymbols = useMemo(
     () =>
       buildHeaderSignalContextSymbols({

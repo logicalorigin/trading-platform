@@ -103,8 +103,6 @@ export async function fetchAlgoCockpitPrimaryPayload(
       ? listSignalOptionsAutomationState({
           deploymentId: target.deploymentId,
           view: "summary",
-          cacheMode: "cache-only",
-          refreshSignalsFromMonitorState: true,
         }).catch((error) => {
           logger.warn(
             { err: error, deploymentId: target.deploymentId },

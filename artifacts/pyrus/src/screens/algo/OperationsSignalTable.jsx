@@ -75,6 +75,7 @@ import {
   buildSignalsMatrixHydrationPlan,
   prioritizeSignalMatrixTimeframes,
 } from "../../features/signals/signalsMatrixHydration.js";
+import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
 import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
@@ -423,6 +424,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   scoreBreakdown,
   tfMatrix,
   timeframes,
+  signalEvents = [],
   rowSparklineSnapshotsBySymbol = {},
   alt,
   columns,
@@ -446,6 +448,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
       scoreBreakdown={scoreBreakdown}
       tfMatrix={tfMatrix}
       timeframes={timeframes}
+      signalEvents={signalEvents}
       tickerSnapshot={tickerSnapshot}
       alt={alt}
       columns={columns}
@@ -461,23 +464,37 @@ const timestampMs = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const SIGNAL_TIMEFRAME_MS = Object.freeze({
+  "1m": 60_000,
+  "2m": 120_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "1h": 3_600_000,
+  "1d": 86_400_000,
+});
+
+const signalTimeframeMs = (timeframe) => {
+  const value = SIGNAL_TIMEFRAME_MS[String(timeframe || "").trim()];
+  return Number.isFinite(value) ? value : null;
+};
+
+const signalSourceStaleAfterMs = (timeframes = []) => {
+  const maxTimeframeMs = (Array.isArray(timeframes) ? timeframes : []).reduce(
+    (maxMs, timeframe) => Math.max(maxMs, signalTimeframeMs(timeframe) || 0),
+    0,
+  );
+  return Math.max(120_000, maxTimeframeMs * 2);
+};
+
 const formatCompactStatusValue = (value) =>
   String(value || "")
     .trim()
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-const pressureLevelBlocksActionWork = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "warning";
-};
-
 const resolveSignalScanWave = (freshness) => {
   if (freshness?.scanRunning) {
     return { status: "healthy", wave: "fast", color: CSS_COLOR.green };
-  }
-  if (freshness?.pressureLevel) {
-    return { status: "capacity-limited", wave: "slow", color: CSS_COLOR.amber };
   }
   if (freshness?.staleScan) {
     return { status: "stale", wave: "flat", color: CSS_COLOR.amber };
@@ -705,16 +722,10 @@ export const buildStaSignalStatusSummary = ({
   actionCount = 0,
   historyCount = 0,
   freshnessLine = "",
-  receivedHistorySourceStatus = "database",
 } = {}) => {
-  const fallback = receivedHistorySourceStatus === "runtime-fallback";
   const countLine = `${activeFilterLabel} ${visibleCount}/${totalCount} rows · Received ${receivedCount} · Actions ${actionCount} · History ${historyCount}`;
   return {
-    statusLine: [
-      countLine,
-      freshnessLine,
-      fallback ? "Received history runtime fallback" : null,
-    ]
+    statusLine: [countLine, freshnessLine]
       .filter(Boolean)
       .join(" · "),
     mobileStatusLine: [
@@ -722,7 +733,6 @@ export const buildStaSignalStatusSummary = ({
       `Rec ${receivedCount}`,
       `Act ${actionCount}`,
       `Hist ${historyCount}`,
-      fallback ? "Fallback" : null,
     ]
       .filter(Boolean)
       .join(" · "),
@@ -809,6 +819,20 @@ const rowSignalSymbol = (row) =>
     .trim()
     .toUpperCase();
 
+const hasConcreteStaSignalPayload = (row) => {
+  const signal = asRecord(asRecord(row).signal);
+  const direction = String(signal.direction || signal.currentSignalDirection || "")
+    .trim()
+    .toLowerCase();
+  const signalAt = signal.signalAt || signal.currentSignalAt;
+  return Boolean(
+    rowSignalSymbol(row) &&
+      String(signal.timeframe || "").trim() &&
+      (direction === "buy" || direction === "sell") &&
+      signalAt,
+  );
+};
+
 const NON_HYDRATED_STA_MATRIX_STATUSES = new Set(["pending", "unknown"]);
 
 const isStaSignalMatrixCellHydrated = (state) => {
@@ -834,40 +858,62 @@ export const resolveStaSignalMatrixHydration = ({
 } = {}) => {
   const symbol = rowSignalSymbol(row);
   const selectedTimeframes = normalizeStaSignalMatrixTimeframes(timeframes);
+  const rowTimeframe = String(asRecord(asRecord(row).signal).timeframe || "")
+    .trim();
+  const blockingTimeframes =
+    rowTimeframe && selectedTimeframes.includes(rowTimeframe)
+      ? [rowTimeframe]
+      : selectedTimeframes;
   const statesByTimeframe = asRecord(signalMatrixBySymbol?.[symbol]);
   const missingTimeframes = [];
   const pendingTimeframes = [];
   const problemTimeframes = [];
+  const blockingMissingTimeframes = [];
+  const blockingPendingTimeframes = [];
+  const blockingProblemTimeframes = [];
 
   selectedTimeframes.forEach((timeframe) => {
     const state = statesByTimeframe[timeframe];
+    const blocksRow = blockingTimeframes.includes(timeframe);
     if (!state) {
       missingTimeframes.push(timeframe);
+      if (blocksRow) blockingMissingTimeframes.push(timeframe);
       return;
     }
     const status = String(asRecord(state).status || "ok").trim().toLowerCase();
     if (status === "pending") {
       pendingTimeframes.push(timeframe);
+      if (blocksRow) blockingPendingTimeframes.push(timeframe);
       return;
     }
     if (!isStaSignalMatrixCellHydrated(state)) {
       problemTimeframes.push(timeframe);
+      if (blocksRow) blockingProblemTimeframes.push(timeframe);
     }
   });
 
   return {
     hydrated: Boolean(
       symbol &&
-        selectedTimeframes.length &&
-        missingTimeframes.length === 0 &&
-        pendingTimeframes.length === 0 &&
-        problemTimeframes.length === 0,
+        blockingTimeframes.length &&
+        (
+          hasConcreteStaSignalPayload(row) ||
+          (
+            blockingMissingTimeframes.length === 0 &&
+            blockingPendingTimeframes.length === 0 &&
+            blockingProblemTimeframes.length === 0
+          )
+        ),
     ),
     symbol,
     timeframes: selectedTimeframes,
+    blockingTimeframes,
     missingTimeframes,
     pendingTimeframes,
     problemTimeframes,
+    blockingMissingTimeframes,
+    blockingPendingTimeframes,
+    blockingProblemTimeframes,
   };
 };
 
@@ -1391,6 +1437,10 @@ export const OperationsSignalTable = ({
     () => buildSignalMatrixBySymbol(signalMatrixStates, displaySignalTimeframes),
     [displaySignalTimeframes, signalMatrixStates],
   );
+  const signalEventsBySymbol = useMemo(
+    () => buildSignalEventsBySymbol(events),
+    [events],
+  );
   const sourceRows = useMemo(() => {
     const augmented = (signals || []).map((signal) => {
       const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
@@ -1602,11 +1652,15 @@ export const OperationsSignalTable = ({
       timestampMs(scanStageRecord.lastSignalScanAt) ||
       timestampMs(scanStageRecord.latestAt) ||
       timestampMs(cockpitGeneratedAt);
-    const pollIntervalMs = Number(scanStageRecord.pollIntervalMs);
-    const staleAfterMs = Number.isFinite(pollIntervalMs)
-      ? Math.max(120_000, pollIntervalMs * 2)
-      : 120_000;
-    const scanAgeMs = latestScanMs ? Date.now() - latestScanMs : null;
+    const signalSourceLatestMs = Math.max(latestSignalMs, latestBarMs);
+    const signalSourceAgeMs = signalSourceLatestMs
+      ? Date.now() - signalSourceLatestMs
+      : null;
+    const sourceStaleAfterMs = signalSourceStaleAfterMs(
+      rowSignalTimeframes(staFilteredRows),
+    );
+    const signalSourceStale =
+      signalSourceAgeMs !== null && signalSourceAgeMs > sourceStaleAfterMs;
     const sourcePolicy =
       typeof scanStageRecord.signalSourcePolicy === "string" &&
       scanStageRecord.signalSourcePolicy.trim()
@@ -1617,19 +1671,8 @@ export const OperationsSignalTable = ({
       scanStageRecord.activeScanPhase.trim()
         ? scanStageRecord.activeScanPhase.trim()
         : null;
-    const pressureLevel =
-      typeof scanStageRecord.resourcePressureLevel === "string" &&
-      scanStageRecord.resourcePressureLevel.trim()
-        ? scanStageRecord.resourcePressureLevel.trim()
-        : null;
-    const pressurePaused = scanStageRecord.pressurePaused === true;
-    const pressureBlocksWork =
-      pressurePaused ||
-      (scanStageRecord.heavyWorkDeferred === true &&
-        pressureLevelBlocksActionWork(pressureLevel));
     const heavyWorkDeferred =
-      scanStageRecord.heavyWorkDeferred === true &&
-      (!contractSelectionResolved || pressureBlocksWork);
+      scanStageRecord.heavyWorkDeferred === true && !contractSelectionResolved;
     return {
       latestSignalAt: latestSignalMs ? new Date(latestSignalMs).toISOString() : null,
       latestBarAt: latestBarMs ? new Date(latestBarMs).toISOString() : null,
@@ -1638,23 +1681,18 @@ export const OperationsSignalTable = ({
       scanPhase: activePhase,
       sourcePolicy,
       heavyWorkDeferred,
-      pressureLevel: pressureBlocksWork ? pressureLevel : null,
-      staleScan:
-        Boolean(latestScanMs) &&
-        scanStageRecord.status !== "running" &&
-        scanAgeMs !== null &&
-        scanAgeMs > staleAfterMs,
+      staleScan: signalSourceStale && scanStageRecord.status !== "running",
       scanDetail:
         typeof scanStageRecord.detail === "string" && scanStageRecord.detail.trim()
           ? scanStageRecord.detail.trim()
           : null,
     };
-  }, [cockpitGeneratedAt, cockpitStageItems, signals]);
+  }, [cockpitGeneratedAt, cockpitStageItems, signals, staFilteredRows]);
 
   const sourceHealth = asRecord(signalOptionsSourceHealth);
   const sourceHealthLabel =
     sourceHealth.degraded || sourceHealth.stale
-      ? "Action source cached"
+      ? "Action source degraded"
       : sourceHealth.source && sourceHealth.source !== "empty"
         ? `Action ${formatCompactStatusValue(sourceHealth.source)}`
         : null;
@@ -1676,23 +1714,14 @@ export const OperationsSignalTable = ({
       ? formatCompactStatusValue(freshness.sourcePolicy)
       : "Source --",
     sourceHealthLabel,
-    freshness.pressureLevel ? "Action scan queued" : null,
     matrixPendingRows.length ? `${matrixPendingRows.length} matrix pending` : null,
   ];
   const staleScanBanner =
-    freshness.pressureLevel || freshness.staleScan
+    freshness.staleScan
       ? [
-          freshness.pressureLevel
-            ? "Signal action scan is queued by resource pressure."
-            : "Signal scan freshness is outside the expected window.",
-          freshness.latestScanAt
-            ? `Last scan ${formatRelativeTimeShort(freshness.latestScanAt)}.`
-            : null,
+          "Signal Matrix freshness is outside the expected window.",
           freshness.latestBarAt
             ? `Latest bar ${formatRelativeTimeShort(freshness.latestBarAt)}.`
-            : null,
-          freshness.pressureLevel
-            ? `Pressure ${formatCompactStatusValue(freshness.pressureLevel)}.`
             : null,
         ]
           .filter(Boolean)
@@ -1701,7 +1730,7 @@ export const OperationsSignalTable = ({
   const sourceHealthBanner =
     sourceHealth.degraded || sourceHealth.stale
       ? [
-          "STA action source is using the last successful snapshot.",
+          "STA action source is currently unavailable.",
           Array.isArray(sourceHealth.failedSources) && sourceHealth.failedSources.length
             ? `Failed source ${sourceHealth.failedSources
                 .map(formatCompactStatusValue)
@@ -1736,7 +1765,6 @@ export const OperationsSignalTable = ({
     actionCount: actionMappedCount,
     historyCount: counts.history,
     freshnessLine,
-    receivedHistorySourceStatus: signalMonitorEventsSourceStatus,
   });
   const signalScanWave = resolveSignalScanWave(freshness);
   const sortSummary = `Sorted by ${SORT_LABELS[sortKey] || "Newest"} ${
@@ -2190,6 +2218,9 @@ export const OperationsSignalTable = ({
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={displaySignalTimeframes}
+                    signalEvents={
+                      signalEventsBySymbol.get(String(symbol || "").toUpperCase()) || []
+                    }
                     rowSparklineSnapshotsBySymbol={rowSparklineSnapshotsBySymbol}
                     alt={rowIndex % 2 === 1}
                     columns={visibleColumns}

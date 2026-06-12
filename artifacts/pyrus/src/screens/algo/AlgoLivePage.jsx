@@ -81,7 +81,7 @@ const EmptyOperationsState = ({
   const summary = !setupDataSettled
     ? "Fetching algo deployments and signal-options automation state."
     : deploymentListUnavailable
-      ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh once API pressure settles."
+      ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh to retry the request."
       : candidateDrafts.length
       ? "Create a paper deployment from an available strategy draft."
       : "No signal-options deployments are available yet. The default paper deployment should be seeded at startup.";
@@ -655,10 +655,9 @@ export const AlgoLivePage = ({
   environment,
   bridgeTone,
   handleToggleDeployment,
-  handleRunShadowScan,
+  handleRefreshSignals,
   enableDeploymentMutation,
   pauseDeploymentMutation,
-  runShadowScanMutation,
   algoExecutionScanRunning,
   // Layout
   algoIsPhone,
@@ -799,10 +798,7 @@ export const AlgoLivePage = ({
       : null;
   const DeploymentToggleIcon = focusedDeployment?.enabled ? Pause : Play;
   const deploymentToggleLabel = focusedDeployment?.enabled ? "Pause" : "Resume";
-  const scanMutationPending = Boolean(runShadowScanMutation?.isPending);
-  const scanOperationRunning =
-    scanMutationPending || Boolean(algoExecutionScanRunning);
-  const scanButtonLabel = scanOperationRunning ? "Scanning" : "Scan";
+  const scanOperationRunning = Boolean(algoExecutionScanRunning);
   const safeQaControlsPaused = Boolean(safeQaMode);
   const scanBlocked = !signalScanReady;
   const deploymentToggleDisabled =
@@ -815,12 +811,12 @@ export const AlgoLivePage = ({
     ? "Deployment controls paused in safe QA"
     : deploymentToggleLabel;
   const scanButtonActionLabel = safeQaControlsPaused
-    ? "Options strategy scan paused in safe QA"
+    ? "Signal Matrix refresh paused in safe QA"
     : scanBlocked
       ? signalScanBlockedReason || "Signal scan unavailable"
     : scanOperationRunning
-      ? "Options strategy scan already running"
-      : "Scan now";
+      ? "Signal action scan already running"
+      : "Refresh Signal Matrix";
   const operationsStatus = resolveOperationsStatus({
     gatewayReady,
     scanOn: Boolean(focusedDeployment?.enabled),
@@ -1239,7 +1235,7 @@ export const AlgoLivePage = ({
                   <AppTooltip content={scanButtonActionLabel}>
                     <button
                       type="button"
-                      onClick={handleRunShadowScan}
+                      onClick={handleRefreshSignals}
                       disabled={scanButtonDisabled}
                       aria-label={scanButtonActionLabel}
                       style={headerActionButtonStyle({

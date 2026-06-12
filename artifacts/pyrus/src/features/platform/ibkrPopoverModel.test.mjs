@@ -133,6 +133,7 @@ test("line usage rows display shared app headroom instead of per-pool ceilings",
 
   const rows = Object.fromEntries(normalized.rows.map((row) => [row.id, row]));
 
+  assert.equal(rows.visible.label, "Trade Options Chain");
   assert.deepEqual(
     {
       active: rows["account-monitor"].displayActive,
@@ -165,6 +166,48 @@ test("line usage rows display shared app headroom instead of per-pool ceilings",
     },
     { active: 30, usable: 200, headroom: 170 },
   );
+});
+
+test("account monitor needed count falls back to warm-up target demand", () => {
+  const normalized = normalizeAdmissionDiagnostics(
+    {
+      activeLineCount: 0,
+      accountMonitorLineCount: 0,
+      accountMonitor: {
+        neededLineCount: 0,
+        coveredLineCount: 0,
+      },
+      budget: {
+        maxLines: 200,
+        accountMonitorLineCap: 200,
+      },
+      poolUsage: {
+        "account-monitor": {
+          id: "account-monitor",
+          activeLineCount: 0,
+          maxLines: 200,
+          effectiveMaxLines: 200,
+          remainingLineCount: 200,
+        },
+      },
+    },
+    {
+      accountMonitor: {
+        targetLineCount: 8,
+        pendingLineCount: 8,
+      },
+      warmup: {
+        accountTargetLineCount: 8,
+        accountPendingLineCount: 8,
+      },
+    },
+  );
+
+  const rows = Object.fromEntries(normalized.rows.map((row) => [row.id, row]));
+
+  assert.equal(rows["account-monitor"].needed, 8);
+  assert.equal(rows["account-monitor"].covered, 0);
+  assert.equal(rows["account-monitor"].detail, "0 covered of 8 needed");
 });
 
 test("closed IBKR trigger model surfaces live Massive provider status", () => {

@@ -24,15 +24,19 @@ test("shadow account mode does not prewarm real account streams when broker rout
   );
 });
 
-test("account first-screen readiness waits for primary account data", () => {
+test("account first-screen readiness exposes the frame before account data settles", () => {
   const source = readLocalSource("./AccountScreen.jsx");
 
   assert.match(
     source,
-    /primaryReady: Boolean\(isVisible && accountPrimaryReady\),/,
+    /primaryReady: Boolean\(isVisible\),/,
+  );
+  assert.match(
+    source,
+    /derivedReady: Boolean\(isVisible && accountDerivedReady\),/,
   );
   assert.doesNotMatch(
     source,
-    /primaryReady: Boolean\(isVisible\),\s*derivedReady: Boolean\(isVisible && accountDerivedReady\),/,
+    /primaryReady: Boolean\(isVisible && accountPrimaryReady\),/,
   );
 });

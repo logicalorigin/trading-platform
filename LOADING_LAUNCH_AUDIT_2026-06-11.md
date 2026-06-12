@@ -45,11 +45,11 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 
 ## 3. Errant waiting — the real launch levers
 
-1. **The remaining blocker is overlay policy + first-screen readiness, not shell render.** `session-not-ready` belongs to `resolveQuoteStreamGateReason` (`PlatformApp.jsx:689-705`), so it gates quote streams, not the shell render path. The user-visible boot overlay stays until `bootProgress.complete` (`PlatformApp.jsx:5831-5843`), and `first-screen` completes when the active screen reports `primaryReady` (`PlatformApp.jsx:1359-1371`).
-2. **Screen data gates are already screen-specific.** Runtime boot classification keeps `watchlists` blocking only for Flow/GEX/Trade; Market intentionally blocks only on `session` (`bootPolicy.js:9-20`). Do not blindly mark `watchlists` globally non-blocking or add it back to Market without a product decision.
-3. **`first-screen` is still the main correctness lever.** Several screens report `primaryReady` as mere visibility, which can dismiss the overlay before their primary data is actually fresh. Account and Algo already have richer local readiness booleans (`accountPrimaryReady`, `algoPrimaryDataReady`) that should feed the `primaryReady` callback before changing Market/Flow semantics.
-4. **NOT errant (verified):** `signal-state` is static-default non-blocking (`bootProgress.ts:74`) and should stay out of the launch gate unless a specific initial screen truly requires it. `accounts` and `signal-profile` are non-blocking by default but are restored as blockers for Account/Algo by `SCREEN_BOOT_DATA_DEPS`.
-5. **Backend latency still amplifies every gate:** when `session`, Account, Algo, or Flow dependencies are slow, the overlay remains up longer for screens that legitimately depend on them. Current source shows the bridge governor still has constrained account/orders/health lanes (`bridge-governor.ts:57-62`), and `fetchMarketingShadowDashboardSnapshot` is already `Promise.all`-parallel (`marketing-shadow-dashboard.ts:540`), so downstream slowness should not be misdiagnosed as a serial-await bug.
+1. **Updated contract: the full-screen boot overlay is frame-only.** `session-not-ready` belongs to `resolveQuoteStreamGateReason` (`PlatformApp.jsx:689-705`), so it gates quote streams, not the shell render path. The user-visible boot overlay should clear once the static HTML, React root, app-content chunk, and workspace-route chunk are ready. Session, watchlists, accounts, signal profile/state, and `first-screen` are tracked for timing/work scheduling but no longer block the overlay.
+2. **Screen data gates move inline.** Runtime screen modules should render their structural frame as soon as the route chunk is ready. Data-specific work then resolves through each screen's own loading, stale, empty, and error states. Do not reintroduce global "Loading route module" takeovers or screen data blockers without an explicit product decision.
+3. **`first-screen` remains a metric/work-scheduler signal, not a boot overlay gate.** Several screens now intentionally report `primaryReady: Boolean(isVisible)` so users see the page frame immediately. Richer readiness booleans such as `accountPrimaryReady`, `accountDerivedReady`, and `algoDerivedReady` still matter for inline content readiness and background-work permission.
+4. **NOT errant (verified):** `signal-state` is static-default non-blocking (`bootProgress.ts:74`) and should stay out of the launch gate unless a specific initial screen truly requires it. `accounts` and `signal-profile` should remain inline data readiness concerns, not full-screen overlay blockers.
+5. **Backend latency still matters, but should not hide the app frame:** slow `session`, Account, Algo, or Flow dependencies should degrade the relevant inline screen content rather than trapping the user behind the boot overlay. Current source shows the bridge governor still has constrained account/orders/health lanes (`bridge-governor.ts:57-62`), and `fetchMarketingShadowDashboardSnapshot` is already `Promise.all`-parallel (`marketing-shadow-dashboard.ts:540`), so downstream slowness should not be misdiagnosed as a serial-await bug.
 
 ---
 
@@ -70,10 +70,10 @@ Scope: why PYRUS pages/containers take long to load, the app's **launch/boot-loa
 ---
 
 ## 6. Recommendations (highest launch-time gain first)
-1. **Add a no-behavior-change boot policy test guard** around `reclassifyBootBlocking` + `SCREEN_BOOT_DATA_DEPS` so future audits do not regress the policy back to global blockers.
-2. **Tighten Account/Algo first-screen readiness** by reporting `accountPrimaryReady` / `algoPrimaryDataReady` as `primaryReady`, instead of mere visibility. This preserves the current dependency matrix while making overlay dismissal match usable primary content.
-3. **Leave Market without watchlists** per the current product decision: Market is usable without watchlist hydration. Flow/GEX/Trade remain watchlist-gated until their primary-content semantics are clarified.
-4. **Cut backend latency at the source** for routes that legitimately gate the active screen; keep this separate from frontend boot policy so pressure fallbacks are not hidden by UI changes.
+1. **Keep the boot policy test guard** around `reclassifyBootBlocking` + `SCREEN_BOOT_DATA_DEPS` so future audits do not regress the policy back to global data blockers.
+2. **Preserve immediate frame readiness for Account/Algo.** Their page frames should become visible on navigation; account/algo data readiness should continue to drive inline loading states and background-work permission.
+3. **Leave Market without watchlists** per the current product decision: Market is usable without watchlist hydration. Flow/GEX/Trade watchlist needs should be expressed through their own inline states, not the global boot overlay.
+4. **Cut backend latency at the source** for routes that feed visible screen content; keep this separate from frontend boot policy so pressure fallbacks are not hidden by UI changes.
 5. **Lazy-loading is already in good shape** — no broad re-splitting action; only measure bundle chunks if a new production build shows a concrete regression.
 
 ## 7. Caveats / honesty

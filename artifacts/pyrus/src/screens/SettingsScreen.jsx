@@ -1508,11 +1508,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={formatCount(policy.targetFillLines ?? budget.targetFillLines ?? allocation.targetFillLines)}
           />
           <StateRow
-            label="Default chain lines"
+            label="Trade Options Chain default"
             value={formatCount(budget.visibleOptionChainDefaultLineCount)}
           />
           <StateRow
-            label="Visible option reserve"
+            label="Trade Options Chain reserve"
             value={formatCount(budget.visibleOptionQuoteLineReserve)}
           />
           <StateRow
@@ -1619,7 +1619,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow label="Priority live lines" value={formatCount(allocation.priorityLineCount)} />
           <StateRow label="Scanner rotation lines" value={formatCount(allocation.scannerRotatingLineCount)} />
           <StateRow label="Scanner move-ready lines" value={formatCount(allocation.rotatingReclaimableLineCount)} />
-          <StateRow label="Option reserve lines" value={formatCount(allocation.optionReserveLineCount)} />
+          <StateRow label="Trade Options Chain reserve lines" value={formatCount(allocation.optionReserveLineCount)} />
           <StateRow label="Non-scanner option lines" value={formatCount(allocation.nonScannerOptionLineCount)} />
           <StateRow
             label="Routine stock IBKR lines"

@@ -37,4 +37,4 @@ export const resolveAlgoSignalSparklinePressureLevel = (snapshot = null) =>
   );
 
 export const shouldPauseAlgoSignalRowSparklines = (snapshot = null) =>
-  resolveAlgoSignalSparklinePressureLevel(snapshot) === "high";
+  false;

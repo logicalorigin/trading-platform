@@ -11,6 +11,7 @@ import {
   SIGNAL_TABLE_ROW_HEIGHT,
   SIGNAL_TRADE_BUTTON_SIZE,
   directionMeta,
+  resolveStaSparklineSignalTreatment,
   resolveSparklineData,
 } from "./OperationsSignalRow.jsx";
 
@@ -59,6 +60,29 @@ test("STA sparkline resolver accepts legacy signal sparkline shapes", () => {
   assert.equal(resolveSparklineData({}, { spark: signalSpark }), signalSpark);
   assert.equal(resolveSparklineData({}, { bars: signalBars }), signalBars);
   assert.deepEqual(resolveSparklineData({}, { sparkBars: [{ close: 90 }] }), []);
+});
+
+test("STA sparkline treatment follows signal direction instead of price slope", () => {
+  assert.deepEqual(resolveStaSparklineSignalTreatment("buy"), {
+    color: "var(--ra-blue-500)",
+    mode: "current",
+    direction: "buy",
+  });
+  assert.deepEqual(resolveStaSparklineSignalTreatment("sell"), {
+    color: "var(--ra-red-500)",
+    mode: "current",
+    direction: "sell",
+  });
+  assert.deepEqual(resolveStaSparklineSignalTreatment("buy", { hasTimeline: true }), {
+    color: null,
+    mode: "timeline",
+    direction: "buy",
+  });
+  assert.deepEqual(resolveStaSparklineSignalTreatment(null), {
+    color: null,
+    mode: "price",
+    direction: null,
+  });
 });
 
 test("STA sparkline resolver rejects non-drawable fallback bars", () => {

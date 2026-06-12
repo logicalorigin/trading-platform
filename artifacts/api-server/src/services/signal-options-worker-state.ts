@@ -22,22 +22,13 @@ export type SignalOptionsWorkerSnapshot = {
     lastSkippedAt?: string | null;
     lastSkipReason?: string | null;
     skippedScanCount?: number;
-    pressurePaused?: boolean;
-    pressurePauseStartedAt?: string | null;
-    pressurePauseAgeMs?: number | null;
     currentScanStartedAt: string | null;
     currentScanAgeMs: number | null;
     lastScanDurationMs: number | null;
-    timedOut?: boolean;
-    timeoutReason?: string | null;
-    unsettledAfterTimeout?: boolean;
     lastScanOutcome?:
       | "success"
       | "failed"
-      | "timed_out"
-      | "timed_out_unsettled"
       | "scan_running"
-      | "resource_pressure"
       | null;
     scanCount: number;
     totalFailureCount: number;
@@ -53,7 +44,6 @@ export type SignalOptionsWorkerSnapshot = {
     lastSignalSourcePolicy?: string | null;
     lastHeavyWorkDeferred?: boolean;
     lastActiveScanPhase?: string | null;
-    lastResourcePressureLevel?: string | null;
     lastCandidateCount: number;
     lastBlockedCandidateCount: number;
     lastActivePositionCount?: number;

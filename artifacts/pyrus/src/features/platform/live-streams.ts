@@ -50,6 +50,7 @@ import type {
   SignalOptionsPerformanceResponse,
 } from "@workspace/api-client-react";
 
+import { accountPositionTypeParam } from "../account/accountPositionTypes";
 import { freshnessUnchanged, isStreamFresh } from "./streamFreshness";
 
 type StreamMode = "paper" | "live";
@@ -4750,7 +4751,7 @@ const accountPositionsParams = (
   > = {},
 ) => ({
   mode: payload.mode,
-  assetClass: payload.assetClass ?? undefined,
+  assetClass: accountPositionTypeParam(payload.assetClass),
   liveQuotes: options.positionsLiveQuotes !== false,
 });
 
@@ -4759,7 +4760,7 @@ const accountClosedTradeParams = (
 ): GetAccountClosedTradesParams => ({
   mode: payload.mode,
   symbol: payload.tradeFilters.symbol ?? undefined,
-  assetClass: payload.tradeFilters.assetClass ?? undefined,
+  assetClass: accountPositionTypeParam(payload.tradeFilters.assetClass),
   pnlSign: payload.tradeFilters.pnlSign ?? undefined,
   holdDuration: payload.tradeFilters.holdDuration ?? undefined,
   from: payload.tradeFilters.from ?? undefined,

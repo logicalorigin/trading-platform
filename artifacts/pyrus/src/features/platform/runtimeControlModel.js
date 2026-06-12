@@ -3,11 +3,12 @@ import { streamStateTokenVar } from "./streamSemantics";
 
 export const RUNTIME_CONTROL_SCHEMA_VERSION = 1;
 export const DEFAULT_ACCOUNT_MONITOR_LINE_CAP = 30;
+export const TRADE_OPTIONS_CHAIN_LABEL = "Trade Options Chain";
 
 const POOL_ORDER = [
   ["automation", "Algo & Execution"],
   ["account-monitor", "Account"],
-  ["visible", "Visible Options"],
+  ["visible", TRADE_OPTIONS_CHAIN_LABEL],
   ["flow-scanner", "Flow Scanner"],
 ];
 
@@ -17,6 +18,13 @@ const firstFiniteNumber = (...values) => {
     if (Number.isFinite(number)) return number;
   }
   return null;
+};
+
+const maxFiniteNumber = (...values) => {
+  const numbers = values
+    .map((value) => Number(value))
+    .filter((number) => Number.isFinite(number));
+  return numbers.length ? Math.max(...numbers) : null;
 };
 
 const recordOrEmpty = (value) =>
@@ -70,6 +78,12 @@ const formatScannerReason = (reason) => {
   }
   if (reason === "line-cap-exhausted") {
     return "no scanner lines available";
+  }
+  if (reason === "protected-trade-options-chain-demand") {
+    return `${TRADE_OPTIONS_CHAIN_LABEL} reserve`;
+  }
+  if (reason === "scanner-refill-needed") {
+    return "scanner refill needed";
   }
   if (reason === "resource-pressure") {
     return "resource pressure";
@@ -463,6 +477,14 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (scanner.deepScanner?.draining) {
       return "deep scan starting";
     }
+    const shortfallReason = scanner.lineUtilization?.shortfallReason;
+    if (shortfallReason) {
+      const shortfallLabel = formatScannerReason(shortfallReason);
+      if (shortfallReason === "protected-trade-options-chain-demand") {
+        return `paused: ${shortfallLabel}`;
+      }
+      return `waiting: ${shortfallLabel}`;
+    }
     const snapshotCount = Number(scanner.deepScanner?.snapshotCount);
     const snapshotDetail =
       Number.isFinite(snapshotCount) && snapshotCount > 0
@@ -732,7 +754,11 @@ const normalizeLinePressure = (admission) => {
     scannerDynamicLineCap: firstFiniteNumber(pressure.scannerDynamicLineCap),
     optionBudgetLineCount: firstFiniteNumber(pressure.optionBudgetLineCount),
     nonScannerOptionLineCount: firstFiniteNumber(pressure.nonScannerOptionLineCount),
+    tradeOptionsChainReserveLineCount: firstFiniteNumber(
+      pressure.tradeOptionsChainReserveLineCount,
+    ),
     optionReserveLineCount: firstFiniteNumber(pressure.optionReserveLineCount),
+    protectedPriorityLineCount: firstFiniteNumber(pressure.protectedPriorityLineCount),
     usableRemainingLineCount,
   };
 };
@@ -865,9 +891,18 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
       allocation.nonScannerOptionLineCount,
       pressure.nonScannerOptionLineCount,
     ),
+    tradeOptionsChainReserveLineCount: firstFiniteNumber(
+      allocation.tradeOptionsChainReserveLineCount,
+      pressure.tradeOptionsChainReserveLineCount,
+      admission?.budget?.visibleOptionQuoteLineReserve,
+    ),
     optionReserveLineCount: firstFiniteNumber(
       allocation.optionReserveLineCount,
       pressure.optionReserveLineCount,
+    ),
+    protectedPriorityLineCount: firstFiniteNumber(
+      allocation.protectedPriorityLineCount,
+      pressure.protectedPriorityLineCount,
     ),
     scannerSchedulableLineCap,
     scannerRemainingLineCount: firstFiniteNumber(
@@ -1188,6 +1223,11 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const shadowAccount = normalizeShadowAccountLineUsage(admission, lineUsageSnapshot);
   const totalUsed = firstFiniteNumber(admission.activeLineCount);
   const totalCap = firstFiniteNumber(budget.maxLines);
+  const accountSnapshotDetails =
+    lineUsageSnapshot?.accountMonitor &&
+    typeof lineUsageSnapshot.accountMonitor === "object"
+      ? lineUsageSnapshot.accountMonitor
+      : {};
   const totalFree =
     Number.isFinite(Number(totalUsed)) && Number.isFinite(Number(totalCap))
       ? Math.max(0, Number(totalCap) - Number(totalUsed))
@@ -1260,13 +1300,35 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           ? Math.max(0, (effectiveCap ?? cap) - rawUsed)
           : null
         : Number(pool.remainingLineCount);
+    const accountCoveredLineCount =
+      id === "account-monitor"
+        ? maxFiniteNumber(
+            accountDetails.coveredLineCount,
+            accountSnapshotDetails.coveredLineCount,
+            accountSnapshotDetails.activeLineCount,
+            rawUsed,
+            0,
+          )
+        : null;
+    const accountNeededLineCount =
+      id === "account-monitor"
+        ? maxFiniteNumber(
+            accountDetails.neededLineCount,
+            accountSnapshotDetails.neededLineCount,
+            accountSnapshotDetails.targetLineCount,
+            warmup.accountTargetLineCount,
+            accountCoveredLineCount,
+            rawUsed,
+            0,
+          )
+        : null;
     const displayActive =
       id === "account-monitor"
-        ? firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0)
+        ? accountCoveredLineCount
         : rawUsed;
     const laneDemandCap =
       id === "account-monitor"
-        ? firstFiniteNumber(accountDetails.neededLineCount, displayActive, 0)
+        ? accountNeededLineCount
         : firstFiniteNumber(effectiveCap, cap);
     const displayAvailable =
       Number.isFinite(displayActive) && Number.isFinite(totalFree)
@@ -1287,15 +1349,18 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     );
     const row = {
       id,
-      label: fallbackLabel,
+      label:
+        typeof pool.label === "string" && pool.label.trim()
+          ? pool.label
+          : fallbackLabel,
       used: rawUsed,
       needed:
         id === "account-monitor"
-          ? firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0)
+          ? accountNeededLineCount
           : rawUsed,
       covered:
         id === "account-monitor"
-          ? firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0)
+          ? accountCoveredLineCount
           : rawUsed,
       deferred:
         id === "account-monitor"
@@ -1314,7 +1379,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       activeLineCount,
       detail:
         id === "account-monitor"
-          ? `${formatRuntimeCount(firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0))} covered of ${formatRuntimeCount(firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0))} needed`
+          ? `${formatRuntimeCount(accountCoveredLineCount)} covered of ${formatRuntimeCount(accountNeededLineCount)} needed`
           : id === "flow-scanner"
           ? formatFlowScannerRuntimeDetail(admission, rawUsed)
           : id === "automation"

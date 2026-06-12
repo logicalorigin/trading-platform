@@ -219,12 +219,12 @@ export function getApiResourcePressureCaps(
     case "high":
       return {
         signalOptions: {
-          maintenanceOnly: true,
-          skipDeploymentScans: true,
-          signalRefreshAllowed: false,
-          actionScansAllowed: false,
-          positionMarksAllowed: false,
-          watchlistPrewarmAllowed: false,
+          maintenanceOnly: false,
+          skipDeploymentScans: false,
+          signalRefreshAllowed: true,
+          actionScansAllowed: true,
+          positionMarksAllowed: true,
+          watchlistPrewarmAllowed: true,
         },
       };
     case "watch":
@@ -233,9 +233,9 @@ export function getApiResourcePressureCaps(
           maintenanceOnly: false,
           skipDeploymentScans: false,
           signalRefreshAllowed: true,
-          actionScansAllowed: false,
-          positionMarksAllowed: false,
-          watchlistPrewarmAllowed: false,
+          actionScansAllowed: true,
+          positionMarksAllowed: true,
+          watchlistPrewarmAllowed: true,
         },
       };
     default:

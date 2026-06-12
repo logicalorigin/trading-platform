@@ -47,9 +47,9 @@ test("STA status summary separates rows, received signals, actions, and history"
 
   assert.equal(
     summary.statusLine,
-    "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago · Received history runtime fallback",
+    "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago",
   );
-  assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5 · Fallback");
+  assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5");
 });
 
 test("STA signal matrix hydration prioritizes the row execution timeframe", () => {
@@ -110,7 +110,7 @@ test("STA signal matrix hydration refreshes stale selected bubbles", () => {
   );
 });
 
-test("STA normal rows wait for all selected signal bubbles to hydrate", () => {
+test("STA signal rows do not wait for companion timeframe bubbles", () => {
   const rows = [
     {
       signal: {
@@ -161,17 +161,14 @@ test("STA normal rows wait for all selected signal bubbles to hydrate", () => {
 
   assert.deepEqual(
     split.hydratedRows.map((row) => row.signal.symbol),
-    ["SPY"],
+    ["ALIT", "SPY"],
   );
-  assert.deepEqual(
-    split.pendingRows.map((row) => row.signal.symbol),
-    ["ALIT"],
-  );
+  assert.deepEqual(split.pendingRows, []);
   assert.deepEqual(
     split.rows.map((row) => row.signal.symbol),
     ["ALIT", "SPY"],
   );
-  assert.deepEqual(split.pendingRows[0].matrixHydration.missingTimeframes, ["1m"]);
+  assert.deepEqual(split.rows[0].matrixHydration.missingTimeframes, ["1m"]);
 
   const request = buildAlgoSignalMatrixHydrationRequest({
     rows,

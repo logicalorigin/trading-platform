@@ -12,6 +12,7 @@ import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 import { buildMemoryPressureFailurePoint } from "./failurePointModel.js";
+import { TRADE_OPTIONS_CHAIN_LABEL } from "./runtimeControlModel";
 
 const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
@@ -311,6 +312,15 @@ const buildIbkrSourcePressureBar = (runtimeControl) => {
     Number.isFinite(used) && Number.isFinite(cap) && cap > 0
       ? Math.round(clamp((used / cap) * 100, 0, 100))
       : 0;
+  const tradeOptionsChainReserveLineCount = firstSourceNumber(
+    allocation.tradeOptionsChainReserveLineCount,
+    lineUsage.pressure?.tradeOptionsChainReserveLineCount,
+  );
+  const tradeOptionsChainReserveDetail =
+    Number.isFinite(tradeOptionsChainReserveLineCount) &&
+    tradeOptionsChainReserveLineCount > 0
+      ? ` · ${formatSourceCount(tradeOptionsChainReserveLineCount)} ${TRADE_OPTIONS_CHAIN_LABEL} reserved`
+      : "";
   const level = sourceLevelFromLineUsage({ used, cap, free, limited });
   const hasRatio = Number.isFinite(used) && Number.isFinite(cap);
   const label = hasRatio
@@ -319,7 +329,7 @@ const buildIbkrSourcePressureBar = (runtimeControl) => {
   const detail = hasRatio
     ? `IBKR ${formatSourceCount(used)} of ${formatSourceCount(cap)}${
         Number.isFinite(free) ? ` · ${formatSourceCount(free)} free` : ""
-      }`
+      }${tradeOptionsChainReserveDetail}`
     : "IBKR line usage unavailable";
 
   return {

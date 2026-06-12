@@ -280,6 +280,32 @@ export const DEFAULT_STRATEGY_SIGNAL_SETTINGS = {
   chochVolumeGate: 0,
 };
 
+export const normalizeStrategySignalTimeframe = (
+  value,
+  fallback = DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe,
+) => {
+  const timeframe = String(value || "").trim();
+  if (STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe)) return timeframe;
+  const fallbackTimeframe = String(fallback || "").trim();
+  return STRATEGY_SIGNAL_TIMEFRAMES.includes(fallbackTimeframe)
+    ? fallbackTimeframe
+    : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+};
+
+export const normalizeStrategySignalTimeframes = (value, fallback) => {
+  const source = Array.isArray(value) ? value : [value];
+  const timeframes = [];
+  source.forEach((item) => {
+    const timeframe = normalizeStrategySignalTimeframe(item, "");
+    if (timeframe && !timeframes.includes(timeframe)) {
+      timeframes.push(timeframe);
+    }
+  });
+  return timeframes.length
+    ? timeframes
+    : [normalizeStrategySignalTimeframe(fallback)];
+};
+
 export const SIGNAL_OPTIONS_ACTION_LABELS = {
   candidate: "Awaiting Scan",
   blocked: "Blocked",
@@ -412,10 +438,9 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
 
 const chooseStaActionSourceSnapshot = (snapshots) =>
   snapshots
-    .filter((snapshot) => snapshot.hasRows)
+    .filter((snapshot) => snapshot.hasRows && !snapshot.transient)
     .sort(
       (left, right) =>
-        Number(left.transient) - Number(right.transient) ||
         right.latestMs - left.latestMs ||
         right.rowCount - left.rowCount ||
         (left.source === "cockpit" ? -1 : 1),
@@ -426,21 +451,18 @@ const staActionSourceHealth = ({
   stale = false,
   degraded = false,
   failedSources = [],
-  previousSource = null,
   currentSource = null,
 } = {}) => ({
   source,
   stale: Boolean(stale),
   degraded: Boolean(degraded),
   failedSources,
-  previousSource,
   currentSource,
 });
 
 export const resolveStableStaActionSnapshot = ({
   cockpit = null,
   signalOptionsState = null,
-  previousSnapshot = null,
   cockpitFailed = false,
   signalOptionsStateFailed = false,
 } = {}) => {
@@ -455,74 +477,14 @@ export const resolveStableStaActionSnapshot = ({
       (snapshot) => !failedSources.includes(snapshot.source),
     ),
   );
-  const previous = asRecord(previousSnapshot);
-  const previousRowCount =
-    staSourceArray(previous.signals).length +
-    staSourceArray(previous.candidates).length +
-    staSourceArray(previous.activePositions).length;
-  const previousSource = String(previous.source || "");
-  const hasPrevious = previousRowCount > 0;
-  const previousLatestMs = staSourceLatestTimestampMs(previous, [
-    staSourceArray(previous.signals),
-    staSourceArray(previous.candidates),
-    staSourceArray(previous.activePositions),
-  ]);
-  const currentRowCount = currentSnapshot?.rowCount || 0;
-  const currentSourceFailed = currentSnapshot
-    ? failedSources.includes(currentSnapshot.source)
-    : false;
-  const failedCurrentSourceRefresh = Boolean(
-    failedSources.length &&
-      hasPrevious &&
-      (!currentSnapshot || currentSourceFailed),
-  );
-  const transientEmptyRefresh = Boolean(
-    hasPrevious &&
-      !currentSnapshot &&
-      [cockpitSnapshot, stateSnapshot].some(
-        (snapshot) =>
-          !failedSources.includes(snapshot.source) && snapshot.transient,
-      ),
-  );
-  const emptyCurrentRefresh = Boolean(
-    hasPrevious &&
-      !currentSnapshot &&
-      [cockpitSnapshot, stateSnapshot].some(
-        (snapshot) => !failedSources.includes(snapshot.source),
-      ),
-  );
-  const transientRegressiveRefresh = Boolean(
-    hasPrevious &&
-      currentSnapshot?.transient &&
-      (currentRowCount < previousRowCount ||
-        (previousLatestMs > 0 &&
-          currentSnapshot.latestMs > 0 &&
-          currentSnapshot.latestMs < previousLatestMs)),
-  );
-  const actionSourceDegraded = Boolean(
-    failedCurrentSourceRefresh ||
-      emptyCurrentRefresh ||
-      transientEmptyRefresh ||
-      transientRegressiveRefresh,
-  );
-
-  if (actionSourceDegraded) {
-    return {
-      source: previousSource || "cached",
-      signals: staSourceArray(previous.signals),
-      candidates: staSourceArray(previous.candidates),
-      activePositions: staSourceArray(previous.activePositions),
-      cacheable: false,
-      sourceHealth: staActionSourceHealth({
-        source: previousSource || "cached",
-        stale: true,
-        degraded: true,
-        failedSources,
-        previousSource: previousSource || null,
-        currentSource: currentSnapshot?.source || null,
-      }),
-    };
-  }
+  const staleSources = [cockpitSnapshot, stateSnapshot]
+    .filter(
+      (snapshot) =>
+        !failedSources.includes(snapshot.source) &&
+        snapshot.hasRows &&
+        snapshot.transient,
+    )
+    .map((snapshot) => snapshot.source);
 
   if (currentSnapshot) {
     return {
@@ -546,10 +508,9 @@ export const resolveStableStaActionSnapshot = ({
     cacheable: !failedSources.length,
     sourceHealth: staActionSourceHealth({
       source: "empty",
-      stale: Boolean(failedSources.length && hasPrevious),
-      degraded: Boolean(failedSources.length),
-      failedSources,
-      previousSource: previousSource || null,
+      stale: Boolean(staleSources.length),
+      degraded: Boolean(failedSources.length || staleSources.length),
+      failedSources: [...failedSources, ...staleSources],
     }),
   };
 };
@@ -641,6 +602,121 @@ const signalMonitorEventSignalKey = (event, signalAt) => {
   return [profileId, symbol, timeframe, direction, signalAt].join(":");
 };
 
+const normalizeStaSignalTimeframes = (timeframes = []) => {
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(timeframes) ? timeframes : [])
+        .map((timeframe) => normalizeMatchKey(timeframe))
+        .filter((timeframe) => STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe)),
+    ),
+  );
+  return normalized.length ? normalized : [...STRATEGY_SIGNAL_TIMEFRAMES];
+};
+
+const staSignalDirectionOrNull = (value) => {
+  const normalized = normalizeMatchKey(value).toLowerCase();
+  return normalized === "buy" || normalized === "sell" ? normalized : null;
+};
+
+const signalMatrixStateSignalKey = (state, signalAt, direction) => {
+  const stateRecord = asRecord(state);
+  const existingKey = normalizeMatchKey(stateRecord.signalKey);
+  if (existingKey) return existingKey;
+  const eventId = normalizeMatchKey(stateRecord.eventId);
+  if (eventId) return `event:${eventId}`;
+  const symbol = normalizeMatchToken(stateRecord.symbol);
+  const timeframe = normalizeMatchKey(stateRecord.timeframe);
+  if (!symbol || !timeframe || !direction || !signalAt) return null;
+  return [
+    normalizeMatchKey(stateRecord.profileId) || "signal-matrix",
+    symbol,
+    timeframe,
+    direction,
+    signalAt,
+  ].join(":");
+};
+
+export const buildStaSignalMatrixRows = ({
+  signalMatrixStates,
+  universeSymbols,
+  timeframes,
+} = {}) => {
+  const universe = new Set(
+    (Array.isArray(universeSymbols) ? universeSymbols : [])
+      .map((symbol) => normalizeMatchToken(symbol))
+      .filter(Boolean),
+  );
+  const selectedTimeframes = new Set(normalizeStaSignalTimeframes(timeframes));
+
+  return (Array.isArray(signalMatrixStates) ? signalMatrixStates : [])
+    .map((state) => {
+      const stateRecord = asRecord(state);
+      if (stateRecord.active === false) return null;
+      const symbol = normalizeMatchToken(stateRecord.symbol);
+      const timeframe = normalizeMatchKey(stateRecord.timeframe);
+      if (
+        !symbol ||
+        !selectedTimeframes.has(timeframe) ||
+        (universe.size && !universe.has(symbol))
+      ) {
+        return null;
+      }
+      const direction = staSignalDirectionOrNull(
+        stateRecord.currentSignalDirection || stateRecord.direction,
+      );
+      const signalAt =
+        staIsoStringOrNull(stateRecord.currentSignalAt) ??
+        staIsoStringOrNull(stateRecord.signalAt);
+      if (!direction || !signalAt) return null;
+
+      const status = normalizeMatchKey(stateRecord.status || "ok").toLowerCase();
+      if (status === "pending" || status === "unknown") return null;
+      const signalPrice =
+        staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
+        staFiniteNumberOrNull(stateRecord.signalPrice);
+      const fresh = stateRecord.fresh === true;
+
+      return {
+        profileId: normalizeMatchKey(stateRecord.profileId) || null,
+        signalKey: signalMatrixStateSignalKey(stateRecord, signalAt, direction),
+        source: normalizeMatchKey(stateRecord.source) || "signal-matrix",
+        sourceType: normalizeMatchKey(stateRecord.sourceType) || "signal_matrix_state",
+        eventId: normalizeMatchKey(stateRecord.eventId) || null,
+        symbol,
+        timeframe,
+        direction,
+        signalAt,
+        currentSignalAt: signalAt,
+        signalPrice,
+        currentSignalPrice: signalPrice,
+        latestBarAt:
+          staIsoStringOrNull(stateRecord.latestBarAt) ??
+          staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??
+          signalAt,
+        barsSinceSignal: staFiniteNumberOrNull(stateRecord.barsSinceSignal),
+        fresh,
+        actionEligible:
+          typeof stateRecord.actionEligible === "boolean"
+            ? stateRecord.actionEligible
+            : fresh && status === "ok",
+        actionBlocker:
+          normalizeMatchKey(stateRecord.actionBlocker) ||
+          (!fresh || status !== "ok" ? "historical_signal" : null),
+        status,
+        filterState: Object.keys(asRecord(stateRecord.filterState)).length
+          ? asRecord(stateRecord.filterState)
+          : null,
+        updatedAt: staIsoStringOrNull(stateRecord.lastEvaluatedAt),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.signalAt || "") || 0;
+      const rightTime = Date.parse(right.signalAt || "") || 0;
+      return rightTime - leftTime;
+    });
+};
+
 export const buildStaSignalHistoryRows = ({
   signalEvents,
   universeSymbols,
@@ -714,6 +790,9 @@ export const buildVisibleSignalRows = ({
   signals,
   candidates,
   signalEvents,
+  signalMatrixStates,
+  signalTimeframes,
+  signalActionTimeframes,
   universeSymbols,
   now,
   includeSignalHistory = false,
@@ -721,8 +800,11 @@ export const buildVisibleSignalRows = ({
   const rows = [];
   const seen = new Set();
   const visibleSignalFamilies = new Set();
-  const signalList = Array.isArray(signals) ? signals : [];
-  const candidateList = Array.isArray(candidates) ? candidates : [];
+  const matrixSignals = buildStaSignalMatrixRows({
+    signalMatrixStates,
+    universeSymbols,
+    timeframes: signalActionTimeframes ?? signalTimeframes,
+  });
   const historySignals = includeSignalHistory
     ? buildStaSignalHistoryRows({
         signalEvents,
@@ -740,32 +822,20 @@ export const buildVisibleSignalRows = ({
     return true;
   };
 
-  signalList.forEach((signal) => {
+  // The live SSE Signal Matrix is the SOLE source of STA action rows (already
+  // filtered to the execution/action timeframe, so MTF companions never leak in).
+  // Signal-options does NOT produce signals — it only evaluates matrix signals
+  // against the algo's rules to find a contract or skip — so every candidate has a
+  // backing matrix signal and the poll is never needed as a row source. Each matrix
+  // row resolves its tradeable Signal Options candidate at render
+  // (findSignalOptionsCandidateForSignal), so the act-on-signal/order path is
+  // unaffected. Ranking the poll above the matrix is what made STA lag by minutes.
+  matrixSignals.forEach((signal) => {
+    const familyKey = signalRowFamilyKey(signal);
+    if (familyKey && visibleSignalFamilies.has(familyKey)) return;
     if (addRow(signal)) {
-      const familyKey = signalRowFamilyKey(signal);
       if (familyKey) visibleSignalFamilies.add(familyKey);
     }
-  });
-
-  candidateList.forEach((candidate) => {
-    const candidateRecord = asRecord(candidate);
-    const nestedSignal = asRecord(candidateRecord.signal);
-    const candidateSignal = {
-      ...nestedSignal,
-      signalKey:
-        candidateRecord.signalKey ??
-        nestedSignal.signalKey ??
-        candidateRecord.id ??
-        null,
-      symbol: candidateRecord.symbol ?? nestedSignal.symbol,
-      timeframe: candidateRecord.timeframe ?? nestedSignal.timeframe,
-      direction: candidateRecord.direction ?? nestedSignal.direction,
-      signalAt: candidateRecord.signalAt ?? nestedSignal.signalAt,
-      signalPrice: candidateRecord.signalPrice ?? nestedSignal.signalPrice,
-    };
-    const familyKey = signalRowFamilyKey(candidateSignal);
-    if (familyKey && visibleSignalFamilies.has(familyKey)) return;
-    addRow(candidateSignal, candidateRecord.id);
   });
 
   if (includeSignalHistory) {
@@ -775,8 +845,8 @@ export const buildVisibleSignalRows = ({
   }
 
   // Collapse to one row per (symbol, timeframe): the STA table shows the current
-  // signal per cell. Order is current signals -> candidates -> history
-  // (newest-first), so the first row kept per cell is the most relevant one.
+  // signal per cell from the live Signal Matrix, then signal history. The freshest
+  // ticker-driven signal is the action row.
   // This drops history rows for cells that already have a signal, and older
   // same-cell events, which otherwise render as "multiples of each signal".
   const cellSeen = new Set();

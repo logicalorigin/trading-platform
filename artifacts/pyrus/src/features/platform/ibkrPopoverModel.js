@@ -376,6 +376,11 @@ const buildCompactLineUsage = (lineUsage) => {
     cap > targetFillLines
       ? cap - targetFillLines
       : null;
+  const tradeOptionsChainReserveLineCount = Number.isFinite(
+    allocation.tradeOptionsChainReserveLineCount,
+  )
+    ? Math.max(0, allocation.tradeOptionsChainReserveLineCount)
+    : null;
   const percent =
     cap && used != null
       ? Math.max(0, Math.min(100, (used / cap) * 100))
@@ -393,6 +398,7 @@ const buildCompactLineUsage = (lineUsage) => {
     targetFillLines,
     remainingToTargetLineCount,
     reserveLineCount,
+    tradeOptionsChainReserveLineCount,
     summary:
       Number.isFinite(used) && Number.isFinite(cap)
         ? `${formatHeaderCount(used)} of ${formatHeaderCount(cap)}`

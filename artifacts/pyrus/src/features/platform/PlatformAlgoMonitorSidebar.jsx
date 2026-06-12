@@ -55,9 +55,11 @@ import {
   formatPct,
   candidateBlockerLabel,
   findSignalOptionsCandidateForSignal,
+  DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   resolveSignalScoreBreakdown,
   resolveStableStaActionSnapshot,
   normalizeSignalOptionsMtfTimeframes,
+  normalizeStrategySignalTimeframes,
   signalActionLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
@@ -489,6 +491,9 @@ export const buildAlgoMonitorStaSignalRows = ({
   signals = [],
   candidates = [],
   signalEvents = [],
+  signalMatrixStates = [],
+  signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
+  signalActionTimeframes = signalTimeframes,
   universeSymbols = [],
   signalMonitorEventsLoaded = false,
 } = {}) =>
@@ -496,6 +501,9 @@ export const buildAlgoMonitorStaSignalRows = ({
     signals,
     candidates,
     signalEvents: signalMonitorEventsLoaded ? signalEvents : [],
+    signalMatrixStates,
+    signalTimeframes,
+    signalActionTimeframes,
     universeSymbols,
     includeSignalHistory: signalMonitorEventsLoaded,
   });
@@ -547,6 +555,20 @@ const isAlgoMonitorSignalBubbleHydrated = (state) => {
   );
 };
 
+const hasConcreteAlgoMonitorSignalPayload = (row) => {
+  const signal = asRecord(asRecord(row).signal);
+  const symbol = readSignalSymbol(signal, row?.candidate);
+  const direction = String(signal.direction || signal.currentSignalDirection || "")
+    .trim()
+    .toLowerCase();
+  return Boolean(
+    symbol &&
+      String(signal.timeframe || "").trim() &&
+      (direction === "buy" || direction === "sell") &&
+      (signal.signalAt || signal.currentSignalAt),
+  );
+};
+
 export const splitAlgoMonitorSignalRowsByMatrixHydration = ({
   rows = [],
   signalMatrixBySymbol = {},
@@ -570,12 +592,21 @@ export const splitAlgoMonitorSignalRowsByMatrixHydration = ({
 
   (Array.isArray(rows) ? rows : []).forEach((row) => {
     const symbol = readSignalSymbol(row?.signal, row?.candidate);
+    const rowTimeframe = String(asRecord(asRecord(row).signal).timeframe || "")
+      .trim();
+    const rowRequiredTimeframes =
+      rowTimeframe && requiredTimeframes.includes(rowTimeframe)
+        ? [rowTimeframe]
+        : requiredTimeframes;
     const statesByTimeframe = asRecord(signalMatrixBySymbol?.[symbol]);
     const hydrated = Boolean(
       symbol &&
-        requiredTimeframes.length &&
-        requiredTimeframes.every((timeframe) =>
-          isAlgoMonitorSignalBubbleHydrated(statesByTimeframe[timeframe]),
+        rowRequiredTimeframes.length &&
+        (
+          hasConcreteAlgoMonitorSignalPayload(row) ||
+          rowRequiredTimeframes.every((timeframe) =>
+            isAlgoMonitorSignalBubbleHydrated(statesByTimeframe[timeframe]),
+          )
         ),
     );
     if (hydrated) {
@@ -1190,7 +1221,6 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       ...QUERY_DEFAULTS,
       enabled: restQueriesActive,
       refetchInterval: derivedPollInterval,
-      placeholderData: (previousData) => previousData,
     },
   });
   const automationStateQuery = useGetSignalOptionsAutomationState(deploymentId, {
@@ -1198,7 +1228,6 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       ...QUERY_DEFAULTS,
       enabled: restQueriesActive,
       refetchInterval: primaryPollInterval,
-      placeholderData: (previousData) => previousData,
     },
   });
   const performanceQuery = useGetSignalOptionsPerformance(deploymentId, {
@@ -1235,23 +1264,16 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
 
   const cockpit = cockpitQuery.data || null;
   const automationState = automationStateQuery.data || null;
-  const previousStaActionSnapshotRef = useRef(null);
   const staActionSnapshot = useMemo(
     () =>
       resolveStableStaActionSnapshot({
         cockpit,
         signalOptionsState: automationState,
-        previousSnapshot: previousStaActionSnapshotRef.current,
         cockpitFailed: cockpitQuery.isError,
         signalOptionsStateFailed: automationStateQuery.isError,
       }),
     [automationState, cockpit, cockpitQuery.isError, automationStateQuery.isError],
   );
-  useEffect(() => {
-    if (staActionSnapshot.cacheable) {
-      previousStaActionSnapshotRef.current = staActionSnapshot;
-    }
-  }, [staActionSnapshot]);
   const performance = performanceQuery.data || null;
   const performanceSummary = asRecord(performance?.summary);
   const openExposure = asRecord(performance?.openExposure);
@@ -1282,6 +1304,18 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
     ],
   );
+  const actionSignalTimeframes = useMemo(
+    () =>
+      normalizeStrategySignalTimeframes(
+        automationState?.profile?.timeframe ??
+          focusedDeployment?.config?.parameters?.signalTimeframe,
+        DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe,
+      ),
+    [
+      automationState?.profile?.timeframe,
+      focusedDeployment?.config?.parameters?.signalTimeframe,
+    ],
+  );
   const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];
   const staSignalRows = useMemo(
     () =>
@@ -1289,13 +1323,19 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         signals: signalOptionsSignals,
         candidates: signalOptionsCandidates,
         signalEvents: signalMonitorEventRows,
+        signalMatrixStates,
+        signalTimeframes: displaySignalTimeframes,
+        signalActionTimeframes: actionSignalTimeframes,
         universeSymbols: focusedDeployment?.symbolUniverse || [],
         signalMonitorEventsLoaded,
       }),
     [
+      actionSignalTimeframes,
+      displaySignalTimeframes,
       focusedDeployment?.symbolUniverse,
       signalMonitorEventRows,
       signalMonitorEventsLoaded,
+      signalMatrixStates,
       signalOptionsCandidates,
       signalOptionsSignals,
     ],

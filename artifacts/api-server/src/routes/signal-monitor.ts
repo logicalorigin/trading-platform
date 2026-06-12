@@ -185,8 +185,8 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
         symbols: scope.exactCells ? undefined : scope.symbols,
         timeframes: scope.exactCells ? undefined : scope.timeframes,
         cells: scope.exactCells ? scope.cells : undefined,
-        clientRole: scope.clientRole,
-        requestOrigin: scope.requestOrigin,
+        clientRole: scope.clientRole ?? "follower",
+        requestOrigin: scope.requestOrigin ?? "startup",
       }),
     );
     const bootstrap = buildSignalMonitorMatrixStreamBootstrapEvent(
@@ -217,7 +217,7 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
 router.get("/signal-monitor/state", async (req, res) => {
   const query = GetSignalMonitorStateQueryParams.parse(req.query);
   const data = GetSignalMonitorStateResponse.parse(
-    await getSignalMonitorState({ ...query, staleFast: true }),
+    await getSignalMonitorState(query),
   );
 
   res.json(data);

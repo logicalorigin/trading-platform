@@ -56,9 +56,6 @@ const deploymentListDbBackoff = createTransientPostgresBackoff({
   backoffMs: 15_000,
   warningCooldownMs: 60_000,
 });
-const DEPLOYMENT_LIST_ROUTE_WAIT_MS = 2_500;
-const DEPLOYMENT_LIST_TIMEOUT_WARNING_COOLDOWN_MS = 60_000;
-const DEPLOYMENT_LIST_TIMEOUT = Symbol("deployment-list-timeout");
 
 type AlgoDeploymentRow = typeof algoDeploymentsTable.$inferSelect;
 type AlgoDeploymentListResponse = {
@@ -73,7 +70,6 @@ type DeploymentListCacheEntry = {
 };
 
 const deploymentListCache = new Map<string, DeploymentListCacheEntry>();
-let deploymentListTimeoutWarningUntilMs = 0;
 const deploymentListInFlight = new Map<
   string,
   Promise<AlgoDeploymentListResponse>
@@ -313,16 +309,8 @@ function deploymentListKey(input: ListAlgoDeploymentsInput) {
   return input.mode ?? "all";
 }
 
-function deploymentListFallback(
-  input: ListAlgoDeploymentsInput,
-): AlgoDeploymentListResponse {
-  return (
-    readDeploymentListCache(input) ?? {
-      deployments: [],
-      cacheStatus: "unavailable",
-    }
-  );
-}
+const deploymentListFallback = (input: ListAlgoDeploymentsInput) =>
+  readDeploymentListCache(input);
 
 async function loadAlgoDeploymentList(
   input: ListAlgoDeploymentsInput,
@@ -396,27 +384,6 @@ function readOrStartDeploymentListRequest(
   return request;
 }
 
-async function waitForDeploymentListRouteBudget(
-  request: Promise<AlgoDeploymentListResponse>,
-) {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      request,
-      new Promise<typeof DEPLOYMENT_LIST_TIMEOUT>((resolve) => {
-        timeoutId = setTimeout(
-          () => resolve(DEPLOYMENT_LIST_TIMEOUT),
-          DEPLOYMENT_LIST_ROUTE_WAIT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
-
 function executionEventToResponse(
   event: typeof executionEventsTable.$inferSelect,
   input: { includePayload?: boolean } = {},
@@ -439,31 +406,19 @@ function executionEventToResponse(
 export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
   const nowMs = Date.now();
   if (deploymentListDbBackoff.isActive(nowMs)) {
-    return deploymentListFallback(input);
+    const cached = deploymentListFallback(input);
+    if (cached) return cached;
   }
 
   try {
-    const response = await waitForDeploymentListRouteBudget(
-      readOrStartDeploymentListRequest(input),
-    );
-    if (response !== DEPLOYMENT_LIST_TIMEOUT) {
-      return response;
-    }
-
-    if (nowMs >= deploymentListTimeoutWarningUntilMs) {
-      deploymentListTimeoutWarningUntilMs =
-        nowMs + DEPLOYMENT_LIST_TIMEOUT_WARNING_COOLDOWN_MS;
-      logger.warn(
-        { waitMs: DEPLOYMENT_LIST_ROUTE_WAIT_MS, mode: input.mode ?? null },
-        "Algo deployment list exceeded route budget; serving cached deployments",
-      );
-    }
-    return deploymentListFallback(input);
+    return await readOrStartDeploymentListRequest(input);
   } catch (error) {
     if (!markDeploymentListError(error, nowMs)) {
       throw error;
     }
-    return deploymentListFallback(input);
+    const cached = deploymentListFallback(input);
+    if (cached) return cached;
+    throw error;
   }
 }
 

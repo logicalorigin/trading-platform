@@ -130,12 +130,20 @@ export const readSignalMatrixSnapshotCache = ({
       return null;
     }
     const resolvedTimeframes = normalizeTimeframes(parsed.timeframes || timeframes);
-    const states = sanitizeStates(parsed.states, resolvedTimeframes);
-    if (!states.length) return null;
     const warmStartStale =
       Number.isFinite(cacheAgeMs) &&
       Number.isFinite(Number(freshAgeMs)) &&
       cacheAgeMs > Number(freshAgeMs);
+    const states = sanitizeStates(parsed.states, resolvedTimeframes).map((state) =>
+      warmStartStale
+        ? {
+            ...state,
+            fresh: false,
+            status: state.status === "ok" ? "stale" : state.status,
+          }
+        : state,
+    );
+    if (!states.length) return null;
     return {
       states,
       timeframes: resolvedTimeframes,

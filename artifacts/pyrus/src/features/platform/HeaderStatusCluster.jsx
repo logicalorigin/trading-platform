@@ -90,6 +90,7 @@ import {
   shouldActivateHeaderIbkrLineUsage,
 } from "./headerIbkrLineUsagePolicy";
 import { platformJsonRequest } from "./platformJsonRequest";
+import { TRADE_OPTIONS_CHAIN_LABEL } from "./runtimeControlModel";
 import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -1015,7 +1016,17 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
   const free = compact?.free;
   const targetFillLines = compact?.targetFillLines;
   const reserveLineCount = compact?.reserveLineCount;
+  const tradeOptionsChainReserveLineCount =
+    lineUsage.allocation?.tradeOptionsChainReserveLineCount;
   const summaryItems = [
+    Number.isFinite(tradeOptionsChainReserveLineCount) &&
+    tradeOptionsChainReserveLineCount > 0
+      ? {
+          label: TRADE_OPTIONS_CHAIN_LABEL,
+          value: `${Math.round(tradeOptionsChainReserveLineCount).toLocaleString()} reserved`,
+          tone: CSS_COLOR.textSec,
+        }
+      : null,
     Number.isFinite(targetFillLines) &&
     Number.isFinite(cap) &&
     targetFillLines < cap
@@ -2479,10 +2490,10 @@ const HeaderIbkrOperationStepper = ({ insightModel, model }) => {
 // Isolated elapsed-time label so the stepper doesn't re-render every second.
 // The parent insight model no longer carries `now` — this leaf owns the 1s tick.
 const IbkrInsightElapsedLabel = memo(function IbkrInsightElapsedLabel({ startedAtMs, fallbackLabel }) {
-  const [label, setLabel] = React.useState(() =>
+  const [label, setLabel] = useState(() =>
     startedAtMs != null ? formatIbkrInsightElapsed(Date.now() - startedAtMs) : fallbackLabel,
   );
-  React.useEffect(() => {
+  useEffect(() => {
     if (startedAtMs == null) {
       setLabel(fallbackLabel);
       return undefined;
