@@ -1072,7 +1072,12 @@ export async function fetchBridgeQuoteSnapshots(
     .filter((symbol): symbol is string => Boolean(symbol));
 
   if (!admittedSymbols.length) {
-    releaseMarketDataLeases(owner, "snapshot_complete");
+    // Mirror the normal-path finally: only implicit (auto-generated) owners
+    // release here. An explicit owner's leases are TTL-managed and must not
+    // be torn down just because one fetch was fully rejected under pressure.
+    if (!explicitOwner) {
+      releaseMarketDataLeases(owner, "snapshot_complete");
+    }
     return {
       quotes: getCurrentBridgeQuoteSnapshots(normalizedSymbols),
     };
