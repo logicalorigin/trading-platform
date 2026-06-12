@@ -1,5 +1,6 @@
 export type SignalOptionsWorkerSnapshot = {
   started: boolean;
+  scanEnabled: boolean;
   tickRunning: boolean;
   deploymentCount: number;
   activeDeploymentCount: number;
@@ -31,8 +32,6 @@ export type SignalOptionsWorkerSnapshot = {
     lastScanOutcome?:
       | "success"
       | "failed"
-      | "timed_out"
-      | "timed_out_unsettled"
       | "scan_running"
       | null;
     scanCount: number;
@@ -67,6 +66,7 @@ export type SignalOptionsWorkerSnapshot = {
 
 const EMPTY_SNAPSHOT: SignalOptionsWorkerSnapshot = {
   started: false,
+  scanEnabled: false,
   tickRunning: false,
   deploymentCount: 0,
   activeDeploymentCount: 0,

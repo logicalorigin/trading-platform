@@ -8,10 +8,6 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
-  createTransientPostgresBackoff,
-  isTransientPostgresError,
-} from "../lib/transient-db-error";
-import {
   evaluateSignalMonitorSymbolFromCompletedBars,
   listEnabledSignalMonitorProfiles,
   loadSignalMonitorCompletedBars,
@@ -34,14 +30,11 @@ import {
   type StockMinuteAggregateMessage,
   type StockMinuteAggregateSubscription,
 } from "./stock-aggregate-stream";
-import { requestSignalOptionsWorkerScanSoon } from "./signal-options-worker";
 
 const WORKER_WAKEUP_MS = 5_000;
 const ADVISORY_LOCK_KEY = 1_930_514_021;
-const FAILED_KEY_RETRY_MS = 60_000;
 const STREAM_EVALUATION_FLUSH_MS = 100;
 const HISTORY_FALLBACK_BATCH_SYMBOLS = 48;
-const HISTORY_BAR_LOAD_TIMEOUT_MS = 12_000;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -66,7 +59,6 @@ type WorkerDependencies = {
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   historyBatchMaxSymbols: number;
-  historyBarLoadTimeoutMs: number;
   now: () => Date;
   logger: WorkerLogger;
 };
@@ -80,7 +72,6 @@ type ProfileRuntime = {
   lastCheckedAtMs: number;
   evaluationCursor: number;
   evaluatedKeys: Set<string>;
-  failedKeys: Map<string, number>;
 };
 
 const activeProfileIds = new Set<string>();
@@ -134,36 +125,6 @@ function streamFreshnessWindowMs(input: {
 
 function shouldRememberEvaluatedKey(state: SignalMonitorSymbolState): boolean {
   return state.status === "ok" && Boolean(state.currentSignalAt);
-}
-
-function signalMonitorWorkerBarLoadTimeoutError(input: {
-  symbol: string;
-  timeframe: SignalMonitorTimeframe;
-  timeoutMs: number;
-}) {
-  const error = new Error(
-    `Signal monitor worker bar load timed out for ${input.symbol} ${input.timeframe} after ${input.timeoutMs}ms.`,
-  );
-  const typed = error as Error & {
-    code?: string;
-    symbol?: string;
-    timeframe?: SignalMonitorTimeframe;
-    timeoutMs?: number;
-  };
-  typed.code = "signal_monitor_worker_bar_load_timeout";
-  typed.symbol = input.symbol;
-  typed.timeframe = input.timeframe;
-  typed.timeoutMs = input.timeoutMs;
-  return error;
-}
-
-function isSignalMonitorWorkerBarLoadTimeout(error: unknown): boolean {
-  return (
-    Boolean(error) &&
-    typeof error === "object" &&
-    (error as { code?: unknown }).code ===
-      "signal_monitor_worker_bar_load_timeout"
-  );
 }
 
 function interleaveSignalMonitorWorkerHistorySymbols(input: {
@@ -319,12 +280,6 @@ function defaultDependencies(
       1,
       500,
     ),
-    historyBarLoadTimeoutMs: positiveInteger(
-      options.historyBarLoadTimeoutMs,
-      HISTORY_BAR_LOAD_TIMEOUT_MS,
-      1,
-      120_000,
-    ),
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
   };
@@ -348,56 +303,23 @@ async function loadWorkerCompletedBars(input: {
   evaluatedAt: Date;
   dependencies: WorkerDependencies;
 }): Promise<WorkerCompletedBarsLoadResult> {
-  const timeoutMs = input.dependencies.historyBarLoadTimeoutMs;
-  const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  let timeoutError: Error | null = null;
-  const loadPromise = input.dependencies
-    .loadCompletedBars({
+  try {
+    const completedBars = await input.dependencies.loadCompletedBars({
       symbol: input.symbol,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
-      signal: controller.signal,
-    })
-    .then(
-      (completedBars): WorkerCompletedBarsLoadResult => ({
-        kind: "loaded",
-        symbol: input.symbol,
-        completedBars,
-      }),
-      (error): WorkerCompletedBarsLoadResult => ({
-        kind: "failed",
-        symbol: input.symbol,
-        error,
-      }),
-    );
-  loadPromise.catch(() => {});
-  const timeoutPromise = new Promise<WorkerCompletedBarsLoadResult>((resolve) => {
-    timeout = setTimeout(() => {
-      timeoutError = signalMonitorWorkerBarLoadTimeoutError({
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        timeoutMs,
-      });
-      controller.abort(timeoutError);
-      resolve({
-        kind: "failed",
-        symbol: input.symbol,
-        error: timeoutError,
-      });
-    }, timeoutMs);
-    timeout.unref?.();
-  });
-
-  try {
-    return await Promise.race([loadPromise, timeoutPromise]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    if (timeoutError && !controller.signal.aborted) {
-      controller.abort(timeoutError);
-    }
+    });
+    return {
+      kind: "loaded",
+      symbol: input.symbol,
+      completedBars,
+    };
+  } catch (error) {
+    return {
+      kind: "failed",
+      symbol: input.symbol,
+      error,
+    };
   }
 }
 
@@ -485,7 +407,6 @@ async function runProfile(input: {
       1,
       10,
     );
-    const currentKeys = new Set<string>();
     for (
       let index = 0;
       index < resolvedBatch.symbols.length;
@@ -506,18 +427,14 @@ async function runProfile(input: {
         (result) => result.kind === "failed",
       );
       if (failedBarLoads.length) {
-        const timeoutCount = failedBarLoads.filter((result) =>
-          isSignalMonitorWorkerBarLoadTimeout(result.error),
-        ).length;
         dependencies.logger.warn?.(
           {
             profileId: profile.id,
             timeframe,
             failedCount: failedBarLoads.length,
-            timeoutCount,
             symbols: failedBarLoads.slice(0, 12).map((result) => result.symbol),
           },
-          "Signal monitor worker skipped slow or failed history bar loads",
+          "Signal monitor worker skipped failed history bar loads",
         );
       }
       const keysToRecord = new Map<string, string>();
@@ -542,12 +459,7 @@ async function runProfile(input: {
           latestBarAt: completedBars.latestBarAt,
         });
         keysToRecord.set(symbol, key);
-        currentKeys.add(key);
         if (runtime.evaluatedKeys.has(key)) {
-          return;
-        }
-        const retryAfterMs = runtime.failedKeys.get(key) ?? 0;
-        if (retryAfterMs > evaluatedAtMs) {
           return;
         }
         symbolsToEvaluate.push({ symbol, completedBars });
@@ -577,23 +489,12 @@ async function runProfile(input: {
       evaluatedStates.forEach((state) => {
         const key = keysToRecord.get(state.symbol);
         if (key) {
-          if (state.status === "error") {
-            runtime.failedKeys.set(key, evaluatedAtMs + FAILED_KEY_RETRY_MS);
-            return;
-          }
-          runtime.failedKeys.delete(key);
           if (shouldRememberEvaluatedKey(state)) {
             runtime.evaluatedKeys.add(key);
           }
         }
       });
     }
-
-    Array.from(runtime.failedKeys.keys()).forEach((key) => {
-      if (!currentKeys.has(key)) {
-        runtime.failedKeys.delete(key);
-      }
-    });
   } catch (error) {
     const message =
       error instanceof Error && error.message
@@ -651,10 +552,6 @@ async function runStreamProfileSymbolUnlocked(input: {
     timeframe,
     latestBarAt: new Date(message.startMs),
   });
-  const expectedRetryAfterMs = runtime.failedKeys.get(expectedKey) ?? 0;
-  if (expectedRetryAfterMs > evaluatedAt.getTime()) {
-    return;
-  }
   if (activeStreamEvaluationKeys.has(expectedKey)) {
     return;
   }
@@ -684,10 +581,6 @@ async function runStreamProfileSymbolUnlocked(input: {
     if (runtime.evaluatedKeys.has(key)) {
       return;
     }
-    const retryAfterMs = runtime.failedKeys.get(key) ?? 0;
-    if (retryAfterMs > evaluatedAt.getTime()) {
-      return;
-    }
 
     const state = await dependencies.evaluateSymbolFromCompletedBars({
       profile: evaluationProfile,
@@ -703,20 +596,10 @@ async function runStreamProfileSymbolUnlocked(input: {
       states: [state],
     });
     if (state.status === "error") {
-      runtime.failedKeys.set(key, evaluatedAt.getTime() + FAILED_KEY_RETRY_MS);
       return;
     }
-    runtime.failedKeys.delete(key);
     if (shouldRememberEvaluatedKey(state)) {
       runtime.evaluatedKeys.add(key);
-    }
-    if (
-      state.status === "ok" &&
-      state.fresh === true &&
-      state.currentSignalDirection &&
-      state.currentSignalAt
-    ) {
-      requestSignalOptionsWorkerScanSoon();
     }
   } catch (error) {
     const messageText =
@@ -737,7 +620,6 @@ export function createTradeMonitorWorker(
   options: TradeMonitorWorkerOptions = {},
 ) {
   const dependencies = defaultDependencies(options);
-  const transientDbBackoff = createTransientPostgresBackoff();
   const wakeupMs = positiveInteger(
     options.wakeupMs,
     WORKER_WAKEUP_MS,
@@ -944,11 +826,6 @@ export function createTradeMonitorWorker(
     let releaseLock: ReleaseLock | null = null;
 
     try {
-      const backoffCheckMs = dependencies.now().getTime();
-      if (transientDbBackoff.isActive(backoffCheckMs)) {
-        return;
-      }
-
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
@@ -982,7 +859,6 @@ export function createTradeMonitorWorker(
             lastCheckedAtMs: 0,
             evaluationCursor: 0,
             evaluatedKeys: new Set(),
-            failedKeys: new Map(),
           };
           profileRuntime.set(profile.id, runtime);
         }
@@ -1007,17 +883,7 @@ export function createTradeMonitorWorker(
           onUniverseResolved: rememberProfileSymbols,
         });
       }
-      transientDbBackoff.clear();
     } catch (error) {
-      if (isTransientPostgresError(error)) {
-        transientDbBackoff.markFailure({
-          error,
-          logger: dependencies.logger,
-          message: "Signal monitor database unavailable; pausing worker ticks",
-          nowMs: dependencies.now().getTime(),
-        });
-        return;
-      }
       dependencies.logger.warn(
         { err: error },
         "Signal monitor worker tick failed",

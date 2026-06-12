@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -26,7 +27,18 @@ const signalState = (
     active: true,
     lastEvaluatedAt: signalAt,
     lastError: null,
-  }) as never;
+	  }) as never;
+
+const source = readFileSync(
+  new URL("./signal-options-automation.ts", import.meta.url),
+  "utf8",
+);
+
+test("Signal Options does not evaluate Signal Matrix directly", () => {
+  assert.doesNotMatch(source, /evaluateSignalMonitorMatrix/);
+  assert.doesNotMatch(source, /loadSignalOptionsMtfMatrixBySymbol/);
+  assert.doesNotMatch(source, /enrichSignalOptionsCandidateWithMatrixMtf/);
+});
 
 test("Signal Options backfill requires explicit bar-evaluation opt-in", async () => {
   const previousPyrusFlag =
@@ -113,32 +125,6 @@ test("Signal Options cockpit keeps real gateway failures as warnings", () => {
   assert.equal(items.length, 1);
   assert.equal(items[0].id, "gateway-readiness");
   assert.equal(items[0].severity, "warning");
-});
-
-test("Signal Options MTF matrix symbols follow cursor, seen set, and worker cap", () => {
-  const states = [
-    signalState("SPY", "2026-06-08T14:20:00.000Z"),
-    signalState("AAPL", "2026-06-08T14:19:00.000Z"),
-    signalState("MSFT", "2026-06-08T14:18:00.000Z", "sell"),
-    signalState("TSLA", "2026-06-08T14:17:00.000Z"),
-  ];
-  const seenSignals = new Set([
-    __signalOptionsAutomationInternalsForTests.buildSignalKey(
-      states[1],
-      "2026-06-08T14:19:00.000Z",
-    ),
-  ]);
-
-  assert.deepEqual(
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsMtfMatrixSymbols({
-      states,
-      universe: new Set(["SPY", "AAPL", "MSFT", "TSLA"]),
-      seenSignals,
-      startIndex: 1,
-      maxSymbols: 2,
-    }),
-    ["MSFT", "TSLA"],
-  );
 });
 
 test("Signal Options action states stay on configured execution timeframe", () => {
