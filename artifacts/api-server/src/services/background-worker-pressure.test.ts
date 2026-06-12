@@ -106,6 +106,97 @@ test("signal-options worker refreshes signals under high resource pressure", asy
   __resetApiResourcePressureForTests();
 });
 
+test("signal-options worker aborts deployment scans that exceed the scan timeout", async () => {
+  normalPressureSnapshot();
+  let nowMs = Date.parse("2026-06-09T18:41:00.000Z");
+  let scanCount = 0;
+  let releaseCount = 0;
+  let clearTimerCount = 0;
+  let timeoutCallback: (() => void) | null = null;
+  let resolveTimeoutRegistered: (() => void) | null = null;
+  const timeoutRegistered = new Promise<void>((resolve) => {
+    resolveTimeoutRegistered = resolve;
+  });
+  let scanAborted = false;
+  const deployment = {
+    id: "signal-options-timeout-test",
+    enabled: true,
+    mode: "paper",
+    providerAccountId: null,
+    symbolUniverse: ["SPY"],
+    config: {
+      signalOptions: {
+        worker: { pollIntervalSeconds: 15 },
+      },
+    },
+  } as unknown as AlgoDeployment;
+
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment],
+    scanDeployment: async (input) => {
+      scanCount += 1;
+      return new Promise((_resolve, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () => {
+            scanAborted = true;
+            reject(input.signal?.reason ?? new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+    },
+    runMaintenance: async () => ({}),
+    acquireTickLock: async () => async () => {
+      releaseCount += 1;
+    },
+    now: () => new Date(nowMs),
+    logger: noopLogger,
+    scanTimeoutMs: 1_000,
+    setTimer: (callback, delayMs) => {
+      if (delayMs === 1_000) {
+        timeoutCallback = callback;
+        resolveTimeoutRegistered?.();
+      }
+      return { unref() {} } as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: () => {
+      clearTimerCount += 1;
+    },
+    subscribeCockpitChanges: () => () => {},
+    isAggregateStreamingAvailable: () => true,
+    subscribeAggregates: () => ({
+      unsubscribe() {},
+      setSymbols() {},
+    }),
+    evaluateStreamSignalSymbols: async () => ({}),
+  });
+
+  const runPromise = worker.runOnce();
+  await timeoutRegistered;
+  if (typeof timeoutCallback !== "function") {
+    throw new Error("scan timeout was not registered");
+  }
+  const fireTimeout: () => void = timeoutCallback;
+  nowMs += 1_000;
+  fireTimeout();
+  await runPromise;
+  await Promise.resolve();
+
+  const snapshot = worker.getRuntimeSnapshot();
+  assert.equal(scanCount, 1);
+  assert.equal(scanAborted, true);
+  assert.equal(releaseCount, 1);
+  assert.equal(clearTimerCount, 1);
+  assert.equal(snapshot.tickRunning, false);
+  assert.equal(snapshot.activeDeploymentCount, 0);
+  assert.equal(snapshot.deployments[0]?.timedOut, true);
+  assert.equal(snapshot.deployments[0]?.unsettledAfterTimeout, false);
+  assert.equal(snapshot.deployments[0]?.lastScanOutcome, "timed_out");
+
+  __resetApiResourcePressureForTests();
+});
+
 test("signal-options worker does not subscribe to aggregate signal evaluation in passive mode", async () => {
   normalPressureSnapshot();
   let scanCount = 0;

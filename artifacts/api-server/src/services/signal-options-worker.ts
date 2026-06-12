@@ -38,6 +38,10 @@ const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
 const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = null;
 const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = null;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
+const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
+const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
+const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
 const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS = 250;
 
@@ -46,6 +50,8 @@ type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
 type SignalOptionsWorkerScanOutcome =
   | "success"
   | "failed"
+  | "timed_out"
+  | "timed_out_unsettled"
   | "scan_running"
   | null;
 
@@ -66,6 +72,7 @@ type WorkerDependencies = {
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
   logger: WorkerLogger;
+  scanTimeoutMs: number | null;
   subscribeCockpitChanges: typeof subscribeAlgoCockpitChanges;
   isSignalMonitorBarEvaluationEnabled: () => boolean;
   isAggregateStreamingAvailable: () => boolean;
@@ -79,6 +86,7 @@ type WorkerDependencies = {
 
 export type SignalOptionsWorkerOptions = Partial<WorkerDependencies> & {
   wakeupMs?: number;
+  scanTimeoutMs?: number | null;
 };
 
 type DeploymentRuntime = {
@@ -92,6 +100,9 @@ type DeploymentRuntime = {
   skippedScanCount: number;
   currentScanStartedAtMs: number | null;
   lastScanDurationMs: number | null;
+  timedOut: boolean;
+  timeoutReason: string | null;
+  unsettledAfterTimeout: boolean;
   lastScanOutcome: SignalOptionsWorkerScanOutcome;
   scanCount: number;
   totalFailureCount: number;
@@ -291,6 +302,49 @@ function positiveInteger(value: unknown, fallback: number, min: number, max: num
     : fallback;
 }
 
+function resolveWorkerScanTimeoutMs(value: unknown): number | null {
+  if (value === null || value === false) {
+    return null;
+  }
+  const configured =
+    value === undefined
+      ? process.env.SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS
+      : value;
+  if (configured === null || configured === "" || configured === "0") {
+    return null;
+  }
+  return positiveInteger(
+    configured,
+    DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS,
+    SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS,
+    SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS,
+  );
+}
+
+class SignalOptionsWorkerScanTimeoutError extends Error {
+  readonly timeoutMs: number;
+  readonly scanPromise: Promise<unknown>;
+
+  constructor(input: {
+    deploymentId: string;
+    timeoutMs: number;
+    scanPromise: Promise<unknown>;
+  }) {
+    super(
+      `Signal-options worker scan timed out for ${input.deploymentId} after ${input.timeoutMs}ms.`,
+    );
+    this.name = "SignalOptionsWorkerScanTimeoutError";
+    this.timeoutMs = input.timeoutMs;
+    this.scanPromise = input.scanPromise;
+  }
+}
+
+function isWorkerScanTimeoutError(
+  error: unknown,
+): error is SignalOptionsWorkerScanTimeoutError {
+  return error instanceof SignalOptionsWorkerScanTimeoutError;
+}
+
 function deploymentSignature(deployment: AlgoDeployment): string {
   const config = asRecord(deployment.config);
   return JSON.stringify({
@@ -328,6 +382,9 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     skippedScanCount: 0,
     currentScanStartedAtMs: null,
     lastScanDurationMs: null,
+    timedOut: false,
+    timeoutReason: null,
+    unsettledAfterTimeout: false,
     lastScanOutcome: null,
     scanCount: 0,
     totalFailureCount: 0,
@@ -469,6 +526,7 @@ function defaultDependencies(
     clearTimer: options.clearTimer ?? clearTimeout,
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
+    scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
     subscribeCockpitChanges:
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
     isSignalMonitorBarEvaluationEnabled:
@@ -489,19 +547,48 @@ function defaultDependencies(
   };
 }
 
-async function runDeploymentScan(input: {
+async function runDeploymentScanWithTimeout(input: {
   deployment: AlgoDeployment;
   dependencies: WorkerDependencies;
 }): Promise<unknown> {
   const { deployment, dependencies } = input;
-  return dependencies.scanDeployment({
+  const controller = new AbortController();
+  const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     forceEvaluate: false,
     preferStoredMonitorState: true,
     source: "worker",
     actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
     actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
+    signal: controller.signal,
   });
+  scanPromise.catch(() => {});
+  const timeoutMs = dependencies.scanTimeoutMs;
+  if (timeoutMs === null) {
+    return scanPromise;
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = dependencies.setTimer(() => {
+      const error = new SignalOptionsWorkerScanTimeoutError({
+        deploymentId: deployment.id,
+        timeoutMs,
+        scanPromise,
+      });
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+
+  try {
+    return await Promise.race([scanPromise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      dependencies.clearTimer(timeout);
+    }
+  }
 }
 
 async function runDeployment(input: {
@@ -511,7 +598,8 @@ async function runDeployment(input: {
 }) {
   const { deployment, runtime, dependencies } = input;
   if (activeDeploymentIds.has(deployment.id)) {
-    runtime.lastScanOutcome = "scan_running";
+    runtime.lastScanOutcome =
+      runtime.unsettledAfterTimeout ? "timed_out_unsettled" : "scan_running";
     dependencies.logger.debug?.(
       { deploymentId: deployment.id },
       "Signal-options deployment scan already running",
@@ -521,10 +609,15 @@ async function runDeployment(input: {
 
   const scanStartedAtMs = dependencies.now().getTime();
   let resumeActionWorkNextTick = false;
+  let leaveActiveUntilSettled = false;
+  let timedOutScanPromise: Promise<unknown> | null = null;
   activeDeploymentIds.add(deployment.id);
   runtime.currentScanStartedAtMs = scanStartedAtMs;
+  runtime.timedOut = false;
+  runtime.timeoutReason = null;
+  runtime.unsettledAfterTimeout = false;
   try {
-    const scanResult = await runDeploymentScan({
+    const scanResult = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
     });
@@ -544,6 +637,9 @@ async function runDeployment(input: {
     runtime.lastError = null;
     runtime.failedUntilMs = 0;
     runtime.failureCount = 0;
+    runtime.timedOut = false;
+    runtime.timeoutReason = null;
+    runtime.unsettledAfterTimeout = false;
     runtime.lastScanOutcome = "success";
     runtime.lastSignalCount = scanSummary.signalCount;
     runtime.lastFreshSignalCount = scanSummary.freshSignalCount;
@@ -569,11 +665,21 @@ async function runDeployment(input: {
     runtime.lastBatchFullUniverse = scanSummary.batch?.fullUniverse === true;
   } catch (error) {
     const failedAt = dependencies.now();
+    const timedOut = isWorkerScanTimeoutError(error);
     const message =
       error instanceof Error && error.message
         ? error.message
         : "Signal-options shadow worker scan failed.";
-    runtime.lastScanOutcome = "failed";
+    if (timedOut) {
+      leaveActiveUntilSettled = true;
+      timedOutScanPromise = error.scanPromise;
+      runtime.timedOut = true;
+      runtime.timeoutReason = SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON;
+      runtime.unsettledAfterTimeout = true;
+      runtime.lastScanOutcome = "timed_out_unsettled";
+    } else {
+      runtime.lastScanOutcome = "failed";
+    }
     runtime.totalFailureCount += 1;
     runtime.failureCount += 1;
     runtime.lastFailureAt = failedAt.toISOString();
@@ -596,8 +702,21 @@ async function runDeployment(input: {
     runtime.nextScanDueAtMs = resumeActionWorkNextTick
       ? scanEndedAtMs
       : scanEndedAtMs + nextIntervalMs;
-    runtime.currentScanStartedAtMs = null;
-    activeDeploymentIds.delete(deployment.id);
+    if (leaveActiveUntilSettled && timedOutScanPromise) {
+      timedOutScanPromise
+        .finally(() => {
+          if (runtime.unsettledAfterTimeout) {
+            runtime.unsettledAfterTimeout = false;
+            runtime.lastScanOutcome = "timed_out";
+            runtime.currentScanStartedAtMs = null;
+          }
+          activeDeploymentIds.delete(deployment.id);
+        })
+        .catch(() => {});
+    } else {
+      runtime.currentScanStartedAtMs = null;
+      activeDeploymentIds.delete(deployment.id);
+    }
   }
 }
 
@@ -996,6 +1115,9 @@ export function createSignalOptionsWorker(
               ? null
               : Math.max(0, snapshotNowMs - runtime.currentScanStartedAtMs),
           lastScanDurationMs: runtime.lastScanDurationMs,
+          timedOut: runtime.timedOut,
+          timeoutReason: runtime.timeoutReason,
+          unsettledAfterTimeout: runtime.unsettledAfterTimeout,
           lastScanOutcome: runtime.lastScanOutcome,
           scanCount: runtime.scanCount,
           totalFailureCount: runtime.totalFailureCount,

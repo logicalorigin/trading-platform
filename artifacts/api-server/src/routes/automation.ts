@@ -28,6 +28,9 @@ import {
 } from "../services/route-admission";
 
 const router: IRouter = Router();
+const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
+const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000;
+const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4;
 const OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS = 30_000;
 
 type ContinuingSignalOptionsRouteTimeoutPolicy = {
@@ -45,6 +48,10 @@ type SignalOptionsRouteTimeoutPolicy =
   | AbortableSignalOptionsRouteTimeoutPolicy;
 
 const SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES = {
+  shadowScan: {
+    continuation: "abort-at-route-budget",
+    reason: "manual Signal Options scans can trigger side-effectful action work",
+  },
   overnightSpotScan: {
     continuation: "abort-at-route-budget",
     reason: "manual Overnight Spot scans can trigger side-effectful action work",
@@ -265,16 +272,27 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
     false;
 
   res.json(
-    await runSignalOptionsShadowScan({
-      deploymentId: req.params.deploymentId,
-      forceEvaluate,
-      preferStoredMonitorState: forceEvaluate !== true,
-      responseMode: "summary",
-      skipActionWork: runActions !== true,
-      source: "manual",
-      actionWorkBudgetMs: null,
-      actionWorkItemLimit: null,
-    }),
+    await withAbortableSignalOptionsRouteTimeout(
+      (signal) =>
+        runSignalOptionsShadowScan({
+          deploymentId: req.params.deploymentId,
+          forceEvaluate,
+          preferStoredMonitorState: forceEvaluate !== true,
+          responseMode: "summary",
+          skipActionWork: runActions !== true,
+          source: "manual",
+          actionWorkBudgetMs: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS,
+          actionWorkItemLimit: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT,
+          signal,
+        }),
+      {
+        timeoutMs: SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS,
+        code: "signal_options_shadow_scan_route_timeout",
+        detail:
+          "Signal Options shadow scan did not finish within the route budget.",
+        policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.shadowScan,
+      },
+    ),
   );
 });
 

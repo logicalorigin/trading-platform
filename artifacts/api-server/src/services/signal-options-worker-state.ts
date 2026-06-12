@@ -25,9 +25,14 @@ export type SignalOptionsWorkerSnapshot = {
     currentScanStartedAt: string | null;
     currentScanAgeMs: number | null;
     lastScanDurationMs: number | null;
+    timedOut?: boolean;
+    timeoutReason?: string | null;
+    unsettledAfterTimeout?: boolean;
     lastScanOutcome?:
       | "success"
       | "failed"
+      | "timed_out"
+      | "timed_out_unsettled"
       | "scan_running"
       | null;
     scanCount: number;
