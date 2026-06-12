@@ -20,6 +20,48 @@ const createStorage = () => {
   };
 };
 
+test("v1 snapshots are discarded and their key cleaned up", () => {
+  const storage = createStorage();
+  storage.setItem(
+    "pyrus:signal-matrix-snapshot:v1",
+    JSON.stringify({ version: 1, savedAt: Date.now(), states: [] }),
+  );
+  assert.equal(readSignalMatrixSnapshotCache({ storage }), null);
+  assert.equal(storage.getItem("pyrus:signal-matrix-snapshot:v1"), null);
+});
+
+test("warm-start states never replay prior-session trade eligibility", () => {
+  const storage = createStorage();
+  const nowMs = Date.parse("2026-06-05T14:36:00.000Z");
+  writeSignalMatrixSnapshotCache(
+    {
+      states: [
+        {
+          id: "state-aapl-5m",
+          symbol: "AAPL",
+          timeframe: "5m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-05T14:30:00.000Z",
+          currentSignalPrice: 200.25,
+          latestBarAt: "2026-06-05T14:35:00.000Z",
+          barsSinceSignal: 1,
+          fresh: true,
+          status: "ok",
+          actionEligible: true,
+          actionBlocker: null,
+        },
+      ],
+      timeframes: ["5m"],
+      evaluatedAt: "2026-06-05T14:35:00.000Z",
+    },
+    { storage, nowMs },
+  );
+  const cached = readSignalMatrixSnapshotCache({ storage, nowMs });
+  assert.equal(cached?.states?.length, 1);
+  assert.equal(cached.states[0].actionEligible, false);
+  assert.equal(cached.states[0].actionBlocker, "signal_age_unavailable");
+});
+
 const matrixState = (overrides = {}) => ({
   id: "state-aapl-5m",
   symbol: "aapl",

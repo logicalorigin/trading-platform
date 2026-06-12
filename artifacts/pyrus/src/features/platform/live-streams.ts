@@ -6308,6 +6308,10 @@ export const useAccountPageSnapshotStream = ({
 type SignalMatrixStreamState = Record<string, unknown> & {
   symbol?: string;
   timeframe?: string;
+  // Backend-authored actionability (signal-monitor-actionability.ts) — the
+  // STA table prefers these over its own age inference when present.
+  actionEligible?: boolean;
+  actionBlocker?: string | null;
 };
 
 type SignalMatrixStreamPayload = {

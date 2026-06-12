@@ -8,7 +8,14 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
 ]);
 const DEFAULT_MAX_STATES = null;
 
-export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v1";
+// v2: state semantics changed (latched identity survives staleness; backend
+// authors actionEligible/actionBlocker). v1 snapshots predate that and are
+// discarded rather than replayed with old semantics.
+export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v2";
+const SIGNAL_MATRIX_SNAPSHOT_CACHE_LEGACY_KEYS = Object.freeze([
+  "pyrus:signal-matrix-snapshot:v1",
+]);
+const SIGNAL_MATRIX_SNAPSHOT_CACHE_VERSION = 2;
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_FRESH_MS = 15 * 60_000;
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS = 72 * 60 * 60_000;
 
@@ -81,6 +88,12 @@ const sanitizeState = (state, allowedTimeframes) => {
       state.indicatorSnapshot && typeof state.indicatorSnapshot === "object"
         ? state.indicatorSnapshot
         : null,
+    // Warm-start states are display-only: never replay a prior session's
+    // trade eligibility. The live SSE bootstrap re-authors these in seconds.
+    actionEligible: false,
+    actionBlocker: state.actionBlocker
+      ? String(state.actionBlocker)
+      : "signal_age_unavailable",
   };
 };
 
@@ -119,10 +132,17 @@ export const readSignalMatrixSnapshotCache = ({
 } = {}) => {
   if (!storage) return null;
   try {
+    SIGNAL_MATRIX_SNAPSHOT_CACHE_LEGACY_KEYS.forEach((legacyKey) => {
+      try {
+        storage.removeItem(legacyKey);
+      } catch (_legacyError) {}
+    });
     const raw = storage.getItem(SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || parsed.version !== 1) return null;
+    if (!parsed || parsed.version !== SIGNAL_MATRIX_SNAPSHOT_CACHE_VERSION) {
+      return null;
+    }
     const savedAt = Number(parsed.savedAt);
     const cacheAgeMs = nowMs - savedAt;
     if (!Number.isFinite(savedAt) || cacheAgeMs > maxAgeMs) {
@@ -172,7 +192,7 @@ export const writeSignalMatrixSnapshotCache = (
     storage.setItem(
       SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY,
       JSON.stringify({
-        version: 1,
+        version: SIGNAL_MATRIX_SNAPSHOT_CACHE_VERSION,
         savedAt: nowMs,
         evaluatedAt: readTimestamp(snapshot.evaluatedAt),
         timeframes: resolvedTimeframes,

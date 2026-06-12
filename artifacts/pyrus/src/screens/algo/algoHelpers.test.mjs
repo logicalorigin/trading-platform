@@ -196,6 +196,49 @@ test("STA action rows use backend one-bar execution age instead of matrix fresh 
   assert.equal(bySymbol.BGC.actionBlocker, "signal_age_unavailable");
 });
 
+test("STA action rows trust backend-authored actionability over local inference", () => {
+  const rows = buildVisibleSignalRows({
+    universeSymbols: ["NVDA", "AMD"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        // bars=0 would locally infer eligible; the backend verdict must win.
+        profileId: "profile-1",
+        symbol: "NVDA",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-12T17:05:00.000Z",
+        latestBarAt: "2026-06-12T17:05:00.000Z",
+        barsSinceSignal: 0,
+        fresh: false,
+        status: "stale",
+        actionEligible: false,
+        actionBlocker: "data_stale",
+      },
+      {
+        profileId: "profile-1",
+        symbol: "AMD",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-12T17:05:00.000Z",
+        latestBarAt: "2026-06-12T17:10:00.000Z",
+        barsSinceSignal: 1,
+        fresh: true,
+        status: "ok",
+        actionEligible: true,
+        actionBlocker: null,
+      },
+    ],
+  });
+
+  const bySymbol = Object.fromEntries(rows.map((row) => [row.symbol, row]));
+
+  assert.equal(bySymbol.NVDA.actionEligible, false);
+  assert.equal(bySymbol.NVDA.actionBlocker, "data_stale");
+  assert.equal(bySymbol.AMD.actionEligible, true);
+  assert.equal(bySymbol.AMD.actionBlocker, null);
+});
+
 test("visible signal rows keep received history on the execution timeframe only", () => {
   const rows = buildVisibleSignalRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),
