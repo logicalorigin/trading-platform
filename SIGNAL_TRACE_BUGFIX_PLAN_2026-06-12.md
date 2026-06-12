@@ -1,5 +1,17 @@
 # Implementation Plan: Ticker→Trades Bug-Hunt Fixes
 
+## STATUS: COMPLETE (2026-06-12)
+
+- [x] Task 1 — `a677cea` options snapshot status seatbelt (shared actionability; stale blocked at zero bars)
+- [x] Task 2 — `f0a886e`-range / committed with docs: 1d heal-on-next-eval contract pinned (SQL comment + source-contract test)
+- [x] Task 3 — `910a5f3` tick-manager swap carries buffered ticks (the real loss path; the "gap" itself is one synchronous turn)
+- [x] Task 4 — `b69fb6f` stop exits demand fallback marks ≤60s (marks still allowed to 3 min); skip diagnostic carries fallbackMarkAgeMs
+- [x] Task 5 — CLEARED: daily-bar UTC/NY boundary behaves correctly; pinned by characterization tests (`f879e42`)
+- [x] Task 6 — CONFIRMED+FIXED: delayed replays no longer displace live bars (`f879e42`)
+- [x] Task 7 — CONFIRMED+FIXED: rejected admissions keep explicit owners' leases (`8754dc0`, scoped hunks; other workstream untouched)
+- [x] Task 8 — `256dfa3` REST carries actionEligible/actionBlocker (scoped spec/codegen hunks); STA age inference deleted; rows without backend fields are ineligible by default
+- CHECKPOINT B: backend 74/74 + STA battery 51/51 + bridge/admission 27/27 + tick-manager 2/2; both typechecks clean; audit:api-codegen current. LIVE-PROBE PENDING: the running API serves the pre-change bundle — after the next Replit Run App restart, verify `/api/signal-monitor/state` rows carry actionEligible/actionBlocker and STA verdicts stay stable across REST polls.
+
 - Created: 2026-06-12 (follows SIGNAL_MATRIX_STATE_CONSOLIDATION_PLAN_2026-06-12.md)
 - Source: four-agent bug hunt over the ticker → bars → signals → STA → options → shadow-trades trace, with the high-stakes claims hand-verified. Findings classified: 3 verified fix-worthy, 3 credible-unverified, rest cleared.
 
