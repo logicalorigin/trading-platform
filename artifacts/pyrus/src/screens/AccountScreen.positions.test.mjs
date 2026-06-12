@@ -64,3 +64,21 @@ test("positions source selector is wired to live state, not pinned to all", () =
   // It must NOT be hardcoded to "all" (the original inert bug).
   assert.doesNotMatch(positionsPanel, /sourceFilter="all"/);
 });
+
+test("account positions trading actions use broker-safe account context", () => {
+  assert.match(source, /const positionManagementAccountId = shadowMode \? null : selectedAccountId;/);
+  assert.match(source, /const positionManagementGatewayReady = Boolean\(!shadowMode && gatewayTradingReady\);/);
+  assert.match(
+    source,
+    /const positionManagementGatewayMessage = shadowMode\s*\?\s*"Shadow positions cannot be managed with live broker orders\."\s*:\s*gatewayTradingMessage;/,
+  );
+
+  const positionsPanel = source.match(
+    /<LazyPositionsPanel[\s\S]*?\/>/,
+  )?.[0] ?? "";
+
+  assert.match(positionsPanel, /accountId=\{positionManagementAccountId\}/);
+  assert.match(positionsPanel, /environment=\{modeParams\.mode\}/);
+  assert.match(positionsPanel, /gatewayTradingReady=\{positionManagementGatewayReady\}/);
+  assert.match(positionsPanel, /gatewayTradingMessage=\{positionManagementGatewayMessage\}/);
+});

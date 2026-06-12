@@ -1155,6 +1155,11 @@ const AccountScreenInner = ({
     }),
     [environment, shadowMode],
   );
+  const positionManagementAccountId = shadowMode ? null : selectedAccountId;
+  const positionManagementGatewayReady = Boolean(!shadowMode && gatewayTradingReady);
+  const positionManagementGatewayMessage = shadowMode
+    ? "Shadow positions cannot be managed with live broker orders."
+    : gatewayTradingMessage;
   const riskParams = useMemo(
     () => ({
       ...modeParams,
@@ -2649,6 +2654,12 @@ const AccountScreenInner = ({
               sourceFilter={sourceFilter}
               onSourceFilterChange={setSourceFilter}
               onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+              accountId={positionManagementAccountId}
+              environment={modeParams.mode}
+              gatewayTradingReady={positionManagementGatewayReady}
+              gatewayTradingMessage={positionManagementGatewayMessage}
+              brokerConfigured={brokerConfigured}
+              brokerAuthenticated={brokerAuthenticated}
               rightRail={shadowMode ? "Shadow positions + marks" : undefined}
               emptyBody={
                 shadowMode

@@ -5,14 +5,13 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  Bell,
-  CircleDollarSign,
   ClipboardList,
   Eye,
   Info,
+  Pencil,
   RotateCcw,
-  ShieldCheck,
   SlidersHorizontal,
   Ticket,
   XCircle,
@@ -91,6 +90,17 @@ import {
   positionTableColumnIdsForSurface,
 } from "../../features/account/positionTableColumns.js";
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
+import { PositionProtectionEditor } from "../../features/account/PositionProtectionEditor.jsx";
+import {
+  buildCloseOrderRequest,
+  buildStopOrderRequest,
+} from "../../features/account/positionOrderActions.js";
+import { usePlaceOrder, usePreviewOrder, useReplaceOrder } from "@workspace/api-client-react";
+import { useToast } from "../../features/platform/platformContexts.jsx";
+import {
+  BrokerActionConfirmDialog,
+  formatLiveBrokerActionError,
+} from "../../features/trade/BrokerActionConfirmDialog.jsx";
 import {
   usePositionQuoteSnapshots,
   useRegisterPositionMarketDataSymbols,
@@ -2434,6 +2444,10 @@ const DensePositionActions = ({
   onJumpToChart,
   onPositionSelect,
   onToggle,
+  onClosePosition,
+  onEditProtection,
+  canManagePositions,
+  manageDisabledReason,
 }) => {
   const expandable = hasExpandablePositionDetails(row);
   const quote = denseDisplayQuote(row);
@@ -2510,21 +2524,6 @@ const DensePositionActions = ({
           tone: "warning",
         },
         {
-          id: "quote",
-          label: "Quote",
-          description: "Bid, ask, mark, and quote age are already shown in the row",
-          Icon: CircleDollarSign,
-          disabled: true,
-        },
-        {
-          id: "risk",
-          label: "Risk",
-          description: management.statusLabel || "No stop or trailing stop is attached",
-          Icon: ShieldCheck,
-          disabled: true,
-          tone: management.status === "breached" ? "danger" : "success",
-        },
-        {
           id: "focus",
           label: "Focus",
           description: `Focus ${row.symbol} in the surrounding workspace`,
@@ -2533,38 +2532,34 @@ const DensePositionActions = ({
           disabled: !onPositionSelect,
           tone: "info",
         },
-        {
-          id: "alert",
-          label: "Alert",
-          description: "Price alerts are not wired to account rows yet",
-          Icon: Bell,
-          disabled: true,
-          tone: "warning",
-        },
       ]}
       managementActions={[
         {
           id: "adjust",
           label: "Adjust",
-          description: "Stop and target editing is not wired from this table yet",
+          description: canManagePositions
+            ? "Set or replace the protective stop"
+            : manageDisabledReason || "Position management is unavailable",
           Icon: SlidersHorizontal,
-          disabled: true,
+          onSelect: () => onEditProtection?.(row),
+          disabled: !onEditProtection || !canManagePositions,
           tone: "warning",
         },
         {
           id: "close",
           label: "Close",
-          description: "Close workflows are managed from the trade ticket",
+          description: canManagePositions
+            ? "Flatten this position with a market order"
+            : manageDisabledReason || "Position management is unavailable",
           Icon: XCircle,
-          disabled: true,
+          onSelect: () => onClosePosition?.(row),
+          disabled: !onClosePosition || !canManagePositions,
           tone: "danger",
         },
         {
           id: "roll",
           label: "Roll",
-          description: isOptionPosition(row)
-            ? "Option roll workflows are managed from the trade ticket"
-            : "Roll is available for option positions",
+          description: "Roll workflow is disabled until a broker-safe multi-leg order flow exists.",
           Icon: RotateCcw,
           disabled: true,
           tone: "info",
@@ -2608,6 +2603,45 @@ const DenseUnderlyingPriceCell = ({
   );
 };
 
+const StopEditAffordance = ({ disabled, title, onClick }) => (
+  <AppTooltip content={title}>
+    <button
+      type="button"
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        flexShrink: 0,
+        display: "inline-grid",
+        placeItems: "center",
+        width: dim(18),
+        height: dim(18),
+        border: "none",
+        background: "transparent",
+        color: disabled ? CSS_COLOR.textDim : CSS_COLOR.textMuted,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.4 : 0.7,
+        borderRadius: dim(RADII.xs),
+        padding: 0,
+        transition: "color 120ms ease, opacity 120ms ease, background 120ms ease",
+      }}
+      onMouseEnter={(event) => {
+        if (disabled) return;
+        event.currentTarget.style.opacity = "1";
+        event.currentTarget.style.color = CSS_COLOR.accent;
+        event.currentTarget.style.background = cssColorMix(CSS_COLOR.accent, 12);
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.opacity = disabled ? "0.4" : "0.7";
+        event.currentTarget.style.color = disabled ? CSS_COLOR.textDim : CSS_COLOR.textMuted;
+        event.currentTarget.style.background = "transparent";
+      }}
+    >
+      <Pencil size={11} strokeWidth={1.8} aria-hidden="true" />
+    </button>
+  </AppTooltip>
+);
+
 const DensePositionCell = ({
   row,
   column,
@@ -2619,6 +2653,10 @@ const DensePositionCell = ({
   onJumpToChart,
   onPositionSelect,
   onToggle,
+  onClosePosition,
+  onEditProtection,
+  canManagePositions,
+  manageDisabledReason,
 }) => {
   const quote = denseDisplayQuote(row);
   const bidAsk = formatPositionBidAskPair(quote, maskValues);
@@ -2677,6 +2715,10 @@ const DensePositionCell = ({
           onJumpToChart={onJumpToChart}
           onPositionSelect={onPositionSelect}
           onToggle={onToggle}
+          onClosePosition={onClosePosition}
+          onEditProtection={onEditProtection}
+          canManagePositions={canManagePositions}
+          manageDisabledReason={manageDisabledReason}
         />
       </td>
     );
@@ -2726,26 +2768,52 @@ const DensePositionCell = ({
       </td>
     );
   } else if (column.id === "stop") {
+    const stopEditable = Boolean(onEditProtection) && canManagePositions;
     return (
       <td style={denseTableCellStyle(column, expanded)}>
-        <DenseStackedValue
-          primary={formatTradeManagementPrice(management.stop, maskValues)}
-          secondary={tradeManagementStopSubtext(management, maskValues)}
-          primaryTone={
-            management.stop
-              ? management.trail
-                ? CSS_COLOR.textSec
-                : tradeManagementTone(management)
-              : CSS_COLOR.textDim
-          }
-          secondaryTone={
-            management.stop && !management.trail
-              ? tradeManagementDistanceTone(management)
-              : CSS_COLOR.textDim
-          }
-          align={column.align}
-          title={managementTitle}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: sp(2),
+          }}
+        >
+          <div style={{ minWidth: 0, flex: "0 1 auto" }}>
+            <DenseStackedValue
+              primary={formatTradeManagementPrice(management.stop, maskValues)}
+              secondary={tradeManagementStopSubtext(management, maskValues)}
+              primaryTone={
+                management.stop
+                  ? management.trail
+                    ? CSS_COLOR.textSec
+                    : tradeManagementTone(management)
+                  : CSS_COLOR.textDim
+              }
+              secondaryTone={
+                management.stop && !management.trail
+                  ? tradeManagementDistanceTone(management)
+                  : CSS_COLOR.textDim
+              }
+              align={column.align}
+              title={managementTitle}
+            />
+          </div>
+          <StopEditAffordance
+            disabled={!stopEditable}
+            title={
+              stopEditable
+                ? management.stop
+                  ? "Adjust protective stop"
+                  : "Set protective stop"
+                : manageDisabledReason || "Stop editing unavailable"
+            }
+            onClick={(event) => {
+              event.stopPropagation();
+              if (stopEditable) onEditProtection?.(row);
+            }}
+          />
+        </div>
       </td>
     );
   } else if (column.id === "trail") {
@@ -3543,6 +3611,12 @@ export const PositionsPanel = ({
   optionQuoteStreamIntent = "account-monitor-live",
   registerMarketDataSymbols = true,
   surfaceId = POSITION_TABLE_SURFACE_ACCOUNT,
+  accountId = null,
+  environment = "live",
+  gatewayTradingReady = false,
+  gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  brokerConfigured = false,
+  brokerAuthenticated = false,
 }) => {
   const [sort, setSort] = useState({ id: "exposure", dir: "desc" });
   const [columnOrder, setColumnOrder] = useState(() =>
@@ -3679,6 +3753,174 @@ export const PositionsPanel = ({
     },
     [onPositionSelect, toggleExpanded],
   );
+
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const refetchPositions = query.refetch;
+  const refreshBrokerQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+    queryClient.invalidateQueries({ queryKey: ["broker-executions"] });
+    refetchPositions?.();
+  }, [queryClient, refetchPositions]);
+  const placeOrderMutation = usePlaceOrder({
+    mutation: {
+      onSuccess: refreshBrokerQueries,
+    },
+  });
+  const previewOrderMutation = usePreviewOrder();
+  const replaceOrderMutation = useReplaceOrder({
+    mutation: {
+      onSuccess: refreshBrokerQueries,
+    },
+  });
+
+  // Live broker actions (Close, protective stop) require a healthy gateway, an
+  // authenticated bridge (when IBKR is configured), and a selected account.
+  const canManagePositions = Boolean(
+    accountId && gatewayTradingReady && !(brokerConfigured && !brokerAuthenticated),
+  );
+  const manageDisabledReason = !gatewayTradingReady
+    ? gatewayTradingMessage
+    : brokerConfigured && !brokerAuthenticated
+      ? "Authenticate the IBKR bridge before managing live positions."
+      : !accountId
+        ? "No broker account is selected."
+        : null;
+
+  const [liveConfirmState, setLiveConfirmState] = useState(null);
+  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
+  const [liveConfirmError, setLiveConfirmError] = useState(null);
+  const [protectionRow, setProtectionRow] = useState(null);
+
+  const closeLiveConfirm = useCallback(() => {
+    if (liveConfirmPending) return;
+    setLiveConfirmError(null);
+    setLiveConfirmState(null);
+  }, [liveConfirmPending]);
+
+  const runLiveConfirm = useCallback(async () => {
+    if (!liveConfirmState?.onConfirm) return;
+    setLiveConfirmError(null);
+    setLiveConfirmPending(true);
+    try {
+      await liveConfirmState.onConfirm();
+      setLiveConfirmState(null);
+    } catch (error) {
+      setLiveConfirmError(formatLiveBrokerActionError(error));
+    } finally {
+      setLiveConfirmPending(false);
+    }
+  }, [liveConfirmState]);
+
+  const handleClosePosition = useCallback(
+    (row) => {
+      if (!canManagePositions) {
+        toast.push({
+          kind: "warn",
+          title: "Trading unavailable",
+          body: manageDisabledReason || "Live position management is unavailable right now.",
+        });
+        return;
+      }
+      const contractLabel = compactPositionContractDetail(row) || row.assetClass || "";
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `Flatten ${row.symbol}`,
+        detail: "Submit a market order to close this position.",
+        confirmLabel: "SEND CLOSE",
+        confirmTone: CSS_COLOR.red,
+        lines: [
+          { label: "Account", value: accountId || MISSING_VALUE },
+          { label: "Symbol", value: row.symbol },
+          contractLabel ? { label: "Contract", value: contractLabel } : null,
+          { label: "Side", value: `${row.quantity >= 0 ? "SELL" : "BUY"} to close` },
+          { label: "Qty", value: String(Math.abs(row.quantity)) },
+        ].filter(Boolean),
+        onConfirm: async () => {
+          await placeOrderMutation.mutateAsync({
+            data: {
+              ...buildCloseOrderRequest({ accountId, environment, position: row }),
+              confirm: true,
+            },
+          });
+          toast.push({
+            kind: "success",
+            title: "Close submitted",
+            body: `${row.symbol} flatten order sent.`,
+          });
+        },
+      });
+    },
+    [accountId, environment, canManagePositions, manageDisabledReason, placeOrderMutation, toast],
+  );
+
+  const handleEditProtection = useCallback(
+    (row) => {
+      if (!canManagePositions) {
+        toast.push({
+          kind: "warn",
+          title: "Trading unavailable",
+          body: manageDisabledReason || "Live position management is unavailable right now.",
+        });
+        return;
+      }
+      setProtectionRow(row);
+    },
+    [canManagePositions, manageDisabledReason, toast],
+  );
+
+  // Place (or replace, if a broker stop already protects the position) a
+  // protective stop order. Mirrors the trade panel's preview -> replace/place
+  // flow so the account surface uses the identical broker contract.
+  const handleSubmitStop = useCallback(
+    async (row, stopPrice) => {
+      if (!row || !canManagePositions) {
+        const message = manageDisabledReason || "Live position management is unavailable right now.";
+        toast.push({
+          kind: "warn",
+          title: "Trading unavailable",
+          body: message,
+        });
+        throw new Error(message);
+      }
+      const management = tradeManagementForRow(row);
+      const stopRequest = buildStopOrderRequest({ accountId, environment, position: row, stopPrice });
+      const preview = await previewOrderMutation.mutateAsync({ data: stopRequest });
+      const existingStop =
+        management.stop?.source === "broker" ? management.stop.order : null;
+      if (existingStop?.id && preview?.orderPayload) {
+        await replaceOrderMutation.mutateAsync({
+          orderId: existingStop.id,
+          data: { accountId, mode: environment, confirm: true, order: preview.orderPayload },
+        });
+      } else {
+        await placeOrderMutation.mutateAsync({
+          data: { ...stopRequest, confirm: true },
+        });
+      }
+      toast.push({
+        kind: "success",
+        title: existingStop?.id ? "Stop replaced" : "Stop placed",
+        body: `${row.symbol} protective stop @ ${stopPrice}`,
+      });
+    },
+    [
+      accountId,
+      environment,
+      canManagePositions,
+      manageDisabledReason,
+      previewOrderMutation,
+      replaceOrderMutation,
+      placeOrderMutation,
+      toast,
+    ],
+  );
+
+  const protectionManagement = protectionRow ? tradeManagementForRow(protectionRow) : null;
+  const protectionQuote = protectionRow ? denseDisplayQuote(protectionRow) : null;
+  const protectionMark =
+    protectionQuote?.mark ?? protectionQuote?.mid ?? protectionRow?.mark ?? null;
 
   const positionsTablePanel = (
     <Panel
@@ -3818,6 +4060,10 @@ export const PositionsPanel = ({
                           onJumpToChart={onJumpToChart}
                           onPositionSelect={onPositionSelect}
                           onToggle={handlePositionToggle}
+                          onClosePosition={handleClosePosition}
+                          onEditProtection={handleEditProtection}
+                          canManagePositions={canManagePositions}
+                          manageDisabledReason={manageDisabledReason}
                         />
                       ))}
                     </tr>
@@ -4106,7 +4352,34 @@ export const PositionsPanel = ({
 	    </Panel>
   );
 
-  return positionsTablePanel;
+  return (
+    <>
+      {positionsTablePanel}
+      <BrokerActionConfirmDialog
+        open={Boolean(liveConfirmState)}
+        title={liveConfirmState?.title || "Confirm broker action"}
+        detail={liveConfirmState?.detail}
+        lines={liveConfirmState?.lines || []}
+        confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM"}
+        confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
+        pending={liveConfirmPending}
+        error={liveConfirmError}
+        onCancel={closeLiveConfirm}
+        onConfirm={runLiveConfirm}
+      />
+      <PositionProtectionEditor
+        position={protectionRow}
+        management={protectionManagement}
+        mark={protectionMark}
+        maskValues={maskValues}
+        accountId={accountId}
+        canSubmit={canManagePositions}
+        disabledReason={manageDisabledReason}
+        onSubmit={(stopPrice) => handleSubmitStop(protectionRow, stopPrice)}
+        onClose={() => setProtectionRow(null)}
+      />
+    </>
+  );
 };
 
 export default PositionsPanel;
