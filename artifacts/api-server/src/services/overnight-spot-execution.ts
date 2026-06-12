@@ -19,6 +19,7 @@ import {
   planOvernightSpotOrder,
   resolveOvernightSpotProfile,
   type OvernightSpotOrderRequest,
+  type OvernightSpotPlanBlocked,
   type OvernightSpotPlanResult,
   type OvernightSpotPlanReady,
   type OvernightSpotProfile,
@@ -39,6 +40,7 @@ const OVERNIGHT_SPOT_TRACKED_EVENT = "overnight_spot_signal_tracked";
 const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
 const OVERNIGHT_SPOT_FAILED_EVENT = "overnight_spot_order_failed";
 const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
+const OVERNIGHT_SPOT_BLOCKED_EVENT_DEDUPE_MS = 30 * 60 * 1000;
 
 type OvernightSpotDeployment = Pick<
   AlgoDeployment,
@@ -334,6 +336,48 @@ function shouldSkipExistingClientOrderEvent(input: {
     eventType.startsWith("overnight_spot_shadow_") ||
     eventType.startsWith("overnight_spot_live_") ||
     eventType === OVERNIGHT_SPOT_FAILED_EVENT
+  );
+}
+
+function overnightSpotBlockerCodes(plan: unknown) {
+  const record = asRecord(plan) ?? {};
+  const blockers = Array.isArray(record.blockers) ? record.blockers : [];
+  return blockers
+    .map((blocker) => asString(asRecord(blocker)?.code))
+    .filter((code): code is string => Boolean(code))
+    .sort();
+}
+
+function sameOvernightSpotBlockerCodes(left: string[], right: string[]) {
+  return (
+    left.length === right.length &&
+    left.every((code, index) => code === right[index])
+  );
+}
+
+function shouldSkipDuplicateBlockedPlan(input: {
+  existing: Record<string, unknown>;
+  plan: OvernightSpotPlanBlocked;
+  now: Date;
+  dedupeMs?: number;
+}) {
+  const eventType = asString(input.existing.eventType) ?? "";
+  if (eventType !== OVERNIGHT_SPOT_BLOCKED_EVENT) {
+    return false;
+  }
+  const occurredAt = dateOrNull(input.existing.occurredAt);
+  if (!occurredAt) {
+    return false;
+  }
+  const dedupeMs = input.dedupeMs ?? OVERNIGHT_SPOT_BLOCKED_EVENT_DEDUPE_MS;
+  if (input.now.getTime() - occurredAt.getTime() > dedupeMs) {
+    return false;
+  }
+  const payload = asRecord(input.existing.payload) ?? {};
+  const existingPlan = asRecord(payload.plan) ?? {};
+  return sameOvernightSpotBlockerCodes(
+    overnightSpotBlockerCodes(existingPlan),
+    overnightSpotBlockerCodes(input.plan),
   );
 }
 
@@ -636,6 +680,23 @@ export async function runOvernightSpotSignalScan(
       env: input.env,
     });
 
+    if (
+      plan.status === "blocked" &&
+      existing &&
+      shouldSkipDuplicateBlockedPlan({ existing, plan, now })
+    ) {
+      results.push({
+        symbol: signal.symbol,
+        clientOrderId,
+        status: "skipped",
+        reason: "duplicate_blocked_client_order_id",
+        eventId: eventId(existing),
+        eventType: asString(existing.eventType) ?? undefined,
+        blockerCodes: plan.blockers.map((blocker) => blocker.code),
+      });
+      continue;
+    }
+
     throwIfOvernightSpotScanAborted(input.signal);
     const handled =
       plan.status === "ready"
@@ -917,6 +978,7 @@ export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDe
 export const __overnightSpotExecutionInternalsForTests = {
   signalStateToSignal,
   isSignalStateActionableForOvernightSpot,
+  shouldSkipDuplicateBlockedPlan,
   loadQuotes,
   resolveSignalTimeframe,
   payloadClientOrderId,

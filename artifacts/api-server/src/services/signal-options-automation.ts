@@ -39,7 +39,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
-import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, like } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -2012,7 +2012,12 @@ async function listDeploymentEvents(deploymentId: string, limit = 500) {
   return db
     .select()
     .from(executionEventsTable)
-    .where(eq(executionEventsTable.deploymentId, deploymentId))
+    .where(
+      and(
+        eq(executionEventsTable.deploymentId, deploymentId),
+        like(executionEventsTable.eventType, `${SIGNAL_OPTIONS_EVENT_PREFIX}%`),
+      ),
+    )
     .orderBy(desc(executionEventsTable.occurredAt))
     .limit(Math.min(Math.max(limit, 1), 10_000));
 }
@@ -2538,6 +2543,7 @@ async function loadSignalOptionsActivePositionCountForWorkerSummary(
   const activePositions = await reconcileActivePositionsWithShadowLedger({
     positions: deriveActivePositions(events),
     events,
+    deploymentId,
   });
   return activePositions.length;
 }
@@ -5701,6 +5707,246 @@ function deriveActivePositions(events: ExecutionEvent[]) {
   return [...positions.values()];
 }
 
+function signalOptionsShadowOrderDeploymentId(
+  order: typeof shadowOrdersTable.$inferSelect,
+) {
+  const payload = asRecord(order.payload);
+  const metadata = asRecord(payload.metadata);
+  const candidate = asRecord(payload.candidate);
+  const position = asRecord(payload.position);
+  return (
+    compactString(metadata.deploymentId) ??
+    compactString(candidate.deploymentId) ??
+    compactString(position.deploymentId)
+  );
+}
+
+function latestShadowMarkForPosition(
+  marks: Array<typeof shadowPositionMarksTable.$inferSelect>,
+) {
+  return [...marks]
+    .filter((mark) => finiteNumber(mark.mark) != null)
+    .sort(
+      (left, right) =>
+        right.asOf.getTime() - left.asOf.getTime() ||
+        right.createdAt.getTime() - left.createdAt.getTime(),
+    )[0] ?? null;
+}
+
+function peakShadowMarkForPosition(
+  marks: Array<typeof shadowPositionMarksTable.$inferSelect>,
+) {
+  return marks.reduce<number | null>((peak, mark) => {
+    const value = finiteNumber(mark.mark);
+    if (value == null) {
+      return peak;
+    }
+    return peak == null ? value : Math.max(peak, value);
+  }, null);
+}
+
+function recoverActivePositionsFromShadowLedgerRows(input: {
+  deploymentId: string;
+  positions: Array<typeof shadowPositionsTable.$inferSelect>;
+  orders: Array<typeof shadowOrdersTable.$inferSelect>;
+  marks?: Array<typeof shadowPositionMarksTable.$inferSelect>;
+}) {
+  const marksByPositionId = new Map<
+    string,
+    Array<typeof shadowPositionMarksTable.$inferSelect>
+  >();
+  for (const mark of input.marks ?? []) {
+    const rows = marksByPositionId.get(mark.positionId) ?? [];
+    rows.push(mark);
+    marksByPositionId.set(mark.positionId, rows);
+  }
+
+  const ordersByPositionKey = new Map<
+    string,
+    typeof shadowOrdersTable.$inferSelect
+  >();
+  for (const order of input.orders) {
+    if (
+      order.accountId !== "shadow" ||
+      order.source !== "automation" ||
+      order.assetClass !== "option" ||
+      order.side !== "buy" ||
+      signalOptionsShadowOrderDeploymentId(order) !== input.deploymentId
+    ) {
+      continue;
+    }
+    const key = shadowPositionKey({
+      symbol: order.symbol,
+      selectedContract: order.optionContract,
+    });
+    const current = ordersByPositionKey.get(key);
+    if (!current || order.placedAt.getTime() > current.placedAt.getTime()) {
+      ordersByPositionKey.set(key, order);
+    }
+  }
+
+  const recovered: SignalOptionsPosition[] = [];
+  for (const row of input.positions) {
+    const quantity = finiteNumber(row.quantity);
+    const entryPrice = finiteNumber(row.averageCost);
+    if (
+      row.accountId !== "shadow" ||
+      row.assetClass !== "option" ||
+      row.status !== "open" ||
+      quantity == null ||
+      quantity <= 0 ||
+      entryPrice == null ||
+      entryPrice <= 0
+    ) {
+      continue;
+    }
+
+    const order = ordersByPositionKey.get(row.positionKey);
+    if (!order) {
+      continue;
+    }
+
+    const position = positionFromEntryPayload({
+      id: String(order.sourceEventId ?? order.id),
+      deploymentId: input.deploymentId,
+      symbol: row.symbol,
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      payload: order.payload,
+      occurredAt: order.placedAt,
+    } as ExecutionEvent);
+    if (!position) {
+      continue;
+    }
+
+    const selectedContract = Object.keys(asRecord(row.optionContract)).length
+      ? asRecord(row.optionContract)
+      : position.selectedContract;
+    const positionMarks = marksByPositionId.get(row.id) ?? [];
+    const latestMark = latestShadowMarkForPosition(positionMarks);
+    const latestMarkPrice =
+      finiteNumber(row.mark) ??
+      finiteNumber(latestMark?.mark) ??
+      position.lastMarkPrice;
+    const peakMark = peakShadowMarkForPosition(positionMarks);
+    const peakPrice = Math.max(
+      position.peakPrice,
+      entryPrice,
+      latestMarkPrice ?? Number.NEGATIVE_INFINITY,
+      peakMark ?? Number.NEGATIVE_INFINITY,
+    );
+    const openedAt = toIsoString(row.openedAt) ?? position.openedAt;
+    const lastMarkedAt =
+      toIsoString(row.asOf) ??
+      toIsoString(latestMark?.asOf) ??
+      position.lastMarkedAt ??
+      null;
+
+    recovered.push({
+      ...position,
+      symbol: normalizeSymbol(row.symbol).toUpperCase(),
+      openedAt,
+      entryPrice,
+      quantity,
+      peakPrice,
+      premiumAtRisk: Number(
+        (
+          entryPrice *
+          quantity *
+          signalOptionsContractMultiplier(selectedContract)
+        ).toFixed(2),
+      ),
+      selectedContract,
+      lastMarkPrice: latestMarkPrice,
+      lastMarkedAt,
+    });
+  }
+
+  return recovered;
+}
+
+async function recoverActivePositionsFromShadowLedger(input: {
+  deploymentId: string;
+}) {
+  const positions = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(
+      and(
+        eq(shadowPositionsTable.accountId, "shadow"),
+        eq(shadowPositionsTable.assetClass, "option"),
+        eq(shadowPositionsTable.status, "open"),
+      ),
+    );
+  if (!positions.length) {
+    return [];
+  }
+
+  const positionIds = positions.map((position) => position.id);
+  const [orders, marks] = await Promise.all([
+    db
+      .select()
+      .from(shadowOrdersTable)
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, "shadow"),
+          eq(shadowOrdersTable.source, "automation"),
+          eq(shadowOrdersTable.assetClass, "option"),
+          eq(shadowOrdersTable.side, "buy"),
+          isNotNull(shadowOrdersTable.sourceEventId),
+        ),
+      )
+      .orderBy(desc(shadowOrdersTable.placedAt)),
+    db
+      .select()
+      .from(shadowPositionMarksTable)
+      .where(inArray(shadowPositionMarksTable.positionId, positionIds))
+      .orderBy(desc(shadowPositionMarksTable.asOf)),
+  ]);
+
+  return recoverActivePositionsFromShadowLedgerRows({
+    deploymentId: input.deploymentId,
+    positions,
+    orders,
+    marks,
+  });
+}
+
+function mergeActivePositionsWithShadowLedger(
+  positions: SignalOptionsPosition[],
+  ledgerPositions: SignalOptionsPosition[],
+) {
+  const bySymbol = new Map(
+    positions.map((position) => [
+      normalizeSymbol(position.symbol).toUpperCase(),
+      position,
+    ]),
+  );
+
+  for (const ledger of ledgerPositions) {
+    const symbol = normalizeSymbol(ledger.symbol).toUpperCase();
+    const current = bySymbol.get(symbol);
+    bySymbol.set(
+      symbol,
+      current
+        ? {
+            ...current,
+            quantity: ledger.quantity,
+            entryPrice: ledger.entryPrice,
+            peakPrice: Math.max(current.peakPrice, ledger.peakPrice),
+            premiumAtRisk: ledger.premiumAtRisk,
+            selectedContract: Object.keys(ledger.selectedContract).length
+              ? ledger.selectedContract
+              : current.selectedContract,
+            lastMarkPrice: ledger.lastMarkPrice ?? current.lastMarkPrice ?? null,
+            lastMarkedAt: ledger.lastMarkedAt ?? current.lastMarkedAt ?? null,
+          }
+        : ledger,
+    );
+  }
+
+  return [...bySymbol.values()];
+}
+
 function signalOptionsEvents(events: ExecutionEvent[]) {
   return events.filter((event) =>
     event.eventType.startsWith(SIGNAL_OPTIONS_EVENT_PREFIX),
@@ -6057,12 +6303,22 @@ function reconcileActivePositionsWithShadowLinks(
 async function reconcileActivePositionsWithShadowLedger(input: {
   positions: SignalOptionsPosition[];
   events: ExecutionEvent[];
+  deploymentId?: string;
 }) {
-  if (!input.positions.length) {
-    return input.positions;
+  const ledgerPositions = input.deploymentId
+    ? await recoverActivePositionsFromShadowLedger({
+        deploymentId: input.deploymentId,
+      })
+    : [];
+  const positions = mergeActivePositionsWithShadowLedger(
+    input.positions,
+    ledgerPositions,
+  );
+  if (!positions.length) {
+    return positions;
   }
   const shadowIndex = await buildSignalOptionsShadowIndex(input.events);
-  return reconcileActivePositionsWithShadowLinks(input.positions, shadowIndex);
+  return reconcileActivePositionsWithShadowLinks(positions, shadowIndex);
 }
 
 const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
@@ -9182,10 +9438,11 @@ async function buildStatePayload(input: {
   const shadowIndex = await buildSignalOptionsShadowIndex(
     activeSignalEventsBeforeReconciliation,
   );
-  const activePositions = reconcileActivePositionsWithShadowLinks(
-    eventActivePositions,
-    shadowIndex,
-  );
+  const activePositions = await reconcileActivePositionsWithShadowLedger({
+    positions: eventActivePositions,
+    events: activeSignalEventsBeforeReconciliation,
+    deploymentId: input.deployment.id,
+  });
   const activeSignalEvents = filterOrphanPositionMarkEvents(
     activeSignalEventsBeforeReconciliation,
     activePositions,
@@ -10484,6 +10741,7 @@ export async function listSignalOptionsActivePositionsForDeployment(input: {
   const positions = await reconcileActivePositionsWithShadowLedger({
     positions: deriveActivePositions(events),
     events,
+    deploymentId: input.deploymentId,
   });
   return { positions, events };
 }
@@ -16493,6 +16751,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const initialPositions = await reconcileActivePositionsWithShadowLedger({
     positions: deriveActivePositions(initialSignalEvents),
     events: initialSignalEvents,
+    deploymentId: deployment.id,
   });
   const unmanagedPositionSymbols = new Set<string>();
   const evaluatedStates = evaluated.states as SignalMonitorState[];
@@ -16722,6 +16981,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     await reconcileActivePositionsWithShadowLedger({
       positions: deriveActivePositions(eventsAfterMarksRuntime),
       events: eventsAfterMarksRuntime,
+      deploymentId: deployment.id,
     });
   const profileUpdatedAt = latestSignalOptionsControlUpdatedAt(
     eventsAfterMarksRuntime,
@@ -17075,6 +17335,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   markSignalOptionsScanActive,
   deriveCandidateActionStatus,
   deriveActivePositions,
+  recoverActivePositionsFromShadowLedgerRows,
   reconcileActivePositionsWithShadowLinks,
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,

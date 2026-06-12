@@ -4714,6 +4714,7 @@ async function recordSignalOptionsShadowMarkExit(input: {
   position: ShadowPositionRow;
   contract: ShadowOptionContract;
   context: SignalOptionsShadowMarkExitContext;
+  exitReason: "hard_stop" | "runner_trail_stop";
   markPrice: number;
   peakPrice: number;
   exitPrice: number;
@@ -4759,7 +4760,7 @@ async function recordSignalOptionsShadowMarkExit(input: {
       runSource: "shadow_mark",
       runPhase: "mark_enforcement",
     },
-    reason: "runner_trail_stop",
+    reason: input.exitReason,
     enforcementSource: "shadow_mark",
     exitPrice: input.exitPrice,
     markPrice: input.markPrice,
@@ -4797,7 +4798,7 @@ async function recordSignalOptionsShadowMarkExit(input: {
       providerAccountId: input.context.deployment.providerAccountId,
       symbol: normalizeSymbol(input.position.symbol).toUpperCase(),
       eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-      summary: `${input.position.symbol} shadow exit runner_trail_stop at ${input.exitPrice.toFixed(2)}`,
+      summary: `${input.position.symbol} shadow exit ${input.exitReason} at ${input.exitPrice.toFixed(2)}`,
       payload,
       occurredAt: input.markAt,
     })
@@ -4805,7 +4806,7 @@ async function recordSignalOptionsShadowMarkExit(input: {
   await recordShadowAutomationEvent(event, { source: "automation" }).catch((error) => {
     logger.warn?.(
       { err: error, eventId: event.id, eventType: event.eventType },
-      "Failed to mirror signal-options mark-time trailing exit into Shadow account ledger",
+      "Failed to mirror signal-options mark-time stop exit into Shadow account ledger",
     );
   });
   notifyAlgoCockpitChanged({
@@ -4814,6 +4815,12 @@ async function recordSignalOptionsShadowMarkExit(input: {
     reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
   });
   return event;
+}
+
+function isSignalOptionsShadowMarkStopExitReason(
+  reason: unknown,
+): reason is "hard_stop" | "runner_trail_stop" {
+  return reason === "hard_stop" || reason === "runner_trail_stop";
 }
 
 async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
@@ -4843,13 +4850,18 @@ async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
     markAt: input.markAt,
     signalQuality: context.signalQuality,
   });
-  if (decision.exitReason !== "runner_trail_stop" || decision.exitPrice == null || !decision.stop) {
+  if (
+    !isSignalOptionsShadowMarkStopExitReason(decision.exitReason) ||
+    decision.exitPrice == null ||
+    !decision.stop
+  ) {
     return { exited: false, reason: decision.skipReason ?? "stop_not_breached" };
   }
   await recordSignalOptionsShadowMarkExit({
     position: input.position,
     contract: input.contract,
     context,
+    exitReason: decision.exitReason,
     markPrice: input.markPrice,
     peakPrice,
     exitPrice: decision.exitPrice,
@@ -4858,7 +4870,7 @@ async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
     quote: input.quote,
     markAt: input.markAt,
   });
-  return { exited: true, reason: "runner_trail_stop" };
+  return { exited: true, reason: decision.exitReason };
 }
 
 async function resolveMaintenanceOptionExitPrice(input: {
@@ -5564,7 +5576,7 @@ function computeSignalOptionsShadowMarkExitDecision(input: {
     profile: input.profile,
     signalQuality: input.signalQuality ?? null,
   });
-  if (stop.exitReason !== "runner_trail_stop") {
+  if (!isSignalOptionsShadowMarkStopExitReason(stop.exitReason)) {
     return {
       exitReason: null,
       exitPrice: null,
