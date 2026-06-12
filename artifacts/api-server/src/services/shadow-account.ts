@@ -7985,7 +7985,14 @@ function readReusableShadowAllocationFromPositions(input: {
 }
 
 function shouldServeFastShadowPositionsForPressure(): boolean {
-  return getApiResourcePressureSnapshot().level !== "normal";
+  // Gate the heavy canonical shadow build on genuine server SATURATION only.
+  // `level` folds in request latency (inflated by slow broker routes) and trips
+  // to `watch` on a borderline event-loop (e.g. 61ms vs the 60ms watch line), so
+  // gating on `level !== "normal"` served the degraded fast-fallback almost
+  // constantly — blanking SL/TRL and starving the canonical path that computes
+  // them. Per ApiResourcePressureSnapshot's contract, real work gates on
+  // `resourceLevel` (rss+heap+event-loop, NOT latency); only shed under `high`.
+  return getApiResourcePressureSnapshot().resourceLevel === "high";
 }
 
 // Last-known canonical SL/TRL per shadow position id. The pressure fast-fallback
