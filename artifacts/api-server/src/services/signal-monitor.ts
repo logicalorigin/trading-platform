@@ -2759,9 +2759,18 @@ function mergeCompletedBars(
   const byTimestamp = new Map<number, SignalMonitorBarSnapshot>();
   [...baseBars, ...liveEdgeBars].forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
-    if (timestamp) {
-      byTimestamp.set(timestamp.getTime(), bar);
+    if (!timestamp) {
+      return;
     }
+    const key = timestamp.getTime();
+    const current = byTimestamp.get(key);
+    // Same-bucket collision: a delayed replay must not displace a live copy.
+    // The OHLC matches either way, but the delayed flag would propagate and
+    // pause evaluation behind the delayed-latest-bar gate.
+    if (current && current.delayed !== true && bar.delayed === true) {
+      return;
+    }
+    byTimestamp.set(key, bar);
   });
   return Array.from(byTimestamp.entries())
     .sort(([left], [right]) => left - right)
@@ -8856,6 +8865,7 @@ export const __signalMonitorInternalsForTests = {
   shouldPersistSignalMonitorStateEvent,
   shouldPreserveExistingSignalMonitorSymbolState,
   loadSignalMonitorStreamCompletedBars,
+  mergeCompletedBars,
   signalMonitorBarsSinceSignal,
   stableSignalMonitorPyrusBarEntries,
   selectSignalMonitorSignalEvent,

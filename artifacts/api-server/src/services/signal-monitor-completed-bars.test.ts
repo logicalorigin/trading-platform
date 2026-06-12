@@ -8,6 +8,7 @@ import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
+  isSignalMonitorBarComplete,
 } from "./signal-monitor";
 
 const bar = (timestamp: string) =>
@@ -200,6 +201,81 @@ test("python signal matrix state keeps signal identity when the cell is stale", 
   assert.equal(result?.fresh, false);
   assert.equal(result?.canonicalSignalEvent, null);
   assert.ok((result?.barsSinceSignal ?? 0) > 0);
+});
+
+test("a delayed bar replay never displaces a live bar for the same bucket", () => {
+  const mergeBars = __signalMonitorInternalsForTests.mergeCompletedBars;
+  const liveBar = {
+    ...(bar("2026-06-11T14:30:00.000Z") as Record<string, unknown>),
+    delayed: false,
+    close: 101,
+  } as never;
+  const delayedReplay = {
+    ...(bar("2026-06-11T14:30:00.000Z") as Record<string, unknown>),
+    delayed: true,
+    close: 101,
+  } as never;
+  const nextLiveBar = {
+    ...(bar("2026-06-11T14:31:00.000Z") as Record<string, unknown>),
+    delayed: false,
+  } as never;
+
+  // Delayed live-edge replay of an existing live base bar: live copy wins.
+  const merged = mergeBars([liveBar], [delayedReplay, nextLiveBar], 10);
+  assert.equal(merged.length, 2);
+  assert.equal((merged[0] as { delayed?: boolean }).delayed, false);
+
+  // A live copy still upgrades a delayed base bar.
+  const upgraded = mergeBars([delayedReplay], [liveBar], 10);
+  assert.equal(upgraded.length, 1);
+  assert.equal((upgraded[0] as { delayed?: boolean }).delayed, false);
+});
+
+test("daily bar completeness is consistent across the UTC/NY date boundary", () => {
+  // Convention: daily bars timestamped at UTC midnight carry their TRADING
+  // date; completeness compares against the NY calendar date of evaluatedAt.
+  const complete = (timestamp: string, evaluatedAt: string) =>
+    isSignalMonitorBarComplete({
+      timestamp: new Date(timestamp),
+      timeframe: "1d",
+      evaluatedAt: new Date(evaluatedAt),
+    });
+
+  // Today's bar (UTC-midnight stamped) is incomplete all NY day...
+  assert.equal(
+    complete("2026-06-11T00:00:00.000Z", "2026-06-11T19:00:00.000Z"),
+    false,
+  );
+  // ...and complete the next NY day.
+  assert.equal(
+    complete("2026-06-11T00:00:00.000Z", "2026-06-12T13:31:00.000Z"),
+    true,
+  );
+  // 8pm ET is already the next UTC day: a bar dated tomorrow must NOT read
+  // complete — that trading day has not happened yet.
+  assert.equal(
+    complete("2026-06-12T00:00:00.000Z", "2026-06-12T00:00:00.000Z"),
+    false,
+  );
+  // Close-stamped bars (4pm ET) resolve to their NY date: incomplete that
+  // evening, complete the next NY day.
+  assert.equal(
+    complete("2026-06-11T20:00:00.000Z", "2026-06-11T21:00:00.000Z"),
+    false,
+  );
+  assert.equal(
+    complete("2026-06-11T20:00:00.000Z", "2026-06-12T13:31:00.000Z"),
+    true,
+  );
+  // Winter (EST) variant of the UTC-midnight convention.
+  assert.equal(
+    complete("2026-12-10T00:00:00.000Z", "2026-12-10T15:00:00.000Z"),
+    false,
+  );
+  assert.equal(
+    complete("2026-12-10T00:00:00.000Z", "2026-12-11T15:00:00.000Z"),
+    true,
+  );
 });
 
 test("reconciliation keeps adopted 1d rows age-less until the next daily eval", () => {
