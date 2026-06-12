@@ -7988,6 +7988,41 @@ function shouldServeFastShadowPositionsForPressure(): boolean {
   return getApiResourcePressureSnapshot().level !== "normal";
 }
 
+// Last-known canonical SL/TRL per shadow position id. The pressure fast-fallback
+// (served when resource pressure != normal) skips the heavy automation-context
+// build and would otherwise blank stopLoss/takeProfit/riskOverlay. Instead it
+// serves the most recent good canonical value recorded here (the response is
+// still flagged degraded/stale). Bounded to LAST_KNOWN_SHADOW_STOPS_CAP entries.
+const LAST_KNOWN_SHADOW_STOPS_CAP = 1000;
+const lastKnownShadowPositionStops = new Map<
+  string,
+  {
+    stopLoss: number | null;
+    takeProfit: number | null;
+    riskOverlay: ReturnType<typeof buildShadowPositionRiskOverlay>;
+  }
+>();
+
+function recordLastKnownShadowPositionStops(
+  positionId: string,
+  value: {
+    stopLoss: number | null;
+    takeProfit: number | null;
+    riskOverlay: ReturnType<typeof buildShadowPositionRiskOverlay>;
+  },
+): void {
+  if (
+    lastKnownShadowPositionStops.size >= LAST_KNOWN_SHADOW_STOPS_CAP &&
+    !lastKnownShadowPositionStops.has(positionId)
+  ) {
+    const oldest = lastKnownShadowPositionStops.keys().next().value;
+    if (oldest) {
+      lastKnownShadowPositionStops.delete(oldest);
+    }
+  }
+  lastKnownShadowPositionStops.set(positionId, value);
+}
+
 function buildFastShadowPositionsResponseFromRows(input: {
   positions: ShadowPositionRow[];
   account: ShadowAccountRow | null;
@@ -8038,6 +8073,7 @@ function buildFastShadowPositionsResponseFromRows(input: {
         : 0);
     const openedAt = position.openedAt ?? position.asOf ?? observedAt;
     const positionType = shadowPositionType(position);
+    const lastKnownStops = lastKnownShadowPositionStops.get(position.id);
 
     return {
       id: position.id,
@@ -8088,9 +8124,11 @@ function buildFastShadowPositionsResponseFromRows(input: {
       valuationReason: "shadow_positions_pressure_fallback",
       quote: null,
       optionQuote: null,
-      stopLoss: null,
-      takeProfit: null,
-      riskOverlay: null,
+      // Pressure fast-fallback: serve the last-known canonical stop/trail
+      // (still flagged degraded/stale on the response) instead of blanking.
+      stopLoss: lastKnownStops?.stopLoss ?? null,
+      takeProfit: lastKnownStops?.takeProfit ?? null,
+      riskOverlay: lastKnownStops?.riskOverlay ?? null,
     };
   });
   const responseMarketValue = rows.reduce(
@@ -8467,6 +8505,21 @@ export async function getShadowAccountPositions(input: {
             automationContext,
             openedAt,
           });
+          const stopLoss =
+            riskOverlay?.activeStopPrice ??
+            automationContext?.activeStopPrice ??
+            automationContext?.stopPrice ??
+            automationContext?.stopLossPrice ??
+            null;
+          const takeProfit =
+            automationContext?.takeProfitPrice ??
+            automationContext?.targetPrice ??
+            null;
+          recordLastKnownShadowPositionStops(position.id, {
+            stopLoss,
+            takeProfit,
+            riskOverlay,
+          });
           return {
             id: position.id,
             accountId: SHADOW_ACCOUNT_ID,
@@ -8534,16 +8587,8 @@ export async function getShadowAccountPositions(input: {
                     pricing,
                   })
                 : null,
-            stopLoss:
-              riskOverlay?.activeStopPrice ??
-              automationContext?.activeStopPrice ??
-              automationContext?.stopPrice ??
-              automationContext?.stopLossPrice ??
-              null,
-            takeProfit:
-              automationContext?.takeProfitPrice ??
-              automationContext?.targetPrice ??
-              null,
+            stopLoss,
+            takeProfit,
             riskOverlay,
             ...(automationContext ? { automationContext } : {}),
             ...attribution,
