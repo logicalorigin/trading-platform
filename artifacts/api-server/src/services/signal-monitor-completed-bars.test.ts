@@ -1016,6 +1016,8 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
           active: true,
           lastEvaluatedAt: evaluatedAt,
           lastError: null,
+          actionEligible: true,
+          actionBlocker: null,
         },
       ],
       evaluatedAt,

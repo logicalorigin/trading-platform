@@ -71,6 +71,8 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
         barsSinceSignal: 0,
         fresh: true,
         status: "ok",
+        actionEligible: true,
+        actionBlocker: null,
       },
       {
         profileId: "profile-15m",
@@ -145,9 +147,12 @@ test("visible signal rows use the live Signal Matrix as the STA action source ov
   assert.equal(rows[0].sourceType, "signal_matrix_state");
 });
 
-test("STA action rows use backend one-bar execution age instead of matrix fresh flag", () => {
+test("STA action rows without backend actionability are ineligible by default", () => {
+  // No client-side age inference remains: a state that does not carry the
+  // backend-authored actionEligible/actionBlocker fields renders blocked.
+  // The fresh flag never substitutes for the backend verdict.
   const rows = buildVisibleSignalRows({
-    universeSymbols: ["TSM", "DIA", "BGC"],
+    universeSymbols: ["TSM", "DIA"],
     signalActionTimeframes: ["5m"],
     signalMatrixStates: [
       {
@@ -172,28 +177,15 @@ test("STA action rows use backend one-bar execution age instead of matrix fresh 
         fresh: true,
         status: "ok",
       },
-      {
-        profileId: "profile-1",
-        symbol: "BGC",
-        timeframe: "5m",
-        currentSignalDirection: "buy",
-        currentSignalAt: "2026-06-11T15:05:00.000Z",
-        latestBarAt: "2026-06-11T15:20:00.000Z",
-        barsSinceSignal: null,
-        fresh: true,
-        status: "ok",
-      },
     ],
   });
 
   const bySymbol = Object.fromEntries(rows.map((row) => [row.symbol, row]));
 
-  assert.equal(bySymbol.TSM.actionEligible, true);
+  assert.equal(bySymbol.TSM.actionEligible, false);
   assert.equal(bySymbol.TSM.actionBlocker, null);
   assert.equal(bySymbol.DIA.actionEligible, false);
-  assert.equal(bySymbol.DIA.actionBlocker, "signal_too_old");
-  assert.equal(bySymbol.BGC.actionEligible, false);
-  assert.equal(bySymbol.BGC.actionBlocker, "signal_age_unavailable");
+  assert.equal(bySymbol.DIA.actionBlocker, null);
 });
 
 test("STA action rows trust backend-authored actionability over local inference", () => {

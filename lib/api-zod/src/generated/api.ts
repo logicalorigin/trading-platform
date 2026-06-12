@@ -4884,7 +4884,9 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
-  "lastError": zod.string().nullable()
+  "lastError": zod.string().nullable(),
+  "actionEligible": zod.boolean().optional(),
+  "actionBlocker": zod.string().nullish()
 })),
   "evaluatedAt": zod.coerce.date(),
   "truncated": zod.boolean(),
@@ -5058,7 +5060,9 @@ export const GetSignalMonitorStateResponse = zod.object({
   "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
-  "lastError": zod.string().nullable()
+  "lastError": zod.string().nullable(),
+  "actionEligible": zod.boolean().optional(),
+  "actionBlocker": zod.string().nullish()
 })),
   "evaluatedAt": zod.coerce.date(),
   "truncated": zod.boolean(),

@@ -5022,6 +5022,9 @@ export interface SignalMonitorSymbolState {
   lastEvaluatedAt: string | null;
   /** @nullable */
   lastError: string | null;
+  actionEligible?: boolean;
+  /** @nullable */
+  actionBlocker?: string | null;
 }
 
 export type SignalMonitorIndicatorDirection = typeof SignalMonitorIndicatorDirection[keyof typeof SignalMonitorIndicatorDirection];
@@ -5092,6 +5095,9 @@ export interface SignalMonitorMatrixState {
   /** @nullable */
   lastError: string | null;
   indicatorSnapshot: SignalMonitorIndicatorSnapshot | null;
+  actionEligible?: boolean;
+  /** @nullable */
+  actionBlocker?: string | null;
 }
 
 export interface SignalMonitorEvent {

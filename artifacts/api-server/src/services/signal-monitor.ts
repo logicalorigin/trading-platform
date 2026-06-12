@@ -983,6 +983,16 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
       ? state.currentSignalDirection
       : null;
   const hasStoredSignal = Boolean(direction && state.currentSignalAt);
+  // Backend-authored actionability on REST, mirroring the SSE matrix stream,
+  // so every transport carries the same verdict. freshWindowBars only feeds
+  // the (discarded) fresh recompute — eligibility does not use it.
+  const actionability = buildSignalMonitorActionability({
+    direction,
+    signalAt: hasStoredSignal ? (state.currentSignalAt ?? null) : null,
+    barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
+    stale: status !== "ok",
+    freshWindowBars: 0,
+  });
 
   return {
     id: state.id,
@@ -1001,6 +1011,8 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     active: state.active,
     lastEvaluatedAt: state.lastEvaluatedAt ?? null,
     lastError: state.lastError ?? null,
+    actionEligible: actionability.actionEligible,
+    actionBlocker: actionability.actionBlocker,
   };
 }
 
@@ -1027,16 +1039,30 @@ function stateToResponseForSnapshot(
     return response;
   }
 
+  const staleDirection = response.latestBarAt
+    ? response.currentSignalDirection
+    : null;
+  const staleSignalAt = response.latestBarAt ? response.currentSignalAt : null;
+  const staleBarsSinceSignal = response.latestBarAt
+    ? response.barsSinceSignal
+    : null;
+  // The lane relabel changes status/identity, so actionability re-authors on
+  // the rewritten values (always ineligible: the lane is stale or unavailable).
+  const staleActionability = buildSignalMonitorActionability({
+    direction: staleDirection,
+    signalAt: staleSignalAt,
+    barsSinceSignal: staleBarsSinceSignal,
+    stale: true,
+    freshWindowBars: 0,
+  });
   return {
     ...response,
-    currentSignalDirection: response.latestBarAt
-      ? response.currentSignalDirection
-      : null,
-    currentSignalAt: response.latestBarAt ? response.currentSignalAt : null,
+    currentSignalDirection: staleDirection,
+    currentSignalAt: staleSignalAt,
     currentSignalPrice: response.latestBarAt
       ? response.currentSignalPrice
       : null,
-    barsSinceSignal: response.latestBarAt ? response.barsSinceSignal : null,
+    barsSinceSignal: staleBarsSinceSignal,
     fresh: false,
     status: response.latestBarAt
       ? ("stale" as const)
@@ -1046,6 +1072,8 @@ function stateToResponseForSnapshot(
       (response.latestBarAt
         ? null
       : "Signal monitor state has no latest bar; using persisted state without live bar refresh."),
+    actionEligible: staleActionability.actionEligible,
+    actionBlocker: staleActionability.actionBlocker,
   };
 }
 
@@ -1072,6 +1100,8 @@ function buildUnavailableSignalMonitorSnapshotState(input: {
     active: true,
     lastEvaluatedAt: input.evaluatedAt,
     lastError: "No signal monitor state is available for this symbol/timeframe.",
+    actionEligible: false,
+    actionBlocker: "no_signal",
   };
 }
 

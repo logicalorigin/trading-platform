@@ -592,16 +592,6 @@ const staFiniteNumberOrNull = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const STA_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 1;
-
-const staSignalAgeActionBlocker = (barsSinceSignal) => {
-  const bars = staFiniteNumberOrNull(barsSinceSignal);
-  if (bars == null) return "signal_age_unavailable";
-  return Math.max(0, Math.round(bars)) <= STA_MAX_ACTIONABLE_BARS_SINCE_SIGNAL
-    ? null
-    : "signal_too_old";
-};
-
 const staIsoStringOrNull = (value) => {
   if (!value) return null;
   const text = String(value).trim();
@@ -695,14 +685,11 @@ export const buildStaSignalMatrixRows = ({
         staFiniteNumberOrNull(stateRecord.signalPrice);
       const barsSinceSignal = staFiniteNumberOrNull(stateRecord.barsSinceSignal);
       const fresh = stateRecord.fresh === true;
-      const explicitActionBlocker = normalizeMatchKey(stateRecord.actionBlocker);
-      const inferredActionBlocker =
-        explicitActionBlocker ||
-        (status !== "ok" ? "historical_signal" : staSignalAgeActionBlocker(barsSinceSignal));
-      const actionEligible =
-        typeof stateRecord.actionEligible === "boolean"
-          ? stateRecord.actionEligible
-          : Boolean(signalAt && direction && status === "ok" && !inferredActionBlocker);
+      // Actionability is backend-authored (SSE matrix stream + REST both
+      // carry it). A state without the fields is ineligible by default —
+      // the safe direction; no client-side age inference remains.
+      const actionBlocker = normalizeMatchKey(stateRecord.actionBlocker) || null;
+      const actionEligible = stateRecord.actionEligible === true;
 
       return {
         profileId: normalizeMatchKey(stateRecord.profileId) || null,
@@ -724,7 +711,7 @@ export const buildStaSignalMatrixRows = ({
         barsSinceSignal,
         fresh,
         actionEligible,
-        actionBlocker: actionEligible ? null : inferredActionBlocker || null,
+        actionBlocker: actionEligible ? null : actionBlocker,
         status,
         filterState: Object.keys(asRecord(stateRecord.filterState)).length
           ? asRecord(stateRecord.filterState)

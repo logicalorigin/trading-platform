@@ -12278,6 +12278,10 @@ components:
           format: date-time
         lastError:
           type: [string, "null"]
+        actionEligible:
+          type: boolean
+        actionBlocker:
+          type: [string, "null"]
       required:
         - id
         - profileId
@@ -12404,6 +12408,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SignalMonitorIndicatorSnapshot"
             - type: "null"
+        actionEligible:
+          type: boolean
+        actionBlocker:
+          type: [string, "null"]
       required:
         - id
         - profileId
