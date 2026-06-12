@@ -255,6 +255,7 @@ export const buildIbkrConnectionSnapshot = ({
         healthErrorCode: runtimeIbkr.healthErrorCode,
         healthErrorStatusCode: runtimeIbkr.healthErrorStatusCode,
         healthErrorDetail: runtimeIbkr.healthErrorDetail,
+        governor: runtimeIbkr.governor || null,
         connected: Boolean(effectiveConnected),
         authenticated: Boolean(effectiveAuthenticated),
         competing: brokerProofEnabled

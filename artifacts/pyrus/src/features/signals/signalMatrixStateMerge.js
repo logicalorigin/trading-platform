@@ -8,6 +8,14 @@ const SIGNAL_EVENT_MATRIX_TIMEFRAMES = Object.freeze([
   "1h",
   "1d",
 ]);
+const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
+  "1m": 60_000,
+  "2m": 2 * 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+});
 
 export const normalizeSignalMatrixSymbol = (symbol) =>
   symbol?.trim?.().toUpperCase?.() || "";
@@ -47,6 +55,12 @@ const finiteNumberOrNull = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const comparableFiniteNumberOrNull = (value) => {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const normalizeSignalDirection = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "buy" || normalized === "sell" ? normalized : "";
@@ -55,6 +69,30 @@ const normalizeSignalDirection = (value) => {
 const normalizeSignalTimeframe = (value) => {
   const normalized = String(value || "").trim();
   return SIGNAL_EVENT_MATRIX_TIMEFRAMES.includes(normalized) ? normalized : "";
+};
+
+const signalMatrixBarsSinceSignal = ({
+  timeframe,
+  signalAt,
+  latestBarAt,
+  presentBarsSinceSignal = null,
+} = {}) => {
+  const presentBars = finiteNumberOrNull(presentBarsSinceSignal);
+  const normalizedTimeframe = normalizeSignalTimeframe(timeframe);
+  if (normalizedTimeframe === "1d") {
+    return presentBars;
+  }
+  const signalMs = timestampMs(signalAt);
+  const latestBarMs = timestampMs(latestBarAt);
+  const timeframeMs = SIGNAL_MATRIX_TIMEFRAME_MS[normalizedTimeframe];
+  if (!signalMs || !latestBarMs || !Number.isFinite(timeframeMs) || timeframeMs <= 0) {
+    return presentBars;
+  }
+  const elapsedMs = latestBarMs - signalMs;
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return presentBars;
+  }
+  return Math.max(presentBars ?? 0, Math.round(elapsedMs / timeframeMs));
 };
 
 const eventActivityMs = (event) =>
@@ -68,6 +106,16 @@ const eventSignalKey = (event) => {
   if (!symbol || !timeframe || !direction || !signalAt) return "";
   return [event?.profileId || "", symbol, timeframe, direction, signalAt].join("|");
 };
+
+export const canonicalSignalMonitorEventsForMatrixMerge = ({
+  events = [],
+  sourceStatus = "database",
+} = {}) =>
+  sourceStatus === "runtime-fallback"
+    ? []
+    : Array.isArray(events)
+      ? events
+      : [];
 
 export const readSignalMatrixStateActivityMs = (state) =>
   Math.max(
@@ -86,6 +134,38 @@ const hasSignalDirection = (state) => {
   return direction === "buy" || direction === "sell";
 };
 
+const readDirectionalSignalMs = (state) =>
+  hasSignalDirection(state) ? timestampMs(state?.currentSignalAt) : 0;
+
+const mergeDirectionalStateWithMetadata = (directionalState, metadataState) => {
+  if (!directionalState || !metadataState) return directionalState || null;
+  if (
+    readSignalMatrixStateActivityMs(metadataState) <=
+    readSignalMatrixStateActivityMs(directionalState)
+  ) {
+    return directionalState;
+  }
+  const latestBarAt = metadataState.latestBarAt || directionalState.latestBarAt;
+  return {
+    ...metadataState,
+    currentSignalDirection: directionalState.currentSignalDirection,
+    currentSignalAt: directionalState.currentSignalAt,
+    currentSignalPrice:
+      directionalState.currentSignalPrice ?? metadataState.currentSignalPrice ?? null,
+    barsSinceSignal: signalMatrixBarsSinceSignal({
+      timeframe: metadataState.timeframe || directionalState.timeframe,
+      signalAt: directionalState.currentSignalAt,
+      latestBarAt,
+      presentBarsSinceSignal:
+        directionalState.barsSinceSignal ?? metadataState.barsSinceSignal,
+    }),
+    fresh: false,
+    displayHydrationSource:
+      directionalState.displayHydrationSource ||
+      metadataState.displayHydrationSource,
+  };
+};
+
 const signalMatrixStateRank = (state) => {
   if (!state) return 0;
   const status = normalizeSignalStatus(state);
@@ -95,6 +175,28 @@ const signalMatrixStateRank = (state) => {
   if (readSignalMatrixStateActivityMs(state) > 0) return 3;
   return 1;
 };
+
+const equivalentSignalMatrixCellState = (current, candidate) =>
+  signalMatrixStateKey(current) === signalMatrixStateKey(candidate) &&
+  normalizeSignalStatus(current) === normalizeSignalStatus(candidate) &&
+  normalizeSignalDirection(current?.currentSignalDirection) ===
+    normalizeSignalDirection(candidate?.currentSignalDirection) &&
+  timestampMs(current?.currentSignalAt) === timestampMs(candidate?.currentSignalAt) &&
+  timestampMs(current?.latestBarAt) === timestampMs(candidate?.latestBarAt) &&
+  timestampMs(current?.lastEvaluatedAt) === timestampMs(candidate?.lastEvaluatedAt) &&
+  comparableFiniteNumberOrNull(current?.currentSignalPrice) ===
+    comparableFiniteNumberOrNull(candidate?.currentSignalPrice) &&
+  comparableFiniteNumberOrNull(current?.barsSinceSignal) ===
+    comparableFiniteNumberOrNull(candidate?.barsSinceSignal) &&
+  Boolean(current?.fresh) === Boolean(candidate?.fresh) &&
+  (current?.active !== false) === (candidate?.active !== false) &&
+  String(current?.lastError || "") === String(candidate?.lastError || "") &&
+  String(current?.actionBlocker || "") === String(candidate?.actionBlocker || "") &&
+  Boolean(current?.actionEligible) === Boolean(candidate?.actionEligible) &&
+  String(current?.sourceType || "") === String(candidate?.sourceType || "") &&
+  String(current?.eventId || "") === String(candidate?.eventId || "") &&
+  String(current?.displayHydrationSource || "") ===
+    String(candidate?.displayHydrationSource || "");
 
 export const preferSignalMatrixCellState = (current, candidate) => {
   if (!current) return candidate || null;
@@ -113,7 +215,17 @@ export const preferSignalMatrixCellState = (current, candidate) => {
   const currentHasDirection = hasSignalDirection(current);
   const candidateHasDirection = hasSignalDirection(candidate);
   if (currentHasDirection !== candidateHasDirection) {
-    return currentHasDirection ? current : candidate;
+    return currentHasDirection
+      ? mergeDirectionalStateWithMetadata(current, candidate)
+      : mergeDirectionalStateWithMetadata(candidate, current);
+  }
+
+  if (currentHasDirection && candidateHasDirection) {
+    const currentSignalAt = readDirectionalSignalMs(current);
+    const candidateSignalAt = readDirectionalSignalMs(candidate);
+    if (candidateSignalAt !== currentSignalAt) {
+      return candidateSignalAt > currentSignalAt ? candidate : current;
+    }
   }
 
   const currentActivity = readSignalMatrixStateActivityMs(current);
@@ -128,7 +240,7 @@ export const preferSignalMatrixCellState = (current, candidate) => {
     return candidateRank > currentRank ? candidate : current;
   }
 
-  return candidate;
+  return equivalentSignalMatrixCellState(current, candidate) ? current : candidate;
 };
 
 const hasDisplaySignalDirection = (state) =>
@@ -198,6 +310,12 @@ export const signalMonitorEventToMatrixState = (
     finiteNumberOrNull(event?.signalPrice) ??
     finiteNumberOrNull(event?.close) ??
     finiteNumberOrNull(currentState?.currentSignalPrice);
+  const barsSinceSignal = signalMatrixBarsSinceSignal({
+    timeframe,
+    signalAt,
+    latestBarAt,
+    presentBarsSinceSignal: payload.barsSinceSignal ?? currentState?.barsSinceSignal,
+  });
 
   return {
     ...(currentState || {}),
@@ -214,7 +332,7 @@ export const signalMonitorEventToMatrixState = (
     currentSignalPrice: signalPrice,
     latestBarAt,
     lastEvaluatedAt,
-    barsSinceSignal: currentState?.barsSinceSignal ?? null,
+    barsSinceSignal,
     fresh: false,
     actionEligible: false,
     source: event?.source || currentState?.source || "pyrus-signals",

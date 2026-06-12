@@ -84,6 +84,212 @@ test("closed IBKR trigger model exposes compact line usage when a snapshot is av
   assert.equal(model.compactLineUsage?.summary, "12 of 200");
 });
 
+test("closed IBKR trigger treats unreachable backed off bridge health as offline", () => {
+  const model = buildHeaderIbkrTriggerModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: true,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: true,
+        healthFresh: false,
+        healthError: "IBKR bridge health work is backed off.",
+        healthErrorCode: "ibkr_bridge_work_backoff",
+        healthErrorDetail: "Bridge health work is backed off for 9198ms.",
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "bridge_unreachable",
+        strictReady: false,
+        strictReason: "health_error",
+      },
+    },
+    runtimeError: null,
+  });
+
+  assert.equal(model.health.status, "offline");
+  assert.equal(model.health.label, "Offline");
+  assert.equal(model.issue.key, "offline");
+  assert.equal(model.issue.severity, "error");
+  assert.match(model.issue.label, /not reachable/i);
+});
+
+test("closed IBKR trigger treats active bridge context with missing health proof as pending", () => {
+  const model = buildHeaderIbkrTriggerModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: true,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: false,
+        healthFresh: false,
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "checking",
+        streamStateReason: "health_pending",
+        strictReady: false,
+        strictReason: "health_unavailable",
+      },
+    },
+    runtimeError: null,
+  });
+
+  assert.equal(model.health.status, "stale");
+  assert.equal(model.health.label, "Health Pending");
+  assert.notEqual(model.issue.key, "offline");
+  assert.equal(model.issue.severity, "warning");
+});
+
+test("open IBKR popover labels active bridge health checks as pending, not server offline", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    latencyStats: null,
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: true,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: false,
+        healthFresh: false,
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "checking",
+        streamStateReason: "health_pending",
+        strictReady: false,
+        strictReason: "health_unavailable",
+      },
+    },
+    runtimeError: null,
+    lineUsageSnapshot: null,
+  });
+
+  const gatewayTile = model.tiles.find((tile) => tile.label === "Gateway");
+  assert.equal(model.health.label, "Health Pending");
+  assert.equal(gatewayTile?.value, "Health pending");
+  assert.notEqual(gatewayTile?.value, "Server offline");
+});
+
+test("closed IBKR trigger surfaces dead tunnel failures instead of pending bridge wording", () => {
+  const model = buildHeaderIbkrTriggerModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: true,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: false,
+        healthFresh: false,
+        healthError: "IBKR bridge health is temporarily backed off.",
+        healthErrorCode: "ibkr_bridge_health_backoff",
+        healthErrorDetail: "Bridge health checks are backed off for 2416ms.",
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "bridge_unreachable",
+        strictReady: false,
+        strictReason: "health_error",
+        governor: {
+          health: {
+            lastFailure: "HTTP 530 <none>: error code: 1033",
+          },
+        },
+      },
+    },
+    runtimeError: null,
+  });
+
+  assert.equal(model.health.status, "offline");
+  assert.equal(model.health.label, "Offline");
+  assert.equal(model.issue.key, "offline");
+  assert.equal(model.issue.severity, "error");
+  assert.match(model.issue.label, /HTTP 530/);
+});
+
+test("closed IBKR trigger still marks an unreachable inactive bridge offline", () => {
+  const model = buildHeaderIbkrTriggerModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: false,
+        desktopAgentOnline: false,
+        healthFresh: false,
+        healthError: "connect ECONNREFUSED 127.0.0.1:5001",
+        healthErrorCode: "ECONNREFUSED",
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "bridge_unreachable",
+        strictReady: false,
+        strictReason: "bridge_unreachable",
+      },
+    },
+    runtimeError: null,
+  });
+
+  assert.equal(model.health.status, "offline");
+  assert.equal(model.health.label, "Offline");
+  assert.equal(model.issue.key, "offline");
+  assert.equal(model.issue.severity, "error");
+});
+
 test("line usage rows display shared app headroom instead of per-pool ceilings", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 30,

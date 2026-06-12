@@ -560,6 +560,14 @@ const signalRowTimestampMs = (...values) => {
   return 0;
 };
 
+const signalRowSignalTimestampMs = (signal) => {
+  const signalRecord = asRecord(signal);
+  return Math.max(
+    Date.parse(signalRecord.signalAt || "") || 0,
+    Date.parse(signalRecord.currentSignalAt || "") || 0,
+  );
+};
+
 const signalRowsHaveCompatibleSignalAt = (
   signalRecord,
   candidateRecord,
@@ -866,23 +874,28 @@ export const buildVisibleSignalRows = ({
     });
   }
 
-  // Collapse to one row per (symbol, timeframe): the STA table shows the current
-  // signal per cell from the live Signal Matrix, then signal history. The freshest
-  // ticker-driven signal is the action row.
-  // This drops history rows for cells that already have a signal, and older
-  // same-cell events, which otherwise render as "multiples of each signal".
-  const cellSeen = new Set();
-  const collapsed = [];
+  // Collapse to one row per (symbol, timeframe), keeping the newest signal for
+  // the selected execution/action timeframe. On ties, keep the existing row so
+  // the live Signal Matrix remains the action source for the same signal.
+  const collapsedByCell = new Map();
   rows.forEach((row) => {
     const symbol = normalizeMatchToken(row.symbol);
     const timeframe = normalizeMatchToken(row.timeframe);
     const cell = symbol && timeframe ? `${symbol}|${timeframe}` : "";
-    if (cell && cellSeen.has(cell)) return;
-    if (cell) cellSeen.add(cell);
-    collapsed.push(row);
+    if (!cell) return;
+    const current = collapsedByCell.get(cell);
+    if (
+      !current ||
+      signalRowSignalTimestampMs(row) > signalRowSignalTimestampMs(current)
+    ) {
+      collapsedByCell.set(cell, row);
+    }
   });
 
-  return collapsed;
+  return Array.from(collapsedByCell.values()).sort(
+    (left, right) =>
+      signalRowSignalTimestampMs(right) - signalRowSignalTimestampMs(left),
+  );
 };
 
 export const findSignalOptionsCandidateForSignal = (candidates, signal) => {

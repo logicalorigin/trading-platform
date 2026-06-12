@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
-  buildAlgoSignalMatrixHydrationRequest,
   buildStaSparklineHydrationSymbols,
   buildStaSignalSparklineBatchRequest,
   buildStaSignalStatusSummary,
@@ -12,26 +12,11 @@ import {
   splitStaRowsBySignalMatrixHydration,
 } from "./OperationsSignalTable.jsx";
 
-test("STA signal matrix hydration uses control-rail trading timeframes only", () => {
-  const request = buildAlgoSignalMatrixHydrationRequest({
-    rows: [
-      {
-        signal: {
-          symbol: "SPY",
-          timeframe: "5m",
-        },
-      },
-    ],
-    currentStates: [],
-    timeframes: ["1m", "2m", "5m"],
-  });
+const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.url), "utf8");
 
-  assert.deepEqual(request.requestSymbols, ["SPY"]);
-  assert.deepEqual(request.requestTimeframes, ["5m", "1m", "2m"]);
-  assert.deepEqual(
-    request.requestCells.map((cell) => cell.timeframe),
-    ["5m", "1m", "2m"],
-  );
+test("STA table does not request Signal Matrix hydration", () => {
+  assert.doesNotMatch(source, /onRequestSignalMatrixHydration/);
+  assert.doesNotMatch(source, /buildAlgoSignalMatrixHydrationRequest/);
 });
 
 test("STA status summary separates rows, received signals, actions, and history", () => {
@@ -51,64 +36,6 @@ test("STA status summary separates rows, received signals, actions, and history"
     "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago",
   );
   assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5");
-});
-
-test("STA signal matrix hydration prioritizes the row execution timeframe", () => {
-  const request = buildAlgoSignalMatrixHydrationRequest({
-    rows: [
-      {
-        signal: {
-          symbol: "MU",
-          timeframe: "5m",
-        },
-      },
-    ],
-    currentStates: [],
-    timeframes: ["2m", "5m", "15m"],
-  });
-
-  assert.deepEqual(
-    request.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    ["MU:5m", "MU:2m", "MU:15m"],
-  );
-  assert.deepEqual(request.requestTimeframes, ["5m", "2m", "15m"]);
-});
-
-test("STA signal matrix hydration refreshes stale selected bubbles", () => {
-  const request = buildAlgoSignalMatrixHydrationRequest({
-    rows: [
-      {
-        signal: {
-          symbol: "VST",
-          timeframe: "5m",
-        },
-      },
-    ],
-    currentStates: [
-      {
-        symbol: "VST",
-        timeframe: "2m",
-        active: true,
-        latestBarAt: "2026-06-08T18:00:00.000Z",
-        lastEvaluatedAt: "2026-06-08T18:00:10.000Z",
-        status: "stale",
-      },
-      {
-        symbol: "VST",
-        timeframe: "5m",
-        active: true,
-        latestBarAt: "2026-06-08T18:00:00.000Z",
-        lastEvaluatedAt: "2026-06-08T18:00:10.000Z",
-        status: "ok",
-      },
-    ],
-    timeframes: ["2m", "5m", "15m"],
-  });
-
-  assert.deepEqual(
-    request.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    ["VST:2m", "VST:15m"],
-  );
 });
 
 test("STA signal rows do not wait for companion timeframe bubbles", () => {
@@ -170,36 +97,6 @@ test("STA signal rows do not wait for companion timeframe bubbles", () => {
     ["ALIT", "SPY"],
   );
   assert.deepEqual(split.rows[0].matrixHydration.missingTimeframes, ["1m"]);
-
-  const request = buildAlgoSignalMatrixHydrationRequest({
-    rows,
-    currentStates: [
-      {
-        symbol: "ALIT",
-        timeframe: "5m",
-        status: "ok",
-        latestBarAt: "2026-06-09T13:35:00.000Z",
-      },
-      {
-        symbol: "SPY",
-        timeframe: "1m",
-        status: "stale",
-        latestBarAt: "2026-06-09T13:35:00.000Z",
-      },
-      {
-        symbol: "SPY",
-        timeframe: "5m",
-        status: "ok",
-        latestBarAt: "2026-06-09T13:35:00.000Z",
-      },
-    ],
-    timeframes: ["1m", "5m"],
-  });
-
-  assert.deepEqual(
-    request.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    ["ALIT:1m", "SPY:1m"],
-  );
 });
 
 test("STA normal rows accept evaluated diagnostic signal bubbles", () => {

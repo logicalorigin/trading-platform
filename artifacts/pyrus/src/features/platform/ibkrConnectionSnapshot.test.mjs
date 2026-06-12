@@ -185,3 +185,72 @@ test("suppresses stale broker proof after deactivation clears configuration", ()
   assert.equal(ibkr.streamFresh, false);
   assert.equal(ibkr.strictReady, false);
 });
+
+test("carries session bridge health failures through the header runtime snapshot", () => {
+  const snapshot = buildIbkrConnectionSnapshot({
+    session: {
+      configured: { ibkr: true },
+      environment: "paper",
+      ibkrBridge: null,
+      runtime: {
+        ibkr: {
+          runtimeOverrideActive: true,
+          runtimeOverrideUpdatedAt: "2026-06-12T19:16:53.215Z",
+          desktopAgentOnline: true,
+          desktopAgentRegistered: true,
+          desktopAgentRegisteredCount: 1,
+          desktopAgentCompatibility: "compatible",
+          desktopAgentCompatible: true,
+          desktopAgentHelperVersion: "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+          desktopAgentKnownBad: false,
+          desktopAgentExpectedHelperVersion:
+            "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+          desktopAgentUpgradeRequired: false,
+          reconnectAvailable: false,
+          activation: { active: false },
+          healthError: "IBKR bridge health is temporarily backed off.",
+          healthErrorCode: "ibkr_bridge_health_backoff",
+          healthErrorStatusCode: 503,
+          healthErrorDetail: "Bridge health checks are backed off for 2416ms.",
+          reachable: false,
+          healthFresh: false,
+          stale: true,
+          bridgeReachable: false,
+          socketConnected: false,
+          brokerServerConnected: false,
+          connected: false,
+          authenticated: false,
+          accountsLoaded: false,
+          streamFresh: false,
+          streamState: "reconnect_needed",
+          streamStateReason: "bridge_unreachable",
+          strictReady: false,
+          strictReason: "health_error",
+          governor: {
+            health: {
+              lastFailure: "HTTP 530 <none>: error code: 1033",
+            },
+          },
+        },
+      },
+    },
+    nowMs: Date.parse("2026-06-12T20:30:00.000Z"),
+  });
+
+  const ibkr = snapshot.runtimeDiagnostics.ibkr;
+
+  assert.equal(snapshot.available, true);
+  assert.equal(ibkr.configured, true);
+  assert.equal(ibkr.runtimeOverrideActive, true);
+  assert.equal(ibkr.desktopAgentOnline, true);
+  assert.equal(ibkr.healthFresh, false);
+  assert.equal(ibkr.bridgeReachable, false);
+  assert.equal(ibkr.streamState, "reconnect_needed");
+  assert.equal(ibkr.streamStateReason, "bridge_unreachable");
+  assert.equal(ibkr.strictReason, "health_error");
+  assert.equal(ibkr.healthErrorCode, "ibkr_bridge_health_backoff");
+  assert.equal(
+    ibkr.governor.health.lastFailure,
+    "HTTP 530 <none>: error code: 1033",
+  );
+});

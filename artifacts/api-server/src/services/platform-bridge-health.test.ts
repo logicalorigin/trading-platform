@@ -5,14 +5,20 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import test, { after } from "node:test";
 
+import { HttpError } from "../lib/errors";
 import {
   clearIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
 import {
+  __resetBridgeGovernorForTests,
+  recordBridgeWorkFailure,
+} from "./bridge-governor";
+import {
   __platformBridgeHealthInternalsForTests,
   __setIbkrBridgeClientFactoryForTests,
   getBridgeHealthForSession,
+  getSessionBridgeHealthFailureState,
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
 } from "./platform-bridge-health";
@@ -275,4 +281,40 @@ test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconne
     null,
     "after invalidation the read must be disconnected, not stale-connected",
   );
+});
+
+test("session bridge health failure state summarizes health governor backoff", () => {
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+  __resetBridgeGovernorForTests();
+
+  try {
+    const bridgeError = new HttpError(530, "HTTP 530 <none>: error code: 1033", {
+      code: "upstream_http_error",
+    });
+    recordBridgeWorkFailure("health", bridgeError);
+    recordBridgeWorkFailure("health", bridgeError);
+
+    const state = getSessionBridgeHealthFailureState();
+
+    assert(state, "expected compact session bridge failure state");
+    assert.equal(state.healthFresh, false);
+    assert.equal(state.bridgeReachable, false);
+    assert.equal(state.socketConnected, false);
+    assert.equal(state.connected, false);
+    assert.equal(state.strictReady, false);
+    assert.equal(state.strictReason, "health_error");
+    assert.equal(state.streamState, "reconnect_needed");
+    assert.equal(state.streamStateReason, "bridge_unreachable");
+    assert.equal(state.healthErrorCode, "ibkr_bridge_health_backoff");
+    assert.match(state.healthError, /temporarily backed off/i);
+    assert.equal(
+      state.governor.health.lastFailure,
+      "HTTP 530 <none>: error code: 1033",
+    );
+  } finally {
+    __resetBridgeGovernorForTests();
+  }
 });

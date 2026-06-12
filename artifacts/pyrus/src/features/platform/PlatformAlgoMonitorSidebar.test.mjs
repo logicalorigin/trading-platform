@@ -3,8 +3,6 @@ import test from "node:test";
 
 import {
   buildAlgoMonitorStaSignalRows,
-  buildAlgoMonitorSignalMatrixHydrationRequest,
-  buildAlgoMonitorSignalMatrixHydrationRequestKey,
   resolveAlgoMonitorReadinessStatus,
   splitAlgoMonitorSignalRowsByMatrixHydration,
 } from "./PlatformAlgoMonitorSidebar.jsx";
@@ -81,56 +79,6 @@ test("Algo monitor sidebar includes pushed Signal Matrix rows before options sna
   assert.equal(rows[0].symbol, "TSM");
   assert.equal(rows[0].timeframe, "5m");
   assert.equal(rows[0].sourceType, "signal_matrix_state");
-});
-
-
-test("Algo monitor sidebar hydration uses selected trading frames and execution priority", () => {
-  const request = buildAlgoMonitorSignalMatrixHydrationRequest({
-    rows: [
-      {
-        signal: {
-          symbol: "MU",
-          timeframe: "5m",
-        },
-      },
-    ],
-    currentStates: [],
-    timeframes: ["2m", "5m", "15m"],
-  });
-
-  assert.deepEqual(request.requestSymbols, ["MU"]);
-  assert.deepEqual(request.requestTimeframes, ["5m", "2m", "15m"]);
-  assert.deepEqual(
-    request.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    ["MU:5m", "MU:2m", "MU:15m"],
-  );
-});
-
-test("Algo monitor sidebar hydration request key is stable for duplicate requests", () => {
-  const first = buildAlgoMonitorSignalMatrixHydrationRequest({
-    rows: [{ signal: { symbol: "MU", timeframe: "5m" } }],
-    currentStates: [],
-    timeframes: ["2m", "5m", "15m"],
-  });
-  const second = buildAlgoMonitorSignalMatrixHydrationRequest({
-    rows: [{ signal: { symbol: "MU", timeframe: "5m" } }],
-    currentStates: [],
-    timeframes: ["2m", "5m", "15m"],
-  });
-  const changed = buildAlgoMonitorSignalMatrixHydrationRequest({
-    rows: [{ signal: { symbol: "NVDA", timeframe: "5m" } }],
-    currentStates: [],
-    timeframes: ["2m", "5m", "15m"],
-  });
-
-  assert.equal(
-    buildAlgoMonitorSignalMatrixHydrationRequestKey(first),
-    buildAlgoMonitorSignalMatrixHydrationRequestKey(second),
-  );
-  assert.notEqual(
-    buildAlgoMonitorSignalMatrixHydrationRequestKey(first),
-    buildAlgoMonitorSignalMatrixHydrationRequestKey(changed),
-  );
 });
 
 test("Algo monitor sidebar does not withhold action rows for companion bubbles", () => {

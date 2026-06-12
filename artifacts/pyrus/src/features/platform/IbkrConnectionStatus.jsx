@@ -811,6 +811,14 @@ export const resolveIbkrGatewayHealth = ({
   );
   const proof = resolveConnectionProof(connection, runtime);
   const streamHasCurrentEvidence = hasCurrentUptimeStreamEvidence(proof);
+  const activeBridgeContext = Boolean(
+    runtime?.desktopAgentOnline === true ||
+      runtime?.runtimeOverrideActive === true,
+  );
+  const hasDisconnectReason = Boolean(
+    isGatewayDisconnectReason(proof.strictReason) ||
+      isGatewayDisconnectReason(proof.streamStateReason),
+  );
 
   if (!configured || bridgeUrlConfigured === false) {
     return {
@@ -832,14 +840,20 @@ export const resolveIbkrGatewayHealth = ({
 
   if (
     proof.healthFresh === false &&
-    (proof.bridgeReachable || proof.socketConnected || authenticated) &&
+    (proof.bridgeReachable ||
+      proof.socketConnected ||
+      authenticated ||
+      activeBridgeContext) &&
+    !hasDisconnectReason &&
     !streamHasCurrentEvidence
   ) {
     return {
       status: "stale",
       label: "Health Pending",
       color: CSS_COLOR.amber,
-      detail: "Gateway health is pending; waiting for the next successful check",
+      detail: activeBridgeContext
+        ? "Bridge context is active; waiting for Gateway health proof"
+        : "Gateway health is pending; waiting for the next successful check",
     };
   }
 

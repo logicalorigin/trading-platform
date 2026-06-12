@@ -71,10 +71,6 @@ import {
 import { useMemoryPressureSnapshot } from "../../features/platform/memoryPressureStore";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
-import {
-  buildSignalsMatrixHydrationPlan,
-  prioritizeSignalMatrixTimeframes,
-} from "../../features/signals/signalsMatrixHydration.js";
 import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
 import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
@@ -802,20 +798,6 @@ const rowSearchText = (row) => {
     .join(" ");
 };
 
-const rowMatrixSymbols = (rows = []) => {
-  const seen = new Set();
-  const symbols = [];
-  (Array.isArray(rows) ? rows : []).forEach((row) => {
-    const symbol = String(asRecord(asRecord(row).signal).symbol || "")
-      .trim()
-      .toUpperCase();
-    if (!symbol || seen.has(symbol)) return;
-    seen.add(symbol);
-    symbols.push(symbol);
-  });
-  return symbols;
-};
-
 const rowSignalTimeframes = (rows = []) => {
   const seen = new Set();
   const timeframes = [];
@@ -977,45 +959,6 @@ export const splitStaRowsBySignalMatrixHydration = ({
     rows: rowsWithHydration,
     hydratedRows,
     pendingRows,
-  };
-};
-
-export const buildAlgoSignalMatrixHydrationRequest = ({
-  rows = [],
-  currentStates = [],
-  timeframes,
-} = {}) => {
-  const symbols = rowMatrixSymbols(rows);
-  if (!symbols.length) return null;
-  const requestTimeframes = prioritizeSignalMatrixTimeframes(
-    timeframes,
-    rowSignalTimeframes(rows),
-  );
-
-  const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
-    symbols,
-    prioritySymbols: symbols,
-    currentStates,
-    timeframes: requestTimeframes,
-    refreshStale: true,
-  });
-
-  if (
-    !matrixHydrationPlan.symbols.length ||
-    !matrixHydrationPlan.requestSymbols.length
-  ) {
-    return null;
-  }
-
-  return {
-    symbols: matrixHydrationPlan.symbols,
-    prioritySymbols: matrixHydrationPlan.symbols,
-    missingSymbols: matrixHydrationPlan.missingSymbols,
-    requestSymbols: matrixHydrationPlan.requestSymbols,
-    requestCells: matrixHydrationPlan.requestCells,
-    timeframes: matrixHydrationPlan.requestTimeframes,
-    requestTimeframes: matrixHydrationPlan.requestTimeframes,
-    reason: "algo-signal-table",
   };
 };
 
@@ -1399,7 +1342,6 @@ export const OperationsSignalTable = ({
   safeQaMode = false,
   backgroundQueriesEnabled = false,
   rowHydrationQueriesEnabled = false,
-  onRequestSignalMatrixHydration = null,
   onOpenCandidateInTrade,
 }) => {
   const [filter, setFilter] = useState("all");
@@ -1529,19 +1471,6 @@ export const OperationsSignalTable = ({
     [page, rows],
   );
   const pageRows = paginatedRows.pageRows;
-  const signalMatrixHydrationRequest = useMemo(
-    () =>
-      buildAlgoSignalMatrixHydrationRequest({
-        rows: staFilteredRows,
-        currentStates: signalMatrixStates,
-        timeframes: displaySignalTimeframes,
-      }),
-    [displaySignalTimeframes, signalMatrixStates, staFilteredRows],
-  );
-  useEffect(() => {
-    if (!signalMatrixHydrationRequest) return;
-    onRequestSignalMatrixHydration?.(signalMatrixHydrationRequest);
-  }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
   const rowSparklineSymbols = useMemo(
     () =>
       buildStaSparklineHydrationSymbols({

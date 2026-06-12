@@ -4673,13 +4673,33 @@ const accountPositionsQueryRequestsLiveQuotes = (
   params: Record<string, unknown> | null,
 ): boolean => params?.liveQuotes === true || params?.liveQuotes === "true";
 
+const accountPositionsQueryMatchesDetail = (
+  params: Record<string, unknown> | null,
+  positionsLiveQuotes: boolean,
+): boolean =>
+  positionsLiveQuotes
+    ? optionalParamMatches(params, "detail", null)
+    : optionalParamMatches(params, "detail", "fast");
+
+const accountPositionsQueryMatchesPayload = (
+  params: Record<string, unknown> | null,
+  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId" | "assetClass">,
+): boolean => {
+  const positionsLiveQuotes = primaryAccountPositionsUseLiveQuotes(payload);
+  return (
+    assetClassParamMatches(params, payload.assetClass) &&
+    accountPositionsQueryRequestsLiveQuotes(params) === positionsLiveQuotes &&
+    accountPositionsQueryMatchesDetail(params, positionsLiveQuotes)
+  );
+};
+
 const shouldApplyPrimaryAccountPositions = (
   payload: AccountPagePrimaryPayload,
 ): boolean => Boolean(payload.accountId);
 
 const primaryAccountPositionsUseLiveQuotes = (
-  _payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
-): boolean => true;
+  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
+): boolean => isInternalShadowAccountId(payload.accountId);
 
 const orderTabParamMatches = (
   params: Record<string, unknown> | null,
@@ -4749,11 +4769,15 @@ const accountPositionsParams = (
     SeedAccountPagePrimaryQueryKeysOptions,
     "positionsLiveQuotes"
   > = {},
-) => ({
-  mode: payload.mode,
-  assetClass: accountPositionTypeParam(payload.assetClass),
-  liveQuotes: options.positionsLiveQuotes !== false,
-});
+) => {
+  const positionsLiveQuotes = options.positionsLiveQuotes !== false;
+  return {
+    mode: payload.mode,
+    assetClass: accountPositionTypeParam(payload.assetClass),
+    ...(positionsLiveQuotes ? {} : { detail: "fast" as const }),
+    liveQuotes: positionsLiveQuotes,
+  };
+};
 
 const accountClosedTradeParams = (
   payload: AccountPageDerivedPayload,
@@ -4975,9 +4999,7 @@ export const applyAccountPagePrimaryPayloadToCache = (
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
         shouldApplyPrimaryAccountPositions(payload) &&
-        assetClassParamMatches(params, payload.assetClass) &&
-        accountPositionsQueryRequestsLiveQuotes(params) ===
-          primaryAccountPositionsUseLiveQuotes(payload)
+        accountPositionsQueryMatchesPayload(params, payload)
       ) {
         queryClient.setQueryData(
           query.queryKey,
@@ -5050,7 +5072,7 @@ export const applyAccountPageLivePayloadToCache = (
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
-        assetClassParamMatches(params, payload.assetClass)
+        accountPositionsQueryMatchesPayload(params, payload)
       ) {
         queryClient.setQueryData(
           query.queryKey,

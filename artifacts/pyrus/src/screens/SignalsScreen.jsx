@@ -100,7 +100,6 @@ import {
 import {
   buildSignalsHydrationManifest,
   buildSignalsMatrixHydrationPlan,
-  buildSignalsPriorityHydrationSymbols,
 } from "../features/signals/signalsMatrixHydration.js";
 import {
   EMPTY_SIGNAL_EVENTS,
@@ -282,8 +281,6 @@ const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
 const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
 const SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT = 64;
-const SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT = 32;
-const SIGNALS_MATRIX_FULL_HYDRATION_IDLE_TIMEOUT_MS = 1_500;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
 const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 680;
 const SIGNALS_TABLE_MIN_HEIGHT_COMPACT = 620;
@@ -298,21 +295,6 @@ const readSignalsRouteDataTimingNow = () =>
   typeof performance.now === "function"
     ? performance.now()
     : Date.now();
-
-const scheduleSignalsIdleWork = (
-  callback,
-  timeout = SIGNALS_MATRIX_FULL_HYDRATION_IDLE_TIMEOUT_MS,
-) => {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-  if (typeof window.requestIdleCallback === "function") {
-    const idleId = window.requestIdleCallback(callback, { timeout });
-    return () => window.cancelIdleCallback?.(idleId);
-  }
-  const timerId = window.setTimeout(callback, Math.min(timeout, 240));
-  return () => window.clearTimeout(timerId);
-};
 
 const signalSparklineRowKey = (symbol) =>
   String(symbol || "").trim().toUpperCase();
@@ -1519,9 +1501,9 @@ function CompactIntervalCell({
     : pending
       ? `${timeframe} pending`
       : stale
-        ? `${timeframe} aged · ${intervalAge} · ${sparklinePoints.length || 0} bars`
+        ? `${timeframe} aged · ${intervalAge}`
         : hydrated
-          ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
+          ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
           : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
@@ -2732,18 +2714,15 @@ function SignalProvenanceStrip({ row, onJumpToTrade, phone }) {
 }
 
 function SignalsHydrationStrip({
-  active,
   hydrated,
   missing,
   phone,
-  priorityCount,
   timeframeHydration = [],
   total,
 }) {
   const hasUniverse = total > 0;
   const ratio = hasUniverse ? hydrated / total : 0;
   const boundedRatio = Math.max(0, Math.min(1, ratio));
-  const activeCount = hasUniverse ? Math.min(missing, toHydrationCount(active)) : 0;
   const complete = hasUniverse && missing === 0;
   const hydratedPercent = !hasUniverse
     ? 0
@@ -2751,20 +2730,11 @@ function SignalsHydrationStrip({
       ? 100
       : Math.min(99, Math.floor(boundedRatio * 100));
   const tone = !hasUniverse ? CSS_COLOR.textDim : complete ? CSS_COLOR.green : CSS_COLOR.amber;
-  const status = !hasUniverse
-    ? "Hydration idle"
-    : complete
-      ? "Fully hydrated"
-      : activeCount
-        ? `Hydrating ${activeCount} active, ${missing} remaining`
-        : `Hydrating ${missing} cells remaining`;
   const inlineStatus = !hasUniverse
-    ? "Hydration idle"
+    ? "Signal matrix idle"
     : complete
-      ? "Fully hydrated"
-      : activeCount
-        ? `Hydrating ${missing} remaining · ${activeCount} active`
-        : `Hydrating ${missing} remaining`;
+      ? "Signal matrix current"
+      : `${missing} outside freshness`;
   const timeframeRows = Array.isArray(timeframeHydration)
     ? timeframeHydration.filter((item) => item?.timeframe)
     : [];
@@ -2812,7 +2782,7 @@ function SignalsHydrationStrip({
           }}
         >
           {hasUniverse
-            ? `${hydrated}/${total} cells · ${priorityCount} priority symbols`
+            ? `${hydrated}/${total} cells covered`
             : "Waiting for monitor universe"}
         </span>
         <span
@@ -3115,7 +3085,6 @@ export default function SignalsScreen({
   onChangeMonitorFreshWindowBars,
   onChangeMonitorMaxSymbols,
   onApplyPyrusSignalsSettings,
-  onRequestSignalMatrixHydration,
 }) {
   const viewport = useViewport();
   const compact = viewport.width > 0 && viewport.width < 980;
@@ -3132,8 +3101,6 @@ export default function SignalsScreen({
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [matrixHydrationFullRequestReady, setMatrixHydrationFullRequestReady] =
-    useState(false);
   const [signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol] = useState(
     EMPTY_SIGNAL_SPARKLINE_BARS,
   );
@@ -3557,25 +3524,6 @@ export default function SignalsScreen({
     rows.length,
     signalsRowsReady,
   ]);
-  useEffect(() => {
-    if (!active || !signalsRowsReady || !filteredRows.length) {
-      setMatrixHydrationFullRequestReady(false);
-      return undefined;
-    }
-    setMatrixHydrationFullRequestReady(false);
-    return scheduleSignalsIdleWork(() => {
-      setMatrixHydrationFullRequestReady(true);
-    });
-  }, [
-    active,
-    directionFilter,
-    filteredRows.length,
-    query,
-    signalsRowsReady,
-    sortDirection,
-    sortKey,
-    statusFilter,
-  ]);
   const signalSparklineRows = useMemo(
     () =>
       captureSignalsRouteDataStage(
@@ -3781,63 +3729,28 @@ export default function SignalsScreen({
     },
     [],
   );
-  const priorityHydrationSymbols = useMemo(
-    () => {
-      const candidateSymbols = [
-        selectedSymbol,
-        expandedSymbol,
-        ...filteredRows
-          .slice(0, SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT)
-          .map((row) => row.symbol),
-      ];
-      return buildSignalsPriorityHydrationSymbols({
-        selectedSymbol,
-        expandedSymbol,
-        candidateSymbols,
-        scopeSymbols: signalsHydrationUniverseSymbols,
-      });
-    },
-    [
-      expandedSymbol,
-      filteredRows,
-      selectedSymbol,
-      signalsHydrationUniverseSymbols,
-    ],
-  );
-  const matrixHydrationSymbolChunkLimit =
-    SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT;
   const matrixHydrationPlan = useMemo(
     () =>
       captureSignalsRouteDataStage(
-        "matrix-hydration-plan-ready",
+        "matrix-coverage-ready",
         () =>
           buildSignalsMatrixHydrationPlan({
             symbols: signalsHydrationUniverseSymbols,
-            prioritySymbols: priorityHydrationSymbols,
             currentStates: [
               ...signalMatrixStates,
               ...(stateResponse?.states || []),
             ],
             timeframes: SIGNALS_TABLE_TIMEFRAMES,
-            chunkSize: matrixHydrationSymbolChunkLimit,
-            priorityChunkSize: matrixHydrationSymbolChunkLimit,
           }),
         (value) => ({
-          deferred: !matrixHydrationFullRequestReady,
           hydratedCells: value.hydratedCellCount,
           missingCells: value.missingCellCount,
-          prioritySymbols: priorityHydrationSymbols.length,
-          requestCells: value.requestCells.length,
-          requestSymbols: value.requestSymbols.length,
           symbols: value.symbols.length,
           totalCells: value.totalCellCount,
         }),
       ),
     [
       captureSignalsRouteDataStage,
-      matrixHydrationFullRequestReady,
-      matrixHydrationSymbolChunkLimit,
-      priorityHydrationSymbols,
       signalMatrixStates,
       signalsHydrationUniverseSymbols,
       stateResponse?.states,
@@ -3847,33 +3760,18 @@ export default function SignalsScreen({
     if (!active || !stateResponseReady) {
       return;
     }
-    markSignalsRouteDataTiming("matrix-hydration-plan-ready", {
-      ...(signalsRouteDataStageDetailsRef.current.get("matrix-hydration-plan-ready") || {}),
-      deferred: !matrixHydrationFullRequestReady,
+    markSignalsRouteDataTiming("matrix-coverage-ready", {
+      ...(signalsRouteDataStageDetailsRef.current.get("matrix-coverage-ready") || {}),
       missingCells: matrixHydrationPlan.missingCellCount,
-      requestCells: matrixHydrationPlan.requestCells.length,
       symbols: matrixHydrationPlan.symbols.length,
     });
   }, [
     active,
     markSignalsRouteDataTiming,
-    matrixHydrationFullRequestReady,
     matrixHydrationPlan.missingCellCount,
-    matrixHydrationPlan.requestCells.length,
     matrixHydrationPlan.symbols.length,
     stateResponseReady,
   ]);
-  const matrixHydrationRequestKey = useMemo(
-    () =>
-      matrixHydrationPlan.requestCells
-        .map((cell) => `${cell.symbol}:${cell.timeframe}`)
-        .join(","),
-    [matrixHydrationPlan.requestCells],
-  );
-  const matrixHydrationRequestTimeframes =
-    matrixHydrationPlan.timeframes;
-  const matrixHydrationRequestMaterializesPending =
-    matrixHydrationPlan.priorityMissingSymbols.length > 0;
   const summary = useMemo(() => summarizeSignalsRows(rows), [rows]);
   const netBias = useMemo(() => summarizeSignalsNetBias(rows), [rows]);
   const timeframeSignalSummary = useMemo(
@@ -3894,49 +3792,12 @@ export default function SignalsScreen({
   );
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(active),
       primaryReady: Boolean(active),
       derivedReady: Boolean(active),
       backgroundAllowed: Boolean(active),
     });
   }, [active, onReadinessChange]);
-
-  useEffect(() => {
-    if (
-      !active ||
-      !matrixHydrationPlan.symbols.length ||
-      !matrixHydrationPlan.missingCellCount
-    ) {
-      return;
-    }
-
-    onRequestSignalMatrixHydration?.({
-      symbols: matrixHydrationPlan.symbols,
-      prioritySymbols: matrixHydrationPlan.requestSymbols,
-      missingSymbols: matrixHydrationPlan.missingSymbols,
-      missingTimeframesBySymbol: matrixHydrationPlan.missingTimeframesBySymbol,
-      requestSymbols: matrixHydrationPlan.requestSymbols,
-      requestCells: matrixHydrationPlan.requestCells,
-      timeframes: matrixHydrationRequestTimeframes,
-      materializePendingCells: matrixHydrationRequestMaterializesPending,
-      reason: matrixHydrationFullRequestReady
-        ? "signals-screen"
-        : "signals-screen-initial",
-    });
-  }, [
-    active,
-    matrixHydrationFullRequestReady,
-    matrixHydrationPlan.missingCellCount,
-    matrixHydrationPlan.missingSymbols,
-    matrixHydrationPlan.missingTimeframesBySymbol,
-    matrixHydrationPlan.requestCells,
-    matrixHydrationPlan.requestSymbols,
-    matrixHydrationPlan.symbols.length,
-    matrixHydrationPlan.symbols,
-    matrixHydrationRequestMaterializesPending,
-    matrixHydrationRequestTimeframes,
-    matrixHydrationRequestKey,
-    onRequestSignalMatrixHydration,
-  ]);
 
   useEffect(() => {
     if (!selectedSymbol && filteredRows[0]?.symbol) {
@@ -3969,18 +3830,6 @@ export default function SignalsScreen({
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    onRequestSignalMatrixHydration?.({
-      symbols: matrixHydrationPlan.symbols,
-      prioritySymbols: matrixHydrationPlan.requestSymbols,
-      missingSymbols: matrixHydrationPlan.missingSymbols,
-      missingTimeframesBySymbol: matrixHydrationPlan.missingTimeframesBySymbol,
-      requestSymbols: matrixHydrationPlan.requestSymbols,
-      requestCells: matrixHydrationPlan.requestCells,
-      timeframes: matrixHydrationRequestTimeframes,
-      materializePendingCells: matrixHydrationRequestMaterializesPending,
-      reason: "signals-refresh",
-      force: true,
-    });
     Promise.allSettled([
       breadthHistoryQuery.refetch(),
       profileQuery.refetch(),
@@ -3990,14 +3839,6 @@ export default function SignalsScreen({
   }, [
     breadthHistoryQuery,
     eventsQuery,
-    matrixHydrationPlan.missingSymbols,
-    matrixHydrationPlan.missingTimeframesBySymbol,
-    matrixHydrationPlan.requestCells,
-    matrixHydrationPlan.requestSymbols,
-    matrixHydrationPlan.symbols,
-    matrixHydrationRequestMaterializesPending,
-    matrixHydrationRequestTimeframes,
-    onRequestSignalMatrixHydration,
     profileQuery,
     stateQuery,
   ]);
@@ -4367,7 +4208,9 @@ export default function SignalsScreen({
     markSignalsRouteDataTiming,
   ]);
 
-  const loading = effectiveStateLoading || (!profile && effectiveProfileLoading);
+  const loading =
+    (!stateResponseReady && effectiveStateLoading) ||
+    (!profile && effectiveProfileLoading);
   const errored =
     effectiveStateIsError || effectiveProfileIsError || eventsQuery.isError;
   useEffect(() => {
@@ -4428,13 +4271,6 @@ export default function SignalsScreen({
   const matrixHydrationTotal = matrixHydrationPlan.totalCellCount;
   const matrixHydrationHydrated = matrixHydrationPlan.hydratedCellCount;
   const matrixHydrationMissing = matrixHydrationPlan.missingCellCount;
-  const matrixHydrationActive = Math.min(
-    matrixHydrationMissing,
-    Math.max(
-      toHydrationCount(signalMatrixCoverage?.optimisticPendingCellCount),
-      toHydrationCount(signalMatrixCoverage?.pendingCellCount),
-    ),
-  );
   const matrixHydrationTone =
     matrixHydrationTotal > 0 && matrixHydrationMissing === 0
       ? CSS_COLOR.green
@@ -4724,11 +4560,9 @@ export default function SignalsScreen({
           }}
         >
           <SignalsHydrationStrip
-            active={matrixHydrationActive}
             hydrated={matrixHydrationHydrated}
             missing={matrixHydrationMissing}
             phone={phone}
-            priorityCount={priorityHydrationSymbols.length}
             timeframeHydration={matrixHydrationPlan.timeframeHydration}
             total={matrixHydrationTotal}
           />

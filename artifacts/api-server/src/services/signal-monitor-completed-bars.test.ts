@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { GetSignalMonitorStateResponse } from "@workspace/api-zod";
+
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
@@ -97,6 +99,54 @@ test("cross-session intraday signal is counted as very old, not artificially fre
   assert.ok(value > 50);
 });
 
+test("python signal matrix state recomputes elapsed bar age before freshness", () => {
+  const evaluatedAt = new Date("2026-06-12T13:44:30.000Z");
+  const result =
+    __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
+      profile: {
+        id: "paper-profile",
+        environment: "paper",
+        enabled: true,
+        watchlistId: null,
+        timeframe: "5m",
+        pyrusSignalsSettings: {},
+        freshWindowBars: 8,
+        pollIntervalSeconds: 60,
+        maxSymbols: 500,
+        evaluationConcurrency: 2,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: evaluatedAt,
+        updatedAt: evaluatedAt,
+      },
+      symbol: "AAPL",
+      timeframe: "1m",
+      evaluatedAt,
+      completedBars: [
+        bar("2026-06-12T13:15:00.000Z"),
+        bar("2026-06-12T13:44:00.000Z"),
+      ],
+      pythonState: {
+        symbol: "AAPL",
+        timeframe: "1m",
+        status: "ok",
+        signal: {
+          direction: "long",
+          barIndex: 0,
+          time: Math.floor(Date.parse("2026-06-12T13:15:00.000Z") / 1000),
+          price: 100,
+        },
+        barsSinceSignal: 1,
+        fresh: true,
+        indicatorSnapshot: null,
+        warning: null,
+      },
+    });
+
+  assert.equal(result?.barsSinceSignal, 29);
+  assert.equal(result?.fresh, false);
+});
+
 test("daily bars do not count weekends/holidays as elapsed bars", () => {
   // Friday close to Monday close is 1 daily bar, not 3 wall-clock days.
   assert.equal(
@@ -122,6 +172,7 @@ test("active-session completed bars still require the expected live edge", () =>
 });
 
 type LatchValues = {
+  timeframe: "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
   currentSignalDirection: "buy" | "sell" | null;
   currentSignalAt: Date | null;
   currentSignalPrice: string | null;
@@ -131,6 +182,7 @@ type LatchValues = {
   status: string;
 };
 const latchValues = (overrides: Partial<LatchValues> = {}): LatchValues => ({
+  timeframe: "5m",
   currentSignalDirection: null,
   currentSignalAt: null,
   currentSignalPrice: null,
@@ -158,6 +210,26 @@ test("matrix cache latches the last signal when a re-eval finds no new signal", 
   assert.equal(result.fresh, false);
   // Bar metadata still advances.
   assert.equal(result.latestBarAt.toISOString(), "2026-06-10T22:00:00.000Z");
+});
+
+test("matrix cache advances latched signal bar age from timestamps", () => {
+  const result = __signalMonitorInternalsForTests.applyStoredSignalDirectionLatch({
+    existing: {
+      currentSignalDirection: "buy",
+      currentSignalAt: new Date("2026-06-12T16:25:00.000Z"),
+      currentSignalPrice: "100",
+      barsSinceSignal: 1,
+    } as never,
+    values: latchValues({
+      timeframe: "5m",
+      latestBarAt: new Date("2026-06-12T17:10:00.000Z"),
+      barsSinceSignal: null,
+    }),
+  });
+
+  assert.equal(result.currentSignalDirection, "buy");
+  assert.equal(result.barsSinceSignal, 9);
+  assert.equal(result.fresh, false);
 });
 
 test("matrix cache flips direction when an opposite signal arrives", () => {
@@ -554,6 +626,51 @@ test("signal monitor event pagination reports source status", () => {
 
   assert.equal(response.sourceStatus, "runtime-fallback");
   assert.equal(response.hasMore, false);
+});
+
+test("signal monitor state fallback carries its source through the API contract", () => {
+  const fallback =
+    __signalMonitorInternalsForTests.buildSignalMonitorStateUnavailableResult(
+      "paper",
+      new Date("2026-06-12T16:30:00.000Z"),
+    );
+
+  assert.equal(fallback.stateSource, "runtime-fallback");
+
+  const parsed = GetSignalMonitorStateResponse.parse({
+    ...fallback.value,
+    stateSource: fallback.stateSource,
+  });
+
+  assert.equal(parsed.stateSource, "runtime-fallback");
+});
+
+test("public signal monitor state responses do not drop state source", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const storedStart = source.indexOf("export async function getSignalMonitorStoredState");
+  const storedEnd = source.indexOf("function buildSignalMonitorStateUnavailableResult", storedStart);
+  const stateStart = source.indexOf("export async function getSignalMonitorState");
+  const stateEnd = source.indexOf("export async function evaluateSignalMonitor", stateStart);
+  const evaluateStart = stateEnd;
+  const evaluateEnd = source.indexOf("export async function listSignalMonitorBreadthHistory", evaluateStart);
+  assert.notEqual(storedStart, -1);
+  assert.notEqual(storedEnd, -1);
+  assert.notEqual(stateStart, -1);
+  assert.notEqual(stateEnd, -1);
+  assert.notEqual(evaluateStart, -1);
+  assert.notEqual(evaluateEnd, -1);
+
+  const storedBlock = source.slice(storedStart, storedEnd);
+  const stateBlock = source.slice(stateStart, stateEnd);
+  const evaluateBlock = source.slice(evaluateStart, evaluateEnd);
+
+  assert.match(storedBlock, /stateSource:\s*snapshot\.stateSource/);
+  assert.doesNotMatch(storedBlock, /return snapshot\.value;/);
+  assert.match(stateBlock, /stateSource:\s*fresh\.stateSource/);
+  assert.doesNotMatch(stateBlock, /return fresh\.value;/);
+  assert.match(evaluateBlock, /stateSource:\s*stored\.stateSource/);
+  assert.match(evaluateBlock, /stateSource:\s*"database" as const/);
+  assert.match(evaluateBlock, /stateSource:\s*fallback\.stateSource/);
 });
 
 test("disabled signal monitor profile symbols do not evaluate bars", async () => {

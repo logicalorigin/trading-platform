@@ -329,6 +329,53 @@ test("visible signal rows overlay current matrix action rows on received history
   assert.deepEqual(rows[1].filterState, { adx: 21.1, sessionPass: true });
 });
 
+test("STA selected execution timeframe keeps the newest received signal over stale matrix state", () => {
+  const rows = buildVisibleSignalRows({
+    includeSignalHistory: true,
+    universeSymbols: ["CEG"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-1",
+        symbol: "CEG",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-12T15:55:00.000Z",
+        latestBarAt: "2026-06-12T16:35:00.000Z",
+        fresh: false,
+        status: "ok",
+      },
+    ],
+    signalEvents: [
+      {
+        id: "ceg-newer-exec-signal",
+        profileId: "profile-1",
+        symbol: "CEG",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-12T16:25:00.000Z",
+        emittedAt: "2026-06-12T16:25:03.000Z",
+      },
+      {
+        id: "ceg-newer-non-exec-signal",
+        profileId: "profile-1",
+        symbol: "CEG",
+        timeframe: "1m",
+        direction: "sell",
+        signalAt: "2026-06-12T16:30:00.000Z",
+        emittedAt: "2026-06-12T16:30:03.000Z",
+      },
+    ],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, "CEG");
+  assert.equal(rows[0].timeframe, "5m");
+  assert.equal(rows[0].direction, "buy");
+  assert.equal(rows[0].signalAt, "2026-06-12T16:25:00.000Z");
+  assert.equal(rows[0].sourceType, "signal_monitor_event");
+});
+
 test("visible signal rows collapse to one row per cell (no signal multiples)", () => {
   const rows = buildVisibleSignalRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),

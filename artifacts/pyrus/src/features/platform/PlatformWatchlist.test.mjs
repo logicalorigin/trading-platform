@@ -127,7 +127,11 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   assert.match(marketDataSource, /"market-sparklines"/);
   assert.match(
     marketDataSource,
-    /buildBarsRequestOptions\(\s*BARS_REQUEST_PRIORITY\.background,\s*"sparkline",?\s*\)/s,
+    /useHydrationGate\(\{\s*enabled:\s*sparklineHistoryEnabled,\s*priority:\s*BARS_REQUEST_PRIORITY\.background,\s*family:\s*"sparkline",?\s*\}\)/s,
+  );
+  assert.match(
+    marketDataSource,
+    /getBarsRequest\([\s\S]*sparklineHydrationGate\.requestOptions/s,
   );
 });
 
@@ -137,7 +141,7 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   const headerSource = readLocalSource("./AppHeader.jsx");
   const shellCallStart = source.indexOf("<PlatformShell");
   const shellCallEnd = source.indexOf(
-    "onRequestSignalMatrixHydration",
+    "selectedSymbol",
     shellCallStart,
   );
   const shellCallSource = source.slice(shellCallStart, shellCallEnd);
@@ -149,11 +153,27 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     source,
-    /states:\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMonitorStates,\s*incomingStates:\s*signalMatrixSnapshot\.states/s,
+    /states:\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
   );
   assert.match(
     source,
-    /events:\s*signalMonitorEvents/,
+    /const signalMonitorStateRuntimeFallback = Boolean\(\s*signalMonitorStateQuery\.data\?\.stateSource === "runtime-fallback",?\s*\);/s,
+  );
+  assert.match(
+    source,
+    /const signalMonitorStates =\s*signalMonitorStateRuntimeFallback\s*\?\s*EMPTY_SIGNAL_MONITOR_STATES\s*:\s*signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES;/s,
+  );
+  assert.match(
+    source,
+    /const canonicalSignalMonitorEvents = useMemo\(/,
+  );
+  assert.match(
+    source,
+    /canonicalSignalMonitorEventsForMatrixMerge\(\{\s*events:\s*signalMonitorEvents,\s*sourceStatus:\s*signalMonitorEventsSourceStatus/s,
+  );
+  assert.match(
+    source,
+    /events:\s*canonicalSignalMonitorEvents/,
   );
   assert.match(
     source,
@@ -162,6 +182,22 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   assert.match(
     source,
     /resolveRecentSignalMarketDataSymbols\(signalMonitorPublishedStates\)/,
+  );
+  assert.match(
+    source,
+    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*signalMonitorPublishedStates\.length > 0[\s\S]*\);/,
+  );
+  assert.match(
+    source,
+    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*!signalMonitorStateRuntimeFallback[\s\S]*\);/,
+  );
+  assert.match(
+    source,
+    /signalMonitorState=\{\s*signalMonitorStateRuntimeFallback\s*\?\s*null\s*:\s*signalMonitorStateQuery\.data \|\| null\s*\}/s,
+  );
+  assert.match(
+    source,
+    /signalMonitorStateLoaded=\{Boolean\([\s\S]*!signalMonitorStateRuntimeFallback[\s\S]*\)\}/,
   );
   assert.equal(
     source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)?.length,

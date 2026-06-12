@@ -527,6 +527,70 @@ function getBridgeBackoffRemainingMs(category: "orders" | "options" | "health"):
   return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
 }
 
+export function getSessionBridgeHealthFailureState() {
+  if (!getProviderConfiguration().ibkr) {
+    return null;
+  }
+
+  const healthBackedOff = isBridgeWorkBackedOff("health");
+  const governor = getBridgeGovernorSnapshot();
+  const healthGovernor = governor.health;
+  if (!healthBackedOff && !healthGovernor.lastFailure) {
+    return null;
+  }
+
+  const fallbackStreamState = resolveIbkrRuntimeStreamState({
+    configured: true,
+    healthFresh: false,
+    bridgeReachable: false,
+    connected: false,
+    brokerServerConnected: false,
+    authenticated: false,
+    accountsLoaded: false,
+  });
+  const healthError = healthBackedOff
+    ? "IBKR bridge health is temporarily backed off."
+    : (healthGovernor.lastFailure ?? "IBKR bridge health request failed.");
+
+  return {
+    reachable: false,
+    healthError,
+    healthErrorCode: healthBackedOff
+      ? "ibkr_bridge_health_backoff"
+      : "ibkr_bridge_health_failure",
+    healthErrorStatusCode: healthBackedOff ? 503 : null,
+    healthErrorDetail: healthBackedOff
+      ? `Bridge health checks are backed off for ${Math.round(
+          healthGovernor.backoffRemainingMs,
+        )}ms.`
+      : null,
+    healthFresh: false,
+    healthAgeMs: null,
+    stale: true,
+    bridgeReachable: false,
+    socketConnected: false,
+    brokerServerConnected: false,
+    connected: false,
+    authenticated: false,
+    accountsLoaded: false,
+    streamFresh: false,
+    lastStreamEventAgeMs: null,
+    strictReady: false,
+    strictReason: "health_error",
+    ...fallbackStreamState,
+    governor: {
+      health: {
+        circuitOpen: healthGovernor.circuitOpen,
+        backoffRemainingMs: healthGovernor.backoffRemainingMs,
+        failureCount: healthGovernor.failureCount,
+        lastFailure: healthGovernor.lastFailure,
+        lastFailureAt: healthGovernor.lastFailureAt,
+        lastSuccessAt: healthGovernor.lastSuccessAt,
+      },
+    },
+  };
+}
+
 export async function getRuntimeBridgeHealthState() {
   const configured = getProviderConfiguration();
   const bridgeHealthTimeoutMs = runtimeDiagnosticsTimeoutMs();

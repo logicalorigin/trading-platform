@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildSignalsRows,
   buildSignalMatrixStatesBySymbol,
   hydrateSignalMatrixProfileTimeframe,
   resolveSignalMatrixVerdict,
   sortSignalsRows,
 } from "./signalsRowModel.js";
+
+const ms = (iso) => new Date(iso).getTime();
 
 const row = (symbol, universeRank) => ({
   symbol,
@@ -38,7 +41,6 @@ test("Signals rows sort by universe rank", () => {
 });
 
 test("recency ordering ranks by signal-fire time, not bar/eval activity", () => {
-  const ms = (iso) => new Date(iso).getTime();
   // SPY: stale 5m signal (17:25) but constantly-ticking bars -> high activityMs.
   // AES: fresh signal (20:20) with a slightly older latest bar.
   const spy = {
@@ -67,6 +69,54 @@ test("recency ordering ranks by signal-fire time, not bar/eval activity", () => 
     sortSignalsRows([spy, aes], { sortKey: "priority" }).map((item) => item.symbol),
     ["AES", "SPY"],
   );
+});
+
+test("Signals rows sort by the displayed profile signal, not hidden interval activity", () => {
+  const rows = buildSignalsRows({
+    stateResponse: {
+      profile: { timeframe: "5m" },
+      universeSymbols: ["LHX", "CEG"],
+      states: [
+        {
+          symbol: "LHX",
+          timeframe: "5m",
+          status: "ok",
+          active: true,
+          fresh: false,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-10T23:55:00.000Z",
+          latestBarAt: "2026-06-12T16:40:00.000Z",
+          lastEvaluatedAt: "2026-06-12T16:40:00.000Z",
+        },
+        {
+          symbol: "LHX",
+          timeframe: "1m",
+          status: "ok",
+          active: true,
+          fresh: true,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-12T16:39:00.000Z",
+          latestBarAt: "2026-06-12T16:40:00.000Z",
+          lastEvaluatedAt: "2026-06-12T16:40:00.000Z",
+        },
+        {
+          symbol: "CEG",
+          timeframe: "5m",
+          status: "ok",
+          active: true,
+          fresh: false,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-12T16:25:00.000Z",
+          latestBarAt: "2026-06-12T16:40:00.000Z",
+          lastEvaluatedAt: "2026-06-12T16:40:00.000Z",
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(rows.map((item) => item.symbol), ["CEG", "LHX"]);
+  assert.equal(rows[1].currentSignalAt, "2026-06-10T23:55:00.000Z");
+  assert.equal(rows[1].signalActivityMs, ms("2026-06-10T23:55:00.000Z"));
 });
 
 const matrixState = (timeframe, direction) => ({
@@ -135,7 +185,7 @@ test("Signal matrix strict mode does not backfill execution bubble from primary 
   assert.equal(verdict.direction, null);
 });
 
-test("Signal matrix state index uses evaluated no-signal state over older signal", () => {
+test("Signal matrix state index keeps received signal over newer no-signal state", () => {
   const bySymbol = buildSignalMatrixStatesBySymbol([
     {
       symbol: "TSLA",
@@ -158,9 +208,44 @@ test("Signal matrix state index uses evaluated no-signal state over older signal
     },
   ]);
 
-  assert.equal(bySymbol.get("TSLA")["5m"].currentSignalDirection, null);
+  assert.equal(bySymbol.get("TSLA")["5m"].currentSignalDirection, "buy");
+  assert.equal(
+    bySymbol.get("TSLA")["5m"].currentSignalAt,
+    "2026-06-08T12:00:00.000Z",
+  );
   assert.equal(
     bySymbol.get("TSLA")["5m"].latestBarAt,
     "2026-06-08T13:00:00.000Z",
+  );
+});
+
+test("Signal matrix state index ranks directional cells by signal-fire time", () => {
+  const bySymbol = buildSignalMatrixStatesBySymbol([
+    {
+      symbol: "CEG",
+      timeframe: "5m",
+      status: "ok",
+      currentSignalDirection: "sell",
+      currentSignalAt: "2026-06-12T15:55:00.000Z",
+      latestBarAt: "2026-06-12T16:35:00.000Z",
+      lastEvaluatedAt: "2026-06-12T16:37:00.000Z",
+      fresh: false,
+    },
+    {
+      symbol: "CEG",
+      timeframe: "5m",
+      status: "ok",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-12T16:25:00.000Z",
+      latestBarAt: "2026-06-12T16:25:00.000Z",
+      lastEvaluatedAt: "2026-06-12T16:25:05.000Z",
+      fresh: true,
+    },
+  ]);
+
+  assert.equal(bySymbol.get("CEG")["5m"].currentSignalDirection, "buy");
+  assert.equal(
+    bySymbol.get("CEG")["5m"].currentSignalAt,
+    "2026-06-12T16:25:00.000Z",
   );
 });

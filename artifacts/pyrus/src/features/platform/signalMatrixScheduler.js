@@ -38,16 +38,6 @@ const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   watch: 500,
   high: 500,
 });
-const BUSY_QUEUE_DELAY_MS_BY_PRESSURE = Object.freeze({
-  normal: 0,
-  watch: 2_500,
-  high: 15_000,
-});
-const CATCHUP_DELAY_MS_BY_PRESSURE = Object.freeze({
-  normal: 1_500,
-  watch: 5_000,
-  high: 15_000,
-});
 const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "1m": 60_000,
   "2m": 2 * 60_000,
@@ -56,9 +46,6 @@ const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 });
-const SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS = 5_000;
-const SIGNAL_MATRIX_CANDLE_REFRESH_MAX_GRACE_MS = 15_000;
-const SIGNAL_MATRIX_RETRY_COOLDOWN_FALLBACK_MS = 15_000;
 const NON_HYDRATED_MATRIX_STATUSES = new Set([
   "error",
   "pending",
@@ -89,12 +76,6 @@ export const resolveSignalMatrixActiveScreenRequestTaskLimit = (
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
   return ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
 };
-
-export const resolveSignalMatrixBusyQueueDelayMs = (pressureLevel) =>
-  BUSY_QUEUE_DELAY_MS_BY_PRESSURE[normalizePressureLevel(pressureLevel)];
-
-export const resolveSignalMatrixCatchupDelayMs = (pressureLevel) =>
-  CATCHUP_DELAY_MS_BY_PRESSURE[normalizePressureLevel(pressureLevel)];
 
 const uniqueSymbols = (symbols = []) => {
   const seen = new Set();
@@ -393,36 +374,7 @@ const isHydratedState = (state) =>
           (state.lastEvaluatedAt || state.lastError))),
   );
 
-const isRecentlySettledUnavailableState = (state, timeframe, nowMs, pollMs) => {
-  if (!state || normalizeSignalStatus(state) !== "unavailable") {
-    return false;
-  }
-  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
-  if (!Number.isFinite(nowMs) || !Number.isFinite(lastEvaluatedMs)) {
-    return Boolean(state.lastError);
-  }
-  const retryAfterMs = Math.max(
-    Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 2 : 0,
-    5 * 60_000,
-  );
-  return nowMs - lastEvaluatedMs <= retryAfterMs;
-};
-
-const resolveCandleRefreshGraceMs = (pollMs) => {
-  const pollGraceMs =
-    Number.isFinite(pollMs) && pollMs > 0
-      ? Math.ceil(pollMs / 3)
-      : SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS;
-  return Math.max(
-    SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS,
-    Math.min(pollGraceMs, SIGNAL_MATRIX_CANDLE_REFRESH_MAX_GRACE_MS),
-  );
-};
-
-const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
-  if (isRecentlySettledUnavailableState(state, timeframe, nowMs, pollMs)) {
-    return false;
-  }
+const stateNeedsRefresh = (state, timeframe, nowMs) => {
   if (!isHydratedState(state)) {
     return true;
   }
@@ -435,22 +387,7 @@ const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   }
   const timeframeMs = SIGNAL_MATRIX_TIMEFRAME_MS[timeframe] || 5 * 60_000;
   const nextExpectedBarMs = latestBarMs + timeframeMs;
-  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
-  const graceMs = resolveCandleRefreshGraceMs(pollMs);
-  const retryCooldownMs = Math.max(
-    Number.isFinite(pollMs) && pollMs > 0
-      ? pollMs
-      : SIGNAL_MATRIX_RETRY_COOLDOWN_FALLBACK_MS,
-    graceMs,
-  );
-  if (
-    Number.isFinite(lastEvaluatedMs) &&
-    lastEvaluatedMs >= nextExpectedBarMs &&
-    nowMs - lastEvaluatedMs < retryCooldownMs
-  ) {
-    return false;
-  }
-  return nowMs >= nextExpectedBarMs + graceMs;
+  return nowMs >= nextExpectedBarMs;
 };
 
 const missingTimeframesForSymbol = (
@@ -465,7 +402,6 @@ const missingTimeframesForSymbol = (
       byTimeframe[timeframe],
       timeframe,
       options.nowMs,
-      options.pollMs,
     ),
   );
 };
@@ -905,7 +841,7 @@ export function mergeSignalMatrixStates({
     if (preferred) merged.set(key, preferred);
   });
 
-  return Array.from(merged.values()).sort((left, right) => {
+  const nextStates = Array.from(merged.values()).sort((left, right) => {
     const leftSymbol = normalizeSymbol(left?.symbol);
     const rightSymbol = normalizeSymbol(right?.symbol);
     if (leftSymbol !== rightSymbol) {
@@ -915,6 +851,8 @@ export function mergeSignalMatrixStates({
       String(right?.timeframe || ""),
     );
   });
+
+  return signalMatrixStatesEqual(currentStates, nextStates) ? currentStates : nextStates;
 }
 
 export function signalMatrixStatesEqual(left = [], right = []) {

@@ -629,7 +629,6 @@ export const AlgoLivePage = ({
   signalOptionsCandidates,
   signalOptionsSourceHealth,
   signalMatrixStates = [],
-  onRequestSignalMatrixHydration = null,
   selectedCandidate,
   signalOptionsProfile,
   staSignalTimeframes,
@@ -811,12 +810,12 @@ export const AlgoLivePage = ({
     ? "Deployment controls paused in safe QA"
     : deploymentToggleLabel;
   const scanButtonActionLabel = safeQaControlsPaused
-    ? "Signal Matrix refresh paused in safe QA"
+    ? "Signal scan paused in safe QA"
     : scanBlocked
       ? signalScanBlockedReason || "Signal scan unavailable"
     : scanOperationRunning
       ? "Signal action scan already running"
-      : "Refresh Signal Matrix";
+      : "Run signal scan";
   const operationsStatus = resolveOperationsStatus({
     gatewayReady,
     scanOn: Boolean(focusedDeployment?.enabled),
@@ -1360,7 +1359,6 @@ export const AlgoLivePage = ({
             signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
-            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             signalTimeframes={staSignalTimeframes}
             cockpitGeneratedAt={cockpitGeneratedAt}
             cockpitStageItems={cockpitStageItems}

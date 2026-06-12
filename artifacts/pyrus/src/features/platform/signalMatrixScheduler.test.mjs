@@ -294,6 +294,36 @@ test("signal matrix merge keeps real state over pending state", () => {
   assert.equal(merged[0].status, "ok");
 });
 
+test("signal matrix merge reuses the current array for equivalent incoming state", () => {
+  const currentStates = [
+    {
+      symbol: "CEG",
+      timeframe: "5m",
+      status: "ok",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-12T16:25:00.000Z",
+      latestBarAt: "2026-06-12T16:30:00.000Z",
+      lastEvaluatedAt: "2026-06-12T16:30:00.000Z",
+      currentSignalPrice: 93.12,
+      barsSinceSignal: 1,
+      fresh: true,
+    },
+  ];
+  const incomingStates = [
+    {
+      ...currentStates[0],
+      symbol: "ceg",
+      currentSignalPrice: "93.12",
+      barsSinceSignal: "1",
+    },
+  ];
+
+  const merged = mergeSignalMatrixStates({ currentStates, incomingStates });
+
+  assert.equal(merged, currentStates);
+  assert.equal(merged[0], currentStates[0]);
+});
+
 test("signal matrix pending reconciliation keeps only backend-confirmed pending cells", () => {
   const currentStates = [
     {

@@ -130,26 +130,22 @@ export const readSignalMatrixSnapshotCache = ({
       return null;
     }
     const resolvedTimeframes = normalizeTimeframes(parsed.timeframes || timeframes);
-    const warmStartStale =
+    const cacheAged =
       Number.isFinite(cacheAgeMs) &&
       Number.isFinite(Number(freshAgeMs)) &&
       cacheAgeMs > Number(freshAgeMs);
-    const states = sanitizeStates(parsed.states, resolvedTimeframes).map((state) =>
-      warmStartStale
-        ? {
-            ...state,
-            fresh: false,
-            status: state.status === "ok" ? "stale" : state.status,
-          }
-        : state,
-    );
+    if (cacheAged) {
+      storage.removeItem(SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY);
+      return null;
+    }
+    const states = sanitizeStates(parsed.states, resolvedTimeframes);
     if (!states.length) return null;
     return {
       states,
       timeframes: resolvedTimeframes,
       evaluatedAt: readTimestamp(parsed.evaluatedAt),
       cachedAt: savedAt,
-      cacheStatus: warmStartStale ? "warm-start-stale" : "warm-start",
+      cacheStatus: "warm-start",
     };
   } catch (_error) {
     try {

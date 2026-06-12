@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
 const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+const routeSource = readFileSync(
+  new URL("../routes/signal-monitor.ts", import.meta.url),
+  "utf8",
+);
+
+test("signal monitor routes do not expose on-demand matrix evaluation", () => {
+  assert.doesNotMatch(routeSource, /router\.post\("\/signal-monitor\/matrix"/);
+  assert.doesNotMatch(routeSource, /await evaluateSignalMonitorMatrix/);
+});
 
 function profile(id = "profile-test") {
   return {
@@ -310,4 +320,108 @@ test("signal matrix stream bootstrap event includes coverage metadata", () => {
   assert.equal(event.coverage.taskCount, 1);
   assert.equal(event.coverage.stateCount, 1);
   assert.equal(event.coverage.activeScopeSymbols, 1);
+});
+
+test("signal matrix stream bootstrap hydrates from stored canonical state", () => {
+  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  const scope =
+    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+      environment: "paper",
+      symbols: ["DIA"],
+      timeframes: ["5m", "15m"],
+      clientRole: "leader",
+      requestOrigin: "startup",
+    });
+  const event =
+    __signalMonitorInternalsForTests.buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
+      {
+        profile: { id: "profile-test" },
+        evaluatedAt,
+        states: [
+          {
+            id: "profile-test:DIA:5m",
+            profileId: "profile-test",
+            symbol: "DIA",
+            timeframe: "5m",
+            currentSignalDirection: "buy",
+            currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+            currentSignalPrice: 430.12,
+            latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+            barsSinceSignal: 1,
+            fresh: true,
+            status: "ok",
+            active: true,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: null,
+          },
+          {
+            id: "profile-test:SPY:5m",
+            profileId: "profile-test",
+            symbol: "SPY",
+            timeframe: "5m",
+            currentSignalDirection: "sell",
+            currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+            currentSignalPrice: 540.12,
+            latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+            barsSinceSignal: 1,
+            fresh: true,
+            status: "ok",
+            active: true,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: null,
+          },
+        ],
+      } as never,
+      scope,
+    );
+
+  assert.equal(event.event, "bootstrap");
+  assert.deepEqual(
+    event.states.map((state) => `${state.symbol}:${state.timeframe}`),
+    ["DIA:5m"],
+  );
+  assert.equal(event.coverage.stateCount, 1);
+});
+
+test("signal matrix stream bootstrap does not publish runtime fallback state as matrix truth", () => {
+  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  const scope =
+    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+      environment: "paper",
+      symbols: ["DIA"],
+      timeframes: ["5m"],
+      clientRole: "leader",
+      requestOrigin: "startup",
+    });
+  const event =
+    __signalMonitorInternalsForTests.buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
+      {
+        profile: { id: "state-unavailable-paper" },
+        evaluatedAt,
+        stateSource: "runtime-fallback",
+        states: [
+          {
+            id: "state-unavailable-paper:DIA:5m:unavailable",
+            profileId: "state-unavailable-paper",
+            symbol: "DIA",
+            timeframe: "5m",
+            currentSignalDirection: null,
+            currentSignalAt: null,
+            currentSignalPrice: null,
+            latestBarAt: null,
+            barsSinceSignal: null,
+            fresh: false,
+            status: "unavailable",
+            active: true,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: "event database unavailable",
+          },
+        ],
+      } as never,
+      scope,
+    );
+
+  assert.equal(event.event, "bootstrap");
+  assert.deepEqual(event.states, []);
+  assert.equal(event.coverage.stateCount, 0);
 });

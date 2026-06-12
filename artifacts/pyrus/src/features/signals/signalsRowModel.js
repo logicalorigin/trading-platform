@@ -154,6 +154,18 @@ const eventSignalMs = (event) => timestampMs(event?.signalAt);
 const preferLatestState = (left, right) => {
   if (!left) return right || null;
   if (!right) return left;
+  const leftHasSignal = hasCurrentSignalDirection(left);
+  const rightHasSignal = hasCurrentSignalDirection(right);
+  if (leftHasSignal !== rightHasSignal) {
+    return leftHasSignal ? left : right;
+  }
+  if (leftHasSignal && rightHasSignal) {
+    const leftSignalAt = stateSignalMs(left);
+    const rightSignalAt = stateSignalMs(right);
+    if (rightSignalAt !== leftSignalAt) {
+      return rightSignalAt > leftSignalAt ? right : left;
+    }
+  }
   return stateActivityMs(right) >= stateActivityMs(left) ? right : left;
 };
 
@@ -407,7 +419,7 @@ const preferPrimaryMatrixFallback = (currentState, primaryState) => {
   if (!primaryComputed) return currentState || null;
   const currentComputed = hasComputedMatrixState(currentState);
   if (!currentComputed) return primaryState;
-  return stateActivityMs(primaryState) > stateActivityMs(currentState)
+  return preferLatestState(currentState, primaryState) === primaryState
     ? primaryState
     : currentState;
 };
@@ -950,11 +962,22 @@ export const buildSignalsRows = ({
         eventActivityMs(latestEvent),
         ...Object.values(matrixStatesByTimeframe).map(stateActivityMs),
       );
-      const signalActivityMs = Math.max(
-        stateSignalMs(primaryState),
-        eventSignalMs(latestEvent),
-        ...Object.values(matrixStatesByTimeframe).map(stateSignalMs),
-      );
+      const displaySignalAt =
+        currentPrimaryState?.currentSignalAt ||
+        currentMatrixSignalState?.currentSignalAt ||
+        latestEvent?.signalAt ||
+        null;
+      const displaySignalPrice =
+        typeof currentPrimaryState?.currentSignalPrice === "number"
+          ? currentPrimaryState.currentSignalPrice
+          : typeof currentMatrixSignalState?.currentSignalPrice === "number"
+            ? currentMatrixSignalState.currentSignalPrice
+            : typeof latestEvent?.signalPrice === "number"
+              ? latestEvent.signalPrice
+              : typeof latestEvent?.close === "number"
+                ? latestEvent.close
+                : null;
+      const signalActivityMs = timestampMs(displaySignalAt);
       const membership = watchlistMembership.get(symbol) || {
         watchlistIds: [],
         watchlistLabels: [],
@@ -997,16 +1020,8 @@ export const buildSignalsRows = ({
           : Number.isFinite(Number(currentMatrixSignalState?.barsSinceSignal))
             ? Number(currentMatrixSignalState.barsSinceSignal)
             : null,
-        currentSignalAt:
-          currentPrimaryState?.currentSignalAt ||
-          currentMatrixSignalState?.currentSignalAt ||
-          null,
-        currentSignalPrice:
-          typeof currentPrimaryState?.currentSignalPrice === "number"
-            ? currentPrimaryState.currentSignalPrice
-            : typeof currentMatrixSignalState?.currentSignalPrice === "number"
-              ? currentMatrixSignalState.currentSignalPrice
-              : null,
+        currentSignalAt: displaySignalAt,
+        currentSignalPrice: displaySignalPrice,
         latestBarAt:
           primaryState?.latestBarAt ||
           Object.values(matrixStatesByTimeframe)

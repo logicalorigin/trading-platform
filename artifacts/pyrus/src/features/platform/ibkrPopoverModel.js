@@ -482,6 +482,7 @@ const getIssueSeverity = (issue) => {
     return "healthy";
   }
   if (
+    issue.key === "stale" ||
     issue.key === "stream-gaps" ||
     issue.key === "quote-stream-reconnecting" ||
     issue.key === "legacy-env"
@@ -877,6 +878,9 @@ export const buildHeaderIbkrPopoverModel = ({
     runtimeDiagnostics,
     lineUsageSnapshot,
   });
+  const gatewayHealthPending =
+    health.status === "stale" &&
+    /health pending/i.test(String(health.label || ""));
   const lineUsage =
     normalizedLineUsage ||
     buildLineUsageRows(
@@ -909,7 +913,9 @@ export const buildHeaderIbkrPopoverModel = ({
     {
       label: "Gateway",
       value:
-        gatewaySocket == null
+        gatewayHealthPending
+          ? "Health pending"
+          : gatewaySocket == null
           ? runtimeState
           : brokerServerConnected === false
             ? "Server offline"
@@ -917,7 +923,9 @@ export const buildHeaderIbkrPopoverModel = ({
             ? "Connected"
             : "Offline",
       tone:
-        gatewayConnected
+        gatewayHealthPending
+          ? CSS_COLOR.amber
+          : gatewayConnected
           ? CSS_COLOR.green
           : gatewaySocket === false
             ? CSS_COLOR.red

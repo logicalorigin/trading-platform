@@ -433,12 +433,12 @@ test("account page payload merge preserves cached execution open date", () => {
   assert.equal(merged.dayChangePercent, merged.unrealizedPnlPercent);
 });
 
-test("account page positions query keys request live quote hydration", () => {
+test("account page positions query keys request fast real-account positions first", () => {
   assert.equal(
     __liveStreamsInternalsForTests.primaryAccountPositionsUseLiveQuotes({
       accountId: "U123",
     }),
-    true,
+    false,
   );
   assert.equal(
     __liveStreamsInternalsForTests.primaryAccountPositionsUseLiveQuotes({
@@ -455,6 +455,21 @@ test("account page positions query keys request live quote hydration", () => {
       mode: "live",
       assetClass: undefined,
       liveQuotes: true,
+    },
+  );
+  assert.deepEqual(
+    __liveStreamsInternalsForTests.accountPositionsParams(
+      {
+        mode: "live",
+        assetClass: null,
+      },
+      { positionsLiveQuotes: false },
+    ),
+    {
+      mode: "live",
+      assetClass: undefined,
+      detail: "fast",
+      liveQuotes: false,
     },
   );
   assert.deepEqual(

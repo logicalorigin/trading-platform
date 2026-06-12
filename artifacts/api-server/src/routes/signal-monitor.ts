@@ -2,8 +2,6 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import {
   EvaluateSignalMonitorBody,
   EvaluateSignalMonitorResponse,
-  EvaluateSignalMonitorMatrixBody,
-  EvaluateSignalMonitorMatrixResponse,
   GetSignalMonitorProfileQueryParams,
   GetSignalMonitorProfileResponse,
   GetSignalMonitorStateQueryParams,
@@ -17,9 +15,8 @@ import {
   UpdateSignalMonitorProfileResponse,
 } from "@workspace/api-zod";
 import {
-  buildSignalMonitorMatrixStreamBootstrapEvent,
+  buildSignalMonitorMatrixStreamStoredBootstrapEvent,
   evaluateSignalMonitor,
-  evaluateSignalMonitorMatrix,
   getSignalMonitorProfile,
   getSignalMonitorState,
   getSignalMonitorMatrixStreamStatus,
@@ -149,15 +146,6 @@ router.post("/signal-monitor/evaluate", async (req, res) => {
   res.json(data);
 });
 
-router.post("/signal-monitor/matrix", async (req, res) => {
-  const body = EvaluateSignalMonitorMatrixBody.parse(req.body ?? {});
-  const data = EvaluateSignalMonitorMatrixResponse.parse(
-    await evaluateSignalMonitorMatrix(body),
-  );
-
-  res.json(data);
-});
-
 router.get("/signal-monitor/matrix/stream", async (req, res) => {
   const query = StreamSignalMonitorMatrixQueryParams.parse(req.query);
   const scope = normalizeSignalMonitorMatrixStreamScope({
@@ -179,18 +167,7 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
       scope,
       onEvent: (event) => writeEvent(event.event, event),
     });
-    const matrix = EvaluateSignalMonitorMatrixResponse.parse(
-      await evaluateSignalMonitorMatrix({
-        environment: scope.environment,
-        symbols: scope.exactCells ? undefined : scope.symbols,
-        timeframes: scope.exactCells ? undefined : scope.timeframes,
-        cells: scope.exactCells ? scope.cells : undefined,
-        clientRole: scope.clientRole ?? "follower",
-        requestOrigin: scope.requestOrigin ?? "startup",
-      }),
-    );
-    const bootstrap = buildSignalMonitorMatrixStreamBootstrapEvent(
-      matrix,
+    const bootstrap = await buildSignalMonitorMatrixStreamStoredBootstrapEvent(
       subscription.scope,
     );
     await writeEvent(bootstrap.event, bootstrap);

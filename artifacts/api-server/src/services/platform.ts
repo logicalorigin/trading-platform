@@ -210,6 +210,7 @@ import {
   getBridgeHealthForSession,
   getIbkrClient,
   getRuntimeBridgeHealthState,
+  getSessionBridgeHealthFailureState,
 } from "./platform-bridge-health";
 import {
   getRuntimeMarketDataDiagnostics,
@@ -2655,6 +2656,8 @@ export async function getSession() {
     waitForStaleRefresh: false,
   });
   const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
+  const bridgeHealthFailureState =
+    bridgeHealth === null ? getSessionBridgeHealthFailureState() : null;
   const massiveConfig = getMassiveRuntimeConfig();
   const stockMarketDataProvider: "massive" | "ibkr" =
     isMassiveStocksRealtimeConfigured(massiveConfig) ? "massive" : "ibkr";
@@ -2674,6 +2677,7 @@ export async function getSession() {
     runtime: {
       ibkr: {
         ...ibkrRuntime,
+        ...(bridgeHealthFailureState ?? {}),
         activation: sessionActivationDiagnostics(),
       },
     },

@@ -66,7 +66,7 @@ test("signal matrix snapshot cache preserves fresh warm-start states inside the 
   assert.equal(cached.states[0].fresh, true);
 });
 
-test("signal matrix snapshot cache preserves retained warm-start states aged after the fresh window", () => {
+test("signal matrix snapshot cache drops retained warm-start states aged after the fresh window", () => {
   const storage = createStorage();
   const nowMs = Date.parse("2026-06-05T14:40:00.000Z");
 
@@ -85,11 +85,8 @@ test("signal matrix snapshot cache preserves retained warm-start states aged aft
     timeframes: ["5m"],
   });
 
-  assert.equal(cached.cacheStatus, "warm-start-stale");
-  assert.equal(cached.states.length, 1);
-  assert.equal(cached.states[0].status, "stale");
-  assert.equal(cached.states[0].fresh, false);
-  assert.equal(cached.states[0].currentSignalDirection, "buy");
+  assert.equal(cached, null);
+  assert.equal(storage.getItem(SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY), null);
 });
 
 test("signal matrix snapshot cache ignores states without signal or bar timestamps", () => {

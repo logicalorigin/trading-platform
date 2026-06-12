@@ -117,7 +117,7 @@ import { retryDynamicImport } from "../lib/dynamicImport";
 
 export const preloadScreenModules = () => preloadAlgoLivePageModules();
 
-const ALGO_PRIMARY_FALLBACK_DELAY_MS = 1_000;
+const ALGO_PRIMARY_FALLBACK_DELAY_MS = 0;
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
 const EMPTY_ALGO_DRAFTS = Object.freeze([]);
 const EMPTY_ALGO_EVENTS = Object.freeze([]);
@@ -303,7 +303,7 @@ export const AlgoScreen = ({
   signalMatrixStates = [],
   isVisible = false,
   safeQaMode = false,
-  onRequestSignalMatrixHydration,
+  onScanNow,
   onJumpToTradeCandidate,
   onReadinessChange,
 }) => {
@@ -404,7 +404,6 @@ export const AlgoScreen = ({
   });
   const [algoPrimaryFallbackReady, setAlgoPrimaryFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
-  const autoSignalMatrixHydrationKeysRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
       algoTimingStagesRef.current = new Set();
@@ -413,6 +412,10 @@ export const AlgoScreen = ({
   useEffect(() => {
     if (!isVisible || algoCockpitStreamFreshness.algoPrimaryFresh) {
       setAlgoPrimaryFallbackReady(false);
+      return undefined;
+    }
+    if (ALGO_PRIMARY_FALLBACK_DELAY_MS <= 0) {
+      setAlgoPrimaryFallbackReady(true);
       return undefined;
     }
     const timer = window.setTimeout(() => {
@@ -638,6 +641,7 @@ export const AlgoScreen = ({
   );
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: algoDerivedReady,
       backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
@@ -1349,40 +1353,15 @@ export const AlgoScreen = ({
   };
 
   const handleRefreshSignals = () => {
-    if (!focusedDeployment?.id) {
+    if (!onScanNow) {
       toast.push({
         kind: "warn",
-        title: "No deployment selected",
-        body: "Select a deployment before refreshing Signal Matrix states.",
+        title: "Signal scan unavailable",
+        body: "Signal scanning is not available from this surface yet.",
       });
       return;
     }
-    const symbols = Array.isArray(focusedDeployment.symbolUniverse)
-      ? focusedDeployment.symbolUniverse
-          .map((symbol) => String(symbol || "").trim().toUpperCase())
-          .filter(Boolean)
-      : [];
-    if (!symbols.length) {
-      toast.push({
-        kind: "warn",
-        title: "No signal universe",
-        body: "Add symbols to the deployment before refreshing Signal Matrix states.",
-      });
-      return;
-    }
-    onRequestSignalMatrixHydration?.({
-      symbols,
-      prioritySymbols: symbols,
-      timeframes: staSignalTimeframes,
-      materializePendingCells: true,
-      reason: "algo-signal-table",
-      force: true,
-    });
-    toast.push({
-      kind: "info",
-      title: "Signal Matrix refresh queued",
-      body: `${symbols.length} symbols · ${staSignalTimeframes.join(", ")}`,
-    });
+    onScanNow();
   };
 
   const patchProfileDraftPath = (path, value) => {
@@ -1703,17 +1682,6 @@ export const AlgoScreen = ({
           ? "Signal Monitor profile check failed; scan will retry server-side"
           : "ready to scan from Signal Monitor data"
         : "checking Signal Monitor profile";
-  const algoSignalMatrixStates = useMemo(
-    () => [
-      ...(
-        Array.isArray(signalMonitorState?.states)
-          ? signalMonitorState.states
-          : []
-      ),
-      ...(Array.isArray(signalMatrixStates) ? signalMatrixStates : []),
-    ],
-    [signalMatrixStates, signalMonitorState?.states],
-  );
   const cockpitStageItems = cockpitPipelineStages.length
     ? cockpitPipelineStages
     : [
@@ -1751,52 +1719,6 @@ export const AlgoScreen = ({
     cockpitStageItems.find((stage) => stage.id === selectedPipelineStageId) ||
     cockpitStageItems[0] ||
     null;
-  const algoSignalSurfaceEmpty = Boolean(
-    focusedDeployment?.id &&
-      visibleSignalRows.length === 0 &&
-      signalOptionsCandidates.length === 0,
-  );
-  useEffect(() => {
-    const deploymentId = focusedDeployment?.id || null;
-    const symbols = Array.isArray(focusedDeployment?.symbolUniverse)
-      ? focusedDeployment.symbolUniverse
-          .map((symbol) => String(symbol || "").trim().toUpperCase())
-          .filter(Boolean)
-      : [];
-    const hydrationKey = deploymentId
-      ? `${deploymentId}:${staSignalTimeframes.join(",")}`
-      : "";
-    if (
-      !isVisible ||
-      safeQaMode ||
-      !deploymentId ||
-      !symbols.length ||
-      !focusedDeployment?.enabled ||
-      !algoSignalSurfaceEmpty ||
-      autoSignalMatrixHydrationKeysRef.current.has(hydrationKey)
-    ) {
-      return;
-    }
-
-    autoSignalMatrixHydrationKeysRef.current.add(hydrationKey);
-    onRequestSignalMatrixHydration?.({
-      symbols,
-      prioritySymbols: symbols,
-      timeframes: staSignalTimeframes,
-      materializePendingCells: true,
-      reason: "algo-signal-table",
-    });
-  }, [
-    algoSignalSurfaceEmpty,
-    focusedDeployment?.enabled,
-    focusedDeployment?.id,
-    focusedDeployment?.symbolUniverse,
-    isVisible,
-    onRequestSignalMatrixHydration,
-    safeQaMode,
-    staSignalTimeframes,
-  ]);
-
   return (
     <div
       ref={algoRootRef}
@@ -1906,8 +1828,7 @@ export const AlgoScreen = ({
             signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalOptionsCandidates={signalOptionsCandidates}
             signalOptionsSourceHealth={signalOptionsSourceHealth}
-            signalMatrixStates={algoSignalMatrixStates}
-            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+            signalMatrixStates={signalMatrixStates}
             selectedCandidate={selectedCandidate}
             signalOptionsProfile={signalOptionsProfile}
             staSignalTimeframes={staSignalTimeframes}
