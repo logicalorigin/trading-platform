@@ -310,7 +310,7 @@ const livePositionsDayPnlMetric = ({
     tradesResponse?.trades || [],
     marketDate,
   );
-  const totalDayPnl = fallbackValue ?? openPositionsDayPnl;
+  const totalDayPnl = hasDayChange ? openPositionsDayPnl : fallbackValue;
   return {
     ...(fallbackMetric || {}),
     value: totalDayPnl,

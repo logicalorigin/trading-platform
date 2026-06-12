@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -261,6 +262,25 @@ test("matrix evaluation keeps configured capacity under high pressure", () => {
     }),
     null,
   );
+});
+
+test("signal monitor pressure defaults use resource pressure", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const matrixStart = source.indexOf("function cappedSignalMatrixSettings");
+  const matrixEnd = source.indexOf("function shouldBypassSoftSignalMonitorMatrixPressure", matrixStart);
+  const evaluationStart = source.indexOf("export function cappedSignalMonitorEvaluationProfile");
+  const evaluationEnd = source.indexOf("export async function", evaluationStart);
+  assert.notEqual(matrixStart, -1);
+  assert.notEqual(matrixEnd, -1);
+  assert.notEqual(evaluationStart, -1);
+  assert.notEqual(evaluationEnd, -1);
+
+  const block = `${source.slice(matrixStart, matrixEnd)}\n${source.slice(
+    evaluationStart,
+    evaluationEnd,
+  )}`;
+  assert.match(block, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
+  assert.doesNotMatch(block, /getApiResourcePressureSnapshot\(\)\.level/);
 });
 
 test("automatic stored-state matrix bootstrap keeps full universe breadth", () => {

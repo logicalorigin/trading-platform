@@ -4,6 +4,7 @@ import test from "node:test";
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
   buildAlgoSignalMatrixHydrationRequest,
+  buildStaSparklineHydrationSymbols,
   buildStaSignalSparklineBatchRequest,
   buildStaSignalStatusSummary,
   hasUsableSparklineData,
@@ -348,4 +349,35 @@ test("STA sparkline hydration requests compact visible batch bars", () => {
     request.requests.map((item) => item.brokerRecentWindowMinutes),
     [0, 0],
   );
+});
+
+test("STA sparkline hydration preloads adjacent rows without stale fallback bars", () => {
+  const rows = Array.from({ length: 80 }, (_, index) => ({
+    signal: {
+      symbol: `SYM${String(index + 1).padStart(2, "0")}`,
+      ...(index === 21
+        ? {
+            bars: [{ timestamp: "2026-06-08T20:00:00.000Z" }],
+          }
+        : null),
+      ...(index === 22
+        ? {
+            sparkBars: [{ close: 100 }, { close: 101 }],
+          }
+        : null),
+    },
+  }));
+
+  const symbols = buildStaSparklineHydrationSymbols({
+    rows,
+    page: 2,
+    pageSize: 20,
+    maxSymbols: 60,
+  });
+
+  assert.equal(symbols[0], "SYM01");
+  assert.equal(symbols.includes("SYM22"), true);
+  assert.equal(symbols.includes("SYM23"), false);
+  assert.equal(symbols.at(-1), "SYM60");
+  assert.equal(symbols.length, 59);
 });

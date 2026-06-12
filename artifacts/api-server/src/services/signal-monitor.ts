@@ -779,7 +779,7 @@ function cappedSignalMatrixSettings(
   } = {},
 ) {
   const resourcePressureLevel =
-    pressureLevel ?? getApiResourcePressureSnapshot().level;
+    pressureLevel ?? getApiResourcePressureSnapshot().resourceLevel;
   void options;
   const configuredMaxSymbols = positiveInteger(
     profile.maxSymbols,
@@ -916,7 +916,7 @@ export function cappedSignalMonitorEvaluationProfile(
   pressureLevel?: ApiResourcePressureLevel,
 ) {
   const resourcePressureLevel =
-    pressureLevel ?? getApiResourcePressureSnapshot().level;
+    pressureLevel ?? getApiResourcePressureSnapshot().resourceLevel;
   const configuredMaxSymbols = positiveInteger(
     profile.maxSymbols,
     DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,

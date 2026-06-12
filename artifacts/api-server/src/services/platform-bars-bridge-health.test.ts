@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test, { afterEach } from "node:test";
 
 import {
@@ -100,4 +101,16 @@ test("passive quiet-session stale bars do not schedule background refresh", () =
     ),
     false,
   );
+});
+
+test("stale chart bar background refresh gates on resource pressure", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const start = source.indexOf("function shouldRefreshStaleBarsInBackground");
+  const end = source.indexOf("function pruneChartHistoryCursors", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(block, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
+  assert.doesNotMatch(block, /getApiResourcePressureSnapshot\(\)\.level/);
 });

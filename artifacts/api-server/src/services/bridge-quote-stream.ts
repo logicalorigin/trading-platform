@@ -700,16 +700,21 @@ function startStallTimer(expectedSignature: string) {
       return;
     }
 
+    const currentSignalAt = resolveCurrentStreamSignalAt(
+      lastSignalAt,
+      streamStartedAt,
+    );
     const currentDataAt = resolveCurrentStreamDataAt(
       lastEventAt,
       streamStartedAt,
     );
-    if (!currentDataAt) {
+    const currentActivityAt = currentSignalAt ?? currentDataAt;
+    if (!currentActivityAt) {
       return;
     }
 
     const now = nowProvider();
-    const ageMs = Math.max(0, now.getTime() - currentDataAt.getTime());
+    const ageMs = Math.max(0, now.getTime() - currentActivityAt.getTime());
     if (ageMs < STREAM_STALL_RECONNECT_MS) {
       return;
     }

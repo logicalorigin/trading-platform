@@ -40,3 +40,18 @@ test("account first-screen readiness exposes the frame before account data settl
     /primaryReady: Boolean\(isVisible && accountPrimaryReady\),/,
   );
 });
+
+test("account day PnL prefers live position row day changes over summary fallback", () => {
+  const source = readLocalSource("./AccountScreen.jsx");
+  const start = source.indexOf("const livePositionsDayPnlMetric =");
+  const end = source.indexOf("const livePositionsNetLiquidation", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(
+    block,
+    /const totalDayPnl = hasDayChange \? openPositionsDayPnl : fallbackValue;/,
+  );
+  assert.doesNotMatch(block, /const totalDayPnl = fallbackValue \?\? openPositionsDayPnl;/);
+});

@@ -277,6 +277,10 @@ function annotateBridgeHealth(
       ? (options.bridgeQuoteDiagnostics.dataFreshnessAgeMs ??
         options.bridgeQuoteDiagnostics.lastEventAgeMs)
       : null;
+  const bridgeQuoteTransportAgeMs =
+    options.bridgeQuoteDiagnostics?.streamActive === true
+      ? options.bridgeQuoteDiagnostics.transportFreshnessAgeMs
+      : null;
   const desiredSymbolCount = Math.max(
     options.bridgeQuoteDiagnostics?.unionSymbolCount ?? 0,
     numericRecordValue(subscriptions, "quoteListenerCount") ?? 0,
@@ -285,6 +289,7 @@ function annotateBridgeHealth(
     numericRecordValue(subscriptions, "lastQuoteAgeMs"),
     numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
     bridgeQuoteDataAgeMs,
+    bridgeQuoteTransportAgeMs,
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
@@ -402,6 +407,10 @@ function annotateBridgeHealth(
 }
 
 export type AnnotatedBridgeHealth = ReturnType<typeof annotateBridgeHealth>;
+
+export const __platformBridgeHealthInternalsForTests = {
+  annotateBridgeHealth,
+};
 
 async function refreshBridgeHealthForSession(
   timeoutMs: number,

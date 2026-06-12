@@ -117,6 +117,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   label,
   initialWaitMs,
   cacheEmptyPayload = true,
+  allowStaleFallback = true,
   preserveNonEmptyStaleOnEmpty = false,
   work,
 }: {
@@ -128,6 +129,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   label: string;
   initialWaitMs?: number | null;
   cacheEmptyPayload?: boolean;
+  allowStaleFallback?: boolean;
   preserveNonEmptyStaleOnEmpty?: boolean;
   work: () => Promise<T>;
 }): Promise<T> {
@@ -141,7 +143,7 @@ async function runCachedAccountRead<T extends unknown[]>({
 
   const pending = inflight.get(key);
   if (pending) {
-    if (staleCached) {
+    if (allowStaleFallback && staleCached) {
       return staleCached.payload;
     }
     if (normalizedInitialWaitMs !== null) {
@@ -153,7 +155,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     return pending;
   }
 
-  if (isBridgeWorkBackedOff("account") && staleCached) {
+  if (allowStaleFallback && isBridgeWorkBackedOff("account") && staleCached) {
     return staleCached.payload;
   }
 
@@ -169,7 +171,7 @@ async function runCachedAccountRead<T extends unknown[]>({
       health.accountsLoaded,
   );
   if (!accountBridgeReady) {
-    if (staleCached) {
+    if (allowStaleFallback && staleCached) {
       return staleCached.payload;
     }
     logger.debug(
@@ -187,6 +189,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     .then((payload) => {
       if (
         preserveNonEmptyStaleOnEmpty &&
+        allowStaleFallback &&
         payload.length === 0 &&
         staleCached &&
         staleCached.payload.length > 0
@@ -205,6 +208,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     .catch((error) => {
       if (
         isTransientBridgeWorkError(error) &&
+        allowStaleFallback &&
         cached &&
         isUsableStale(cached, staleTtlMs)
       ) {
@@ -228,7 +232,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     });
 
   inflight.set(key, promise);
-  if (staleCached) {
+  if (allowStaleFallback && staleCached) {
     promise.catch((error) => {
       logger.warn(
         { err: error, label, key, cacheAgeMs: cacheAgeMs(staleCached) },
@@ -276,7 +280,7 @@ export function listIbkrPositions(input: {
     staleTtlMs: accountStaleTtlMs(),
     label: "positions",
     cacheEmptyPayload: false,
-    preserveNonEmptyStaleOnEmpty: true,
+    allowStaleFallback: false,
     work: async () =>
       (await bridgeClient.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,

@@ -115,6 +115,7 @@ const SIGNALS_PAGE_SIZE = 20;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS = 30_000;
+const SIGNAL_TABLE_SPARKLINE_BATCH_SYMBOL_LIMIT = 60;
 const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "algo-signal-sparkline",
@@ -321,6 +322,36 @@ export const buildStaSignalSparklineBatchRequest = (symbols) => ({
       sparklinePointLimit: SPARKLINE_RENDER_POINT_LIMIT,
     })),
 });
+
+export const buildStaSparklineHydrationSymbols = ({
+  rows = [],
+  page = 1,
+  pageSize = SIGNALS_PAGE_SIZE,
+  maxSymbols = SIGNAL_TABLE_SPARKLINE_BATCH_SYMBOL_LIMIT,
+} = {}) => {
+  const safePageSize = Math.max(
+    1,
+    Math.floor(Number(pageSize) || SIGNALS_PAGE_SIZE),
+  );
+  const safeMaxSymbols = Math.max(1, Math.floor(Number(maxSymbols) || 1));
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const start = Math.max(0, (safePage - 2) * safePageSize);
+  const end = start + Math.max(safePageSize, safeMaxSymbols);
+  const symbols = [];
+  const seen = new Set();
+
+  rows.slice(start, end).forEach(({ signal }) => {
+    const signalRecord = asRecord(signal);
+    const symbol = String(signalRecord.symbol || "").trim().toUpperCase();
+    if (!symbol || seen.has(symbol) || hasUsableSparklineData(signalRecord)) {
+      return;
+    }
+    seen.add(symbol);
+    symbols.push(symbol);
+  });
+
+  return symbols.slice(0, safeMaxSymbols);
+};
 
 const fetchStaSignalSparklineBarsBatch = async (symbols, signal) => {
   const request = buildStaSignalSparklineBatchRequest(symbols);
@@ -1511,32 +1542,13 @@ export const OperationsSignalTable = ({
     if (!signalMatrixHydrationRequest) return;
     onRequestSignalMatrixHydration?.(signalMatrixHydrationRequest);
   }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
-  const rowSymbols = useMemo(
-    () =>
-      pageRows
-        .map(({ signal }) => String(asRecord(signal).symbol || "").toUpperCase())
-        .filter(Boolean),
-    [pageRows],
-  );
-  const rowSignalBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        pageRows
-          .map(({ signal }) => {
-            const signalRecord = asRecord(signal);
-            const symbol = String(signalRecord.symbol || "").toUpperCase();
-            return symbol ? [symbol, signalRecord] : null;
-          })
-          .filter(Boolean),
-      ),
-    [pageRows],
-  );
   const rowSparklineSymbols = useMemo(
     () =>
-      rowSymbols.filter(
-        (symbol) => !hasUsableSparklineData(rowSignalBySymbol?.[symbol]),
-      ),
-    [rowSignalBySymbol, rowSymbols],
+      buildStaSparklineHydrationSymbols({
+        rows,
+        page,
+      }),
+    [page, rows],
   );
   const rowSparklineSymbolsKey = useMemo(
     () => rowSparklineSymbols.join(","),

@@ -8771,7 +8771,7 @@ function shouldRefreshStaleBarsInBackground(
   ) {
     return false;
   }
-  const pressureLevel = getApiResourcePressureSnapshot().level;
+  const pressureLevel = getApiResourcePressureSnapshot().resourceLevel;
   if (pressureLevel === "high") {
     return (
       typeof options.priority === "number" &&

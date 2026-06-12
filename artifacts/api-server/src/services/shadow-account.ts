@@ -7853,8 +7853,8 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
   }
   const cacheIsFresh = cached.expiresAt > now;
   if (!cacheIsFresh) {
-    const pressureLevel = getApiResourcePressureSnapshot().level;
-      if (pressureLevel !== "high") {
+    const pressureLevel = getApiResourcePressureSnapshot().resourceLevel;
+    if (pressureLevel !== "high") {
       return null;
     }
   }
@@ -7907,8 +7907,8 @@ function readReusableLiveQuotedShadowPositionsResponse(input: {
   }
   const cacheIsFresh = cached.expiresAt > now;
   if (!cacheIsFresh) {
-    const pressureLevel = getApiResourcePressureSnapshot().level;
-      if (pressureLevel !== "high") {
+    const pressureLevel = getApiResourcePressureSnapshot().resourceLevel;
+    if (pressureLevel !== "high") {
       return null;
     }
   }
@@ -7960,7 +7960,7 @@ function readReusableShadowAllocationFromPositions(input: {
       continue;
     }
     const cacheIsFresh = cached.expiresAt > now;
-    if (!cacheIsFresh && getApiResourcePressureSnapshot().level !== "high") {
+    if (!cacheIsFresh && getApiResourcePressureSnapshot().resourceLevel !== "high") {
       continue;
     }
     if (!isShadowAccountPositionsResponseShape(cached.value)) {

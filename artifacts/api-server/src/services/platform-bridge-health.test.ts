@@ -10,6 +10,7 @@ import {
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
 import {
+  __platformBridgeHealthInternalsForTests,
   __setIbkrBridgeClientFactoryForTests,
   getBridgeHealthForSession,
   invalidateBridgeHealthCache,
@@ -194,6 +195,41 @@ test("stale health with a fresh data stream stays connected (health-probe false 
   assert.equal(health.socketConnected, true);
   assert.equal(health.bridgeReachable, true);
   assert.equal(health.authenticated, true);
+});
+
+test("fresh quote stream transport prevents false stale state when quote data is quiet", () => {
+  const staleButTransportAliveHealth = {
+    ...bridgeHealth(new Date(Date.now() - 60_000).toISOString()),
+    accounts: ["U123"],
+    authenticated: true,
+    brokerServerConnected: true,
+    connected: true,
+    liveMarketDataAvailable: true,
+    marketDataMode: "live",
+    diagnostics: { subscriptions: { quoteListenerCount: 3 } },
+  };
+
+  const health =
+    __platformBridgeHealthInternalsForTests.annotateBridgeHealth(
+      staleButTransportAliveHealth as never,
+      {
+        bridgeQuoteDiagnostics: {
+          activeConsumerCount: 3,
+          unionSymbolCount: 3,
+          streamActive: true,
+          dataFreshnessAgeMs: 120_000,
+          lastEventAgeMs: 120_000,
+          transportFreshnessAgeMs: 1_000,
+        } as never,
+      },
+    );
+
+  assert(health, "expected cached bridge health");
+  assert.equal(health.healthFresh, false);
+  assert.equal(health.streamFresh, true, "transport heartbeat is fresh");
+  assert.equal(health.streamState, "live");
+  assert.equal(health.strictReady, true);
+  assert.equal(health.connected, true);
 });
 
 test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconnected immediately", async () => {

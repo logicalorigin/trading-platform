@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,13 @@ import {
 } from "./live-streams.ts";
 
 const queryKeyText = (key) => JSON.stringify(key);
+
+test("broker stream freshness tolerates normal SSE jitter under load", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const ACCOUNT_STREAM_FRESH_MS = 20_000;/);
+  assert.doesNotMatch(source, /const ACCOUNT_STREAM_FRESH_MS = 7_000;/);
+});
 
 test("algo cockpit stream keeps known deployments when fallback is unavailable", () => {
   const current = {

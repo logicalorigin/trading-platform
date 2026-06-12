@@ -275,3 +275,14 @@ test("shadow account positions pressure path does not start a full refresh", () 
   assert.doesNotMatch(pressureBlock, /withShadowReadCache\(/);
   assert.doesNotMatch(pressureBlock, /readFullPositions/);
 });
+
+test("shadow reusable position caches gate stale reuse on resource pressure", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /getApiResourcePressureSnapshot\(\)\.resourceLevel !== "high"/);
+  assert.match(source, /const pressureLevel = getApiResourcePressureSnapshot\(\)\.resourceLevel;/);
+  assert.doesNotMatch(
+    source,
+    /getApiResourcePressureSnapshot\(\)\.level !== "high"/,
+  );
+});
