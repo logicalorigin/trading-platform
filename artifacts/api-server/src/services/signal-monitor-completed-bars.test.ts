@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { GetSignalMonitorStateResponse } from "@workspace/api-zod";
 
+import { signalMonitorSignalAgeBlocker } from "./signal-monitor-actionability";
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorProfileSymbols,
@@ -199,6 +200,26 @@ test("python signal matrix state keeps signal identity when the cell is stale", 
   assert.equal(result?.fresh, false);
   assert.equal(result?.canonicalSignalEvent, null);
   assert.ok((result?.barsSinceSignal ?? 0) > 0);
+});
+
+test("reconciliation keeps adopted 1d rows age-less until the next daily eval", () => {
+  // Deliberate, user-confirmed contract: identity adoption nulls bar age, the
+  // recompute pass is intraday-only (1d age counts trading days, which only
+  // the daily evaluation can author), and a null age blocks action via
+  // signal_age_unavailable — fails safe until the next 1d eval writes a
+  // computed age.
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /bars_since_signal = NULL/);
+  const recomputeTimeframes = source.match(/timeframe IN \(([^)]*)\)/);
+  assert.ok(recomputeTimeframes, "intraday recompute timeframe list exists");
+  assert.doesNotMatch(recomputeTimeframes[1], /'1d'/);
+  assert.equal(
+    signalMonitorSignalAgeBlocker(null),
+    "signal_age_unavailable",
+  );
 });
 
 test("daily bars do not count weekends/holidays as elapsed bars", () => {

@@ -6673,6 +6673,13 @@ export function startSignalMonitorServerOwnedProducer(): void {
 // bar age only INCREASES; fresh only turns OFF. Adopted identities get
 // bars_since_signal reset to null first so the elapsed recompute does not
 // inherit the previous signal's bar count.
+//
+// 1d contract (deliberate, user-confirmed): the bar-age recompute is
+// intraday-only because daily bar age counts trading days, not wall-clock
+// days. An adopted 1d identity therefore keeps bars_since_signal NULL —
+// honestly "unknown", action-blocked via signal_age_unavailable — until the
+// next daily evaluation writes a computed age. Fails safe: blocks action,
+// never enables it.
 // ---------------------------------------------------------------------------
 export type SignalMonitorStateReconciliationCounts = {
   profileId: string;
