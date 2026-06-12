@@ -675,8 +675,6 @@ export const buildAlgoMonitorSignalMatrixHydrationRequestKey = (request) => {
   ].join("::");
 };
 
-const ALGO_MONITOR_SIGNAL_MATRIX_HYDRATION_REQUEST_RETRY_MS = 30_000;
-
 export const resolveAlgoMonitorReadinessStatus = ({
   readinessReady = true,
   attentionItems = [],
@@ -1378,28 +1376,10 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     () => buildAlgoMonitorSignalMatrixHydrationRequestKey(signalMatrixHydrationRequest),
     [signalMatrixHydrationRequest],
   );
-  const lastSignalMatrixHydrationRequestRef = useRef({
-    key: "",
-    requestedAt: 0,
-  });
   useEffect(() => {
-    const nowMs = Date.now();
     if (!signalMatrixHydrationRequest || !signalMatrixHydrationRequestKey) {
-      lastSignalMatrixHydrationRequestRef.current = { key: "", requestedAt: 0 };
       return;
     }
-    const lastRequest = lastSignalMatrixHydrationRequestRef.current;
-    if (
-      lastRequest.key === signalMatrixHydrationRequestKey &&
-      nowMs - lastRequest.requestedAt <
-        ALGO_MONITOR_SIGNAL_MATRIX_HYDRATION_REQUEST_RETRY_MS
-    ) {
-      return;
-    }
-    lastSignalMatrixHydrationRequestRef.current = {
-      key: signalMatrixHydrationRequestKey,
-      requestedAt: nowMs,
-    };
     onRequestSignalMatrixHydration?.(signalMatrixHydrationRequest);
   }, [
     onRequestSignalMatrixHydration,

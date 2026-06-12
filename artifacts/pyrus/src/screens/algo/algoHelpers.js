@@ -579,8 +579,19 @@ const signalRowsHaveCompatibleSignalAt = (
 };
 
 const staFiniteNumberOrNull = (value) => {
+  if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const STA_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 1;
+
+const staSignalAgeActionBlocker = (barsSinceSignal) => {
+  const bars = staFiniteNumberOrNull(barsSinceSignal);
+  if (bars == null) return "signal_age_unavailable";
+  return Math.max(0, Math.round(bars)) <= STA_MAX_ACTIONABLE_BARS_SINCE_SIGNAL
+    ? null
+    : "signal_too_old";
 };
 
 const staIsoStringOrNull = (value) => {
@@ -674,7 +685,16 @@ export const buildStaSignalMatrixRows = ({
       const signalPrice =
         staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
         staFiniteNumberOrNull(stateRecord.signalPrice);
+      const barsSinceSignal = staFiniteNumberOrNull(stateRecord.barsSinceSignal);
       const fresh = stateRecord.fresh === true;
+      const explicitActionBlocker = normalizeMatchKey(stateRecord.actionBlocker);
+      const inferredActionBlocker =
+        explicitActionBlocker ||
+        (status !== "ok" ? "historical_signal" : staSignalAgeActionBlocker(barsSinceSignal));
+      const actionEligible =
+        typeof stateRecord.actionEligible === "boolean"
+          ? stateRecord.actionEligible
+          : Boolean(signalAt && direction && status === "ok" && !inferredActionBlocker);
 
       return {
         profileId: normalizeMatchKey(stateRecord.profileId) || null,
@@ -693,15 +713,10 @@ export const buildStaSignalMatrixRows = ({
           staIsoStringOrNull(stateRecord.latestBarAt) ??
           staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??
           signalAt,
-        barsSinceSignal: staFiniteNumberOrNull(stateRecord.barsSinceSignal),
+        barsSinceSignal,
         fresh,
-        actionEligible:
-          typeof stateRecord.actionEligible === "boolean"
-            ? stateRecord.actionEligible
-            : fresh && status === "ok",
-        actionBlocker:
-          normalizeMatchKey(stateRecord.actionBlocker) ||
-          (!fresh || status !== "ok" ? "historical_signal" : null),
+        actionEligible,
+        actionBlocker: actionEligible ? null : inferredActionBlocker || null,
         status,
         filterState: Object.keys(asRecord(stateRecord.filterState)).length
           ? asRecord(stateRecord.filterState)
@@ -720,22 +735,28 @@ export const buildStaSignalMatrixRows = ({
 export const buildStaSignalHistoryRows = ({
   signalEvents,
   universeSymbols,
+  timeframes,
 } = {}) => {
   const universe = new Set(
     (Array.isArray(universeSymbols) ? universeSymbols : [])
       .map((symbol) => normalizeMatchToken(symbol))
       .filter(Boolean),
   );
+  const selectedTimeframes = new Set(normalizeStaSignalTimeframes(timeframes));
 
   return (Array.isArray(signalEvents) ? signalEvents : [])
     .map((event) => {
       const eventRecord = asRecord(event);
       const signalAt = staIsoStringOrNull(eventRecord.signalAt);
       const symbol = normalizeMatchToken(eventRecord.symbol);
+      const timeframe = normalizeMatchKey(eventRecord.timeframe) || "5m";
       if (!signalAt || !symbol) {
         return null;
       }
       if (universe.size && !universe.has(symbol)) {
+        return null;
+      }
+      if (!selectedTimeframes.has(timeframe)) {
         return null;
       }
 
@@ -761,7 +782,7 @@ export const buildStaSignalHistoryRows = ({
         sourceType: "signal_monitor_event",
         eventId: eventId || null,
         symbol,
-        timeframe: normalizeMatchKey(eventRecord.timeframe) || "5m",
+        timeframe,
         direction: normalizeMatchKey(eventRecord.direction) || null,
         signalAt,
         currentSignalAt: signalAt,
@@ -809,6 +830,7 @@ export const buildVisibleSignalRows = ({
     ? buildStaSignalHistoryRows({
         signalEvents,
         universeSymbols,
+        timeframes: signalActionTimeframes ?? signalTimeframes,
         now,
       })
     : [];

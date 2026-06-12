@@ -145,6 +145,90 @@ test("visible signal rows use the live Signal Matrix as the STA action source ov
   assert.equal(rows[0].sourceType, "signal_matrix_state");
 });
 
+test("STA action rows use backend one-bar execution age instead of matrix fresh flag", () => {
+  const rows = buildVisibleSignalRows({
+    universeSymbols: ["TSM", "DIA", "BGC"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-1",
+        symbol: "TSM",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-11T17:05:00.000Z",
+        latestBarAt: "2026-06-11T17:10:00.000Z",
+        barsSinceSignal: 1,
+        fresh: false,
+        status: "ok",
+      },
+      {
+        profileId: "profile-1",
+        symbol: "DIA",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-11T15:05:00.000Z",
+        latestBarAt: "2026-06-11T15:20:00.000Z",
+        barsSinceSignal: 2,
+        fresh: true,
+        status: "ok",
+      },
+      {
+        profileId: "profile-1",
+        symbol: "BGC",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-11T15:05:00.000Z",
+        latestBarAt: "2026-06-11T15:20:00.000Z",
+        barsSinceSignal: null,
+        fresh: true,
+        status: "ok",
+      },
+    ],
+  });
+
+  const bySymbol = Object.fromEntries(rows.map((row) => [row.symbol, row]));
+
+  assert.equal(bySymbol.TSM.actionEligible, true);
+  assert.equal(bySymbol.TSM.actionBlocker, null);
+  assert.equal(bySymbol.DIA.actionEligible, false);
+  assert.equal(bySymbol.DIA.actionBlocker, "signal_too_old");
+  assert.equal(bySymbol.BGC.actionEligible, false);
+  assert.equal(bySymbol.BGC.actionBlocker, "signal_age_unavailable");
+});
+
+test("visible signal rows keep received history on the execution timeframe only", () => {
+  const rows = buildVisibleSignalRows({
+    now: Date.parse("2026-06-09T14:00:00.000Z"),
+    includeSignalHistory: true,
+    universeSymbols: ["ALIT", "VRT"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [],
+    signalEvents: [
+      {
+        id: "event-alit-one-minute",
+        profileId: "profile-1",
+        symbol: "ALIT",
+        timeframe: "1m",
+        direction: "sell",
+        signalAt: "2026-06-09T14:06:00.000Z",
+      },
+      {
+        id: "event-vrt-five-minute",
+        profileId: "profile-1",
+        symbol: "VRT",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-09T14:05:00.000Z",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.symbol, row.timeframe, row.sourceType]),
+    [["VRT", "5m", "signal_monitor_event"]],
+  );
+});
+
 test("STA signal history keeps received events from the fetched lookback window", () => {
   const rows = buildStaSignalHistoryRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),
