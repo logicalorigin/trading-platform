@@ -229,6 +229,145 @@ test("signal matrix stream subscription emits changed deltas and cleans up", () 
   });
 });
 
+function directionalStreamState(
+  symbol: string,
+  timeframe: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: `profile-test:${symbol}:${timeframe}`,
+    profileId: "profile-test",
+    symbol,
+    timeframe,
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+    currentSignalPrice: 101.5,
+    latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+    barsSinceSignal: 1,
+    fresh: true,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: evaluatedAt,
+    lastError: null,
+    indicatorSnapshot: null,
+    canonicalSignalEvent: null,
+    ...overrides,
+  } as never;
+}
+
+test("stream deltas latch direction across directionless re-evaluations", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "paper",
+        symbols: ["AAPL"],
+        timeframes: ["5m"],
+      });
+    const events: { event: string; states?: Record<string, unknown>[] }[] = [];
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent(event) {
+            events.push(event as never);
+          },
+        },
+      );
+
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe);
+      },
+    });
+    assert.equal(events.length, 1);
+    const first = events[0]?.states?.[0];
+    assert.equal(first?.["currentSignalDirection"], "buy");
+    assert.equal(first?.["actionEligible"], true);
+    assert.equal(first?.["actionBlocker"], null);
+
+    // A re-evaluation with no new signal must not erase the latched buy on
+    // the wire; bar age advances from timestamps and the cell stops being
+    // action-eligible by age.
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe, {
+          currentSignalDirection: null,
+          currentSignalAt: null,
+          currentSignalPrice: null,
+          barsSinceSignal: null,
+          fresh: false,
+          latestBarAt: new Date("2026-06-09T15:10:00.000Z"),
+        });
+      },
+    });
+    assert.equal(events.length, 2);
+    const latched = events[1]?.states?.[0];
+    assert.equal(latched?.["currentSignalDirection"], "buy");
+    assert.equal(
+      (latched?.["currentSignalAt"] as Date).toISOString(),
+      "2026-06-09T14:55:00.000Z",
+    );
+    assert.equal(latched?.["barsSinceSignal"], 3);
+    assert.equal(latched?.["fresh"], false);
+    assert.equal(latched?.["actionEligible"], false);
+    assert.equal(latched?.["actionBlocker"], "signal_too_old");
+
+    subscription.unsubscribe();
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
+test("stale evaluations keep signal identity and report data_stale", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "paper",
+        symbols: ["AAPL"],
+        timeframes: ["5m"],
+      });
+    const events: { event: string; states?: Record<string, unknown>[] }[] = [];
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent(event) {
+            events.push(event as never);
+          },
+        },
+      );
+
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe, {
+          status: "stale",
+          fresh: false,
+        });
+      },
+    });
+    assert.equal(events.length, 1);
+    const state = events[0]?.states?.[0];
+    assert.equal(state?.["currentSignalDirection"], "buy");
+    assert.equal(state?.["status"], "stale");
+    assert.equal(state?.["actionEligible"], false);
+    assert.equal(state?.["actionBlocker"], "data_stale");
+
+    subscription.unsubscribe();
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
 test("server-owned producer scope normalizes and dedupes universe symbols", () => {
   const scope =
     __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope({
@@ -381,6 +520,9 @@ test("signal matrix stream bootstrap hydrates from stored canonical state", () =
     ["DIA:5m"],
   );
   assert.equal(event.coverage.stateCount, 1);
+  // Bootstrap states carry backend-authored actionability for the STA table.
+  assert.equal(event.states[0]?.actionEligible, true);
+  assert.equal(event.states[0]?.actionBlocker, null);
 });
 
 test("signal matrix stream bootstrap does not publish runtime fallback state as matrix truth", () => {

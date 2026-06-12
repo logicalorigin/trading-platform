@@ -147,6 +147,60 @@ test("python signal matrix state recomputes elapsed bar age before freshness", (
   assert.equal(result?.fresh, false);
 });
 
+test("python signal matrix state keeps signal identity when the cell is stale", () => {
+  // Evaluated an hour after the latest bar -> stale. Staleness is reported via
+  // status only; the latched signal identity must survive on the state instead
+  // of being nulled (no canonical event is recorded for stale evals).
+  const evaluatedAt = new Date("2026-06-12T15:00:00.000Z");
+  const result =
+    __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
+      profile: {
+        id: "paper-profile",
+        environment: "paper",
+        enabled: true,
+        watchlistId: null,
+        timeframe: "5m",
+        pyrusSignalsSettings: {},
+        freshWindowBars: 8,
+        pollIntervalSeconds: 60,
+        maxSymbols: 500,
+        evaluationConcurrency: 2,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: evaluatedAt,
+        updatedAt: evaluatedAt,
+      },
+      symbol: "AAPL",
+      timeframe: "1m",
+      evaluatedAt,
+      completedBars: [
+        bar("2026-06-12T13:15:00.000Z"),
+        bar("2026-06-12T13:44:00.000Z"),
+      ],
+      pythonState: {
+        symbol: "AAPL",
+        timeframe: "1m",
+        status: "ok",
+        signal: {
+          direction: "long",
+          barIndex: 0,
+          time: Math.floor(Date.parse("2026-06-12T13:15:00.000Z") / 1000),
+          price: 100,
+        },
+        barsSinceSignal: 1,
+        fresh: true,
+        indicatorSnapshot: null,
+        warning: null,
+      },
+    });
+
+  assert.equal(result?.currentSignalDirection, "buy");
+  assert.equal(result?.status, "stale");
+  assert.equal(result?.fresh, false);
+  assert.equal(result?.canonicalSignalEvent, null);
+  assert.ok((result?.barsSinceSignal ?? 0) > 0);
+});
+
 test("daily bars do not count weekends/holidays as elapsed bars", () => {
   // Friday close to Monday close is 1 daily bar, not 3 wall-clock days.
   assert.equal(

@@ -57,7 +57,10 @@ import {
   getHighBetaUniversePreview,
 } from "./high-beta-universe";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
-import { signalMonitorFresh } from "./signal-monitor-actionability";
+import {
+  buildSignalMonitorActionability,
+  signalMonitorFresh,
+} from "./signal-monitor-actionability";
 import { recordSignalMonitorDbFallback } from "./signal-monitor-diagnostics";
 import {
   getApiResourcePressureSnapshot,
@@ -165,6 +168,11 @@ export type SignalMonitorMatrixStreamState = {
   lastEvaluatedAt: Date | null;
   lastError: string | null;
   indicatorSnapshot?: unknown;
+  // Authored at the wire boundary (delta emit / stored bootstrap) by
+  // buildSignalMonitorActionability — optional so internal eval results can
+  // omit them, but every emitted stream state carries them.
+  actionEligible?: boolean;
+  actionBlocker?: string | null;
 };
 export type SignalMonitorMatrixStreamStatusEvent = {
   stream: "signal-matrix";
@@ -224,6 +232,10 @@ type SignalMonitorMatrixStreamSubscriber = {
   profile: DbSignalMonitorProfile;
   onEvent: (event: SignalMonitorMatrixStreamEvent) => void | Promise<void>;
   lastStateSignatures: Map<string, string>;
+  // Last state emitted per cell: the wire-side signal latch. A directionless
+  // re-evaluation must not erase a latched buy/sell on the stream any more
+  // than it may in the DB (the DB latch lives in upsertSymbolState).
+  lastStates: Map<string, SignalMonitorMatrixStreamState>;
 };
 type SignalMonitorBarSourcePolicy = "mixed" | "ibkr-only";
 type SignalMonitorSignalStabilityPolicy =
@@ -4853,16 +4865,19 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       });
     }
 
+    // Staleness is reported via status only; the signal identity stays on the
+    // row (and on the wire) so the latched memory is never erased by a data
+    // gap. fresh is already false when stale.
     return upsertSymbolState({
       profileId: input.profile.id,
       symbol: input.symbol,
       timeframe: input.timeframe,
-      direction: stale ? null : directionFromSignal(signal),
-      signalAt: stale ? null : signalAt,
-      signalBarAt: stale ? null : signalBarAt,
-      signalPrice: stale ? null : signal.price,
+      direction: directionFromSignal(signal),
+      signalAt,
+      signalBarAt,
+      signalPrice: signal.price,
       latestBarAt,
-      barsSinceSignal: stale ? null : barsSinceSignal,
+      barsSinceSignal,
       fresh,
       status: stale ? "stale" : "ok",
       evaluatedAt: input.evaluatedAt,
@@ -5085,21 +5100,10 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     latestBarAt,
     presentBarsSinceSignal,
   });
-  if (stale) {
-    return {
-      ...base,
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      currentSignalPrice: null,
-      latestBarAt,
-      barsSinceSignal: null,
-      fresh: false,
-      status: "stale" as const,
-      lastError: delayedLatestBarError,
-      indicatorSnapshot,
-    };
-  }
 
+  // Staleness is reported via status only; the signal identity stays on the
+  // state so a data gap never erases the latched memory. Canonical events are
+  // still only recorded for non-stale evaluations.
   return {
     ...base,
     currentSignalDirection: directionFromSignal(signal),
@@ -5115,14 +5119,16 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     status: stale ? ("stale" as const) : ("ok" as const),
     lastError: delayedLatestBarError,
     indicatorSnapshot,
-    canonicalSignalEvent: {
-      signal,
-      signalAt,
-      signalBarAt,
-      latestBarAt,
-      latestBarAnchorAt: latestBarEntry.anchorAt,
-      sourceBarPartial,
-    },
+    canonicalSignalEvent: stale
+      ? null
+      : {
+          signal,
+          signalAt,
+          signalBarAt,
+          latestBarAt,
+          latestBarAnchorAt: latestBarEntry.anchorAt,
+          sourceBarPartial,
+        },
   };
 }
 
@@ -5337,7 +5343,7 @@ function signalMonitorMatrixStateFromPython(input: {
     canonicalSignalEvent: null as SignalMonitorCanonicalEventCandidate | null,
   };
   const signal = input.pythonState.signal;
-  if (!signal || stale) {
+  if (!signal) {
     return {
       ...base,
       currentSignalDirection: null,
@@ -5409,15 +5415,17 @@ function signalMonitorMatrixStateFromPython(input: {
       freshWindowBars: input.profile.freshWindowBars,
       stale,
     }),
-    status: "ok" as const,
-    canonicalSignalEvent: {
-      signal: pyrusSignalEvent,
-      signalAt,
-      signalBarAt,
-      latestBarAt,
-      latestBarAnchorAt: latestBarEntry.anchorAt,
-      sourceBarPartial: signalBarEntry.sourceBar.partial === true,
-    },
+    status: stale ? ("stale" as const) : ("ok" as const),
+    canonicalSignalEvent: stale
+      ? null
+      : {
+          signal: pyrusSignalEvent,
+          signalAt,
+          signalBarAt,
+          latestBarAt,
+          latestBarAnchorAt: latestBarEntry.anchorAt,
+          sourceBarPartial: signalBarEntry.sourceBar.partial === true,
+        },
   };
 }
 
@@ -5695,10 +5703,12 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             String(state.status || "ok").trim().toLowerCase() === "stale"
               ? "stale"
               : "ok";
+          // Signal identity persists regardless of status; staleness only
+          // gates freshness. The upsert latch and identity-ranked preserve
+          // rule guard against regressions.
           const direction =
-            status === "ok" &&
-            (state.currentSignalDirection === "buy" ||
-              state.currentSignalDirection === "sell")
+            state.currentSignalDirection === "buy" ||
+            state.currentSignalDirection === "sell"
               ? state.currentSignalDirection
               : null;
           const signalAt = direction ? dateOrNull(state.currentSignalAt) : null;
@@ -5884,7 +5894,67 @@ function signalMonitorMatrixStreamStateSignature(
     fresh: Boolean(state.fresh),
     status: state.status,
     lastError: state.lastError ?? null,
+    actionEligible: state.actionEligible ?? null,
+    actionBlocker: state.actionBlocker ?? null,
   });
+}
+
+function withSignalMonitorMatrixStreamActionability<
+  T extends SignalMonitorMatrixStreamState,
+>(state: T, profile: { freshWindowBars: number }): T {
+  const actionability = buildSignalMonitorActionability({
+    direction: state.currentSignalDirection,
+    signalAt: state.currentSignalAt,
+    barsSinceSignal: state.barsSinceSignal,
+    stale: state.status !== "ok",
+    freshWindowBars: profile.freshWindowBars,
+  });
+  // fresh stays as authored by the eval/latch path: a latched refresh is
+  // deliberately not fresh even when its bar age is inside the fresh window.
+  return {
+    ...state,
+    actionEligible: actionability.actionEligible,
+    actionBlocker: actionability.actionBlocker,
+  } as T;
+}
+
+// Wire-side variant of applyStoredSignalDirectionLatch for stream emission
+// (evaluation-result shape, number prices). Same semantics: a directionless
+// re-evaluation must not erase a latched buy/sell on the stream any more than
+// it may in the DB.
+function latchSignalMonitorMatrixStreamState(
+  existing: SignalMonitorMatrixStreamState | null,
+  state: SignalMonitorMatrixStateResult,
+): SignalMonitorMatrixStateResult {
+  if (state.currentSignalDirection) {
+    return state;
+  }
+  const existingDirection =
+    existing?.currentSignalDirection === "buy" ||
+    existing?.currentSignalDirection === "sell"
+      ? existing.currentSignalDirection
+      : null;
+  if (!existingDirection) {
+    return state;
+  }
+  const currentSignalAt = existing?.currentSignalAt ?? state.currentSignalAt;
+  return {
+    ...state,
+    currentSignalDirection: existingDirection,
+    currentSignalAt,
+    currentSignalPrice:
+      existing?.currentSignalPrice ?? state.currentSignalPrice,
+    barsSinceSignal: resolveLatchedSignalBarsSinceSignal({
+      timeframe: state.timeframe,
+      currentSignalAt,
+      latestBarAt: state.latestBarAt,
+      existingBarsSinceSignal: existing?.barsSinceSignal,
+      candidateBarsSinceSignal: state.barsSinceSignal,
+    }),
+    fresh: false,
+    // The eval-result union has no branch for "latched identity on a
+    // directionless evaluation"; the merged shape is structurally valid.
+  } as SignalMonitorMatrixStateResult;
 }
 
 function recordSignalMonitorMatrixStreamSnapshot(
@@ -5892,10 +5962,12 @@ function recordSignalMonitorMatrixStreamSnapshot(
   states: SignalMonitorMatrixStreamState[],
 ) {
   states.forEach((state) => {
+    const key = signalMonitorMatrixStreamStateKey(state);
     subscriber.lastStateSignatures.set(
-      signalMonitorMatrixStreamStateKey(state),
+      key,
       signalMonitorMatrixStreamStateSignature(state),
     );
+    subscriber.lastStates.set(key, state);
   });
 }
 
@@ -5912,6 +5984,7 @@ function changedSignalMonitorMatrixStreamStates<
       return false;
     }
     subscriber.lastStateSignatures.set(key, signature);
+    subscriber.lastStates.set(key, state);
     return true;
   });
 }
@@ -6060,7 +6133,9 @@ export function buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
   return buildSignalMonitorMatrixStreamBootstrapEvent(
     {
       profile: snapshot.profile,
-      states: hydrated.states,
+      states: hydrated.states.map((state) =>
+        withSignalMonitorMatrixStreamActionability(state, snapshot.profile),
+      ),
       evaluatedAt: dateOrNull(snapshot.evaluatedAt) ?? new Date(),
       timeframes: scope.timeframes,
     },
@@ -6203,9 +6278,20 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
     if (!states.length) {
       continue;
     }
+    const latchedStates = states.map((state) =>
+      withSignalMonitorMatrixStreamActionability(
+        latchSignalMonitorMatrixStreamState(
+          subscriber.lastStates.get(
+            signalMonitorMatrixStreamStateKey(state),
+          ) ?? null,
+          state,
+        ),
+        subscriber.profile,
+      ),
+    );
     const changedStates = changedSignalMonitorMatrixStreamStates(
       subscriber,
-      states,
+      latchedStates,
     );
     if (!changedStates.length) {
       continue;
@@ -6375,6 +6461,7 @@ function createSignalMonitorMatrixStreamSubscriptionForTests(input: {
     profile: input.profile,
     onEvent: input.onEvent,
     lastStateSignatures: new Map(),
+    lastStates: new Map(),
   };
   signalMonitorMatrixStreamSubscribers.set(subscriberId, subscriber);
   if (input.prime !== false) {
