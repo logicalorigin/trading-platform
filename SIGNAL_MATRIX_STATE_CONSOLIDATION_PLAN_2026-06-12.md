@@ -1,6 +1,16 @@
 # Implementation Plan: Signal Matrix State Consolidation
 
 - Created: 2026-06-12
+
+## Progress
+
+- [x] Task 0 — landed `66e4b5c` (in-flight regression slice, scoped to signal-matrix files; other slices' dirty files left untouched)
+- [x] Task 1 — already complete inside the landed slice (all three producers gap-aware; tests existed)
+- [x] Task 2 — landed `44d2a00` (identity-ranked preserve rule; latch recompute was already in the slice)
+- [x] Task 3 — landed `44d2a00` (signal-monitor-actionability module; single fresh author; shared max-age constant)
+- [x] Task 4 — landed `e540bff` (stale keeps identity in eval+persist; wire-side latch per SSE subscriber; actionEligible/actionBlocker on deltas + stored bootstrap and in the delta signature). DEVIATION: REST/openapi fields deferred — openapi.yaml and generated clients carry other slices' uncommitted changes; adding fields now would force a mixed-slice commit. Do the spec addition when those slices land (or fold into Task 12).
+- [ ] CHECKPOINT 1 — backend suites 58/58 + signal-options 15/15 + typecheck clean. Live probe pending: the running API still serves the pre-change bundle until the normal Replit Run App restart; verify post-restart that stale cells keep direction on `/api/signal-monitor/state` and the SSE bootstrap, and that the impossible-row parser still returns 0. USER REVIEW REQUIRED before Phase 2 (DB reconciliation rewrites trading-adjacent rows).
+- [ ] Tasks 5-12 — not started.
 - Scope: head of the data trace — ticker bars → signal evaluation → signal matrix state → Signals page/table → STA action rows. Options-selection internals are out of scope except where they consume matrix actionability.
 - Companion evidence: `SESSION_HANDOFF_LIVE_2026-06-12_signal-matrix-state-regression.md` (in-flight slice this plan builds on).
 
