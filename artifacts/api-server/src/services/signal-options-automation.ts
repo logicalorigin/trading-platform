@@ -205,6 +205,13 @@ const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
+// Stop-exit decisions demand fresher data than P&L marking: a fallback mark
+// may be up to 3 minutes old to RECORD marks, but an EXIT may only fire from
+// a fallback mark at most 60s old (user-confirmed policy: wait for fresh
+// data rather than acting on stale prices). Skipped enforcement records a
+// position_exit_quote_unavailable event carrying the mark age; the next
+// fresh tick enforces normally.
+const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_EXIT_MAX_AGE_MS = 60 * 1_000;
 const SIGNAL_OPTIONS_BLOCKED_LIVE_MARKET_DATA_MODES = new Set([
   "delayed",
   "frozen",
@@ -753,10 +760,8 @@ function isSignalOptionsShadowMarkFallbackExitEligible(input: {
     return false;
   }
   return (
-    isFreshShadowPositionMarkFallback({
-      fallback: input.fallback,
-      now: input.now,
-    }) &&
+    input.now.getTime() - input.fallback.latestAsOf.getTime() <=
+      SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_EXIT_MAX_AGE_MS &&
     normalizedQuoteStatus(input.fallback.source) === "option_quote" &&
     isLiveOptionTradingSession(
       input.fallback.latestAsOf,
@@ -11062,6 +11067,9 @@ async function refreshActivePosition(input: {
           markPrice,
           markSource,
           usedShadowMarkFallback,
+          fallbackMarkAgeMs: shadowMarkFallback
+            ? markAt.getTime() - shadowMarkFallback.latestAsOf.getTime()
+            : null,
           position: positionPatch,
           stop: stopPayload,
           overnight,

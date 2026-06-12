@@ -260,6 +260,45 @@ test("Signal Options keeps one-bar monitor signals executable even after matrix 
   assert.equal(previewCandidate?.optionRight, "put");
 });
 
+test("shadow fallback marks older than 60s cannot trigger stop exits", () => {
+  // User-confirmed policy: stops wait for fresh data. A fallback mark may be
+  // up to 3 minutes old to RECORD marks, but exits demand <= 60s.
+  const { isSignalOptionsShadowMarkFallbackExitEligible } =
+    __signalOptionsAutomationInternalsForTests;
+  const latestAsOf = new Date("2026-06-11T17:05:00.000Z");
+  const base = {
+    deployment: { providerAccountId: "shadow" },
+    markSource: "shadow_position_mark",
+    usedShadowMarkFallback: true,
+    position: {
+      selectedContract: { expirationDate: "2026-06-19" },
+    },
+    fallback: {
+      positionId: "shadow-position",
+      latestMarkPrice: 1.25,
+      latestAsOf,
+      peakMarkPrice: 1.5,
+      peakAsOf: latestAsOf,
+      source: "option_quote",
+    },
+  } as never;
+
+  assert.equal(
+    isSignalOptionsShadowMarkFallbackExitEligible({
+      ...(base as Record<string, unknown>),
+      now: new Date("2026-06-11T17:05:30.000Z"),
+    } as never),
+    true,
+  );
+  assert.equal(
+    isSignalOptionsShadowMarkFallbackExitEligible({
+      ...(base as Record<string, unknown>),
+      now: new Date("2026-06-11T17:07:00.000Z"),
+    } as never),
+    false,
+  );
+});
+
 test("Signal Options snapshot blocks non-ok signal states regardless of bar age", () => {
   // Seatbelt: callers pre-filter to status="ok", but the snapshot itself must
   // never mark a stale/error state actionable — even at zero bars of age.
