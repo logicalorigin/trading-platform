@@ -52,6 +52,7 @@ import {
   evaluateSignalMonitor,
   evaluateSignalMonitorProfileSymbols,
   getSignalMonitorProfileRow,
+  getSignalDirectionsForSymbolAsOf,
   getSignalMonitorState,
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
@@ -63,6 +64,7 @@ import {
   resolveSignalMonitorEventLookupKeys,
   updateSignalMonitorProfile,
   withSignalMonitorUniverseScope,
+  type SignalMonitorDirection,
   type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
@@ -4078,6 +4080,30 @@ function selectSignalOptionsMtfFrames(input: {
   };
 }
 
+// Matrix-sourced MTF frames: the entry gate's real source. For each configured
+// timeframe, take that timeframe's signal direction from the matrix (resolved
+// point-in-time by the caller: now for live, the signal time for backfill). A
+// missing/neutral frame is a 0 that can never match the entry direction, so it
+// counts against alignment without blocking on its own. Length always equals the
+// configured-frame count, so requiredCount is measured against the frames the
+// user actually picked, not just the ones that happen to have a signal.
+function selectSignalOptionsMtfFramesFromMatrix(input: {
+  profile: SignalOptionsExecutionProfile;
+  mtfTimeframeDirections: Record<string, SignalMonitorDirection | null>;
+}) {
+  const configuredTimeframes = signalOptionsConfiguredMtfTimeframes(input.profile);
+  const mtfDirections = configuredTimeframes.map((timeframe) => {
+    const direction = input.mtfTimeframeDirections[timeframe];
+    return direction === "buy" ? 1 : direction === "sell" ? -1 : 0;
+  });
+  return {
+    mtfDirections,
+    mtfTimeframes: [...configuredTimeframes],
+    missingTimeframes: [] as string[],
+    namedSource: configuredTimeframes.length > 0,
+  };
+}
+
 function mtfFrameCount(mtfDirections: number[]) {
   return Math.max(1, mtfDirections.length);
 }
@@ -4120,6 +4146,11 @@ function signalOptionsMtfAlignmentReason(
 function evaluateSignalOptionsEntryGate(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
+  // Per-timeframe signal directions from the matrix, resolved point-in-time by
+  // the caller. When provided, MTF alignment is gated against the actual signal
+  // direction on each configured timeframe (the correct source). When omitted
+  // (diagnostic/preview callers), the legacy filterState fallback is used.
+  mtfTimeframeDirections?: Record<string, SignalMonitorDirection | null>;
 }) {
   const filterState = asRecord(asRecord(input.candidate.signal).filterState);
   const mtfGate = input.profile.entryGate.mtfAlignment ?? {
@@ -4127,10 +4158,15 @@ function evaluateSignalOptionsEntryGate(input: {
     requiredCount: 2,
   };
   const adx = finiteNumber(filterState.adx);
-  const mtfSelection = selectSignalOptionsMtfFrames({
-    filterState,
-    profile: input.profile,
-  });
+  const mtfSelection = input.mtfTimeframeDirections
+    ? selectSignalOptionsMtfFramesFromMatrix({
+        profile: input.profile,
+        mtfTimeframeDirections: input.mtfTimeframeDirections,
+      })
+    : selectSignalOptionsMtfFrames({
+        filterState,
+        profile: input.profile,
+      });
   const mtfDirections = mtfSelection.mtfDirections;
   const requiredMtfCount = requiredSignalOptionsMtfCount(
     mtfGate.requiredCount,
@@ -12154,9 +12190,16 @@ async function processEntryCandidate(input: {
   recentEvents?: ExecutionEvent[] | null;
   signal?: AbortSignal;
 }) {
+  const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
+    environment: input.deployment.mode,
+    symbol: input.candidate.symbol,
+    timeframes: signalOptionsConfiguredMtfTimeframes(input.profile),
+    asOf: new Date(),
+  });
   const entryGate = evaluateSignalOptionsEntryGate({
     candidate: input.candidate,
     profile: input.profile,
+    mtfTimeframeDirections,
   });
   if (!entryGate.ok) {
     const contractSelectionLease = acquireSignalOptionsContractSelectionLease({
@@ -16125,7 +16168,17 @@ export async function runSignalOptionsShadowBackfill(input: {
         positionsBySymbol.delete(symbol);
       }
 
-      const entryGate = evaluateSignalOptionsEntryGate({ candidate, profile });
+      const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
+        environment: deployment.mode,
+        symbol: candidate.symbol,
+        timeframes: signalOptionsConfiguredMtfTimeframes(profile),
+        asOf: historicalSignal.signalAt,
+      });
+      const entryGate = evaluateSignalOptionsEntryGate({
+        candidate,
+        profile,
+        mtfTimeframeDirections,
+      });
       if (!entryGate.ok) {
         await emitBackfillSkippedCandidate({
           deployment,

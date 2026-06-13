@@ -9287,6 +9287,62 @@ export async function getSignalMonitorState(input: {
   };
 }
 
+// Point-in-time per-timeframe signal direction for a symbol. Returns the signal
+// direction in effect at `asOf` for each requested timeframe (the most recent
+// stored event with signal_at <= asOf), or null when no signal existed yet.
+// The same query serves the live entry gate (asOf = now) and the backfill
+// replay (asOf = the historical signal time), so MTF alignment is evaluated
+// against the timeframes' real state at the moment the signal fired.
+export async function getSignalDirectionsForSymbolAsOf(input: {
+  environment?: RuntimeMode;
+  symbol: string;
+  timeframes: readonly string[];
+  asOf: Date;
+}): Promise<Record<string, SignalMonitorDirection | null>> {
+  const directions: Record<string, SignalMonitorDirection | null> = {};
+  const timeframes = input.timeframes.filter(
+    (timeframe): timeframe is SignalMonitorTimeframe =>
+      SIGNAL_MONITOR_TIMEFRAMES.includes(timeframe as SignalMonitorTimeframe),
+  );
+  for (const timeframe of timeframes) {
+    directions[timeframe] = null;
+  }
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  if (!symbol || !timeframes.length) {
+    return directions;
+  }
+  const environment = resolveEnvironment(input.environment);
+  const profile = await getOrCreateProfile(environment);
+  // One indexed limit-1 lookup per timeframe (<=6). Each reads the latest event
+  // at-or-before asOf; the (profile, signal_at) indexes keep this cheap.
+  const resolved = await Promise.all(
+    timeframes.map(async (timeframe) => {
+      const [row] = await db
+        .select({ direction: signalMonitorEventsTable.direction })
+        .from(signalMonitorEventsTable)
+        .where(
+          and(
+            eq(signalMonitorEventsTable.profileId, profile.id),
+            eq(signalMonitorEventsTable.symbol, symbol),
+            eq(signalMonitorEventsTable.timeframe, timeframe),
+            lte(signalMonitorEventsTable.signalAt, input.asOf),
+          ),
+        )
+        .orderBy(desc(signalMonitorEventsTable.signalAt))
+        .limit(1);
+      const direction = row?.direction;
+      return [
+        timeframe,
+        direction === "buy" || direction === "sell" ? direction : null,
+      ] as const;
+    }),
+  );
+  for (const [timeframe, direction] of resolved) {
+    directions[timeframe] = direction;
+  }
+  return directions;
+}
+
 export async function evaluateSignalMonitor(input: {
   environment?: RuntimeMode;
   mode?: EvaluationMode;
