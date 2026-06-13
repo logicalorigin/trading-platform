@@ -2,6 +2,9 @@ import { Suspense } from "react";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
+// @ts-ignore JS module keeps screen chunk preload state outside the React registry.
+import { preloadScreenModule } from "../features/platform/screenModulePreloader";
 import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 import {
   completeBootProgressTask,
@@ -54,6 +57,10 @@ if (typeof window !== "undefined") {
       retries: 1,
     },
   );
+  // Warm the persisted first screen in the same startup turn as the frame. If
+  // this waits for AppContent, PlatformApp can render its shell first and leave
+  // the user staring at the screen skeleton while the route chunk starts late.
+  void preloadScreenModule(readInitialPlatformScreen())?.catch?.(() => {});
 }
 
 const AppContent = lazyWithRetry(async () => {

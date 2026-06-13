@@ -4468,10 +4468,10 @@ const FlowOverviewPanel = ({
       ) : null}
     </div>
   );
-  const isFlowLoadingShell = flowStatus === "loading" && !flowEvents.length;
   const shouldRenderDeferredPanels = showDeferredPanels;
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && shouldRenderDeferredPanels),
       backgroundAllowed: Boolean(isVisible && shouldRenderDeferredPanels),
@@ -4778,11 +4778,9 @@ const FlowOverviewPanel = ({
                       fontFamily: T.sans,
                     }}
                   >
-                    {isFlowLoadingShell
-                      ? "warming flow feed"
-                      : isMobileFlowLayout
-                        ? `${activeTicker || "All"} · ${visibleFlowRows.length}`
-                        : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} prints${filtered.length > rowsPerPage ? ` · showing ${rowsPerPage}` : ""}`}
+                    {isMobileFlowLayout
+                      ? `${activeTicker || "All"} · ${visibleFlowRows.length}`
+                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} prints${filtered.length > rowsPerPage ? ` · showing ${rowsPerPage}` : ""}`}
                   </span>
                 </div>
                 {isMobileFlowLayout ? (
@@ -5000,20 +4998,7 @@ const FlowOverviewPanel = ({
                   }}
                 >
                   {isMobileFlowLayout ? (
-                    isFlowLoadingShell ? (
-                      <div style={{ flex: 1, overflowY: "auto", padding: sp(8) }}>
-                        {Array.from({ length: Math.min(rowsPerPage, 12) }).map(
-                          (_, rowIndex) => (
-                            <FlowPlaceholderCard
-                              key={`flow_mobile_placeholder_${rowIndex}`}
-                              title="Loading print"
-                              rows={3}
-                              dense
-                            />
-                          ),
-                        )}
-                      </div>
-                    ) : filtered.length ? (
+                    filtered.length ? (
                       <>
                         <div
                           data-testid="flow-mobile-card-list"
@@ -5062,62 +5047,22 @@ const FlowOverviewPanel = ({
                       <DenseVirtualTable
                         columnOrder={tapeColumns.map((column) => column.id)}
                         columns={flowTapeTableColumns}
-                        data={isFlowLoadingShell ? [] : visibleFlowRows}
+                        data={visibleFlowRows}
                         emptyState={
-                          isFlowLoadingShell ? (
-                            <div style={{ flex: 1, overflowY: "auto" }}>
-                              {Array.from({ length: rowsPerPage }).map((_, rowIndex) => (
-                                <div
-                                  key={`tape_placeholder_${rowIndex}`}
-                                  style={{
-                                    display: "grid",
-                                    gridTemplateColumns: tapeGridTemplate,
-                                    padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
-                                    columnGap: sp(2),
-                                    alignItems: "center",
-                                    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 8)}`,
-                                  }}
-                                >
-                                  {tapeColumns.map((column, columnIndex) => (
-                                    <FlowLoadingBlock
-                                      key={`${column.id}_${rowIndex}`}
-                                      width={
-                                        column.id === "strike"
-                                          ? columnIndex % 2 === 0
-                                            ? "92%"
-                                            : "78%"
-                                          : "70%"
-                                      }
-                                      height={denseRows ? dim(11) : dim(14)}
-                                      style={{
-                                        justifySelf:
-                                          getTapeCellAlignment(column.id) === "right"
-                                            ? "end"
-                                            : getTapeCellAlignment(column.id) === "center"
-                                              ? "center"
-                                              : "start",
-                                      }}
-                                    />
-                                  ))}
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div style={{ padding: sp(12) }}>
-                              <DataUnavailableState
-                                title={
-                                  flowEvents.length
-                                    ? "No prints match this scanner"
-                                    : "No live options activity"
-                                }
-                                detail={
-                                  flowEvents.length
-                                    ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
-                                    : emptyFlowDetail
-                                }
-                              />
-                            </div>
-                          )
+                          <div style={{ padding: sp(12) }}>
+                            <DataUnavailableState
+                              title={
+                                flowEvents.length
+                                  ? "No prints match this scanner"
+                                  : "No live options activity"
+                              }
+                              detail={
+                                flowEvents.length
+                                  ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
+                                  : emptyFlowDetail
+                              }
+                            />
+                          </div>
                         }
                         getCellProps={(columnId) => ({
                           style: getTapeCellStyle(columnId),
@@ -5143,7 +5088,7 @@ const FlowOverviewPanel = ({
                         sortState={{ id: sortBy, direction: sortDir }}
                       />
 
-                      {!isFlowLoadingShell && filtered.length > rowsPerPage ? (
+                      {filtered.length > rowsPerPage ? (
                         <div
                           style={{
                             padding: sp("6px 10px"),
@@ -6515,6 +6460,7 @@ export const FlowScreen = ({
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
+        contentReady: false,
         primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,

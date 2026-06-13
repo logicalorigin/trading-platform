@@ -1680,7 +1680,8 @@ export default function GexScreen({
   );
   const snapshots = gexData?.snapshots || [];
 
-  const loading = gexQuery.isPending && !gexData;
+  const loading =
+    gexQuery.isPending && gexQuery.fetchStatus !== "idle" && !gexData;
   const chainError = gexQuery.error;
   const noExpirations = !loading && expirationDates.length === 0;
   const backgroundLoading = gexQuery.isFetching && !gexQuery.isPending;
@@ -1717,6 +1718,7 @@ export default function GexScreen({
 
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && routeDataSettled),
       backgroundAllowed: Boolean(isVisible && routeDataSettled),

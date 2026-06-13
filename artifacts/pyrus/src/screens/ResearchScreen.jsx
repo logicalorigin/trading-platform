@@ -1,101 +1,32 @@
-import {
-  Suspense,
-  useEffect,
-} from "react";
-import LogoLoader from "../components/LogoLoader";
-import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
-import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
+import { useEffect } from "react";
+import PhotonicsObservatory from "../features/research/PhotonicsObservatory.jsx";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
-  RADII,
   T,
-  dim,
   fs,
   sp,
   textSize,
 } from "../lib/uiTokens.jsx";
-
-const loadPhotonicsObservatory = () =>
-  import("../features/research/PhotonicsObservatory.jsx");
-
-const PhotonicsObservatory = lazyWithRetry(loadPhotonicsObservatory, {
-  label: "PhotonicsObservatory",
-});
-
-export const preloadScreenModules = () =>
-  preloadDynamicImport(loadPhotonicsObservatory, {
-    label: "PhotonicsObservatory",
-  });
-
-const ResearchWorkspaceFallback = () => (
-  <div
-    data-testid="research-workspace-loading"
-    aria-busy="true"
-    aria-label="Loading research workspace"
-    style={{
-      display: "grid",
-      gap: sp(10),
-      minHeight: dim(320),
-      alignContent: "start",
-      border: `1px solid ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.md),
-      background: CSS_COLOR.bg1,
-      padding: sp(14),
-    }}
-  >
-    <LogoLoader
-      tone="panel"
-      label="Loading research workspace"
-      minHeight={dim(90)}
-      testId="research-workspace-loader"
-    />
-    <ContainerLoadingStatus
-      items={[
-        {
-          id: "research-workspace",
-          label: "Research workspace",
-          status: "loading",
-          detail: "Photonics workspace module and research datasets",
-          endpoint: "src/features/research/PhotonicsObservatory.jsx",
-        },
-      ]}
-      testId="research-workspace-loading-waits"
-    />
-    <span
-      className="ra-skeleton-shimmer"
-      style={{
-        width: "64%",
-        height: dim(10),
-        borderRadius: dim(RADII.xs),
-        background: CSS_COLOR.bg3,
-      }}
-    />
-    <span
-      className="ra-skeleton-shimmer"
-      style={{
-        width: "86%",
-        height: dim(10),
-        borderRadius: dim(RADII.xs),
-        background: CSS_COLOR.bg3,
-      }}
-    />
-  </div>
-);
 
 export const ResearchScreen = ({
   onJumpToTrade,
   isVisible = false,
   onReadinessChange,
 }) => {
+  const contentReady = Boolean(isVisible);
+  const primaryReady = Boolean(isVisible);
+
   useEffect(() => {
     onReadinessChange?.({
-      primaryReady: Boolean(isVisible),
+      contentReady,
+      primaryReady,
       derivedReady: false,
       backgroundAllowed: false,
+      error: null,
     });
-  }, [isVisible, onReadinessChange]);
+  }, [contentReady, onReadinessChange, primaryReady]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -150,13 +81,11 @@ export const ResearchScreen = ({
           </div>
         </div>
       </header>
-      <Suspense fallback={<ResearchWorkspaceFallback />}>
-        <PhotonicsObservatory
-          onJumpToTrade={onJumpToTrade}
-          isVisible={isVisible}
-          onReadinessChange={onReadinessChange}
-        />
-      </Suspense>
+      <PhotonicsObservatory
+        onJumpToTrade={onJumpToTrade}
+        isVisible={isVisible}
+        onReadinessChange={onReadinessChange}
+      />
     </section>
   );
 };

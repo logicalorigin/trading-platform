@@ -1512,7 +1512,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={formatCount(budget.visibleOptionChainDefaultLineCount)}
           />
           <StateRow
-            label="Trade Options Chain reserve"
+            label="Trade Options Chain quote lines"
             value={formatCount(budget.visibleOptionQuoteLineReserve)}
           />
           <StateRow
@@ -1619,7 +1619,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow label="Priority live lines" value={formatCount(allocation.priorityLineCount)} />
           <StateRow label="Scanner rotation lines" value={formatCount(allocation.scannerRotatingLineCount)} />
           <StateRow label="Scanner move-ready lines" value={formatCount(allocation.rotatingReclaimableLineCount)} />
-          <StateRow label="Trade Options Chain reserve lines" value={formatCount(allocation.optionReserveLineCount)} />
+          <StateRow label="Protected active lines" value={formatCount(allocation.optionReserveLineCount)} />
           <StateRow label="Non-scanner option lines" value={formatCount(allocation.nonScannerOptionLineCount)} />
           <StateRow
             label="Routine stock IBKR lines"
@@ -3295,6 +3295,7 @@ export default function SettingsScreen({
   const backendSettingsEnabled = dataBrokerTabActive || systemTabActive;
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: settingsVisible,
       primaryReady: settingsVisible,
       derivedReady: settingsVisible,
       backgroundAllowed: settingsVisible,

@@ -28,6 +28,7 @@ import {
 import {
   getStoredOptionQuoteSnapshot,
   useStoredOptionQuoteSnapshot,
+  useIbkrOptionChainStream,
   useIbkrOptionQuoteStream,
   useIbkrQuoteSnapshotStream,
 } from "../features/platform/live-streams";
@@ -96,6 +97,11 @@ import { resolveOptionChartSourceState } from "../features/charting/chartApiBars
 import {
   TradeEquityPanel,
 } from "../features/trade/TradeEquityPanel.jsx";
+import { TradeOrderTicket } from "../features/trade/TradeOrderTicket.jsx";
+import { TradeChainPanel } from "../features/trade/TradeChainPanel.jsx";
+import { TradeStrategyGreeksPanel } from "../features/trade/TradeStrategyGreeksPanel.jsx";
+import { TradeL2Panel } from "../features/trade/TradeL2Panel.jsx";
+import { TradePositionsPanel } from "../features/trade/TradePositionsPanel.jsx";
 import { mapFlowEventToUi } from "../features/flow/flowEventMapper";
 import {
   useGexZeroGamma,
@@ -208,7 +214,7 @@ import {
 } from "../lib/motion";
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { lazyWithRetry } from "../lib/dynamicImport";
+import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
@@ -221,61 +227,27 @@ const OPTION_CHAIN_QUERY_DEFAULTS = {
   gcTime: 5 * 60_000,
 };
 
-const LazyMiniChartTickerSearch = lazyWithRetry(
-  () =>
-    import("../features/platform/tickerSearch/TickerSearch.jsx").then((module) => ({
-      default: module.MiniChartTickerSearch,
-    })),
-  { label: "TradeMiniChartTickerSearch" },
-);
-
-const loadTradeOrderTicket = () =>
-  import("../features/trade/TradeOrderTicket.jsx").then((module) => ({
-    default: module.TradeOrderTicket,
+const loadMiniChartTickerSearch = () =>
+  import("../features/platform/tickerSearch/TickerSearch.jsx").then((module) => ({
+    default: module.MiniChartTickerSearch,
   }));
-const LazyTradeOrderTicket = lazyWithRetry(loadTradeOrderTicket, {
-  label: "TradeOrderTicket",
+const LazyMiniChartTickerSearch = lazyWithRetry(loadMiniChartTickerSearch, {
+  label: "TradeMiniChartTickerSearch",
 });
 
-const LazyTradeChainPanel = lazyWithRetry(
-  () =>
-    import("../features/trade/TradeChainPanel.jsx").then((module) => ({
-      default: module.TradeChainPanel,
-    })),
-  { label: "TradeChainPanel" },
-);
+const loadTradeDrawer = () =>
+  import("../components/platform/Drawer.jsx").then((module) => ({
+    default: module.Drawer,
+  }));
+const LazyDrawer = lazyWithRetry(loadTradeDrawer, { label: "TradeDrawer" });
 
-const LazyTradeStrategyGreeksPanel = lazyWithRetry(
-  () =>
-    import("../features/trade/TradeStrategyGreeksPanel.jsx").then((module) => ({
-      default: module.TradeStrategyGreeksPanel,
-    })),
-  { label: "TradeStrategyGreeksPanel" },
-);
-
-const LazyTradeL2Panel = lazyWithRetry(
-  () =>
-    import("../features/trade/TradeL2Panel.jsx").then((module) => ({
-      default: module.TradeL2Panel,
-    })),
-  { label: "TradeL2Panel" },
-);
-
-const LazyTradePositionsPanel = lazyWithRetry(
-  () =>
-    import("../features/trade/TradePositionsPanel.jsx").then((module) => ({
-      default: module.TradePositionsPanel,
-    })),
-  { label: "TradePositionsPanel" },
-);
-
-const LazyDrawer = lazyWithRetry(
-  () =>
-    import("../components/platform/Drawer.jsx").then((module) => ({
-      default: module.Drawer,
-    })),
-  { label: "TradeDrawer" },
-);
+export const preloadScreenModules = () =>
+  Promise.allSettled([
+    preloadDynamicImport(loadMiniChartTickerSearch, {
+      label: "TradeMiniChartTickerSearch",
+    }),
+    preloadDynamicImport(loadTradeDrawer, { label: "TradeDrawer" }),
+  ]).then(() => undefined);
 
 const OPTION_EXPIRATION_QUERY_DEFAULTS = {
   ...OPTION_CHAIN_QUERY_DEFAULTS,
@@ -2010,7 +1982,7 @@ const MemoTradeChainPanel = memo(function MemoTradeChainPanel(props) {
       minHeight={220}
       resetKeys={[props?.slot?.ticker, props?.expiration]}
     >
-      <LazyTradeChainPanel {...props} />
+      <TradeChainPanel {...props} />
     </TradePanelLoadBoundary>
   );
 });
@@ -2040,7 +2012,7 @@ const MemoTradeOrderTicket = memo(function MemoTradeOrderTicket(props) {
       minHeight={240}
       resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
     >
-      <LazyTradeOrderTicket {...props} />
+      <TradeOrderTicket {...props} />
     </TradePanelLoadBoundary>
   );
 });
@@ -2055,7 +2027,7 @@ const MemoTradeStrategyGreeksPanel = memo(
         minHeight={200}
         resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
       >
-        <LazyTradeStrategyGreeksPanel {...props} />
+        <TradeStrategyGreeksPanel {...props} />
       </TradePanelLoadBoundary>
     );
   },
@@ -2070,7 +2042,7 @@ const MemoTradeL2Panel = memo(function MemoTradeL2Panel(props) {
       minHeight={200}
       resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
     >
-      <LazyTradeL2Panel {...props} />
+      <TradeL2Panel {...props} />
     </TradePanelLoadBoundary>
   );
 });
@@ -2084,7 +2056,7 @@ const MemoTradePositionsPanel = memo(function MemoTradePositionsPanel(props) {
       minHeight={200}
       resetKeys={[props?.slot?.ticker, props?.accountId]}
     >
-      <LazyTradePositionsPanel {...props} />
+      <TradePositionsPanel {...props} />
     </TradePanelLoadBoundary>
   );
 });
@@ -2190,17 +2162,7 @@ const TradePanelLoadBoundary = ({
       />
     )}
   >
-    <Suspense
-      fallback={
-        <TradeDeferredPanel
-          title={title}
-          testId={testId}
-          minHeight={minHeight}
-        />
-      }
-    >
-      {children}
-    </Suspense>
+    {children}
   </PlatformErrorBoundary>
 );
 
@@ -2209,7 +2171,7 @@ const TRADE_PHONE_PANELS = [
   { id: "chain", label: "Chain" },
   { id: "positions", label: "Positions" },
 ];
-const TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS = 2_000;
+const TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS = 0;
 const TRADE_VISIBLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.active,
   "trade-visible",
@@ -2242,6 +2204,10 @@ const TradeQuoteRuntime = ({
   useEffect(() => {
     if (!streamQuoteRuntimeActive || streamRuntimeQuotesReady) {
       setStreamQuoteFallbackReady(false);
+      return undefined;
+    }
+    if (TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS <= 0) {
+      setStreamQuoteFallbackReady(true);
       return undefined;
     }
     const timer = window.setTimeout(() => {
@@ -2666,6 +2632,10 @@ const TradeOptionChainRuntime = ({
       cancelled = true;
     };
   }, [enabled, optionChainRuntimeCacheKey, ticker]);
+  useIbkrOptionChainStream({
+    underlying: ticker,
+    enabled: Boolean(enabled && ticker && !background),
+  });
   const orderedExpirationOptions = useMemo(() => {
     const activeKey = selectedActiveChainKey;
     if (!activeKey) {
@@ -2815,23 +2785,9 @@ const TradeOptionChainRuntime = ({
       return undefined;
     }
 
-    if (
-      activeOptionChainQuery.isSuccess ||
-      activeOptionChainQuery.isError ||
-      activeOptionChainQuery.fetchStatus === "idle"
-    ) {
-      setEnabledBatchChunkCount(1);
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      setEnabledBatchChunkCount(1);
-    }, 1_500);
-    return () => window.clearTimeout(timer);
+    setEnabledBatchChunkCount(1);
+    return undefined;
   }, [
-    activeOptionChainQuery.fetchStatus,
-    activeOptionChainQuery.isError,
-    activeOptionChainQuery.isSuccess,
     background,
     batchExpirationChunks.length,
     chainAnalysisEnabled,
@@ -3334,6 +3290,7 @@ const TradeOptionQuoteRuntime = ({
   ticker,
   contract,
   heldContracts,
+  chainCoverage = DEFAULT_OPTION_CHAIN_COVERAGE,
   executionEnabled,
   visibleEnabled,
   visibleRows = [],
@@ -3346,6 +3303,9 @@ const TradeOptionQuoteRuntime = ({
   const effectiveVisibleRows = visibleEnabled
     ? visibleRows
     : EMPTY_VISIBLE_OPTION_CHAIN_ROWS;
+  const visibleStrikeCoverage = visibleEnabled
+    ? normalizeTradeOptionChainCoverage(chainCoverage)
+    : null;
 
   const quoteSubscriptionPlan = useMemo(
     () =>
@@ -3354,8 +3314,17 @@ const TradeOptionQuoteRuntime = ({
         contract,
         heldContracts,
         visibleRows: effectiveVisibleRows,
+        includeFallbackVisibleRows: visibleEnabled,
+        visibleStrikeCoverage,
       }),
-    [chainRows, contract, effectiveVisibleRows, heldContracts],
+    [
+      chainRows,
+      contract,
+      effectiveVisibleRows,
+      heldContracts,
+      visibleEnabled,
+      visibleStrikeCoverage,
+    ],
   );
   const executionProviderContractIds =
     quoteSubscriptionPlan.executionProviderContractIds;
@@ -3374,14 +3343,19 @@ const TradeOptionQuoteRuntime = ({
         requestedProviderContractIds.length,
       pinnedQuoteSubscriptions: executionProviderContractIds.length,
       rotatingQuoteSubscriptions: visibleProviderContractIds.length,
+      chainCoverage: visibleStrikeCoverage,
       quoteMode: visibleEnabled
-        ? "websocket-backend-admission-visible-window"
+        ? effectiveVisibleRows.length
+          ? "websocket-backend-admission-visible-window"
+          : "websocket-backend-admission-chain-reserve"
         : "websocket-backend-admission-execution-warm",
     });
   }, [
     contract.exp,
     executionProviderContractIds.length,
+    effectiveVisibleRows.length,
     requestedProviderContractIds.length,
+    visibleStrikeCoverage,
     visibleEnabled,
     visibleProviderContractIds.length,
     ticker,
@@ -3558,6 +3532,7 @@ const TradeScreenInner = ({
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible),
       backgroundAllowed: Boolean(isVisible && !safeQaMode),
@@ -4461,6 +4436,7 @@ const TradeScreenInner = ({
         ticker={activeTicker}
         contract={contract}
         heldContracts={heldContracts}
+        chainCoverage={tradeOptionChainCoverage}
         executionEnabled={tradeExecutionBrokerStreamingEnabled}
         visibleEnabled={tradeAnalysisBrokerStreamingEnabled}
         visibleRows={visibleOptionChainRows}

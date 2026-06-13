@@ -82,7 +82,6 @@ export const PlatformScreenRouter = ({
   onChangeMonitorFreshWindowBars,
   onChangeMonitorMaxSymbols,
   onApplyPyrusSignalsSettings,
-  onRequestSignalMatrixHydration,
   onJumpToTradeFromSignals,
   onJumpToTradeFromFlow,
   onJumpToTradeFromAccount,
@@ -178,7 +177,6 @@ export const PlatformScreenRouter = ({
           onChangeMonitorFreshWindowBars={onChangeMonitorFreshWindowBars}
           onChangeMonitorMaxSymbols={onChangeMonitorMaxSymbols}
           onApplyPyrusSignalsSettings={onApplyPyrusSignalsSettings}
-          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
           onReadinessChange={buildReadinessHandler("signals")}
         />
       );
@@ -259,7 +257,7 @@ export const PlatformScreenRouter = ({
           signalMatrixStates={signalMatrixStates}
           isVisible={algoDataActive}
           safeQaMode={safeQaMode}
-          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+          onScanNow={onScanNow}
           onJumpToTradeCandidate={onJumpToTradeFromSignalOptionsCandidate}
           onReadinessChange={buildReadinessHandler("algo")}
         />

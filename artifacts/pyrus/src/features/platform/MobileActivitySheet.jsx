@@ -12,7 +12,6 @@ export const MobileActivitySheet = ({
   signalMatrixStates = [],
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
-  onRequestSignalMatrixHydration,
   onOpenAlgo,
   onOpenTradeSymbol,
 }) => (
@@ -40,7 +39,6 @@ export const MobileActivitySheet = ({
         signalMatrixStates={signalMatrixStates}
         signalMonitorEvents={signalMonitorEvents}
         signalMonitorEventsLoaded={signalMonitorEventsLoaded}
-        onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
         onOpenAlgo={onOpenAlgo}
         onOpenTradeSymbol={onOpenTradeSymbol}
         compactLayout

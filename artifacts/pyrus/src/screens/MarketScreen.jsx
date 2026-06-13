@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  Suspense,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -68,7 +67,10 @@ import {
 import {
   toneForDirectionalIntent,
 } from "../features/platform/semanticToneModel.js";
-import { lazyWithRetry, retryDynamicImport } from "../lib/dynamicImport";
+import {
+  MultiChartGrid,
+  preloadMarketChartRuntime,
+} from "../features/market/MultiChartGrid.jsx";
 import {
   buildMarketRenderDiagnostics,
   resolveMarketPanelColumns,
@@ -82,52 +84,28 @@ const MARKET_BEARISH_TONE = toneForDirectionalIntent("bearish");
 const toneForMarketPressure = (value) =>
   value == null ? CSS_COLOR.textDim : value >= 0 ? MARKET_BULLISH_TONE : MARKET_BEARISH_TONE;
 
-const loadRawMultiChartGridModule = () =>
-  import("../features/market/MultiChartGrid.jsx");
-
-const loadMultiChartGridModule = () =>
-  loadRawMultiChartGridModule().then((module) => ({
-    default: module.MultiChartGrid,
-  }));
-
-let marketChartModulesPreloadStarted = false;
 let marketChartModulesPreloadPromise = null;
 
 export const preloadMarketChartModules = () => {
   if (marketChartModulesPreloadPromise) {
     return marketChartModulesPreloadPromise;
   }
-  marketChartModulesPreloadStarted = true;
-  marketChartModulesPreloadPromise = Promise.allSettled([
-    retryDynamicImport(loadMultiChartGridModule, {
-      label: "MultiChartGrid",
-      reloadOnFailure: false,
-    }),
-    retryDynamicImport(loadRawMultiChartGridModule, {
-      label: "MultiChartGridRuntime",
-      reloadOnFailure: false,
-    }).then((module) =>
-      module.preloadMarketChartRuntime?.(),
-    ),
-  ]).then((results) => {
-    if (results.some((result) => result.status === "rejected")) {
+  marketChartModulesPreloadPromise = Promise.resolve()
+    .then(() => preloadMarketChartRuntime?.())
+    .catch(() => {
       marketChartModulesPreloadPromise = null;
-    }
-    return undefined;
-  });
+    })
+    .then(() => {
+      return undefined;
+    });
   return marketChartModulesPreloadPromise;
 };
 
-export const preloadScreenModules = preloadMarketChartModules;
-
-const LazyMultiChartGrid = lazyWithRetry(
-  loadMultiChartGridModule,
-  { label: "MultiChartGrid" },
-);
-
 const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
-  return <LazyMultiChartGrid {...props} />;
+  return <MultiChartGrid {...props} />;
 });
+
+export const preloadScreenModules = preloadMarketChartModules;
 
 const buildMarketChartFallbackSymbols = (symbols = []) => {
   const requestedSymbols = symbols
@@ -261,6 +239,7 @@ const MarketScreenInner = ({
   }, [isVisible]);
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && (safeQaMode || chartGridReady)),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && chartGridReady),
@@ -514,11 +493,15 @@ const MarketScreenInner = ({
 
     return deduped.slice(0, 7);
   }, [earningsQuery.data, researchConfigured]);
+  const newsInitialLoading =
+    newsQuery.isPending && newsQuery.fetchStatus !== "idle";
+  const earningsInitialLoading =
+    earningsQuery.isPending && earningsQuery.fetchStatus !== "idle";
   const newsStatusLabel = newsQuery.data?.articles?.length
     ? "live · news"
     : newsQuery.isError
       ? "offline"
-      : newsQuery.isPending
+      : newsInitialLoading
         ? "loading"
         : "empty";
   const calendarStatusLabel = researchConfigured
@@ -526,7 +509,7 @@ const MarketScreenInner = ({
       ? "earnings · live"
       : earningsQuery.isError
         ? "offline"
-      : earningsQuery.isPending
+      : earningsInitialLoading
         ? "loading"
       : "empty"
     : "research off";
@@ -534,14 +517,14 @@ const MarketScreenInner = ({
     {
       status: newsQuery.isError
         ? "error"
-        : newsQuery.isPending
+        : newsInitialLoading
           ? "loading"
           : newsItems.length
             ? "ok"
             : "unavailable",
       errorMessage: newsQuery.error?.message,
       unavailableDetail:
-        newsQuery.isPending || newsItems.length
+        newsInitialLoading || newsItems.length
           ? null
           : "Provider-backed headlines are not available for this card.",
     },
@@ -741,31 +724,21 @@ const MarketScreenInner = ({
               }
               minHeight={dim(340)}
             >
-              <Suspense
-                fallback={
-                  <MarketChartGridFallback
-                    symbols={symbols}
-                    isPhone={marketLayoutFlags.isPhone}
-                    mode="loading"
-                  />
+              <MemoMultiChartGrid
+                key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
+                activeSym={sym}
+                externalSelection={marketSymPing}
+                onSymClick={onChartFocus || onSymClick}
+                watchlistSymbols={symbols}
+                popularTickers={stablePopularTickers}
+                signalSuggestionSymbols={signalSuggestionSymbols}
+                stockAggregateStreamingEnabled={
+                  stockAggregateStreamingEnabled && !safeQaMode
                 }
-              >
-                <MemoMultiChartGrid
-                  key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
-                  activeSym={sym}
-                  externalSelection={marketSymPing}
-                  onSymClick={onChartFocus || onSymClick}
-                  watchlistSymbols={symbols}
-                  popularTickers={stablePopularTickers}
-                  signalSuggestionSymbols={signalSuggestionSymbols}
-                  stockAggregateStreamingEnabled={
-                    stockAggregateStreamingEnabled && !safeQaMode
-                  }
-                  isVisible={isVisible}
-                  unusualThreshold={chartFlowUnusualThreshold}
-                  onReady={handleMarketChartGridReady}
-                />
-              </Suspense>
+                isVisible={isVisible}
+                unusualThreshold={chartFlowUnusualThreshold}
+                onReady={handleMarketChartGridReady}
+              />
             </PlatformErrorBoundary>
           ) : (
             <MarketChartGridFallback
@@ -1371,6 +1344,7 @@ export const MarketScreen = (props) => {
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
+        contentReady: false,
         primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,
