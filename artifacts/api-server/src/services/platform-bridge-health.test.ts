@@ -4,14 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import test, { after } from "node:test";
+import { GetSessionResponse } from "@workspace/api-zod";
 
 import { HttpError } from "../lib/errors";
 import {
   clearIbkrBridgeRuntimeOverride,
+  getIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
 import {
   __resetBridgeGovernorForTests,
+  getBridgeGovernorSnapshot,
+  isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
 } from "./bridge-governor";
 import {
@@ -22,6 +26,7 @@ import {
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
 } from "./platform-bridge-health";
+import { getIbkrBridgeActivationDiagnostics } from "./ibkr-bridge-runtime";
 
 const testDataDir = mkdtempSync(join(tmpdir(), "pyrus-bridge-health-"));
 const previousOverrideFile =
@@ -315,6 +320,127 @@ test("session bridge health failure state summarizes health governor backoff", (
       "HTTP 530 <none>: error code: 1033",
     );
   } finally {
+    __resetBridgeGovernorForTests();
+  }
+});
+
+test("session response preserves compact IBKR runtime bridge failure fields", () => {
+  const session = {
+    brokerProvider: "ibkr",
+    configured: {
+      ibkr: true,
+      massive: false,
+      research: true,
+    },
+    environment: "live",
+    ibkrBridge: null,
+    marketDataProvider: "ibkr",
+    marketDataProviders: {
+      historical: "ibkr",
+      live: "ibkr",
+      research: "fmp",
+    },
+    runtime: {
+      ibkr: {
+        runtimeOverrideActive: true,
+        runtimeOverrideUpdatedAt: new Date().toISOString(),
+        desktopAgentOnline: false,
+        desktopAgentRegistered: true,
+        desktopAgentRegisteredCount: 1,
+        desktopAgentCompatibility: "known_bad",
+        desktopAgentCompatible: false,
+        desktopAgentHelperVersion: "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+        desktopAgentKnownBad: true,
+        desktopAgentExpectedHelperVersion:
+          "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop",
+        desktopAgentUpgradeRequired: true,
+        reconnectAvailable: false,
+        activation: getIbkrBridgeActivationDiagnostics(),
+        reachable: false,
+        healthError: "IBKR bridge health is temporarily backed off.",
+        healthErrorCode: "ibkr_bridge_health_backoff",
+        healthFresh: false,
+        bridgeReachable: false,
+        socketConnected: false,
+        connected: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "bridge_unreachable",
+        strictReady: false,
+        strictReason: "health_error",
+      },
+    },
+    timestamp: new Date().toISOString(),
+  };
+
+  // The generated zod schema enumerates only a subset of runtime.ibkr keys and
+  // strips the rest, so the /session route re-merges the source object to honor
+  // SessionIbkrRuntime additionalProperties:true (see routes/platform.ts
+  // "/session"). This mirrors that merge to assert the contract holds end-to-end.
+  const parsed = GetSessionResponse.parse(session);
+  const runtime = {
+    ...(session.runtime.ibkr as Record<string, unknown>),
+    ...(parsed.runtime.ibkr as Record<string, unknown>),
+  };
+
+  // Passthrough fields survive only via the route merge.
+  assert.equal(runtime.healthErrorCode, "ibkr_bridge_health_backoff");
+  assert.equal(runtime.streamState, "reconnect_needed");
+  assert.equal(runtime.strictReason, "health_error");
+  assert.equal(runtime.desktopAgentUpgradeRequired, true);
+  assert.equal(
+    runtime.desktopAgentHelperVersion,
+    "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+  );
+});
+
+test("dead bridge override is abandoned via firstOpenedAt, which survives backoff-window resets", () => {
+  __resetBridgeGovernorForTests();
+  setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://dead.bridge" });
+  const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+    __platformBridgeHealthInternalsForTests;
+  // "health" failureThreshold is 2; a health-timeout error is transient and counts.
+  const transient = new HttpError(504, "timeout", {
+    code: "ibkr_bridge_health_timeout",
+  });
+
+  const realNow = Date.now;
+  try {
+    recordBridgeWorkFailure("health", transient);
+    recordBridgeWorkFailure("health", transient);
+    const opened = getBridgeGovernorSnapshot().health;
+    assert.notEqual(opened.openedAt, null);
+    assert.notEqual(opened.firstOpenedAt, null);
+    const firstOpenedAt = opened.firstOpenedAt;
+    if (firstOpenedAt === null) throw new Error("expected firstOpenedAt to be set");
+
+    // Advance past the health backoff window so isBridgeWorkBackedOff runs its
+    // expiry branch — this is exactly what wipes openedAt on the real read path.
+    Date.now = () => realNow() + 11_000;
+    assert.equal(isBridgeWorkBackedOff("health"), false);
+    const afterExpiry = getBridgeGovernorSnapshot().health;
+    assert.equal(afterExpiry.openedAt, null, "openedAt is wiped by backoff expiry");
+    assert.notEqual(
+      afterExpiry.firstOpenedAt,
+      null,
+      "firstOpenedAt must survive the backoff-expiry reset (the bug openedAt had)",
+    );
+
+    // Recent outage relative to firstOpenedAt: a transient blip must not abandon it.
+    assert.equal(maybeAbandonDeadBridgeOverride(firstOpenedAt + 1_000), false);
+    assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
+
+    // Sustained continuous outage past the window: the dead override is abandoned —
+    // and this only works because firstOpenedAt (not openedAt) is the clock.
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      true,
+    );
+    assert.equal(getIbkrBridgeRuntimeOverride(), null);
+  } finally {
+    Date.now = realNow;
     __resetBridgeGovernorForTests();
   }
 });

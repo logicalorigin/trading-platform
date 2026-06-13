@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-10.ib-async-sidecar-v21-continuous-claim'
+$HelperVersion = '2026-06-13.ib-async-sidecar-v23-responsive-agent-loop'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -365,9 +365,8 @@ function Claim-DesktopAgentLaunchJob([string]$BaseUrl) {
         desktopSecret = $identity['desktopSecret']
         helperVersion = $HelperVersion
         label = Get-DesktopAgentLabel
-        waitMs = 25000
     }
-    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 30
+    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 5
 }
 
 function Complete-DesktopAgentJob([string]$BaseUrl, [string]$JobId, [string]$CompletionToken, [bool]$Ok, [string]$Message) {
@@ -404,11 +403,20 @@ function Complete-HelperUpdateOnlyActivation([string]$BaseUrl, [string]$Activati
 }
 
 function Start-BridgeLaunchProcess([string]$LaunchUrl) {
+    # Run the launch in a SEPARATE process so the desktop-agent claim/heartbeat loop
+    # keeps running for the whole (multi-second) launch. Running it inline blocked the
+    # loop, so a cancel/shutdown job could not be claimed mid-launch and heartbeats
+    # were missed (a launch stuck at 2FA stranded the agent). The launch URL carries
+    # desktopAgentLaunch=1, so the child skips the agent self-refresh; the child
+    # reports its own progress and errors through the script's top-level launch catch.
     $target = Resolve-OwnScriptPath
+    if (-not $target -or -not (Test-Path $target)) {
+        $target = Join-Path $StateDir 'pyrus-ibkr-helper.ps1'
+    }
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Start-Process -FilePath $powershell `
-        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $target, '-LaunchUrl', $LaunchUrl) `
-        | Out-Null
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-LaunchUrl', $LaunchUrl) `
+        -WindowStyle Hidden | Out-Null
 }
 
 function Test-DesktopAgentProcessRunning {
@@ -566,15 +574,19 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
     $heartbeatIntervalSeconds = 30
     $lastHeartbeatUtc = [DateTime]::MinValue
 
+    # Register once up front so the backend knows this agent before the first claim.
+    try {
+        $registration = Register-DesktopAgent -BaseUrl $baseUrl
+        Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
+        $lastHeartbeatUtc = [DateTime]::UtcNow
+    } catch {
+        Write-Log "Initial desktop agent registration failed: $($_.Exception.Message)"
+    }
+
     while ($true) {
         try {
-            if (($lastHeartbeatUtc -eq [DateTime]::MinValue) -or ((([DateTime]::UtcNow) - $lastHeartbeatUtc).TotalSeconds -ge $heartbeatIntervalSeconds)) {
-                $registration = Register-DesktopAgent -BaseUrl $baseUrl
-                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
-                $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
-                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $heartbeat
-                $lastHeartbeatUtc = [DateTime]::UtcNow
-            }
+            # Claim FIRST so a queued launch/shutdown job is picked up immediately,
+            # never delayed behind a (possibly slow) register/heartbeat round-trip.
             $job = Claim-DesktopAgentLaunchJob -BaseUrl $baseUrl
             if ($job -and $job.ready -eq $true) {
                 $jobAction = [string]$job.action
@@ -599,6 +611,16 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
                 }
             } else {
                 Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $job
+            }
+
+            # Heartbeat AFTER the claim, on its own ~30s cadence, so it never gates
+            # the claim of a freshly-queued job (the "we went to heartbeat" launch lag).
+            if ((([DateTime]::UtcNow) - $lastHeartbeatUtc).TotalSeconds -ge $heartbeatIntervalSeconds) {
+                $registration = Register-DesktopAgent -BaseUrl $baseUrl
+                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $registration
+                $heartbeat = Send-DesktopAgentHeartbeat -BaseUrl $baseUrl
+                Invoke-DesktopAgentSelfUpdateIfNeeded -BaseUrl $baseUrl -Response $heartbeat
+                $lastHeartbeatUtc = [DateTime]::UtcNow
             }
         } catch {
             Write-Log "Desktop agent polling failed: $($_.Exception.Message)"
@@ -763,7 +785,7 @@ function Ensure-LocalAsyncSidecar {
             Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_exited' -Message (Truncate-Message "Python IBKR async sidecar exited before becoming ready. $detail")
             return $false
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 500
     }
 
     Write-Log 'Python IBKR async sidecar did not become ready before timeout.'
@@ -1640,7 +1662,7 @@ function Claim-LoginHandoffEnvelope([string]$HelperInstanceId) {
             throw 'IB Gateway bridge launch was canceled from Pyrus.'
         }
 
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 150
     }
 
     throw 'Timed out waiting for encrypted IBKR credentials from Pyrus.'
@@ -2265,7 +2287,7 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
             try {
                 Write-Log "Activating IB Gateway window pid=$($process.Id) title='$($process.MainWindowTitle)'."
                 if ($shell.AppActivate([int]$process.Id)) {
-                    Start-Sleep -Seconds 1
+                    Start-Sleep -Milliseconds 200
                     $activatedCredentialWindow = Get-ForegroundIBGatewayCredentialWindowCandidate
                     if ($activatedCredentialWindow) {
                         return $shell
@@ -2280,7 +2302,7 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
         foreach ($title in @('IB Gateway', 'IBKR', 'Interactive Brokers', 'Trader Workstation', 'Login', 'Log In')) {
             try {
                 if ($shell.AppActivate($title)) {
-                    Start-Sleep -Seconds 1
+                    Start-Sleep -Milliseconds 200
                     $activatedCredentialWindow = Get-ForegroundIBGatewayCredentialWindowCandidate
                     if ($activatedCredentialWindow) {
                         return $shell
@@ -2304,7 +2326,7 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
                 Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message 'Waiting for the IB Gateway login window to become active.'
             }
         }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 250
     }
 
     if ($AllowForegroundFallback) {
@@ -2467,7 +2489,6 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         Start-IBGatewayExecutable -GatewayPath $gatewayPath
         $startedGateway = $true
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_process_started' -Message 'IB Gateway process start requested; waiting for the login window.'
-        Start-Sleep -Seconds 3
         Assert-ActivationNotCanceled
     } elseif (-not $gatewayWindow) {
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_running_waiting_login' -Message "IB Gateway is running; waiting for the login window to accept credentials ($gatewayProcessSummary)."
@@ -2580,7 +2601,7 @@ function Ensure-IBGatewaySocket {
             if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
                 throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
             }
-            Start-Sleep -Seconds 2
+            Start-Sleep -Milliseconds 500
         }
 
         throw 'IB Gateway is already running, but the live API socket did not open on 127.0.0.1:4001. Log in to live mode, enable API socket port 4001, then retry the bridge launch.'
@@ -2605,7 +2626,7 @@ function Ensure-IBGatewaySocket {
         if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
             throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 500
     }
 
     throw 'IB Gateway live API socket did not open on 127.0.0.1:4001. Open IB Gateway, log in to live mode, enable API socket port 4001, then retry the bridge launch.'
@@ -3331,35 +3352,8 @@ function Ensure-CloudflareTunnel([string]$LocalBaseUrl) {
     throw 'Cloudflare quick tunnel is published but the bridge health check is not passing yet.'
 }
 
-try {
-    if ($Install) {
-        Install-ProtocolHandler
-    }
-
-    if ($InstallAgent) {
-        Install-DesktopAgent -BaseUrl $ApiBaseUrl -StartAgent (-not $NoStartAgent)
-        exit 0
-    }
-
-    if ($Agent) {
-        Start-DesktopAgent -PreferredBaseUrl $ApiBaseUrl
-        exit 0
-    }
-
-    $rawLaunchUrl = $LaunchUrl
-    if (-not $rawLaunchUrl) {
-        $rawLaunchUrl = $ActivationUrl
-    }
-    if (-not $rawLaunchUrl) {
-        $rawLaunchUrl = $ProtocolUrl
-    }
-
-    if (-not $rawLaunchUrl) {
-        Write-Log 'Protocol handler is installed. Start the IB Gateway bridge from the Pyrus header.'
-        exit 0
-    }
-
-    $params = Parse-LaunchUrl -RawUrl $rawLaunchUrl
+function Invoke-BridgeLaunch([string]$RawLaunchUrl) {
+    $params = Parse-LaunchUrl -RawUrl $RawLaunchUrl
     $action = [string]$params['action']
     if ($action -eq 'configure-autologin') {
         throw 'Local stored IB Gateway auto-login setup is no longer used. Start auto-login from Pyrus and enter credentials in the app.'
@@ -3372,7 +3366,7 @@ try {
     $script:CallbackSecret = [string]$params['callbackSecret']
     $script:ApiBaseUrl = (Get-RequiredParam -Params $params -Name 'apiBaseUrl').TrimEnd('/')
     Save-DesktopAgentConfig -BaseUrl $script:ApiBaseUrl
-    Invoke-HelperSelfUpdateIfNeeded -Params $params -RawLaunchUrl $rawLaunchUrl
+    Invoke-HelperSelfUpdateIfNeeded -Params $params -RawLaunchUrl $RawLaunchUrl
     $desktopAgentLaunch = Test-TruthyParam $params['desktopAgentLaunch']
     if (-not (Test-TruthyParam $params['shutdown']) -and -not $desktopAgentLaunch) {
         Write-Log 'Windows bridge helper launch accepted; refreshing the desktop agent before continuing.'
@@ -3389,7 +3383,7 @@ try {
             Complete-DesktopAgentJob -BaseUrl $script:ApiBaseUrl -JobId $shutdownJobId -CompletionToken $shutdownCompletionToken -Ok $false -Message $_.Exception.Message
             throw
         }
-        exit 0
+        return
     }
     if (Test-TruthyParam $params['helperUpdateOnly']) {
         Write-Log 'Pyrus IBKR helper update-only launch completed; Gateway startup skipped.'
@@ -3399,7 +3393,7 @@ try {
             Write-Log "Desktop agent registration after update-only launch failed: $($_.Exception.Message)"
         }
         Complete-HelperUpdateOnlyActivation -BaseUrl $script:ApiBaseUrl -ActivationId $script:ActivationId -CallbackSecret $script:CallbackSecret
-        exit 0
+        return
     }
 
     $script:BridgeToken = Get-OrCreate-BridgeToken -PreferredToken (Get-RequiredParam -Params $params -Name 'bridgeToken')
@@ -3455,6 +3449,37 @@ try {
         }
     }
     Write-Log "IB Gateway bridge attached with $publicUrl."
+}
+
+try {
+    if ($Install) {
+        Install-ProtocolHandler
+    }
+
+    if ($InstallAgent) {
+        Install-DesktopAgent -BaseUrl $ApiBaseUrl -StartAgent (-not $NoStartAgent)
+        exit 0
+    }
+
+    if ($Agent) {
+        Start-DesktopAgent -PreferredBaseUrl $ApiBaseUrl
+        exit 0
+    }
+
+    $rawLaunchUrl = $LaunchUrl
+    if (-not $rawLaunchUrl) {
+        $rawLaunchUrl = $ActivationUrl
+    }
+    if (-not $rawLaunchUrl) {
+        $rawLaunchUrl = $ProtocolUrl
+    }
+
+    if (-not $rawLaunchUrl) {
+        Write-Log 'Protocol handler is installed. Start the IB Gateway bridge from the Pyrus header.'
+        exit 0
+    }
+
+    Invoke-BridgeLaunch -RawLaunchUrl $rawLaunchUrl
 } catch {
     $message = $_.Exception.Message
     Write-Log "IB Gateway bridge launch failed: $message"

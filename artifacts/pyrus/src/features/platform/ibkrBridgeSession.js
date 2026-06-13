@@ -17,11 +17,34 @@ export const IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS = 10 * 60_000;
 export const IBKR_RECONNECT_REQUEST_EVENT = "pyrus:ibkr-reconnect-request";
 
 export const openIbkrProtocolLauncher = () => {
-  return null;
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const documentRef = window.document;
+  const parent = documentRef?.body || documentRef?.documentElement;
+  if (!documentRef?.createElement || !parent?.appendChild) {
+    return null;
+  }
+
+  const iframe = documentRef.createElement("iframe");
+  iframe.setAttribute?.("aria-hidden", "true");
+  iframe.tabIndex = -1;
+  iframe.style.position = "absolute";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  iframe.style.left = "-9999px";
+  parent.appendChild(iframe);
+  return iframe;
 };
 
 export const closeIbkrProtocolLauncher = (launcher) => {
-  void launcher;
+  try {
+    launcher?.remove?.();
+  } catch {
+    // Best effort cleanup for browsers with unusual protocol prompt behavior.
+  }
 };
 
 export const requestIbkrReconnect = () => {
@@ -174,27 +197,20 @@ export const navigateIbkrProtocolLauncher = (launcher, url) => {
     return false;
   }
 
+  let target = launcher;
   try {
-    const anchor = window.document?.createElement?.("a");
-    if (!anchor) {
+    target = launcher || openIbkrProtocolLauncher();
+    if (!target) {
       return false;
     }
-    anchor.href = url;
-    anchor.rel = "noopener";
-    anchor.target = "_self";
-    anchor.style.display = "none";
-    const parent = window.document.body || window.document.documentElement;
-    parent?.appendChild(anchor);
-    anchor.click();
-    window.setTimeout(() => anchor.remove(), 250);
+    target.src = url;
+    window.setTimeout?.(() => closeIbkrProtocolLauncher(target), 5_000);
     return true;
   } catch {
-    try {
-      window.location.assign(url);
-      return true;
-    } catch {
-      return false;
-    }
+    // Clean up the iframe we created here, not the (possibly null) argument,
+    // so a failed src assignment cannot orphan a freshly-created launcher.
+    closeIbkrProtocolLauncher(target);
+    return false;
   }
 };
 

@@ -12,6 +12,11 @@ type CategoryState = {
   active: number;
   queued: number;
   openedAt: number | null;
+  // When the circuit FIRST opened in the current unbroken failure streak. Unlike
+  // openedAt (which isBridgeWorkBackedOff resets every time the backoff window
+  // expires), this is cleared only on a success, so it measures the true continuous
+  // outage duration. Used to decide when a dead bridge override should be abandoned.
+  firstOpenedAt: number | null;
   backoffUntil: number | null;
   failureCount: number;
   lastFailure: string | null;
@@ -89,6 +94,7 @@ function emptyState(): CategoryState {
     active: 0,
     queued: 0,
     openedAt: null,
+    firstOpenedAt: null,
     backoffUntil: null,
     failureCount: 0,
     lastFailure: null,
@@ -321,6 +327,7 @@ export function recordBridgeWorkFailure(
   current.lastFailureAt = Date.now();
   if (current.failureCount >= config.failureThreshold) {
     current.openedAt ??= current.lastFailureAt;
+    current.firstOpenedAt ??= current.lastFailureAt;
     current.backoffUntil = current.lastFailureAt + config.backoffMs;
   }
 }
@@ -329,6 +336,7 @@ export function recordBridgeWorkSuccess(category: BridgeWorkCategory): void {
   const current = state[category];
   current.failureCount = 0;
   current.openedAt = null;
+  current.firstOpenedAt = null;
   current.backoffUntil = null;
   current.lastSuccessAt = Date.now();
 }

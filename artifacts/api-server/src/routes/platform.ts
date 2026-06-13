@@ -59,6 +59,7 @@ import {
   getOptionChainWithDebug,
   getOptionExpirationsWithDebug,
   OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
+  OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   getOptionChartBarsWithDebug,
   resolveOptionContractWithDebug,
   getQuoteSnapshots,
@@ -93,7 +94,6 @@ import {
   fetchAccountSnapshotPayload,
   fetchExecutionSnapshotPayload,
   fetchMarketDepthSnapshotPayload,
-  fetchOptionChainSnapshotPayload,
   fetchHistoricalBarSnapshotPayload,
   fetchOptionQuoteSnapshotPayload,
   fetchOrderSnapshotPayload,
@@ -1314,7 +1314,22 @@ async function startSse(
 }
 
 router.get("/session", async (_req, res) => {
-  const data = GetSessionResponse.parse(await getSession());
+  const session = await getSession();
+  const data = GetSessionResponse.parse(session);
+
+  // SessionIbkrRuntime is openapi `additionalProperties: true`, but the generated
+  // zod validator strips keys it does not enumerate. The bridge-status UI depends
+  // on runtime.ibkr health fields (brokerServerConnected, healthErrorCode,
+  // streamState, strictReason, healthFresh, strictReady, bridgeReachable,
+  // socketConnected, ...) that are not all enumerated, so re-merge the source
+  // object to pass them through. Parsed (date-coerced) values win for enumerated
+  // keys; extra keys fall through from the source.
+  if (session.runtime?.ibkr && data.runtime?.ibkr) {
+    data.runtime.ibkr = {
+      ...session.runtime.ibkr,
+      ...data.runtime.ibkr,
+    };
+  }
 
   res.json(data);
 });
@@ -1625,6 +1640,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
       : req.query.liveQuotes === "false"
         ? false
         : undefined;
+  const detail = req.query.detail === "fast" ? "fast" : undefined;
   res.json(
     await getAccountPositions({
       accountId: req.params.accountId,
@@ -1633,6 +1649,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
       mode,
       source: readOptionalString(req.query.source, 80),
       liveQuotes,
+      detail,
     }),
   );
 });
@@ -2170,6 +2187,9 @@ router.get("/options/chains", async (req, res) => {
   const raw = await getOptionChainWithDebug({
     ...query,
     bypassBridgeBackoff: true,
+    allowDelayedSnapshotHydration: false,
+    emptyRetryDelaysMs: [],
+    timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionChainResponse.parse(raw);
@@ -2180,7 +2200,13 @@ router.get("/options/chains", async (req, res) => {
 router.post("/options/chains/batch", async (req, res) => {
   const body = BatchOptionChainsBody.parse(req.body);
   // User-facing route — see note on GET /options/chains.
-  const raw = await batchOptionChains({ ...body, bypassBridgeBackoff: true });
+  const raw = await batchOptionChains({
+    ...body,
+    bypassBridgeBackoff: true,
+    allowDelayedSnapshotHydration: false,
+    emptyRetryDelaysMs: [],
+    timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
+  });
   setRequestDebugHeaders(res, raw.debug);
   const data = BatchOptionChainsResponse.parse(raw);
 
@@ -2715,10 +2741,6 @@ router.get("/streams/options/chains", async (req, res) => {
   }
 
   await startSse(req, res, "option-chains", async ({ writeEvent }) => {
-    await writeEvent(
-      "chains",
-      await fetchOptionChainSnapshotPayload(underlyings),
-    );
     await writeEvent("ready", {
       underlyings,
       source: "ibkr-bridge",

@@ -35,15 +35,73 @@ export const resolveIbkrCredentialActionState = ({
   };
 };
 
+export const resolveIbkrBridgeProcessActions = ({
+  bridgeDeactivationComplete = false,
+  bridgeLaunchCancelable = false,
+  bridgeLaunchInFlight = false,
+  bridgeManagementToken = null,
+  bridgeRuntimeOverrideActive = false,
+  gatewayConnectedForBridge = false,
+  runtime = null,
+} = {}) => {
+  const hasManagementToken = Boolean(bridgeManagementToken);
+  const hasRuntimeOverride = Boolean(
+    bridgeRuntimeOverrideActive || runtime?.runtimeOverrideActive === true,
+  );
+  const hasBridgeProof = Boolean(
+    gatewayConnectedForBridge ||
+      runtime?.bridgeReachable === true ||
+      runtime?.socketConnected === true ||
+      runtime?.connected === true ||
+      runtime?.authenticated === true,
+  );
+  const hasManagedTeardownTarget = Boolean(
+    hasManagementToken && (hasRuntimeOverride || hasBridgeProof) && !bridgeLaunchInFlight,
+  );
+  // An active runtime override must ALWAYS be clearable from the UI, even when the
+  // bridge looks disconnected or its health/proof fields are absent (e.g. the
+  // session response stripped the passthrough fields, or the override points at a
+  // now-dead bridge). Previously this also required hasBridgeProof, which stranded
+  // the user with a silently no-op deactivate control and no way to clear a stale
+  // override. The backend exposes a force-clear for exactly this case.
+  const hasOverrideCleanupTarget = Boolean(
+    !hasManagementToken && hasRuntimeOverride && !bridgeLaunchInFlight,
+  );
+
+  return {
+    cancelLaunchAction: bridgeLaunchCancelable
+      ? {
+          label: "Cancel launch",
+          mode: "cancel-launch",
+        }
+      : null,
+    deactivateAction:
+      !bridgeDeactivationComplete && hasManagedTeardownTarget
+        ? {
+            label: "Deactivate",
+            mode: "managed-teardown",
+            queueRemoteShutdown: true,
+            stepperVariant: "deactivate",
+          }
+        : !bridgeDeactivationComplete && hasOverrideCleanupTarget
+          ? {
+              label: "Detach bridge",
+              mode: "detach-bridge",
+              queueRemoteShutdown: false,
+              stepperVariant: "clear-state",
+            }
+          : null,
+  };
+};
+
 export const shouldAutoResumeIbkrCredentials = ({
   activationId = null,
   attemptedActivationId = null,
   directActivationShouldReplaceCurrentLaunch = false,
   gatewayConnected = false,
   launchCancelInFlight = false,
-  loginEnvelopeSubmitAttemptCount = 0,
+  loginEnvelopeSubmitted = false,
   loginHandoffReady = false,
-  loginKeyReadCount = 0,
   managementToken = null,
   password = "",
   runtimeActivationActive = false,
@@ -61,8 +119,7 @@ export const shouldAutoResumeIbkrCredentials = ({
       password &&
       runtimeActivationActive &&
       loginHandoffReady &&
-      Number(loginKeyReadCount || 0) > 0 &&
-      Number(loginEnvelopeSubmitAttemptCount || 0) === 0,
+      loginEnvelopeSubmitted !== true,
   );
 };
 

@@ -65,6 +65,7 @@ import {
   shouldUseRemoteIbkrLaunchBrowser,
   writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession";
+import { waitForBridgeLaunchFeedbackPaint } from "./ibkrBridgeLaunchFeedback";
 import {
   isIbkrLoginKeyReadActivationNotFoundError,
   isTransientIbkrLoginKeyReadError,
@@ -76,6 +77,7 @@ import {
 } from "./ibkrConnectionOperationStepperModel";
 import { buildIbkrConnectionSnapshot } from "./ibkrConnectionSnapshot";
 import {
+  resolveIbkrBridgeProcessActions,
   resolveIbkrCredentialActionState,
   shouldAutoResumeIbkrCredentials,
   shouldClearIbkrPasswordAfterCredentialSubmit,
@@ -104,8 +106,8 @@ const getIbkrInsightToneColor = (tone) => {
 };
 
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
-const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
-const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 1_000;
+const IBKR_LOGIN_HANDOFF_POLL_MS = 150;
+const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 0;
 const IBKR_LOGIN_HANDOFF_WAIT_MS = 60_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
@@ -114,21 +116,6 @@ const IBKR_DESKTOP_JOB_POLL_MS = 250;
 const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-const waitForBridgeLaunchFeedbackPaint = () =>
-  new Promise((resolve) => {
-    if (typeof window === "undefined") {
-      resolve();
-      return;
-    }
-
-    const finish = () => window.setTimeout(resolve, 0);
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(finish);
-      return;
-    }
-    finish();
-  });
 
 const bytesToBase64 = (bytes) => {
   let binary = "";
@@ -199,7 +186,9 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken, shouldAbort 
           method: "POST",
           body: {
             managementToken,
-            waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS,
+            ...(IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS > 0
+              ? { waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS }
+              : {}),
           },
           timeoutMs: 0,
         },
@@ -914,16 +903,20 @@ const HeaderIbkrTriggerSummary = ({
 
 const isIbkrDeactivateOperationComplete = (model) =>
   Boolean(
-    model?.operation === "deactivate" &&
+    (model?.operation === "deactivate" ||
+      model?.operation === "detach-bridge") &&
       Array.isArray(model.steps) &&
       model.steps.length > 0 &&
       model.steps.every((step) => step.status === "complete"),
   );
 
-const buildIbkrDeactivatedTone = () => ({
+const isIbkrDetachBridgeOperation = (model) =>
+  model?.operation === "detach-bridge";
+
+const buildIbkrDeactivatedTone = (model) => ({
   color: CSS_COLOR.green,
   Icon: Power,
-  label: "Deactivated",
+  label: isIbkrDetachBridgeOperation(model) ? "Detached" : "Deactivated",
   pulse: false,
 });
 
@@ -932,15 +925,18 @@ const buildIbkrDeactivatedPopoverModel = (model) => {
     return model;
   }
 
+  const detachBridge = isIbkrDetachBridgeOperation(model);
   const deactivatedHealth = {
-    status: "deactivated",
-    label: "Deactivated",
+    status: detachBridge ? "bridge-detached" : "deactivated",
+    label: detachBridge ? "Bridge Detached" : "Deactivated",
     color: CSS_COLOR.green,
-    detail: "Windows helper confirmed IB Gateway shutdown.",
+    detail: detachBridge
+      ? "IBKR bridge runtime was detached."
+      : "Windows helper confirmed IB Gateway shutdown.",
   };
   const deactivatedIssue = {
-    key: "deactivated",
-    label: "Windows helper confirmed IB Gateway shutdown.",
+    key: detachBridge ? "bridge-detached" : "deactivated",
+    label: deactivatedHealth.detail,
     tone: CSS_COLOR.green,
     iconKey: "check",
     severity: "healthy",
@@ -951,7 +947,7 @@ const buildIbkrDeactivatedPopoverModel = (model) => {
         tile.label === "Gateway"
           ? {
               ...tile,
-              value: "Stopped",
+              value: detachBridge ? "Detached" : "Stopped",
               tone: CSS_COLOR.green,
             }
           : tile,
@@ -962,8 +958,8 @@ const buildIbkrDeactivatedPopoverModel = (model) => {
         row.label === "IBKR"
           ? {
               ...row,
-              value: "Deactivated",
-              detail: "Gateway stopped",
+              value: detachBridge ? "Detached" : "Deactivated",
+              detail: detachBridge ? "Bridge detached" : "Gateway stopped",
               tone: CSS_COLOR.green,
             }
           : row,
@@ -997,7 +993,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
   const driftStatus = lineUsage.drift?.status || "unknown";
   const driftActionable =
     driftStatus &&
-    !["ok", "unknown", "matched", "api_active_bridge_missing"].includes(driftStatus);
+    !["ok", "unknown", "matched", "settling", "api_active_bridge_missing"].includes(driftStatus);
   const autoOpenBreakdown = Boolean(
     driftActionable ||
     (warmup.available && warmup.state !== "idle") ||
@@ -1023,7 +1019,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
     tradeOptionsChainReserveLineCount > 0
       ? {
           label: TRADE_OPTIONS_CHAIN_LABEL,
-          value: `${Math.round(tradeOptionsChainReserveLineCount).toLocaleString()} reserved`,
+          value: `${Math.round(tradeOptionsChainReserveLineCount).toLocaleString()} active`,
           tone: CSS_COLOR.textSec,
         }
       : null,
@@ -2216,12 +2212,14 @@ const HeaderIbkrOperationStepper = ({ insightModel, model }) => {
                     left: "-50%",
                     width: "100%",
                     height: 1,
-                    background:
+                    backgroundColor:
                       model.steps[index - 1]?.status === "complete"
                         ? CSS_COLOR.green
-                        : activeLine
-                          ? `linear-gradient(90deg, ${CSS_COLOR.borderLight}, ${tone}, ${CSS_COLOR.borderLight})`
-                          : CSS_COLOR.borderLight,
+                        : CSS_COLOR.borderLight,
+                    backgroundImage:
+                      model.steps[index - 1]?.status === "complete" || !activeLine
+                        ? undefined
+                        : `linear-gradient(90deg, ${CSS_COLOR.borderLight}, ${tone}, ${CSS_COLOR.borderLight})`,
                     transformOrigin: "left center",
                     animation:
                       model.steps[index - 1]?.status === "complete"
@@ -2773,6 +2771,7 @@ export const HeaderStatusCluster = ({
   const bridgePopoverRef = useRef(null);
   const autoLoginUsernameInputRef = useRef(null);
   const autoLoginPasswordInputRef = useRef(null);
+  const bridgePendingAutoLoginCredentialsRef = useRef(null);
   const bridgeCredentialAutoResumeAttemptRef = useRef(null);
   const bridgeRecognitionRefreshTimerRef = useRef(null);
   const bridgeLaunchCancelRequestedRef = useRef(false);
@@ -2999,27 +2998,38 @@ export const HeaderStatusCluster = ({
       bridgeRuntimeActivation &&
       bridgeRuntimeActivation.canceled !== true,
   );
-  const desktopReconnectNeeded = Boolean(
-    ibkrRuntimeState?.desktopAgentOnline && !bridgeRuntimeOverrideActive,
-  );
-  const desktopReconnectReady = Boolean(
-    desktopReconnectNeeded && ibkrRuntimeState?.reconnectAvailable,
-  );
-  const desktopReconnectKnownBad = Boolean(
-    desktopReconnectNeeded &&
-      (ibkrRuntimeState?.desktopAgentKnownBad ||
-        ibkrRuntimeState?.desktopAgentCompatibility === "known_bad"),
-  );
-  const desktopReconnectUpgradeRequired = Boolean(
-    desktopReconnectNeeded && ibkrRuntimeState?.desktopAgentUpgradeRequired,
-  );
-  const desktopReconnectNeedsHelperUpdate = Boolean(
-    desktopReconnectKnownBad || desktopReconnectUpgradeRequired,
-  );
   const gatewayConnectedForBridge = isIbkrGatewayBridgeAttached({
     connection: gatewayConnection,
     runtime: ibkrRuntimeState,
   });
+  const desktopHelperKnownBad = Boolean(
+    ibkrRuntimeState?.desktopAgentKnownBad ||
+      ibkrRuntimeState?.desktopAgentCompatibility === "known_bad",
+  );
+  const desktopHelperUpgradeRequired = Boolean(
+    ibkrRuntimeState?.desktopAgentUpgradeRequired,
+  );
+  const desktopReconnectNeeded = Boolean(
+    !gatewayConnectedForBridge &&
+      (ibkrRuntimeState?.desktopAgentOnline ||
+        desktopHelperKnownBad ||
+        desktopHelperUpgradeRequired ||
+        (!bridgeRuntimeOverrideActive && ibkrRuntimeState?.reconnectAvailable)),
+  );
+  const desktopReconnectReady = Boolean(
+    desktopReconnectNeeded &&
+      ibkrRuntimeState?.desktopAgentOnline &&
+      ibkrRuntimeState?.reconnectAvailable,
+  );
+  const desktopReconnectKnownBad = Boolean(
+    desktopReconnectNeeded && desktopHelperKnownBad,
+  );
+  const desktopReconnectUpgradeRequired = Boolean(
+    desktopReconnectNeeded && desktopHelperUpgradeRequired,
+  );
+  const desktopReconnectNeedsHelperUpdate = Boolean(
+    desktopReconnectKnownBad || desktopReconnectUpgradeRequired,
+  );
   const bridgeLaunchInFlight = Boolean(
     !gatewayConnectedForBridge &&
       (bridgeLaunchInFlightUntil > marketClockNow ||
@@ -3081,7 +3091,7 @@ export const HeaderStatusCluster = ({
   const bridgeDeactivationComplete =
     isIbkrDeactivateOperationComplete(bridgeOperationModel);
   const bridgeDeactivatedTone = bridgeDeactivationComplete
-    ? buildIbkrDeactivatedTone()
+    ? buildIbkrDeactivatedTone(bridgeOperationModel)
     : null;
   const displayedBridgeTone = bridgeDeactivatedTone || bridgeTone;
   const displayedGatewayTone = bridgeDeactivatedTone || gatewayTone;
@@ -3091,13 +3101,6 @@ export const HeaderStatusCluster = ({
         ? buildIbkrDeactivatedPopoverModel(gatewayPopoverModel)
         : gatewayPopoverModel,
     [bridgeDeactivationComplete, gatewayPopoverModel],
-  );
-  const canDeactivate = Boolean(
-    !bridgeDeactivationComplete &&
-      (bridgeManagementToken ||
-        bridgeRuntimeOverrideActive ||
-        session?.configured?.ibkr ||
-        gatewayConnection?.configured),
   );
   const bridgeConnectionInsightModel = useMemo(() => {
     if (bridgeOperationModel?.operation && bridgeOperationModel.operation !== "launch") {
@@ -3149,6 +3152,8 @@ export const HeaderStatusCluster = ({
   const bridgeActivationLoginEnvelopeSubmitAttemptCount = Number(
     bridgeRuntimeActivation?.loginEnvelopeSubmitAttemptCount ?? 0,
   );
+  const bridgeActivationLoginEnvelopeSubmitted =
+    bridgeRuntimeActivation?.loginEnvelopeSubmitted === true;
   const bridgeActivationRemoteLaunchQueued = Boolean(
     bridgeRuntimeActivation?.timings?.launchJobCreatedAt,
   );
@@ -3194,12 +3199,20 @@ export const HeaderStatusCluster = ({
     credentialActionState.resumeAvailable;
   const autoLoginPrimaryBlockedByActiveLaunch =
     credentialActionState.primaryBlockedByActiveLaunch;
-  // Show "Cancel launch" whenever a launch is in flight, even before the API
-  // returns an activationId. handleCancelBridgeLaunch already handles the
-  // no-activationId case (clears client state, skips the server cancel POST).
+  const bridgeProcessActions = resolveIbkrBridgeProcessActions({
+    bridgeDeactivationComplete,
+    bridgeLaunchCancelable,
+    bridgeLaunchInFlight,
+    bridgeManagementToken,
+    bridgeRuntimeOverrideActive,
+    gatewayConnectedForBridge,
+    runtime: ibkrRuntimeState,
+  });
+  const bridgeDeactivateAction = bridgeProcessActions.deactivateAction;
+  const bridgeCancelLaunchAction = bridgeProcessActions.cancelLaunchAction;
+  const canDeactivate = Boolean(bridgeDeactivateAction);
   const bridgeCredentialSecondaryCancelsLaunch =
-    bridgeLaunchCancelable ||
-    (!gatewayConnectedForBridge && (bridgeLauncherBusy || bridgeLaunchInFlight));
+    Boolean(bridgeCancelLaunchAction);
   const bridgeCredentialSecondaryActionDisabled = Boolean(
     bridgeCredentialSecondaryCancelsLaunch
       ? bridgeLaunchCancelInFlight
@@ -3240,7 +3253,12 @@ export const HeaderStatusCluster = ({
   } else if (gatewayReconnectNeeded) {
     autoLoginActionLabel = "Reconnect with credentials";
   }
-  const showCredentialForm = !gatewayConnectedForBridge;
+  // When a runtime override is still active but the bridge is not attached (e.g. a
+  // stale/dead override after the gateway dropped), the deactivate/detach control is
+  // shown. Don't also render the launch form in that case — the two together read as
+  // a contradiction ("Detach bridge" + "Launch"). Surface the detach/reconnect
+  // control first; the launch form returns once the stale override is cleared.
+  const showCredentialForm = !gatewayConnectedForBridge && !canDeactivate;
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
@@ -3356,6 +3374,7 @@ export const HeaderStatusCluster = ({
   }, []);
 
   const clearBridgeLaunchSessionState = useCallback(() => {
+    bridgePendingAutoLoginCredentialsRef.current = null;
     setBridgeActivationActive(false);
     setBridgeLaunchCancelInFlight(false);
     setBridgeLaunchInFlightUntil(0);
@@ -3842,8 +3861,17 @@ export const HeaderStatusCluster = ({
   useEffect(() => {
     const activationId = bridgeActivationId;
     const managementToken = bridgeManagementToken;
-    const username = autoLoginUsernameInputRef.current?.value?.trim() || "";
-    const password = autoLoginPasswordInputRef.current?.value || "";
+    const pendingCredentials = bridgePendingAutoLoginCredentialsRef.current;
+    const usePendingCredentials =
+      pendingCredentials &&
+      (!pendingCredentials.activationId ||
+        pendingCredentials.activationId === activationId);
+    const username = usePendingCredentials
+      ? pendingCredentials.username
+      : autoLoginUsernameInputRef.current?.value?.trim() || "";
+    const password = usePendingCredentials
+      ? pendingCredentials.password
+      : autoLoginPasswordInputRef.current?.value || "";
     const shouldResume = shouldAutoResumeIbkrCredentials({
       activationId,
       attemptedActivationId: bridgeCredentialAutoResumeAttemptRef.current,
@@ -3853,6 +3881,7 @@ export const HeaderStatusCluster = ({
       launchCancelInFlight: bridgeLaunchCancelInFlight,
       loginEnvelopeSubmitAttemptCount:
         bridgeActivationLoginEnvelopeSubmitAttemptCount,
+      loginEnvelopeSubmitted: bridgeActivationLoginEnvelopeSubmitted,
       loginHandoffReady: bridgeActivationLoginHandoffReady,
       loginKeyReadCount: bridgeActivationLoginKeyReadCount,
       managementToken,
@@ -3895,6 +3924,7 @@ export const HeaderStatusCluster = ({
           deliveryResult?.delivered &&
           autoLoginPasswordInputRef.current
         ) {
+          bridgePendingAutoLoginCredentialsRef.current = null;
           autoLoginPasswordInputRef.current.value = "";
         }
       } catch (error) {
@@ -3925,6 +3955,7 @@ export const HeaderStatusCluster = ({
   }, [
     bridgeActivationId,
     bridgeActivationLoginEnvelopeSubmitAttemptCount,
+    bridgeActivationLoginEnvelopeSubmitted,
     bridgeActivationLoginHandoffReady,
     bridgeActivationLoginKeyReadCount,
     bridgeDirectActivationShouldReplaceCurrentLaunch,
@@ -3947,6 +3978,13 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherError("IBKR username and password are required.");
       return { credentialsDelivered: false };
     }
+    bridgePendingAutoLoginCredentialsRef.current = credentialsReady
+      ? {
+          activationId: bridgeActivationId || null,
+          password,
+          username: normalizedUsername,
+        }
+      : null;
     setBridgeManualOperationModel(null);
 
     if (
@@ -3978,6 +4016,15 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherNotice(
         "Sending credentials to the active Windows helper.",
       );
+      // Claim the one-shot auto-resume slot for this activation so the auto-resume
+      // effect cannot also post an envelope for it before the backend flips
+      // loginEnvelopeSubmitted (which would be a double-submit).
+      bridgeCredentialAutoResumeAttemptRef.current = bridgeActivationId;
+      bridgePendingAutoLoginCredentialsRef.current = {
+        activationId: bridgeActivationId,
+        password,
+        username: normalizedUsername,
+      };
       let resumeDeliveryResult = null;
       try {
         await waitForBridgeLaunchFeedbackPaint();
@@ -4002,6 +4049,9 @@ export const HeaderStatusCluster = ({
         return { credentialsDelivered: false };
       } finally {
         setBridgeLauncherBusy(false);
+      }
+      if (resumeDeliveryResult?.delivered) {
+        bridgePendingAutoLoginCredentialsRef.current = null;
       }
       return {
         credentialsDelivered: Boolean(resumeDeliveryResult?.delivered),
@@ -4069,6 +4119,13 @@ export const HeaderStatusCluster = ({
         const selectedLaunchUrl = credentialsReady
           ? payload.autoLoginLaunchUrl || payload.launchUrl
           : payload.updateOnlyLaunchUrl || payload.launchUrl;
+        if (credentialsReady && payload.activationId) {
+          bridgePendingAutoLoginCredentialsRef.current = {
+            activationId: payload.activationId,
+            password,
+            username: normalizedUsername,
+          };
+        }
         setBridgeActivationId(payload.activationId || null);
         setBridgeManagementToken(payload.managementToken || null);
         setBridgeLaunchUrl(selectedLaunchUrl || null);
@@ -4169,6 +4226,9 @@ export const HeaderStatusCluster = ({
         username: normalizedUsername,
         password,
       });
+      if (deliveryResult?.delivered) {
+        bridgePendingAutoLoginCredentialsRef.current = null;
+      }
       return { credentialsDelivered: Boolean(deliveryResult?.delivered) };
     } catch (error) {
       if (protocolLauncher) {
@@ -4219,9 +4279,10 @@ export const HeaderStatusCluster = ({
 
   const handleCancelBridgeLaunch = useCallback(async () => {
     if (!bridgeActivationId || !bridgeManagementToken) {
-      setBridgeLauncherError(null);
-      setBridgeLauncherNotice("No active IB Gateway launch remained.");
-      clearBridgeLaunchSessionState();
+      setBridgeLauncherNotice(null);
+      setBridgeLauncherError(
+        "Cancel launch is unavailable because the backend activation identity is missing.",
+      );
       return;
     }
 
@@ -4283,38 +4344,57 @@ export const HeaderStatusCluster = ({
   ]);
 
   const handleDeactivate = useCallback(async () => {
+    const action = bridgeDeactivateAction;
+    if (!action) {
+      return;
+    }
+    const buildDeactivateModel = (state = {}) =>
+      buildIbkrDeactivateOperationStepper({
+        variant: action.stepperVariant,
+        ...state,
+      });
+    const queueRemoteShutdown = action.queueRemoteShutdown === true;
+    const detachingBridgeOnly = action.stepperVariant === "clear-state";
+
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
     setBridgeLauncherNotice(null);
     setBridgeActivationStatus(null);
     setBridgeManualOperationModel(
-      buildIbkrDeactivateOperationStepper({
-        queue: "current",
-        message: "Queueing Windows desktop shutdown.",
+      buildDeactivateModel({
+        detach: detachingBridgeOnly ? "current" : "pending",
+        queue: queueRemoteShutdown ? "current" : "complete",
+        message: queueRemoteShutdown
+          ? "Queueing Windows desktop shutdown."
+          : "Detaching IBKR bridge runtime.",
       }),
     );
-    const shutdownRequest = platformJsonRequest("/api/ibkr/remote-shutdown", {
-      method: "POST",
-      body: bridgeManagementToken
-        ? { managementToken: bridgeManagementToken }
-        : { force: true },
-      timeoutMs: 0,
-    }).then(
-      (payload) => ({ payload, error: null }),
-      (error) => ({ payload: null, error }),
-    );
+    const shutdownRequest = queueRemoteShutdown
+      ? platformJsonRequest("/api/ibkr/remote-shutdown", {
+          method: "POST",
+          body: { managementToken: bridgeManagementToken },
+          timeoutMs: 0,
+        }).then(
+          (payload) => ({ payload, error: null }),
+          (error) => ({ payload: null, error }),
+        )
+      : Promise.resolve({ payload: null, error: null });
 
     try {
       setBridgeManualOperationModel(
-        buildIbkrDeactivateOperationStepper({
-          queue: "current",
+        buildDeactivateModel({
+          queue: queueRemoteShutdown ? "current" : "complete",
           detach: "current",
-          message: "Queueing Windows shutdown and detaching backend runtime.",
+          message: queueRemoteShutdown
+            ? "Queueing Windows shutdown and detaching backend runtime."
+            : "Detaching IBKR bridge runtime.",
         }),
       );
 
-      setBridgeLauncherNotice("Detaching IBKR bridge.");
-      if (bridgeManagementToken) {
+      setBridgeLauncherNotice(
+        queueRemoteShutdown ? "Detaching IBKR bridge." : "Detaching IBKR bridge.",
+      );
+      if (bridgeManagementToken && queueRemoteShutdown) {
         try {
           await platformJsonRequest("/api/ibkr/bridge/detach", {
             method: "POST",
@@ -4344,11 +4424,13 @@ export const HeaderStatusCluster = ({
         );
       }
       setBridgeManualOperationModel(
-        buildIbkrDeactivateOperationStepper({
-          queue: "current",
+        buildDeactivateModel({
+          queue: queueRemoteShutdown ? "current" : "complete",
           detach: "complete",
           refresh: "current",
-          message: "IBKR runtime detached. Refreshing connection state.",
+          message: queueRemoteShutdown
+            ? "IBKR runtime detached. Refreshing connection state."
+            : "IBKR bridge detached. Refreshing connection state.",
         }),
       );
       setBridgeManagementToken(null);
@@ -4359,14 +4441,22 @@ export const HeaderStatusCluster = ({
       invalidateIbkrRuntimeQueries(queryClient);
       void refreshIbkrConnectionStatus({ includeSupplementalState: true });
       setBridgeManualOperationModel(
-        buildIbkrDeactivateOperationStepper({
-          queue: "current",
+        buildDeactivateModel({
+          queue: queueRemoteShutdown ? "current" : "complete",
           detach: "complete",
           refresh: "complete",
-          message: "IBKR detached. Waiting for Windows shutdown queue confirmation.",
+          desktop: queueRemoteShutdown ? "pending" : "complete",
+          message: queueRemoteShutdown
+            ? "IBKR detached. Waiting for Windows shutdown queue confirmation."
+            : "IBKR bridge detached.",
         }),
       );
-      setBridgeLauncherNotice("IBKR detached.");
+      setBridgeLauncherNotice(
+        queueRemoteShutdown ? "IBKR detached." : "IBKR bridge detached.",
+      );
+      if (!queueRemoteShutdown) {
+        return;
+      }
       void shutdownRequest.then(({ payload: shutdown, error }) => {
         if (error) {
           const message =
@@ -4374,7 +4464,7 @@ export const HeaderStatusCluster = ({
               ? error.message
               : "shutdown request was not queued";
           setBridgeManualOperationModel(
-            buildIbkrDeactivateOperationStepper({
+            buildDeactivateModel({
               queue: "warning",
               detach: "complete",
               refresh: "complete",
@@ -4391,7 +4481,7 @@ export const HeaderStatusCluster = ({
         const shutdownJob = shutdown?.shutdown;
         if (!shutdownJob?.jobId || !shutdownJob?.statusToken) {
           setBridgeManualOperationModel(
-            buildIbkrDeactivateOperationStepper({
+            buildDeactivateModel({
               queue: "warning",
               detach: "complete",
               refresh: "complete",
@@ -4404,7 +4494,7 @@ export const HeaderStatusCluster = ({
         }
 
         setBridgeManualOperationModel(
-          buildIbkrDeactivateOperationStepper({
+          buildDeactivateModel({
             queue: "complete",
             detach: "complete",
             refresh: "complete",
@@ -4423,7 +4513,7 @@ export const HeaderStatusCluster = ({
             invalidateIbkrRuntimeQueries(queryClient);
             void refreshIbkrConnectionStatus({ includeSupplementalState: true });
             setBridgeManualOperationModel(
-              buildIbkrDeactivateOperationStepper({
+              buildDeactivateModel({
                 queue: "complete",
                 detach: "complete",
                 refresh: "complete",
@@ -4441,7 +4531,7 @@ export const HeaderStatusCluster = ({
                 ? statusError.message
                 : "shutdown was not confirmed";
             setBridgeManualOperationModel(
-              buildIbkrDeactivateOperationStepper({
+              buildDeactivateModel({
                 queue: "complete",
                 detach: "complete",
                 refresh: "complete",
@@ -4457,19 +4547,33 @@ export const HeaderStatusCluster = ({
       });
     } catch (error) {
       setBridgeManualOperationModel(
-        buildIbkrDeactivateOperationStepper({
-          queue: "current",
+        buildDeactivateModel({
+          queue: queueRemoteShutdown ? "current" : "complete",
           detach: "error",
-          message: error instanceof Error ? error.message : "Deactivate failed.",
+          message:
+            error instanceof Error
+              ? error.message
+              : detachingBridgeOnly
+                ? "Detach bridge failed."
+                : "Deactivate failed.",
         }),
       );
       setBridgeLauncherError(
-        error instanceof Error ? error.message : "Deactivate failed.",
+        error instanceof Error
+          ? error.message
+          : detachingBridgeOnly
+            ? "Detach bridge failed."
+            : "Deactivate failed.",
       );
     } finally {
       setBridgeLauncherBusy(false);
     }
-  }, [bridgeManagementToken, queryClient, refreshIbkrConnectionStatus]);
+  }, [
+    bridgeDeactivateAction,
+    bridgeManagementToken,
+    queryClient,
+    refreshIbkrConnectionStatus,
+  ]);
 
   return (
     <div
@@ -4701,7 +4805,7 @@ export const HeaderStatusCluster = ({
                   }}
                 >
                   <X size={dim(12)} strokeWidth={2.2} />
-                  Deactivate
+                  {bridgeDeactivateAction.label}
                 </button>
               </div>
             ) : null}

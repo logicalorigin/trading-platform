@@ -117,6 +117,14 @@ test("remote launch queues to a registered desktop even when its helper heartbea
   assert.equal(runtimeState.desktopAgentRegistered, true);
   assert.equal(runtimeState.desktopAgentRegisteredCount, 1);
   assert.equal(runtimeState.desktopAgentOnline, false);
+  assert.equal(
+    runtimeState.desktopAgentHelperVersion,
+    "2026-06-04.ib-async-sidecar-v6-fast-agent",
+  );
+  assert.equal(runtimeState.desktopAgentCompatibility, "known_bad");
+  assert.equal(runtimeState.desktopAgentCompatible, false);
+  assert.equal(runtimeState.desktopAgentKnownBad, true);
+  assert.equal(runtimeState.desktopAgentUpgradeRequired, true);
 
   const launcher = createIbkrRemoteBridgeLaunch({
     apiBaseUrl: "https://pyrus.test",
@@ -490,4 +498,29 @@ test("claimed login envelope can be re-claimed by the same helper within the win
   // The first claim timestamp is preserved as the two-factor phase anchor.
   const diagnostics = getIbkrBridgeActivationDiagnostics();
   assert.ok(diagnostics.latestActivation?.timings.loginEnvelopeClaimedAt);
+});
+
+test("a launch that never attaches is failed after the hard non-terminal window", () => {
+  const launcher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.test",
+    bundleUrl: null,
+  });
+
+  const beforePrune = getIbkrBridgeActivationDiagnostics();
+  assert.equal(beforePrune.latestActivationId, launcher.activationId);
+  assert.equal(beforePrune.latestActivation?.canceled, false);
+
+  // Advance past the 10-minute hard non-terminal window. A successful attach
+  // deletes the activation, so a never-attached launch must be marked failed
+  // here instead of lingering active for the full TTL.
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 11 * 60_000;
+    const afterPrune = getIbkrBridgeActivationDiagnostics();
+    assert.equal(afterPrune.activeCount, 0);
+    assert.equal(afterPrune.latestActivation?.canceled, true);
+    assert.equal(afterPrune.latestProgress?.step, "error");
+  } finally {
+    Date.now = realNow;
+  }
 });

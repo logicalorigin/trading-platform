@@ -1,7 +1,11 @@
 import { performance } from "node:perf_hooks";
 import { HttpError, isHttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import { getProviderConfiguration } from "../lib/runtime";
+import {
+  clearIbkrBridgeRuntimeOverride,
+  getIbkrBridgeRuntimeOverride,
+  getProviderConfiguration,
+} from "../lib/runtime";
 import { recordConnectionLiveState } from "./ibkr-connection-audit";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
@@ -19,6 +23,10 @@ import {
   resolveIbkrRuntimeStrictReason,
   sanitizeConnectedBridgeLastError,
 } from "./platform-runtime-status";
+
+// How long the health circuit must stay continuously open before a launched bridge
+// runtime override is treated as dead and cleared (see maybeAbandonDeadBridgeOverride).
+const DEAD_BRIDGE_OVERRIDE_ABANDON_MS = 3 * 60_000;
 
 type IbkrBridgeClientFactory = () => IbkrBridgeClient;
 type BridgeHealthSnapshot = Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>;
@@ -410,6 +418,8 @@ export type AnnotatedBridgeHealth = ReturnType<typeof annotateBridgeHealth>;
 
 export const __platformBridgeHealthInternalsForTests = {
   annotateBridgeHealth,
+  maybeAbandonDeadBridgeOverride,
+  DEAD_BRIDGE_OVERRIDE_ABANDON_MS,
 };
 
 async function refreshBridgeHealthForSession(
@@ -454,12 +464,45 @@ type BridgeHealthForSessionOptions = {
   waitForStaleRefresh?: boolean;
 };
 
+// A launched bridge sets a runtime override pointing at its tunnel URL. If that
+// bridge dies (gateway closed, tunnel gone), the override would otherwise linger
+// "active" forever while the health circuit stays open — which the UI surfaces as a
+// contradictory state (an active override plus a failing/disconnected bridge). Once
+// the health circuit has been open CONTINUOUSLY (no success) for this long, treat
+// the override as dead and clear it so the connection resolves to a clean
+// disconnected/relaunchable state. Generous enough that a transient tunnel 502
+// (which recovers in seconds and resets openedAt on the next success) cannot trip it.
+function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
+  if (!getIbkrBridgeRuntimeOverride()) {
+    return false;
+  }
+  // firstOpenedAt marks the start of the current unbroken failure streak and — unlike
+  // openedAt — survives the backoff-window resets in isBridgeWorkBackedOff, so it is a
+  // true continuous-outage clock. It is cleared only on a health success.
+  const health = getBridgeGovernorSnapshot().health;
+  if (
+    !health.firstOpenedAt ||
+    now - health.firstOpenedAt < DEAD_BRIDGE_OVERRIDE_ABANDON_MS
+  ) {
+    return false;
+  }
+  clearIbkrBridgeRuntimeOverride();
+  logger.warn(
+    { openForMs: now - health.firstOpenedAt, failureCount: health.failureCount },
+    "Cleared IBKR bridge runtime override after a sustained health-circuit outage; the bridge appears dead. Relaunch to reconnect.",
+  );
+  return true;
+}
+
 export async function getBridgeHealthForSession(
   options: BridgeHealthForSessionOptions = {},
 ): Promise<AnnotatedBridgeHealth | null> {
   if (!getProviderConfiguration().ibkr) {
     return null;
   }
+  // Drop a dead override before evaluating health so the session reports a clean
+  // disconnected state instead of an active-override-but-failing contradiction.
+  maybeAbandonDeadBridgeOverride();
 
   const initialTimeoutMs =
     options.waitForInitialRefresh === false

@@ -201,10 +201,10 @@ test("carries session bridge health failures through the header runtime snapshot
           desktopAgentRegisteredCount: 1,
           desktopAgentCompatibility: "compatible",
           desktopAgentCompatible: true,
-          desktopAgentHelperVersion: "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+          desktopAgentHelperVersion: "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop",
           desktopAgentKnownBad: false,
           desktopAgentExpectedHelperVersion:
-            "2026-06-10.ib-async-sidecar-v21-continuous-claim",
+            "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop",
           desktopAgentUpgradeRequired: false,
           reconnectAvailable: false,
           activation: { active: false },

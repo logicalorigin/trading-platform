@@ -20,6 +20,12 @@ import {
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
+// A launch that never attaches within this window is marked failed so it does not
+// linger as "active" (blocking the UI and activeCount) for the full TTL — e.g. when
+// IB Gateway is closed externally during 2FA and the helper keeps polling. A
+// successful attach DELETES the activation, so this only ever fails a launch that
+// never connected; the window is generous enough to cover slow IBKR 2FA approval.
+const HARD_NONTERMINAL_ACTIVATION_MS = 10 * 60_000;
 const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 // Window during which a helper that already claimed the login envelope may
@@ -31,7 +37,7 @@ const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 const LEGACY_LOGIN_ENVELOPE_RECLAIM_TTL_MS = 3 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
 const BRIDGE_HELPER_VERSION =
-  "2026-06-10.ib-async-sidecar-v21-continuous-claim";
+  "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
@@ -887,6 +893,24 @@ function pruneLegacyBridgeActivations(now = Date.now()): void {
       if (latestLegacyBridgeActivationId === activationId) {
         latestLegacyBridgeActivationId = null;
       }
+      continue;
+    }
+    // Fast-fail a launch that never attached within the hard window so it stops
+    // counting as active. Successful attaches delete the activation, so a record
+    // still present here never connected.
+    if (
+      !activation.canceledAt &&
+      now - activation.issuedAt > HARD_NONTERMINAL_ACTIVATION_MS
+    ) {
+      activation.canceledAt = now;
+      appendLegacyBridgeActivationProgress({
+        activationId,
+        status: "error",
+        step: "error",
+        message:
+          "IB Gateway launch did not complete in time and was marked failed. Start the launch again.",
+      });
+      notifyLegacyActivationWaiters(activationId);
     }
   }
 }
@@ -1783,15 +1807,17 @@ export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionStat
   const desktopAgentRegisteredCount = remoteDesktops.desktops.length;
   const onlineDesktop =
     remoteDesktops.desktops.find((desktop) => desktop.online) ?? null;
-  const desktopAgentHelperVersion = onlineDesktop?.helperVersion ?? null;
-  const desktopAgentCompatibility = onlineDesktop
-    ? onlineDesktop.helperCompatibility
+  const latestDesktop = remoteDesktops.desktops[0] ?? null;
+  const statusDesktop = onlineDesktop ?? latestDesktop;
+  const desktopAgentHelperVersion = statusDesktop?.helperVersion ?? null;
+  const desktopAgentCompatibility = statusDesktop
+    ? statusDesktop.helperCompatibility
     : null;
   const desktopAgentCompatible =
     desktopAgentCompatibility === "compatible";
   const desktopAgentKnownBad = desktopAgentCompatibility === "known_bad";
   const desktopAgentUpgradeRequired = Boolean(
-    onlineDesktop && !desktopAgentCompatible,
+    statusDesktop && !desktopAgentCompatible,
   );
 
   return {
