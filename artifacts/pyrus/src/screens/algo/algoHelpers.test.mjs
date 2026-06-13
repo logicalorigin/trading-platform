@@ -557,6 +557,35 @@ test("STA signal move uses signal basis aliases and current quote", () => {
   assert.equal(move.detail, "+2.00");
 });
 
+test("STA signal move falls back to latest sparkline bar close without a live quote", () => {
+  const move = resolveSignalMove(
+    {
+      symbol: "APLD",
+      currentSignalPrice: 40,
+      sparkBars: [{ close: 41 }, { close: 44 }],
+    },
+    // No live quote fields (price/last/mark all absent).
+    { symbol: "APLD" },
+  );
+
+  assert.equal(move.label, "+10.0%");
+  assert.equal(move.detail, "+4.00");
+});
+
+test("STA signal move prefers a live quote over the sparkline fallback", () => {
+  const move = resolveSignalMove(
+    {
+      symbol: "APLD",
+      currentSignalPrice: 40,
+      sparkBars: [{ close: 99 }],
+    },
+    { symbol: "APLD", price: 42 },
+  );
+
+  assert.equal(move.label, "+5.0%");
+  assert.equal(move.detail, "+2.00");
+});
+
 test("STA source selection does not let cockpit wrapper generatedAt beat fuller state rows", () => {
   const snapshot = resolveStableStaActionSnapshot({
     signalOptionsState: {

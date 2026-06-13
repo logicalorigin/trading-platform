@@ -248,6 +248,7 @@ const WatchlistRow = memo(
     onSignalAction,
     signalStatesByTimeframe = {},
     signalEvents = EMPTY_SIGNAL_EVENTS,
+    executionTimeframe = null,
     busy = false,
     density = "default",
     selectionMode = false,
@@ -268,29 +269,36 @@ const WatchlistRow = memo(
       bestSignalState?.status !== "error" &&
       bestSignalState?.status !== "unavailable";
     const signalColor = signalDirection === "buy" ? CSS_COLOR.blue : CSS_COLOR.red;
+    // Sparkline color follows the traded (execution) signal so the watchlist
+    // matches the STA table. Use the execution-timeframe state for the latched
+    // single-color fallback; without an execution timeframe, keep the legacy
+    // "freshest signal across timeframes" behavior.
+    const sparklineSignalState = executionTimeframe
+      ? signalStatesByTimeframe?.[executionTimeframe] || null
+      : bestSignalState;
     const sparklineRow = useMemo(() => {
-      const currentDirection = bestSignalState?.currentSignalDirection;
+      const currentDirection = sparklineSignalState?.currentSignalDirection;
       if (
         !isWatchlistSignalDirection(currentDirection) ||
-        bestSignalState?.status === "error" ||
-        bestSignalState?.status === "unavailable"
+        sparklineSignalState?.status === "error" ||
+        sparklineSignalState?.status === "unavailable"
       ) {
         return null;
       }
       return {
         direction: currentDirection,
-        currentSignalAt: bestSignalState?.currentSignalAt || null,
-        profileTimeframe: bestSignalState?.timeframe || "",
-        status: bestSignalState?.fresh
+        currentSignalAt: sparklineSignalState?.currentSignalAt || null,
+        profileTimeframe: sparklineSignalState?.timeframe || "",
+        status: sparklineSignalState?.fresh
           ? SIGNALS_ROW_STATUS.activeFresh
           : SIGNALS_ROW_STATUS.activeStale,
       };
     }, [
-      bestSignalState?.currentSignalAt,
-      bestSignalState?.currentSignalDirection,
-      bestSignalState?.fresh,
-      bestSignalState?.status,
-      bestSignalState?.timeframe,
+      sparklineSignalState?.currentSignalAt,
+      sparklineSignalState?.currentSignalDirection,
+      sparklineSignalState?.fresh,
+      sparklineSignalState?.status,
+      sparklineSignalState?.timeframe,
     ]);
     const sparklineSignalDirection = sparklineRow?.direction;
     const sparklineSignalColor =
@@ -372,8 +380,9 @@ const WatchlistRow = memo(
           points: sparklinePoints,
           row: sparklineRow,
           signalEvents,
+          colorTimeframe: executionTimeframe,
         }),
-      [signalEvents, sparklineRow, sparklinePoints],
+      [executionTimeframe, signalEvents, sparklineRow, sparklinePoints],
     );
     const sparklineUsesSignalTimeline = Array.isArray(sparklinePointColors);
     const sparklineColor = sparklineUsesSignalTimeline ? null : sparklineSignalColor;
@@ -983,6 +992,10 @@ export const Watchlist = ({
     () => buildSignalMatrixBySymbol(signalMatrixStates),
     [signalMatrixStates],
   );
+  // The traded (execution) timeframe from the active signal monitor profile;
+  // sparklines color by this signal so the watchlist matches the STA table.
+  const watchlistExecutionTimeframe =
+    String(signalProfile?.timeframe || "").trim() || null;
   const addSymbolSearch = useSearchUniverseTickers(
     addMode && deferredAddQuery.length > 0
       ? {
@@ -1819,6 +1832,7 @@ export const Watchlist = ({
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               signalEvents={signalEventsBySymbol.get(item.sym) || EMPTY_SIGNAL_EVENTS}
+              executionTimeframe={watchlistExecutionTimeframe}
               busy={busy}
               density={density}
               selectionMode={selectionMode}

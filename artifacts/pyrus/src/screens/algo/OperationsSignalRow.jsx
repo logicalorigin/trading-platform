@@ -2196,6 +2196,7 @@ export const OperationsSignalRow = ({
   auditProgression = null,
   tfMatrix = null,
   timeframes = undefined,
+  executionTimeframe = null,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
   signalEvents = [],
@@ -2384,6 +2385,7 @@ export const OperationsSignalRow = ({
                 : signalRecord.status,
         },
         signalEvents,
+        colorTimeframe: executionTimeframe,
       }),
     [
       signalEvents,
@@ -2393,6 +2395,7 @@ export const OperationsSignalRow = ({
       signalRecord.signalAt,
       signalRecord.status,
       signalRecord.timeframe,
+      executionTimeframe,
       sparklinePoints,
     ],
   );

@@ -49,6 +49,8 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
+
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import {
@@ -451,6 +453,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   scoreBreakdown,
   tfMatrix,
   timeframes,
+  executionTimeframe = null,
   signalEvents = [],
   rowSparklineSnapshotsBySymbol = {},
   alt,
@@ -475,6 +478,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
       scoreBreakdown={scoreBreakdown}
       tfMatrix={tfMatrix}
       timeframes={timeframes}
+      executionTimeframe={executionTimeframe}
       signalEvents={signalEvents}
       tickerSnapshot={tickerSnapshot}
       alt={alt}
@@ -1334,6 +1338,7 @@ export const OperationsSignalTable = ({
   signalOptionsSourceHealth = null,
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
+  executionTimeframe = null,
   cockpitGeneratedAt = null,
   cockpitStageItems = [],
   events = [],
@@ -1600,8 +1605,20 @@ export const OperationsSignalTable = ({
     const sourceStaleAfterMs = signalSourceStaleAfterMs(
       rowSignalTimeframes(staFilteredRows),
     );
+    // Match the backend's session-aware staleness: when the US equity market is
+    // quiet (weekends, holidays, the fully-closed window) no new bars are
+    // expected, so a bar pinned at the last session close is NOT stale. Only flag
+    // freshness during a live trading session. Mirrors the backend's
+    // getSignalMonitorMarketSessionContext quiet rule
+    // (status.session.key === "closed" || !calendarDay.tradingDay).
+    const marketStatus = resolveUsEquityMarketStatus();
+    const marketSessionQuiet =
+      marketStatus.session.key === "closed" ||
+      !marketStatus.calendarDay?.tradingDay;
     const signalSourceStale =
-      signalSourceAgeMs !== null && signalSourceAgeMs > sourceStaleAfterMs;
+      !marketSessionQuiet &&
+      signalSourceAgeMs !== null &&
+      signalSourceAgeMs > sourceStaleAfterMs;
     const sourcePolicy =
       typeof scanStageRecord.signalSourcePolicy === "string" &&
       scanStageRecord.signalSourcePolicy.trim()
@@ -2159,6 +2176,7 @@ export const OperationsSignalTable = ({
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={displaySignalTimeframes}
+                    executionTimeframe={executionTimeframe}
                     signalEvents={
                       signalEventsBySymbol.get(String(symbol || "").toUpperCase()) || []
                     }

@@ -67,17 +67,23 @@ export const buildSignalSparklinePointColors = ({
   signalEvents = EMPTY_SIGNAL_EVENTS,
   activeStatuses = DEFAULT_ACTIVE_SIGNAL_STATUSES,
   signalColorForDirection = defaultSignalSparklineColorForDirection,
+  colorTimeframe = null,
 }) => {
   const sparklinePoints = Array.isArray(points) ? points : [];
   if (sparklinePoints.length < 2) {
     return null;
   }
 
+  // When the caller passes the algo's traded execution timeframe, color by
+  // THAT signal's transitions (unified across STA + watchlist); otherwise fall
+  // back to the row's own timeframe (legacy per-row behavior).
   const rowTimeframe = String(row?.timeframe || row?.profileTimeframe || "").trim();
+  const tradedTimeframe = String(colorTimeframe || "").trim();
+  const filterTimeframe = tradedTimeframe || rowTimeframe;
   const transitions = (Array.isArray(signalEvents) ? signalEvents : [])
     .filter((event) => {
-      if (!rowTimeframe || !event.timeframe) return true;
-      return event.timeframe === rowTimeframe;
+      if (!filterTimeframe || !event.timeframe) return true;
+      return event.timeframe === filterTimeframe;
     })
     .map((event) => ({
       direction: event.direction,
@@ -86,7 +92,13 @@ export const buildSignalSparklinePointColors = ({
     }));
   const rowSignalDirection = row?.direction;
   const rowSignalMs = signalSparklineTimestampMs(row?.currentSignalAt);
+  // The row's latched signal only belongs on the timeline when it is the same
+  // timeframe we're coloring by; otherwise it would inject a transition from a
+  // different timeframe than the traded signal.
+  const rowMatchesColorTimeframe =
+    !tradedTimeframe || !rowTimeframe || rowTimeframe === tradedTimeframe;
   if (
+    rowMatchesColorTimeframe &&
     activeStatuses.has(row?.status) &&
     isSignalSparklineDirection(rowSignalDirection) &&
     rowSignalMs != null

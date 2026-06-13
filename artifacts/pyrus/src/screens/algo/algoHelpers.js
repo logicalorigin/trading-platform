@@ -1133,6 +1133,38 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
   };
 };
 
+// Mirrors readSparklineValue in primitives.jsx: a bar's close from a raw
+// number, { close }, { c }, or { v } shape. Kept local so this logic module
+// does not import the React rendering primitives.
+const sparklineBarClose = (point) => {
+  if (typeof point === "number" && Number.isFinite(point)) return point;
+  if (typeof point?.close === "number" && Number.isFinite(point.close)) {
+    return point.close;
+  }
+  if (typeof point?.c === "number" && Number.isFinite(point.c)) return point.c;
+  if (typeof point?.v === "number" && Number.isFinite(point.v)) return point.v;
+  return null;
+};
+
+// Latest sparkline bar close from the same sources resolveSparklineData reads,
+// used as the current-price fallback when no live quote is present so Move can
+// still populate (against the most recent bar rather than a live mark).
+const latestSparklineClose = (snapshot, record) => {
+  const data =
+    (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars) ||
+    (Array.isArray(snapshot?.spark) && snapshot.spark) ||
+    (Array.isArray(record?.sparkBars) && record.sparkBars) ||
+    (Array.isArray(record?.spark) && record.spark) ||
+    (Array.isArray(record?.bars) && record.bars) ||
+    null;
+  if (!data) return null;
+  for (let index = data.length - 1; index >= 0; index -= 1) {
+    const close = sparklineBarClose(data[index]);
+    if (close != null) return close;
+  }
+  return null;
+};
+
 export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = null) => {
   const record = asRecord(signal);
   const snapshot = asRecord(tickerSnapshot);
@@ -1154,6 +1186,7 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
     record.currentPrice,
     record.last,
     record.mark,
+    latestSparklineClose(snapshot, record),
   );
   if (signalPrice == null || currentPrice == null || signalPrice <= 0) {
     return { value: null, pct: null, label: MISSING_VALUE, detail: MISSING_VALUE };

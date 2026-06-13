@@ -37,6 +37,7 @@ import {
   compactButtonStyle,
   formatMoney,
   formatPct,
+  normalizeStrategySignalTimeframe,
   optionProviderContractId,
 } from "./algoHelpers";
 import {
@@ -1360,6 +1361,9 @@ export const AlgoLivePage = ({
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
+            executionTimeframe={normalizeStrategySignalTimeframe(
+              strategySettingsDraft?.signalTimeframe,
+            )}
             cockpitGeneratedAt={cockpitGeneratedAt}
             cockpitStageItems={cockpitStageItems}
             events={events}
