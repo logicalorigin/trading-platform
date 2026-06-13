@@ -547,6 +547,8 @@ export async function fetchAccountPagePrimaryPayload(
           getAccountPositions({
             ...common,
             assetClass: normalized.assetClass,
+            detail: "fast",
+            liveQuotes: false,
           }),
           getAccountOrders({ ...common, tab: normalized.orderTab }),
         ]);

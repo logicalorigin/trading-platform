@@ -16,7 +16,7 @@ const positionMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
 });
 
 export type PositionMarketHydration = {
-  mark: number;
+  mark: number | null;
   marketValue: number;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
@@ -286,19 +286,22 @@ export function buildPositionMarketHydration(
   );
   const hasQuoteMark = quoteMark !== null;
   const marketPrice = positionMarketPrice(position);
+  const positionMark =
+    Math.abs(marketPrice || 0) > POSITION_QUANTITY_EPSILON
+      ? marketPrice
+      : null;
   const mark = hasQuoteMark
     ? quoteMark
-    : Math.abs(marketPrice || 0) > POSITION_QUANTITY_EPSILON
-      ? marketPrice
-      : averagePrice;
+    : positionMark;
+  const hasMark = mark !== null && Number.isFinite(mark);
   const marketValue =
-    Number.isFinite(mark) &&
+    hasMark &&
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
       ? mark * quantity * multiplier
       : positionSignedNotional(position);
   const unrealizedPnl =
-    Number.isFinite(mark) &&
+    hasMark &&
     Number.isFinite(averagePrice) &&
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
@@ -330,7 +333,7 @@ export function buildPositionMarketHydration(
       (quoteChange !== 0 || quotePrevClose !== null)
     ) {
       quoteDayChange = quoteChange * quantity * multiplier;
-    } else if (quotePrevClose !== null && Number.isFinite(mark)) {
+    } else if (quotePrevClose !== null && hasMark) {
       quoteDayChange = (mark - quotePrevClose) * quantity * multiplier;
     }
   }

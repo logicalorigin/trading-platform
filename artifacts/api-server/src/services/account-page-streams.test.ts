@@ -32,6 +32,11 @@ function findFunctionDeclaration(name: string): ts.FunctionDeclaration {
   throw new Error(`Missing ${name}`);
 }
 
+function functionSource(name: string): string {
+  const target = findFunctionDeclaration(name);
+  return source.slice(target.pos, target.end);
+}
+
 function getAccountPositionLiveQuoteFlags(functionName: string): string[] {
   const target = findFunctionDeclaration(functionName);
   const flags: string[] = [];
@@ -61,19 +66,26 @@ function getAccountPositionLiveQuoteFlags(functionName: string): string[] {
   return flags;
 }
 
-test("shadow account-page position fetches request live quote hydration", () => {
-  for (const functionName of [
-    "fetchAccountPageLivePayload",
-    "fetchAccountPagePrimaryPayload",
-  ]) {
-    const flags = getAccountPositionLiveQuoteFlags(functionName);
-    assert.ok(
-      flags.includes("true"),
-      `${functionName} must request liveQuotes:true for shadow account positions`,
-    );
-    assert.ok(
-      !flags.includes("false"),
-      `${functionName} must not disable live quotes for account-page positions`,
-    );
-  }
+test("shadow account-page live positions keep quote hydration", () => {
+  const flags = getAccountPositionLiveQuoteFlags("fetchAccountPageLivePayload");
+  assert.ok(
+    flags.includes("true"),
+    "fetchAccountPageLivePayload must request liveQuotes:true for shadow account positions",
+  );
+  assert.ok(
+    !flags.includes("false"),
+    "fetchAccountPageLivePayload must not disable live quotes for shadow account positions",
+  );
+});
+
+test("real account-page primary positions use fast quote-free first paint", () => {
+  const body = functionSource("fetchAccountPagePrimaryPayload");
+  assert.match(
+    body,
+    /getAccountPositions\(\{[\s\S]*?detail:\s*"fast"[\s\S]*?liveQuotes:\s*false[\s\S]*?\}\)/,
+  );
+  assert.match(
+    body,
+    /isShadow[\s\S]*?getAccountPositions\(\{[\s\S]*?liveQuotes:\s*true[\s\S]*?\}\)/,
+  );
 });

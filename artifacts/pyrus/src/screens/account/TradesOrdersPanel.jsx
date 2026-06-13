@@ -125,7 +125,10 @@ export const OrdersPanel = ({
   <Panel
     title="Orders"
     rightRail={`Showing ${tab}`}
-    loading={(query.isPending || query.isLoading) && !query.data}
+    loading={
+      (query.isLoading || (query.isPending && query.fetchStatus !== "idle")) &&
+      !query.data
+    }
     error={query.error}
     onRetry={query.refetch}
     minHeight={168}

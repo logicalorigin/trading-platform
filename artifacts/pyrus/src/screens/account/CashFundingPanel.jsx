@@ -70,7 +70,11 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
       title="Cash & Funding"
       subtitle="Cash balances, deposits, withdrawals, dividends, interest, and fees"
       rightRail="Flex cash activity + dividends"
-      loading={(query.isPending || query.isLoading) && !query.data}
+      loading={
+        !query.data &&
+        (query.isLoading ||
+          (query.isPending && query.fetchStatus !== "idle"))
+      }
       error={query.error}
       onRetry={query.refetch}
       minHeight={168}

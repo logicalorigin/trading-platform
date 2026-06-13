@@ -1653,7 +1653,6 @@ const buildPositionFallbackSparklineData = (row, snapshot, symbol) => {
     row?.underlyingMarket?.mark,
     row?.mark,
     row?.marketPrice,
-    row?.averageCost,
   );
   if (current == null) return [];
 
@@ -1666,7 +1665,6 @@ const buildPositionFallbackSparklineData = (row, snapshot, symbol) => {
   const previous = firstPositiveFiniteNumber(
     row?.underlyingMarket?.previousClose,
     row?.previousClose,
-    row?.averageCost,
   );
   const start =
     percent != null && percent > -99
@@ -3636,12 +3634,16 @@ export const PositionsPanel = ({
     () => orderColumnsById(getPositionTableColumns(surfaceId), columnOrder),
     [columnOrder, surfaceId],
   );
+  const openPositionRows = useMemo(
+    () => getOpenPositionRows(query.data?.positions || []),
+    [query.data?.positions],
+  );
   const sourceFilteredRows = useMemo(
     () =>
-      getOpenPositionRows(query.data?.positions || []).filter((row) =>
+      openPositionRows.filter((row) =>
         sourceFilter === "all" ? true : row.sourceType === sourceFilter,
       ),
-    [query.data?.positions, sourceFilter],
+    [openPositionRows, sourceFilter],
   );
   const filteredRows = useMemo(() => {
     const needle = symbolSearch.trim().toLowerCase();
@@ -3921,12 +3923,30 @@ export const PositionsPanel = ({
   const protectionQuote = protectionRow ? denseDisplayQuote(protectionRow) : null;
   const protectionMark =
     protectionQuote?.mark ?? protectionQuote?.mid ?? protectionRow?.mark ?? null;
+  const positionsQueryActivelyFetching = Boolean(
+    query.fetchStatus !== "idle" &&
+      (query.isPending || query.isLoading || query.isFetching),
+  );
+  const positionsInitialFetchPending = Boolean(
+    positionsQueryActivelyFetching && !query.data,
+  );
+  const positionsEmptyTitle = positionsInitialFetchPending
+    ? "Fetching broker positions"
+    : openPositionRows.length && !rows.length
+      ? "No positions match filters"
+      : "No open positions";
+  const positionsEmptyBody =
+    positionsInitialFetchPending
+      ? "Waiting on the broker positions snapshot. The table shell is ready; rows will appear as soon as the broker returns them."
+      : openPositionRows.length && !rows.length
+        ? "Clear the active position filters to show the fetched broker positions."
+      : emptyBody;
 
   const positionsTablePanel = (
     <Panel
       title={`Current Positions · ${rows.length}`}
       rightRail={rightRail}
-      loading={(query.isPending || query.isLoading) && !query.data}
+      loading={false}
       error={query.error}
       onRetry={query.refetch}
       minHeight={rows.length ? 144 : 174}
@@ -3968,8 +3988,8 @@ export const PositionsPanel = ({
       {!rows.length ? (
         <div style={{ padding: sp(7) }}>
           <EmptyState
-            title="No open positions"
-            body={emptyBody}
+            title={positionsEmptyTitle}
+            body={positionsEmptyBody}
           />
         </div>
       ) : (

@@ -83,6 +83,7 @@ export const OperationsPositionsTable = ({
       isPending: Boolean(
         useAccountPositionRows && accountPositionsQuery?.isPending && !rows.length,
       ),
+      fetchStatus: accountPositionsQuery?.fetchStatus,
       error: useAccountPositionRows ? accountPositionsQuery?.error : null,
       refetch: accountPositionsQuery?.refetch || (() => undefined),
     }),
@@ -107,7 +108,7 @@ export const OperationsPositionsTable = ({
         showFilters={false}
         isPhone={algoIsPhone}
         liveOptionQuotesEnabled={true}
-        streamLiveOptionQuotes={true}
+        streamLiveOptionQuotes={false}
         optionQuoteStreamOwner="algo-position-option-quotes"
         optionQuoteStreamIntent="automation-live"
         registerMarketDataSymbols={false}

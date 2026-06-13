@@ -110,109 +110,44 @@ import { useAccountSection } from "../features/platform/useAccountSection.js";
 import TodaySnapshotPanel from "./account/TodaySnapshotPanel.jsx";
 import TradingAnalysisWorkbench from "./account/TradingAnalysisWorkbench.jsx";
 import { OrdersPanel } from "./account/TradesOrdersPanel.jsx";
+import { AccountHeroBlock } from "./account/AccountHeroBlock";
+import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
+import { PortfolioExposurePanel } from "./account/PortfolioExposurePanel";
+import { EquityCurvePanel } from "./account/EquityCurvePanel";
+import PositionsPanel, {
+  PositionsAtDateInspector,
+} from "./account/PositionsPanel";
 
-let accountHeroBlockImport = null;
-const loadAccountHeroBlock = () => {
-  if (!accountHeroBlockImport) {
-    accountHeroBlockImport = retryDynamicImport(
-      () =>
-        import("./account/AccountHeroBlock").then((module) => ({
-          default: module.AccountHeroBlock,
-        })),
-      { label: "AccountHeroBlock" },
+let cashFundingPanelImport = null;
+const loadCashFundingPanel = () => {
+  if (!cashFundingPanelImport) {
+    cashFundingPanelImport = retryDynamicImport(
+      () => import("./account/CashFundingPanel"),
+      { label: "CashFundingPanel" },
     ).catch((error) => {
-      accountHeroBlockImport = null;
+      cashFundingPanelImport = null;
       throw error;
     });
   }
-  return accountHeroBlockImport;
+  return cashFundingPanelImport;
 };
-let accountReturnsPanelImport = null;
-const loadAccountReturnsPanel = () => {
-  if (!accountReturnsPanelImport) {
-    accountReturnsPanelImport = retryDynamicImport(
-      () =>
-        import("./account/AccountReturnsPanel").then((module) => ({
-          default: module.AccountReturnsPanel,
-        })),
-      { label: "AccountReturnsPanel" },
+let setupHealthPanelImport = null;
+const loadSetupHealthPanel = () => {
+  if (!setupHealthPanelImport) {
+    setupHealthPanelImport = retryDynamicImport(
+      () => import("./account/SetupHealthPanel"),
+      { label: "SetupHealthPanel" },
     ).catch((error) => {
-      accountReturnsPanelImport = null;
+      setupHealthPanelImport = null;
       throw error;
     });
   }
-  return accountReturnsPanelImport;
-};
-let portfolioExposurePanelImport = null;
-const loadPortfolioExposurePanel = () => {
-  if (!portfolioExposurePanelImport) {
-    portfolioExposurePanelImport = retryDynamicImport(
-      () => import("./account/PortfolioExposurePanel"),
-      { label: "PortfolioExposurePanel" },
-    ).catch((error) => {
-      portfolioExposurePanelImport = null;
-      throw error;
-    });
-  }
-  return portfolioExposurePanelImport;
-};
-let equityCurvePanelImport = null;
-const loadEquityCurvePanel = () => {
-  if (!equityCurvePanelImport) {
-    equityCurvePanelImport = retryDynamicImport(
-      () => import("./account/EquityCurvePanel"),
-      { label: "EquityCurvePanel" },
-    ).catch((error) => {
-      equityCurvePanelImport = null;
-      throw error;
-    });
-  }
-  return equityCurvePanelImport;
-};
-let positionsPanelImport = null;
-const loadPositionsPanel = () => {
-  if (!positionsPanelImport) {
-    positionsPanelImport = retryDynamicImport(
-      () => import("./account/PositionsPanel"),
-      { label: "PositionsPanel" },
-    ).catch((error) => {
-      positionsPanelImport = null;
-      throw error;
-    });
-  }
-  return positionsPanelImport;
+  return setupHealthPanelImport;
 };
 
-const LazyAccountHeroBlock = lazy(loadAccountHeroBlock);
-const LazyAccountReturnsPanel = lazy(loadAccountReturnsPanel);
-const LazyPortfolioExposurePanel = lazy(loadPortfolioExposurePanel);
-const LazyEquityCurvePanel = lazy(loadEquityCurvePanel);
-const LazyPositionsPanel = lazy(loadPositionsPanel);
-const LazyPositionsAtDateInspector = lazy(() =>
-  loadPositionsPanel().then((module) => ({
-    default: module.PositionsAtDateInspector,
-  })),
-);
-export const preloadScreenModules = () =>
-  Promise.allSettled([
-    loadAccountHeroBlock(),
-    loadAccountReturnsPanel(),
-    loadPortfolioExposurePanel(),
-    loadEquityCurvePanel(),
-    loadPositionsPanel(),
-  ]);
-const LazyCashFundingPanel = lazy(() =>
-  retryDynamicImport(
-    () => import("./account/CashFundingPanel"),
-    { label: "CashFundingPanel" },
-  ),
-);
-const LazySetupHealthPanel = lazy(() =>
-  retryDynamicImport(
-    () => import("./account/SetupHealthPanel"),
-    { label: "SetupHealthPanel" },
-  ),
-);
+const LazyCashFundingPanel = lazy(loadCashFundingPanel);
+const LazySetupHealthPanel = lazy(loadSetupHealthPanel);
+export const preloadScreenModules = () => Promise.resolve();
 
 const finiteAccountNumber = (value) => {
   if (value == null || value === "") return null;
@@ -556,11 +491,6 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
   },
 };
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
-const ACCOUNT_PRIMARY_FALLBACK_DELAY_MS = 0;
-const SHADOW_ACCOUNT_PRIMARY_FALLBACK_DELAY_MS = 0;
-const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 0;
-const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 0;
-const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 0;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -1368,7 +1298,8 @@ const AccountScreenInner = ({
           target.accountId,
           {
             ...positionsParams,
-            liveQuotes: true,
+            detail: "fast",
+            liveQuotes: false,
           },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
@@ -1422,78 +1353,24 @@ const AccountScreenInner = ({
   const accountSectionPending = Boolean(
     isVisible && accountSection !== settledAccountSection,
   );
-  const [accountPrimaryFallbackReady, setAccountPrimaryFallbackReady] = useState(false);
-  const [accountLiveFallbackReady, setAccountLiveFallbackReady] = useState(false);
-  const [accountDerivedFallbackReady, setAccountDerivedFallbackReady] = useState(false);
   const accountTimingStagesRef = useRef(new Set());
-  const accountPrimaryFallbackDelayMs = shadowMode
-    ? SHADOW_ACCOUNT_PRIMARY_FALLBACK_DELAY_MS
-    : ACCOUNT_PRIMARY_FALLBACK_DELAY_MS;
   useEffect(() => {
     if (!isVisible) {
       accountTimingStagesRef.current = new Set();
     }
   }, [isVisible]);
-  useEffect(() => {
-    // Arm the primary-ready fallback whenever the live stream is not fresh, even
-    // while the account section is still pending. Gating this on
-    // accountSectionPending used to wedge the boot overlay open forever on a cold
-    // launch: if the section never settled (bridge still connecting, no warm
-    // cache), the timer never armed, accountPrimaryReady stayed false, and
-    // first-screen never completed. Matches AlgoScreen's fallback, which only
-    // resets on freshness/visibility.
-    if (
-      !accountPageStreamEnabled ||
-      accountPageStreamFreshness.accountPrimaryFresh
-    ) {
-      setAccountPrimaryFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setAccountPrimaryFallbackReady(true);
-    }, accountPrimaryFallbackDelayMs);
-    return () => window.clearTimeout(timer);
-  }, [
-    accountPageStreamEnabled,
-    accountPageStreamFreshness.accountPrimaryFresh,
-    accountPrimaryFallbackDelayMs,
-  ]);
-  useEffect(() => {
-    if (
-      !accountPageStreamEnabled ||
-      accountSectionPending ||
-      accountPageStreamFreshness.accountLiveFresh
-    ) {
-      setAccountLiveFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setAccountLiveFallbackReady(true);
-    }, ACCOUNT_LIVE_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    accountPageStreamEnabled,
-    accountPageStreamFreshness.accountLiveFresh,
-    accountSectionPending,
-  ]);
-  useEffect(() => {
-    if (
-      !accountPageStreamEnabled ||
-      accountSectionPending ||
-      accountPageStreamFreshness.accountDerivedFresh
-    ) {
-      setAccountDerivedFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setAccountDerivedFallbackReady(true);
-    }, ACCOUNT_DERIVED_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    accountPageStreamEnabled,
-    accountPageStreamFreshness.accountDerivedFresh,
-    accountSectionPending,
-  ]);
+  const accountPrimaryFallbackReady = Boolean(
+    accountPageStreamEnabled &&
+      !accountPageStreamFreshness.accountPrimaryFresh,
+  );
+  const accountLiveFallbackReady = Boolean(
+    accountPageStreamEnabled &&
+      !accountPageStreamFreshness.accountLiveFresh,
+  );
+  const accountDerivedFallbackReady = Boolean(
+    accountPageStreamEnabled &&
+      !accountPageStreamFreshness.accountDerivedFresh,
+  );
   const accountPrimaryReady = Boolean(
     !accountPageStreamEnabled ||
       accountPageStreamFreshness.accountPrimaryFresh ||
@@ -1526,24 +1403,10 @@ const AccountScreenInner = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: inactiveAccountPageStreamEnabled,
   });
-  const [inactiveAccountPrewarmFallbackReady, setInactiveAccountPrewarmFallbackReady] =
-    useState(false);
-  useEffect(() => {
-    if (
-      !inactiveAccountPageStreamEnabled ||
-      inactiveAccountPageStreamFreshness.accountPrimaryFresh
-    ) {
-      setInactiveAccountPrewarmFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setInactiveAccountPrewarmFallbackReady(true);
-    }, ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    inactiveAccountPageStreamEnabled,
-    inactiveAccountPageStreamFreshness.accountPrimaryFresh,
-  ]);
+  const inactiveAccountPrewarmFallbackReady = Boolean(
+    inactiveAccountPageStreamEnabled &&
+      !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
+  );
   const inactiveAccountPrewarmEnabled = Boolean(
     isVisible &&
       accountQueriesEnabled &&
@@ -1554,6 +1417,7 @@ const AccountScreenInner = ({
   );
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: Boolean(isVisible),
       primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && accountDerivedReady),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
@@ -1718,6 +1582,7 @@ const AccountScreenInner = ({
   const ordersPanelQueriesEnabled = Boolean(
     primaryAccountRestQueriesEnabled,
   );
+  const positionsRestQueriesEnabled = Boolean(accountQueriesEnabled);
   const supportPanelQueriesEnabled = Boolean(
     secondaryAccountQueriesEnabled && activatedAccountPanels.support,
   );
@@ -1851,13 +1716,14 @@ const AccountScreenInner = ({
     {
       ...accountDataParams,
       assetClass: accountPositionTypeParam(assetFilter),
-      liveQuotes: true,
+      detail: "fast",
+      liveQuotes: false,
     },
     {
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
-        enabled: primaryAccountRestQueriesEnabled,
+        enabled: positionsRestQueriesEnabled,
         placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.positions),
       },
@@ -2486,7 +2352,7 @@ const AccountScreenInner = ({
             },
           ]}
         >
-          <LazyAccountHeroBlock
+          <AccountHeroBlock
             summary={displaySummaryData}
             equityHistory={equityQuery.data}
             benchmarkHistories={{
@@ -2531,7 +2397,7 @@ const AccountScreenInner = ({
                 },
               ]}
             >
-              <LazyAccountReturnsPanel
+              <AccountReturnsPanel
                 currency={currency}
                 maskValues={maskAccountValues}
                 tradesData={returnsCalendarTradesData}
@@ -2556,7 +2422,7 @@ const AccountScreenInner = ({
                 },
               ]}
             >
-              <LazyPortfolioExposurePanel
+              <PortfolioExposurePanel
                 allocationQuery={allocationQuery}
                 riskQuery={riskQuery}
                 positionsResponse={positionsQuery.data}
@@ -2590,7 +2456,7 @@ const AccountScreenInner = ({
                 },
               ]}
             >
-              <LazyEquityCurvePanel
+              <EquityCurvePanel
                 query={equityQueryForDisplay}
                 benchmarkQueries={{
                   SPY: spyBenchmarkQuery,
@@ -2614,7 +2480,7 @@ const AccountScreenInner = ({
                 dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountSection}`}
                 compact
               />
-              <LazyPositionsAtDateInspector
+              <PositionsAtDateInspector
                 query={positionsAtDateQuery}
                 activeDate={activeEquityInspectionDate}
                 pinnedDate={pinnedEquityDate}
@@ -2628,51 +2494,36 @@ const AccountScreenInner = ({
           </div>
         </div>
 
-        <DeferredRender
+        <DeferredPanelSuspense
           minHeight={accountIsPhone ? 430 : 300}
-          testId="account-deferred-positions"
+          title="Current Positions"
         >
-          <DeferredPanelSuspense
-            minHeight={accountIsPhone ? 430 : 300}
-            title="Loading positions"
-            detail="Preparing open positions and option quote context."
-            waitItems={[
-              {
-                id: "account-positions-module",
-                label: "Positions panel module",
-                status: "loading",
-                detail: "reads open positions and live option quote context",
-                endpoint: "src/screens/account/PositionsPanel",
-              },
-            ]}
-          >
-            <LazyPositionsPanel
-              query={positionsQuery}
-              currency={currency}
-              assetFilter={assetFilter}
-              onAssetFilterChange={setAssetFilter}
-              sourceFilter={sourceFilter}
-              onSourceFilterChange={setSourceFilter}
-              onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
-              accountId={positionManagementAccountId}
-              environment={modeParams.mode}
-              gatewayTradingReady={positionManagementGatewayReady}
-              gatewayTradingMessage={positionManagementGatewayMessage}
-              brokerConfigured={brokerConfigured}
-              brokerAuthenticated={brokerAuthenticated}
-              rightRail={shadowMode ? "Shadow positions + marks" : undefined}
-              emptyBody={
-                shadowMode
-                  ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
-                  : undefined
-              }
-              maskValues={maskAccountValues}
-              isPhone={accountIsPhone}
-              liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
-              streamLiveOptionQuotes={false}
-            />
-          </DeferredPanelSuspense>
-        </DeferredRender>
+          <PositionsPanel
+            query={positionsQuery}
+            currency={currency}
+            assetFilter={assetFilter}
+            onAssetFilterChange={setAssetFilter}
+            sourceFilter={sourceFilter}
+            onSourceFilterChange={setSourceFilter}
+            onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+            accountId={positionManagementAccountId}
+            environment={modeParams.mode}
+            gatewayTradingReady={positionManagementGatewayReady}
+            gatewayTradingMessage={positionManagementGatewayMessage}
+            brokerConfigured={brokerConfigured}
+            brokerAuthenticated={brokerAuthenticated}
+            rightRail={shadowMode ? "Shadow positions + marks" : undefined}
+            emptyBody={
+              shadowMode
+                ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
+                : undefined
+            }
+            maskValues={maskAccountValues}
+            isPhone={accountIsPhone}
+            liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+            streamLiveOptionQuotes={false}
+          />
+        </DeferredPanelSuspense>
 
         <DeferredRender
           minHeight={accountIsPhone ? 340 : 300}
@@ -2926,6 +2777,7 @@ export const AccountScreen = (props) => {
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
+        contentReady: false,
         primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,

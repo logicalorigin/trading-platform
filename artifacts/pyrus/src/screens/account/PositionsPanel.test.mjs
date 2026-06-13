@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
 
 const { applyLiveEquityQuoteToRow } = __positionsPanelInternalsForTests;
+
+const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 
 test("same-day equity position day PnL follows live mark unrealized PnL", () => {
   const openedAt = new Date().toISOString();
@@ -141,4 +144,13 @@ test("equity position row prefers IBKR position quote over Massive base quote", 
   assert.equal(patched.quote.bid, 15.81);
   assert.equal(patched.quote.ask, 15.84);
   assert.equal(patched.underlyingMarket.source, "ibkr");
+});
+
+test("position fallback sparkline does not use average cost as current price", () => {
+  const fallbackSparkline = source.match(
+    /const buildPositionFallbackSparklineData = \([\s\S]*?\n};/,
+  )?.[0];
+
+  assert.ok(fallbackSparkline, "Missing buildPositionFallbackSparklineData");
+  assert.doesNotMatch(fallbackSparkline, /row\?\.averageCost/);
 });

@@ -13,7 +13,7 @@ test("algo operations positions do not register stock underlyings into account p
   )?.[0];
 
   assert.ok(positionsPanelUsage, "Missing algo PositionsPanel usage");
-  assert.match(positionsPanelUsage, /streamLiveOptionQuotes=\{true\}/);
+  assert.match(positionsPanelUsage, /streamLiveOptionQuotes=\{false\}/);
   assert.match(positionsPanelUsage, /optionQuoteStreamOwner="algo-position-option-quotes"/);
   assert.match(positionsPanelUsage, /optionQuoteStreamIntent="automation-live"/);
   assert.match(positionsPanelUsage, /registerMarketDataSymbols=\{false\}/);

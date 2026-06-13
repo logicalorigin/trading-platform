@@ -1453,32 +1453,10 @@ async function readOrdersForUniverseUncached(
 async function fetchEquityQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
-  const accountKey = Array.from(
-    new Set(
-      positions
-        .map((position) => String(position.accountId || "").trim())
-        .filter(Boolean),
-    ),
-  ).sort().join("+") || "mixed";
-  const admissionOwner = `account-position-equity-quotes:${accountKey}`;
-  const symbols = Array.from(
-    new Set(
-      positions
-        .filter(canHydratePositionFromEquityQuote)
-        .map((position) => normalizeSymbol(positionReferenceSymbol(position)))
-        .filter(Boolean),
-    ),
-  );
-  const providerContractIdsBySymbol = new Map<string, string>();
-  positions
-    .filter(canHydratePositionFromEquityQuote)
-    .forEach((position) => {
-      const symbol = normalizeSymbol(positionReferenceSymbol(position));
-      const providerContractId = equityProviderContractIdFromPosition(position);
-      if (symbol && providerContractId) {
-        providerContractIdsBySymbol.set(symbol, providerContractId);
-      }
-    });
+  const admissionOwner = accountPositionEquityQuoteOwner(positions, "mixed");
+  const symbols = accountPositionEquityQuoteSymbols(positions);
+  const providerContractIdsBySymbol =
+    accountPositionEquityProviderContractIdsBySymbol(positions);
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
   recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
 
@@ -1500,6 +1478,77 @@ async function fetchEquityQuoteSnapshotsForPositions(
   }
 
   return quotesBySymbol;
+}
+
+function accountPositionEquityQuoteOwner(
+  positions: AccountPositionOptionQuoteDemandRow[],
+  fallbackAccountKey: string,
+): string {
+  const accountKey = Array.from(
+    new Set(
+      positions
+        .map((position) => String(position.accountId || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort().join("+") || fallbackAccountKey || "mixed";
+  return `account-position-equity-quotes:${accountKey}`;
+}
+
+function accountPositionEquityQuoteSymbols(
+  positions: BrokerPositionSnapshot[],
+): string[] {
+  return Array.from(
+    new Set(
+      positions
+        .filter(canHydratePositionFromEquityQuote)
+        .map((position) => normalizeSymbol(positionReferenceSymbol(position)))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function accountPositionEquityProviderContractIdsBySymbol(
+  positions: BrokerPositionSnapshot[],
+): Map<string, string> {
+  const providerContractIdsBySymbol = new Map<string, string>();
+  positions
+    .filter(canHydratePositionFromEquityQuote)
+    .forEach((position) => {
+      const symbol = normalizeSymbol(positionReferenceSymbol(position));
+      const providerContractId = equityProviderContractIdFromPosition(position);
+      if (symbol && providerContractId) {
+        providerContractIdsBySymbol.set(symbol, providerContractId);
+      }
+    });
+  return providerContractIdsBySymbol;
+}
+
+function declareAccountPositionEquityQuoteDemands(
+  positions: BrokerPositionSnapshot[],
+  fallbackAccountKey: string,
+): void {
+  const admissionOwner = accountPositionEquityQuoteOwner(
+    positions,
+    fallbackAccountKey,
+  );
+  const symbols = accountPositionEquityQuoteSymbols(positions);
+  const providerContractIdsBySymbol =
+    accountPositionEquityProviderContractIdsBySymbol(positions);
+  recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
+  if (symbols.length) {
+    void fetchBridgeQuoteSnapshots(symbols, {
+      owner: admissionOwner,
+      intent: "account-monitor-live",
+      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
+      fallbackProvider: "cache",
+      providerContractIdsBySymbol,
+      hydrate: false,
+    }).catch(() => ({
+      quotes: [],
+    }));
+  } else {
+    releaseMarketDataLeases(admissionOwner, "account_position_set_empty");
+  }
 }
 
 function equityProviderContractIdFromPosition(
@@ -4670,6 +4719,7 @@ export async function getAccountPositions(input: {
   mode?: RuntimeMode;
   source?: string | null;
   liveQuotes?: boolean;
+  detail?: AccountPositionsDetail;
 }) {
   resolveAccountPositionTypeFilter(input.assetClass);
   if (isShadowAccountId(input.accountId)) {
@@ -4681,14 +4731,8 @@ export async function getAccountPositions(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  const response = await getAccountPositionsUncached({ ...input, mode });
-  if (input.liveQuotes !== false) {
-    declareAccountPositionOptionQuoteDemands(
-      response.positions,
-      response.accountId || input.accountId,
-    );
-  }
-  return response;
+  const detail = normalizeAccountPositionsDetail(input.detail);
+  return getAccountPositionsUncached({ ...input, mode, detail });
 }
 
 function resolveAccountPositionTypeFilter(input: string | null | undefined) {
@@ -4702,6 +4746,14 @@ function resolveAccountPositionTypeFilter(input: string | null | undefined) {
     });
   }
   return filter;
+}
+
+type AccountPositionsDetail = "fast" | "full";
+
+function normalizeAccountPositionsDetail(
+  input: AccountPositionsDetail | string | null | undefined,
+): AccountPositionsDetail {
+  return input === "fast" ? "fast" : "full";
 }
 
 type RealPositionAttributionSourceType =
@@ -4839,72 +4891,86 @@ async function getAccountPositionsUncached(input: {
   mode: RuntimeMode;
   source?: string | null;
   liveQuotes?: boolean;
+  detail: AccountPositionsDetail;
 }) {
   const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const assetClassFilter = resolveAccountPositionTypeFilter(input.assetClass);
-  const positionsPromise = listPositionsForUniverse(universe, mode).then((result) =>
-    result.filter((position) =>
-      accountPositionTypeMatchesFilter(
-        classifyAccountPositionType(position),
-        assetClassFilter,
-      ),
+  const allPositions = await listPositionsForUniverse(universe, mode);
+  const positions = allPositions.filter((position) =>
+    accountPositionTypeMatchesFilter(
+      classifyAccountPositionType(position),
+      assetClassFilter,
     ),
   );
-  const [
-    positions,
-    ordersResult,
-    lots,
-    greekEnrichment,
-    equityQuoteSnapshots,
-    optionQuoteSnapshots,
-    flexOpenDates,
-    executionOpenDates,
-  ] = await Promise.all([
-    positionsPromise,
-    listOrdersForUniverse(universe, mode),
-    getPositionLots(universe.accountIds),
-    positionsPromise.then((result) =>
-      enrichPositionGreeks(result, { refreshChains: false }),
-    ),
-    positionsPromise.then((result) =>
-      input.liveQuotes === false
-        ? new Map<string, QuoteSnapshot>()
-        : fetchEquityQuoteSnapshotsForPositions(result),
-    ),
-    positionsPromise.then((result) =>
-      input.liveQuotes === false
-        ? new Map<string, AccountPositionOptionQuoteDemandState>()
-        : fetchOptionQuoteSnapshotsForPositions(result),
-    ),
-    positionsPromise.then((result) =>
-      fetchFlexOpenDatesForPositions(universe.accountIds, result),
-    ),
-    positionsPromise.then((result) =>
-      result.some((position) => !position.openedAt)
-        ? listExecutionsForUniverse(universe, mode, {}).then((executions) =>
-            buildExecutionOpenDatesForPositions(result, executions),
-          )
-        : new Map<string, PositionOpenDate>(),
-    ),
-  ]);
-  const openDates = new Map(flexOpenDates);
-  executionOpenDates.forEach((executionOpenDate, positionId) => {
-    const current = openDates.get(positionId);
-    if (!current || current.openedAtSource === "flex_snapshot") {
-      openDates.set(positionId, executionOpenDate);
-    }
-  });
-  const realAttribution = await buildRealPositionAttribution({
-    accountIds: universe.accountIds,
-    positions,
-  });
-  const marketHydration = await hydratePositionMarkets(
+  let ordersResult: Awaited<ReturnType<typeof listOrdersForUniverse>> = { orders: [] };
+  let lots: Awaited<ReturnType<typeof getPositionLots>> = [];
+  let greekEnrichment: OptionGreekEnrichmentResult = {
+    byPositionId: new Map(),
+    totalOptionPositions: 0,
+    matchedOptionPositions: 0,
+    warnings: [],
+  };
+  let equityQuoteSnapshots = new Map<string, QuoteSnapshot>();
+  let optionQuoteSnapshots = new Map<string, AccountPositionOptionQuoteDemandState>();
+  let openDates = new Map<string, PositionOpenDate>();
+  let realAttribution = new Map<string, RealPositionAttribution>();
+  let marketHydration = await hydratePositionMarkets(
     positions,
     equityQuoteSnapshots,
     optionQuoteSnapshots,
     openDates,
   );
+
+  if (input.detail !== "fast") {
+    const [
+      fullOrdersResult,
+      fullLots,
+      fullGreekEnrichment,
+      fullEquityQuoteSnapshots,
+      fullOptionQuoteSnapshots,
+      flexOpenDates,
+      executionOpenDates,
+    ] = await Promise.all([
+      listOrdersForUniverse(universe, mode),
+      getPositionLots(universe.accountIds),
+      enrichPositionGreeks(positions, { refreshChains: false }),
+      input.liveQuotes === false
+        ? new Map<string, QuoteSnapshot>()
+        : fetchEquityQuoteSnapshotsForPositions(positions),
+      input.liveQuotes === false
+        ? new Map<string, AccountPositionOptionQuoteDemandState>()
+        : fetchOptionQuoteSnapshotsForPositions(positions),
+      fetchFlexOpenDatesForPositions(universe.accountIds, positions),
+      positions.some((position) => !position.openedAt)
+        ? listExecutionsForUniverse(universe, mode, {}).then((executions) =>
+            buildExecutionOpenDatesForPositions(positions, executions),
+          )
+        : new Map<string, PositionOpenDate>(),
+    ]);
+    ordersResult = fullOrdersResult;
+    lots = fullLots;
+    greekEnrichment = fullGreekEnrichment;
+    equityQuoteSnapshots = fullEquityQuoteSnapshots;
+    optionQuoteSnapshots = fullOptionQuoteSnapshots;
+    openDates = new Map(flexOpenDates);
+    executionOpenDates.forEach((executionOpenDate, positionId) => {
+      const current = openDates.get(positionId);
+      if (!current || current.openedAtSource === "flex_snapshot") {
+        openDates.set(positionId, executionOpenDate);
+      }
+    });
+    realAttribution = await buildRealPositionAttribution({
+      accountIds: universe.accountIds,
+      positions,
+    });
+    marketHydration = await hydratePositionMarkets(
+      positions,
+      equityQuoteSnapshots,
+      optionQuoteSnapshots,
+      openDates,
+    );
+  }
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
 
@@ -4934,6 +5000,7 @@ async function getAccountPositionsUncached(input: {
     quantity: number;
     averageCostAccumulator: number;
     markAccumulator: number;
+    markWeight: number;
     averageWeight: number;
     unrealizedWeight: number;
     dayChange: number | null;
@@ -4969,6 +5036,7 @@ async function getAccountPositionsUncached(input: {
             quantity: 0,
             averageCostAccumulator: 0,
             markAccumulator: 0,
+            markWeight: 0,
             averageWeight: 0,
             unrealizedWeight: 0,
             dayChange: null as number | null,
@@ -4996,12 +5064,15 @@ async function getAccountPositionsUncached(input: {
             hydratedMarket?.mark ??
             (Math.abs(positionMarketPrice(position) || 0) > POSITION_QUANTITY_EPSILON
               ? positionMarketPrice(position)
-              : positionAveragePrice(position));
+              : null);
           const marketValueWeight = Math.abs(positionValue);
 
           current.quantity += position.quantity;
           current.averageCostAccumulator += positionAveragePrice(position) * quantityWeight;
-          current.markAccumulator += positionMark * quantityWeight;
+          if (positionMark != null) {
+            current.markAccumulator += positionMark * quantityWeight;
+            current.markWeight += quantityWeight;
+          }
           current.averageWeight += quantityWeight;
           current.unrealizedWeight += marketValueWeight;
           current.dayChange = upsertNullableTotal(
@@ -5062,7 +5133,7 @@ async function getAccountPositionsUncached(input: {
           row.averageWeight > 0
             ? row.averageCostAccumulator / row.averageWeight
             : 0,
-        mark: row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
+        mark: row.markWeight > 0 ? row.markAccumulator / row.markWeight : null,
         dayChange: row.dayChange,
         dayChangePercent:
           row.unrealizedWeight > 0 && row.dayChangePercent !== null
@@ -5108,7 +5179,7 @@ async function getAccountPositionsUncached(input: {
             row.optionContract
               ? optionQuoteSnapshotForPosition(row, optionQuoteSnapshots)
               : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
-            row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
+            row.markWeight > 0 ? row.markAccumulator / row.markWeight : null,
             row.optionContract
               ? "option_quote"
               : (
@@ -5132,7 +5203,7 @@ async function getAccountPositionsUncached(input: {
           hydratedMarket?.mark ??
           (Math.abs(positionMarketPrice(position) || 0) > POSITION_QUANTITY_EPSILON
             ? positionMarketPrice(position)
-            : positionAveragePrice(position));
+            : null);
         const greek = greekEnrichment.byPositionId.get(position.id);
         const referenceSymbol = positionReferenceSymbol(position);
         const openedAt = bestOpenedAtForPosition(
@@ -5188,6 +5259,17 @@ async function getAccountPositionsUncached(input: {
   const openRows = rows.filter((row) => Math.abs(Number(row.quantity)) > POSITION_QUANTITY_EPSILON);
   const exposure = exposureSummary(positions, (position) =>
     hydratedPositionMarketValue(position, marketHydration),
+  );
+  const marketDataDemandPositions = allPositions.filter(
+    (position) => Math.abs(Number(position.quantity)) > POSITION_QUANTITY_EPSILON,
+  );
+  declareAccountPositionEquityQuoteDemands(
+    marketDataDemandPositions,
+    universe.requestedAccountId || input.accountId,
+  );
+  declareAccountPositionOptionQuoteDemands(
+    marketDataDemandPositions,
+    universe.requestedAccountId || input.accountId,
   );
   return {
     accountId: universe.requestedAccountId,

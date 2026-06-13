@@ -6,7 +6,10 @@ import type {
   BrokerPositionSnapshot,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
-import { buildPositionMarketHydration } from "./account-position-model";
+import {
+  buildPositionMarketHydration,
+  buildPositionQuoteFromSnapshot,
+} from "./account-position-model";
 import { __accountPositionInternalsForTests } from "./account";
 
 const optionContract = {
@@ -85,6 +88,27 @@ test("manual same-day option executions infer openedAt for position day PnL", ()
   assert.ok(Math.abs(hydrated.unrealizedPnl - 45) < 1e-9);
   assert.equal(hydrated.dayChange, hydrated.unrealizedPnl);
   assert.equal(hydrated.dayChangePercent, hydrated.unrealizedPnlPercent);
+});
+
+test("missing quote and broker market price do not fabricate mark from average price", () => {
+  const positionWithoutMarketPrice = {
+    ...manualNvdaPosition,
+    marketPrice: 0,
+    marketValue: 0,
+    unrealizedPnl: 0,
+    unrealizedPnlPercent: 0,
+  } satisfies BrokerPositionSnapshot;
+
+  const hydrated = buildPositionMarketHydration(
+    positionWithoutMarketPrice,
+    null,
+  );
+
+  assert.equal(hydrated.mark, null);
+  assert.equal(
+    buildPositionQuoteFromSnapshot(null, hydrated.mark, "bridge_quote"),
+    null,
+  );
 });
 
 test("manual option positions demand structured IBKR quote ids and alias numeric conids", () => {

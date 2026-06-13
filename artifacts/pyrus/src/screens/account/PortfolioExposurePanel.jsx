@@ -1248,9 +1248,13 @@ export const PortfolioExposurePanel = ({
   const hasAllocation = assetRows.length > 0;
   const hasRisk = Boolean(riskModel);
   const allocationInitialLoading =
-    (allocationQuery.isPending || allocationQuery.isLoading) && !allocationQuery.data;
+    (allocationQuery.isLoading ||
+      (allocationQuery.isPending && allocationQuery.fetchStatus !== "idle")) &&
+    !allocationQuery.data;
   const riskInitialLoading =
-    (riskQuery.isPending || riskQuery.isLoading) && !riskQuery.data;
+    (riskQuery.isLoading ||
+      (riskQuery.isPending && riskQuery.fetchStatus !== "idle")) &&
+    !riskQuery.data;
   const allBlank =
     !allocationInitialLoading &&
     !allocationQuery.error &&
