@@ -1,14 +1,14 @@
-// The boot overlay hides the app ONLY until the app frame can render — i.e. the
-// code chunks for the shell. Everything else (session, watchlists, accounts,
-// signal data, and the active page's own content) streams in visibly behind the
-// frame with its own inline loading, instead of holding a full-screen overlay
-// until the slowest data fetch returns. "first-screen" stays a tracked task for
-// timing/diagnostics but no longer blocks the overlay.
+// The boot overlay hides the app until the frame and the actual first screen
+// component can render. Data still streams through each page's inline states;
+// the blocker is only the real route component, not session/watchlist/account
+// fetches. This avoids showing the workspace frame with an interim route
+// skeleton where the page should be.
 export const BOOT_INFRA_TASK_IDS = Object.freeze([
   "static-html",
   "react-root",
   "app-content-chunk",
   "workspace-route-chunk",
+  "first-screen",
 ]);
 
 // No screen blocks the overlay on data anymore. Kept as an explicit, testable map

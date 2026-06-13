@@ -72,7 +72,7 @@ const TASKS: BootProgressTaskDefinition[] = [
   { id: "accounts", label: "Loading accounts", weight: 8, blocking: false },
   { id: "signal-profile", label: "Loading signal profile", weight: 7, blocking: false },
   { id: "signal-state", label: "Loading signal state", weight: 5, blocking: false },
-  { id: "first-screen", label: "Preparing first screen", weight: 15, blocking: false },
+  { id: "first-screen", label: "Preparing first screen", weight: 15, blocking: true },
   { id: "screen-preload-flow", label: "Preloading Flow screen", weight: 5, blocking: false },
   { id: "screen-preload-trade", label: "Preloading Trade screen", weight: 5, blocking: false },
   { id: "screen-preload-algo", label: "Preloading Algo screen", weight: 6, blocking: false },

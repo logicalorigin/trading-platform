@@ -16,23 +16,12 @@ import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { WATCHLIST } from "./marketReferenceData";
 import { MarketChartPremiumFlowIndicator } from "./MarketChartPremiumFlowIndicator.jsx";
 import { CSS_COLOR, cssColorMix, RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
-import { lazyWithRetry, preloadDynamicImport } from "../../lib/dynamicImport";
+import { lazyWithRetry } from "../../lib/dynamicImport";
+import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
 
 const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
 
-const loadTradeEquityPanelModule = () =>
-  import("../trade/TradeEquityPanel.jsx").then((module) => ({
-    default: module.TradeEquityPanel,
-  }));
-
-export const preloadMarketChartRuntime = () => {
-  preloadDynamicImport(loadTradeEquityPanelModule, { label: "TradeEquityPanel" });
-};
-
-const LazyTradeEquityPanel = lazyWithRetry(
-  loadTradeEquityPanelModule,
-  { label: "TradeEquityPanel" },
-);
+export const preloadMarketChartRuntime = () => undefined;
 
 const LazyMarketChartTickerSearch = lazyWithRetry(
   () =>
@@ -533,8 +522,8 @@ export const MarketChartCell = ({
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         {historicalDataEnabled ? (
-          <Suspense fallback={<MarketChartPanelFallback dataTestId={dataTestId} />}>
-            <LazyTradeEquityPanel
+          <>
+            <TradeEquityPanel
               ticker={ticker}
               flowEvents={flowEvents}
               flowEventsSourceMode="provided"
@@ -597,7 +586,7 @@ export const MarketChartCell = ({
               crosshairSyncInstanceId={crosshairSyncInstanceId}
             />
             <MarketChartReadyProbe onReady={onReady} readyKey={readyKey} />
-          </Suspense>
+          </>
         ) : (
           <MarketChartPanelFallback dataTestId={dataTestId} />
         )}

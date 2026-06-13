@@ -253,55 +253,27 @@ const streamAgeFillPercent = (ageMs, fallbackPercent) => {
   return Math.round(clamp((ms / 60_000) * 100, 4, 100));
 };
 
-const sourceLevelFromLineUsage = ({ used, cap, free, limited }) => {
+const sourceLevelFromLineUsage = ({ used, cap, limited }) => {
   if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
     return "normal";
   }
-  const ratio = used / cap;
-  if (ratio >= 0.95 || (Number.isFinite(free) && free <= 0)) {
+  if (limited) {
     return "high";
-  }
-  if (limited || ratio >= 0.85) {
-    return "high";
-  }
-  if (ratio >= 0.65) {
-    return "watch";
   }
   return "normal";
 };
 
-const findLineUsageRow = (lineUsage, id) =>
-  Array.isArray(lineUsage?.rows)
-    ? lineUsage.rows.find((row) => row?.id === id) || null
-    : null;
-
 const buildIbkrSourcePressureBar = (runtimeControl) => {
   const lineUsage = runtimeControl?.lineUsage || {};
-  const total = lineUsage.total || findLineUsageRow(lineUsage, "total") || {};
   const bridge = lineUsage.bridge || {};
   const allocation = lineUsage.allocation || {};
-  const used = firstSourceNumber(
-    total.used,
-    lineUsage.activeLineCount,
-    bridge.used,
-  );
-  const cap = firstSourceNumber(
-    total.effectiveCap,
-    total.cap,
-    bridge.cap,
-    allocation.bridgeLineBudget,
-    allocation.targetFillLines,
-  );
+  const used = sourceNumber(bridge.used);
+  const cap = firstSourceNumber(bridge.effectiveCap, bridge.cap);
   const computedFree =
     Number.isFinite(used) && Number.isFinite(cap) ? Math.max(0, cap - used) : null;
-  const free = firstSourceNumber(
-    total.free,
-    bridge.free,
-    allocation.remainingToTargetLineCount,
-    computedFree,
-  );
+  const free = firstSourceNumber(bridge.free, computedFree);
   const state = String(
-    total.streamState || bridge.streamState || lineUsage.pressure?.state || "",
+    bridge.streamState || lineUsage.pressure?.state || "",
   ).toLowerCase();
   const limited =
     Number(lineUsage.warnings) > 0 ||
@@ -319,9 +291,9 @@ const buildIbkrSourcePressureBar = (runtimeControl) => {
   const tradeOptionsChainReserveDetail =
     Number.isFinite(tradeOptionsChainReserveLineCount) &&
     tradeOptionsChainReserveLineCount > 0
-      ? ` · ${formatSourceCount(tradeOptionsChainReserveLineCount)} ${TRADE_OPTIONS_CHAIN_LABEL} reserved`
+      ? ` · ${formatSourceCount(tradeOptionsChainReserveLineCount)} ${TRADE_OPTIONS_CHAIN_LABEL} active`
       : "";
-  const level = sourceLevelFromLineUsage({ used, cap, free, limited });
+  const level = sourceLevelFromLineUsage({ used, cap, limited });
   const hasRatio = Number.isFinite(used) && Number.isFinite(cap);
   const label = hasRatio
     ? `IBKR ${formatSourceCount(used)}/${formatSourceCount(cap)}`
@@ -544,39 +516,9 @@ const buildCachePressureBar = (signal) => {
   };
 };
 
-const buildAppRuntimePressureBar = (signal) => {
-  const drivers = Array.isArray(signal?.pressureDrivers)
-    ? signal.pressureDrivers
-    : [];
-  const runtimeStoreDriver =
-    findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
-  const runtimeStoreThresholds = normalizeThresholds(
-    MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
-  );
-  const storeEntryCount = finiteNumber(signal?.storeEntryCount) ?? 0;
-  const level = maxPressureLevel(
-    runtimeStoreDriver.level,
-    levelFromThresholds(storeEntryCount, runtimeStoreThresholds),
-  );
-
-  return {
-    key: "app",
-    driverKind: "runtime-stores",
-    level,
-    fillPercent: thresholdFillPercent(
-      storeEntryCount,
-      runtimeStoreThresholds,
-      180,
-    ),
-    label: `App ${formatMetric(storeEntryCount)}`,
-    detail: `Runtime ${formatMetric(storeEntryCount)} entries`,
-  };
-};
-
 export const buildFooterPressureBars = ({ signal, runtimeControl, nowMs } = {}) => [
   ...buildApiSourcePressureBars(runtimeControl, nowMs),
   buildCachePressureBar(signal),
-  buildAppRuntimePressureBar(signal),
 ];
 
 const ApiSourcePressureTooltip = ({ bar }) => (
@@ -704,7 +646,6 @@ const buildTitle = (signal) => {
     ),
     buildApiMemoryDetail(readApiRssMb(signal), finiteNumber(signal?.apiHeapUsedPercent)),
     buildCacheDetail(finiteNumber(signal?.queryCount), finiteNumber(signal?.heavyQueryCount)),
-    `Runtime ${formatMetric(signal?.storeEntryCount)} entries`,
     drivers,
   ]
     .filter(Boolean)
