@@ -4992,7 +4992,7 @@ async function getQuoteSnapshotsUncached(input: {
         recordMarketDataFallback({
           owner: "quote-snapshot",
           intent: "visible-live",
-          fallbackProvider: quote.source === "massive" ? "massive" : "massive",
+          fallbackProvider: "massive",
           reason: "ibkr_missing_or_not_admitted",
           instrumentKey: `equity:${quote.symbol}`,
         });
@@ -10128,15 +10128,8 @@ async function getBaseBarsImpl(
   const massiveBarsDelayed =
     massiveProviderIdentity === "massive" &&
     !isMassiveStocksRealtimeConfigured(massiveConfig);
-  const historicalStoreSource =
-    massiveProviderIdentity === "massive"
-      ? "massive-history"
-      : "massive-history";
-  const historicalFallbackProvider = massiveClient
-    ? massiveProviderIdentity === "massive"
-      ? "massive"
-      : "massive"
-    : "cache";
+  const historicalStoreSource = "massive-history";
+  const historicalFallbackProvider = massiveClient ? "massive" : "cache";
   // Default to including extended hours across ALL timeframes so the "last close"
   // a chart shows is consistent regardless of the selected interval. Without this,
   // 1d returned RTH-only bars while 1m/5m/15m/1h returned extended-hours bars,
@@ -12246,12 +12239,19 @@ function flowEventAggregateIdentity(event: unknown): string {
     event && typeof event === "object"
       ? (event as Record<string, unknown>)
       : {};
+  // Provider is part of the identity so a realtime (IBKR) event and a delayed
+  // (Massive) event for the same contract are NEVER collapsed by dedup — even if
+  // an `id` is ever blank or the two sources ever share an id format. Within a
+  // single provider this is a no-op (same provider prefix), so real duplicates
+  // still dedupe.
+  const provider = String(record.provider ?? "").trim();
   const id = String(record.id || "").trim();
   if (id) {
-    return id;
+    return `${provider}::${id}`;
   }
 
   return [
+    provider,
     record.underlying,
     record.optionSymbol ?? record.symbol,
     record.expirationDate,
@@ -12328,10 +12328,30 @@ function compareAggregateFlowEventsByRecency(
     return occurredAt;
   }
 
+  const premium =
+    flowEventNumber(rightRecord.premium) - flowEventNumber(leftRecord.premium);
+  if (premium !== 0) {
+    return premium;
+  }
+
+  // Deterministic realtime-over-delayed tiebreak: at equal recency and premium a
+  // realtime (IBKR) event must not be outranked by a delayed (Massive) one.
   return (
-    flowEventNumber(rightRecord.premium) - flowEventNumber(leftRecord.premium)
+    flowEventFreshnessRank(leftRecord.provider) -
+    flowEventFreshnessRank(rightRecord.provider)
   );
 }
+
+// Lower rank sorts first. Realtime (IBKR) ahead of delayed (Massive)/unknown.
+function flowEventFreshnessRank(provider: unknown): number {
+  return String(provider ?? "").trim().toLowerCase() === "ibkr" ? 0 : 1;
+}
+
+export const __flowAggregateInternalsForTests = {
+  flowEventAggregateIdentity,
+  dedupeAggregateFlowEvents,
+  compareAggregateFlowEventsByRecency,
+};
 
 let optionsFlowAggregateSeedOffset = 0;
 

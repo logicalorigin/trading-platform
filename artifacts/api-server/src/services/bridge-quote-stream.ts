@@ -323,17 +323,28 @@ function toPayloadQuote(quote: QuoteSnapshot): QuoteWithSource {
     lastReceivedAt === null
       ? null
       : Math.max(0, emittedAt.getTime() - lastReceivedAt);
+  // Cache age can DEMOTE a quote to "stale", but it must never PROMOTE a delayed
+  // or frozen quote to "live": a <2s-old delayed-origin quote stays delayed, so
+  // delayed market data is never served as realtime. Non-delayed quotes keep the
+  // prior age-based live/stale behavior. Mirrors bridge-option-quote-stream.ts.
+  const freshness =
+    quote.freshness === "delayed" ||
+    quote.freshness === "frozen" ||
+    quote.freshness === "delayed_frozen"
+      ? ageMs !== null && ageMs > LIVE_QUOTE_STALE_MS
+        ? "stale"
+        : quote.freshness
+      : ageMs === null
+        ? quote.freshness
+        : ageMs <= LIVE_QUOTE_STALE_MS
+          ? "live"
+          : "stale";
   return {
     ...addApiLatency(
       {
         ...quote,
         cacheAgeMs: ageMs,
-        freshness:
-          ageMs === null
-            ? quote.freshness
-            : ageMs <= LIVE_QUOTE_STALE_MS
-              ? "live"
-              : "stale",
+        freshness,
       },
       "apiServerEmittedAt",
       emittedAt,
@@ -1306,6 +1317,10 @@ export function __setBridgeQuoteRuntimeConfiguredForTests(
 
 export function __setBridgeQuoteStreamNowForTests(now: Date | null): void {
   nowProvider = now ? () => new Date(now) : () => new Date();
+}
+
+export function __toPayloadQuoteForTests(quote: QuoteSnapshot): QuoteWithSource {
+  return toPayloadQuote(quote);
 }
 
 export function __cacheBridgeQuoteForTests(
