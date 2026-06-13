@@ -1580,6 +1580,43 @@ summary,
   transform-origin: center;
 }
 
+@keyframes diagnosticsMachineEdgeFlow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+.diagnostics-machine-diagram-workspace {
+  width: 100%;
+}
+
+.diagnostics-machine-edge {
+  transition:
+    stroke var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.diagnostics-machine-edge[data-animated="true"] {
+  stroke-dasharray: 7 8;
+  animation: diagnosticsMachineEdgeFlow 1550ms linear infinite;
+}
+
+.diagnostics-machine-edge[data-status="unknown"] {
+  opacity: 0.44;
+}
+
+.diagnostics-machine-edge[data-status="degraded"],
+.diagnostics-machine-edge[data-status="down"] {
+  opacity: 0.78;
+}
+
+@media (max-width: 700px) {
+  .diagnostics-machine-diagram-workspace {
+    max-width: none;
+    width: var(--diagnostics-machine-min-width, 1180px);
+  }
+}
+
 .ra-signal-row-glow {
   animation: raSignalHotGlow 620ms var(--ra-motion-enter) 1;
 }
@@ -2567,6 +2604,11 @@ textarea:disabled:not([data-ra-keep-opacity]) {
     stroke-dashoffset: 0 !important;
   }
 
+  .diagnostics-machine-edge[data-animated="true"] {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+
   .ra-bar-fill {
     transform: none !important;
   }
@@ -2667,5 +2709,10 @@ html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline path {
+  stroke-dashoffset: 0 !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .diagnostics-machine-edge[data-animated="true"] {
+  animation: none !important;
   stroke-dashoffset: 0 !important;
 }
