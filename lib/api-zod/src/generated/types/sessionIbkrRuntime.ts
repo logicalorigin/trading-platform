@@ -25,4 +25,5 @@ export interface SessionIbkrRuntime {
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
   activation: IbkrBridgeActivationDiagnosticsResponse;
-}
+  [key: string]: unknown;
+ }

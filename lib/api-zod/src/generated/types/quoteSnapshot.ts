@@ -7,6 +7,7 @@
  */
 import type { MarketDataFreshness } from './marketDataFreshness';
 import type { MarketDataTransport } from './marketDataTransport';
+import type { QuoteSnapshotExtendedBaselineSource } from './quoteSnapshotExtendedBaselineSource';
 import type { QuoteSnapshotLatency } from './quoteSnapshotLatency';
 import type { QuoteSnapshotMarketDataMode } from './quoteSnapshotMarketDataMode';
 import type { QuoteSource } from './quoteSource';
@@ -26,10 +27,16 @@ export interface QuoteSnapshot {
   prevClose: number | null;
   /** Verified regular-session close baseline used for pre-market and after-hours move displays. */
   extendedBaselinePrice?: number | null;
-  /** Timestamp associated with the extended-hours baseline when known. */
+  /**
+   * Timestamp associated with the extended-hours baseline when known.
+   * @nullable
+   */
   extendedBaselineAt?: Date | null;
-  /** Source of the extended-hours baseline. */
-  extendedBaselineSource?: 'regular_close' | null;
+  /**
+   * Source of the extended-hours baseline.
+   * @nullable
+   */
+  extendedBaselineSource?: QuoteSnapshotExtendedBaselineSource;
   volume: number | null;
   /** Underlying reference price from option computations, when available. */
   underlyingPrice?: number | null;

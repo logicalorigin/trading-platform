@@ -69,7 +69,6 @@ import type {
   DiagnosticsLatestResponse,
   EnableAlgoDeploymentParams,
   EnsureDefaultSignalOptionsPaperDeploymentBody,
-  EvaluateSignalMonitorMatrixRequest,
   EvaluateSignalMonitorRequest,
   ExecutionEventsResponse,
   ExportDiagnosticsParams,
@@ -188,7 +187,6 @@ import type {
   SessionInfo,
   SignalMonitorBreadthHistoryResponse,
   SignalMonitorEventsResponse,
-  SignalMonitorMatrixResponse,
   SignalMonitorProfile,
   SignalMonitorStateResponse,
   SignalOptionsAutomationState,
@@ -9110,77 +9108,6 @@ export const useEvaluateSignalMonitor = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getEvaluateSignalMonitorMutationOptions(options));
-    }
-
-/**
- * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
- */
-export const getEvaluateSignalMonitorMatrixUrl = () => {
-
-
-
-
-  return `/api/signal-monitor/matrix`
-}
-
-export const evaluateSignalMonitorMatrix = async (evaluateSignalMonitorMatrixRequest?: EvaluateSignalMonitorMatrixRequest, options?: RequestInit): Promise<SignalMonitorMatrixResponse> => {
-
-  return customFetch<SignalMonitorMatrixResponse>(getEvaluateSignalMonitorMatrixUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      evaluateSignalMonitorMatrixRequest,)
-  }
-);}
-
-
-
-
-export const getEvaluateSignalMonitorMatrixMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext> => {
-
-const mutationKey = ['evaluateSignalMonitorMatrix'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, {data: BodyType<EvaluateSignalMonitorMatrixRequest>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  evaluateSignalMonitorMatrix(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EvaluateSignalMonitorMatrixMutationResult = NonNullable<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>>
-    export type EvaluateSignalMonitorMatrixMutationBody = BodyType<EvaluateSignalMonitorMatrixRequest>
-    export type EvaluateSignalMonitorMatrixMutationError = ErrorType<unknown>
-
-    /**
- * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
- */
-export const useEvaluateSignalMonitorMatrix = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>,
-        TError,
-        {data: BodyType<EvaluateSignalMonitorMatrixRequest>},
-        TContext
-      > => {
-      return useMutation(getEvaluateSignalMonitorMatrixMutationOptions(options));
     }
 
 /**

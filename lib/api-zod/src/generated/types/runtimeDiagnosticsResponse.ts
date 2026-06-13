@@ -14,5 +14,7 @@ export interface RuntimeDiagnosticsResponse {
   api: RuntimeApiDiagnostics;
   ibkr: RuntimeIbkrDiagnostics;
   providers: JsonObject;
+  marketDataWorkPlan: JsonObject;
+  signalMonitor: JsonObject;
   storage: JsonObject;
 }

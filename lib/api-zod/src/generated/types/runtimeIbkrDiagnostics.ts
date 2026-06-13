@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { JsonObject } from './jsonObject';
 import type { RuntimeIbkrDiagnosticsDesktopAgentCompatibility } from './runtimeIbkrDiagnosticsDesktopAgentCompatibility';
 import type { RuntimeIbkrDiagnosticsMarketDataMode } from './runtimeIbkrDiagnosticsMarketDataMode';
 import type { RuntimeIbkrDiagnosticsStreamState } from './runtimeIbkrDiagnosticsStreamState';
@@ -77,4 +78,6 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   lastError: string | null;
   orderCapability: RuntimeOrderCapabilityDiagnostics;
+  governor: JsonObject;
+  streams: JsonObject;
 }

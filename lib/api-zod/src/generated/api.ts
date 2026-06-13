@@ -396,9 +396,13 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "readOnlyModeLikely": zod.boolean(),
   "liveActionConfirmationRequired": zod.boolean(),
   "diagnosticsMutateOrders": zod.boolean()
-})
+}),
+  "governor": zod.record(zod.string(), zod.unknown()),
+  "streams": zod.record(zod.string(), zod.unknown())
 }),
   "providers": zod.record(zod.string(), zod.unknown()),
+  "marketDataWorkPlan": zod.record(zod.string(), zod.unknown()),
+  "signalMonitor": zod.record(zod.string(), zod.unknown()),
   "storage": zod.record(zod.string(), zod.unknown())
 })
 
@@ -3131,6 +3135,9 @@ export const GetOptionQuoteSnapshotsResponse = zod.object({
   "high": zod.number().nullable(),
   "low": zod.number().nullable(),
   "prevClose": zod.number().nullable(),
+  "extendedBaselinePrice": zod.number().nullish().describe('Verified regular-session close baseline used for pre-market and after-hours move displays.'),
+  "extendedBaselineAt": zod.coerce.date().nullish().describe('Timestamp associated with the extended-hours baseline when known.'),
+  "extendedBaselineSource": zod.union([zod.literal('regular_close'),zod.literal(null)]).nullish().describe('Source of the extended-hours baseline.'),
   "volume": zod.number().nullable(),
   "underlyingPrice": zod.number().nullish().describe('Underlying reference price from option computations, when available.'),
   "providerContractId": zod.string().nullable(),
@@ -4908,104 +4915,6 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "refreshing": zod.boolean().optional(),
   "servedAt": zod.coerce.date().optional(),
   "stateSource": zod.enum(['database', 'runtime-fallback', 'memory-cache']).optional()
-})
-
-
-/**
- * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
- */
-export const EvaluateSignalMonitorMatrixBody = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
-  "watchlistId": zod.string().nullish(),
-  "cells": zod.array(zod.object({
-  "symbol": zod.string(),
-  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])
-})).optional().describe('Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols\/timeframes.'),
-  "symbols": zod.array(zod.string()).optional(),
-  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])).optional(),
-  "clientRole": zod.enum(['leader', 'follower', 'manual', 'test']).optional(),
-  "requestOrigin": zod.enum(['startup', 'poll', 'manual', 'test']).optional()
-})
-
-export const EvaluateSignalMonitorMatrixResponse = zod.object({
-  "profile": zod.object({
-  "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
-  "enabled": zod.boolean(),
-  "watchlistId": zod.string().nullable(),
-  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
-  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
-  "freshWindowBars": zod.number(),
-  "pollIntervalSeconds": zod.number(),
-  "maxSymbols": zod.number(),
-  "evaluationConcurrency": zod.number(),
-  "lastEvaluatedAt": zod.coerce.date().nullable(),
-  "lastError": zod.string().nullable(),
-  "createdAt": zod.coerce.date(),
-  "updatedAt": zod.coerce.date()
-}),
-  "states": zod.array(zod.object({
-  "id": zod.string(),
-  "profileId": zod.string(),
-  "symbol": zod.string(),
-  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
-  "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
-  "currentSignalAt": zod.coerce.date().nullable(),
-  "currentSignalPrice": zod.number().nullable(),
-  "latestBarAt": zod.coerce.date().nullable(),
-  "barsSinceSignal": zod.number().nullable(),
-  "fresh": zod.boolean(),
-  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
-  "active": zod.boolean(),
-  "lastEvaluatedAt": zod.coerce.date().nullable(),
-  "lastError": zod.string().nullable(),
-  "indicatorSnapshot": zod.union([zod.object({
-  "trendDirection": zod.union([zod.enum(['bullish', 'bearish']),zod.null()]),
-  "trendAgeBars": zod.number().nullable(),
-  "trendAgeBucket": zod.union([zod.enum(['new', 'mature', 'old']),zod.null()]),
-  "adx": zod.number().nullable(),
-  "strength": zod.union([zod.enum(['strong', 'weak']),zod.null()]),
-  "volatilityScore": zod.number().nullable(),
-  "mtf": zod.array(zod.object({
-  "timeframe": zod.string(),
-  "direction": zod.union([zod.enum(['bullish', 'bearish']),zod.null()]),
-  "required": zod.boolean(),
-  "pass": zod.boolean()
-})),
-  "filterState": zod.union([zod.record(zod.string(), zod.unknown()),zod.null()])
-}),zod.null()])
-})),
-  "evaluatedAt": zod.coerce.date(),
-  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])),
-  "truncated": zod.boolean(),
-  "skippedSymbols": zod.array(zod.string()),
-  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
-  "refreshing": zod.boolean().optional(),
-  "warming": zod.boolean().optional(),
-  "pendingCells": zod.array(zod.object({
-  "symbol": zod.string(),
-  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])
-})).optional(),
-  "coverage": zod.object({
-  "requestedSymbols": zod.number(),
-  "evaluatedSymbols": zod.number(),
-  "pendingSymbols": zod.number(),
-  "totalSymbols": zod.number(),
-  "timeframes": zod.number(),
-  "taskCount": zod.number(),
-  "sourceStrategy": zod.enum(['native_timeframes', 'native_timeframes_live_retry', 'native_timeframes_live_retry_exact_backfill']).optional(),
-  "sourceRequestCount": zod.number().optional(),
-  "hydratedSymbols": zod.number().optional(),
-  "missingSymbols": zod.number().optional(),
-  "pendingCellCount": zod.number().optional(),
-  "estimatedFullCycleMs": zod.number().nullish(),
-  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']),
-  "durationMs": zod.number(),
-  "skippedSymbols": zod.number(),
-  "truncated": zod.boolean(),
-  "automaticRequest": zod.boolean().optional(),
-  "debounced": zod.boolean().optional()
-}).optional()
 })
 
 

@@ -30,4 +30,7 @@ export interface SignalMonitorSymbolState {
   lastEvaluatedAt: Date | null;
   /** @nullable */
   lastError: string | null;
+  actionEligible?: boolean;
+  /** @nullable */
+  actionBlocker?: string | null;
 }

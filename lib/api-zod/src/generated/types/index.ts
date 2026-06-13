@@ -457,6 +457,7 @@ export * from './positionsResponse';
 export * from './promoteBacktestRunRequest';
 export * from './proxyUniverseLogoParams';
 export * from './quoteSnapshot';
+export * from './quoteSnapshotExtendedBaselineSource';
 export * from './quoteSnapshotLatency';
 export * from './quoteSnapshotMarketDataMode';
 export * from './quoteSnapshotsResponse';

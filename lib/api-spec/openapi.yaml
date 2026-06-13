@@ -3174,25 +3174,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalMonitorStateResponse"
 
-  /signal-monitor/matrix:
-    post:
-      operationId: evaluateSignalMonitorMatrix
-      tags: [signal-monitor]
-      summary: Evaluate Pyrus Signals signal states for watchlist row timeframes
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EvaluateSignalMonitorMatrixRequest"
-      responses:
-        "200":
-          description: Watchlist row signal matrix after evaluation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SignalMonitorMatrixResponse"
-
   /signal-monitor/matrix/stream:
     get:
       operationId: streamSignalMonitorMatrix
@@ -5355,6 +5336,7 @@ components:
 
     SessionIbkrRuntime:
       type: object
+      additionalProperties: true
       properties:
         runtimeOverrideActive:
           type: boolean
@@ -5810,6 +5792,10 @@ components:
           type: [string, "null"]
         orderCapability:
           $ref: "#/components/schemas/RuntimeOrderCapabilityDiagnostics"
+        governor:
+          $ref: "#/components/schemas/JsonObject"
+        streams:
+          $ref: "#/components/schemas/JsonObject"
       required:
         - transport
         - configured
@@ -5845,6 +5831,8 @@ components:
         - lastRecoveryError
         - lastError
         - orderCapability
+        - governor
+        - streams
 
     RuntimeDiagnosticsResponse:
       type: object
@@ -5858,6 +5846,10 @@ components:
           $ref: "#/components/schemas/RuntimeIbkrDiagnostics"
         providers:
           $ref: "#/components/schemas/JsonObject"
+        marketDataWorkPlan:
+          $ref: "#/components/schemas/JsonObject"
+        signalMonitor:
+          $ref: "#/components/schemas/JsonObject"
         storage:
           $ref: "#/components/schemas/JsonObject"
       required:
@@ -5865,6 +5857,8 @@ components:
         - api
         - ibkr
         - providers
+        - marketDataWorkPlan
+        - signalMonitor
         - storage
 
     DiagnosticSeverity:

@@ -32,4 +32,7 @@ export interface SignalMonitorMatrixState {
   /** @nullable */
   lastError: string | null;
   indicatorSnapshot: SignalMonitorIndicatorSnapshot | null;
+  actionEligible?: boolean;
+  /** @nullable */
+  actionBlocker?: string | null;
 }

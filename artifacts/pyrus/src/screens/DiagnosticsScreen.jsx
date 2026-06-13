@@ -42,6 +42,15 @@ import {
   syncDiagnosticSnapshotAlerts,
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { MachineStateDiagram } from "./diagnostics/MachineStateDiagram.jsx";
+import {
+  DIAGNOSTICS_COLLECTION_INTERVAL_MS,
+  buildMachineStateDiagramModel,
+} from "./diagnostics/machineStateDiagramModel.js";
+
+const GEX_QUERY_KEY_PREFIXES = ["gex-dashboard", "gex-projection", "gex-zero-gamma"];
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -753,6 +762,7 @@ export default function DiagnosticsScreen({
   const diagnosticsOpenLoggedRef = useRef(false);
   useEffect(() => {
     onReadinessChange?.({
+      contentReady: diagnosticsVisible,
       primaryReady: diagnosticsVisible,
       derivedReady: diagnosticsVisible,
       backgroundAllowed: diagnosticsVisible,
@@ -1079,49 +1089,111 @@ export default function DiagnosticsScreen({
   const chartHydrationSeverity =
     chartHydrationSnapshot?.severity ||
     ((chartStats.counters?.payloadShapeError ?? 0) > 0 ? "warning" : "info");
-  const footerSignal = {
-    level:
-      memoryPressureState?.level ||
-      footerMemoryMetrics?.level ||
-      "normal",
-    trend:
-      memoryPressureState?.trend ||
-      footerMemoryMetrics?.trend ||
-      resourcePressureMetrics.clientPressureTrend ||
-      "steady",
-    sourceQuality:
-      memoryPressureState?.sourceQuality ||
-      footerMemoryMetrics?.sourceQuality ||
-      resourcePressureMetrics.sourceQuality ||
-      MISSING_VALUE,
-    browserMemoryMb:
-      memoryPressureState?.browserMemoryMb ??
-      footerMemoryMetrics?.browserMemoryMb ??
-      resourcePressureMetrics.browserMemoryMb,
-    browserMemoryLimitMb:
-      memoryPressureState?.browserMemoryLimitMb ??
-      footerMemoryMetrics?.browserMemoryLimitMb ??
-      resourcePressureMetrics.browserMemoryLimitMb,
-    apiHeapUsedPercent:
-      memoryPressureState?.apiHeapUsedPercent ??
-      footerMemoryMetrics?.apiHeapUsedPercent ??
-      resourcePressureMetrics.heapUsedPercent,
-    dominantDrivers:
-      memoryPressureState?.dominantDrivers?.length
-        ? memoryPressureState.dominantDrivers
-        : Array.isArray(footerMemoryMetrics?.dominantDrivers)
-          ? footerMemoryMetrics.dominantDrivers
-          : [],
-    observedAt:
-      memoryPressureState?.observedAt ||
-      footerMemoryMetrics?.observedAt ||
-      resourcePressureMetrics.browserObservedAt ||
-      null,
-  };
+  const footerSignal = useMemo(
+    () => ({
+      level:
+        memoryPressureState?.level ||
+        footerMemoryMetrics?.level ||
+        "normal",
+      trend:
+        memoryPressureState?.trend ||
+        footerMemoryMetrics?.trend ||
+        resourcePressureMetrics.clientPressureTrend ||
+        "steady",
+      sourceQuality:
+        memoryPressureState?.sourceQuality ||
+        footerMemoryMetrics?.sourceQuality ||
+        resourcePressureMetrics.sourceQuality ||
+        MISSING_VALUE,
+      browserMemoryMb:
+        memoryPressureState?.browserMemoryMb ??
+        footerMemoryMetrics?.browserMemoryMb ??
+        resourcePressureMetrics.browserMemoryMb,
+      browserMemoryLimitMb:
+        memoryPressureState?.browserMemoryLimitMb ??
+        footerMemoryMetrics?.browserMemoryLimitMb ??
+        resourcePressureMetrics.browserMemoryLimitMb,
+      apiHeapUsedPercent:
+        memoryPressureState?.apiHeapUsedPercent ??
+        footerMemoryMetrics?.apiHeapUsedPercent ??
+        resourcePressureMetrics.heapUsedPercent,
+      dominantDrivers:
+        memoryPressureState?.dominantDrivers?.length
+          ? memoryPressureState.dominantDrivers
+          : Array.isArray(footerMemoryMetrics?.dominantDrivers)
+            ? footerMemoryMetrics.dominantDrivers
+            : [],
+      observedAt:
+        memoryPressureState?.observedAt ||
+        footerMemoryMetrics?.observedAt ||
+        resourcePressureMetrics.browserObservedAt ||
+        null,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resourcePressureMetrics derives from resourcePressureSnapshot
+    [memoryPressureState, footerMemoryMetrics, resourcePressureSnapshot],
+  );
   const memoryOverviewSeverity =
     footerSignal.level === "high" || footerSignal.level === "watch"
       ? "warning"
       : "info";
+  // Coarse ticker so snapshot-age decay stays live after the SSE stream dies;
+  // one tick per collector interval is enough granularity for the decay tiers.
+  const [machineNowMs, setMachineNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!overviewTabActive) return undefined;
+    setMachineNowMs(Date.now());
+    const interval = window.setInterval(
+      () => setMachineNowMs(Date.now()),
+      DIAGNOSTICS_COLLECTION_INTERVAL_MS,
+    );
+    return () => window.clearInterval(interval);
+  }, [overviewTabActive]);
+  // GEX lane sensor: the client-side React Query cache state of the gex
+  // feature's fetches, sampled on the same coarse ticker as decay.
+  const queryClient = useQueryClient();
+  const gexClientState = useMemo(() => {
+    if (!overviewTabActive) return null;
+    const queries = queryClient
+      .getQueryCache()
+      .findAll()
+      .filter((query) =>
+        GEX_QUERY_KEY_PREFIXES.includes(String(query.queryKey?.[0] ?? "")),
+      );
+    return {
+      queryCount: queries.length,
+      isFetching: queries.some((query) => query.state.fetchStatus === "fetching"),
+      hasError: queries.some((query) => query.state.status === "error"),
+      lastUpdatedAt: queries.reduce(
+        (latestAt, query) => Math.max(latestAt, query.state.dataUpdatedAt || 0),
+        0,
+      ) || null,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- machineNowMs is the sampling tick
+  }, [overviewTabActive, machineNowMs, queryClient]);
+  const machineStateModel = useMemo(
+    () =>
+      overviewTabActive
+        ? buildMachineStateDiagramModel({
+            latest,
+            streamState,
+            runtimeControl,
+            footerSignal,
+            memoryPressureState,
+            gexClientState,
+            nowMs: machineNowMs,
+          })
+        : null,
+    [
+      overviewTabActive,
+      latest,
+      streamState,
+      runtimeControl,
+      footerSignal,
+      memoryPressureState,
+      gexClientState,
+      machineNowMs,
+    ],
+  );
 
   const selectMetric = (subsystem, metricKey) => {
     setActiveTab("Events");
@@ -1199,6 +1271,73 @@ export default function DiagnosticsScreen({
     });
     return `/api/diagnostics/export?${params.toString()}`;
   }, [timeWindow.from, timeWindow.to]);
+
+  const activeAlertsPanel =
+    activeLocalAlerts.length > 0 || dismissedLocalAlerts.length > 0 ? (
+      <Panel
+        title="Active Alerts"
+        action={
+          <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() =>
+                setAlertPreferences((current) => ({
+                  ...current,
+                  audioEnabled: !current.audioEnabled,
+                }))
+              }
+              style={smallButton()}
+            >
+              {audioEnabled ? "Audio On" : "Audio Off"}
+            </button>
+            {AUDIO_SNOOZE_OPTIONS.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                onClick={() => setAudioMutedUntilPreference(option.ms === Number.POSITIVE_INFINITY ? Number.MAX_SAFE_INTEGER : Date.now() + option.ms)}
+                style={smallButton()}
+              >
+                Snooze {option.label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setAudioMutedUntilPreference(0)} style={smallButton()}>
+              Unsnooze
+            </button>
+            {activeLocalAlerts.length > 0 && (
+              <button type="button" onClick={dismissAllVisibleAlerts} style={smallButton()}>
+                Dismiss all
+              </button>
+            )}
+            {dismissedLocalAlerts.length > 0 && (
+              <button type="button" onClick={restoreDismissedAlerts} style={smallButton()}>
+                Restore
+              </button>
+            )}
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(8) }}>
+          {activeLocalAlerts.slice(0, 8).map((alert) => (
+            <LocalAlertRow
+              key={alert.key}
+              alert={alert}
+              onSelect={selectLocalAlert}
+              onDismiss={dismissLocalAlert}
+            />
+          ))}
+          {activeLocalAlerts.length > 8 && (
+            <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              {activeLocalAlerts.length - 8} more grouped alerts
+            </div>
+          )}
+          {dismissedLocalAlerts.length > 0 && (
+            <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              {dismissedLocalAlerts.length} dismissed active alert{dismissedLocalAlerts.length === 1 ? "" : "s"}
+            </div>
+          )}
+        </div>
+      </Panel>
+    ) : null;
 
   return (
     <div
@@ -1298,74 +1437,12 @@ export default function DiagnosticsScreen({
         ))}
       </div>
 
-      {(activeLocalAlerts.length > 0 || dismissedLocalAlerts.length > 0) && (
-        <Panel
-          title="Active Alerts"
-          action={
-            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={() =>
-                  setAlertPreferences((current) => ({
-                    ...current,
-                    audioEnabled: !current.audioEnabled,
-                  }))
-                }
-                style={smallButton()}
-              >
-                {audioEnabled ? "Audio On" : "Audio Off"}
-              </button>
-              {AUDIO_SNOOZE_OPTIONS.map((option) => (
-                <button
-                  key={option.label}
-                  type="button"
-                  onClick={() => setAudioMutedUntilPreference(option.ms === Number.POSITIVE_INFINITY ? Number.MAX_SAFE_INTEGER : Date.now() + option.ms)}
-                  style={smallButton()}
-                >
-                  Snooze {option.label}
-                </button>
-              ))}
-              <button type="button" onClick={() => setAudioMutedUntilPreference(0)} style={smallButton()}>
-                Unsnooze
-              </button>
-              {activeLocalAlerts.length > 0 && (
-                <button type="button" onClick={dismissAllVisibleAlerts} style={smallButton()}>
-                  Dismiss all
-                </button>
-              )}
-              {dismissedLocalAlerts.length > 0 && (
-                <button type="button" onClick={restoreDismissedAlerts} style={smallButton()}>
-                  Restore
-                </button>
-              )}
-            </div>
-          }
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: sp(8) }}>
-            {activeLocalAlerts.slice(0, 8).map((alert) => (
-              <LocalAlertRow
-                key={alert.key}
-                alert={alert}
-                onSelect={selectLocalAlert}
-                onDismiss={dismissLocalAlert}
-              />
-            ))}
-            {activeLocalAlerts.length > 8 && (
-              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
-                {activeLocalAlerts.length - 8} more grouped alerts
-              </div>
-            )}
-            {dismissedLocalAlerts.length > 0 && (
-              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
-                {dismissedLocalAlerts.length} dismissed active alert{dismissedLocalAlerts.length === 1 ? "" : "s"}
-              </div>
-            )}
-          </div>
-        </Panel>
-      )}
+      {activeTab !== "Overview" && activeAlertsPanel}
 
       {activeTab === "Overview" && (
         <>
+          <MachineStateDiagram model={machineStateModel} />
+          {activeAlertsPanel}
           <div className="ra-hide-scrollbar" style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", gap: sp(8), margin: sp("10px 0"), minWidth: 0 }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(apiSnapshot)} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
             <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(ibkrSnapshot)} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />

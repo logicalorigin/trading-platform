@@ -925,7 +925,8 @@ export interface SessionIbkrRuntime {
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
   activation: IbkrBridgeActivationDiagnosticsResponse;
-}
+  [key: string]: unknown;
+ }
 
 export interface SessionRuntime {
   ibkr: SessionIbkrRuntime;
@@ -1259,6 +1260,8 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   lastError: string | null;
   orderCapability: RuntimeOrderCapabilityDiagnostics;
+  governor: JsonObject;
+  streams: JsonObject;
 }
 
 export interface RuntimeDiagnosticsResponse {
@@ -1266,6 +1269,8 @@ export interface RuntimeDiagnosticsResponse {
   api: RuntimeApiDiagnostics;
   ibkr: RuntimeIbkrDiagnostics;
   providers: JsonObject;
+  marketDataWorkPlan: JsonObject;
+  signalMonitor: JsonObject;
   storage: JsonObject;
 }
 
@@ -2064,6 +2069,17 @@ export interface ReorderWatchlistItemsRequest {
 }
 
 /**
+ * Source of the extended-hours baseline.
+ * @nullable
+ */
+export type QuoteSnapshotExtendedBaselineSource = typeof QuoteSnapshotExtendedBaselineSource[keyof typeof QuoteSnapshotExtendedBaselineSource] | null;
+
+
+export const QuoteSnapshotExtendedBaselineSource = {
+  regular_close: 'regular_close',
+} as const;
+
+/**
  * @nullable
  */
 export type QuoteSnapshotMarketDataMode = typeof QuoteSnapshotMarketDataMode[keyof typeof QuoteSnapshotMarketDataMode] | null;
@@ -2120,10 +2136,16 @@ export interface QuoteSnapshot {
   prevClose: number | null;
   /** Verified regular-session close baseline used for pre-market and after-hours move displays. */
   extendedBaselinePrice?: number | null;
-  /** Timestamp associated with the extended-hours baseline when known. */
+  /**
+   * Timestamp associated with the extended-hours baseline when known.
+   * @nullable
+   */
   extendedBaselineAt?: string | null;
-  /** Source of the extended-hours baseline. */
-  extendedBaselineSource?: 'regular_close' | null;
+  /**
+   * Source of the extended-hours baseline.
+   * @nullable
+   */
+  extendedBaselineSource?: QuoteSnapshotExtendedBaselineSource;
   volume: number | null;
   /** Underlying reference price from option computations, when available. */
   underlyingPrice?: number | null;

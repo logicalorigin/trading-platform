@@ -577,6 +577,175 @@ Use this table to identify who calls an API surface and what data enters through
 14. Massive and Signal Monitor broad-universe paths must not reintroduce artificial 90/80/64/20/60/120 caps. Signal Monitor broad profiles default to `all_watchlists_plus_universe`: watchlists are pinned first, then the ranked flow universe and active optionable universe catalog fill toward 500 symbols. High Beta/Massive display universes target 500 symbols. In normal live runtime, Signal Monitor matrix/profile endpoints read stored state and emitted events only; legacy profile/automatic bar evaluation caps apply only when explicit backfill/diagnostic evaluation is enabled. Browser Matrix warm-start persistence preserves the full 500x6 state set, foreground/STA exact cells use 240-cell admission caps, and only non-foreground background hydration may pause under priority pressure.
 15. Documentation is part of the contract. Adding a provider, table, endpoint, stream, worker path, major cache, or screen consumer requires updating this spec.
 
+### Backend Data Line Machine
+
+This is the canonical state machine for one backend data line. A data line may be a browser request, EventSource subscription, provider tick, bridge payload, worker job, or diagnostics sample. It is a branched lifecycle, not a mandatory sequence: request admission happens at the API edge, provider and bridge payloads can enter through service boundaries, and diagnostics samples/incidents are observed on a separate collector path.
+
+Source references:
+
+- API edge, request context, route admission headers, and problem responses: `artifacts/api-server/src/app.ts`.
+- Route classes and admission actions: `artifacts/api-server/src/services/route-admission.ts`.
+- Request metric samples: `artifacts/api-server/src/services/request-metrics.ts`.
+- Resource pressure levels and drivers: `artifacts/api-server/src/services/resource-pressure.ts`.
+- Diagnostics REST/SSE boundary: `artifacts/api-server/src/routes/diagnostics.ts`.
+- Diagnostics snapshots, threshold breaches, and incident lifecycle: `artifacts/api-server/src/services/diagnostics.ts`.
+- Diagnostics persistence schema: `lib/db/src/schema/diagnostics.ts`.
+- Runtime/IBKR and market-data diagnostic aggregates: `artifacts/api-server/src/services/platform.ts`, `artifacts/api-server/src/services/platform-runtime-status.ts`, `artifacts/api-server/src/services/platform-market-data-diagnostics.ts`, and `artifacts/api-server/src/services/bridge-quote-stream.ts`.
+- Account/page streams, account quote enrichment, equity history, and shadow account read models: `artifacts/api-server/src/routes/platform.ts`, `artifacts/api-server/src/services/account-page-streams.ts`, and `artifacts/api-server/src/services/account.ts`.
+- Flow scanner, market read models, option chain/quote fallbacks, and scanner spot-price hydration: `artifacts/api-server/src/services/platform.ts` and `artifacts/api-server/src/services/bridge-quote-stream.ts`.
+- Signal, algo, and trade-management worker state: `artifacts/api-server/src/services/signal-monitor.ts`, `artifacts/api-server/src/services/signal-options-automation.ts`, `artifacts/api-server/src/services/signal-options-worker-state.ts`, and `artifacts/api-server/src/services/trade-monitor-worker.ts`.
+- Collector and worker startup wiring: `artifacts/api-server/src/index.ts`.
+- Frontend real-time diagnostics projection: `artifacts/pyrus/src/screens/diagnostics/machineStateDiagramModel.js` and `artifacts/pyrus/src/screens/diagnostics/MachineStateDiagram.jsx`.
+
+#### Runtime Data Movement Topology
+
+This is the concrete PYRUS runtime topology that the Diagnostics `Backend Data Machine` panel mirrors. Broker and Massive are data sources, shared midpoints sit in the center, and control/diagnostic paths are side inputs rather than primary data sources.
+
+```mermaid
+flowchart TD
+  Broker["Broker Feed<br/>IBKR/TWS bridge<br/>REST, bridge streams, SSE fanout"]
+  Massive["Massive Feed<br/>equity market data<br/>WebSocket + REST"]
+
+  AccountState["Account State<br/>accounts, positions, balances<br/>IBKR live, Flex/DB fallback, shadow ledger"]
+  OrderState["Order State<br/>orders, fills, shadow orders<br/>broker/shadow ledger"]
+  MarketHub["Market Data Hub<br/>stock/option quotes, bars, chains<br/>IBKR bridge + Massive sockets/REST + caches"]
+  FlowScanner["Flow Scanner<br/>chains, spot, flow events<br/>line-budgeted worker + cache"]
+  PositionQuotes["Position Quotes<br/>position marks and PnL enrichment<br/>account-monitor/shadow line pools"]
+  AccountView["Account View<br/>summary, positions, orders, risk<br/>REST + account page SSE"]
+  Signals["Signals<br/>Signal Monitor, STA, Matrix<br/>stored state + emitted events + bars"]
+  Algo["Algo Engine<br/>Signal Options orchestration<br/>worker scans, candidates, gateway checks"]
+  TradeMgmt["Trade Management<br/>entries, exits, stops, fills, maintenance<br/>shadow/live order and position marks"]
+
+  Admission["Route Admission<br/>global /api middleware<br/>allow or shed; cache-only only if explicitly emitted"]
+  Api["API Routes<br/>route handlers and SSE handlers<br/>p95/request/error metrics"]
+  Services["Domain Services<br/>read models and command handlers<br/>source/freshness/failure normalization"]
+  Contracts["REST + SSE Contracts<br/>generated JSON, problem JSON, stream events"]
+  Client["Frontend Stores<br/>generated hooks, EventSource reducers, query caches"]
+  Ui["Screens/Tables/Containers<br/>Account, Flow, Signals, Algo, Trade, Diagnostics"]
+
+  LineGovernor["Line Governor<br/>account/flow/automation pools<br/>pressure, backoff, line budgets"]
+  MemoryPressure["Memory + Workload<br/>heap/cache/workload pressure<br/>route pressure, timeouts, drain pressure"]
+  DiagnosticsCollector["Diagnostics Collector<br/>snapshots, probes, request metrics, events"]
+  DiagnosticsSse["Diagnostics SSE<br/>ready, heartbeat, snapshot/event push"]
+  Incidents["Incidents<br/>threshold breaches and lifecycle"]
+
+  Broker -->|broker REST/SSE accounts| AccountState
+  Broker -->|broker streams orders/fills| OrderState
+  Broker -->|IBKR WS/REST quotes/chains| MarketHub
+  Massive -->|Massive WebSocket + REST equities| MarketHub
+  Broker -->|option chains/quotes| FlowScanner
+  Massive -->|spot/fallback hydration| FlowScanner
+
+  MarketHub -->|quote cache/marks| PositionQuotes
+  AccountState -->|balances/positions| AccountView
+  OrderState -->|orders/fills| AccountView
+  PositionQuotes -->|quote enrichment| AccountView
+
+  MarketHub -->|bars/quotes| Signals
+  FlowScanner -->|flow events| Signals
+  Signals -->|worker state/action snapshots| Algo
+  AccountView -->|risk/capital/positions| Algo
+  Algo -->|decisions/intents| TradeMgmt
+  AccountView -->|risk/positions| TradeMgmt
+  OrderState -->|fills/status/rejections| TradeMgmt
+
+  Admission -->|route gate| Api
+  Api -->|REST handler/SSE setup| Services
+  AccountView -->|account read model| Services
+  MarketHub -->|market read model| Services
+  FlowScanner -->|flow read model| Services
+  TradeMgmt -->|trade state/read model| Services
+  Services -->|REST/SSE contract| Contracts
+  Contracts -->|generated fetch/EventSource| Client
+  Client -->|render state| Ui
+
+  LineGovernor -->|pressure/backoff| Admission
+  LineGovernor -->|flow line budget| FlowScanner
+  LineGovernor -->|automation/execution line budget| Algo
+  MemoryPressure -->|pressure/timeouts| Admission
+
+  Api -->|request metrics| DiagnosticsCollector
+  Services -->|runtime samples| DiagnosticsCollector
+  TradeMgmt -->|execution events/probes| DiagnosticsCollector
+  MemoryPressure -->|pressure samples| DiagnosticsCollector
+  DiagnosticsCollector -->|snapshot/event push| DiagnosticsSse
+  DiagnosticsCollector -->|thresholds| Incidents
+  DiagnosticsSse -->|EventSource| Ui
+```
+
+Operational signals surfaced along this path include API p95/request/error metrics, IBKR heartbeat age, Massive WebSocket last-message age, market-data freshness and stream gaps, account/order stream freshness, account-monitor/flow-scanner/automation line usage, route pressure/admission actions, automation latest scan age and scan duration, gateway-blocked/failure counts, option chain/expiration backoffs, candidate/position mark timeouts, shadow exit counts, and diagnostics threshold incidents.
+
+```mermaid
+stateDiagram-v2
+  [*] --> DemandObserved
+  DemandObserved --> BoundaryReceived: browser, SSE, bridge, provider, worker, diagnostics
+
+  BoundaryReceived --> RejectedInvalid: body/query/payload validation fails
+  BoundaryReceived --> Validated: accepted at first trusted boundary
+
+  Validated --> RouteClassified: HTTP route or stream request
+  Validated --> ServiceSelected: internal worker/provider path
+
+  RouteClassified --> AdmissionAllowed: action=allow
+  RouteClassified --> AdmissionCacheOnly: action=cache-only
+  RouteClassified --> AdmissionShed: action=shed
+
+  AdmissionAllowed --> ServiceSelected
+  AdmissionCacheOnly --> SourceRead: stale/degraded cache is permitted
+  AdmissionShed --> ContractEmitted: 204/429/problem JSON plus admission metadata
+
+  ServiceSelected --> SourceRead
+  SourceRead --> SourceUnavailable: auth, pacing, timeout, stale, disconnected, or missing durable state
+  SourceRead --> Normalized: source data found
+  SourceUnavailable --> Normalized: preserve concrete failure/degraded state
+
+  Normalized --> PersistedOrCached: durable table, runtime cache, event buffer, or generated client cache
+  Normalized --> ContractEmitted
+  PersistedOrCached --> ContractEmitted
+
+  ContractEmitted --> ClientConsumed: generated hook, direct fetch, EventSource reducer, store, scheduler, or worker output
+
+  ServiceSelected --> DiagnosticSampled: collector observes service/runtime path
+  ContractEmitted --> DiagnosticSampled: request metrics, pressure, reports
+  ClientConsumed --> DiagnosticSampled: browser metrics and client events
+
+  DiagnosticSampled --> IncidentOpen: threshold or event remains active
+  IncidentOpen --> IncidentResolved: collector no longer sees active incident key
+  IncidentResolved --> DiagnosticSampled
+```
+
+Plain-text fallback:
+
+1. Observe demand or input at a browser, stream, provider, bridge, worker, or diagnostics boundary.
+2. Validate at the first backend boundary. Invalid data exits through problem JSON, rejected provider/bridge state, or a diagnostic event.
+3. Classify HTTP/SSE routes and apply admission: `allow`, `cache-only`, or `shed`. `cache-only` is part of the route-admission vocabulary and should be modeled explicitly even when it is not observed in a current runtime sample.
+4. Let the owning service read source state. Source state can be durable, runtime-only, cached, live, fallback, stale, unavailable, or degraded.
+5. Normalize identity, source, freshness, actionability, pressure, and failure reason before emitting or persisting.
+6. Emit a contract: generated REST JSON, problem JSON, SSE event, worker output, or internal read model.
+7. Let clients consume the contract without inventing a healthier state than the payload proves.
+8. Diagnostics may sample the API edge, service/runtime path, emitted contract, or client consumption path and may open or resolve incidents independently of the original request.
+
+#### Machine State Evidence Rules
+
+| State | Evidence Rule |
+|---|---|
+| `DemandObserved` | Observed when a route request, stream subscription, provider/bridge payload, worker job, or diagnostics sample exists. |
+| `BoundaryReceived` / `Validated` | Observed from route handlers, generated schema parsing, bridge/provider adapters, or accepted client report payloads. |
+| `RejectedInvalid` | Observed from validation failure, rejected provider/bridge payload, or problem JSON. |
+| `RouteClassified` | Observed from route admission context and route class. |
+| `AdmissionAllowed` | Observed when admission action is `allow`. |
+| `AdmissionCacheOnly` | Observed when admission action is `cache-only`; otherwise model as reserved/unknown. |
+| `AdmissionShed` | Observed when admission action is `shed`, or inferred when pressure metadata explicitly reports shed/deferred work. |
+| `ServiceSelected` | Inferred from route family or worker/service ownership when no explicit service marker is emitted. |
+| `SourceRead` | Observed from source metrics, cache hit/source fields, stream event freshness, DB-backed rows, bridge/provider diagnostics, or worker output. |
+| `SourceUnavailable` | Observed from auth, pacing, timeout, stale, disconnected, no durable state, or provider failure reason. |
+| `Normalized` | Required whenever a user-facing response carries identity/source/freshness/actionability/failure context. |
+| `PersistedOrCached` | Observed from durable tables, runtime caches, event buffers, or generated-client cache state. |
+| `ContractEmitted` | Observed from REST response, problem JSON, SSE event, or worker output. |
+| `ClientConsumed` | Observed from generated hooks, direct fetch callers, EventSource reducers, UI stores, schedulers, or browser metric reports. |
+| `DiagnosticSampled` | Observed from diagnostics snapshots, request metrics, resource pressure samples, browser reports, or runtime flight recorder output. |
+| `IncidentOpen` / `IncidentResolved` | Observed from diagnostics event status and threshold-breach lifecycle. |
+
 ### Validation Spec
 
 | Change Type | Minimum Validation |
@@ -1994,8 +2163,8 @@ Use these when debugging where a property fell out of the payload. Read each wat
 ```mermaid
 flowchart TD
   UiDemand["UI demand"]
-  Route["API route or SSE handler"]
   Boundary["Request validation and route admission"]
+  Route["API route or SSE handler"]
   Service["Domain service"]
   State["Provider, cache, or DB state"]
   Model["Normalized read model"]
@@ -2003,7 +2172,7 @@ flowchart TD
   Client["Generated client, query cache, or EventSource reducer"]
   View["Visible UI state"]
 
-  UiDemand --> Route --> Boundary --> Service --> State --> Model --> Payload --> Client --> View
+  UiDemand --> Boundary --> Route --> Service --> State --> Model --> Payload --> Client --> View
 ```
 
 ### Property Projection
