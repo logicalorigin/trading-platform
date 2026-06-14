@@ -50,7 +50,11 @@ import {
   subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
-import { getOptionChain, getQuoteSnapshots } from "./platform";
+import {
+  getOptionChain,
+  getQuoteSnapshots,
+  OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
+} from "./platform";
 
 const bridgeClient = new IbkrBridgeClient();
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
@@ -547,6 +551,9 @@ export async function fetchOptionChainSnapshotPayload(
           await getOptionChain({
             underlying,
             quoteHydration: "metadata",
+            allowDelayedSnapshotHydration: false,
+            timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
+            emptyRetryDelaysMs: [],
           })
         ).contracts,
         updatedAt: new Date().toISOString(),
@@ -935,12 +942,17 @@ export function subscribeOptionChains(
     new Set(underlyings.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
 
-  return createPollingStream({
-    intervalMs: 15_000,
-    fetchSnapshot: async () =>
-      fetchOptionChainSnapshotPayload(normalizedUnderlyings),
-    onSnapshot,
-  });
+  const unsubscribes = normalizedUnderlyings.map((underlying) =>
+    createPollingStream({
+      intervalMs: 15_000,
+      fetchSnapshot: async () => fetchOptionChainSnapshotPayload([underlying]),
+      onSnapshot,
+    }),
+  );
+
+  return () => {
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
+  };
 }
 
 export function subscribeOptionQuoteSnapshots(

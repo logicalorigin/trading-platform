@@ -18,6 +18,7 @@ import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local
 import {
   getMarketDataAdmissionDiagnostics,
   setMarketDataAdmissionBridgeLineBudget,
+  subscribeMarketDataLeaseChanges,
   type MarketDataLease,
 } from "./market-data-admission";
 import { getRuntimeMassiveProviderDiagnostics } from "./platform-market-data-diagnostics";
@@ -76,6 +77,7 @@ const DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS = 30_000;
 const DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS = 2_500;
 const MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS = 30_000;
 const DEFAULT_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS = 2_000;
+const LINE_USAGE_GENERATION_COORDINATOR_LEASE_CHANGE_DEBOUNCE_MS = 50;
 type PersistentLineObservation = {
   lineId: string;
   firstSeenAt: string;
@@ -100,10 +102,17 @@ let latestMarketDataGenerationApply: (GenerationApplyResult & {
   key: string;
   completedAtMs: number | null;
 }) | null = null;
+let latestMarketDataGenerationStatusByTarget: Partial<
+  Record<GenerationApplyTarget, IbkrMarketDataGenerationStatus>
+> = {};
 let marketDataGenerationApplySequence = 0;
 let lineUsageGenerationCoordinatorTimer: ReturnType<typeof setInterval> | null =
   null;
 let lineUsageGenerationCoordinatorInFlight: Promise<unknown> | null = null;
+let lineUsageGenerationCoordinatorRequestedTimer: ReturnType<typeof setTimeout> | null =
+  null;
+let lineUsageGenerationCoordinatorRerunRequested = false;
+let lineUsageGenerationCoordinatorUnsubscribe: (() => void) | null = null;
 const bridgeOnlyLineObservations = new Map<string, PersistentLineObservation>();
 const apiOnlyLineObservations = new Map<string, PersistentLineObservation>();
 let bridgeLaneDiagnosticsClientFactory: () => BridgeLaneDiagnosticsClient = () =>
@@ -349,13 +358,21 @@ function buildBridgeLineIds(subscriptions: Record<string, unknown>): Set<string>
   return result;
 }
 
+function isGenerationLineBridgeOwned(
+  line: IbkrMarketDataGenerationStatus["lines"][number],
+): boolean {
+  return (
+    line.state === "desired" ||
+    line.state === "subscribing" ||
+    line.state === "live"
+  );
+}
+
 function buildSubscriptionsFromGenerationStatus(input: {
   status: IbkrMarketDataGenerationStatus;
   fallback: Record<string, unknown>;
 }): Record<string, unknown> {
-  const activeLines = input.status.lines.filter(
-    (line) => line.state === "live" || line.state === "subscribing",
-  );
+  const activeLines = input.status.lines.filter(isGenerationLineBridgeOwned);
   const activeEquitySymbols = activeLines
     .filter((line) => line.assetClass === "equity" && line.contract.symbol)
     .map((line) => normalizeSymbol(line.contract.symbol ?? ""))
@@ -383,15 +400,27 @@ function buildSubscriptionsFromGenerationStatus(input: {
 function classifyLineDrift(input: {
   apiOnlyCount: number;
   bridgeOnlyCount: number;
+  persistentApiOnlyCount: number;
+  persistentBridgeOnlyCount: number;
   bridgeDiagnosticsAvailable: boolean;
+  settling?: boolean;
 }):
   | "matched"
+  | "settling"
   | "api_released_bridge_active"
   | "api_active_bridge_missing"
   | "mixed"
   | "unknown" {
   if (!input.bridgeDiagnosticsAvailable) {
     return "unknown";
+  }
+  if (
+    input.settling &&
+    (input.apiOnlyCount > 0 || input.bridgeOnlyCount > 0) &&
+    input.persistentApiOnlyCount === 0 &&
+    input.persistentBridgeOnlyCount === 0
+  ) {
+    return "settling";
   }
   if (input.apiOnlyCount > 0 && input.bridgeOnlyCount > 0) {
     return "mixed";
@@ -622,6 +651,7 @@ function buildLineDriftReconciliation(input: {
   admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>;
   subscriptions: Record<string, unknown>;
   bridgeDiagnosticsAvailable: boolean;
+  settling?: boolean;
 }) {
   const apiLineSets = buildAdmissionLineIdSets(input.admission);
   const apiLineIds = apiLineSets.comparable;
@@ -654,7 +684,10 @@ function buildLineDriftReconciliation(input: {
     status: classifyLineDrift({
       apiOnlyCount: apiOnlyLineIds.size,
       bridgeOnlyCount: bridgeOnlyLineIds.size,
+      persistentApiOnlyCount: persistentApiOnlyLines.length,
+      persistentBridgeOnlyCount: persistentBridgeOnlyLines.length,
       bridgeDiagnosticsAvailable: input.bridgeDiagnosticsAvailable,
+      settling: input.settling,
     }),
     apiLineCount: apiLineIds.size,
     totalApiLineCount: apiLineSets.all.size,
@@ -687,6 +720,12 @@ function buildLineDriftReconciliation(input: {
       .map((entry) => entry.lineId)
       .slice(0, 20),
     persistentApiOnlyLines: persistentApiOnlyLines.slice(0, 20),
+    settling: Boolean(
+      input.settling &&
+        (apiOnlyLineIds.size > 0 || bridgeOnlyLineIds.size > 0) &&
+        persistentApiOnlyLines.length === 0 &&
+        persistentBridgeOnlyLines.length === 0,
+    ),
     lineStates: buildLineStateSample({
       matchedLineIds,
       apiOnlyLineIds,
@@ -811,7 +850,7 @@ function buildSidecarGenerationComparison(input: {
   );
   const bridgeLineIds = new Set(
     input.bridgeGenerationStatus.lines
-      .filter((line) => line.state === "live" || line.state === "subscribing")
+      .filter(isGenerationLineBridgeOwned)
       .map((line) => line.lineKey),
   );
   const matchedLineIds = new Set(
@@ -981,6 +1020,18 @@ function marketDataGenerationApplyKey(input: {
   };
 }
 
+function rememberMarketDataGenerationStatus(result: GenerationApplyResult): void {
+  if (result.status) {
+    latestMarketDataGenerationStatusByTarget[result.target] = result.status;
+  }
+}
+
+function latestMarketDataGenerationStatusForTarget(
+  target: GenerationApplyTarget,
+): IbkrMarketDataGenerationStatus | null {
+  return latestMarketDataGenerationStatusByTarget[target] ?? null;
+}
+
 function scheduleMarketDataGenerationApply(input: {
   desiredGeneration: IbkrMarketDataDesiredGeneration;
   routeToAsyncSidecar: boolean;
@@ -1022,10 +1073,9 @@ function scheduleMarketDataGenerationApply(input: {
 
   if (marketDataGenerationApplyInFlight) {
     return {
-      status: latestMarketDataGenerationApply?.key ===
-        marketDataGenerationApplyInFlight.key
-        ? latestMarketDataGenerationApply.status
-        : null,
+      status: latestMarketDataGenerationStatusForTarget(
+        marketDataGenerationApplyInFlight.target,
+      ),
       error: null,
       target: marketDataGenerationApplyInFlight.target,
       enabled: true,
@@ -1040,6 +1090,7 @@ function scheduleMarketDataGenerationApply(input: {
   const sequence = (marketDataGenerationApplySequence += 1);
   const promise = applyMarketDataGeneration(input).then((result) => {
     if (sequence === marketDataGenerationApplySequence) {
+      rememberMarketDataGenerationStatus(result);
       latestMarketDataGenerationApply = {
         ...result,
         key,
@@ -1066,9 +1117,7 @@ function scheduleMarketDataGenerationApply(input: {
   });
 
   return {
-    status: latestMarketDataGenerationApply?.key === key
-      ? latestMarketDataGenerationApply.status
-      : null,
+    status: latestMarketDataGenerationStatusForTarget(target),
     error: null,
     target,
     enabled: true,
@@ -1100,11 +1149,9 @@ function readMarketDataGenerationApplyState(input: {
   const { key, target } = marketDataGenerationApplyKey(input);
   if (marketDataGenerationApplyInFlight) {
     return {
-      status:
-        latestMarketDataGenerationApply?.key ===
-        marketDataGenerationApplyInFlight.key
-          ? latestMarketDataGenerationApply.status
-          : null,
+      status: latestMarketDataGenerationStatusForTarget(
+        marketDataGenerationApplyInFlight.target,
+      ),
       error: null,
       target: marketDataGenerationApplyInFlight.target,
       enabled: true,
@@ -1132,11 +1179,11 @@ function readMarketDataGenerationApplyState(input: {
   }
 
   return {
-    status: null,
+    status: latestMarketDataGenerationStatusForTarget(target),
     error: null,
     target,
     enabled: true,
-    pending: false,
+    pending: true,
     generationId: input.desiredGeneration.generationId,
     startedAt: null,
     completedAt: null,
@@ -1378,6 +1425,8 @@ function buildLineUtilizationAudit(input: {
         ? "bridge-budget-full"
         : input.driftReconciliation.status === "unknown"
           ? "bridge-diagnostics-unavailable"
+          : input.driftReconciliation.status === "settling"
+            ? "generation-settling"
           : input.driftReconciliation.status !== "matched"
             ? "line-drift"
           : idleButEligibleLineCount > 0 && scannerWorkActive
@@ -1560,6 +1609,7 @@ async function buildIbkrLineUsageSnapshot(options: {
     admission,
     subscriptions,
     bridgeDiagnosticsAvailable: Boolean(bridge.value),
+    settling: generationApply.pending,
   });
   const allocation = buildLineAllocation({
     admission,
@@ -1677,8 +1727,27 @@ export function startIbkrLineUsageGenerationCoordinator(): () => void {
     return stopIbkrLineUsageGenerationCoordinator;
   }
 
-  const run = () => {
+  const requestRun = (delayMs = 0) => {
+    if (!lineUsageGenerationCoordinatorTimer) {
+      return;
+    }
     if (lineUsageGenerationCoordinatorInFlight) {
+      lineUsageGenerationCoordinatorRerunRequested = true;
+      return;
+    }
+    if (lineUsageGenerationCoordinatorRequestedTimer) {
+      return;
+    }
+    lineUsageGenerationCoordinatorRequestedTimer = setTimeout(() => {
+      lineUsageGenerationCoordinatorRequestedTimer = null;
+      run();
+    }, Math.max(0, delayMs));
+    lineUsageGenerationCoordinatorRequestedTimer.unref?.();
+  };
+
+  function run() {
+    if (lineUsageGenerationCoordinatorInFlight) {
+      lineUsageGenerationCoordinatorRerunRequested = true;
       return;
     }
     const task = runIbkrLineUsageGenerationCoordinatorOnce()
@@ -1686,17 +1755,27 @@ export function startIbkrLineUsageGenerationCoordinator(): () => void {
       .finally(() => {
         if (lineUsageGenerationCoordinatorInFlight === task) {
           lineUsageGenerationCoordinatorInFlight = null;
+          if (lineUsageGenerationCoordinatorRerunRequested) {
+            lineUsageGenerationCoordinatorRerunRequested = false;
+            requestRun(0);
+          }
         }
       });
     lineUsageGenerationCoordinatorInFlight = task;
-  };
+  }
 
-  run();
   lineUsageGenerationCoordinatorTimer = setInterval(
     run,
     lineUsageGenerationCoordinatorIntervalMs(),
   );
   lineUsageGenerationCoordinatorTimer.unref?.();
+  lineUsageGenerationCoordinatorUnsubscribe = subscribeMarketDataLeaseChanges((event) => {
+    if (event.lease.lineIds.length === 0) {
+      return;
+    }
+    requestRun(LINE_USAGE_GENERATION_COORDINATOR_LEASE_CHANGE_DEBOUNCE_MS);
+  });
+  run();
   return stopIbkrLineUsageGenerationCoordinator;
 }
 
@@ -1705,6 +1784,15 @@ export function stopIbkrLineUsageGenerationCoordinator(): void {
     clearInterval(lineUsageGenerationCoordinatorTimer);
     lineUsageGenerationCoordinatorTimer = null;
   }
+  if (lineUsageGenerationCoordinatorRequestedTimer) {
+    clearTimeout(lineUsageGenerationCoordinatorRequestedTimer);
+    lineUsageGenerationCoordinatorRequestedTimer = null;
+  }
+  if (lineUsageGenerationCoordinatorUnsubscribe) {
+    lineUsageGenerationCoordinatorUnsubscribe();
+    lineUsageGenerationCoordinatorUnsubscribe = null;
+  }
+  lineUsageGenerationCoordinatorRerunRequested = false;
   lineUsageGenerationCoordinatorInFlight = null;
 }
 
@@ -1732,6 +1820,7 @@ export function __resetIbkrLineUsageForTests(): void {
   bridgeLaneDiagnosticsRequestId += 1;
   marketDataGenerationApplyInFlight = null;
   latestMarketDataGenerationApply = null;
+  latestMarketDataGenerationStatusByTarget = {};
   bridgeOnlyLineObservations.clear();
   apiOnlyLineObservations.clear();
 }

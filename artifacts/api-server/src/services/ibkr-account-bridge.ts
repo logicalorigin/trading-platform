@@ -118,6 +118,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   initialWaitMs,
   cacheEmptyPayload = true,
   allowStaleFallback = true,
+  serveStaleWhileRefreshing = true,
   preserveNonEmptyStaleOnEmpty = false,
   work,
 }: {
@@ -130,6 +131,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   initialWaitMs?: number | null;
   cacheEmptyPayload?: boolean;
   allowStaleFallback?: boolean;
+  serveStaleWhileRefreshing?: boolean;
   preserveNonEmptyStaleOnEmpty?: boolean;
   work: () => Promise<T>;
 }): Promise<T> {
@@ -143,7 +145,7 @@ async function runCachedAccountRead<T extends unknown[]>({
 
   const pending = inflight.get(key);
   if (pending) {
-    if (allowStaleFallback && staleCached) {
+    if (allowStaleFallback && serveStaleWhileRefreshing && staleCached) {
       return staleCached.payload;
     }
     if (normalizedInitialWaitMs !== null) {
@@ -232,7 +234,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     });
 
   inflight.set(key, promise);
-  if (allowStaleFallback && staleCached) {
+  if (allowStaleFallback && serveStaleWhileRefreshing && staleCached) {
     promise.catch((error) => {
       logger.warn(
         { err: error, label, key, cacheAgeMs: cacheAgeMs(staleCached) },
@@ -280,7 +282,8 @@ export function listIbkrPositions(input: {
     staleTtlMs: accountStaleTtlMs(),
     label: "positions",
     cacheEmptyPayload: false,
-    allowStaleFallback: false,
+    allowStaleFallback: true,
+    serveStaleWhileRefreshing: false,
     work: async () =>
       (await bridgeClient.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,

@@ -15,6 +15,27 @@ test("quote stream watchdog uses transport signals before quote data age", () =>
   assert.match(block, /now\.getTime\(\) - currentActivityAt\.getTime\(\)/);
 });
 
+test("quote stream capacity pressure feeds IBKR admission shedding", () => {
+  const source = readFileSync(new URL("./bridge-quote-stream.ts", import.meta.url), "utf8");
+  const detectorStart = source.indexOf("function isIbkrBackpressureMessage");
+  const detectorEnd = source.indexOf("function capacityPressureFromError", detectorStart);
+  const handlerStart = source.indexOf("function handleStreamError");
+  const handlerEnd = source.indexOf("const marketSessionActive", handlerStart);
+
+  assert.notEqual(detectorStart, -1);
+  assert.notEqual(detectorEnd, -1);
+  assert.notEqual(handlerStart, -1);
+  assert.notEqual(handlerEnd, -1);
+
+  const detectorBlock = source.slice(detectorStart, detectorEnd);
+  const handlerBlock = source.slice(handlerStart, handlerEnd);
+
+  assert.match(detectorBlock, /output exceeded/);
+  assert.match(detectorBlock, /paced/);
+  assert.match(handlerBlock, /recordMarketDataAdmissionIbkrPressure\(/);
+  assert.match(handlerBlock, /source: "quote-stream"/);
+});
+
 test("rejected snapshot admissions release leases only for implicit owners", () => {
   const source = readFileSync(new URL("./bridge-quote-stream.ts", import.meta.url), "utf8");
   const start = source.indexOf("if (!admittedSymbols.length) {");

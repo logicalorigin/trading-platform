@@ -14,6 +14,7 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
   admitMarketDataLeases,
   isMarketDataLeaseActive,
+  recordMarketDataAdmissionIbkrPressure,
   releaseMarketDataLeases,
   subscribeMarketDataLeaseChanges,
   type MarketDataFallbackProvider,
@@ -385,11 +386,20 @@ function isCapacityPressureStatus(
   return isCapacityPressureState(status?.state);
 }
 
-function isCapacityPressureError(error: unknown): boolean {
-  const message = readErrorMessage(error).toLowerCase();
+function isIbkrBackpressureMessage(message: string): boolean {
   return (
     message.includes("ibkr_bridge_lane_queue_full") ||
     message.includes("lane queue is full") ||
+    message.includes("output exceeded") ||
+    message.includes("paced") ||
+    message.includes("pacing violation")
+  );
+}
+
+function isCapacityPressureError(error: unknown): boolean {
+  const message = readErrorMessage(error).toLowerCase();
+  return (
+    isIbkrBackpressureMessage(message) ||
     message.includes("market data line") ||
     message.includes("max number of tickers") ||
     message.includes("ticker limit") ||
@@ -413,8 +423,7 @@ function capacityPressureFromError(
   error: unknown,
 ): "backpressure" | "capacity_limited" {
   const message = readErrorMessage(error).toLowerCase();
-  return message.includes("ibkr_bridge_lane_queue_full") ||
-    message.includes("lane queue is full")
+  return isIbkrBackpressureMessage(message)
     ? "backpressure"
     : "capacity_limited";
 }
@@ -778,10 +787,18 @@ function handleStreamError(expectedSignature: string, error: unknown) {
     stopPendingStream();
   }
   if (isCapacityPressureError(error)) {
+    const state = capacityPressureFromError(error);
+    const message = readErrorMessage(error);
+    recordMarketDataAdmissionIbkrPressure({
+      state,
+      reason: message,
+      source: "quote-stream",
+      observedAt: now,
+    });
     lastStreamStatus = {
-      state: capacityPressureFromError(error),
+      state,
       reason: "ibkr_stream_capacity_limited",
-      message: readErrorMessage(error),
+      message,
     };
     lastSignalAt = now;
     lastError = null;

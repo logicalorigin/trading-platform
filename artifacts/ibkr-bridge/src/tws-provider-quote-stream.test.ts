@@ -10,10 +10,34 @@ import { toQuoteSnapshot } from "./tws-provider";
 const source = readFileSync(new URL("./tws-provider.ts", import.meta.url), "utf8");
 
 function methodSource(name: string): string {
-  const offset = source.indexOf(`  async ${name}(`);
+  const offsets = [
+    source.indexOf(`  async ${name}(`),
+    source.indexOf(`  private async ${name}(`),
+    source.indexOf(`  private ${name}(`),
+    source.indexOf(`  ${name}(`),
+  ].filter((value) => value >= 0);
+  const offset = offsets.length ? Math.min(...offsets) : -1;
   assert.notEqual(offset, -1, `Missing ${name}`);
-  const nextMethod = source.indexOf("\n  async ", offset + 1);
-  return source.slice(offset, nextMethod >= 0 ? nextMethod : source.length);
+  const rest = source.slice(offset + 1);
+  const nextMethod = rest.search(
+    /\n  (?:private\s+)?(?:async\s+)?[A-Za-z0-9_]+\(/,
+  );
+  return source.slice(
+    offset,
+    nextMethod >= 0 ? offset + 1 + nextMethod : source.length,
+  );
+}
+
+function functionSource(name: string): string {
+  const offset = source.indexOf(`function ${name}(`);
+  assert.notEqual(offset, -1, `Missing ${name}`);
+  const nextFunction = source.indexOf("\nfunction ", offset + 1);
+  const nextExportedFunction = source.indexOf("\nexport function ", offset + 1);
+  const nextOffsets = [nextFunction, nextExportedFunction].filter(
+    (value) => value >= 0,
+  );
+  const end = nextOffsets.length ? Math.min(...nextOffsets) : source.length;
+  return source.slice(offset, end);
 }
 
 test("quote stream subscription does not wait on snapshot bootstrap", () => {
@@ -21,6 +45,21 @@ test("quote stream subscription does not wait on snapshot bootstrap", () => {
   assert.match(body, /await this\.ensureQuoteSubscriptionsForSymbols\(normalizedSymbols\);/);
   assert.doesNotMatch(body, /await this\.getQuoteSnapshots\(normalizedSymbols\)/);
   assert.doesNotMatch(body, /const bootstrapQuotes = await this\.getQuoteSnapshots/);
+});
+
+test("historical ticker-id misses are request scoped", () => {
+  const body = functionSource("isHistoricalDataRequestUnavailableError");
+  assert.match(body, /no historical data query found for ticker id/);
+});
+
+test("trim desired set includes applied market-data generation", () => {
+  const symbolsBody = methodSource("getDesiredQuoteSymbols");
+  assert.match(symbolsBody, /appliedMarketDataGeneration\?\.desiredLines/);
+  assert.match(symbolsBody, /line\.assetClass !== "equity"/);
+
+  const optionsBody = methodSource("getDesiredQuoteProviderContractIds");
+  assert.match(optionsBody, /appliedMarketDataGeneration\?\.desiredLines/);
+  assert.match(optionsBody, /line\.assetClass !== "option"/);
 });
 
 test("market-data generation applies known equity conids without contract-detail lookup", () => {

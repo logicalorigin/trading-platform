@@ -1675,6 +1675,7 @@ function isHistoricalDataRequestUnavailableError(error: unknown): boolean {
   return (
     (message.includes("historical market data service") &&
       message.includes("query returned no data")) ||
+    message.includes("no historical data query found for ticker id") ||
     message.includes("hmds query returned no data") ||
     message.includes("no security definition has been found") ||
     message.includes("requested market data is not subscribed")
@@ -2657,6 +2658,15 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       listener.symbols.forEach((symbol) => desiredSymbols.add(symbol));
     });
     this.getPrewarmQuoteSymbols().forEach((symbol) => desiredSymbols.add(symbol));
+    this.appliedMarketDataGeneration?.desiredLines.forEach((line) => {
+      if (line.assetClass !== "equity" || !line.contract.symbol) {
+        return;
+      }
+      const symbol = normalizeSymbol(line.contract.symbol);
+      if (symbol) {
+        desiredSymbols.add(symbol);
+      }
+    });
 
     return desiredSymbols;
   }
@@ -2676,6 +2686,15 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       listener.providerContractIds.forEach((providerContractId) =>
         desiredProviderContractIds.add(providerContractId),
       );
+    });
+    this.appliedMarketDataGeneration?.desiredLines.forEach((line) => {
+      if (line.assetClass !== "option") {
+        return;
+      }
+      const providerContractId = line.contract.providerContractId?.trim();
+      if (providerContractId) {
+        desiredProviderContractIds.add(providerContractId);
+      }
     });
 
     return desiredProviderContractIds;
@@ -3431,11 +3450,20 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     }
 
     const multiplier = optionContract?.multiplier ?? 1;
-    const averagePrice = position.avgCost ?? 0;
-    const marketPrice = position.marketPrice ?? averagePrice;
-    const marketValue =
-      position.marketValue ?? marketPrice * position.pos * multiplier;
-    const unrealizedPnl = position.unrealizedPNL ?? 0;
+    const averagePrice = Number.isFinite(position.avgCost)
+      ? Number(position.avgCost)
+      : 0;
+    const marketPrice = Number.isFinite(position.marketPrice)
+      ? Number(position.marketPrice)
+      : 0;
+    const marketValue = Number.isFinite(position.marketValue)
+      ? Number(position.marketValue)
+      : marketPrice > 0
+        ? marketPrice * position.pos * multiplier
+        : 0;
+    const unrealizedPnl = Number.isFinite(position.unrealizedPNL)
+      ? Number(position.unrealizedPNL)
+      : 0;
 
     return {
       id: this.positionSnapshotId(position) ?? `${position.account}:${symbol}`,
@@ -3448,7 +3476,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       marketValue,
       unrealizedPnl,
       unrealizedPnlPercent:
-        averagePrice && position.pos
+        averagePrice && position.pos && marketPrice > 0
           ? ((marketPrice - averagePrice) /
               averagePrice) *
             100

@@ -29,6 +29,11 @@ export const IBKR_DEACTIVATE_OPERATION_STEPS = [
   { id: "desktop", label: "Desktop", icon: "power", motion: "power" },
 ];
 
+export const IBKR_CLEAR_BRIDGE_STATE_OPERATION_STEPS = [
+  { id: "detach", label: "Detach", icon: "unplug", motion: "detach" },
+  { id: "refresh", label: "Refresh", icon: "refresh", motion: "spin" },
+];
+
 const LAUNCH_STEP_PHASES = {
   request: new Set([
     "checking_gateway_socket",
@@ -351,14 +356,19 @@ export const buildIbkrDeactivateOperationStepper = ({
   message = null,
   queue = "pending",
   refresh = "pending",
+  variant = "deactivate",
 } = {}) => {
+  const clearState = variant === "clear-state";
   const statusById = {
     queue: normalizeStatus(queue),
     detach: normalizeStatus(detach),
     refresh: normalizeStatus(refresh),
     desktop: normalizeStatus(desktop),
   };
-  const steps = IBKR_DEACTIVATE_OPERATION_STEPS.map((step) => ({
+  const operationSteps = clearState
+    ? IBKR_CLEAR_BRIDGE_STATE_OPERATION_STEPS
+    : IBKR_DEACTIVATE_OPERATION_STEPS;
+  const steps = operationSteps.map((step) => ({
     ...step,
     status: statusById[step.id],
   }));
@@ -367,12 +377,16 @@ export const buildIbkrDeactivateOperationStepper = ({
     [...steps].reverse().find((step) => step.status === "current") || null;
   const activityByStepId = {
     queue: {
-      detail: "Sending the shutdown request to the paired Windows desktop.",
-      label: "Queueing Windows shutdown",
+      detail: clearState
+        ? "No desktop shutdown is queued for unmanaged bridge detach."
+        : "Sending the shutdown request to the paired Windows desktop.",
+      label: clearState ? "Skipping desktop shutdown" : "Queueing Windows shutdown",
     },
     detach: {
-      detail: "Clearing the active bridge runtime and persisted session handoff.",
-      label: "Detaching backend runtime",
+      detail: clearState
+        ? "Detaching the active bridge runtime override and persisted session handoff."
+        : "Clearing the active bridge runtime and persisted session handoff.",
+      label: clearState ? "Detaching bridge runtime" : "Detaching backend runtime",
     },
     refresh: {
       detail: "Refreshing session, runtime diagnostics, and line usage state.",
@@ -391,8 +405,14 @@ export const buildIbkrDeactivateOperationStepper = ({
           ...(activityByStepId[activeStep.id] || {}),
         }
       : null,
-    operation: "deactivate",
-    title: complete ? "IBKR Deactivated" : "Deactivate IBKR",
+    operation: clearState ? "detach-bridge" : "deactivate",
+    title: clearState
+      ? complete
+        ? "IBKR Bridge Detached"
+        : "Detach IBKR Bridge"
+      : complete
+        ? "IBKR Deactivated"
+        : "Deactivate IBKR",
     latestMessage: message,
     steps,
   };

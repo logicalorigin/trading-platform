@@ -6,7 +6,10 @@ import {
   getBridgeGovernorSnapshot,
 } from "./bridge-governor";
 import {
+  admitMarketDataLeases,
+  getMarketDataAdmissionDiagnostics,
   __resetMarketDataAdmissionForTests,
+  setMarketDataAdmissionRuntimeDefaults,
 } from "./market-data-admission";
 import {
   __getBridgeOptionQuoteLastErrorForTests,
@@ -14,6 +17,7 @@ import {
   __setBridgeOptionQuoteClientForTests,
   __setBridgeOptionQuoteStreamNowForTests,
   fetchBridgeOptionQuoteSnapshots,
+  subscribeBridgeOptionQuoteSnapshots,
 } from "./bridge-option-quote-stream";
 import { HttpError } from "../lib/errors";
 
@@ -91,6 +95,19 @@ function makeThrowingOptionQuoteClient(error: unknown) {
   };
 }
 
+async function waitForStreamErrorHook(
+  getHook: () => ((error: unknown) => void) | null,
+): Promise<(error: unknown) => void> {
+  for (let index = 0; index < 20; index += 1) {
+    const hook = getHook();
+    if (hook) {
+      return hook;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail("Expected option quote stream hook to be registered");
+}
+
 test("off-hours upstream-unavailable option fetch does not record a connection error", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
@@ -141,4 +158,67 @@ test("a genuine upstream error still records a connection error", async () => {
     /tws auth rejected/,
     "non-upstream errors must still surface as option-stream lastError",
   );
+});
+
+test("option stream Output exceeded pressure sheds flow scanner demand", async () => {
+  __resetBridgeOptionQuoteStreamForTests();
+  __resetBridgeGovernorForTests();
+  __resetMarketDataAdmissionForTests();
+  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
+
+  let onStreamError: ((error: unknown) => void) | null = null;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws" as const,
+        marketDataMode: "live" as const,
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [];
+    },
+    streamOptionQuoteSnapshots(_input, _onQuotes, onError) {
+      onStreamError = onError ?? null;
+      return () => {};
+    },
+  });
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 20,
+    flowScannerConcurrency: 1,
+  });
+  admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 10 }, (_, index) => ({
+      assetClass: "option",
+      symbol: "SPY",
+      providerContractId: `SPY-C-${index}`,
+    })),
+    fallbackProvider: "none",
+  });
+
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    {
+      underlying: "SPY",
+      providerContractIds: ["visible-contract"],
+      owner: "trade-option-chain:SPY",
+      intent: "visible-live",
+      requiresGreeks: true,
+      fallbackProvider: "none",
+    },
+    () => {},
+  );
+  const streamError = await waitForStreamErrorHook(() => onStreamError);
+  streamError(new Error("Output exceeded limit (was: 100031)"));
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.pressure.ibkrPressure?.state, "backpressure");
+  assert.equal(diagnostics.pressure.ibkrPressure?.source, "option-stream");
+  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountBefore, 10);
+  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 5);
+  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
+  assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
+
+  unsubscribe();
 });

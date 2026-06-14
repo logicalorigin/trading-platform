@@ -34,6 +34,23 @@ test("deactivation stepper keeps command label while shutdown is running", () =>
   assert.equal(model.activity?.id, "desktop");
 });
 
+test("detach bridge stepper does not claim Gateway deactivation", () => {
+  const model = buildIbkrDeactivateOperationStepper({
+    variant: "clear-state",
+    detach: "complete",
+    refresh: "complete",
+    message: "IBKR bridge detached.",
+  });
+
+  assert.equal(model.title, "IBKR Bridge Detached");
+  assert.equal(model.operation, "detach-bridge");
+  assert.deepEqual(
+    model.steps.map((step) => step.id),
+    ["detach", "refresh"],
+  );
+  assert.equal(model.activity, null);
+});
+
 test("launch stepper keeps credential-key handoff progress in credentials phase", () => {
   const activationStatus = {
     latestProgress: {

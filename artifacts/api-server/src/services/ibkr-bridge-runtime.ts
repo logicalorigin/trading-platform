@@ -3035,12 +3035,28 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
   };
   activation.loginEnvelopeReceivedAt = now;
   activation.loginEnvelopeHelperInstanceId = helperInstanceId;
+  // Credential-phase timing breakdown so a slow handoff can be localized from
+  // the progress log: `pickup` is helper-key-published -> browser-read (a large
+  // value points at the browser not polling, e.g. a backgrounded tab throttling
+  // its timers); `deliver` is browser-read -> envelope-received (encrypt time
+  // plus any wait on the user typing credentials).
+  const keyPublishedAt = activation.loginKeyPublishedAt;
+  const keyReadAt = activation.lastLoginKeyReadAt;
+  const pickupMs =
+    keyPublishedAt != null && keyReadAt != null ? keyReadAt - keyPublishedAt : null;
+  const deliverMs = keyReadAt != null ? now - keyReadAt : null;
+  const totalMs = keyPublishedAt != null ? now - keyPublishedAt : null;
+  const timingSuffix =
+    totalMs != null
+      ? ` (credential phase ${totalMs}ms: key pickup ${pickupMs ?? "?"}ms, deliver ${deliverMs ?? "?"}ms)`
+      : "";
   appendLegacyBridgeActivationProgress({
     activationId,
     status: "waiting_gateway",
     step: "credentials_received",
     message:
-      "Encrypted IBKR credentials were received by Pyrus for the Windows helper.",
+      "Encrypted IBKR credentials were received by Pyrus for the Windows helper." +
+      timingSuffix,
   });
   notifyWaiters(legacyLoginEnvelopeWaiters, activationId);
 

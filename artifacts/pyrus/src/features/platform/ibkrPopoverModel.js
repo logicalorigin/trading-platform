@@ -343,32 +343,16 @@ const buildCompactLineUsage = (lineUsage) => {
     return null;
   }
 
-  const totalRow =
-    lineUsage.rows?.find((row) => row.id === "total") ||
-    lineUsage.rows?.find((row) => Number.isFinite(row.used));
-  const source = totalRow || lineUsage.bridge;
+  const source = lineUsage.bridge || {};
   const used = Number.isFinite(source?.used) ? Math.max(0, source.used) : null;
   const allocation = lineUsage.allocation || {};
   const targetFillLines = Number.isFinite(allocation.targetFillLines)
     ? Math.max(0, allocation.targetFillLines)
     : null;
-  const remainingToTargetLineCount = Number.isFinite(
-    allocation.remainingToTargetLineCount,
-  )
-    ? Math.max(0, allocation.remainingToTargetLineCount)
-    : null;
-  const capSource =
-    source?.effectiveCap ??
-    source?.cap ??
-    lineUsage.bridge?.cap ??
-    allocation.bridgeLineBudget ??
-    targetFillLines;
+  const capSource = source?.effectiveCap ?? source?.cap;
   const cap = Number.isFinite(capSource) ? Math.max(0, capSource) : null;
   const computedFree = cap != null && used != null ? cap - used : null;
-  const freeSource =
-    source?.free ??
-    computedFree ??
-    remainingToTargetLineCount;
+  const freeSource = source?.free ?? computedFree;
   const free = Number.isFinite(freeSource) ? Math.max(0, freeSource) : null;
   const reserveLineCount =
     Number.isFinite(cap) &&
@@ -386,7 +370,6 @@ const buildCompactLineUsage = (lineUsage) => {
       ? Math.max(0, Math.min(100, (used / cap) * 100))
       : 0;
   const state =
-    lineUsage.bridge?.streamState ||
     source?.streamState ||
     (free != null && free <= 0 ? "capacity-limited" : "healthy");
 
@@ -396,13 +379,12 @@ const buildCompactLineUsage = (lineUsage) => {
     free,
     percent,
     targetFillLines,
-    remainingToTargetLineCount,
     reserveLineCount,
     tradeOptionsChainReserveLineCount,
     summary:
       Number.isFinite(used) && Number.isFinite(cap)
         ? `${formatHeaderCount(used)} of ${formatHeaderCount(cap)}`
-        : lineUsage.summary,
+        : source?.summary || lineUsage.bridgeSummary || MISSING_VALUE,
     tone: source?.tone || streamStateTokenVar(state),
   };
 };
