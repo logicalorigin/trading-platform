@@ -281,6 +281,7 @@ body,button,input,select,textarea{font-family:var(--ra-font-sans)}
 input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes toastSlideIn{from{opacity:0;transform:translateX(20px) scale(0.96)}to{opacity:1;transform:translateX(0) scale(1)}}
 @keyframes toastSlideOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(20px)}}
+@keyframes toastProgress{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 @keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-status-warn) 60%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--ra-color-status-warn) 0%,transparent)}}
 @keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-pnl-negative) 60%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--ra-color-pnl-negative) 0%,transparent)}}
 @keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
@@ -765,7 +766,6 @@ export default function PlatformApp() {
   const [startupProtectionActive, setStartupProtectionActive] = useState(true);
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [auxiliarySurfacesReady, setAuxiliarySurfacesReady] = useState(false);
-  const [warmupSnapshotRevision, setWarmupSnapshotRevision] = useState(0);
   const [screenReadiness, setScreenReadiness] = useState({});
   const [backgroundResumeReady, setBackgroundResumeReady] = useState(
     EMPTY_BACKGROUND_RESUME_READY,
@@ -907,7 +907,16 @@ export default function PlatformApp() {
         Math.round(platformNowMs() - warmupTimelineBaseMsRef.current),
       ),
     };
-    setWarmupSnapshotRevision((revision) => revision + 1);
+    // Diagnostics-only: keep the published perf snapshot's timeline fresh
+    // imperatively instead of bumping render state, which used to re-render the
+    // whole root ~20x during boot. Coarser snapshot fields refresh on the next
+    // effect run via its other boot-state deps.
+    if (
+      typeof window !== "undefined" &&
+      window.__PYRUS_PERF_WARMUP_SNAPSHOT__
+    ) {
+      window.__PYRUS_PERF_WARMUP_SNAPSHOT__.timelineMs = warmupTimelineRef.current;
+    }
   }, []);
   // Pending sym hand-off to Trade tab — bumped each time a watchlist item is clicked
   // so TradeScreen can react even when the same sym is clicked twice
@@ -1849,7 +1858,7 @@ export default function PlatformApp() {
       captureToast({ title, body, kind: normalizedKind });
       setToasts((prev) => [
         ...prev,
-        { id, title, body, kind: normalizedKind, leaving: false },
+        { id, title, body, kind: normalizedKind, duration, leaving: false },
       ]);
       const dismissTimer = setTimeout(() => {
         setToasts((prev) =>
@@ -3736,7 +3745,6 @@ export default function PlatformApp() {
       },
       backgroundResumeReady,
       screenReadiness,
-      warmupSnapshotRevision,
     };
     publishWarmupSnapshot(snapshot);
 
@@ -3772,7 +3780,6 @@ export default function PlatformApp() {
     signalMatrixBackgroundReady,
     signalMonitorDisplayReady,
     startupProtectionActive,
-    warmupSnapshotRevision,
     warmupTestOverrides,
     workspaceLeader,
     workspaceLeadership.reason,

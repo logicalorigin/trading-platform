@@ -138,6 +138,17 @@ const preloadInitialPlatformScreenModule = (initialScreen = readInitialPlatformS
   preloadPlatformScreenModule(initialScreen);
 };
 
+const scheduleIdlePreload = (callback: () => void) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(callback, { timeout: 2_000 });
+    return;
+  }
+  window.setTimeout(callback, 200);
+};
+
 const preloadPriorityPlatformScreenModules = (
   initialScreen = readInitialPlatformScreen(),
 ) => {
@@ -171,12 +182,15 @@ export const preloadInitialAppContentRoute = () => {
   }
   const initialScreen = readInitialPlatformScreen();
   preloadInitialPlatformScreenModule(initialScreen);
-  preloadPriorityPlatformScreenModules(initialScreen);
   preloadDynamicImport(loadPlatformApp, {
     label: "PlatformApp",
     retries: ROOT_ROUTE_CHUNK_RETRIES,
     retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
   });
+  // Non-initial priority screens (e.g. account) pull heavy chart libs; defer
+  // them until the browser is idle so they don't compete with the initial
+  // screen + workspace chunk during the critical boot window.
+  scheduleIdlePreload(() => preloadPriorityPlatformScreenModules(initialScreen));
 };
 
 const getPreloadedInitialAppContentRoute = (labMode: string | null) => {

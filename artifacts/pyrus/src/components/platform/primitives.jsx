@@ -1,4 +1,4 @@
-import React, { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
@@ -99,7 +99,7 @@ const normalizeSparklinePoints = (points = []) =>
  * pass explicit blue/red color or pointColors; the default green/red contract
  * is only for financial trend displays.
  */
-export const MicroSparkline = ({
+const MicroSparklineBase = ({
   data = [],
   positive = null,
   color = null,
@@ -286,6 +286,10 @@ export const MicroSparkline = ({
     </svg>
   );
 };
+
+// Memoized so re-renders driven by unrelated live signal-state ticks skip the
+// SVG path recompute when this sparkline's props are referentially unchanged.
+export const MicroSparkline = memo(MicroSparklineBase);
 
 /**
  * RowSparkValue — compact inline row: [value] [delta?] [MicroSparkline].

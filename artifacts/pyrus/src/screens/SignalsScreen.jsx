@@ -17,15 +17,20 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Bell,
   ChevronDown,
   Clock3,
   ExternalLink,
   ListFilter,
   Power,
+  Radar,
   RefreshCw,
   ScanLine,
+  Scale,
   Search,
   SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import {
@@ -91,6 +96,7 @@ import {
   filterSignalsRows,
   normalizeSignalsTicker,
   normalizeSignalsBreadthHistory,
+  SIGNALS_BREADTH_HISTORY_RANGES,
   resolveSignalDirectionFlipStates,
   sortSignalsRows,
   summarizeSignalsNetBias,
@@ -136,10 +142,6 @@ const SORT_OPTIONS = [
   { value: "bars", label: "Bars" },
   { value: "symbol", label: "Symbol" },
 ];
-const SIGNALS_BREADTH_HISTORY_RANGE_OPTIONS = Object.freeze([
-  { value: "day", label: "Day" },
-  { value: "week", label: "Week" },
-]);
 
 const isHydratedSignalMatrixState = (state) =>
   Boolean(state && isRenderableSignalMatrixState(state));
@@ -276,6 +278,13 @@ const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
 ]);
 const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
 const EMPTY_SIGNAL_SPARKLINE_POINTS = Object.freeze({});
+const EMPTY_SPARKLINE_SERIES = Object.freeze([]);
+const SPARKLINE_FILL_STYLE = Object.freeze({ width: "100%", height: "100%" });
+// Cache marker for a symbol whose real bars are still being fetched. Lets the
+// cell show a neutral placeholder while loading instead of flashing the
+// synthetic fallback line ("old data") before real bars arrive. A settled fetch
+// stores an array ([] when genuinely empty), so `!Array.isArray` means pending.
+const SIGNAL_SPARKLINE_PENDING = "pending";
 const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
 const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
@@ -296,6 +305,9 @@ const readSignalsRouteDataTimingNow = () =>
     ? performance.now()
     : Date.now();
 
+// One shared 1m series per symbol drives every timeframe column's sparkline; the
+// per-column signal coloring (not the underlying price line) is what differs, so
+// a symbol-level cache key is all we fetch and store.
 const signalSparklineRowKey = (symbol) =>
   String(symbol || "").trim().toUpperCase();
 
@@ -341,7 +353,7 @@ const fetchSignalSparklineBarsBatch = async (rows, signal) => {
       requests: rows.map((row) => ({
         key: row.key,
         symbol: row.symbol,
-        timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+        timeframe: row.timeframe || SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
         limit: SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT,
         outsideRth: true,
         source: "trades",
@@ -763,66 +775,173 @@ function DirectionBadge({ direction }) {
   );
 }
 
+// Horizontal proportion bar (active/inactive, fresh/aged …). Segments sit on a
+// muted track so a zero-width segment simply doesn't paint.
+function SignalsSplitBar({ segments = [] }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: "100%",
+        maxWidth: dim(96),
+        height: dim(6),
+        borderRadius: dim(RADII.pill),
+        overflow: "hidden",
+        display: "flex",
+        background: CSS_COLOR.bg3,
+      }}
+    >
+      {segments.map((segment, index) =>
+        segment.pct > 0 ? (
+          <span
+            key={index}
+            style={{
+              width: `${segment.pct}%`,
+              height: "100%",
+              background: segment.color,
+            }}
+          />
+        ) : null,
+      )}
+    </span>
+  );
+}
+
+// Attention readout: one dot per item, high-severity first, capped with a +N
+// overflow so a large backlog never blows out the card width.
+function SignalsAttentionDots({ high = 0, medium = 0, max = 8 }) {
+  const dots = [
+    ...Array(Math.max(0, high)).fill(CSS_COLOR.red),
+    ...Array(Math.max(0, medium)).fill(CSS_COLOR.amber),
+  ];
+  if (!dots.length) {
+    return (
+      <span style={{ color: CSS_COLOR.textDim, fontSize: fs(9), whiteSpace: "nowrap" }}>
+        clear
+      </span>
+    );
+  }
+  const shown = dots.slice(0, max);
+  const overflow = dots.length - shown.length;
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: sp(4), minWidth: 0 }}>
+      {shown.map((color, index) => (
+        <span
+          key={index}
+          style={{
+            width: dim(7),
+            height: dim(7),
+            borderRadius: "50%",
+            background: color,
+            flexShrink: 0,
+          }}
+        />
+      ))}
+      {overflow > 0 ? (
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontSize: fs(9),
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.label,
+          }}
+        >
+          +{formatCount(overflow)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function SignalsOverviewMetric({
-  detail = "",
+  icon: Icon = null,
   label,
   tone = CSS_COLOR.text,
+  tooltip = null,
   value,
+  viz = null,
 }) {
-  return (
+  const card = (
     <div
       style={{
-        display: "grid",
-        gap: sp(3),
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(6),
         minWidth: 0,
-        padding: sp("5px 7px"),
-        borderRadius: dim(RADII.xs),
+        padding: sp("8px 10px"),
+        borderRadius: dim(RADII.sm),
         background: CSS_COLOR.bg2,
         boxShadow: `inset 0 0 0 1px ${CSS_COLOR.borderLight}`,
       }}
     >
-      <span
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontSize: fs(9),
-          fontWeight: FONT_WEIGHTS.label,
-          letterSpacing: 0,
-          textTransform: "uppercase",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {label}
+      <span style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
+        {Icon ? (
+          <Icon
+            size={dim(12)}
+            strokeWidth={2}
+            color={CSS_COLOR.textMuted}
+            aria-hidden="true"
+            style={{ flexShrink: 0 }}
+          />
+        ) : null}
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontSize: fs(9),
+            fontWeight: FONT_WEIGHTS.label,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            ...cellTextStyle,
+          }}
+        >
+          {label}
+        </span>
       </span>
       <span
         style={{
-          color: tone,
-          fontSize: fs(15),
-          fontWeight: FONT_WEIGHTS.medium,
-          fontVariantNumeric: "tabular-nums",
-          lineHeight: 1,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: sp(8),
           minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
         }}
       >
-        {value}
-      </span>
-      <span
-        style={{
-          ...cellTextStyle,
-          color: CSS_COLOR.textDim,
-          fontSize: fs(9),
-        }}
-      >
-        {detail || MISSING_VALUE}
+        <span
+          style={{
+            color: tone,
+            fontSize: fs(22),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 0.95,
+            letterSpacing: "-0.01em",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {value}
+        </span>
+        {viz ? (
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: dim(22),
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "flex-end",
+            }}
+          >
+            {viz}
+          </span>
+        ) : null}
       </span>
     </div>
   );
+  return tooltip ? <AppTooltip content={tooltip}>{card}</AppTooltip> : card;
 }
 
 function TimeframeSignalGroupedBars({
   summaries = [],
+  pointsByTimeframe = null,
   phone = false,
   compact = false,
 }) {
@@ -837,11 +956,7 @@ function TimeframeSignalGroupedBars({
       Math.max(0, Number(item.sell) || 0),
     ]),
   );
-  const gridTemplateColumns = phone
-    ? "1fr"
-    : compact
-      ? "repeat(2, minmax(0, 1fr))"
-      : "repeat(3, minmax(0, 1fr))";
+  const columns = phone ? 2 : compact ? 3 : 6;
 
   return (
     <div
@@ -849,7 +964,7 @@ function TimeframeSignalGroupedBars({
       aria-label="Buy and sell signals by timeframe"
       style={{
         display: "grid",
-        gridTemplateColumns,
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gap: sp(6),
         minWidth: 0,
       }}
@@ -857,120 +972,185 @@ function TimeframeSignalGroupedBars({
       {items.map((item) => {
         const buy = Math.max(0, Number(item.buy) || 0);
         const sell = Math.max(0, Number(item.sell) || 0);
-        const buyRatio = buy / maxCount;
-        const sellRatio = sell / maxCount;
-        const tone =
-          item.direction === "buy"
-            ? CSS_COLOR.blue
-            : item.direction === "sell"
-              ? CSS_COLOR.red
-              : CSS_COLOR.textMuted;
+        const total = buy + sell;
+        const net = buy - sell;
+        const idle = total === 0;
+        const share = total ? Math.round((buy / total) * 100) : 0;
+        const timeframe = String(item.timeframe || "").toUpperCase();
+        const netTone =
+          net > 0 ? CSS_COLOR.blue : net < 0 ? CSS_COLOR.red : CSS_COLOR.textMuted;
+        const timeframeKey = String(item.timeframe || "").toLowerCase();
+        const timeframeSeries = Array.isArray(pointsByTimeframe?.[timeframeKey])
+          ? pointsByTimeframe[timeframeKey]
+          : [];
+        const hasTimeframeSpark =
+          timeframeSeries.length >= 2 &&
+          timeframeSeries.some(
+            (point) => (Number(point.buy) || 0) > 0 || (Number(point.sell) || 0) > 0,
+          );
         return (
           <AppTooltip
             key={item.timeframe}
-            content={`${item.timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh)} fresh`}
+            content={`${timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh || 0)} fresh`}
           >
             <div
               data-testid={`signals-timeframe-kpi-${item.timeframe}`}
               data-buy-count={buy}
               data-sell-count={sell}
               style={{
-                display: "grid",
-                gap: sp(4),
+                display: "flex",
+                flexDirection: "column",
+                gap: sp(5),
                 minWidth: 0,
-                minHeight: dim(48),
-                padding: sp("6px 8px"),
+                padding: sp("7px 8px"),
                 border: `1px solid ${CSS_COLOR.borderLight}`,
-                borderRadius: dim(RADII.xs),
+                borderRadius: dim(RADII.sm),
                 background: CSS_COLOR.bg2,
               }}
             >
+              {/* header — timeframe + net badge */}
               <span
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  gap: sp(6),
+                  gap: sp(4),
                   minWidth: 0,
                 }}
               >
                 <span
                   style={{
-                    color: CSS_COLOR.textMuted,
-                    fontSize: fs(9),
-                    fontWeight: FONT_WEIGHTS.label,
-                    letterSpacing: 0,
-                    textTransform: "uppercase",
+                    color: CSS_COLOR.text,
+                    fontSize: fs(11),
+                    fontWeight: FONT_WEIGHTS.emphasis,
+                    letterSpacing: "0.02em",
                   }}
                 >
-                  {item.timeframe}
+                  {timeframe}
                 </span>
                 <span
                   style={{
-                    color: tone,
-                    fontSize: fs(11),
+                    color: netTone,
+                    fontSize: fs(10),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontVariantNumeric: "tabular-nums",
+                    padding: sp("1px 5px"),
+                    borderRadius: dim(RADII.xs),
+                    background: CSS_COLOR.bg1,
+                    border: `1px solid ${CSS_COLOR.borderLight}`,
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {formatCount(buy)}/{formatCount(sell)}
+                  {idle ? "0" : `${net > 0 ? "+" : ""}${formatCount(net)}`}
                 </span>
               </span>
+              {/* paired buy/sell bars */}
               <div
+                aria-hidden="true"
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: sp(5),
-                  minWidth: 0,
+                  height: dim(46),
+                  display: "flex",
+                  alignItems: idle ? "center" : "flex-end",
+                  justifyContent: "center",
+                  gap: sp(8),
                 }}
               >
-                {[
-                  ["B", buy, buyRatio, CSS_COLOR.blue],
-                  ["S", sell, sellRatio, CSS_COLOR.red],
-                ].map(([label, count, ratio, color]) => (
-                  <span
-                    key={label}
-                    style={{
-                      display: "grid",
-                      gap: sp(3),
-                      minWidth: 0,
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: dim(5),
-                        borderRadius: dim(RADII.pill),
-                        background: CSS_COLOR.bg3,
-                        overflow: "hidden",
-                      }}
-                    >
+                {idle ? (
+                  <span style={{ fontSize: fs(9), color: CSS_COLOR.textDim }}>idle</span>
+                ) : (
+                  [
+                    ["b", buy, CSS_COLOR.blue],
+                    ["s", sell, CSS_COLOR.red],
+                  ].map(([key, count, color]) => {
+                    const height = Math.round((count / maxCount) * 100);
+                    return (
                       <span
+                        key={key}
                         style={{
-                          display: "block",
-                          width: `${Math.round(ratio * 100)}%`,
-                          minWidth: count ? dim(2) : 0,
+                          flex: 1,
+                          maxWidth: dim(34),
                           height: "100%",
-                          borderRadius: dim(RADII.pill),
-                          background: color,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                          gap: sp(2),
                         }}
-                      />
-                    </span>
-                    <span
-                      style={{
-                        color,
-                        fontSize: fs(9),
-                        fontVariantNumeric: "tabular-nums",
-                        fontWeight: FONT_WEIGHTS.label,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {label} {formatCount(count)}
-                    </span>
-                  </span>
-                ))}
+                      >
+                        <span
+                          style={{
+                            fontSize: fs(9),
+                            fontWeight: FONT_WEIGHTS.label,
+                            color,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {formatCount(count)}
+                        </span>
+                        <span
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            display: "flex",
+                            alignItems: "flex-end",
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "100%",
+                              height: `${Math.max(count ? 6 : 0, height)}%`,
+                              background: color,
+                              borderRadius: `${dim(RADII.xs)}px ${dim(RADII.xs)}px 0 0`,
+                            }}
+                          />
+                        </span>
+                      </span>
+                    );
+                  })
+                )}
               </div>
+              {/* buy-share bar */}
+              <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    height: dim(5),
+                    borderRadius: dim(RADII.pill),
+                    overflow: "hidden",
+                    display: "flex",
+                    background: idle ? CSS_COLOR.bg3 : CSS_COLOR.red,
+                  }}
+                >
+                  {idle ? null : (
+                    <span style={{ width: `${share}%`, height: "100%", background: CSS_COLOR.blue }} />
+                  )}
+                </span>
+                <span
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: sp(4),
+                    fontSize: fs(9),
+                    fontVariantNumeric: "tabular-nums",
+                    fontWeight: FONT_WEIGHTS.label,
+                  }}
+                >
+                  <span style={{ color: CSS_COLOR.blue }}>B {formatCount(buy)}</span>
+                  <span style={{ color: CSS_COLOR.textMuted }}>
+                    {idle ? MISSING_VALUE : `${share}%`}
+                  </span>
+                  <span style={{ color: CSS_COLOR.red }}>S {formatCount(sell)}</span>
+                </span>
+              </div>
+              {/* buy/sell signal counts over the selected range */}
+              {hasTimeframeSpark ? (
+                <div style={{ height: dim(20), minWidth: 0 }}>
+                  <BuySellSparkline
+                    points={timeframeSeries}
+                    ariaLabel={`${timeframe} buy and sell signals over time`}
+                  />
+                </div>
+              ) : null}
             </div>
           </AppTooltip>
         );
@@ -979,52 +1159,177 @@ function TimeframeSignalGroupedBars({
   );
 }
 
+// Two-line sparkline: buy (blue) and sell (red) signal counts over time. Both
+// lines share one scale so their relative height reads directly. Returns null
+// when there isn't enough varying data to plot.
+function BuySellSparkline({ points = [], showArea = false, ariaLabel = null, testId = null }) {
+  const series = Array.isArray(points) ? points : [];
+  const buySeries = series.map((point) => Math.max(0, Number(point.buy) || 0));
+  const sellSeries = series.map((point) => Math.max(0, Number(point.sell) || 0));
+  const hasData =
+    series.length >= 2 && (buySeries.some((v) => v > 0) || sellSeries.some((v) => v > 0));
+  if (!hasData) {
+    return null;
+  }
+  const maxMagnitude = Math.max(1, ...buySeries, ...sellSeries);
+  const count = series.length;
+  const viewHeight = 60;
+  const baseY = viewHeight - 3;
+  const usable = baseY - 4;
+  const toX = (index) => (count > 1 ? (index / (count - 1)) * 100 : 50);
+  const toY = (value) => baseY - Math.min(1, value / maxMagnitude) * usable;
+  const linePoints = (arr) =>
+    arr.map((value, index) => `${toX(index).toFixed(1)},${toY(value).toFixed(1)}`).join(" ");
+  const areaPath = (arr) =>
+    `M0,${baseY} ` +
+    arr.map((value, index) => `L${toX(index).toFixed(1)},${toY(value).toFixed(1)}`).join(" ") +
+    ` L100,${baseY} Z`;
+  return (
+    <svg
+      data-testid={testId || undefined}
+      role="img"
+      aria-label={ariaLabel || undefined}
+      viewBox={`0 0 100 ${viewHeight}`}
+      preserveAspectRatio="none"
+      style={{ width: "100%", height: "100%", display: "block", overflow: "visible" }}
+    >
+      {showArea ? (
+        <>
+          <defs>
+            <linearGradient id="raSignalsBreadthBuy" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CSS_COLOR.blue} stopOpacity="0.28" />
+              <stop offset="100%" stopColor={CSS_COLOR.blue} stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="raSignalsBreadthSell" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CSS_COLOR.red} stopOpacity="0.20" />
+              <stop offset="100%" stopColor={CSS_COLOR.red} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={areaPath(sellSeries)} fill="url(#raSignalsBreadthSell)" />
+          <path d={areaPath(buySeries)} fill="url(#raSignalsBreadthBuy)" />
+        </>
+      ) : null}
+      <polyline
+        points={linePoints(sellSeries)}
+        fill="none"
+        stroke={CSS_COLOR.red}
+        strokeWidth={showArea ? "1.4" : "1.3"}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+      <polyline
+        points={linePoints(buySeries)}
+        fill="none"
+        stroke={CSS_COLOR.blue}
+        strokeWidth={showArea ? "1.7" : "1.5"}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+function SignalsBreadthTotal({ value, tone, label }) {
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        width: dim(76),
+        height: dim(76),
+        borderRadius: "50%",
+        border: `2px solid ${tone}`,
+        background: CSS_COLOR.bg1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(2),
+        padding: sp(4),
+      }}
+    >
+      <span
+        style={{
+          color: tone,
+          fontSize: fs(19),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+        }}
+      >
+        {formatCount(value)}
+      </span>
+      <span
+        style={{
+          fontSize: fs(7),
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: CSS_COLOR.textMuted,
+          textAlign: "center",
+          lineHeight: 1.2,
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+const SIGNALS_BREADTH_RANGE_LABELS = {
+  hour: "1H",
+  day: "1D",
+  week: "1W",
+  month: "1M",
+};
+
+// Rings show the current (last-available) advancing/declining counts; the
+// center plots how buy/sell signals have changed over the selected range.
 function CompactSignalBreadthPanel({
-  history,
-  range,
+  buy = 0,
+  sell = 0,
+  neutral = 0,
+  netBias = null,
+  points = [],
+  range = "day",
   onRangeChange,
-  loading = false,
-  error = null,
   phone = false,
 }) {
-  const chartWidth = 240;
-  const chartHeight = 44;
-  const centerY = Math.round(chartHeight / 2);
-  const points = Array.isArray(history?.points) ? history.points : [];
-  const maxMagnitude = Math.max(1, history?.maxTotal || history?.maxAbsNet || 0);
-  const usableHeight = centerY - 5;
-  const step = points.length > 1 ? chartWidth / (points.length - 1) : chartWidth;
-  const barWidth = Math.max(1, Math.min(5, step * 0.5));
-  const statusLabel = error
-    ? "History unavailable"
-    : loading
-      ? "Loading"
-      : history?.empty
-        ? "No signals"
-        : `${formatCount(history?.buyTotal)} buy / ${formatCount(history?.sellTotal)} sell`;
-  const netTone = toneForDirection(history?.direction);
+  const advancing = Math.max(0, Number(buy) || 0);
+  const declining = Math.max(0, Number(sell) || 0);
+  const flat = Math.max(0, Number(neutral) || 0);
+  const activeBuySell = advancing + declining;
+  const advancingPct = activeBuySell ? Math.round((advancing / activeBuySell) * 100) : 0;
+  const net = Number.isFinite(netBias?.net) ? netBias.net : advancing - declining;
+  const direction = net > 0 ? "buy" : net < 0 ? "sell" : null;
+  const netTone = toneForDirection(direction);
   const netLabel =
-    history?.direction === "buy"
-      ? `Buy +${formatCount(Math.abs(history.net))}`
-      : history?.direction === "sell"
-        ? `Sell +${formatCount(Math.abs(history.net))}`
-        : history?.total
+    direction === "buy"
+      ? `Buy +${formatCount(Math.abs(net))}`
+      : direction === "sell"
+        ? `Sell +${formatCount(Math.abs(net))}`
+        : activeBuySell
           ? "Balanced"
           : "Flat";
+
+  const series = Array.isArray(points) ? points : [];
+  const hasSeries =
+    series.length >= 2 &&
+    series.some((point) => (Number(point.buy) || 0) > 0 || (Number(point.sell) || 0) > 0);
+  const rangeLabel = SIGNALS_BREADTH_RANGE_LABELS[range] || "range";
 
   return (
     <div
       data-testid="signals-breadth-history-strip"
-      aria-label="Aggregate buy and sell signal breadth history"
+      aria-label="Market breadth — advancing versus declining signals over time"
       style={{
-        display: "grid",
-        gap: sp(6),
-        alignContent: "stretch",
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(8),
         minWidth: 0,
-        height: "100%",
-        padding: sp(8),
+        padding: sp("10px 12px"),
         border: `1px solid ${CSS_COLOR.borderLight}`,
-        borderRadius: dim(RADII.xs),
+        borderRadius: dim(RADII.sm),
         background: CSS_COLOR.bg2,
         overflow: "hidden",
       }}
@@ -1034,27 +1339,27 @@ function CompactSignalBreadthPanel({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: sp(6),
+          gap: sp(8),
+          flexWrap: "wrap",
           minWidth: 0,
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(8), minWidth: 0 }}>
           <span
             style={{
-              color: CSS_COLOR.textMuted,
-              fontSize: fs(9),
-              fontWeight: FONT_WEIGHTS.label,
-              letterSpacing: 0,
-              textTransform: "uppercase",
+              color: CSS_COLOR.text,
+              fontSize: fs(12),
+              fontWeight: FONT_WEIGHTS.medium,
+              whiteSpace: "nowrap",
             }}
           >
-            Breadth
+            Overall market breadth
           </span>
           <span
             data-testid="signals-breadth-net"
             style={{
               color: netTone,
-              fontSize: fs(13),
+              fontSize: fs(11),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
@@ -1065,30 +1370,22 @@ function CompactSignalBreadthPanel({
         </span>
         <div
           role="group"
-          aria-label="Signals breadth history range"
-          style={{
-            display: "inline-grid",
-            gridTemplateColumns: "repeat(2, minmax(42px, 1fr))",
-            alignItems: "center",
-            gap: sp(3),
-            minWidth: 0,
-          }}
+          aria-label="Breadth history range"
+          style={{ display: "inline-flex", gap: sp(2), minWidth: 0 }}
         >
-          {SIGNALS_BREADTH_HISTORY_RANGE_OPTIONS.map((option) => {
-            const selected = option.value === range;
+          {SIGNALS_BREADTH_HISTORY_RANGES.map((option) => {
+            const selected = option === range;
             return (
               <button
-                key={option.value}
+                key={option}
                 type="button"
-                data-testid={
-                  option.value === "day"
-                    ? "signals-breadth-range-day"
-                    : "signals-breadth-range-week"
-                }
+                data-testid={`signals-breadth-range-${option}`}
                 aria-pressed={selected ? "true" : "false"}
-                onClick={() => onRangeChange?.(option.value)}
+                onClick={() => onRangeChange?.(option)}
                 style={{
-                  minHeight: dim(24),
+                  minWidth: dim(30),
+                  minHeight: dim(22),
+                  padding: sp("2px 7px"),
                   border: `1px solid ${selected ? CSS_COLOR.accent : CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.xs),
                   background: selected ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg1,
@@ -1096,10 +1393,11 @@ function CompactSignalBreadthPanel({
                   fontSize: fs(10),
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
+                  fontVariantNumeric: "tabular-nums",
                   cursor: "pointer",
                 }}
               >
-                {option.label}
+                {SIGNALS_BREADTH_RANGE_LABELS[option] || option}
               </button>
             );
           })}
@@ -1109,137 +1407,203 @@ function CompactSignalBreadthPanel({
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(8),
+          gap: sp(phone ? 10 : 18),
+          flexDirection: phone ? "column" : "row",
           minWidth: 0,
-          color: CSS_COLOR.textDim,
-          fontSize: fs(10),
-          fontVariantNumeric: "tabular-nums",
         }}
       >
-        <span style={{ color: CSS_COLOR.blue }}>B {formatCount(history?.buyTotal || 0)}</span>
-        <span style={{ ...cellTextStyle, color: CSS_COLOR.textDim, textAlign: "center" }}>
-          {statusLabel}
-        </span>
-        <span style={{ color: CSS_COLOR.red }}>S {formatCount(history?.sellTotal || 0)}</span>
+        <SignalsBreadthTotal value={advancing} tone={CSS_COLOR.blue} label="Advancing (B)" />
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            width: phone ? "100%" : undefined,
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(5),
+          }}
+        >
+          <div
+            style={{
+              height: dim(phone ? 52 : 60),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minWidth: 0,
+            }}
+          >
+            {hasSeries ? (
+              <BuySellSparkline
+                points={series}
+                showArea
+                testId="signals-breadth-history-chart"
+                ariaLabel={`Buy and sell signal breadth over the last ${rangeLabel}`}
+              />
+            ) : (
+              <span
+                style={{
+                  ...cellTextStyle,
+                  color: CSS_COLOR.textDim,
+                  fontSize: fs(10),
+                  textAlign: "center",
+                }}
+              >
+                {`No breadth history for the last ${rangeLabel}`}
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: sp(8),
+              fontSize: fs(10),
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: FONT_WEIGHTS.medium,
+            }}
+          >
+            <span style={{ color: CSS_COLOR.blue, display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+              <i style={{ width: dim(11), height: dim(2), borderRadius: dim(RADII.pill), background: CSS_COLOR.blue, display: "block" }} />
+              buys
+            </span>
+            <span style={{ color: CSS_COLOR.textMuted }}>
+              {activeBuySell ? `${advancingPct}% advancing now` : "No signals"}
+              {flat ? ` · ${formatCount(flat)} neutral` : ""}
+            </span>
+            <span style={{ color: CSS_COLOR.red, display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+              <i style={{ width: dim(11), height: dim(2), borderRadius: dim(RADII.pill), background: CSS_COLOR.red, display: "block" }} />
+              sells
+            </span>
+          </div>
+        </div>
+        <SignalsBreadthTotal value={declining} tone={CSS_COLOR.red} label="Declining (S)" />
       </div>
-      <svg
-        data-testid="signals-breadth-history-chart"
-        role="img"
-        aria-label={`Signals breadth history ${statusLabel}`}
-        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-        preserveAspectRatio="none"
-        style={{
-          width: "100%",
-          height: dim(phone ? 44 : 50),
-          display: "block",
-          overflow: "visible",
-        }}
-      >
-        <line
-          x1="0"
-          x2={chartWidth}
-          y1={centerY}
-          y2={centerY}
-          stroke={CSS_COLOR.border}
-          strokeWidth="1"
-        />
-        {points.map((point, index) => {
-          const x = points.length > 1 ? index * step : chartWidth / 2;
-          const buyHeight = Math.round((point.buy / maxMagnitude) * usableHeight);
-          const sellHeight = Math.round((point.sell / maxMagnitude) * usableHeight);
-          return (
-            <g key={`${point.at}-${index}`}>
-              {buyHeight ? (
-                <rect
-                  x={x - barWidth / 2}
-                  y={centerY - buyHeight}
-                  width={barWidth}
-                  height={buyHeight}
-                  rx="0.8"
-                  fill={CSS_COLOR.blue}
-                  opacity="0.8"
-                />
-              ) : null}
-              {sellHeight ? (
-                <rect
-                  x={x - barWidth / 2}
-                  y={centerY}
-                  width={barWidth}
-                  height={sellHeight}
-                  rx="0.8"
-                  fill={CSS_COLOR.red}
-                  opacity="0.8"
-                />
-              ) : null}
-            </g>
-          );
-        })}
-      </svg>
     </div>
   );
 }
 
 function SignalsOverviewPanel({
-  breadthHistory,
-  breadthHistoryError,
-  breadthHistoryLoading,
-  breadthHistoryRange,
+  breadthHistory = null,
+  breadthHistoryRange = "day",
+  onBreadthHistoryRangeChange,
   compact = false,
   netBias,
-  onBreadthHistoryRangeChange,
   phone = false,
   summary,
   timeframeSummaries,
 }) {
   const active = Math.max(0, summary?.active || 0);
   const total = Math.max(0, summary?.total || 0);
+  const inactive = Math.max(0, total - active);
   const fresh = Math.max(0, summary?.fresh || 0);
   const aged = Math.max(0, active - fresh);
+  const buy = Math.max(0, summary?.buy || 0);
+  const sell = Math.max(0, summary?.sell || 0);
+  const net = Number.isFinite(netBias?.net) ? netBias.net : buy - sell;
+  const problem = Math.max(0, summary?.problem || 0);
+  const pending = Math.max(0, summary?.pending || 0);
+  const netTone =
+    net > 0 ? CSS_COLOR.blue : net < 0 ? CSS_COLOR.red : CSS_COLOR.textDim;
+  const attentionTone = problem
+    ? CSS_COLOR.red
+    : pending
+      ? CSS_COLOR.amber
+      : CSS_COLOR.textDim;
+
+  // Breadth is a point-in-time aggregate (not a tracked time series), so the
+  // Buy/Sell/Net cards visualize current proportions rather than a trend line.
+  const activeBuySell = buy + sell;
+
   const metrics = [
     {
+      key: "tracked",
+      icon: Radar,
       label: "Tracked",
       value: formatCount(total),
-      detail: `${formatCount(active)} active`,
       tone: CSS_COLOR.text,
+      tooltip: `${formatCount(active)} active · ${formatCount(inactive)} idle`,
+      viz: (
+        <SignalsSplitBar
+          segments={[
+            { pct: total ? (active / total) * 100 : 0, color: CSS_COLOR.accent },
+            { pct: total ? (inactive / total) * 100 : 0, color: CSS_COLOR.textMuted },
+          ]}
+        />
+      ),
     },
     {
+      key: "fresh",
+      icon: Clock3,
       label: "Fresh",
       value: formatCount(fresh),
-      detail: `${formatCount(aged)} aged`,
       tone: CSS_COLOR.green,
+      tooltip: `${formatCount(fresh)} fresh · ${formatCount(aged)} aged`,
+      viz: (
+        <SignalsSplitBar
+          segments={[{ pct: total ? (fresh / total) * 100 : 0, color: CSS_COLOR.green }]}
+        />
+      ),
     },
     {
+      key: "buy",
+      icon: TrendingUp,
       label: "Buy",
-      value: formatCount(summary?.buy || 0),
-      detail: "long bias",
+      value: formatCount(buy),
       tone: CSS_COLOR.blue,
+      tooltip: `${formatCount(buy)} of ${formatCount(total)} symbols on a buy signal`,
+      viz: (
+        <SignalsSplitBar
+          segments={[{ pct: total ? (buy / total) * 100 : 0, color: CSS_COLOR.blue }]}
+        />
+      ),
     },
     {
+      key: "sell",
+      icon: TrendingDown,
       label: "Sell",
-      value: formatCount(summary?.sell || 0),
-      detail: "short bias",
+      value: formatCount(sell),
       tone: CSS_COLOR.red,
+      tooltip: `${formatCount(sell)} of ${formatCount(total)} symbols on a sell signal`,
+      viz: (
+        <SignalsSplitBar
+          segments={[{ pct: total ? (sell / total) * 100 : 0, color: CSS_COLOR.red }]}
+        />
+      ),
     },
     {
+      key: "net",
+      icon: Scale,
       label: "Net",
-      value: netBias?.label || "No signals",
-      detail: `B ${formatCount(netBias?.buy || 0)} / S ${formatCount(netBias?.sell || 0)}`,
-      tone: toneForDirection(netBias?.direction),
+      value: `${net > 0 ? "+" : ""}${formatCount(net)}`,
+      tone: netTone,
+      tooltip: netBias?.label || "Net buy/sell bias",
+      viz: (
+        <SignalsSplitBar
+          segments={[
+            { pct: activeBuySell ? (buy / activeBuySell) * 100 : 0, color: CSS_COLOR.blue },
+            { pct: activeBuySell ? (sell / activeBuySell) * 100 : 0, color: CSS_COLOR.red },
+          ]}
+        />
+      ),
     },
     {
+      key: "attention",
+      icon: Bell,
       label: "Attention",
-      value: formatCount(summary?.problem || 0),
-      detail: `${formatCount(summary?.skipped || 0)} pending`,
-      tone: CSS_COLOR.amber,
+      value: formatCount(problem + pending),
+      tone: attentionTone,
+      tooltip: `${formatCount(problem)} need attention · ${formatCount(pending)} pending`,
+      viz: <SignalsAttentionDots high={problem} medium={pending} />,
     },
   ];
   return (
     <div
       data-testid="signals-overview-panel"
       style={{
-        display: "grid",
-        gap: sp(8),
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(7),
         minWidth: 0,
         padding: sp(10),
         border: `1px solid ${CSS_COLOR.border}`,
@@ -1252,41 +1616,32 @@ function SignalsOverviewPanel({
         style={{
           display: "grid",
           gridTemplateColumns: phone
-            ? "repeat(2, minmax(0, 1fr))"
+            ? "repeat(3, minmax(0, 1fr))"
             : "repeat(6, minmax(0, 1fr))",
           gap: sp(6),
           minWidth: 0,
         }}
       >
         {metrics.map((metric) => (
-          <SignalsOverviewMetric key={metric.label} {...metric} />
+          <SignalsOverviewMetric key={metric.key} {...metric} />
         ))}
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: phone || compact
-            ? "1fr"
-            : "minmax(0, 1.55fr) minmax(260px, 0.72fr)",
-          gap: sp(8),
-          minWidth: 0,
-          alignItems: "stretch",
-        }}
-      >
-        <TimeframeSignalGroupedBars
-          summaries={timeframeSummaries}
-          phone={phone}
-          compact={compact}
-        />
-        <CompactSignalBreadthPanel
-          history={breadthHistory}
-          range={breadthHistoryRange}
-          onRangeChange={onBreadthHistoryRangeChange}
-          loading={breadthHistoryLoading}
-          error={breadthHistoryError}
-          phone={phone}
-        />
-      </div>
+      <TimeframeSignalGroupedBars
+        summaries={timeframeSummaries}
+        pointsByTimeframe={breadthHistory?.pointsByTimeframe}
+        phone={phone}
+        compact={compact}
+      />
+      <CompactSignalBreadthPanel
+        buy={buy}
+        sell={sell}
+        neutral={Math.max(0, total - active)}
+        netBias={netBias}
+        points={breadthHistory?.points}
+        range={breadthHistoryRange}
+        onRangeChange={onBreadthHistoryRangeChange}
+        phone={phone}
+      />
     </div>
   );
 }
@@ -1381,6 +1736,7 @@ function CompactIntervalCell({
   sparklineData = [],
   sparklinePoints: sourceSparklinePoints = null,
   signalEvents = EMPTY_SIGNAL_EVENTS,
+  loading = false,
 }) {
   const status = normalizeSignalStatus(state);
   const pending = status === "pending";
@@ -1407,16 +1763,22 @@ function CompactIntervalCell({
       }),
     [direction, fallbackPrice, sparklineFallbackDirection, state, symbol],
   );
-  const displaySparklineData =
-    Array.isArray(sparklineData) && sparklineData.length >= 2
-      ? sparklineData
-      : fallbackSparklineData;
   const usesFetchedSparklineData =
     Array.isArray(sparklineData) && sparklineData.length >= 2;
+  // While the symbol's real bars are still loading, render a neutral placeholder
+  // instead of the synthetic fallback so we never flash "old"/fake data before
+  // the real series arrives.
+  const displaySparklineData = usesFetchedSparklineData
+    ? sparklineData
+    : loading
+      ? EMPTY_SPARKLINE_SERIES
+      : fallbackSparklineData;
   const sparklineSource =
     usesFetchedSparklineData
       ? "bars"
-      : fallbackSparklineData.length >= 2
+      : loading
+        ? "loading"
+        : fallbackSparklineData.length >= 2
         ? "fallback"
         : "empty";
   const sparklinePoints = useMemo(
@@ -1543,7 +1905,7 @@ function CompactIntervalCell({
               height={TABLE_SPARKLINE_HEIGHT}
               className="ra-sparkline"
               ariaHidden
-              style={{ width: "100%", height: "100%" }}
+              style={SPARKLINE_FILL_STYLE}
             />
           ) : (
             <span
@@ -3537,6 +3899,7 @@ export default function SignalsScreen({
             .map((row) => ({
               key: signalSparklineRowKey(row.symbol),
               symbol: row.symbol,
+              timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
             }))
             .filter((rowSparkline) => rowSparkline.key);
           return Array.from(
@@ -3612,7 +3975,7 @@ export default function SignalsScreen({
       const next = entries.length ? Object.fromEntries(entries) : {};
       rowsNeedingFetch.forEach((row) => {
         if (!Object.prototype.hasOwnProperty.call(next, row.key)) {
-          next[row.key] = [];
+          next[row.key] = SIGNAL_SPARKLINE_PENDING;
         }
       });
       const nextCache = Object.keys(next).length
@@ -4005,6 +4368,7 @@ export default function SignalsScreen({
         meta: { width: phone ? "70px" : "76px", align: "right" },
         cell: ({ row }) => {
           const symbolKey = signalSparklineRowKey(row.original.symbol);
+          const barsValue = signalSparklineBarsBySymbol[symbolKey];
           return (
             <CompactIntervalCell
               symbol={row.original.symbol}
@@ -4012,8 +4376,9 @@ export default function SignalsScreen({
               state={row.original.matrixStatesByTimeframe?.[timeframe] || null}
               rowDirection={row.original.direction}
               fallbackPrice={signalRowSparklineFallbackPrice(row.original)}
-              sparklineData={signalSparklineBarsBySymbol[symbolKey] || []}
+              sparklineData={Array.isArray(barsValue) ? barsValue : EMPTY_SPARKLINE_SERIES}
               sparklinePoints={signalSparklinePointsBySymbol[symbolKey] || null}
+              loading={barsValue === SIGNAL_SPARKLINE_PENDING}
               signalEvents={
                 signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS
               }
@@ -4370,12 +4735,10 @@ export default function SignalsScreen({
 
         <SignalsOverviewPanel
           breadthHistory={breadthHistory}
-          breadthHistoryError={breadthHistoryQuery.error}
-          breadthHistoryLoading={breadthHistoryQuery.isLoading}
           breadthHistoryRange={breadthHistoryRange}
+          onBreadthHistoryRangeChange={setBreadthHistoryRange}
           compact={compact}
           netBias={netBias}
-          onBreadthHistoryRangeChange={setBreadthHistoryRange}
           phone={phone}
           summary={summary}
           timeframeSummaries={timeframeSignalSummary}

@@ -417,12 +417,42 @@ export default defineConfig({
       },
     },
   },
+  // Prebundle boot-critical and lazy-only heavy deps at server start so cold
+  // dev boot never waits on on-demand prebundling, and chart-lib screens don't
+  // trigger a mid-session "new dependencies optimized → reload" full-page stall.
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "@tanstack/react-query",
+      "@tanstack/react-table",
+      "@tanstack/react-virtual",
+      "lucide-react",
+      "recharts",
+      "lightweight-charts",
+      "d3",
+      "hls.js",
+    ],
+  },
   server: {
     port,
     strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
     headers: isolationHeaders,
+    // Eagerly transform the cold-boot critical path at server start instead of
+    // discovering/transforming it serially on first request.
+    warmup: {
+      clientFiles: [
+        "./src/main.tsx",
+        "./src/app/App.tsx",
+        "./src/app/AppContent.tsx",
+        "./src/features/platform/PlatformApp.jsx",
+        "./src/screens/MarketScreen.jsx",
+      ],
+    },
     proxy: {
       "/api": {
         target: process.env.VITE_PROXY_API_TARGET || "http://127.0.0.1:8080",
