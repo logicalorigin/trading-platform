@@ -104,6 +104,69 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
   assert.equal(rows[0].signalPrice, 545.25);
 });
 
+test("STA matrix row carries latestBarClose as currentPrice so Move resolves without sparkline hydration", () => {
+  const [row] = buildVisibleSignalRows({
+    signals: [],
+    candidates: [],
+    universeSymbols: ["SPY"],
+    signalTimeframes: ["5m"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-11T16:55:00.000Z",
+        currentSignalPrice: 500,
+        latestBarAt: "2026-06-11T17:30:00.000Z",
+        latestBarClose: 525,
+        barsSinceSignal: 7,
+        fresh: true,
+        status: "ok",
+        actionEligible: true,
+        actionBlocker: null,
+      },
+    ],
+  });
+
+  // currentPrice comes straight off the matrix state (latestBarClose), so the
+  // Move column renders immediately — no live quote or sparkline snapshot.
+  assert.equal(row.currentPrice, 525);
+  const move = resolveSignalMove(row, null, null);
+  assert.equal(move.label, "+5.0%");
+  assert.equal(move.detail, "+25.00");
+});
+
+test("STA matrix row Move is blank without latestBarClose until async hydration arrives", () => {
+  const [row] = buildVisibleSignalRows({
+    signals: [],
+    candidates: [],
+    universeSymbols: ["SPY"],
+    signalTimeframes: ["5m"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-11T16:55:00.000Z",
+        currentSignalPrice: 500,
+        latestBarAt: "2026-06-11T17:30:00.000Z",
+        barsSinceSignal: 7,
+        fresh: true,
+        status: "ok",
+        actionEligible: true,
+        actionBlocker: null,
+      },
+    ],
+  });
+
+  assert.equal(row.currentPrice, null);
+  assert.equal(resolveSignalMove(row, null, null).label, "—");
+});
+
 test("visible signal rows use the live Signal Matrix as the STA action source over Signal Options duplicates", () => {
   const rows = buildVisibleSignalRows({
     universeSymbols: ["VRT"],

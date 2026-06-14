@@ -5036,6 +5036,8 @@ export interface SignalMonitorSymbolState {
   /** @nullable */
   latestBarAt: string | null;
   /** @nullable */
+  latestBarClose: number | null;
+  /** @nullable */
   barsSinceSignal: number | null;
   fresh: boolean;
   status: SignalMonitorSymbolStatus;
@@ -5107,6 +5109,8 @@ export interface SignalMonitorMatrixState {
   currentSignalPrice: number | null;
   /** @nullable */
   latestBarAt: string | null;
+  /** @nullable */
+  latestBarClose: number | null;
   /** @nullable */
   barsSinceSignal: number | null;
   fresh: boolean;

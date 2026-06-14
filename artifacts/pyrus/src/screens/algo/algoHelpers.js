@@ -683,6 +683,12 @@ export const buildStaSignalMatrixRows = ({
       const signalPrice =
         staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
         staFiniteNumberOrNull(stateRecord.signalPrice);
+      // Current price as of the last evaluation (close of the bar at
+      // latestBarAt). Lets the Move column render immediately from the matrix
+      // state instead of waiting on per-page sparkline hydration, so it stays
+      // populated across execution-timeframe changes. Live quote/sparkline
+      // snapshots still override this in resolveSignalMove when present.
+      const currentPrice = staFiniteNumberOrNull(stateRecord.latestBarClose);
       const barsSinceSignal = staFiniteNumberOrNull(stateRecord.barsSinceSignal);
       const fresh = stateRecord.fresh === true;
       // Actionability is backend-authored (SSE matrix stream + REST both
@@ -704,6 +710,7 @@ export const buildStaSignalMatrixRows = ({
         currentSignalAt: signalAt,
         signalPrice,
         currentSignalPrice: signalPrice,
+        currentPrice,
         latestBarAt:
           staIsoStringOrNull(stateRecord.latestBarAt) ??
           staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??

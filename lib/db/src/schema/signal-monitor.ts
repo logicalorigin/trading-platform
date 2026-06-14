@@ -58,6 +58,13 @@ export const signalMonitorSymbolStatesTable = pgTable(
       scale: 6,
     }),
     latestBarAt: timestamp("latest_bar_at", { withTimezone: true }),
+    // Close of the bar at latestBarAt: the current price as of the last
+    // evaluation. Lets the STA "Move since signal" column render synchronously
+    // from the matrix state instead of waiting on per-page sparkline hydration.
+    latestBarClose: numeric("latest_bar_close", {
+      precision: 18,
+      scale: 6,
+    }),
     barsSinceSignal: integer("bars_since_signal"),
     fresh: boolean("fresh").notNull().default(false),
     status: varchar("status", { length: 32 }).notNull().default("unknown"),

@@ -23,6 +23,8 @@ export interface SignalMonitorMatrixState {
   /** @nullable */
   latestBarAt: Date | null;
   /** @nullable */
+  latestBarClose: number | null;
+  /** @nullable */
   barsSinceSignal: number | null;
   fresh: boolean;
   status: SignalMonitorSymbolStatus;

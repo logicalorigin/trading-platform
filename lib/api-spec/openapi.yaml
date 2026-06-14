@@ -12259,6 +12259,8 @@ components:
         latestBarAt:
           type: [string, "null"]
           format: date-time
+        latestBarClose:
+          type: [number, "null"]
         barsSinceSignal:
           type: [integer, "null"]
         fresh:
@@ -12285,6 +12287,7 @@ components:
         - currentSignalAt
         - currentSignalPrice
         - latestBarAt
+        - latestBarClose
         - barsSinceSignal
         - fresh
         - status
@@ -12385,6 +12388,8 @@ components:
         latestBarAt:
           type: [string, "null"]
           format: date-time
+        latestBarClose:
+          type: [number, "null"]
         barsSinceSignal:
           type: [integer, "null"]
         fresh:
@@ -12415,6 +12420,7 @@ components:
         - currentSignalAt
         - currentSignalPrice
         - latestBarAt
+        - latestBarClose
         - barsSinceSignal
         - fresh
         - status

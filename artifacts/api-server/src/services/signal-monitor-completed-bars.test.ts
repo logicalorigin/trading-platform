@@ -1010,6 +1010,7 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
           currentSignalAt: evaluatedAt,
           currentSignalPrice: 500,
           latestBarAt: evaluatedAt,
+          latestBarClose: 501,
           barsSinceSignal: 0,
           fresh: true,
           status: "ok",

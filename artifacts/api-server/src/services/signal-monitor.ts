@@ -161,6 +161,7 @@ export type SignalMonitorMatrixStreamState = {
   currentSignalAt: Date | null;
   currentSignalPrice: number | null;
   latestBarAt: Date | null;
+  latestBarClose: number | null;
   barsSinceSignal: number | null;
   fresh: boolean;
   status: SignalMonitorStatus;
@@ -1005,6 +1006,10 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
       ? numericValueOrNull(state.currentSignalPrice)
       : null,
     latestBarAt: state.latestBarAt ?? null,
+    // Current price as of the last evaluation. Independent of signal identity,
+    // so it is carried even when there is no stored signal (it powers the Move
+    // column's "current" side regardless of direction/freshness).
+    latestBarClose: numericValueOrNull(state.latestBarClose),
     barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
     fresh: current ? state.fresh : false,
     status,
@@ -1094,6 +1099,7 @@ function buildUnavailableSignalMonitorSnapshotState(input: {
     currentSignalAt: null,
     currentSignalPrice: null,
     latestBarAt: null,
+    latestBarClose: null,
     barsSinceSignal: null,
     fresh: false,
     status: "unavailable",
@@ -4088,6 +4094,7 @@ async function upsertSymbolState(input: {
   signalBarAt?: Date | null;
   signalPrice: number | null;
   latestBarAt: Date | null;
+  latestBarClose?: number | null;
   barsSinceSignal: number | null;
   fresh: boolean;
   status: SignalMonitorStatus;
@@ -4103,6 +4110,7 @@ async function upsertSymbolState(input: {
     currentSignalAt,
     currentSignalPrice: numericStringOrNull(input.signalPrice),
     latestBarAt: input.latestBarAt,
+    latestBarClose: numericStringOrNull(input.latestBarClose ?? null),
     barsSinceSignal: input.barsSinceSignal,
     fresh: input.fresh,
     status: input.status,
@@ -4853,6 +4861,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
         signalAt: null,
         signalPrice: null,
         latestBarAt,
+        latestBarClose: numericValueOrNull(latestBar.c),
         barsSinceSignal: null,
         fresh: false,
         status: stale ? "stale" : "ok",
@@ -4916,6 +4925,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       signalBarAt,
       signalPrice: signal.price,
       latestBarAt,
+      latestBarClose: numericValueOrNull(latestBar.c),
       barsSinceSignal,
       fresh,
       status: stale ? "stale" : "ok",
@@ -5069,6 +5079,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
       currentSignalAt: null,
       currentSignalPrice: null,
       latestBarAt: null,
+      latestBarClose: null,
       barsSinceSignal: null,
       fresh: false,
       status: "unavailable" as SignalMonitorStatus,
@@ -5117,6 +5128,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
       currentSignalAt: null,
       currentSignalPrice: null,
       latestBarAt,
+      latestBarClose: numericValueOrNull(latestBar.c),
       barsSinceSignal: null,
       fresh: false,
       status: stale ? ("stale" as const) : ("ok" as const),
@@ -5149,6 +5161,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     currentSignalAt: signalAt,
     currentSignalPrice: signal.price,
     latestBarAt,
+    latestBarClose: numericValueOrNull(latestBar.c),
     barsSinceSignal,
     fresh: signalMonitorFresh({
       barsSinceSignal,
@@ -5389,6 +5402,7 @@ function signalMonitorMatrixStateFromPython(input: {
       currentSignalAt: null,
       currentSignalPrice: null,
       latestBarAt,
+      latestBarClose: numericValueOrNull(latestBar.c),
       barsSinceSignal: null,
       fresh: false,
       status: stale ? ("stale" as const) : ("ok" as const),
@@ -5448,6 +5462,7 @@ function signalMonitorMatrixStateFromPython(input: {
     currentSignalAt: signalAt,
     currentSignalPrice: signal.price,
     latestBarAt,
+    latestBarClose: numericValueOrNull(latestBar.c),
     barsSinceSignal,
     fresh: signalMonitorFresh({
       barsSinceSignal,
@@ -5761,6 +5776,7 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
               ? numericValueOrNull(state.currentSignalPrice)
               : null,
             latestBarAt: dateOrNull(state.latestBarAt),
+            latestBarClose: numericValueOrNull(state.latestBarClose),
             barsSinceSignal: matrixBarsSinceSignalOrNull(state.barsSinceSignal),
             fresh: status === "ok" && Boolean(state.fresh),
             status,
@@ -5808,6 +5824,7 @@ function buildSignalMonitorMatrixErrorState(input: {
     currentSignalAt: null,
     currentSignalPrice: null,
     latestBarAt: null,
+    latestBarClose: null,
     barsSinceSignal: null,
     fresh: false,
     status: "error" as SignalMonitorStatus,
@@ -7651,6 +7668,7 @@ function storedSignalStateToMatrixState(
     currentSignalAt: state.currentSignalAt,
     currentSignalPrice: state.currentSignalPrice,
     latestBarAt: state.latestBarAt,
+    latestBarClose: state.latestBarClose,
     barsSinceSignal: state.barsSinceSignal,
     fresh: state.fresh,
     status: state.status,
