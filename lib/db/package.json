@@ -9,8 +9,8 @@
     "./transient-postgres-error": "./src/transient-postgres-error.ts"
   },
   "scripts": {
-    "push": "drizzle-kit push --config ./drizzle.config.ts",
-    "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+    "push": "echo 'DISABLED: drizzle-kit push rewrites the LIVE database schema (drizzle.config targets the resolved DATABASE_URL, which is the shared helium dev DB) and can DROP tables/data. Add a SQL migration in lib/db/migrations/ instead. Disabled after the 2026-06-15 data-loss incident.' && exit 1",
+    "push-force": "echo 'DISABLED: drizzle-kit push --force silently DROPS tables on the live DB. Use a SQL migration in lib/db/migrations/ instead. Disabled after the 2026-06-15 data-loss incident.' && exit 1"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",
