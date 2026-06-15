@@ -3397,18 +3397,25 @@ export async function attachIbkrBridgeRuntime(
     });
   }
 
-  const health = await fetchBridgeJson<unknown>(
-    bridgeUrl,
-    "/healthz",
-    bridgeToken,
-  );
+  // Validate health and load accounts concurrently. Both are independent ~20s
+  // bridge reads on the final-attach critical path; running them sequentially
+  // added up to another ~20s to every launch. Still surface a health failure
+  // first so the error reflects an unhealthy bridge rather than a downstream
+  // accounts read, and only trust accounts once health has been validated.
+  const [healthResult, accountsResult] = await Promise.allSettled([
+    fetchBridgeJson<unknown>(bridgeUrl, "/healthz", bridgeToken),
+    fetchBridgeJson<unknown>(bridgeUrl, "/accounts", bridgeToken),
+  ]);
+  if (healthResult.status === "rejected") {
+    throw healthResult.reason;
+  }
+  const health = healthResult.value;
   assertBridgeHealth(health);
   primeBridgeHealthForSession(health);
-  const accounts = await fetchBridgeJson<unknown>(
-    bridgeUrl,
-    "/accounts",
-    bridgeToken,
-  );
+  if (accountsResult.status === "rejected") {
+    throw accountsResult.reason;
+  }
+  const accounts = accountsResult.value;
 
   setIbkrBridgeRuntimeOverride(
     {

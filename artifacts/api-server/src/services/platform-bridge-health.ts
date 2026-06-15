@@ -430,9 +430,27 @@ async function refreshBridgeHealthForSession(
     return;
   }
 
+  // Cache the snapshot whenever the probe itself resolves, decoupled from the
+  // caller-side withTimeout below. A bridge that answers slower than `timeoutMs`
+  // (common under market-open load, where timeoutMs is the short 5s/1.5s session
+  // budget while the bridge request budget is 12s) must NOT have its successful
+  // health snapshot discarded — otherwise lastKnownBridgeHealth never populates
+  // and every health-gated read (session connection state, accounts, positions,
+  // bars) stays blocked even though the bridge is alive. The await only bounds
+  // how long the caller waits; it never decides whether a success is recorded.
+  const probe = runBridgeWork("health", () => fetchBridgeHealthWithPing());
+  probe.then(
+    (health) => {
+      lastKnownBridgeHealth = health;
+    },
+    () => {
+      // Failure is recorded by runBridgeWork and surfaced via the await below.
+    },
+  );
+
   try {
-    const health = await withTimeout(
-      runBridgeWork("health", () => fetchBridgeHealthWithPing()),
+    await withTimeout(
+      probe,
       timeoutMs,
       () =>
         new HttpError(504, "IBKR bridge health request timed out.", {
@@ -440,7 +458,6 @@ async function refreshBridgeHealthForSession(
           detail: `Bridge health did not respond within ${timeoutMs}ms.`,
         }),
     );
-    lastKnownBridgeHealth = health;
   } catch (error) {
     warnBridgeHealthFailure(error, context);
   }
@@ -720,8 +737,18 @@ export async function getRuntimeBridgeHealthState() {
 export async function getAnnotatedBridgeHealthForTradingGuard(
   timeoutMs: number,
 ): Promise<AnnotatedBridgeHealth> {
+  // As in refreshBridgeHealthForSession: cache the snapshot when the probe
+  // resolves, even if the caller-side withTimeout fires first, so a slow-but-
+  // successful probe still refreshes lastKnownBridgeHealth for the next read.
+  const probe = runBridgeWork("health", () => fetchBridgeHealthWithPing());
+  probe.then(
+    (health) => {
+      lastKnownBridgeHealth = health;
+    },
+    () => {},
+  );
   const health = await withTimeout(
-    runBridgeWork("health", () => fetchBridgeHealthWithPing()),
+    probe,
     timeoutMs,
     () =>
       new HttpError(504, "IB Gateway health request timed out.", {
@@ -729,7 +756,6 @@ export async function getAnnotatedBridgeHealthForTradingGuard(
         detail: "Gateway health did not respond before the trading guard timed out.",
       }),
   );
-  lastKnownBridgeHealth = health;
   return annotateBridgeHealth(health, {
     bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
   });

@@ -65,6 +65,96 @@ test("account list does not wait on stale bridge health before fallback", async 
   );
 });
 
+test("positions return cached rows within the initial-wait budget when the bridge is slow", async () => {
+  const priorTtl = process.env["IBKR_ACCOUNT_CACHE_TTL_MS"];
+  const priorStaleTtl = process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"];
+  const priorWait = process.env["IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS"];
+  process.env["IBKR_ACCOUNT_CACHE_TTL_MS"] = "1";
+  process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"] = "120000";
+  process.env["IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS"] = "150";
+  let bridgePositionCalls = 0;
+
+  const position = {
+    accountId: "DU123",
+    id: "position:SPY",
+    symbol: "SPY",
+    assetClass: "equity" as const,
+    quantity: 1,
+    averagePrice: 500,
+    marketPrice: 501,
+    marketValue: 501,
+    unrealizedPnl: 1,
+    unrealizedPnlPercent: 0.2,
+    realizedPnl: 0,
+    currency: "USD",
+    optionContract: null,
+  };
+
+  __setIbkrAccountBridgeDependenciesForTests({
+    bridgeClient: {
+      async listAccounts() {
+        return [];
+      },
+      async listPositions() {
+        bridgePositionCalls += 1;
+        // First read populates the cache fast; the second read simulates a
+        // slow/504-ing bridge that exceeds the initial-wait budget.
+        if (bridgePositionCalls === 1) {
+          return [position];
+        }
+        await delay(2_000);
+        return [position];
+      },
+      async listExecutions() {
+        return [];
+      },
+    },
+    async getBridgeHealthForSession() {
+      return {
+        bridgeReachable: true,
+        socketConnected: true,
+        brokerServerConnected: true,
+        authenticated: true,
+        accountsLoaded: true,
+      } as never;
+    },
+  });
+
+  try {
+    const first = await listIbkrPositions({ accountId: "DU123", mode: "paper" });
+    assert.equal(first.length, 1);
+
+    await delay(10);
+
+    const startedAt = performance.now();
+    const refreshed = await listIbkrPositions({
+      accountId: "DU123",
+      mode: "paper",
+    });
+    const elapsedMs = performance.now() - startedAt;
+
+    // The slow refresh must not block the request: it returns the cached rows
+    // within the ~150ms budget rather than hanging for the full 2s bridge read.
+    assert.equal(refreshed.length, 1);
+    assert(
+      elapsedMs < 900,
+      `expected cached positions within the initial-wait budget, took ${elapsedMs.toFixed(1)}ms`,
+    );
+  } finally {
+    for (const [key, value] of [
+      ["IBKR_ACCOUNT_CACHE_TTL_MS", priorTtl],
+      ["IBKR_ACCOUNT_STALE_CACHE_TTL_MS", priorStaleTtl],
+      ["IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS", priorWait],
+    ] as const) {
+      if (value == null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
 test("positions refresh to empty rows instead of preserving stale bridge rows", async () => {
   const priorTtl = process.env["IBKR_ACCOUNT_CACHE_TTL_MS"];
   const priorStaleTtl = process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"];

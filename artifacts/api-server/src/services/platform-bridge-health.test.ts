@@ -123,6 +123,66 @@ test("session bridge health can return stale cached data without awaiting refres
   assert.equal(refreshedHealth?.updatedAt, freshUpdatedAt);
 });
 
+test("a health probe slower than the session timeout still populates the cache", async () => {
+  __resetBridgeGovernorForTests();
+  invalidateBridgeHealthCache();
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+
+  // The caller budget (15ms) is far shorter than the probe's response time
+  // (90ms), mirroring the real 5s session budget vs a slow market-open bridge
+  // that answers within the 12s request budget. The slow-but-successful probe
+  // must still refresh lastKnownBridgeHealth; otherwise the cache never
+  // populates and every health-gated read (connection, accounts, bars) wedges.
+  const previousTimeout = process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"];
+  process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"] = "15";
+
+  const freshUpdatedAt = new Date().toISOString();
+  let healthCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          healthCalls += 1;
+          await delay(90);
+          return bridgeHealth(freshUpdatedAt);
+        },
+      }) as never,
+  );
+
+  try {
+    // No cache yet: this schedules a background refresh whose caller-side
+    // timeout (15ms) fires long before the probe resolves (90ms).
+    const initial = await getBridgeHealthForSession({
+      waitForInitialRefresh: false,
+      waitForStaleRefresh: false,
+    });
+    assert.equal(initial, null, "expected no cached health on the first read");
+
+    // Wait until well past the probe's completion.
+    await delay(150);
+
+    const refreshed = await getBridgeHealthForSession({
+      waitForInitialRefresh: false,
+      waitForStaleRefresh: false,
+    });
+    assert.equal(
+      refreshed?.updatedAt,
+      freshUpdatedAt,
+      "a slow-but-successful health probe must still populate the cache",
+    );
+    assert(healthCalls >= 1, "expected the health probe to run");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"];
+    } else {
+      process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"] = previousTimeout;
+    }
+  }
+});
+
 test("stale connected bridge health is not reported as usable", async () => {
   setIbkrBridgeRuntimeOverride({
     apiToken: "test-token",

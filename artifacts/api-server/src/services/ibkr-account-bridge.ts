@@ -75,6 +75,10 @@ function executionsInitialWaitMs(): number {
   return readPositiveIntegerEnv("IBKR_ACCOUNT_EXECUTION_INITIAL_WAIT_MS", 1_500);
 }
 
+function positionsInitialWaitMs(): number {
+  return readPositiveIntegerEnv("IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS", 2_000);
+}
+
 function normalizeInitialWaitMs(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
@@ -142,6 +146,12 @@ async function runCachedAccountRead<T extends unknown[]>({
   const staleCached =
     cached && isUsableStale(cached, staleTtlMs) ? cached : null;
   const normalizedInitialWaitMs = normalizeInitialWaitMs(initialWaitMs);
+  // When the initial-wait budget elapses before the live read returns, prefer
+  // the cached payload over an empty array so a slow/504-ing bridge still
+  // surfaces the last-known data (e.g. open positions) instead of a momentary
+  // empty render. The live read keeps running and refreshes the cache for the
+  // next poll. Falls back to empty only when there is no usable cache.
+  const initialWaitFallback = (staleCached?.payload ?? []) as unknown as T;
 
   const pending = inflight.get(key);
   if (pending) {
@@ -151,7 +161,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     if (normalizedInitialWaitMs !== null) {
       return Promise.race([
         pending,
-        waitForFallback(normalizedInitialWaitMs, [] as unknown as T),
+        waitForFallback(normalizedInitialWaitMs, initialWaitFallback),
       ]);
     }
     return pending;
@@ -246,7 +256,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   if (normalizedInitialWaitMs !== null) {
     return Promise.race([
       promise,
-      waitForFallback(normalizedInitialWaitMs, [] as unknown as T),
+      waitForFallback(normalizedInitialWaitMs, initialWaitFallback),
     ]);
   }
   return promise;
@@ -284,6 +294,7 @@ export function listIbkrPositions(input: {
     cacheEmptyPayload: false,
     allowStaleFallback: true,
     serveStaleWhileRefreshing: false,
+    initialWaitMs: positionsInitialWaitMs(),
     work: async () =>
       (await bridgeClient.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,

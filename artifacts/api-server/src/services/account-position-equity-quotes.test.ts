@@ -21,6 +21,9 @@ test("account equity position quote hydration uses IBKR bridge snapshots", () =>
   assert.match(body, /fetchBridgeQuoteSnapshots\(symbols,\s*\{/);
   assert.match(body, /providerContractIdsBySymbol/);
   assert.match(body, /fallbackProvider:\s*"none"/);
+  // Must stay non-blocking: read streamed/cached quotes (hydrate: false) rather
+  // than awaiting a live bridge hydration on every /positions response.
+  assert.match(body, /hydrate:\s*false/);
   assert.doesNotMatch(body, /getQuoteSnapshots\(/);
   assert.doesNotMatch(body, /allowMassiveFallback/);
   assert.doesNotMatch(body, /admissionFallbackProvider:\s*"massive"/);

@@ -10982,10 +10982,12 @@ const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
   8,
 );
-const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 8;
+// Reverted 8 -> 2 (the 337cb24 bump overwhelmed the shared DB + IB tunnel with
+// concurrent option-chain fetches/writes). Override via OPTIONS_FLOW_SCANNER_CONCURRENCY.
+const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 2;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
   OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY,
-  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 8),
+  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 2),
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",

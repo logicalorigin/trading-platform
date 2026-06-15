@@ -1461,12 +1461,21 @@ async function fetchEquityQuoteSnapshotsForPositions(
   recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
 
   if (symbols.length) {
+    // Read the streamed/cached quotes without blocking on a live bridge
+    // hydration. The recorded symbols (above) are kept warm by the dedicated
+    // position-quote stream in bridge-streams.ts, and the account SSE patches
+    // live quotes on the client. Awaiting the hydration here added up to
+    // SNAPSHOT_BOOTSTRAP_TIMEOUT_MS (2.5s+, longer under quotes-lane backoff)
+    // to every /positions response while the bridge was slow. Mirror the
+    // non-blocking option-quote path. fallbackProvider stays "none" (equity
+    // position quotes must never fall back to Massive).
     const payload = await fetchBridgeQuoteSnapshots(symbols, {
       owner: admissionOwner,
       intent: "account-monitor-live",
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
       fallbackProvider: "none",
       providerContractIdsBySymbol,
+      hydrate: false,
     }).catch(() => ({
       quotes: [],
     }));

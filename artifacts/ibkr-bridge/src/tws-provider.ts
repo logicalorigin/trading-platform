@@ -4842,9 +4842,28 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return this.getLaneDiagnostics();
   }
 
+  // The managed-account list and session are kept fresh by the periodic tickle()
+  // timer and the connection watchdog; account/position values flow from
+  // background subscriptions. So a read only needs a full refreshSession() on the
+  // cold path (not connected, or no account list yet). On the warm path we skip
+  // it: refreshSession() runs on the concurrency-1 "control" lane, and calling it
+  // per read serialized every account/position request behind a single global
+  // slot (queueCap 1) -> queue timeouts (504) and the account-lane circuit
+  // opening after 2 failures. getManagedAccounts() returns a static session
+  // account list we already hold, so it is pure overhead on the read path.
+  private async ensureSessionReadyForRead(): Promise<void> {
+    if (
+      this.connectionState === ConnectionState.Connected &&
+      this.managedAccounts.length > 0
+    ) {
+      return;
+    }
+    await this.refreshSession();
+  }
+
   async listAccounts(_mode: RuntimeMode): Promise<BrokerAccountSnapshot[]> {
     return runBridgeLane("account", async () => {
-      await this.refreshSession();
+      await this.ensureSessionReadyForRead();
       await this.waitForCondition(
         () => this.accountSummaryInitialized,
         1_500,
@@ -4889,7 +4908,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     mode: RuntimeMode;
   }): Promise<BrokerPositionSnapshot[]> {
     return runBridgeLane("account", async () => {
-      await this.refreshSession();
+      await this.ensureSessionReadyForRead();
       await this.waitForCondition(() => this.positionsInitialized, 1_500, 100);
       const accountId = input.accountId?.trim();
 
