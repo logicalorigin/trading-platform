@@ -165,3 +165,55 @@ test("algo deployment list cache serves mode fallback from all-deployments cache
     __algoAutomationInternalsForTests.clearDeploymentListCacheForTests();
   }
 });
+
+// Regression: a pool-acquire timeout ("all pooled connections are busy right now")
+// is NOT a database outage. Tripping the 15s deployment-list backoff on it locks out
+// the read during the exact startup window the pool is saturated, surfacing
+// "deployment unavailable" on the algo screen for 15s though the deployment exists.
+test("deployment list backoff does NOT trip on a pool-acquire timeout", () => {
+  const { markDeploymentListError, deploymentListDbBackoff } =
+    __algoAutomationInternalsForTests;
+  deploymentListDbBackoff.resetForTest();
+  const now = 1_000_000;
+  const poolError = new Error(
+    "pool timed out while waiting for an open connection",
+  );
+  const handled = markDeploymentListError(poolError, now);
+  assert.equal(handled, true, "still handled — serve cached fallback");
+  assert.equal(
+    deploymentListDbBackoff.isActive(now + 1),
+    false,
+    "pool contention must not open the lockout (next read retries immediately)",
+  );
+  deploymentListDbBackoff.resetForTest();
+});
+
+test("deployment list backoff DOES trip on a genuine transient connectivity error", () => {
+  const { markDeploymentListError, deploymentListDbBackoff } =
+    __algoAutomationInternalsForTests;
+  deploymentListDbBackoff.resetForTest();
+  const now = 2_000_000;
+  const connError = Object.assign(
+    new Error("connection terminated unexpectedly"),
+    { code: "57P01" },
+  );
+  assert.equal(markDeploymentListError(connError, now), true);
+  assert.equal(
+    deploymentListDbBackoff.isActive(now + 1),
+    true,
+    "a real connectivity failure still backs off",
+  );
+  deploymentListDbBackoff.resetForTest();
+});
+
+test("deployment list backoff ignores non-transient errors", () => {
+  const { markDeploymentListError, deploymentListDbBackoff } =
+    __algoAutomationInternalsForTests;
+  deploymentListDbBackoff.resetForTest();
+  assert.equal(
+    markDeploymentListError(new Error("syntax error at or near FOO"), 3_000_000),
+    false,
+    "non-transient errors are not handled here",
+  );
+  assert.equal(deploymentListDbBackoff.isActive(3_000_001), false);
+});

@@ -7,6 +7,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { HttpError } from "../lib/errors";
@@ -351,12 +352,21 @@ function markDeploymentListError(error: unknown, nowMs: number) {
   if (!isTransientPostgresError(error)) {
     return false;
   }
-  deploymentListDbBackoff.markFailure({
-    error,
-    logger,
-    message: "Algo deployment list database unavailable; serving cached deployments",
-    nowMs,
-  });
+  // A pool-acquire timeout means "all pooled connections are busy right now"
+  // (the startup read burst briefly saturating the pool), NOT "the database is
+  // down". Opening the 15s lockout for it blocks the deployment read during the
+  // exact window the pool is saturated, so the algo screen shows "deployment
+  // unavailable" for 15s even though the deployment exists and the DB is healthy.
+  // Serve the cached fallback (return true) but do NOT back off, so the next
+  // request retries the DB immediately. Genuine connectivity failures still back off.
+  if (!isPoolContentionError(error)) {
+    deploymentListDbBackoff.markFailure({
+      error,
+      logger,
+      message: "Algo deployment list database unavailable; serving cached deployments",
+      nowMs,
+    });
+  }
   return true;
 }
 
@@ -651,6 +661,8 @@ export const __algoAutomationInternalsForTests = {
   buildDeploymentListResponse,
   clearDeploymentListCacheForTests,
   deploymentHasSignalOptionsProfile,
+  deploymentListDbBackoff,
+  markDeploymentListError,
   readDeploymentListCache,
   rememberDeploymentListCache,
   visibleDeploymentRows,
