@@ -1,6 +1,6 @@
 import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { HttpError } from "../lib/errors";
-import { getRuntimeDiagnostics } from "./platform";
+import { getAlgoGatewayReadinessSignals } from "./platform";
 
 export type AlgoGatewayReadinessReason =
   | "ibkr_not_configured"
@@ -128,8 +128,12 @@ export function resolveAlgoGatewayReadiness(
 }
 
 export async function getAlgoGatewayReadiness(): Promise<AlgoGatewayReadiness> {
-  const runtime = await getRuntimeDiagnostics();
-  return resolveAlgoGatewayReadiness(asRecord(runtime).ibkr);
+  // Read only the lightweight gateway readiness signals, not the full
+  // getRuntimeDiagnostics blob. This call is on the cockpit/STA hot read path
+  // (getAlgoDeploymentCockpit -> buildAlgoDeploymentCockpitPayload), where
+  // building the full diagnostics added ~2s + ~540KB per read at startup.
+  const ibkr = await getAlgoGatewayReadinessSignals();
+  return resolveAlgoGatewayReadiness(ibkr);
 }
 
 export function throwAlgoGatewayNotReady(

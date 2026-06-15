@@ -3515,6 +3515,31 @@ export async function getRuntimeDiagnostics() {
   };
 }
 
+// Lightweight readiness signals for the algo gateway. getAlgoGatewayReadiness
+// (algo-gateway.ts) only needs these IBKR health/connection fields, NOT the full
+// getRuntimeDiagnostics blob, which also builds the ~540KB market-data work plan,
+// ingest diagnostics, and account/shadow reads on the hot cockpit/STA read path.
+// Field derivations mirror the `ibkr` block in getRuntimeDiagnostics above; keep
+// them in sync with resolveAlgoGatewayReadiness's inputs.
+export async function getAlgoGatewayReadinessSignals() {
+  const configured = getProviderConfiguration();
+  const { annotatedHealth, fallbackStreamState } =
+    await getRuntimeBridgeHealthState();
+  return {
+    configured: configured.ibkr,
+    healthFresh: annotatedHealth?.healthFresh ?? false,
+    connected: annotatedHealth?.connected ?? false,
+    authenticated: annotatedHealth?.authenticated ?? false,
+    accountsLoaded: annotatedHealth?.accountsLoaded ?? false,
+    configuredLiveMarketDataMode:
+      annotatedHealth?.configuredLiveMarketDataMode ?? false,
+    streamFresh: annotatedHealth?.streamFresh ?? false,
+    strictReady: annotatedHealth?.strictReady ?? false,
+    streamState:
+      annotatedHealth?.streamState ?? fallbackStreamState.streamState,
+  };
+}
+
 export function getPlatformResourceDiagnostics() {
   const now = Date.now();
   const countExpired = <

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { resolveAlgoGatewayReadiness } from "./algo-gateway";
@@ -48,4 +49,37 @@ test("non-session readiness failures take precedence over the session gate", () 
   );
   assert.equal(readiness.ready, false);
   assert.equal(readiness.reason, "gateway_socket_disconnected");
+});
+
+// Regression guard for the cockpit/STA startup-latency fix. getAlgoGatewayReadiness
+// runs on the hot cockpit read path (getAlgoDeploymentCockpit ->
+// buildAlgoDeploymentCockpitPayload). It must read only the lightweight readiness
+// signals, never build the full getRuntimeDiagnostics aggregate (~540KB: market-data
+// work plan, ingest diagnostics, account/shadow reads), which added ~2s per read.
+test("getAlgoGatewayReadiness reads lightweight signals, not the full diagnostics blob", () => {
+  const gatewaySource = readFileSync(
+    new URL("./algo-gateway.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(gatewaySource, /getAlgoGatewayReadinessSignals\(\)/);
+  // No call to, and no import of, the heavy aggregate (a comment may still name it).
+  assert.doesNotMatch(gatewaySource, /getRuntimeDiagnostics\(/);
+  assert.doesNotMatch(gatewaySource, /import\s[^\n]*getRuntimeDiagnostics/);
+});
+
+test("getAlgoGatewayReadinessSignals sources from cached bridge health, not the work-plan builder", () => {
+  const platformSource = readFileSync(
+    new URL("./platform.ts", import.meta.url),
+    "utf8",
+  );
+  const idx = platformSource.indexOf(
+    "export async function getAlgoGatewayReadinessSignals",
+  );
+  assert.notEqual(idx, -1, "getAlgoGatewayReadinessSignals must exist");
+  const body = platformSource.slice(idx, idx + 800);
+  assert.match(body, /getRuntimeBridgeHealthState\(\)/);
+  assert.doesNotMatch(
+    body,
+    /buildMarketDataWorkPlan|getRuntimeMarketDataIngestDiagnostics/,
+  );
 });
