@@ -1361,6 +1361,7 @@ export const AlgoLivePage = ({
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
+            mtfAlignmentConfig={signalOptionsProfile?.entryGate?.mtfAlignment}
             executionTimeframe={normalizeStrategySignalTimeframe(
               strategySettingsDraft?.signalTimeframe,
             )}

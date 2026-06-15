@@ -32,6 +32,7 @@ import {
 } from "../../components/platform/primitives.jsx";
 import {
   hydrateSignalMatrixProfileTimeframe,
+  resolveConfiguredMtfAlignment,
   resolveSignalMatrixVerdict,
   signalPrimaryStateForMatrix,
 } from "../../features/signals/signalsRowModel.js";
@@ -2196,6 +2197,7 @@ export const OperationsSignalRow = ({
   auditProgression = null,
   tfMatrix = null,
   timeframes = undefined,
+  mtfAlignmentConfig = null,
   executionTimeframe = null,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
@@ -2253,7 +2255,37 @@ export const OperationsSignalRow = ({
     timeframes,
     includePrimaryFallback: false,
   });
-  const matrixDisplay = matrixVerdictDisplay(matrixVerdict);
+  const baseMatrixDisplay = matrixVerdictDisplay(matrixVerdict);
+  // Mirror the backend MTF entry gate: if the configured MTF timeframes don't
+  // reach requiredCount agreement with the signal direction (a disagreeing or
+  // stale-opposing frame counts against it), the row is not tradeable, so the
+  // matrix readout must show that instead of a weighted-bias "Ready".
+  const mtfAlignmentResult = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe: resolvedTfMatrix,
+    signalDirection: direction,
+    timeframes: mtfAlignmentConfig?.timeframes,
+    requiredCount: mtfAlignmentConfig?.requiredCount,
+    enabled: mtfAlignmentConfig?.enabled !== false,
+  });
+  const matrixDisplay =
+    mtfAlignmentResult.applicable && !mtfAlignmentResult.aligned
+      ? {
+          ...baseMatrixDisplay,
+          main: scoreTierLabel("avoid"),
+          tone: matrixReadinessTone("avoid"),
+          motionState: matrixMotionState("avoid"),
+          detail: compactJoin([
+            `MTF ${mtfAlignmentResult.matches}/${mtfAlignmentResult.required}`,
+            mtfAlignmentResult.opposingTimeframes.length
+              ? `${mtfAlignmentResult.opposingTimeframes.join("/")} opposes`
+              : null,
+          ]),
+          title: compactJoin([
+            baseMatrixDisplay.title,
+            `MTF not aligned: needs ${mtfAlignmentResult.required} of ${mtfAlignmentResult.total} frames, ${mtfAlignmentResult.matches} agree`,
+          ]),
+        }
+      : baseMatrixDisplay;
   const candidateBlocker = candidateBlockerLabel(candidate);
   const signalBlocker = signalActionBlockerLabel(signalRecord);
   const blocker =

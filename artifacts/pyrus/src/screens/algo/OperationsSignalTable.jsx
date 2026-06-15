@@ -1338,6 +1338,7 @@ export const OperationsSignalTable = ({
   signalOptionsSourceHealth = null,
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
+  mtfAlignmentConfig = null,
   executionTimeframe = null,
   cockpitGeneratedAt = null,
   cockpitStageItems = [],
@@ -2176,6 +2177,7 @@ export const OperationsSignalTable = ({
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={displaySignalTimeframes}
+                    mtfAlignmentConfig={mtfAlignmentConfig}
                     executionTimeframe={executionTimeframe}
                     signalEvents={
                       signalEventsBySymbol.get(String(symbol || "").toUpperCase()) || []

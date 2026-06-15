@@ -5,6 +5,7 @@ import {
   isProblemSignalState,
   isSignalStateCurrent,
   isStaleSignalState,
+  normalizeSignalDirection,
   normalizeSignalStatus,
 } from "./signalStateFreshness.js";
 import { preferSignalMatrixCellState } from "./signalMatrixStateMerge.js";
@@ -503,6 +504,72 @@ const buildSignalMatrixVerdictLabel = ({
     no_data: "pending",
   }[regime] || "signal";
   return `${readinessLabel} ${directionLabel} ${regimeLabel}`;
+};
+
+// Frontend mirror of the backend signal-options MTF entry gate
+// (signal-options-automation.ts evaluateSignalOptionsEntryGate). For the
+// CONFIGURED MTF timeframes, count how many agree with the signal direction
+// using the SAME per-timeframe state the bubbles display
+// (getCurrentSignalDirection), so the table can never disagree with its own
+// bubbles. A stale opposing frame counts as disagreement (its bubble is shown);
+// a missing/problem frame is neutral and cannot match. Aligned when
+// matches >= requiredCount, matching the gate that actually decides entries.
+export const resolveConfiguredMtfAlignment = ({
+  matrixStatesByTimeframe = {},
+  signalDirection = null,
+  timeframes = [],
+  requiredCount = null,
+  enabled = true,
+} = {}) => {
+  const direction = normalizeSignalDirection(signalDirection);
+  const frames = Array.isArray(timeframes)
+    ? timeframes.map((timeframe) => String(timeframe || "").trim()).filter(Boolean)
+    : [];
+  if (enabled === false || !frames.length || !direction) {
+    return {
+      applicable: false,
+      aligned: true,
+      direction: direction || null,
+      matches: 0,
+      opposing: 0,
+      neutral: frames.length,
+      total: frames.length,
+      required: 0,
+      opposingTimeframes: [],
+    };
+  }
+  const required = Math.min(
+    frames.length,
+    Math.max(1, Math.round(Number(requiredCount) || 2)),
+  );
+  let matches = 0;
+  let opposing = 0;
+  let neutral = 0;
+  const opposingTimeframes = [];
+  for (const timeframe of frames) {
+    const tfDirection = getCurrentSignalDirection(
+      matrixStatesByTimeframe?.[timeframe],
+    );
+    if (!tfDirection) {
+      neutral += 1;
+    } else if (tfDirection === direction) {
+      matches += 1;
+    } else {
+      opposing += 1;
+      opposingTimeframes.push(timeframe);
+    }
+  }
+  return {
+    applicable: true,
+    aligned: matches >= required,
+    direction,
+    matches,
+    opposing,
+    neutral,
+    total: frames.length,
+    required,
+    opposingTimeframes,
+  };
 };
 
 export const resolveSignalMatrixVerdict = ({
@@ -1285,8 +1352,31 @@ export const summarizeSignalsNetBias = (rows = []) => {
   };
 };
 
-const normalizeBreadthHistoryRange = (value) =>
-  String(value || "").trim() === "week" ? "week" : "day";
+export const SIGNALS_BREADTH_HISTORY_RANGES = Object.freeze([
+  "hour",
+  "day",
+  "week",
+  "month",
+]);
+
+const normalizeBreadthHistoryRange = (value) => {
+  const normalized = String(value || "").trim();
+  return SIGNALS_BREADTH_HISTORY_RANGES.includes(normalized) ? normalized : "day";
+};
+
+const normalizeBreadthPoints = (rawPoints) =>
+  (Array.isArray(rawPoints) ? rawPoints : [])
+    .map((point) => {
+      const at = isoTimestampOrNull(point?.at);
+      if (!at) return null;
+      const buy = normalizedBreadthCount(point?.buy);
+      const sell = normalizedBreadthCount(point?.sell);
+      const total = normalizedBreadthCount(point?.total ?? buy + sell);
+      const netValue = Number(point?.net);
+      const net = Number.isFinite(netValue) ? Math.round(netValue) : buy - sell;
+      return { at, buy, sell, net, total };
+    })
+    .filter(Boolean);
 
 const isoTimestampOrNull = (value) => {
   const ms = timestampMs(value);
@@ -1299,28 +1389,17 @@ const normalizedBreadthCount = (value) => {
 };
 
 export const normalizeSignalsBreadthHistory = (history = null) => {
-  const points = (Array.isArray(history?.points) ? history.points : [])
-    .map((point) => {
-      const at = isoTimestampOrNull(point?.at);
-      if (!at) return null;
-      const buy = normalizedBreadthCount(point?.buy);
-      const sell = normalizedBreadthCount(point?.sell);
-      const total = normalizedBreadthCount(point?.total ?? buy + sell);
-      const netValue = Number(point?.net);
-      const net = Number.isFinite(netValue) ? Math.round(netValue) : buy - sell;
-      return {
-        at,
-        buy,
-        sell,
-        net,
-        total,
-      };
-    })
-    .filter(Boolean);
+  const points = normalizeBreadthPoints(history?.points);
   const buyTotal = points.reduce((sum, point) => sum + point.buy, 0);
   const sellTotal = points.reduce((sum, point) => sum + point.sell, 0);
   const net = buyTotal - sellTotal;
   const total = buyTotal + sellTotal;
+  const pointsByTimeframe = {};
+  (Array.isArray(history?.timeframes) ? history.timeframes : []).forEach((series) => {
+    const timeframe = String(series?.timeframe || "").trim().toLowerCase();
+    if (!timeframe) return;
+    pointsByTimeframe[timeframe] = normalizeBreadthPoints(series?.points);
+  });
   return {
     range: normalizeBreadthHistoryRange(history?.range),
     from: isoTimestampOrNull(history?.from),
@@ -1328,6 +1407,7 @@ export const normalizeSignalsBreadthHistory = (history = null) => {
     generatedAt: isoTimestampOrNull(history?.generatedAt),
     bucketMinutes: normalizedBreadthCount(history?.bucketMinutes),
     points,
+    pointsByTimeframe,
     buyTotal,
     sellTotal,
     total,

@@ -5,6 +5,7 @@ import {
   buildSignalsRows,
   buildSignalMatrixStatesBySymbol,
   hydrateSignalMatrixProfileTimeframe,
+  resolveConfiguredMtfAlignment,
   resolveSignalMatrixVerdict,
   sortSignalsRows,
 } from "./signalsRowModel.js";
@@ -128,6 +129,101 @@ const matrixState = (timeframe, direction) => ({
   currentSignalDirection: direction,
   currentSignalAt: "2026-06-08T19:00:00.000Z",
   latestBarAt: "2026-06-08T19:10:00.000Z",
+});
+
+const mtfState = (timeframe, direction, status = "ok") => ({
+  symbol: "SPY",
+  timeframe,
+  status,
+  active: true,
+  fresh: status === "ok",
+  currentSignalDirection: direction,
+  currentSignalAt: "2026-06-08T19:00:00.000Z",
+  latestBarAt: "2026-06-08T19:10:00.000Z",
+});
+
+test("MTF alignment reproduces the reported bug: stale-opposing 5m blocks even though the legacy verdict reads Buy", () => {
+  // The reported case: 1m/2m buy, 5m latched SELL but stale. The legacy weighted
+  // verdict DROPS the stale frame, so it reads "buy" while the 5m sell bubble is
+  // still shown -> the row looks aligned. That is the exact divergence.
+  const matrixStatesByTimeframe = {
+    "1m": mtfState("1m", "buy"),
+    "2m": mtfState("2m", "buy"),
+    "5m": mtfState("5m", "sell", "stale"),
+  };
+
+  const legacyVerdict = resolveSignalMatrixVerdict({
+    matrixStatesByTimeframe,
+    profileTimeframe: "1m",
+    timeframes: ["1m", "2m", "5m"],
+    includePrimaryFallback: false,
+  });
+  assert.equal(legacyVerdict.direction, "buy");
+
+  // The gate mirror counts the stale 5m sell as disagreement -> not aligned.
+  const alignment = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe,
+    signalDirection: "buy",
+    timeframes: ["1m", "2m", "5m"],
+    requiredCount: 3,
+  });
+  assert.equal(alignment.applicable, true);
+  assert.equal(alignment.aligned, false);
+  assert.equal(alignment.matches, 2);
+  assert.equal(alignment.required, 3);
+  assert.deepEqual(alignment.opposingTimeframes, ["5m"]);
+});
+
+test("MTF alignment passes when requiredCount is met by partial agreement", () => {
+  const alignment = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe: {
+      "1m": mtfState("1m", "buy"),
+      "2m": mtfState("2m", "buy"),
+      "5m": mtfState("5m", "sell"),
+    },
+    signalDirection: "buy",
+    timeframes: ["1m", "2m", "5m"],
+    requiredCount: 2,
+  });
+  assert.equal(alignment.aligned, true);
+  assert.equal(alignment.matches, 2);
+});
+
+test("MTF alignment counts a stale opposing frame as disagreement (bubble is shown)", () => {
+  const alignment = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe: {
+      "1m": mtfState("1m", "buy"),
+      "2m": mtfState("2m", "buy"),
+      "5m": mtfState("5m", "sell", "stale"),
+    },
+    signalDirection: "buy",
+    timeframes: ["1m", "2m", "5m"],
+    requiredCount: 3,
+  });
+  assert.equal(alignment.aligned, false);
+  assert.equal(alignment.opposing, 1);
+  assert.deepEqual(alignment.opposingTimeframes, ["5m"]);
+});
+
+test("MTF alignment is not applicable when the gate is disabled or unconfigured", () => {
+  assert.equal(
+    resolveConfiguredMtfAlignment({
+      matrixStatesByTimeframe: { "5m": mtfState("5m", "sell") },
+      signalDirection: "buy",
+      timeframes: ["1m", "2m", "5m"],
+      requiredCount: 3,
+      enabled: false,
+    }).applicable,
+    false,
+  );
+  assert.equal(
+    resolveConfiguredMtfAlignment({
+      signalDirection: "buy",
+      timeframes: [],
+      requiredCount: 2,
+    }).aligned,
+    true,
+  );
 });
 
 test("Signal matrix verdict ignores hidden non-trading timeframes", () => {
