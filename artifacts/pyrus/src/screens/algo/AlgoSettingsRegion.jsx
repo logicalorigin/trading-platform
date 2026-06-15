@@ -138,10 +138,26 @@ const compactUnitLabel = (field) => {
   return field.unit;
 };
 
-const compactInputStyle = ({ invalid, disabled, numeric = false }) => ({
+// Width a numeric field needs for its widest legal value, so a 2-3 digit
+// input stops reserving a quarter-rail of empty space. Chars come from the
+// field's max magnitude (+ sign, + decimals from step); padding adds 14px.
+const numericInputWidth = (field) => {
+  const maxSource = Number(field?.max);
+  const maxDigits = Number.isFinite(maxSource)
+    ? String(Math.trunc(Math.abs(maxSource))).length
+    : 4;
+  const negative = field?.min != null && Number(field.min) < 0 ? 1 : 0;
+  const stepText = field?.step != null ? String(field.step) : "";
+  const decimals = stepText.includes(".") ? stepText.split(".")[1].length : 0;
+  const chars = Math.max(2, maxDigits) + negative + (decimals ? decimals + 1 : 0);
+  return `calc(${chars}ch + 14px)`;
+};
+
+const compactInputStyle = ({ invalid, disabled, numeric = false, field }) => ({
   height: dim(24),
-  width: "100%",
+  width: numeric ? numericInputWidth(field) : "100%",
   minWidth: 0,
+  maxWidth: "100%",
   padding: sp("0 6px"),
   border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
   borderRadius: dim(RADII.xs),
@@ -153,7 +169,7 @@ const compactInputStyle = ({ invalid, disabled, numeric = false }) => ({
   boxSizing: "border-box",
   opacity: disabled ? 0.55 : 1,
   cursor: disabled ? "not-allowed" : undefined,
-  textAlign: numeric ? "right" : "left",
+  textAlign: "left",
 });
 
 const compactImpactSummary = (field, impact) => {
@@ -311,7 +327,7 @@ export const CompactFieldInput = ({
   draftRoot,
 }) => {
   const numeric = numericField(field);
-  const inputStyle = compactInputStyle({ invalid, disabled, numeric });
+  const inputStyle = compactInputStyle({ invalid, disabled, numeric, field });
   const patchFieldValue = (nextValue) => {
     const coerced = field.coerce ? field.coerce(nextValue) : nextValue;
     if (typeof field.patchFromValue === "function") {
@@ -385,8 +401,8 @@ export const CompactFieldInput = ({
               aria-label={`${selectedFrame ? "Remove" : "Add"} ${timeframe} MTF frame`}
               onClick={() => toggleTimeframe(timeframe)}
               style={{
-                height: dim(24),
-                minWidth: dim(34),
+                height: dim(22),
+                minWidth: dim(30),
                 border: `1px solid ${selectedFrame ? CSS_COLOR.accent : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
                 background: selectedFrame
@@ -394,9 +410,9 @@ export const CompactFieldInput = ({
                   : CSS_COLOR.bg1,
                 color: selectedFrame ? CSS_COLOR.text : CSS_COLOR.textSec,
                 fontFamily: T.data,
-                fontSize: textSize("caption"),
+                fontSize: textSize("micro"),
                 cursor: disabled ? "not-allowed" : "pointer",
-                padding: sp("0 6px"),
+                padding: sp("0 5px"),
               }}
             >
               {timeframe}
