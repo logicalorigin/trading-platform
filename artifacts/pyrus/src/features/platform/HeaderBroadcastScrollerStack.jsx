@@ -279,7 +279,7 @@ const resolveHeaderSignalTimeframe = (value) => {
   return WATCHLIST_SIGNAL_TIMEFRAMES.includes(normalized) ? normalized : "5m";
 };
 
-const HEADER_SIGNAL_CONTEXT_SLANT = 8;
+const HEADER_SIGNAL_CONTEXT_SLANT = 5;
 const HEADER_SIGNAL_CONTEXT_VIEWBOX = "0 0 48 32";
 
 const getHeaderSignalContextShapePoints = (isLast) =>
@@ -366,13 +366,13 @@ const HeaderSignalIntervalContext = ({
       alignSelf: "stretch",
       height: "100%",
       minWidth: 0,
-      maxWidth: dim(compact ? 174 : 220),
-      flexShrink: 1,
+      maxWidth: dim(124),
+      flexShrink: 0,
       gap: 0,
-      marginRight: compact ? "-12px" : "-14px",
+      marginRight: compact ? "-7px" : "-10px",
       overflow: "hidden",
-      borderTopRightRadius: dim(RADII.pill),
-      borderBottomRightRadius: dim(RADII.pill),
+      borderTopRightRadius: dim(RADII.xs),
+      borderBottomRightRadius: dim(RADII.xs),
     }}
   >
     {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe, index) => {
@@ -397,7 +397,7 @@ const HeaderSignalIntervalContext = ({
           ? colorWithAlpha(CSS_COLOR.textMuted, 0.08)
           : colorWithAlpha(CSS_COLOR.textMuted, 0.1);
       const labelColor = hasDirection ? color : pending ? CSS_COLOR.textDim : CSS_COLOR.textSec;
-      const width = timeframe === "15m" ? 54 : 44;
+      const width = timeframe === "15m" ? 34 : 26;
 
       return (
         <AppTooltip
@@ -426,7 +426,7 @@ const HeaderSignalIntervalContext = ({
               opacity: pending ? 0.72 : hasDirection ? 1 : 0.82,
               boxShadow: "none",
               fontFamily: T.sans,
-              fontSize: textSize(compact ? "caption" : "body"),
+              fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
               lineHeight: 1,
