@@ -1035,8 +1035,16 @@ const useTickerSearchController = ({
     [secondarySuggestionGroups],
   );
 
+  // Live results are hidden from the list while a displayable search error is
+  // showing (stale data is retained via placeholderData). Drop them from the
+  // selectable set too, otherwise keyboard nav lands on rows that aren't
+  // rendered and Enter selects an invisible ticker. Both render blocks derive
+  // their secondary-suggestion index offset from `results.length`, so exposing
+  // the error-aware list keeps highlight, aria-activedescendant, and selection
+  // consistent.
+  const visibleRankedResults = hasDisplayableSearchError ? [] : rankedResults;
   const selectableResults = searchEnabled
-    ? [...prioritySuggestionRows, ...rankedResults, ...secondarySuggestionRows]
+    ? [...prioritySuggestionRows, ...visibleRankedResults, ...secondarySuggestionRows]
     : quickPickGroups.flatMap((group) => group.rows);
 
   return {
@@ -1049,7 +1057,7 @@ const useTickerSearchController = ({
     suggestionGroups,
     prioritySuggestionGroups,
     secondarySuggestionGroups,
-    results: rankedResults,
+    results: visibleRankedResults,
     selectableResults,
     rawResultCount: rawSearchResults.length,
     requestLimit,
@@ -1184,6 +1192,19 @@ export const MarketChartTickerSearch = ({
   useEffect(() => {
     setActiveIndex(0);
   }, [open, deferredQuery, selectableResults.length]);
+
+  // Keep the keyboard-highlighted row visible as the user arrows through a
+  // scrolling result list (the listbox has a fixed max-height).
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const activeNode =
+      typeof document !== "undefined"
+        ? document.getElementById(`${listboxIdRef.current}-option-${activeIndex}`)
+        : null;
+    activeNode?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open]);
 
   useEffect(() => {
     setVisibleResultLimit(TICKER_SEARCH_INITIAL_RESULT_LIMIT);
@@ -1901,6 +1922,19 @@ export const TickerUniverseSearchPanel = ({
   useEffect(() => {
     setActiveIndex(0);
   }, [open, deferredQuery, selectableResults.length]);
+
+  // Keep the keyboard-highlighted row visible as the user arrows through a
+  // scrolling result list (the listbox has a fixed max-height).
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const activeNode =
+      typeof document !== "undefined"
+        ? document.getElementById(`${listboxIdRef.current}-option-${activeIndex}`)
+        : null;
+    activeNode?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open]);
 
   useEffect(() => {
     setVisibleResultLimit(TICKER_SEARCH_INITIAL_RESULT_LIMIT);

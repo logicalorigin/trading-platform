@@ -257,7 +257,7 @@ export const TradeEquityPanel = ({
   }, [onWorkspaceChartChange, signalMonitorProfile?.timeframe, tf]);
   const prewarmedFavoriteTimeframesRef = useRef(null);
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
-    useDrawingHistory();
+    useDrawingHistory([], ticker);
   const chartHydrationBasePolicy = useMemo(
     () =>
       resolveChartHydrationPolicy({

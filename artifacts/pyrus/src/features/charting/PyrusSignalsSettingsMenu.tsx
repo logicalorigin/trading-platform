@@ -451,6 +451,56 @@ function ColorControl({
   );
 }
 
+function NumericSettingInput({
+  theme,
+  settingKey,
+  value,
+  min,
+  max,
+  step,
+  setNumber,
+}: {
+  theme: WidgetTheme;
+  settingKey: NumericSettingKey;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  setNumber: (key: NumericSettingKey, value: string) => void;
+}) {
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={formatNumber(value)}
+      onChange={(event) => setNumber(settingKey, event.target.value)}
+      onBlur={(event) => {
+        const raw = event.target.value;
+        if (raw.trim() === "") {
+          return;
+        }
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) {
+          return;
+        }
+        let clamped = parsed;
+        if (min !== undefined && clamped < min) {
+          clamped = min;
+        }
+        if (max !== undefined && clamped > max) {
+          clamped = max;
+        }
+        if (clamped !== parsed) {
+          setNumber(settingKey, String(clamped));
+        }
+      }}
+      style={inputStyle(theme)}
+    />
+  );
+}
+
 export function PyrusSignalsSettingsMenu({
   theme,
   settings,
@@ -469,6 +519,12 @@ export function PyrusSignalsSettingsMenu({
   };
 
   const setNumber = (key: NumericSettingKey, value: string) => {
+    // An empty/whitespace field would coerce to 0 via Number(""), silently
+    // committing a value below documented mins while the user is mid-edit.
+    // Treat it as a no-op so the previous valid value is retained.
+    if (value.trim() === "") {
+      return;
+    }
     const resolved = Number(value);
     if (!Number.isFinite(resolved)) {
       return;
@@ -633,13 +689,13 @@ export function PyrusSignalsSettingsMenu({
                 helper="Pivot lookback for swing confirmation."
                 tooltip="Pivot lookback for swing confirmation. Lower = more signals and more whipsaw; higher = fewer, cleaner breaks."
               >
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="timeHorizon"
                   min={2}
                   step={1}
-                  value={formatNumber(settings.timeHorizon)}
-                  onChange={(event) => setNumber("timeHorizon", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.timeHorizon}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row
@@ -648,13 +704,13 @@ export function PyrusSignalsSettingsMenu({
                 helper="ATR-scaled threshold beyond the pivot for CHOCH triggers."
                 tooltip="Filters wick-stab breaks. Zero means raw close-beyond-pivot behavior."
               >
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="chochAtrBuffer"
                   min={0}
                   step={0.05}
-                  value={formatNumber(settings.chochAtrBuffer)}
-                  onChange={(event) => setNumber("chochAtrBuffer", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.chochAtrBuffer}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row
@@ -663,13 +719,13 @@ export function PyrusSignalsSettingsMenu({
                 helper="Breakout candle body must be at least N × ATR."
                 tooltip="Zero disables the body gate."
               >
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="chochBodyExpansionAtr"
                   min={0}
                   step={0.1}
-                  value={formatNumber(settings.chochBodyExpansionAtr)}
-                  onChange={(event) => setNumber("chochBodyExpansionAtr", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.chochBodyExpansionAtr}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row
@@ -678,13 +734,13 @@ export function PyrusSignalsSettingsMenu({
                 helper="Breakout volume must be at least N × SMA(volume, Volume MA Length)."
                 tooltip="Zero disables the volume gate."
               >
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="chochVolumeGate"
                   min={0}
                   step={0.1}
-                  value={formatNumber(settings.chochVolumeGate)}
-                  onChange={(event) => setNumber("chochVolumeGate", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.chochVolumeGate}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="BOS/CHOCH Line Style">
@@ -737,13 +793,13 @@ export function PyrusSignalsSettingsMenu({
                 </div>
               </Row>
               <Row theme={theme} label="Signal Line Length (Bars)">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="trendReversalLengthBars"
                   min={1}
                   step={1}
-                  value={formatNumber(settings.trendReversalLengthBars)}
-                  onChange={(event) => setNumber("trendReversalLengthBars", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.trendReversalLengthBars}
+                  setNumber={setNumber}
                 />
               </Row>
             </Section>
@@ -771,14 +827,14 @@ export function PyrusSignalsSettingsMenu({
                 </div>
               </Row>
               <Row theme={theme} label="Max Active OBs (per side)">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="orderBlockMaxActivePerSide"
                   min={1}
                   max={20}
                   step={1}
-                  value={formatNumber(settings.orderBlockMaxActivePerSide)}
-                  onChange={(event) => setNumber("orderBlockMaxActivePerSide", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.orderBlockMaxActivePerSide}
+                  setNumber={setNumber}
                 />
               </Row>
             </Section>
@@ -788,60 +844,54 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showSupportResistance} onChange={() => toggle("showSupportResistance")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Pivot Strength">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="supportResistancePivotStrength"
                   min={2}
                   step={1}
-                  value={formatNumber(settings.supportResistancePivotStrength)}
-                  onChange={(event) => setNumber("supportResistancePivotStrength", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.supportResistancePivotStrength}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="Minimum Zone Distance (%)" helper="Prevents zones from drawing too close together.">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="supportResistanceMinZoneDistancePercent"
                   min={0.01}
                   step={0.01}
-                  value={formatNumber(settings.supportResistanceMinZoneDistancePercent)}
-                  onChange={(event) =>
-                    setNumber("supportResistanceMinZoneDistancePercent", event.target.value)
-                  }
-                  style={inputStyle(theme)}
+                  value={settings.supportResistanceMinZoneDistancePercent}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="Zone Thickness (ATR Mult)" helper="ATR multiplier for zone thickness.">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="supportResistanceThicknessMultiplier"
                   min={0.01}
                   step={0.01}
-                  value={formatNumber(settings.supportResistanceThicknessMultiplier)}
-                  onChange={(event) =>
-                    setNumber("supportResistanceThicknessMultiplier", event.target.value)
-                  }
-                  style={inputStyle(theme)}
+                  value={settings.supportResistanceThicknessMultiplier}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="Max Number of Zones">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="supportResistanceMaxZones"
                   min={1}
                   max={20}
                   step={1}
-                  value={formatNumber(settings.supportResistanceMaxZones)}
-                  onChange={(event) => setNumber("supportResistanceMaxZones", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.supportResistanceMaxZones}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="Zone Extension (Bars)">
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="supportResistanceExtensionBars"
                   min={1}
                   step={1}
-                  value={formatNumber(settings.supportResistanceExtensionBars)}
-                  onChange={(event) =>
-                    setNumber("supportResistanceExtensionBars", event.target.value)
-                  }
-                  style={inputStyle(theme)}
+                  value={settings.supportResistanceExtensionBars}
+                  setNumber={setNumber}
                 />
               </Row>
               <Row theme={theme} label="Zone Colors">
@@ -963,30 +1013,30 @@ export function PyrusSignalsSettingsMenu({
                 label="Label Offset (Bars Right)"
                 helper="Pushes level labels right of the current bar so they do not overlap TP/SL markers."
               >
-                <input
-                  type="number"
+                <NumericSettingInput
+                  theme={theme}
+                  settingKey="keyLevelLabelOffsetBars"
                   min={0}
                   max={50}
                   step={1}
-                  value={formatNumber(settings.keyLevelLabelOffsetBars)}
-                  onChange={(event) => setNumber("keyLevelLabelOffsetBars", event.target.value)}
-                  style={inputStyle(theme)}
+                  value={settings.keyLevelLabelOffsetBars}
+                  setNumber={setNumber}
                 />
               </Row>
             </Section>
 
             <Section theme={theme} title="6. Main Trend Settings">
               <Row theme={theme} label="Basis Length">
-                <input type="number" min={1} step={1} value={formatNumber(settings.basisLength)} onChange={(event) => setNumber("basisLength", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="basisLength" min={1} step={1} value={settings.basisLength} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="ATR Length">
-                <input type="number" min={1} step={1} value={formatNumber(settings.atrLength)} onChange={(event) => setNumber("atrLength", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="atrLength" min={1} step={1} value={settings.atrLength} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="ATR Smoothing">
-                <input type="number" min={1} step={1} value={formatNumber(settings.atrSmoothing)} onChange={(event) => setNumber("atrSmoothing", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="atrSmoothing" min={1} step={1} value={settings.atrSmoothing} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="Volatility Multiplier">
-                <input type="number" min={0.1} step={0.1} value={formatNumber(settings.volatilityMultiplier)} onChange={(event) => setNumber("volatilityMultiplier", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="volatilityMultiplier" min={0.1} step={0.1} value={settings.volatilityMultiplier} setNumber={setNumber} />
               </Row>
             </Section>
 
@@ -995,7 +1045,7 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Wireframe Spread">
-                <input type="number" min={0.01} step={0.1} value={formatNumber(settings.wireSpread)} onChange={(event) => setNumber("wireSpread", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="wireSpread" min={0.01} step={0.1} value={settings.wireSpread} setNumber={setNumber} />
               </Row>
             </Section>
 
@@ -1004,10 +1054,10 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showShadow} onChange={() => toggle("showShadow")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Length">
-                <input type="number" min={1} step={1} value={formatNumber(settings.shadowLength)} onChange={(event) => setNumber("shadowLength", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="shadowLength" min={1} step={1} value={settings.shadowLength} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="StdDev">
-                <input type="number" min={0.001} max={50} step={0.001} value={formatNumber(settings.shadowStdDev)} onChange={(event) => setNumber("shadowStdDev", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="shadowStdDev" min={0.001} max={50} step={0.001} value={settings.shadowStdDev} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="Shadow Color">
                 <ColorControl
@@ -1034,13 +1084,13 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showTpSl} onChange={() => toggle("showTpSl")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="TP 1 Risk/Reward">
-                <input type="number" step={0.1} value={formatNumber(settings.tp1Rr)} onChange={(event) => setNumber("tp1Rr", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="tp1Rr" step={0.1} value={settings.tp1Rr} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="TP 2 Risk/Reward">
-                <input type="number" step={0.1} value={formatNumber(settings.tp2Rr)} onChange={(event) => setNumber("tp2Rr", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="tp2Rr" step={0.1} value={settings.tp2Rr} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="TP 3 Risk/Reward">
-                <input type="number" step={0.1} value={formatNumber(settings.tp3Rr)} onChange={(event) => setNumber("tp3Rr", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="tp3Rr" step={0.1} value={settings.tp3Rr} setNumber={setNumber} />
               </Row>
             </Section>
 
@@ -1067,10 +1117,10 @@ export function PyrusSignalsSettingsMenu({
                 </select>
               </Row>
               <Row theme={theme} label="ADX Length">
-                <input type="number" min={1} step={1} value={formatNumber(settings.adxLength)} onChange={(event) => setNumber("adxLength", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="adxLength" min={1} step={1} value={settings.adxLength} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="Volume MA Length" helper="Also used by the CHOCH Volume Gate in Market Structure.">
-                <input type="number" min={1} step={1} value={formatNumber(settings.volumeMaLength)} onChange={(event) => setNumber("volumeMaLength", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="volumeMaLength" min={1} step={1} value={settings.volumeMaLength} setNumber={setNumber} />
               </Row>
               <Row theme={theme} label="MTF 1 / MTF 2 / MTF 3">
                 <div style={threeColumnStyle}>
@@ -1126,7 +1176,7 @@ export function PyrusSignalsSettingsMenu({
                 label="Buy/Sell Offset (ATR × N)"
                 helper="Distance between BUY/SELL labels and the signal candle, measured in ATR units."
               >
-                <input type="number" min={0} step={0.1} value={formatNumber(settings.signalOffsetAtr)} onChange={(event) => setNumber("signalOffsetAtr", event.target.value)} style={inputStyle(theme)} />
+                <NumericSettingInput theme={theme} settingKey="signalOffsetAtr" min={0} step={0.1} value={settings.signalOffsetAtr} setNumber={setNumber} />
               </Row>
             </Section>
 
@@ -1159,7 +1209,7 @@ export function PyrusSignalsSettingsMenu({
               <Row theme={theme} label="Require ADX >= Min">
                 <div style={twoColumnInlineStyle}>
                   <InlineCheckbox theme={theme} label="Enable ADX Gate" checked={settings.requireAdx} onChange={() => toggle("requireAdx")} />
-                  <input type="number" min={1} max={100} step={1} value={formatNumber(settings.adxMin)} onChange={(event) => setNumber("adxMin", event.target.value)} style={inputStyle(theme)} />
+                  <NumericSettingInput theme={theme} settingKey="adxMin" min={1} max={100} step={1} value={settings.adxMin} setNumber={setNumber} />
                 </div>
               </Row>
               <Row theme={theme} label="Require Volatility Score Range">
@@ -1168,11 +1218,11 @@ export function PyrusSignalsSettingsMenu({
                   <div style={twoColumnInlineStyle}>
                     <div style={{ display: "grid", gap: 4 }}>
                       <div style={miniLabelStyle(theme)}>Vol Score Min</div>
-                      <input type="number" min={0} max={10} step={1} value={formatNumber(settings.volScoreMin)} onChange={(event) => setNumber("volScoreMin", event.target.value)} style={inputStyle(theme)} />
+                      <NumericSettingInput theme={theme} settingKey="volScoreMin" min={0} max={10} step={1} value={settings.volScoreMin} setNumber={setNumber} />
                     </div>
                     <div style={{ display: "grid", gap: 4 }}>
                       <div style={miniLabelStyle(theme)}>Vol Score Max</div>
-                      <input type="number" min={0} max={10} step={1} value={formatNumber(settings.volScoreMax)} onChange={(event) => setNumber("volScoreMax", event.target.value)} style={inputStyle(theme)} />
+                      <NumericSettingInput theme={theme} settingKey="volScoreMax" min={0} max={10} step={1} value={settings.volScoreMax} setNumber={setNumber} />
                     </div>
                   </div>
                 </div>

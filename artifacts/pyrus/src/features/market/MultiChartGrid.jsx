@@ -316,10 +316,13 @@ export const MultiChartGrid = ({
   );
   const [recentTickers, setRecentTickers] = useState(() =>
     Array.isArray(_initialState.marketGridRecentTickers)
-      ? _initialState.marketGridRecentTickers
-          .map((symbol) => normalizeTickerSymbol(symbol))
-          .filter(Boolean)
-          .slice(0, 10)
+      ? Array.from(
+          new Set(
+            _initialState.marketGridRecentTickers
+              .map((symbol) => normalizeTickerSymbol(symbol))
+              .filter(Boolean),
+          ),
+        ).slice(0, 10)
       : [],
   );
   const [recentTickerRows, setRecentTickerRows] = useState(() =>
@@ -1042,7 +1045,7 @@ export const MultiChartGrid = ({
   const resetGridChartViews = useCallback(() => {
     visibleSlotEntries.forEach(({ slot }) => {
       const ticker = normalizeTickerSymbol(slot?.ticker) || "SPY";
-      const timeframe = normalizeChartTimeframe(slot?.tf) || "5m";
+      const timeframe = normalizeChartTimeframe(slot?.tf) || "15m";
       clearStoredChartViewportSnapshot(
         buildChartBarScopeKey("trade-equity-chart", "primary", ticker, timeframe),
       );
@@ -1530,7 +1533,9 @@ export const MultiChartGrid = ({
                 flowEvents={flowEventsBySlotIndex[index] || []}
                 premiumFlowStatus={effectiveChartFlowStatus}
                 premiumFlowProviderSummary={chartFlowProviderSummary}
-                isActive={slot.ticker === activeSym}
+                isActive={
+                  normalizeTickerSymbol(slot.ticker) === normalizeTickerSymbol(activeSym)
+                }
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
                 fullFrame={layout === "1x1"}

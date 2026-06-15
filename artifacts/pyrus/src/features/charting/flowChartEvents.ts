@@ -669,9 +669,11 @@ const resolveBucketIndex = (
 
   const lastIndex = bars.length - 1;
   const lastBarMs = bars[lastIndex].time * 1000;
-  const lastRange = ranges.length
-    ? ranges[Math.min(ranges.length, bars.length) - 1]
-    : undefined;
+  // Use the actual last loaded range for the right-edge (endMs) math. The prior
+  // `Math.min(ranges.length, bars.length) - 1` clamp picked an earlier range
+  // whenever ranges outnumbered bars, computing the live-edge window from the
+  // wrong segment and dropping/mis-bucketing recent flow markers.
+  const lastRange = ranges.length ? ranges[ranges.length - 1] : undefined;
   const inferredStepMs =
     lastRange && lastRange.endMs > lastRange.startMs
       ? lastRange.endMs - lastRange.startMs

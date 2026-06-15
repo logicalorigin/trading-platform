@@ -2373,7 +2373,7 @@ const writeStoredChartScalePrefs = (
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(prefs));
     const legacyStorageKey = buildLegacyChartScalePrefsStorageKey(uiStateKey);
-    if (legacyStorageKey) {
+    if (legacyStorageKey && legacyStorageKey !== storageKey) {
       window.localStorage.removeItem(legacyStorageKey);
     }
   } catch (_error) {}
@@ -6748,14 +6748,66 @@ const ResearchChartSurfaceComponent = ({
     chartRef.current?.priceScale?.("right", 0)?.setAutoScale?.(resolved);
     setAutoScale(resolved);
   }, []);
+  // Sync global chart preferences into local chart state, but re-apply each
+  // field ONLY when its own source changes. The chart surface never writes
+  // back to global prefs, so showVolume/showFlowEvents/showGrid/showTimeScale/
+  // crosshairMode/scaleMode are all local-only overrides. Re-applying every
+  // field whenever any single global pref changed would clobber the user's
+  // per-chart overrides of the other fields. The ref seed also skips the
+  // initial mount so locally-persisted state (e.g. scaleMode) is not
+  // overridden by the global default on load.
+  const lastSyncedChartPrefsRef = useRef({
+    defaultShowVolume,
+    hideTimeScale,
+    defaultScaleMode,
+    showVolume: userPreferences.chart.showVolume,
+    showFlowEvents: userPreferences.chart.showFlowEvents,
+    showGrid: userPreferences.chart.showGrid,
+    showTimeScale: userPreferences.chart.showTimeScale,
+    crosshairMode: userPreferences.chart.crosshairMode,
+    priceScaleMode: userPreferences.chart.priceScaleMode,
+  });
   useEffect(() => {
+    const prev = lastSyncedChartPrefsRef.current;
     const chartPreferences = userPreferences.chart;
-    setShowVolume(defaultShowVolume && chartPreferences.showVolume);
-    setShowFlowEvents(chartPreferences.showFlowEvents);
-    setShowGrid(chartPreferences.showGrid);
-    setShowTimeScaleState(!hideTimeScale && chartPreferences.showTimeScale);
-    setCrosshairMode(chartPreferences.crosshairMode);
-    setScaleMode(resolvePreferenceScaleMode(chartPreferences.priceScaleMode, defaultScaleMode));
+    if (
+      defaultShowVolume !== prev.defaultShowVolume ||
+      chartPreferences.showVolume !== prev.showVolume
+    ) {
+      setShowVolume(defaultShowVolume && chartPreferences.showVolume);
+    }
+    if (chartPreferences.showFlowEvents !== prev.showFlowEvents) {
+      setShowFlowEvents(chartPreferences.showFlowEvents);
+    }
+    if (chartPreferences.showGrid !== prev.showGrid) {
+      setShowGrid(chartPreferences.showGrid);
+    }
+    if (
+      hideTimeScale !== prev.hideTimeScale ||
+      chartPreferences.showTimeScale !== prev.showTimeScale
+    ) {
+      setShowTimeScaleState(!hideTimeScale && chartPreferences.showTimeScale);
+    }
+    if (chartPreferences.crosshairMode !== prev.crosshairMode) {
+      setCrosshairMode(chartPreferences.crosshairMode);
+    }
+    if (
+      defaultScaleMode !== prev.defaultScaleMode ||
+      chartPreferences.priceScaleMode !== prev.priceScaleMode
+    ) {
+      setScaleMode(resolvePreferenceScaleMode(chartPreferences.priceScaleMode, defaultScaleMode));
+    }
+    lastSyncedChartPrefsRef.current = {
+      defaultShowVolume,
+      hideTimeScale,
+      defaultScaleMode,
+      showVolume: chartPreferences.showVolume,
+      showFlowEvents: chartPreferences.showFlowEvents,
+      showGrid: chartPreferences.showGrid,
+      showTimeScale: chartPreferences.showTimeScale,
+      crosshairMode: chartPreferences.crosshairMode,
+      priceScaleMode: chartPreferences.priceScaleMode,
+    };
   }, [
     defaultScaleMode,
     defaultShowVolume,

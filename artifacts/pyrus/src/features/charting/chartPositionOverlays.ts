@@ -881,9 +881,12 @@ const buildTrailingRiskPoints = ({
           (riskOverlay.trailActivationPct ?? Number.POSITIVE_INFINITY);
     if (!trailActive) return;
     const lockedPrice = entryPrice * (1 + minLockedGainPct / 100);
+    // Clamp giveback to [0, 100]% so malformed data can't drive the trail line
+    // to a negative or zero price via peakPrice * (1 - giveback/100).
+    const boundedGivebackPct = Math.min(Math.max(givebackPct, 0), 100);
     const trailPrice = Math.max(
       lockedPrice,
-      peakPrice * (1 - givebackPct / 100),
+      peakPrice * (1 - boundedGivebackPct / 100),
     );
     points.push({
       time: bar.time,

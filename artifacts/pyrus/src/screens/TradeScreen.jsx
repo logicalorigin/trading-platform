@@ -962,15 +962,6 @@ const TradeContractDetailPanel = ({
     () => buildPyrusSignalsIndicatorSettings(pyrusSignalsSettings),
     [pyrusSignalsSettings],
   );
-  const {
-    drawings,
-    addDrawing,
-    clearDrawings,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-  } = useDrawingHistory();
   const optionProgressiveScopeKey = useMemo(() => {
     return buildChartBarScopeKey(
       "trade-contract-option-bars",
@@ -989,6 +980,15 @@ const TradeContractDetailPanel = ({
     providerContractId,
     ticker,
   ]);
+  const {
+    drawings,
+    addDrawing,
+    clearDrawings,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useDrawingHistory([], optionProgressiveScopeKey);
   const optionProgressiveBars = useProgressiveChartBarLimit({
     scopeKey: optionProgressiveScopeKey,
     timeframe: optionChartTimeframe,
