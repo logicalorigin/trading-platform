@@ -253,6 +253,7 @@ const WatchlistRow = memo(
     density = "default",
     selectionMode = false,
     selectedForRemoval = false,
+    reserveAddColumn = false,
   }) => {
     const fallback = useMemo(
       () =>
@@ -309,12 +310,12 @@ const WatchlistRow = memo(
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
     const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({ quote: snapshot });
-    const extendedHoursPositive =
-      extendedHoursDisplay?.tone === "positive"
-        ? true
-        : extendedHoursDisplay?.tone === "negative"
-          ? false
-          : null;
+    // Extended-hours detail is tertiary, so it lives on row hover instead of an
+    // always-on third line that would make pre/after-market rows taller than the
+    // rest. Keeps every row at a uniform height.
+    const extendedHoursSummary = extendedHoursDisplay
+      ? `${extendedHoursDisplay.sessionLabel} ${formatQuotePrice(extendedHoursDisplay.price)} ${formatSignedQuoteMove(extendedHoursDisplay.change)} (${formatSignedPercent(extendedHoursDisplay.changePercent)})${extendedHoursDisplay.delayed || extendedHoursDisplay.freshness === "stale" ? " · delayed" : ""}`
+      : null;
     const priceValue = isFiniteNumber(snapshot?.price) ? snapshot.price : null;
     const quotePriceForFlash = isFiniteNumber(snapshot?.price)
       ? snapshot.price
@@ -339,8 +340,6 @@ const WatchlistRow = memo(
         ? `${cssColorMix(CSS_COLOR.accent, 9)}`
         : selectedForRemoval
           ? `${cssColorMix(CSS_COLOR.accent, 9)}`
-        : selectedRow
-          ? CSS_COLOR.bg3
           : "transparent";
     const mobileDense = density === "mobile-dense";
     const generatedSparklineFallback = useMemo(
@@ -472,45 +471,6 @@ const WatchlistRow = memo(
         {formatSignedPercent(snapshot?.pct)}
       </span>
     );
-    const renderExtendedHoursBadge = () =>
-      extendedHoursDisplay ? (
-        <span
-          data-testid="watchlist-extended-hours"
-          title={`${extendedHoursDisplay.sessionLabel} move from regular close`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(4),
-            maxWidth: "100%",
-            color:
-              extendedHoursPositive == null
-                ? CSS_COLOR.textMuted
-                : extendedHoursPositive
-                  ? CSS_COLOR.green
-                  : CSS_COLOR.red,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontVariantNumeric: "tabular-nums",
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1,
-            opacity:
-              extendedHoursDisplay.delayed ||
-              extendedHoursDisplay.freshness === "stale"
-                ? 0.72
-                : 1,
-            whiteSpace: "nowrap",
-          }}
-        >
-          <span style={{ color: CSS_COLOR.textMuted }}>
-            {extendedHoursDisplay.sessionLabel}
-          </span>
-          <span>{formatQuotePrice(extendedHoursDisplay.price)}</span>
-          <span>
-            {formatSignedQuoteMove(extendedHoursDisplay.change)} (
-            {formatSignedPercent(extendedHoursDisplay.changePercent)})
-          </span>
-        </span>
-      ) : null;
     const renderSignalPill = () =>
       hasSignal ? (
         <AppTooltip
@@ -581,15 +541,15 @@ const WatchlistRow = memo(
           style={{
             ...motionRowStyle(itemIndex, 7, 140),
             ...motionVars({
+              // Match the desktop row: accent follows P&L (green/red); buy/sell
+              // direction stays on the signal pill/dots per DESIGN.md.
               accent: selectedRow
                 ? CSS_COLOR.accent
-                : hasSignal
-                  ? signalColor
-                  : pctPositive == null
-                    ? CSS_COLOR.accent
-                    : pctPositive
-                      ? CSS_COLOR.green
-                      : CSS_COLOR.red,
+                : pctPositive == null
+                  ? CSS_COLOR.accent
+                  : pctPositive
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.red,
             }),
             width: "100%",
             height: 44,
@@ -699,6 +659,7 @@ const WatchlistRow = memo(
         data-testid="watchlist-row"
         data-symbol={item.sym}
         data-source={item.source}
+        title={extendedHoursSummary || undefined}
         className={joinMotionClasses(
           "ra-row-enter",
           "ra-interactive",
@@ -728,21 +689,23 @@ const WatchlistRow = memo(
         style={{
           ...motionRowStyle(itemIndex, 7, 140),
           ...motionVars({
+            // Row hover/focus accent follows financial outcome (green/red) per
+            // DESIGN.md. Directional buy/sell (blue/red) stays on the signal
+            // pill and dots so the two color languages never collide on one
+            // element or read differently from one row to the next.
             accent: selectedRow
               ? CSS_COLOR.accent
-              : hasSignal
-                ? signalColor
-                : pctPositive == null
-                  ? CSS_COLOR.accent
-                  : pctPositive
-                    ? CSS_COLOR.green
-                    : CSS_COLOR.red,
+              : pctPositive == null
+                ? CSS_COLOR.accent
+                : pctPositive
+                  ? CSS_COLOR.green
+                  : CSS_COLOR.red,
           }),
           display: "grid",
           gridTemplateColumns: [
             selectionMode ? `${dim(20)}px` : null,
             "minmax(0,1fr)",
-            item.monitoredOnly ? `${dim(26)}px` : null,
+            reserveAddColumn ? `${dim(26)}px` : null,
           ].filter(Boolean).join(" "),
           gap: sp(4),
           padding: sp("9px 6px"),
@@ -866,7 +829,7 @@ const WatchlistRow = memo(
                   fontFamily: T.sans,
                   fontSize: textSize("paragraphMuted"),
                   fontVariantNumeric: "tabular-nums",
-                  fontWeight: FONT_WEIGHTS.regular,
+                  fontWeight: FONT_WEIGHTS.medium,
                   textAlign: "right",
                   padding: sp("1px 2px"),
                   borderRadius: dim(RADII.xs),
@@ -879,7 +842,6 @@ const WatchlistRow = memo(
                 fontSize: textSize("caption"),
                 justifySelf: "end",
               })}
-              {renderExtendedHoursBadge()}
             </span>
           </div>
         </div>
@@ -911,6 +873,10 @@ const WatchlistRow = memo(
               <Plus size={13} />
             </button>
           </AppTooltip>
+        ) : reserveAddColumn ? (
+          // Keep the add-button column reserved on non-monitored rows so prices
+          // and sparklines stay vertically aligned down a mixed list.
+          <span aria-hidden="true" style={{ width: dim(26), justifySelf: "end" }} />
         ) : null}
       </div>
     );
@@ -1037,6 +1003,13 @@ export const Watchlist = ({
       sortDirection,
       sortMode,
     ],
+  );
+  // Reserve the trailing add-button column on every row only when the list
+  // actually contains monitored-only rows, so a mixed list stays aligned
+  // without padding an all-watchlist list with dead space.
+  const reserveAddColumn = useMemo(
+    () => sorted.some((item) => item.monitoredOnly),
+    [sorted],
   );
   const itemOrder = useMemo(
     () => new Map(items.map((item, index) => [item.key || item.id || item.sym, index])),
@@ -1837,6 +1810,7 @@ export const Watchlist = ({
               density={density}
               selectionMode={selectionMode}
               selectedForRemoval={Boolean(item.id && selectedItemIds.has(item.id))}
+              reserveAddColumn={reserveAddColumn}
             />
           );
         })}
