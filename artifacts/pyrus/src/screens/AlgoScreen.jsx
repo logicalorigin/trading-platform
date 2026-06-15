@@ -1294,15 +1294,6 @@ export const AlgoScreen = ({
       return;
     }
 
-    if (!gatewayReady) {
-      toast.push({
-        kind: "warn",
-        title: "Data bridge required",
-        body: "Start the IB Gateway bridge before creating a signal-options paper deployment.",
-      });
-      return;
-    }
-
     if (!activeAccountId) {
       toast.push({
         kind: "warn",
@@ -1335,15 +1326,6 @@ export const AlgoScreen = ({
   };
 
   const handleToggleDeployment = (deployment) => {
-    if (!deployment.enabled && !gatewayReady) {
-      toast.push({
-        kind: "warn",
-        title: "Data bridge required",
-        body: "Start the IB Gateway bridge before enabling a signal-options paper deployment.",
-      });
-      return;
-    }
-
     if (deployment.enabled) {
       pauseDeploymentMutation.mutate({ deploymentId: deployment.id });
       return;
