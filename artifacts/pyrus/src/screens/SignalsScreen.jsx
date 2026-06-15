@@ -4624,11 +4624,26 @@ export default function SignalsScreen({
     markSignalsRouteDataTiming,
   ]);
 
+  // The signals matrix (pushed/stored states) is the source of truth for this
+  // table. A transient profile/events/state read error must NOT blank a table
+  // that still has signal data to show — the KPI strip already renders from the
+  // same states, so the table must too. Only surface "Signals unavailable" when
+  // we genuinely have no signal data AND a read failed.
+  const hasSignalData =
+    rows.length > 0 ||
+    (Array.isArray(stateResponse.states) && stateResponse.states.length > 0) ||
+    (Array.isArray(signalMatrixStates) && signalMatrixStates.length > 0);
+  // For the same reason, never hold the table behind a loading spinner once the
+  // matrix already has signal data. Wait only when there is genuinely nothing to
+  // show yet — e.g. the profile read is still settling the saved column setup,
+  // which hydrates a tick later without blocking the matrix itself.
   const loading =
-    (!stateResponseReady && effectiveStateLoading) ||
-    (!profile && effectiveProfileLoading);
+    !hasSignalData &&
+    ((!stateResponseReady && effectiveStateLoading) ||
+      (!profile && effectiveProfileLoading));
   const errored =
-    effectiveStateIsError || effectiveProfileIsError || eventsQuery.isError;
+    !hasSignalData &&
+    (effectiveStateIsError || effectiveProfileIsError || eventsQuery.isError);
   useEffect(() => {
     if (!active || loading || errored) {
       return;
