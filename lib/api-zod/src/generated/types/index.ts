@@ -538,6 +538,7 @@ export * from './sessionRuntime';
 export * from './signalMonitorBreadthHistoryPoint';
 export * from './signalMonitorBreadthHistoryRange';
 export * from './signalMonitorBreadthHistoryResponse';
+export * from './signalMonitorBreadthHistoryTimeframeSeries';
 export * from './signalMonitorDirection';
 export * from './signalMonitorEvent';
 export * from './signalMonitorEventsResponse';

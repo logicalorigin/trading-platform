@@ -127,38 +127,10 @@ const buildChartOptions = ({ compact }) => ({
   handleScale: false,
 });
 
-const buildNavSeriesOptions = (accentColor, currency, maskValues, chartMode) => {
-  const resolvedAccent = chartColor(accentColor, THEMES.dark.accent);
-  return {
-    priceScaleId: NAV_PRICE_SCALE_ID,
-    lineColor: resolvedAccent,
-    topColor: chartColorAlpha(accentColor, "48", THEMES.dark.accent),
-    bottomColor: chartColorAlpha(accentColor, "05", THEMES.dark.accent),
-    lineWidth: 2,
-    lineType: 0,
-    priceLineVisible: false,
-    lastValueVisible: true,
-    crosshairMarkerVisible: true,
-    crosshairMarkerRadius: 4,
-    crosshairMarkerBorderColor: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1),
-    crosshairMarkerBackgroundColor: resolvedAccent,
-    priceFormat: {
-      type: "custom",
-      formatter: buildPriceFormatter(chartMode, currency, maskValues),
-      minMove: 0.01,
-    },
-  };
-};
-
-const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
+// Fields shared by the NAV (area) and PnL (baseline) price series. Each builder
+// spreads this then adds/overrides its own series-type-specific options.
+const buildPriceSeriesBase = (chartMode, currency, maskValues) => ({
   priceScaleId: NAV_PRICE_SCALE_ID,
-  baseValue: { type: "price", price: 0 },
-  topLineColor: chartColor(CSS_COLOR.green, THEMES.dark.green),
-  topFillColor1: chartColorAlpha(CSS_COLOR.green, "3b", THEMES.dark.green),
-  topFillColor2: chartColorAlpha(CSS_COLOR.green, "05", THEMES.dark.green),
-  bottomLineColor: chartColor(CSS_COLOR.red, THEMES.dark.red),
-  bottomFillColor1: chartColorAlpha(CSS_COLOR.red, "05", THEMES.dark.red),
-  bottomFillColor2: chartColorAlpha(CSS_COLOR.red, "3b", THEMES.dark.red),
   lineWidth: 2,
   priceLineVisible: false,
   lastValueVisible: true,
@@ -170,6 +142,29 @@ const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
     formatter: buildPriceFormatter(chartMode, currency, maskValues),
     minMove: 0.01,
   },
+});
+
+const buildNavSeriesOptions = (accentColor, currency, maskValues, chartMode) => {
+  const resolvedAccent = chartColor(accentColor, THEMES.dark.accent);
+  return {
+    ...buildPriceSeriesBase(chartMode, currency, maskValues),
+    lineColor: resolvedAccent,
+    topColor: chartColorAlpha(accentColor, "48", THEMES.dark.accent),
+    bottomColor: chartColorAlpha(accentColor, "05", THEMES.dark.accent),
+    lineType: 0,
+    crosshairMarkerBackgroundColor: resolvedAccent,
+  };
+};
+
+const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
+  ...buildPriceSeriesBase(chartMode, currency, maskValues),
+  baseValue: { type: "price", price: 0 },
+  topLineColor: chartColor(CSS_COLOR.green, THEMES.dark.green),
+  topFillColor1: chartColorAlpha(CSS_COLOR.green, "3b", THEMES.dark.green),
+  topFillColor2: chartColorAlpha(CSS_COLOR.green, "05", THEMES.dark.green),
+  bottomLineColor: chartColor(CSS_COLOR.red, THEMES.dark.red),
+  bottomFillColor1: chartColorAlpha(CSS_COLOR.red, "05", THEMES.dark.red),
+  bottomFillColor2: chartColorAlpha(CSS_COLOR.red, "3b", THEMES.dark.red),
 });
 
 const buildBenchmarkSeriesOptions = (benchmark) => ({

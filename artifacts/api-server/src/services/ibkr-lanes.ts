@@ -159,6 +159,7 @@ const governorCategories = [
   "account",
   "orders",
   "options",
+  "optionsScanner",
   "bars",
   "quotes",
 ] as const satisfies BridgeWorkCategory[];

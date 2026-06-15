@@ -3,6 +3,7 @@ import {
   Bot,
   CheckCircle2,
   CircleAlert,
+  X,
   XCircle,
 } from "lucide-react";
 import React from "react";
@@ -13,6 +14,14 @@ import {
   normalizeToastKind,
   TOAST_OVERLAY_Z_INDEX,
 } from "./toastModel.js";
+
+const KIND_LABELS = {
+  success: "Success",
+  error: "Error",
+  warn: "Warning",
+  algo: "Algo",
+  info: "Info",
+};
 
 export const resolveToastVisuals = (kind) => {
   const normalizedKind = normalizeToastKind(kind);
@@ -50,6 +59,8 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
     >
       {toasts.map((toast) => {
         const { kind, color, Icon: ToastIcon } = resolveToastVisuals(toast.kind);
+        const kindLabel = KIND_LABELS[kind] || KIND_LABELS.info;
+        const dismiss = () => onDismiss?.(toast.id);
         return (
           <AppTooltip key={toast.id} content="Click to dismiss">
             <div
@@ -57,17 +68,19 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
               data-toast-kind={kind}
               role={isAlertToastKind(kind) ? "alert" : "status"}
               aria-atomic="true"
-              onClick={() => onDismiss?.(toast.id)}
+              onClick={dismiss}
               className="ra-h-toast"
               style={{
+                position: "relative",
+                overflow: "hidden",
                 background: CSS_COLOR.bg1,
                 border: `1px solid ${cssColorMix(color, 20)}`,
                 "--toast-h-bg": cssColorMix(color, 6),
                 "--toast-h-bd": cssColorMix(color, 33),
-                borderRadius: dim(RADII.xs),
-                padding: sp("8px 10px"),
-                minWidth: dim(244),
-                maxWidth: dim(330),
+                borderRadius: dim(RADII.sm),
+                padding: sp("8px 10px 8px 13px"),
+                minWidth: dim(252),
+                maxWidth: dim(340),
                 boxShadow: ELEVATION.sm,
                 animation: toast.leaving
                   ? "toastSlideOut 0.2s ease-in forwards"
@@ -78,6 +91,18 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                   "background var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease",
               }}
             >
+              {/* kind-colored accent rail */}
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: dim(3),
+                  background: color,
+                }}
+              />
               <div
                 style={{
                   display: "flex",
@@ -93,7 +118,7 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                     width: dim(20),
                     height: dim(20),
                     borderRadius: dim(RADII.xs),
-                    background: `${cssColorMix(color, 7)}`,
+                    background: `${cssColorMix(color, 12)}`,
                     color,
                     lineHeight: 1,
                     flexShrink: 0,
@@ -102,6 +127,18 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                   <ToastIcon size={dim(13)} strokeWidth={2.3} />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: textSize("label"),
+                      fontWeight: FONT_WEIGHTS.label,
+                      letterSpacing: "0.07em",
+                      textTransform: "uppercase",
+                      color,
+                      marginBottom: sp(1),
+                    }}
+                  >
+                    {kindLabel}
+                  </div>
                   <div
                     style={{
                       fontSize: textSize("paragraphMuted"),
@@ -126,19 +163,52 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                     </div>
                   ) : null}
                 </div>
-                <span
+                <button
+                  type="button"
+                  aria-label="Dismiss notification"
+                  className="ra-toast-close"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dismiss();
+                  }}
                   style={{
-                    fontSize: textSize("caption"),
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: dim(18),
+                    height: dim(18),
+                    flexShrink: 0,
+                    marginLeft: sp(2),
+                    marginTop: sp(1),
+                    padding: 0,
+                    border: "none",
+                    borderRadius: dim(RADII.xs),
+                    background: "transparent",
                     color: CSS_COLOR.textMuted,
-                    fontWeight: FONT_WEIGHTS.medium,
-                    opacity: 0.6,
-                    marginLeft: sp(4),
-                    marginTop: sp(2),
+                    cursor: "pointer",
+                    transition: "background var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease",
                   }}
                 >
-                  x
-                </span>
+                  <X size={dim(12)} strokeWidth={2.4} />
+                </button>
               </div>
+              {/* auto-dismiss progress bar (time remaining) */}
+              {!toast.leaving && Number.isFinite(toast.duration) && toast.duration > 0 ? (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: dim(2),
+                    background: color,
+                    opacity: 0.45,
+                    transformOrigin: "left center",
+                    animation: `toastProgress ${toast.duration}ms linear forwards`,
+                  }}
+                />
+              ) : null}
             </div>
           </AppTooltip>
         );

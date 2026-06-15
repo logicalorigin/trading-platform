@@ -155,7 +155,13 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
 let nextSubscriberId = 1;
 let nextSnapshotOwnerId = 1;
 let streamSignature = "";
-let streamUnsubscribes: Array<() => void> = [];
+type OptionStreamChunk = {
+  contracts: string[];
+  unsubscribe: () => void;
+  reconnectAttempt: number;
+  reconnectTimer: NodeJS.Timeout | null;
+};
+let streamChunks: OptionStreamChunk[] = [];
 let refreshTimer: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let retainedSnapshotDemandExpiryTimer: NodeJS.Timeout | null = null;
@@ -311,6 +317,22 @@ function capacityPressureFromError(
   return isIbkrBackpressureMessage(message)
     ? "backpressure"
     : "capacity_limited";
+}
+
+// A transient per-request fault (a 30s `/options/quotes` request timeout or a
+// stream stall under load) — recoverable by re-establishing the affected chunk,
+// not a reason to tear down every option subscription. Distinguished from
+// capacity pressure (real line-limit) and upstream-unavailable (market closed).
+function isTransientStreamError(error: unknown): boolean {
+  const message = readErrorMessage(error).toLowerCase();
+  return (
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("stalled") ||
+    message.includes("socket hang up") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout")
+  );
 }
 
 type LiveOptionQuotePolicy = {
@@ -836,15 +858,109 @@ function clearReconnectTimer() {
 }
 
 function stopStream() {
-  streamUnsubscribes.forEach((unsubscribe) => {
+  streamChunks.forEach((chunk) => {
+    if (chunk.reconnectTimer) {
+      clearTimeout(chunk.reconnectTimer);
+      chunk.reconnectTimer = null;
+    }
     try {
-      unsubscribe();
+      chunk.unsubscribe();
     } catch (error) {
       logger.warn({ err: error }, "Bridge option quote stream unsubscribe failed");
     }
   });
-  streamUnsubscribes = [];
+  streamChunks = [];
   streamSignature = "";
+}
+
+// Subscribe (or re-subscribe) a single option-quote chunk in its slot. Any prior
+// subscription in the slot is torn down first so re-establishment never leaks.
+function subscribeOptionChunk(
+  signature: string,
+  contracts: string[],
+  slot: number,
+): void {
+  const previous = streamChunks[slot];
+  if (previous) {
+    if (previous.reconnectTimer) {
+      clearTimeout(previous.reconnectTimer);
+      previous.reconnectTimer = null;
+    }
+    try {
+      previous.unsubscribe();
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Bridge option quote stream chunk unsubscribe failed",
+      );
+    }
+  }
+  const chunk: OptionStreamChunk = {
+    contracts,
+    unsubscribe: () => {},
+    reconnectAttempt: previous?.reconnectAttempt ?? 0,
+    reconnectTimer: null,
+  };
+  streamChunks[slot] = chunk;
+  chunk.unsubscribe = bridgeClient.streamOptionQuoteSnapshots(
+    { providerContractIds: contracts },
+    (quotes) => {
+      // A healthy quote batch clears this chunk's transient backoff.
+      chunk.reconnectAttempt = 0;
+      const cachedQuotes = quotes.flatMap((quote) => {
+        const cached = cacheQuote(quote);
+        return cached ? [cached] : [];
+      });
+      notifySubscribers(cachedQuotes);
+    },
+    (error) => handleChunkStreamError(signature, slot, error),
+    recordStreamSignal,
+  );
+}
+
+// One chunk's bridge stream failed. For a transient fault (request timeout /
+// stall) re-establish ONLY that chunk with per-chunk backoff, leaving the other
+// chunks — and the live option quotes they carry, including the Trade Options
+// Chain — subscribed. Tearing down the whole stream on a single chunk's 30s
+// timeout was the self-sustaining flap: every timeout dropped all option lines,
+// then the mass re-subscribe under load timed out again. Non-transient faults
+// (capacity pressure, upstream-unavailable, fatal) keep stream-wide handling.
+function handleChunkStreamError(
+  signature: string,
+  slot: number,
+  error: unknown,
+): void {
+  if (streamSignature !== signature) {
+    return;
+  }
+  if (!isTransientStreamError(error)) {
+    handleStreamError(signature, error);
+    return;
+  }
+  const chunk = streamChunks[slot];
+  if (!chunk) {
+    return;
+  }
+  lastError = readErrorMessage(error);
+  lastErrorAt = nowProvider();
+  reconnectCount += 1;
+  const attempt = chunk.reconnectAttempt;
+  chunk.reconnectAttempt = attempt + 1;
+  const delayMs = Math.min(
+    RECONNECT_DELAY_MAX_MS,
+    RECONNECT_DELAY_MIN_MS * 2 ** attempt,
+  );
+  if (chunk.reconnectTimer) {
+    clearTimeout(chunk.reconnectTimer);
+  }
+  chunk.reconnectTimer = setTimeout(() => {
+    chunk.reconnectTimer = null;
+    if (streamSignature !== signature) {
+      return;
+    }
+    subscribeOptionChunk(signature, chunk.contracts, slot);
+  }, delayMs);
+  chunk.reconnectTimer.unref?.();
 }
 
 function scheduleReconnect() {
@@ -990,22 +1106,10 @@ function refreshBridgeOptionQuoteStream() {
   const chunks = chunkValues(providerContractIds, OPTION_QUOTE_BRIDGE_CHUNK_SIZE);
 
   try {
-    streamUnsubscribes = chunks.map((chunk) =>
-      bridgeClient.streamOptionQuoteSnapshots(
-        {
-          providerContractIds: chunk,
-        },
-        (quotes) => {
-          const cachedQuotes = quotes.flatMap((quote) => {
-            const cached = cacheQuote(quote);
-            return cached ? [cached] : [];
-          });
-          notifySubscribers(cachedQuotes);
-        },
-        (error) => handleStreamError(nextSignature, error),
-        recordStreamSignal,
-      ),
-    );
+    streamChunks = [];
+    chunks.forEach((chunk, slot) => {
+      subscribeOptionChunk(nextSignature, chunk, slot);
+    });
   } catch (error) {
     handleStreamError(nextSignature, error);
   }
@@ -1568,8 +1672,8 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
     cachedQuoteCount: quoteCacheByProviderContractId.size,
     eventCount,
     reconnectCount,
-    activeBridgeStreamCount: streamUnsubscribes.length,
-    activeBridgeChunkCount: streamUnsubscribes.length,
+    activeBridgeStreamCount: streamChunks.length,
+    activeBridgeChunkCount: streamChunks.length,
     lastEventAt: lastEventAt?.toISOString() ?? null,
     lastEventAgeMs:
       lastEventMs === null ? null : Math.max(0, now - lastEventMs),
@@ -1577,7 +1681,7 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
     lastSignalAgeMs:
       lastSignalMs === null ? null : Math.max(0, now - lastSignalMs),
     streamActive: Boolean(
-      desiredProviderContractIds.length && streamUnsubscribes.length,
+      desiredProviderContractIds.length && streamChunks.length,
     ),
     reconnectScheduled: Boolean(reconnectTimer),
     desiredProviderContractIds: desiredProviderContractIds.slice(0, 100),

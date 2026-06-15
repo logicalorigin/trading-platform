@@ -617,11 +617,15 @@ export const useLiveMarketFlow = (
     );
   }, [aggregatedEvents, effectiveScannerConfig, userPreferences]);
   const hasLiveFlow = flowEvents.length > 0;
+  const scannerLoading = Boolean(
+    enabled &&
+      (aggregateFlowQuery.isLoading ||
+        scanState.isPending ||
+        (scanState.isFetching && scanState.cycle === 0)),
+  );
   const flowStatus = hasLiveFlow
     ? "live"
-    : aggregateFlowQuery.isLoading ||
-        scanState.isPending ||
-        (scanState.isFetching && scanState.cycle === 0)
+    : scannerLoading
       ? "loading"
       : failures.length > 0
         ? "offline"
@@ -678,7 +682,7 @@ export const useLiveMarketFlow = (
 
     let label = "No IBKR flow";
     let color = CSS_COLOR.textMuted;
-    if (scanState.isPending || (scanState.isFetching && scanState.cycle === 0)) {
+    if (scannerLoading) {
       label = "Loading flow";
       color = CSS_COLOR.accent;
     } else if (providerSet.has("ibkr") && providerSet.has("massive")) {

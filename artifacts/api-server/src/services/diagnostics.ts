@@ -2120,6 +2120,7 @@ async function buildAutomationMetrics(): Promise<{
   const deployments = Array.isArray(worker.deployments)
     ? worker.deployments
     : [];
+  const workerScanEnabled = worker.scanEnabled === true;
   const latestSuccessMs = deployments.reduce<number | null>(
     (latest, deployment) => {
       const time = timestampMs(asJsonRecord(deployment)["lastSuccessAt"]);
@@ -2128,29 +2129,35 @@ async function buildAutomationMetrics(): Promise<{
     null,
   );
   const latestScanAgeMs =
-    latestSuccessMs === null ? null : Math.max(0, nowMs - latestSuccessMs);
-  const staleScanCount = deployments.filter((deployment) => {
-    const lastSuccessAt = timestampMs(asJsonRecord(deployment)["lastSuccessAt"]);
-    return (
-      lastSuccessAt === null ||
-      nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS
-    );
-  }).length;
-  const inactiveStaleScanCount = deployments.filter((deployment) => {
-    const record = asJsonRecord(deployment);
-    const currentScanAgeMs = numeric(record["currentScanAgeMs"]);
-    const lastSuccessAt = timestampMs(record["lastSuccessAt"]);
-    return (
-      currentScanAgeMs === null &&
-      (lastSuccessAt === null ||
-        nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
-    );
-  }).length;
+    workerScanEnabled && latestSuccessMs !== null
+      ? Math.max(0, nowMs - latestSuccessMs)
+      : null;
+  const staleScanCount = workerScanEnabled
+    ? deployments.filter((deployment) => {
+        const lastSuccessAt = timestampMs(asJsonRecord(deployment)["lastSuccessAt"]);
+        return (
+          lastSuccessAt === null ||
+          nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS
+        );
+      }).length
+    : 0;
+  const inactiveStaleScanCount = workerScanEnabled
+    ? deployments.filter((deployment) => {
+        const record = asJsonRecord(deployment);
+        const currentScanAgeMs = numeric(record["currentScanAgeMs"]);
+        const lastSuccessAt = timestampMs(record["lastSuccessAt"]);
+        return (
+          currentScanAgeMs === null &&
+          (lastSuccessAt === null ||
+            nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
+        );
+      }).length
+    : 0;
   const activeScanAges = deployments
     .map((deployment) => numeric(asJsonRecord(deployment)["currentScanAgeMs"]))
     .filter((value): value is number => value !== null);
   const activeLongScanCount = activeScanAges.filter(
-    (ageMs) => ageMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS,
+    (ageMs) => workerScanEnabled && ageMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS,
   ).length;
   const activeMaxScanAgeMs =
     activeScanAges.length > 0 ? Math.max(...activeScanAges) : null;
@@ -2284,6 +2291,7 @@ async function buildAutomationMetrics(): Promise<{
   return {
     metrics: {
       workerRunning: worker.started === true,
+      workerScanEnabled,
       tickRunning: worker.tickRunning === true,
       deploymentCount: workerDeploymentCount,
       signalOptionsDeploymentCount,
@@ -2380,6 +2388,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const legacyEquityForwardEnabledCount =
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
+  const workerScanEnabled = metrics["workerScanEnabled"] === true;
   const activeMaxScanAgeMs = numeric(metrics["activeMaxScanAgeMs"]);
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
@@ -2404,7 +2413,8 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (
     gatewayBlockedCount >= 3 ||
     failureCount >= 3 ||
-    (activeLongScanCount === 0 &&
+    (workerScanEnabled &&
+      activeLongScanCount === 0 &&
       enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
       latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
@@ -2413,6 +2423,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   }
 
   if (
+    workerScanEnabled &&
     enabledDeployments > 0 &&
     (metrics["workerRunning"] !== true ||
       inactiveStaleScanCount > 0 ||
@@ -4004,6 +4015,7 @@ export async function collectDiagnosticSnapshot(
 
   const enabledAutomationDeployments =
     numeric(automation.metrics["enabledDeployments"]) ?? 0;
+  const workerScanEnabled = automation.metrics["workerScanEnabled"] === true;
   const inactiveStaleScanCount =
     numeric(automation.metrics["inactiveStaleScanCount"]) ??
     numeric(automation.metrics["staleScanCount"]) ??
@@ -4012,6 +4024,7 @@ export async function collectDiagnosticSnapshot(
     numeric(automation.metrics["activeLongScanCount"]) ?? 0;
 
   if (
+    workerScanEnabled &&
     enabledAutomationDeployments > 0 &&
     (automation.metrics["workerRunning"] !== true ||
       inactiveStaleScanCount > 0)
@@ -4034,7 +4047,11 @@ export async function collectDiagnosticSnapshot(
     });
   }
 
-  if (enabledAutomationDeployments > 0 && activeLongScanCount > 0) {
+  if (
+    workerScanEnabled &&
+    enabledAutomationDeployments > 0 &&
+    activeLongScanCount > 0
+  ) {
     activeEvents.push({
       subsystem: "automation",
       category: "worker",

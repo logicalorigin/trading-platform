@@ -28,6 +28,15 @@ const HEAVY_GET_PRIORITY: Record<string, number> = {
   "/api/options/chains": 10,
 };
 
+// Safety-net timeouts for idempotent GETs. An unresponsive backend otherwise
+// holds browser connections open indefinitely; under the per-origin connection
+// cap that starves every other request — including the JS module loads a screen
+// needs to finish rendering — so the UI freezes on a spinner with no error.
+// These are generous on purpose: they must not fire on a slow-but-valid
+// response, only on a truly hung one. Tunable.
+const DEFAULT_API_GET_TIMEOUT_MS = 20_000;
+const HEAVY_API_GET_TIMEOUT_MS = 45_000;
+
 // ---------------------------------------------------------------------------
 // Module-level configuration
 // ---------------------------------------------------------------------------
@@ -317,9 +326,34 @@ function resolveDefaultRequestTimeoutMs(
   input: RequestInfo | URL,
   method: string,
 ): number | null {
-  void input;
-  void method;
-  return null;
+  // Only idempotent GETs get an automatic timeout. Mutations
+  // (POST/PUT/PATCH/DELETE) must never be auto-aborted: a timed-out order or
+  // write leaves ambiguous server state, so those wait for an explicit response.
+  if (method !== "GET") {
+    return null;
+  }
+  const normalizedUrl = normalizeUrlForDedupe(input);
+  if (
+    !normalizedUrl ||
+    !(
+      normalizedUrl.pathname === "/api" ||
+      normalizedUrl.pathname.startsWith("/api/")
+    )
+  ) {
+    return null;
+  }
+  // Live streams are long-lived by design. They run over EventSource/WebSocket
+  // (not this fetch path), but guard the path anyway so a polling fallback is
+  // never capped.
+  if (normalizedUrl.pathname.startsWith("/api/streams/")) {
+    return null;
+  }
+  // Heavy data endpoints (bars, option chains, flow) can legitimately run long
+  // under load; give them more headroom before the safety net fires.
+  if (HEAVY_GET_PATHS.has(normalizedUrl.pathname)) {
+    return HEAVY_API_GET_TIMEOUT_MS;
+  }
+  return DEFAULT_API_GET_TIMEOUT_MS;
 }
 
 function isApiPath(input: RequestInfo | URL): boolean {

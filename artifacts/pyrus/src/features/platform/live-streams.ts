@@ -373,6 +373,10 @@ const OPTION_QUOTE_INTENT_PRIORITY: Record<OptionQuoteStreamIntent, number> = {
   "execution-live": 6,
 };
 
+const shouldUseSharedOptionQuoteStream = (
+  intent: OptionQuoteStreamIntent,
+): boolean => OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED && intent === "visible-live";
+
 let sharedOptionQuoteSubscriberId = 1;
 const sharedOptionQuoteSubscribers = new Map<
   number,
@@ -6952,7 +6956,7 @@ export const useIbkrOptionQuoteStream = ({
         });
     };
 
-    if (OPTION_QUOTE_SHARED_CLIENT_SOCKET_ENABLED) {
+    if (shouldUseSharedOptionQuoteStream(intent)) {
       return subscribeSharedOptionQuoteStream({
         underlying: normalizedUnderlying || null,
         providerContractIds: normalizedProviderContractIds,
@@ -7285,4 +7289,5 @@ export const __liveStreamsInternalsForTests = {
   primaryAccountPositionsUseLiveQuotes,
   resolveAlgoDeploymentsStreamCacheUpdate,
   resolveSharedOptionQuoteStreamDemand,
+  shouldUseSharedOptionQuoteStream,
 };

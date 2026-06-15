@@ -3,6 +3,7 @@ import test, { afterEach } from "node:test";
 
 import { HttpError } from "../lib/errors";
 import {
+  OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   __resetOptionChainCachesForTests,
   __runOptionsFlowScannerOnceForTests,
   __resolveOptionsFlowScannerTargetTickerSlotsForTests,
@@ -30,18 +31,22 @@ test("options flow scanner defaults scan each worker's budget", () => {
   const runtimeConfig = getOptionsFlowRuntimeConfig();
   const diagnostics = getOptionsFlowScannerDiagnostics();
 
+  assert.equal(
+    runtimeConfig.scannerMetadataTimeoutMs,
+    OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
+  );
   assert.equal(runtimeConfig.scannerBatchSize, 8);
   assert.equal(diagnostics.lineBudget, 200);
-  assert.equal(diagnostics.lineUtilization.scannerTargetLineBudget, 159);
+  assert.equal(diagnostics.lineUtilization.scannerTargetLineBudget, 200);
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 8);
-  assert.equal(diagnostics.seedLineBudget, 20);
-  assert.equal(diagnostics.expandedLineBudget, 20);
-  assert.equal(diagnostics.lineUtilization.effectiveDeepLineBudget, 20);
-  assert.equal(diagnostics.lineUtilization.perTickerLiveContractLimit, 20);
+  assert.equal(diagnostics.seedLineBudget, 25);
+  assert.equal(diagnostics.expandedLineBudget, 25);
+  assert.equal(diagnostics.lineUtilization.effectiveDeepLineBudget, 25);
+  assert.equal(diagnostics.lineUtilization.perTickerLiveContractLimit, 25);
   assert.equal(
     __resolveOptionsFlowScannerTargetTickerSlotsForTests({
-      scannerTargetLineBudget: 159,
-      perTickerLineBudget: 20,
+      scannerTargetLineBudget: 200,
+      perTickerLineBudget: 25,
       eligibleOptionableTickerCount: 741,
     }),
     8,

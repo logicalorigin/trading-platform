@@ -382,9 +382,16 @@ export function useDenseVirtualRows({
 }) {
   const scrollRef = useRef(null);
   const lastScrollRequestRef = useRef(null);
+  // Hold the (frequently re-created) estimateSize callback in a ref so this
+  // callback's identity stays stable. Otherwise it changes on every render
+  // (estimateSize depends on virtualRows -> rows, which is a fresh array each
+  // live tick), which made the measure() effect below re-run on every render
+  // and every scroll frame — forcing a full virtualizer re-measure (jank).
+  const estimateSizeRef = useRef(estimateSize);
+  estimateSizeRef.current = estimateSize;
   const estimateItemSize = useCallback(
-    (index) => estimateSize?.(index) ?? rowHeight,
-    [estimateSize, rowHeight],
+    (index) => estimateSizeRef.current?.(index) ?? rowHeight,
+    [rowHeight],
   );
   const rowVirtualizer = useVirtualizer({
     count,

@@ -485,7 +485,7 @@ test("account page positions query keys request fast real-account positions firs
   );
 });
 
-test("shared option quote stream demand unions active hook subscriptions", () => {
+test("shared option quote stream demand unions visible hook subscriptions", () => {
   const demand =
     __liveStreamsInternalsForTests.resolveSharedOptionQuoteStreamDemand([
       {
@@ -496,19 +496,40 @@ test("shared option quote stream demand unions active hook subscriptions", () =>
         requiresGreeks: false,
       },
       {
-        underlying: "TSLA",
+        underlying: "NVDA",
         providerContractIds: ["102", "201"],
-        owner: "execution-tsla",
-        intent: "execution-live",
+        owner: "visible-nvda-depth",
+        intent: "visible-live",
         requiresGreeks: true,
       },
     ]);
 
   assert.deepEqual(demand.providerContractIds, ["101", "102", "201"]);
-  assert.equal(demand.underlying, null);
+  assert.equal(demand.underlying, "NVDA");
   assert.equal(demand.owner, "shared-option-quotes:3-contracts");
-  assert.equal(demand.intent, "execution-live");
+  assert.equal(demand.intent, "visible-live");
   assert.equal(demand.requiresGreeks, true);
+});
+
+test("shared option quote sockets are limited to visible chain demand", () => {
+  assert.equal(
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("visible-live"),
+    true,
+  );
+  assert.equal(
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("execution-live"),
+    false,
+  );
+  assert.equal(
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream(
+      "account-monitor-live",
+    ),
+    false,
+  );
+  assert.equal(
+    __liveStreamsInternalsForTests.shouldUseSharedOptionQuoteStream("automation-live"),
+    false,
+  );
 });
 
 test("signal matrix stream url omits requestOrigin (backend rejects unknown origins with 400)", () => {

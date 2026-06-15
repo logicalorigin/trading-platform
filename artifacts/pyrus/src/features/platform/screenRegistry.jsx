@@ -6,6 +6,7 @@ import {
   preloadScreenModule,
 } from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
+import { LoadingSpinner } from "../../components/platform/primitives";
 export { SCREEN_BOOT_DATA_DEPS } from "./bootPolicy.js";
 
 const createPreloadableScreen = (screenId, label) => {
@@ -97,7 +98,25 @@ const createPreloadableScreen = (screenId, label) => {
     ) : props?.isVisible === false ? (
       null
     ) : (
-      null
+      // Module is still loading. Render a centered spinner instead of null so a
+      // navigation to a not-yet-loaded screen shows a loader, not a black panel
+      // on the dark app canvas while the chunk resolves.
+      <div
+        data-testid={`screen-loading-${screenId}`}
+        role="status"
+        aria-label={`Loading ${label}`}
+        style={{
+          minHeight: 240,
+          width: "100%",
+          height: "100%",
+          flex: 1,
+          display: "grid",
+          placeItems: "center",
+          background: "var(--background, #050814)",
+        }}
+      >
+        <LoadingSpinner size={22} />
+      </div>
     );
   };
 };
@@ -160,10 +179,6 @@ export const SCREEN_RENDER_POLICIES = {
   diagnostics: { retainInactive: false },
   settings: { retainInactive: false },
 };
-
-export const SCREEN_SHELL_WARM_MOUNT_ORDER = SCREEN_MODULE_PRELOAD_ORDER.filter(
-  (screenId) => SCREEN_RENDER_POLICIES[screenId]?.retainInactive === true,
-);
 
 export { getScreenModulePreloadSnapshot, preloadScreenModule };
 

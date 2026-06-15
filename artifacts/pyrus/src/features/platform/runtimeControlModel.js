@@ -80,7 +80,7 @@ const formatScannerReason = (reason) => {
     return "no scanner lines available";
   }
   if (reason === "protected-trade-options-chain-demand") {
-    return `${TRADE_OPTIONS_CHAIN_LABEL} reserve`;
+    return `${TRADE_OPTIONS_CHAIN_LABEL} active demand`;
   }
   if (reason === "scanner-refill-needed") {
     return "scanner refill needed";
@@ -563,6 +563,24 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   return null;
 };
 
+const firstBridgeLineNumber = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+};
+
+const bridgeLineUsageState = (used, cap, degraded = false) => {
+  if (degraded) return "capacity-limited";
+  if (!Number.isFinite(used) || !Number.isFinite(cap)) {
+    return "no-subscribers";
+  }
+  if (cap <= 0) return used > 0 ? "capacity-limited" : "no-subscribers";
+  return "healthy";
+};
+
 const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
   const bridge =
     lineUsageSnapshot?.bridge && typeof lineUsageSnapshot.bridge === "object"
@@ -573,16 +591,16 @@ const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
     typeof bridge.diagnostics.subscriptions === "object"
       ? bridge.diagnostics.subscriptions
       : {};
-  const used = firstFiniteNumber(
+  const used = firstBridgeLineNumber(
     bridge.activeLineCount,
     subscriptions.activeQuoteSubscriptions,
   );
-  const cap = firstFiniteNumber(
+  const cap = firstBridgeLineNumber(
     bridge.lineBudget,
     subscriptions.marketDataLineBudget,
     admission?.budget?.bridgeLineBudget,
   );
-  const free = firstFiniteNumber(
+  const free = firstBridgeLineNumber(
     bridge.remainingLineCount,
     subscriptions.marketDataLineBudgetRemaining,
     Number.isFinite(used) && Number.isFinite(cap) ? cap - used : null,
@@ -593,7 +611,7 @@ const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
       : "unknown";
   const degraded = pressure === "degraded" || pressure === "backoff" || pressure === "stalled";
   const available = Number.isFinite(used) || Number.isFinite(cap);
-  const streamState = lineUsageState(used, cap, degraded);
+  const streamState = bridgeLineUsageState(used, cap, degraded);
   return {
     available,
     used,
@@ -620,6 +638,7 @@ const normalizeLineDrift = (lineUsageSnapshot) => {
     : "unknown";
   const labels = {
     matched: "matched",
+    settling: "settling",
     api_active_bridge_missing: "pending bridge",
     api_released_bridge_active: "line drift",
     mixed: "mixed drift",
@@ -628,6 +647,8 @@ const normalizeLineDrift = (lineUsageSnapshot) => {
   const state =
     status === "matched"
       ? "healthy"
+      : status === "settling"
+        ? "checking"
       : status === "unknown"
         ? "no-subscribers"
         : "capacity-limited";
@@ -894,7 +915,6 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
     tradeOptionsChainReserveLineCount: firstFiniteNumber(
       allocation.tradeOptionsChainReserveLineCount,
       pressure.tradeOptionsChainReserveLineCount,
-      admission?.budget?.visibleOptionQuoteLineReserve,
     ),
     optionReserveLineCount: firstFiniteNumber(
       allocation.optionReserveLineCount,
@@ -1171,6 +1191,29 @@ export const sumAdmissionActions = (admission, actions) => {
   }, 0);
 };
 
+const isExpectedLineRotationDemotion = (event) =>
+  event?.action === "demoted" &&
+  (event.reason === "flow_scanner_rotated" ||
+    event.reason === "flow_scanner_underlying_rotated");
+
+export const countAdmissionWarnings = (admission) => {
+  const recentEvents = Array.isArray(admission?.recentEvents)
+    ? admission.recentEvents
+    : null;
+  if (recentEvents) {
+    return recentEvents.reduce((total, event) => {
+      if (!event || typeof event !== "object") return total;
+      if (event.action === "rejected") return total + 1;
+      if (event.action === "demoted" && !isExpectedLineRotationDemotion(event)) {
+        return total + 1;
+      }
+      return total;
+    }, 0);
+  }
+
+  return sumAdmissionActions(admission, ["rejected"]);
+};
+
 export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = null) => {
   if (!admission || typeof admission !== "object") {
     const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, null);
@@ -1213,7 +1256,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const budget = admission.budget || {};
   const poolUsage = admission.poolUsage || {};
   const legacyAdmission = !hasAccountMonitorAdmission(admission);
-  const warnings = sumAdmissionActions(admission, ["rejected", "demoted"]);
+  const warnings = countAdmissionWarnings(admission);
   const pressure = normalizeLinePressure(admission);
   const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, admission);
   const drift = normalizeLineDrift(lineUsageSnapshot);
@@ -1535,6 +1578,15 @@ export const buildRuntimeControlSnapshot = ({
       mode: flowScannerControl?.config?.mode ?? null,
       scope: flowScannerControl?.config?.scope ?? null,
       lineUsage: lineUsage.flowScanner,
+      // Structured session-quiet signal so consumers can distinguish "blocked
+      // because the market session is quiet" from "enabled but stuck".
+      sessionBlockedReason:
+        admission?.optionsFlowScanner?.backgroundBlockedReason ===
+          "market-session-quiet" ||
+        admission?.optionsFlowScanner?.sessionBlockReason ===
+          "market-session-quiet"
+          ? "market-session-quiet"
+          : null,
     },
     workSchedule: workSchedule || null,
     memoryPressure: memoryPressure || null,

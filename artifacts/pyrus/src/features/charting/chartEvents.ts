@@ -1,4 +1,5 @@
 import { getChartTimeframeStepMs } from "./timeframes";
+import { finiteNumber } from "./utils/numeric";
 
 export type ChartEventType = "unusual_flow" | "earnings";
 export type ChartEventPlacement = "bar" | "timescale";
@@ -80,15 +81,6 @@ export type FlowEventSourceBasis =
 export type FlowEventChartLoadedWindow = {
   fromMs: number;
   toMs: number;
-};
-
-const finiteNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 };
 
 const severityRank: Record<ChartEventSeverity, number> = {

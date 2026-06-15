@@ -222,3 +222,81 @@ test("option stream Output exceeded pressure sheds flow scanner demand", async (
 
   unsubscribe();
 });
+
+test("a transient option-stream timeout does not shed the scanner or tear down the chunk", async () => {
+  __resetBridgeOptionQuoteStreamForTests();
+  __resetBridgeGovernorForTests();
+  __resetMarketDataAdmissionForTests();
+  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
+
+  let onStreamError: ((error: unknown) => void) | null = null;
+  let unsubscribeCount = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws" as const,
+        marketDataMode: "live" as const,
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [];
+    },
+    streamOptionQuoteSnapshots(_input, _onQuotes, onError) {
+      onStreamError = onError ?? null;
+      // The unsubscribe call is the teardown signal: the flap was every option
+      // line being unsubscribed on one chunk's timeout.
+      return () => {
+        unsubscribeCount += 1;
+      };
+    },
+  });
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 20,
+    flowScannerConcurrency: 1,
+  });
+  admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 10 }, (_, index) => ({
+      assetClass: "option",
+      symbol: "SPY",
+      providerContractId: `SPY-C-${index}`,
+    })),
+    fallbackProvider: "none",
+  });
+
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    {
+      underlying: "SPY",
+      providerContractIds: ["visible-contract"],
+      owner: "trade-option-chain:SPY",
+      intent: "visible-live",
+      requiresGreeks: true,
+      fallbackProvider: "none",
+    },
+    () => {},
+  );
+  const streamError = await waitForStreamErrorHook(() => onStreamError);
+
+  streamError(
+    new Error(
+      "IBKR bridge request to /options/quotes timed out after 30000ms.",
+    ),
+  );
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  // A transient request timeout must NOT be treated as capacity pressure, so the
+  // one-shot scanner shed never fires (this was half the flap).
+  assert.equal(diagnostics.pressure.ibkrPressure, null);
+  // ...and it must NOT tear down the live chunk: the other option lines (incl.
+  // the Trade Options Chain) stay subscribed while only the failed chunk retries.
+  assert.equal(unsubscribeCount, 0);
+  // The timeout is still surfaced as the stream's lastError for visibility.
+  assert.match(
+    __getBridgeOptionQuoteLastErrorForTests() ?? "",
+    /timed out/,
+  );
+
+  unsubscribe();
+});

@@ -5003,11 +5003,11 @@ export const GetSignalMonitorStateResponse = zod.object({
  */
 export const ListSignalMonitorBreadthHistoryQueryParams = zod.object({
   "environment": zod.enum(['paper', 'live']).optional(),
-  "range": zod.enum(['day', 'week']).optional()
+  "range": zod.enum(['hour', 'day', 'week', 'month']).optional()
 })
 
 export const ListSignalMonitorBreadthHistoryResponse = zod.object({
-  "range": zod.enum(['day', 'week']),
+  "range": zod.enum(['hour', 'day', 'week', 'month']),
   "from": zod.coerce.date(),
   "to": zod.coerce.date(),
   "generatedAt": zod.coerce.date(),
@@ -5018,6 +5018,16 @@ export const ListSignalMonitorBreadthHistoryResponse = zod.object({
   "sell": zod.number(),
   "net": zod.number(),
   "total": zod.number()
+})),
+  "timeframes": zod.array(zod.object({
+  "timeframe": zod.string(),
+  "points": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "buy": zod.number(),
+  "sell": zod.number(),
+  "net": zod.number(),
+  "total": zod.number()
+}))
 }))
 })
 

@@ -1,5 +1,4 @@
-const SHADOW_ENTRY_EVENT = "signal_options_shadow_entry";
-const SHADOW_EXIT_EVENT = "signal_options_shadow_exit";
+import { formatEnumLabel } from "../../lib/formatters";
 
 const readNumber = (value) => {
   const number =
@@ -11,32 +10,78 @@ const readNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
-export function buildAlgoEventToast(event) {
-  if (event?.eventType === SHADOW_ENTRY_EVENT) {
-    return {
-      kind: "success",
-      title: event.summary,
-      body: "Algo entry filled",
-      duration: 5000,
-    };
-  }
+const formatSignedUsd = (value) =>
+  `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
 
-  if (event?.eventType === SHADOW_EXIT_EVENT) {
-    const pnl = readNumber(event.payload?.pnl);
+// Categorize by event-type suffix so this stays robust across the algo event
+// family (e.g. signal_options_shadow_exit, signal_options_gateway_blocked,
+// signal_options_candidate_skipped). High-frequency mark/candidate events
+// return null so they never toast.
+const categorize = (eventType) => {
+  const type = String(eventType || "");
+  if (type.endsWith("_exit")) return "exit";
+  if (type.endsWith("_entry")) return "entry";
+  if (type.endsWith("_blocked")) return "blocked";
+  if (type.endsWith("_skipped")) return "skipped";
+  return null;
+};
+
+// Drop the verbose "signal_options_" prefix, matching the notifications drawer.
+const eventLabel = (eventType) => {
+  const stripped = String(eventType || "").replace(/^signal_options_/, "");
+  return formatEnumLabel(stripped || eventType || "event");
+};
+
+export function buildAlgoEventToast(event) {
+  const category = categorize(event?.eventType);
+  if (!category) return null;
+
+  const summary =
+    typeof event?.summary === "string" && event.summary.trim()
+      ? event.summary.trim()
+      : "";
+  const symbol = typeof event?.symbol === "string" ? event.symbol.trim() : "";
+  const label = eventLabel(event?.eventType);
+  const title = symbol ? `${symbol} · ${label}` : label;
+
+  if (category === "exit") {
+    const pnl = readNumber(event?.payload?.pnl);
     const kind =
       pnl == null ? "info" : pnl > 0 ? "success" : pnl < 0 ? "error" : "info";
+    // Exit summaries carry the price/reason but not the PnL, so lead the body
+    // with the realized PnL when we have it.
     const body =
       pnl == null
-        ? "Algo exit filled"
-        : `Algo exit · PnL ${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`;
+        ? summary || "Exit filled"
+        : summary
+          ? `PnL ${formatSignedUsd(pnl)} · ${summary}`
+          : `Exit · PnL ${formatSignedUsd(pnl)}`;
+    return { kind, title, body, duration: 5000 };
+  }
 
+  if (category === "entry") {
     return {
-      kind,
-      title: event.summary,
-      body,
+      kind: "success",
+      title,
+      body: summary || "Entry filled",
       duration: 5000,
     };
   }
 
-  return null;
+  if (category === "blocked") {
+    return {
+      kind: "warn",
+      title,
+      body: summary || "Scan blocked",
+      duration: 6000,
+    };
+  }
+
+  // skipped
+  return {
+    kind: "info",
+    title,
+    body: summary || "Candidate skipped",
+    duration: 4000,
+  };
 }

@@ -5147,8 +5147,10 @@ export type SignalMonitorBreadthHistoryRange = typeof SignalMonitorBreadthHistor
 
 
 export const SignalMonitorBreadthHistoryRange = {
+  hour: 'hour',
   day: 'day',
   week: 'week',
+  month: 'month',
 } as const;
 
 export interface SignalMonitorBreadthHistoryPoint {
@@ -5159,6 +5161,11 @@ export interface SignalMonitorBreadthHistoryPoint {
   total: number;
 }
 
+export interface SignalMonitorBreadthHistoryTimeframeSeries {
+  timeframe: string;
+  points: SignalMonitorBreadthHistoryPoint[];
+}
+
 export interface SignalMonitorBreadthHistoryResponse {
   range: SignalMonitorBreadthHistoryRange;
   from: string;
@@ -5166,6 +5173,7 @@ export interface SignalMonitorBreadthHistoryResponse {
   generatedAt: string;
   bucketMinutes: number;
   points: SignalMonitorBreadthHistoryPoint[];
+  timeframes: SignalMonitorBreadthHistoryTimeframeSeries[];
 }
 
 export type SignalMonitorStateResponseCacheStatus = typeof SignalMonitorStateResponseCacheStatus[keyof typeof SignalMonitorStateResponseCacheStatus];

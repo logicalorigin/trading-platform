@@ -1,4 +1,7 @@
-export const SPARKLINE_RENDER_POINT_LIMIT = 40;
+// Capped at 24: inline sparklines are <=~120px wide (table cells are 58px), so
+// more points add path/plot/color-mapping work and larger bar payloads without
+// any visible detail (~2.4px per point at 58px). Applies app-wide.
+export const SPARKLINE_RENDER_POINT_LIMIT = 24;
 export const TABLE_SPARKLINE_WIDTH = 58;
 export const TABLE_SPARKLINE_HEIGHT = 16;
 export const TABLE_SPARKLINE_COMPACT_WIDTH = 44;

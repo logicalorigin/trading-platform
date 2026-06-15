@@ -214,7 +214,6 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           safeQaMode={safeQaMode}
           isVisible={tradeDataActive}
-          isRetained={screen !== "trade"}
           onReadinessChange={buildReadinessHandler("trade")}
         />
       );

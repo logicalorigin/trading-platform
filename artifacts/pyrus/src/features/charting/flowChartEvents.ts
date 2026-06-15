@@ -1,5 +1,6 @@
 import type { ChartEvent, ChartEventBias, ChartEventSeverity } from "./chartEvents";
 import type { ChartBar, ChartBarRange } from "./types";
+import { finiteNumber } from "./utils/numeric";
 
 export type FlowChartBucket = {
   id: string;
@@ -131,15 +132,6 @@ const severityRank: Record<ChartEventSeverity, number> = {
   medium: 1,
   high: 2,
   extreme: 3,
-};
-
-const finiteNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -876,8 +868,15 @@ const buildRawFlowChartBucket = ({
 const applyFlowBucketIntensity = <T extends { bucket?: FlowChartBucket }>(
   values: T[],
 ): T[] => {
-  const buckets = values.flatMap((value) => (value.bucket ? [value.bucket] : []));
-  const maxPremium = Math.max(...buckets.map((bucket) => bucket.totalPremium), 0);
+  // Single accumulation pass: equivalent to Math.max(...premiums, 0) (including
+  // NaN propagation) but without building intermediate arrays or spreading a
+  // potentially-large array into Math.max (which can overflow the call stack).
+  let maxPremium = 0;
+  for (const value of values) {
+    if (value.bucket) {
+      maxPremium = Math.max(maxPremium, value.bucket.totalPremium);
+    }
+  }
   return values.map((value) => {
     if (!value.bucket) return value;
     return {

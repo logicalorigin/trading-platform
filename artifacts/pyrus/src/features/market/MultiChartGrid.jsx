@@ -251,37 +251,6 @@ const buildInitialMarketChartSlots = (activeSym) => {
   );
 };
 
-const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
-  "a[href]",
-  "button",
-  "input",
-  "select",
-  "textarea",
-  "[contenteditable='true']",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='menu']",
-  "[role='menuitem']",
-  "[role='option']",
-  "[role='radio']",
-  "[role='switch']",
-  "[data-chart-control-root]",
-  "[data-grid-resize-handle]",
-  "[data-radix-popper-content-wrapper]",
-  "[data-testid='ticker-search-popover']",
-].join(",");
-
-const isMarketChartInteractiveTarget = (target) =>
-  typeof Element !== "undefined" &&
-  target instanceof Element &&
-  Boolean(target.closest(MARKET_CHART_INTERACTIVE_TARGET_SELECTOR));
-
-const isMarketChartPlotTarget = (target) =>
-  typeof Element !== "undefined" &&
-  target instanceof Element &&
-  Boolean(target.closest("[data-chart-plot-root]"));
-const MARKET_CHART_PLOT_FOCUS_MOVE_TOLERANCE = 6;
-
 export const MultiChartGrid = ({
   activeSym,
   externalSelection = null,
@@ -381,16 +350,8 @@ export const MultiChartGrid = ({
       }
     };
     window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, handleWorkspaceSettings);
-    window.addEventListener(
-      PYRUS_WORKSPACE_SETTINGS_EVENT,
-      handleWorkspaceSettings,
-    );
     window.addEventListener(USER_PREFERENCES_UPDATED_EVENT, handleWorkspaceSettings);
     return () => {
-      window.removeEventListener(
-        PYRUS_WORKSPACE_SETTINGS_EVENT,
-        handleWorkspaceSettings,
-      );
       window.removeEventListener(
         PYRUS_WORKSPACE_SETTINGS_EVENT,
         handleWorkspaceSettings,

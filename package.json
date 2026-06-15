@@ -40,6 +40,7 @@
   },
   "private": true,
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "knip": "^5.88.1",
     "typescript": "~5.9.2"
   }

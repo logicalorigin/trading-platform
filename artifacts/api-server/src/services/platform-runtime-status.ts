@@ -63,6 +63,7 @@ export function isRequestScopedBridgeHealthError(value: unknown): boolean {
     (message.includes("bridge") && message.includes("work is backed off")) ||
     (message.includes("historical market data service") &&
       message.includes("query returned no data")) ||
+    message.includes("no historical data query found for ticker id") ||
     message.includes("hmds query returned no data") ||
     (message.includes("historical market data service") &&
       message.includes("query cancelled")) ||

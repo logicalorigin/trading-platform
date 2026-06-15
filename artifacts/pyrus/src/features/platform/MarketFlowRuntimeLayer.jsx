@@ -20,7 +20,7 @@ const buildPendingFlowSource = (reason = "options_flow_refreshing") => ({
   ibkrStatus: "empty",
   ibkrReason: reason,
 });
-const BROAD_FLOW_STARTUP_DELAY_MS = 250;
+const BROAD_FLOW_STARTUP_DELAY_MS = 0;
 
 const normalizeRuntimeSymbols = (symbols = []) =>
   Array.from(

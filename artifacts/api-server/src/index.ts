@@ -28,6 +28,7 @@ import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
 import {
+  startSignalMonitorBreadthSnapshotWorker,
   startSignalMonitorLocalBarCacheWarmup,
   startSignalMonitorServerOwnedProducer,
   startSignalMonitorStateReconciliation,
@@ -246,30 +247,57 @@ function ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt = 1): void {
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
   ensureIbkrLaneRuntimeOverridesLoaded();
-  startAccountFlexRefreshScheduler();
-  startIbkrWatchlistPrewarmRuntime();
-  startOptionsFlowScanner();
-  startFlowUniverseOptionabilityVerifier();
-  startTradeMonitorWorker();
-  startIbkrLineUsageGenerationCoordinator();
-  startSignalMonitorLocalBarCacheWarmup();
-  startSignalMonitorServerOwnedProducer();
-  startSignalMonitorStateReconciliation();
-  void startPythonComputeRuntime().catch((err) => {
-    logger.warn({ err }, "Failed to start Python compute runtime");
-  });
-  ensureDefaultSignalOptionsPaperDeploymentWithRetry();
-  startSignalOptionsWorker();
-  startSignalOptionsPositionTickManager();
-  startOvernightSpotWorker();
-  startDiagnosticsCollector(collectDiagnosticsInput);
-  startRuntimeFlightRecorder();
-  void importRuntimeFlightRecorderIncidents(recordServerDiagnosticEvent).catch(
-    (err) => {
-      logger.warn(
-        { err },
-        "Failed to import runtime flight recorder incidents",
-      );
+  // Stagger the DB-touching background workers instead of starting them all in
+  // the same tick. Starting ~19 workers synchronously had every one call
+  // pool.connect() at once on boot; against the bounded pool (and a
+  // connection-limited dev database shared with the market-data worker) that
+  // herd exhausts connection slots, so acquires wait the full 30s
+  // connectionTimeoutMillis and surface as "pool timed out" / "connection
+  // terminated" across the app, the market-data worker, and the Replit DB pane.
+  // HTTP is already serving here; these are background workers, so spreading
+  // their first connect over a few seconds is harmless and keeps the boot from
+  // stampeding Postgres.
+  const backgroundWorkers: Array<() => void> = [
+    startAccountFlexRefreshScheduler,
+    startIbkrWatchlistPrewarmRuntime,
+    startOptionsFlowScanner,
+    startFlowUniverseOptionabilityVerifier,
+    startTradeMonitorWorker,
+    startIbkrLineUsageGenerationCoordinator,
+    startSignalMonitorLocalBarCacheWarmup,
+    startSignalMonitorServerOwnedProducer,
+    startSignalMonitorStateReconciliation,
+    startSignalMonitorBreadthSnapshotWorker,
+    () => {
+      void startPythonComputeRuntime().catch((err) => {
+        logger.warn({ err }, "Failed to start Python compute runtime");
+      });
     },
-  );
+    ensureDefaultSignalOptionsPaperDeploymentWithRetry,
+    startSignalOptionsWorker,
+    startSignalOptionsPositionTickManager,
+    startOvernightSpotWorker,
+    () => startDiagnosticsCollector(collectDiagnosticsInput),
+    startRuntimeFlightRecorder,
+    () => {
+      void importRuntimeFlightRecorderIncidents(
+        recordServerDiagnosticEvent,
+      ).catch((err) => {
+        logger.warn(
+          { err },
+          "Failed to import runtime flight recorder incidents",
+        );
+      });
+    },
+  ];
+  const BACKGROUND_WORKER_STAGGER_MS = 350;
+  backgroundWorkers.forEach((startWorker, index) => {
+    setTimeout(() => {
+      try {
+        startWorker();
+      } catch (err) {
+        logger.warn({ err }, "Background worker failed to start");
+      }
+    }, index * BACKGROUND_WORKER_STAGGER_MS).unref();
+  });
 });

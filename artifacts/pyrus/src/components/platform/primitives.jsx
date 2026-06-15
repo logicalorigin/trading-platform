@@ -99,6 +99,11 @@ const normalizeSparklinePoints = (points = []) =>
  * pass explicit blue/red color or pointColors; the default green/red contract
  * is only for financial trend displays.
  */
+// Hard cap on rendered points. Inline sparklines (<=~120px) can't resolve more,
+// and some callers pass unthinned live series (90+ points). Applied at render so
+// the guarantee holds regardless of the data path.
+const MICRO_SPARKLINE_MAX_POINTS = 24;
+
 const MicroSparklineBase = ({
   data = [],
   positive = null,
@@ -112,15 +117,38 @@ const MicroSparklineBase = ({
   ariaLabel = null,
   ariaHidden,
 }) => {
-  const sparklinePoints = useMemo(
+  const rawSparklinePoints = useMemo(
     () =>
       Array.isArray(points)
         ? normalizeSparklinePoints(points)
         : extractSparklinePoints(data),
     [data, points],
   );
+  // Downsample to the render cap, carrying pointColors through the same indices
+  // so segment coloring stays aligned with the points it describes.
+  const sampleIndices = useMemo(() => {
+    const length = rawSparklinePoints.length;
+    if (length <= MICRO_SPARKLINE_MAX_POINTS) return null;
+    const lastIndex = length - 1;
+    return Array.from({ length: MICRO_SPARKLINE_MAX_POINTS }, (_, index) =>
+      Math.round((index * lastIndex) / (MICRO_SPARKLINE_MAX_POINTS - 1)),
+    );
+  }, [rawSparklinePoints]);
+  const sparklinePoints = useMemo(
+    () =>
+      sampleIndices
+        ? sampleIndices.map((index) => rawSparklinePoints[index])
+        : rawSparklinePoints,
+    [rawSparklinePoints, sampleIndices],
+  );
+  const resolvedPointColors = useMemo(
+    () =>
+      sampleIndices && Array.isArray(pointColors)
+        ? sampleIndices.map((index) => pointColors[index])
+        : pointColors,
+    [pointColors, sampleIndices],
+  );
   const values = sparklinePoints.map((point) => point.value);
-  const uid = useId().replace(/:/g, "");
 
   if (values.length < 2) {
     return null;
@@ -139,8 +167,9 @@ const MicroSparklineBase = ({
     typeof positive === "boolean" ? positive : inferredPositive;
   const lineColor = color || (resolvedPositive ? CSS_COLOR.green : CSS_COLOR.red);
   const pointColorAt = (index) =>
-    Array.isArray(pointColors) && typeof pointColors[index] === "string"
-      ? pointColors[index]
+    Array.isArray(resolvedPointColors) &&
+    typeof resolvedPointColors[index] === "string"
+      ? resolvedPointColors[index]
       : null;
   const toY = (value) => {
     if (range === 0) {
@@ -176,30 +205,11 @@ const MicroSparklineBase = ({
       });
     }
   }
-  const areaPath = `M ${plottedPoints
-    .map(({ x, y }, index) => `${index === 0 ? "" : "L "}${x},${y}`)
-    .join(" ")} L ${width},${height} L 0,${height} Z`;
   const tailPoint = plottedPoints[plottedPoints.length - 1];
   const tailColor = pointColorAt(tailPoint.index) || lineColor;
-  const highIndex = values.indexOf(max);
-  const lowIndex = values.indexOf(min);
-  const extremeIndexes = new Set([lowIndex, highIndex]);
-  const detailPoints =
-    range === 0
-      ? []
-      : plottedPoints
-          .slice(1, -1)
-          .filter((point) => extremeIndexes.has(point.index));
-  const baselineValue = min < 0 && max > 0 ? 0 : values[0];
-  const baselineY = Number(toY(baselineValue).toFixed(2));
-  const extremeDotRadius = Number(
-    Math.min(Math.max(height * 0.06, 0.95), 1.3).toFixed(2),
-  );
   const tailDotRadius = Number(
     Math.min(Math.max(height * 0.07, 1.05), 1.35).toFixed(2),
   );
-  const gradientId = `raSparkGrad-${uid}`;
-  const glowId = `raSparkGlow-${uid}`;
 
   return (
     <svg
@@ -213,36 +223,6 @@ const MicroSparklineBase = ({
       role={ariaLabel ? "img" : undefined}
       style={{ display: "block", ...style }}
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={tailColor} stopOpacity="0.22" />
-          <stop offset="100%" stopColor={tailColor} stopOpacity="0" />
-        </linearGradient>
-        <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      <path
-        className="ra-sparkline-area"
-        d={areaPath}
-        fill={`url(#${gradientId})`}
-      />
-      <line
-        className="ra-sparkline-baseline"
-        x1={xPad}
-        y1={baselineY}
-        x2={width - xPad}
-        y2={baselineY}
-        stroke={CSS_COLOR.textMuted}
-        strokeWidth="0.75"
-        strokeOpacity="0.28"
-        vectorEffect="non-scaling-stroke"
-        shapeRendering="crispEdges"
-      />
       {lineRuns.map((run, index) => (
         <polyline
           key={`${run.stroke}-${index}`}
@@ -256,22 +236,6 @@ const MicroSparklineBase = ({
           vectorEffect="non-scaling-stroke"
         />
       ))}
-      {detailPoints.map((point) => {
-        return (
-          <circle
-            key={`${point.index}-${point.x}-${point.y}`}
-            className="ra-sparkline-extreme"
-            cx={point.x}
-            cy={point.y}
-            r={extremeDotRadius}
-            fill={pointColorAt(point.index) || lineColor}
-            fillOpacity="0.88"
-            stroke={CSS_COLOR.bg1}
-            strokeWidth="0.45"
-            vectorEffect="non-scaling-stroke"
-          />
-        );
-      })}
       <circle
         className="ra-sparkline-tail"
         cx={tailPoint.x}
@@ -281,7 +245,6 @@ const MicroSparklineBase = ({
         stroke={CSS_COLOR.bg1}
         strokeWidth="0.65"
         vectorEffect="non-scaling-stroke"
-        filter={`url(#${glowId})`}
       />
     </svg>
   );

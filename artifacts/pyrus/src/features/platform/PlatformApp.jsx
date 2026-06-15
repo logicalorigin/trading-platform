@@ -116,7 +116,6 @@ import {
   BOOT_SCREEN_MODULE_PRELOAD_ORDER,
   SCREENS,
   SCREEN_MODULE_PRELOAD_ORDER,
-  SCREEN_SHELL_WARM_MOUNT_ORDER,
   buildMountedScreenState,
   getScreenModulePreloadSnapshot,
   preloadScreenModule,
@@ -348,8 +347,6 @@ const STARTUP_PROTECTION_COOLDOWN_MS = 250;
 const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 250;
 const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 750;
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
-const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
-const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
 const HEADER_SIGNAL_MATRIX_SYMBOL_LIMIT = 24;
 const ACTIVITY_SIGNAL_MATRIX_SYMBOL_LIMIT = 64;
 
@@ -890,7 +887,6 @@ export default function PlatformApp() {
   const priorityScreenCodePreloadCompleteRef = useRef(false);
   const screenCodePreloadStartedRef = useRef(false);
   const screenCodePreloadCompleteRef = useRef(false);
-  const screenShellWarmMountCompleteRef = useRef(false);
   const researchWorkspaceCodePreloadCompleteRef = useRef(false);
   const researchWorkspaceDataPreloadCompleteRef = useRef(false);
   const auxiliarySurfacesReadyRef = useRef(false);
@@ -1207,7 +1203,6 @@ export default function PlatformApp() {
     const unique = [...new Set(symbols.filter(Boolean))];
     return unique.length ? unique : watchlistSymbols;
   }, [watchlistSymbols, watchlists, watchlistsQuery.data]);
-  const marketScreenWarm = Boolean(mountedScreens.market);
   const marketScreenActive = screen === "market";
   const flowScreenActive = screen === "flow";
   const activeScreenReadiness =
@@ -1234,10 +1229,27 @@ export default function PlatformApp() {
     setScreenWarmupPhase("ready");
     markWarmupTimeline("firstScreenReadyAtMs");
     markWarmupTimeline("screenWarmupReadyAtMs");
-    completeBootProgressTask("first-screen", {
-      detail: `${screen} screen frame ready`,
-    });
-  }, [activeScreenFrameReady, markWarmupTimeline, screen]);
+    // The active screen reports frameReady even when its chunk failed to load
+    // (so the boot overlay still lifts to the screen's error fallback). Settle
+    // the boot task as failed in that case so boot telemetry reflects the error
+    // instead of recording a clean boot.
+    if (activeScreenReadiness.error) {
+      failBootProgressTask(
+        "first-screen",
+        activeScreenReadiness.error,
+        { detail: `${screen} screen failed to load` },
+      );
+    } else {
+      completeBootProgressTask("first-screen", {
+        detail: `${screen} screen frame ready`,
+      });
+    }
+  }, [
+    activeScreenFrameReady,
+    activeScreenReadiness.error,
+    markWarmupTimeline,
+    screen,
+  ]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -1844,12 +1856,17 @@ export default function PlatformApp() {
     if (timers) {
       clearTimeout(timers.dismiss);
       clearTimeout(timers.remove);
-      delete timeoutMapRef.current[id];
     }
     setToasts((prev) =>
       prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)),
     );
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 220);
+    // Tracked in the map (not a bare timer) so an unmount mid-dismiss can cancel
+    // it and we never call setToasts on an unmounted tree.
+    const removeTimer = setTimeout(() => {
+      delete timeoutMapRef.current[id];
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 220);
+    timeoutMapRef.current[id] = { remove: removeTimer };
   }, []);
   const pushToast = useCallback(
     ({ title, body, kind = "info", duration = 3500 }) => {
@@ -1864,10 +1881,10 @@ export default function PlatformApp() {
         setToasts((prev) =>
           prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)),
         );
-        const removeTimer = setTimeout(
-          () => setToasts((prev) => prev.filter((t) => t.id !== id)),
-          220,
-        );
+        const removeTimer = setTimeout(() => {
+          delete timeoutMapRef.current[id];
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 220);
         timeoutMapRef.current[id] = {
           ...(timeoutMapRef.current[id] || {}),
           remove: removeTimer,
@@ -1877,6 +1894,16 @@ export default function PlatformApp() {
     },
     [],
   );
+  useEffect(() => {
+    const timeoutMap = timeoutMapRef.current;
+    return () => {
+      Object.values(timeoutMap).forEach((timers) => {
+        if (!timers) return;
+        clearTimeout(timers.dismiss);
+        clearTimeout(timers.remove);
+      });
+    };
+  }, []);
   const toastValue = useMemo(
     () => ({ push: pushToast, toasts }),
     [pushToast, toasts],
@@ -2441,13 +2468,6 @@ export default function PlatformApp() {
         if (cancelled) {
           return;
         }
-        setMountedScreens((current) => {
-          const next = { ...current };
-          BOOT_SCREEN_MODULE_PRELOAD_ORDER.forEach((screenId) => {
-            next[screenId] = true;
-          });
-          return next;
-        });
         bootScreenShellWarmMountCompleteRef.current = true;
         markWarmupTimeline("bootScreenShellWarmMountCompleteAtMs");
       });
@@ -2467,73 +2487,6 @@ export default function PlatformApp() {
 
   useEffect(() => {
     if (
-      isPhone ||
-      screenWarmupPhase !== "ready" ||
-      !hiddenScreenWarmMountAllowed ||
-      screenShellWarmMountCompleteRef.current
-    ) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timers = [];
-    const idleCleanups = [];
-    const warmMountOrder = SCREEN_SHELL_WARM_MOUNT_ORDER.filter(
-      (screenId) => screenId !== screen,
-    );
-    markWarmupTimeline("hiddenScreenWarmMountQueuedAtMs");
-
-    warmMountOrder.forEach((screenId, index) => {
-      const timerId = window.setTimeout(
-        () => {
-          if (cancelled) {
-            return;
-          }
-          const cancelIdle = scheduleIdleWork(() => {
-            if (cancelled) {
-              return;
-            }
-            setMountedScreens((current) =>
-              current[screenId] ? current : { ...current, [screenId]: true },
-            );
-          }, 12_000);
-          idleCleanups.push(cancelIdle);
-        },
-        SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS +
-          SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS * index,
-      );
-      timers.push(timerId);
-    });
-
-    const completeTimer = window.setTimeout(
-      () => {
-        screenShellWarmMountCompleteRef.current = true;
-        markWarmupTimeline("hiddenScreenWarmMountCompleteAtMs");
-      },
-      SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS +
-        SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS * warmMountOrder.length +
-        12_000,
-    );
-    timers.push(completeTimer);
-
-    return () => {
-      cancelled = true;
-      timers.forEach((timerId) => window.clearTimeout(timerId));
-      idleCleanups.forEach((cleanup) => cleanup());
-      if (!screenShellWarmMountCompleteRef.current) {
-        screenShellWarmMountCompleteRef.current = false;
-      }
-    };
-  }, [
-    hiddenScreenWarmMountAllowed,
-    isPhone,
-    markWarmupTimeline,
-    screen,
-    screenWarmupPhase,
-  ]);
-
-  useEffect(() => {
-    if (
       !operationalCodePreloadReady ||
       screen !== "research" ||
       screenWarmupPhase !== "ready" ||
@@ -2545,6 +2498,12 @@ export default function PlatformApp() {
     }
 
     let cancelled = false;
+    // Tracks whether the deferred preload actually fired. The complete ref is
+    // set up-front to block re-scheduling while we wait, but is rolled back in
+    // cleanup if we tear down before firing — otherwise an interrupted attempt
+    // (navigation / memory pressure during the idle delay) would permanently
+    // disable the preload for the session.
+    let completed = false;
     const timers = [];
     const idleCleanups = [];
     const queueIdleCodePreload = (delayMs, callback, timeoutMs = 10_000) => {
@@ -2573,12 +2532,16 @@ export default function PlatformApp() {
         { label: "PhotonicsObservatoryPrefetch" },
       );
       markWarmupTimeline("researchWorkspaceCodePreloadFiredAtMs");
+      completed = true;
     });
 
     return () => {
       cancelled = true;
       timers.forEach((timerId) => window.clearTimeout(timerId));
       idleCleanups.forEach((cleanup) => cleanup());
+      if (!completed) {
+        researchWorkspaceCodePreloadCompleteRef.current = false;
+      }
     };
   }, [
     markWarmupTimeline,
@@ -2601,6 +2564,10 @@ export default function PlatformApp() {
     }
 
     let cancelled = false;
+    // See the code-preload effect above: the complete ref is set up-front to
+    // block re-scheduling but rolled back in cleanup if neither deferred load
+    // fired, so an interrupted attempt stays eligible to re-run.
+    let completed = false;
     const timers = [];
     const idleCleanups = [];
     const queueIdleDataPreload = (delayMs, callback, timeoutMs = 8_000) => {
@@ -2627,6 +2594,7 @@ export default function PlatformApp() {
         .finally(() => markWarmupTimeline("researchWorkspaceMetaLoadedAtMs"));
     });
     queueIdleDataPreload(5_500, () => {
+      completed = true;
       void import("../research/data/runtime.js")
         .then(({ loadResearchThemeDataset }) => loadResearchThemeDataset("ai"))
         .catch(() => {})
@@ -2637,6 +2605,9 @@ export default function PlatformApp() {
       cancelled = true;
       timers.forEach((timerId) => window.clearTimeout(timerId));
       idleCleanups.forEach((cleanup) => cleanup());
+      if (!completed) {
+        researchWorkspaceDataPreloadCompleteRef.current = false;
+      }
     };
   }, [
     markWarmupTimeline,
@@ -3679,8 +3650,6 @@ export default function PlatformApp() {
         priorityScreenCodePreloadComplete:
           priorityScreenCodePreloadCompleteRef.current,
         screenCodePreloadComplete: screenCodePreloadCompleteRef.current,
-        screenShellWarmMountComplete:
-          screenShellWarmMountCompleteRef.current,
         researchWorkspaceCodePreloadComplete:
           researchWorkspaceCodePreloadCompleteRef.current,
         researchWorkspaceDataPreloadComplete:
@@ -3700,10 +3669,6 @@ export default function PlatformApp() {
           warmupTimelineRef.current.screenCodePreloadQueuedAtMs != null,
         screenCodePreloadCompleted:
           warmupTimelineRef.current.screenCodePreloadCompleteAtMs != null,
-        hiddenScreenWarmMountStarted:
-          warmupTimelineRef.current.hiddenScreenWarmMountQueuedAtMs != null,
-        hiddenScreenWarmMountCompleted:
-          warmupTimelineRef.current.hiddenScreenWarmMountCompleteAtMs != null,
         backgroundDataWarmupGateOpened:
           warmupTimelineRef.current.backgroundDataWarmupGateOpenedAtMs != null,
         researchWorkspaceCodePreloadStarted:

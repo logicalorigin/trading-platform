@@ -14,6 +14,10 @@ import {
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { WATCHLIST } from "./marketReferenceData";
+import {
+  isMarketChartInteractiveTarget,
+  isMarketChartPlotTarget,
+} from "./chartInteractionSelectors.js";
 import { MarketChartPremiumFlowIndicator } from "./MarketChartPremiumFlowIndicator.jsx";
 import { CSS_COLOR, cssColorMix, RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
 import { lazyWithRetry } from "../../lib/dynamicImport";
@@ -31,34 +35,6 @@ const LazyMarketChartTickerSearch = lazyWithRetry(
   { label: "MarketChartTickerSearch" },
 );
 
-const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
-  "a[href]",
-  "button",
-  "input",
-  "select",
-  "textarea",
-  "[contenteditable='true']",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='menu']",
-  "[role='menuitem']",
-  "[role='option']",
-  "[role='radio']",
-  "[role='switch']",
-  "[data-chart-control-root]",
-  "[data-grid-resize-handle]",
-  "[data-radix-popper-content-wrapper]",
-  "[data-testid='ticker-search-popover']",
-].join(",");
-
-const isMarketChartInteractiveTarget = (target) =>
-  typeof Element !== "undefined" &&
-  target instanceof Element &&
-  Boolean(target.closest(MARKET_CHART_INTERACTIVE_TARGET_SELECTOR));
-const isMarketChartPlotTarget = (target) =>
-  typeof Element !== "undefined" &&
-  target instanceof Element &&
-  Boolean(target.closest("[data-chart-plot-root]"));
 const isMarketChartShellControlTarget = (target) =>
   isMarketChartInteractiveTarget(target) && !isMarketChartPlotTarget(target);
 const MARKET_CHART_CLICK_MOVE_TOLERANCE = 6;

@@ -1842,6 +1842,16 @@ summary,
   border-color: var(--toast-h-bd);
   transform: translateX(-2px);
 }
+.ra-toast-close:hover {
+  background: var(--ra-surface-3);
+  color: var(--ra-text-primary);
+}
+.ra-notif-row--clickable {
+  transition: background var(--ra-motion-fast) ease;
+}
+.ra-notif-row--clickable:hover {
+  background: var(--ra-surface-2);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ra-interactive,
@@ -2079,19 +2089,13 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   opacity: 0.55;
 }
 
-.ra-sparkline polyline,
-.ra-sparkline path {
-  stroke-dasharray: var(--ra-spark-length, 420);
-  stroke-dashoffset: var(--ra-spark-length, 420);
-  animation: raSparkDraw var(--ra-motion-slow) var(--ra-motion-enter) both;
-}
-
-.ra-sparkline-tail {
-  transform-origin: center;
-  transform-box: fill-box;
-  animation: raSparklineTailPulse 2400ms ease-in-out infinite;
-  will-change: opacity, transform;
-}
+/*
+ * Sparkline line draw-on and tail-dot pulse animations were removed for
+ * performance: MicroSparkline renders on dozens of rows (and 6 per row in the
+ * signals table), so the per-line draw replayed on every row that scrolled in,
+ * and the infinite tail pulse kept a `will-change` GPU layer alive per sparkline
+ * app-wide. Sparklines now render statically (line + static tail dot).
+ */
 
 .ra-card-luminous {
   box-shadow: var(--ra-card-inner-shadow);

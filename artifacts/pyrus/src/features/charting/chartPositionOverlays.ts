@@ -1,4 +1,5 @@
 import type { ChartBar, ChartBarRange } from "./types";
+import { finiteNumber } from "./utils/numeric";
 
 export type ChartPositionSurfaceKind = "spot" | "option" | "mini";
 
@@ -228,15 +229,6 @@ const normalizeSymbol = (value: unknown): string =>
   String(value || "")
     .trim()
     .toUpperCase();
-
-const finiteNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
 
 const firstFiniteNumber = (...values: unknown[]): number | null => {
   for (const value of values) {

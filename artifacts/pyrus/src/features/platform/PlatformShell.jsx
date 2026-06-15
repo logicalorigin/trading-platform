@@ -44,12 +44,13 @@ import { useToast } from "./platformContexts.jsx";
 import {
   SCREENS,
   SCREEN_RENDER_POLICIES,
-  ScreenLoadingFallback,
   preloadScreenModule,
 } from "./screenRegistry.jsx";
 import { useElementSize, useStableWidth, useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
+import { LoadingSpinner } from "../../components/platform/primitives";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
   markScreenSwitchStart,
@@ -102,9 +103,53 @@ const MOBILE_NAV_ICONS = {
 };
 const MAX_RETAINED_INACTIVE_SCREENS = 2;
 const DEFERRED_SCREEN_UNMOUNT_MS = 1_200;
+
+// Fit-to-width protocol: screens are designed against this width; when the
+// stack is narrower, the whole screen stack zooms down proportionally so
+// every screen fits instead of clipping or hiding horizontal overflow.
+// Floored so content never shrinks past 80% of the user's chosen scale.
+const SCREEN_FIT_DESIGN_WIDTH = 1280;
+const SCREEN_FIT_MIN_SCALE = 0.8;
+
 const BloombergLiveDock = lazyWithRetry(
   () => import("./BloombergLiveDock"),
   { label: "BloombergLiveDock" },
+);
+
+// The live dock is an optional overlay loaded as its own chunk. Contain a chunk
+// load failure / render throw locally so it silently drops out instead of
+// bubbling to the workspace-level error boundary and taking down the terminal.
+const renderBloombergLiveDock = () => (
+  <PlatformErrorBoundary
+    label="Live dock"
+    reportCategory="bloomberg-live-dock"
+    reportSeverity="info"
+    fallbackRender={() => null}
+  >
+    <Suspense fallback={null}>
+      <BloombergLiveDock initialOpen />
+    </Suspense>
+  </PlatformErrorBoundary>
+);
+
+// Shown while a screen's lazy children suspend. Non-null so a suspending screen
+// renders a loader instead of nothing on the dark canvas (the "black screen on
+// navigation" failure mode).
+const ScreenSuspenseFallback = () => (
+  <div
+    data-testid="screen-suspense-fallback"
+    role="status"
+    aria-label="Loading screen"
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "grid",
+      placeItems: "center",
+      background: "var(--background, #050814)",
+    }}
+  >
+    <LoadingSpinner size={22} />
+  </div>
 );
 
 /**
@@ -175,6 +220,20 @@ const PlatformScreenStack = memo(({
   const handoffTimersRef = useRef(new Map());
   const [retainedInactiveScreens, setRetainedInactiveScreens] = useState([]);
   const [deferredInactiveScreens, setDeferredInactiveScreens] = useState([]);
+  const [stackRef, stackSize] = useElementSize();
+  // zoom keeps this element's outer box parent-driven while its content lays
+  // out in width/zoom virtual space, so measurement never feeds back. Raw
+  // (non-deadbanded) width so the scale tracks resize continuously instead of
+  // jumping in steps; rounded to avoid sub-pixel churn.
+  const screenFitZoom =
+    stackSize.width > 0
+      ? Math.round(
+          Math.max(
+            SCREEN_FIT_MIN_SCALE,
+            Math.min(1, stackSize.width / SCREEN_FIT_DESIGN_WIDTH),
+          ) * 200,
+        ) / 200
+      : 1;
 
   useEffect(() => {
     const previousScreen = previousActiveScreenRef.current;
@@ -229,16 +288,31 @@ const PlatformScreenStack = memo(({
   );
 
   return (
+    // Outer wrapper is measured and NEVER zoomed; the inner wrapper carries
+    // the zoom. Measuring the zoomed element itself feeds back (observed size
+    // is reported in the element's zoomed coordinate space) and oscillates.
     <div
+      ref={stackRef}
       data-testid="platform-screen-stack"
       style={{
         flex: 1,
         minWidth: 0,
+        minHeight: 0,
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
       }}
     >
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          ...(screenFitZoom < 1 ? { zoom: screenFitZoom } : {}),
+        }}
+      >
       {SCREENS.map(({ id, label }) => {
         const active = activeScreen === id;
         const shouldRender =
@@ -253,12 +327,18 @@ const PlatformScreenStack = memo(({
             screenLabel={label}
             active={active}
           >
-            <Suspense fallback={<ScreenLoadingFallback screenId={id} />}>
-              {renderScreenById(id)}
-            </Suspense>
+            <PlatformErrorBoundary
+              label={`${label} screen`}
+              reportCategory="screen-render"
+            >
+              <Suspense fallback={<ScreenSuspenseFallback />}>
+                {renderScreenById(id)}
+              </Suspense>
+            </PlatformErrorBoundary>
           </ScreenTransitionHost>
         ) : null;
       })}
+      </div>
     </div>
   );
 });
@@ -268,11 +348,7 @@ const BloombergLiveDockLauncher = () => {
   const [mounted, setMounted] = useState(false);
 
   if (mounted) {
-    return (
-      <Suspense fallback={null}>
-        <BloombergLiveDock initialOpen />
-      </Suspense>
-    );
+    return renderBloombergLiveDock();
   }
 
   return (
@@ -625,7 +701,6 @@ export const PlatformShell = ({
   headerSignalMatrixStates = [],
   watchlistSignalMatrixStates = [],
   activitySignalMatrixStates = [],
-  onRequestSignalMatrixHydration,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -1042,7 +1117,6 @@ export const PlatformShell = ({
       signalMatrixStates={activitySignalMatrixStates}
       signalMonitorEvents={signalMonitorEvents}
       signalMonitorEventsLoaded={signalMonitorEventsLoaded}
-      onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
       onOpenAlgo={(focus) => {
         setMobileActivityOpen(false);
         handleSetScreen("algo", focus);
@@ -1109,11 +1183,7 @@ export const PlatformShell = ({
       watchlists={watchlists}
       watchlistsBusy={watchlistsBusy}
     />
-    {isPhone && mobileBloombergMounted ? (
-      <Suspense fallback={null}>
-        <BloombergLiveDock initialOpen />
-      </Suspense>
-    ) : null}
+    {isPhone && mobileBloombergMounted ? renderBloombergLiveDock() : null}
 
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
       {!isPhone ? (
@@ -1212,7 +1282,6 @@ export const PlatformShell = ({
             signalMatrixStates={activitySignalMatrixStates}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={signalMonitorEventsLoaded}
-            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             externalStreamFreshness={
               algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
             }

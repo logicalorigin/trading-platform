@@ -956,6 +956,23 @@ function TimeframeSignalGroupedBars({
       Math.max(0, Number(item.sell) || 0),
     ]),
   );
+  // One shared ceiling across every card's history sparkline so a low-volume
+  // timeframe reads as quieter than a busy one instead of each card self-scaling.
+  const sparklineSeriesMax = Object.values(pointsByTimeframe || {}).reduce(
+    (max, series) =>
+      Array.isArray(series)
+        ? series.reduce(
+            (acc, point) =>
+              Math.max(
+                acc,
+                Math.max(0, Number(point?.buy) || 0),
+                Math.max(0, Number(point?.sell) || 0),
+              ),
+            max,
+          )
+        : max,
+    0,
+  );
   const columns = phone ? 2 : compact ? 3 : 6;
 
   return (
@@ -988,11 +1005,17 @@ function TimeframeSignalGroupedBars({
           timeframeSeries.some(
             (point) => (Number(point.buy) || 0) > 0 || (Number(point.sell) || 0) > 0,
           );
+        const peakBuy = hasTimeframeSpark
+          ? Math.max(0, ...timeframeSeries.map((point) => Number(point.buy) || 0))
+          : 0;
+        const peakSell = hasTimeframeSpark
+          ? Math.max(0, ...timeframeSeries.map((point) => Number(point.sell) || 0))
+          : 0;
+        const tooltipContent = hasTimeframeSpark
+          ? `${timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh || 0)} fresh · range peak ${formatCount(peakBuy)} buy / ${formatCount(peakSell)} sell`
+          : `${timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh || 0)} fresh`;
         return (
-          <AppTooltip
-            key={item.timeframe}
-            content={`${timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh || 0)} fresh`}
-          >
+          <AppTooltip key={item.timeframe} content={tooltipContent}>
             <div
               data-testid={`signals-timeframe-kpi-${item.timeframe}`}
               data-buy-count={buy}
@@ -1147,6 +1170,8 @@ function TimeframeSignalGroupedBars({
                 <div style={{ height: dim(20), minWidth: 0 }}>
                   <BuySellSparkline
                     points={timeframeSeries}
+                    height={20}
+                    scaleMax={sparklineSeriesMax}
                     ariaLabel={`${timeframe} buy and sell signals over time`}
                   />
                 </div>
@@ -1159,10 +1184,22 @@ function TimeframeSignalGroupedBars({
   );
 }
 
+// Floor for the buy/sell sparkline's vertical scale so a window with only a
+// signal or two renders as a low, honest line instead of a full-height spike.
+const SIGNALS_BREADTH_SPARKLINE_MIN_SCALE = 4;
+
 // Two-line sparkline: buy (blue) and sell (red) signal counts over time. Both
 // lines share one scale so their relative height reads directly. Returns null
 // when there isn't enough varying data to plot.
-function BuySellSparkline({ points = [], showArea = false, ariaLabel = null, testId = null }) {
+function BuySellSparkline({
+  points = [],
+  showArea = false,
+  ariaLabel = null,
+  testId = null,
+  height = 60,
+  scaleMax = null,
+  minScale = SIGNALS_BREADTH_SPARKLINE_MIN_SCALE,
+}) {
   const series = Array.isArray(points) ? points : [];
   const buySeries = series.map((point) => Math.max(0, Number(point.buy) || 0));
   const sellSeries = series.map((point) => Math.max(0, Number(point.sell) || 0));
@@ -1171,11 +1208,18 @@ function BuySellSparkline({ points = [], showArea = false, ariaLabel = null, tes
   if (!hasData) {
     return null;
   }
-  const maxMagnitude = Math.max(1, ...buySeries, ...sellSeries);
+  // Prefer a caller-supplied shared ceiling so sibling cards stay comparable;
+  // otherwise scale to this series. The minScale floor keeps a lone signal from
+  // filling the chart (a 1-vs-0 window shouldn't look like a cliff).
+  const seriesMax = Math.max(...buySeries, ...sellSeries);
+  const sharedMax = Number.isFinite(scaleMax) && scaleMax > 0 ? scaleMax : seriesMax;
+  const maxMagnitude = Math.max(minScale, sharedMax);
   const count = series.length;
-  const viewHeight = 60;
+  // viewBox height tracks the rendered box so vertical units stay truthful
+  // (preserveAspectRatio="none" only stretches the time axis).
+  const viewHeight = Math.max(12, Math.round(Number(height) || 60));
   const baseY = viewHeight - 3;
-  const usable = baseY - 4;
+  const usable = Math.max(1, baseY - 4);
   const toX = (index) => (count > 1 ? (index / (count - 1)) * 100 : 50);
   const toY = (value) => baseY - Math.min(1, value / maxMagnitude) * usable;
   const linePoints = (arr) =>
@@ -1316,6 +1360,12 @@ function CompactSignalBreadthPanel({
   const hasSeries =
     series.length >= 2 &&
     series.some((point) => (Number(point.buy) || 0) > 0 || (Number(point.sell) || 0) > 0);
+  const peakBuy = hasSeries
+    ? Math.max(0, ...series.map((point) => Number(point.buy) || 0))
+    : 0;
+  const peakSell = hasSeries
+    ? Math.max(0, ...series.map((point) => Number(point.sell) || 0))
+    : 0;
   const rangeLabel = SIGNALS_BREADTH_RANGE_LABELS[range] || "range";
 
   return (
@@ -1436,6 +1486,7 @@ function CompactSignalBreadthPanel({
               <BuySellSparkline
                 points={series}
                 showArea
+                height={phone ? 52 : 60}
                 testId="signals-breadth-history-chart"
                 ariaLabel={`Buy and sell signal breadth over the last ${rangeLabel}`}
               />
@@ -1465,7 +1516,7 @@ function CompactSignalBreadthPanel({
           >
             <span style={{ color: CSS_COLOR.blue, display: "inline-flex", alignItems: "center", gap: sp(4) }}>
               <i style={{ width: dim(11), height: dim(2), borderRadius: dim(RADII.pill), background: CSS_COLOR.blue, display: "block" }} />
-              buys
+              buys{hasSeries ? ` · peak ${formatCount(peakBuy)}` : ""}
             </span>
             <span style={{ color: CSS_COLOR.textMuted }}>
               {activeBuySell ? `${advancingPct}% advancing now` : "No signals"}
@@ -1473,7 +1524,7 @@ function CompactSignalBreadthPanel({
             </span>
             <span style={{ color: CSS_COLOR.red, display: "inline-flex", alignItems: "center", gap: sp(4) }}>
               <i style={{ width: dim(11), height: dim(2), borderRadius: dim(RADII.pill), background: CSS_COLOR.red, display: "block" }} />
-              sells
+              sells{hasSeries ? ` · peak ${formatCount(peakSell)}` : ""}
             </span>
           </div>
         </div>
@@ -4644,6 +4695,32 @@ export default function SignalsScreen({
     ? `Intervals ${matrixHydrationHydrated}/${matrixHydrationTotal}`
     : "Intervals idle";
   const minTableWidth = phone ? dim(900) : compact ? dim(1040) : dim(1360);
+  // Stable identities for the virtual-table callbacks. Inline arrows here would
+  // change every render, rebuilding the table's virtualRows/row model and
+  // re-deriving react-table on every live tick.
+  const getSignalRowId = useCallback((row) => row.id, []);
+  const isSignalRowExpanded = useCallback(
+    (row) => row.symbol === expandedSymbol,
+    [expandedSymbol],
+  );
+  const renderSignalRowDetail = useCallback(
+    (row) => (
+      <SignalsRowDrilldown row={row} onJumpToTrade={onJumpToTrade} phone={phone} />
+    ),
+    [onJumpToTrade, phone],
+  );
+  const getSignalRowDetailProps = useCallback(
+    (row) => ({
+      id: getSignalDrilldownId(row.symbol),
+      role: "region",
+      "aria-label": `${row.symbol} signal detail`,
+      style: {
+        minWidth: minTableWidth,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
+      },
+    }),
+    [minTableWidth],
+  );
   const minTableHeight = phone
     ? SIGNALS_TABLE_MIN_HEIGHT_PHONE
     : compact
@@ -4963,7 +5040,7 @@ export default function SignalsScreen({
                 columnOrder={columns.map((column) => column.id)}
                 columns={columns}
                 data={filteredRows}
-                getRowId={(row) => row.id}
+                getRowId={getSignalRowId}
                 lockedColumnIds={SIGNALS_LOCKED_COLUMN_IDS}
                 rowHeight={phone ? 58 : 56}
                 rowDetailHeight={phone ? 820 : compact ? 720 : 650}
@@ -4971,23 +5048,9 @@ export default function SignalsScreen({
                 minWidth={minTableWidth}
                 onColumnOrderChange={handleSignalsColumnOrderChange}
                 onSortChange={handleSignalsSortChange}
-                isRowExpanded={(row) => row.symbol === expandedSymbol}
-                renderRowDetail={(row) => (
-                  <SignalsRowDrilldown
-                    row={row}
-                    onJumpToTrade={onJumpToTrade}
-                    phone={phone}
-                  />
-                )}
-                getRowDetailProps={(row) => ({
-                  id: getSignalDrilldownId(row.symbol),
-                  role: "region",
-                  "aria-label": `${row.symbol} signal detail`,
-                  style: {
-                    minWidth: minTableWidth,
-                    borderBottom: `1px solid ${CSS_COLOR.border}`,
-                  },
-                })}
+                isRowExpanded={isSignalRowExpanded}
+                renderRowDetail={renderSignalRowDetail}
+                getRowDetailProps={getSignalRowDetailProps}
                 rowTestId="signals-table-row"
                 sortState={{ id: sortKey, direction: sortDirection }}
                 headerStyle={{

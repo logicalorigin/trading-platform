@@ -114,6 +114,35 @@ export const signalMonitorEventsTable = pgTable(
   ],
 );
 
+// Periodic snapshots of standing breadth (how many symbols are on buy vs sell)
+// per timeframe, plus an aggregate row (timeframe = "all"). Recorded going
+// forward so the breadth sparklines read an exact, universe-bounded history
+// instead of always replaying the event log.
+export const signalMonitorBreadthSnapshotsTable = pgTable(
+  "signal_monitor_breadth_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    environment: environmentModeEnum("environment").notNull(),
+    timeframe: varchar("timeframe", { length: 16 }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    buy: integer("buy").notNull().default(0),
+    sell: integer("sell").notNull().default(0),
+    total: integer("total").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    index("signal_monitor_breadth_snapshots_env_captured_idx").on(
+      table.environment,
+      table.capturedAt,
+    ),
+    index("signal_monitor_breadth_snapshots_env_tf_captured_idx").on(
+      table.environment,
+      table.timeframe,
+      table.capturedAt,
+    ),
+  ],
+);
+
 export const insertSignalMonitorProfileSchema = createInsertSchema(
   signalMonitorProfilesTable,
 );

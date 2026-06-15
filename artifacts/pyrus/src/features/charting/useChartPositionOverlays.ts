@@ -23,6 +23,7 @@ import {
   type ChartPositionOverlayContext,
   type ChartPositionOverlays,
 } from "./chartPositionOverlays";
+import { finiteNumber } from "./utils/numeric";
 
 const POSITION_OVERLAY_STORAGE_PREFIX = "chart-positions-overlay";
 const CHART_POSITION_QUOTE_REQUEST_OPTIONS = buildHydrationRequestOptions(
@@ -34,15 +35,6 @@ const normalizeSymbol = (value: unknown): string =>
   String(value || "")
     .trim()
     .toUpperCase();
-
-const finiteNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
 
 const readStoredVisibility = (surfaceKind: string | null): boolean => {
   if (typeof window === "undefined" || !surfaceKind) {

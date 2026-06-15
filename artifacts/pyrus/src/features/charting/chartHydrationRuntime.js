@@ -24,6 +24,7 @@ import {
   expandLocalRollupLimit,
   resolveLocalRollupBaseTimeframe,
 } from "./timeframeRollups";
+import { resolveBarTimestampMs } from "./chartBarTime";
 import { useHydrationGate } from "../platform/hydrationCoordinator";
 
 export const buildChartBarScopeKey = (...parts) =>
@@ -40,23 +41,6 @@ const nowMs = () =>
   typeof performance !== "undefined" && Number.isFinite(performance.now())
     ? performance.now()
     : Date.now();
-
-const resolveBarTimestampMs = (value) => {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
-  }
-
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
-
-  return null;
-};
 
 const resolveFiniteCount = (value, fallback = 0) =>
   Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : fallback;

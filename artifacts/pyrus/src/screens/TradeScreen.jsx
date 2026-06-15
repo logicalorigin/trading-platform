@@ -3417,7 +3417,6 @@ const TradeScreenInner = ({
   gatewayTradingBlockReason = "gateway",
   safeQaMode = false,
   isVisible = false,
-  isRetained = false,
   onReadinessChange,
 }) => {
   const toast = useToast();
@@ -3560,7 +3559,6 @@ const TradeScreenInner = ({
   );
   const tradeRuntimeActivity = buildTradeRuntimeActivity({
     isVisible,
-    isRetained,
     searchOpen: Boolean(tradeTickerSearchAnchor),
   });
   const tradeLiveStreamsEnabled = Boolean(

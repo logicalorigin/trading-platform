@@ -5,6 +5,7 @@ import {
   DISPLAY_CHART_PRICE_TIMEFRAME,
 } from "./displayChartSession";
 import { measureChartBarsRequest } from "./chartHydrationRuntime";
+import { resolveBarTimestampMs } from "./chartBarTime";
 import {
   BARS_QUERY_DEFAULTS,
   BARS_REQUEST_PRIORITY,
@@ -17,22 +18,7 @@ const DISPLAY_CHART_PRICE_QUERY_DEFAULTS = {
   refetchOnMount: true,
 };
 
-export const resolveApiBarTimestampMs = (value) => {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
-  }
-
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
-
-  return null;
-};
+export const resolveApiBarTimestampMs = resolveBarTimestampMs;
 
 export const buildChartBarsFromApi = (bars) =>
   (bars || []).reduce((result, bar, index) => {

@@ -127,6 +127,7 @@ import { createFlowUniversePlanner } from "./flow-universe-planner";
 import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
 import {
   getCurrentStockMinuteAggregates,
+  getRecentStockMinuteAggregateHistory,
   subscribeStockMinuteAggregates,
 } from "./stock-aggregate-stream";
 import { getCurrentMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
@@ -140,12 +141,14 @@ import {
   getCurrentBridgeOptionQuoteSnapshots,
 } from "./bridge-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
+import { getSignalMonitorDbFallbackDiagnostics } from "./signal-monitor-diagnostics";
 import {
   getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
   runBridgeWork,
+  type BridgeWorkCategory,
 } from "./bridge-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
 import {
@@ -3416,6 +3419,9 @@ export async function getRuntimeDiagnostics() {
         streams: marketDataStreams,
       }),
     },
+    signalMonitor: {
+      lastDbFallback: getSignalMonitorDbFallbackDiagnostics(),
+    },
     storage: getCachedStorageHealthSnapshot(),
     ibkr: {
       transport: "tws" as const,
@@ -3624,9 +3630,10 @@ export async function listBrokerConnections() {
   const timestamp = new Date();
   const marketDataName = getMarketDataConnectionName();
   const marketDataCapabilities = getMarketDataConnectionCapabilities();
-  const bridgeHealth = await getIbkrClient()
-    .getHealth()
-    .catch(() => null);
+  const bridgeHealth = await getBridgeHealthForSession({
+    waitForInitialRefresh: false,
+    waitForStaleRefresh: false,
+  }).catch(() => null);
   const ibkrConnectionName = "Interactive Brokers Gateway";
   const ibkrStatus = !configured.ibkr
     ? ("disconnected" as const)
@@ -10144,6 +10151,11 @@ async function getBaseBarsImpl(
   const historicalSynthesisAvailable = Boolean(
     allowHistoricalSynthesis && input.market !== "futures" && massiveClient,
   );
+  // When Massive can serve equity history, do not fetch IBKR equity bars; the
+  // Massive REST merge + WS forming-bar overlay below own the live edge. Options
+  // and the Massive-unconfigured fallback keep IBKR (historicalSynthesisAvailable
+  // is false in those cases).
+  const useBrokerEquityHistory = !historicalSynthesisAvailable;
   const brokerHistoryMayBeRecentLimited = shouldLimitBrokerHistoryToRecent(
     input,
     {
@@ -10273,12 +10285,20 @@ async function getBaseBarsImpl(
       const skipBackgroundBrokerHistory =
         brokerHistoryMayBeRecentLimited &&
         !shouldAttemptBrokerLiveEdgeHistory(options);
-      if (brokerHistoryInput && !skipBackgroundBrokerHistory) {
+      if (
+        brokerHistoryInput &&
+        !skipBackgroundBrokerHistory &&
+        useBrokerEquityHistory
+      ) {
         attemptedBrokerHistory = true;
         ibkrBars = await fetchBrokerHistory(brokerHistoryInput, {
           recoveryMode: "live-edge",
         });
-      } else if (brokerHistoryMayBeRecentLimited) {
+      } else if (brokerHistoryMayBeRecentLimited && useBrokerEquityHistory) {
+        // Only a genuine fallback when IBKR was an option but skipped for the
+        // window/background reason. When Massive is the primary equity source
+        // (useBrokerEquityHistory false), skipping IBKR is by design, not a
+        // fallback, so it must not pollute the fallback diagnostics.
         recordMarketDataFallback({
           owner: "bars-history",
           intent: "historical",
@@ -10541,7 +10561,50 @@ async function getBaseBarsImpl(
       .slice(-desiredBars);
   }
 
+  // Equities: overlay the Massive WS forming/most-recent 1m bar so the live edge
+  // stays fresh without IBKR. WS aggregator is 1m only; higher timeframes roll up
+  // from this base in getBarsImpl.
+  if (historicalSynthesisAvailable && input.timeframe === "1m") {
+    const nowMs = Date.now();
+    const wsMessages = [
+      ...getRecentStockMinuteAggregateHistory({
+        symbol: input.symbol,
+        limit: desiredBars,
+      }),
+      ...getCurrentStockMinuteAggregates([input.symbol]),
+    ];
+    if (wsMessages.length) {
+      const overlaid = new Map(
+        bars.map((bar) => [bar.timestamp.getTime(), bar] as const),
+      );
+      for (const msg of wsMessages) {
+        const startMs = Number(msg.startMs);
+        if (!Number.isFinite(startMs)) continue;
+        overlaid.set(startMs, {
+          timestamp: new Date(startMs),
+          open: msg.open,
+          high: msg.high,
+          low: msg.low,
+          close: msg.close,
+          volume: msg.volume,
+          source: "massive-websocket",
+          providerContractId: null,
+          outsideRth,
+          partial: Number(msg.endMs) > nowMs,
+          transport: "massive_websocket",
+          delayed: massiveBarsDelayed,
+          freshness: massiveBarsDelayed ? "delayed" : "live",
+          dataUpdatedAt: new Date(),
+        });
+      }
+      bars = Array.from(overlaid.values())
+        .sort((l, r) => l.timestamp.getTime() - r.timestamp.getTime())
+        .slice(-desiredBars);
+    }
+  }
+
   if (
+    useBrokerEquityHistory &&
     brokerHistoryMayBeRecentLimited &&
     isBrokerHistoryTimeframe &&
     bars.length < desiredBars &&
@@ -10630,6 +10693,7 @@ type IbkrOptionChainInput = {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -10646,6 +10710,7 @@ type IbkrOptionExpirationsInput = {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   foregroundWaitMs?: number | null;
   signal?: AbortSignal;
@@ -10801,6 +10866,10 @@ export const OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS = readPositiveIntegerEn
   "OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS",
   1_500,
 );
+export const OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS = readPositiveIntegerEnv(
+  "OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS",
+  12_000,
+);
 const OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS = readPositiveIntegerEnv(
   "OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS",
   24 * 60 * 60_000,
@@ -10838,7 +10907,7 @@ const OPTIONS_FLOW_SCANNER_SYMBOL_TIMEOUT_MS = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_METADATA_TIMEOUT_MS = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_METADATA_TIMEOUT_MS",
-  5_000,
+  OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
 );
 const OPTIONS_FLOW_UNIVERSE_MODE = readFlowUniverseModeEnv();
 const OPTIONS_FLOW_UNIVERSE_SIZE = readPositiveIntegerEnv(
@@ -11488,6 +11557,9 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
       expirationScanCount,
       strikeCoverage,
       bypassBridgeBackoff: false,
+      // Route the background scanner's option work to its own governor lane so a
+      // deep-scan burst can't trip the user-facing `options` circuit / chain.
+      bridgeWorkCategory: "optionsScanner",
       signal,
     }),
   onBatch: (symbols) => {
@@ -14878,7 +14950,17 @@ async function getCachedIbkrOptionChainWithDebug(
     normalizedInput,
     requestedAt,
   });
-  if (durable && durable.debug.stale !== true) {
+  if (durable) {
+    if (
+      durable.debug.stale === true &&
+      normalizedInput.quoteHydration === "metadata" &&
+      !optionChainInFlight.has(key)
+    ) {
+      refreshOptionChainCache(
+        key,
+        optionChainCacheInput(normalizedInput),
+      ).catch(() => {});
+    }
     return durable;
   }
   const optionChainBackoffRemainingMs = getOptionUpstreamBackoffRemainingMs(
@@ -14889,20 +14971,18 @@ async function getCachedIbkrOptionChainWithDebug(
     !normalizedInput.bypassBridgeBackoff &&
     optionChainBackoffRemainingMs > 0
   ) {
-    return (
-      durable ?? {
-        contracts: [],
-        debug: {
-          cacheStatus: "miss",
-          totalMs: Math.max(0, Date.now() - requestedAt),
-          upstreamMs: null,
-          stale: true,
-          degraded: true,
-          reason: "options_backoff",
-          backoffRemainingMs: optionChainBackoffRemainingMs,
-        },
-      }
-    );
+    return {
+      contracts: [],
+      debug: {
+        cacheStatus: "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        degraded: true,
+        reason: "options_backoff",
+        backoffRemainingMs: optionChainBackoffRemainingMs,
+      },
+    };
   }
 
   if (
@@ -14910,20 +14990,18 @@ async function getCachedIbkrOptionChainWithDebug(
     !normalizedInput.bypassBridgeBackoff &&
     isBridgeWorkBackedOff("options")
   ) {
-    return (
-      durable ?? {
-        contracts: [],
-        debug: {
-          cacheStatus: "miss",
-          totalMs: Math.max(0, Date.now() - requestedAt),
-          upstreamMs: null,
-          stale: true,
-          degraded: true,
-          reason: "options_backoff",
-          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
-        },
-      }
-    );
+    return {
+      contracts: [],
+      debug: {
+        cacheStatus: "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        degraded: true,
+        reason: "options_backoff",
+        backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+      },
+    };
   }
 
   if (inFlight) {
@@ -14957,17 +15035,6 @@ async function getCachedIbkrOptionChainWithDebug(
           },
         };
       }
-      if (durable && isTransientOptionUpstreamError(error)) {
-        return {
-          contracts: durable.contracts,
-          debug: {
-            ...durable.debug,
-            stale: true,
-            degraded: true,
-            reason: "durable_option_chain_after_upstream_failure",
-          },
-        };
-      }
       throw error;
     }
   }
@@ -14993,19 +15060,6 @@ async function getCachedIbkrOptionChainWithDebug(
           ageMs: Number.isFinite(cached.cachedAt)
             ? Math.max(0, requestedAt - cached.cachedAt)
             : null,
-        },
-      };
-    }
-    if (durable && isTransientOptionUpstreamError(error)) {
-      return {
-        contracts: durable.contracts,
-        debug: {
-          ...durable.debug,
-          totalMs: Math.max(0, Date.now() - requestedAt),
-          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
-          stale: true,
-          degraded: true,
-          reason: "durable_option_chain_after_upstream_failure",
         },
       };
     }
@@ -15038,8 +15092,9 @@ function refreshOptionChainCache(
         recordFailure: input.recordBridgeFailure !== false,
         signal: input.signal,
       };
+      const bridgeWorkCategory = input.bridgeWorkCategory ?? "options";
       let ibkrValue = await runBridgeWork(
-        "options",
+        bridgeWorkCategory,
         () => getIbkrClient().getOptionChain(input),
         bridgeWorkOptions,
       );
@@ -15049,7 +15104,7 @@ function refreshOptionChainCache(
         for (const delayMs of emptyRetryDelaysMs) {
           await waitForOptionChainRetry(delayMs, input.signal);
           ibkrValue = await runBridgeWork(
-            "options",
+            bridgeWorkCategory,
             () => getIbkrClient().getOptionChain(input),
             bridgeWorkOptions,
           );
@@ -15456,7 +15511,7 @@ function refreshOptionExpirationCache(
   const promise = (async () => {
     try {
       const value = await runBridgeWork(
-        "options",
+        input.bridgeWorkCategory ?? "options",
         () => getIbkrClient().getOptionExpirations(input),
         {
           bypassBackoff: input.bypassBridgeBackoff === true,
@@ -15496,9 +15551,11 @@ export async function getOptionChainWithDebug(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  emptyRetryDelaysMs?: readonly number[];
 }): Promise<GetOptionChainResultWithDebug> {
   const requestedAt = Date.now();
   const normalizedUnderlying = normalizeSymbol(input.underlying);
@@ -15564,8 +15621,10 @@ export async function getOptionChain(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   timeoutMs?: number;
+  emptyRetryDelaysMs?: readonly number[];
 }): Promise<GetOptionChainResult> {
   const { debug: _debug, ...value } = await getOptionChainWithDebug(input);
   return value;
@@ -15581,9 +15640,11 @@ export async function batchOptionChains(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  emptyRetryDelaysMs?: readonly number[];
 }): Promise<BatchOptionChainsResult> {
   throwIfOptionRequestAborted(input.signal);
   const requestedAt = Date.now();
@@ -15631,6 +15692,7 @@ export async function batchOptionChains(input: {
         quoteHydration: input.quoteHydration,
         allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
         recordBridgeFailure: input.recordBridgeFailure,
+        bridgeWorkCategory: input.bridgeWorkCategory,
         bypassBridgeBackoff: input.bypassBridgeBackoff,
         signal: input.signal,
         timeoutMs: input.timeoutMs,
@@ -15706,7 +15768,7 @@ export async function batchOptionChains(input: {
 
   const fetchResults = await mapWithConcurrency(
     expirationDates,
-    Math.min(1, getOptionsFlowRuntimeConfig().optionChainBatchConcurrency),
+    Math.max(1, getOptionsFlowRuntimeConfig().optionChainBatchConcurrency),
     async (expirationDate) => fetchBatchExpiration(expirationDate),
   );
 
@@ -15714,7 +15776,7 @@ export async function batchOptionChains(input: {
     if (entry.error || entry.contracts.length > 0) {
       continue;
     }
-    for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
+    for (const delayMs of input.emptyRetryDelaysMs ?? OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
       await waitForOptionChainRetry(delayMs, input.signal);
       const retry = await fetchBatchExpiration(entry.expirationDate);
       entry.contracts = retry.contracts;
@@ -15761,6 +15823,7 @@ export async function getOptionExpirationsWithDebug(input: {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   foregroundWaitMs?: number | null;
   signal?: AbortSignal;
@@ -15772,6 +15835,7 @@ export async function getOptionExpirationsWithDebug(input: {
     underlying: input.underlying,
     maxExpirations: input.maxExpirations,
     recordBridgeFailure: input.recordBridgeFailure,
+    bridgeWorkCategory: input.bridgeWorkCategory,
     bypassBridgeBackoff: input.bypassBridgeBackoff,
     foregroundWaitMs: input.foregroundWaitMs,
     signal: input.signal,
@@ -15852,6 +15916,7 @@ export async function getOptionExpirations(input: {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   timeoutMs?: number;
 }): Promise<GetOptionExpirationsResult> {
@@ -17880,6 +17945,7 @@ async function listFlowEventsUncached(input: {
   expirationScanCount?: number;
   strikeCoverage?: OptionChainStrikeCoverage;
   bypassBridgeBackoff?: boolean;
+  bridgeWorkCategory?: BridgeWorkCategory;
   signal?: AbortSignal;
 }): Promise<FlowEventsResult> {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
@@ -17944,6 +18010,7 @@ async function listFlowEventsUncached(input: {
     const expirationsResult = await getCachedIbkrOptionExpirationsWithDebug({
       underlying: input.underlying,
       recordBridgeFailure: true,
+      bridgeWorkCategory: input.bridgeWorkCategory,
       bypassBridgeBackoff: input.bypassBridgeBackoff === true,
       timeoutMs: getOptionsFlowRuntimeConfig().scannerMetadataTimeoutMs,
       signal: input.signal,
@@ -17982,6 +18049,7 @@ async function listFlowEventsUncached(input: {
         quoteHydration: "metadata",
         allowDelayedSnapshotHydration: false,
         recordBridgeFailure: true,
+        bridgeWorkCategory: input.bridgeWorkCategory,
         bypassBridgeBackoff: input.bypassBridgeBackoff === true,
         timeoutMs: getOptionsFlowRuntimeConfig().scannerMetadataTimeoutMs,
         signal: input.signal,

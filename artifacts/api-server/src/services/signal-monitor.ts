@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm";
 import {
   db,
+  signalMonitorBreadthSnapshotsTable,
   signalMonitorEventsTable,
   signalMonitorProfilesTable,
   signalMonitorSymbolStatesTable,
@@ -93,7 +94,7 @@ import {
 export type SignalMonitorTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe;
 export type SignalMonitorDirection = "buy" | "sell";
-export type SignalMonitorBreadthHistoryRange = "day" | "week";
+export type SignalMonitorBreadthHistoryRange = "hour" | "day" | "week" | "month";
 type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
 type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorEventsSourceStatus = "database" | "runtime-fallback";
@@ -1191,13 +1192,15 @@ const SIGNAL_MONITOR_EVENTS_DEFAULT_PAGE_SIZE = 100;
 const SIGNAL_MONITOR_EVENTS_MAX_PAGE_SIZE = 1_000;
 const SIGNAL_MONITOR_RUNTIME_EVENT_RETENTION = 20_000;
 const SIGNAL_MONITOR_BREADTH_HISTORY_RANGES: readonly SignalMonitorBreadthHistoryRange[] =
-  ["day", "week"];
+  ["hour", "day", "week", "month"];
 const SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES: Record<
   SignalMonitorBreadthHistoryRange,
   number
 > = {
+  hour: 2,
   day: 15,
   week: 120,
+  month: 1440,
 };
 
 type SignalMonitorEventsCursor = {
@@ -1206,11 +1209,22 @@ type SignalMonitorEventsCursor = {
 };
 
 type SignalMonitorBreadthHistorySourceRow = {
-  at?: Date | string | null;
-  bucket?: Date | string | null;
-  signalAt?: Date | string | null;
+  symbol?: string | null;
+  timeframe?: string | null;
   direction?: string | null;
-  value?: number | string | bigint | null;
+  signalAt?: Date | string | null;
+  at?: Date | string | null;
+};
+
+type SignalMonitorBreadthSeedRow = {
+  symbol?: string | null;
+  timeframe?: string | null;
+  direction?: string | null;
+};
+
+const normalizeBreadthDirection = (value: unknown): "buy" | "sell" | null => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "buy" || normalized === "sell" ? normalized : null;
 };
 
 function resolveSignalMonitorBreadthHistoryRange(
@@ -1294,9 +1308,13 @@ function resolveSignalMonitorBreadthHistoryWindow(input: {
     ? input.now
     : new Date();
   const from =
-    range === "week"
-      ? new Date(to.getTime() - 7 * 24 * 60 * 60_000)
-      : startOfMarketDate(to);
+    range === "hour"
+      ? new Date(to.getTime() - 60 * 60_000)
+      : range === "week"
+        ? new Date(to.getTime() - 7 * 24 * 60 * 60_000)
+        : range === "month"
+          ? new Date(to.getTime() - 30 * 24 * 60 * 60_000)
+          : startOfMarketDate(to);
   const bucketMinutes =
     SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES[range];
   return {
@@ -1319,8 +1337,13 @@ const alignSignalMonitorBreadthBucketMs = (
   return Math.floor(date.getTime() / bucketMs) * bucketMs;
 };
 
+// Standing breadth over time: replay signal-flip events to count how many
+// symbols are *on buy* vs *on sell* at each bucket (so buy + sell compete and
+// add up to the tracked universe). State carries forward between flips and is
+// seeded from the latest direction before the window so short ranges are full.
 function buildSignalMonitorBreadthHistoryResponse(
-  rows: SignalMonitorBreadthHistorySourceRow[],
+  events: SignalMonitorBreadthHistorySourceRow[],
+  seedRows: SignalMonitorBreadthSeedRow[],
   input: {
     range: SignalMonitorBreadthHistoryRange;
     from: Date;
@@ -1336,39 +1359,119 @@ function buildSignalMonitorBreadthHistoryResponse(
   const toBucketMs =
     alignSignalMonitorBreadthBucketMs(input.to, bucketMs) ??
     input.to.getTime();
-  const byBucket = new Map<number, { buy: number; sell: number }>();
 
-  for (const row of rows) {
-    const direction = String(row.direction || "").trim().toLowerCase();
-    if (direction !== "buy" && direction !== "sell") {
+  // Standing direction per symbol+timeframe cell (drives the per-timeframe
+  // series) and per symbol across timeframes (drives the aggregate readout).
+  const cellState = new Map<string, "buy" | "sell">();
+  const symbolState = new Map<string, { direction: "buy" | "sell"; at: number }>();
+  const timeframeKeys = new Set<string>();
+
+  for (const row of Array.isArray(seedRows) ? seedRows : []) {
+    const direction = normalizeBreadthDirection(row.direction);
+    const symbol = String(row.symbol || "").trim();
+    const timeframe = String(row.timeframe || "").trim().toLowerCase();
+    if (!direction || !symbol || !timeframe) {
       continue;
     }
-    const bucketValue = row.bucket ?? row.at ?? row.signalAt ?? null;
-    const bucket = bucketValue
-      ? alignSignalMonitorBreadthBucketMs(bucketValue, bucketMs)
-      : null;
-    if (bucket == null || bucket < fromBucketMs || bucket > toBucketMs) {
-      continue;
+    cellState.set(`${symbol} ${timeframe}`, direction);
+    timeframeKeys.add(timeframe);
+    if (!symbolState.has(symbol)) {
+      symbolState.set(symbol, { direction, at: Number.NEGATIVE_INFINITY });
     }
-    const count = Math.max(0, Number(row.value ?? 1) || 0);
-    const current = byBucket.get(bucket) ?? { buy: 0, sell: 0 };
-    current[direction] += count;
-    byBucket.set(bucket, current);
   }
 
-  const points = [];
+  const sortedEvents = (Array.isArray(events) ? events : [])
+    .map((row) => {
+      const direction = normalizeBreadthDirection(row.direction);
+      const symbol = String(row.symbol || "").trim();
+      const timeframe = String(row.timeframe || "").trim().toLowerCase();
+      const at = dateOrNull(row.signalAt ?? row.at)?.getTime() ?? null;
+      if (!direction || !symbol || !timeframe || at == null) {
+        return null;
+      }
+      return { direction, symbol, timeframe, at };
+    })
+    .filter(
+      (
+        row,
+      ): row is { direction: "buy" | "sell"; symbol: string; timeframe: string; at: number } =>
+        row != null,
+    )
+    .sort((a, b) => a.at - b.at);
+
+  for (const event of sortedEvents) {
+    timeframeKeys.add(event.timeframe);
+  }
+
+  type BreadthPoint = {
+    at: Date;
+    buy: number;
+    sell: number;
+    net: number;
+    total: number;
+  };
+  const aggregatePoints: BreadthPoint[] = [];
+  const timeframePoints = new Map<string, BreadthPoint[]>();
+  for (const timeframe of timeframeKeys) {
+    timeframePoints.set(timeframe, []);
+  }
+
+  let eventIndex = 0;
   for (let bucket = fromBucketMs; bucket <= toBucketMs; bucket += bucketMs) {
-    const counts = byBucket.get(bucket) ?? { buy: 0, sell: 0 };
-    const buy = Math.round(counts.buy);
-    const sell = Math.round(counts.sell);
-    points.push({
-      at: new Date(bucket),
-      buy,
-      sell,
-      net: buy - sell,
-      total: buy + sell,
+    const bucketEnd = bucket + bucketMs;
+    while (eventIndex < sortedEvents.length && sortedEvents[eventIndex].at < bucketEnd) {
+      const event = sortedEvents[eventIndex];
+      cellState.set(`${event.symbol} ${event.timeframe}`, event.direction);
+      const existing = symbolState.get(event.symbol);
+      if (!existing || event.at >= existing.at) {
+        symbolState.set(event.symbol, { direction: event.direction, at: event.at });
+      }
+      eventIndex += 1;
+    }
+
+    const at = new Date(bucket);
+    const timeframeCounts = new Map<string, { buy: number; sell: number }>();
+    for (const [key, direction] of cellState) {
+      const timeframe = key.slice(key.indexOf(" ") + 1);
+      const counts = timeframeCounts.get(timeframe) ?? { buy: 0, sell: 0 };
+      counts[direction] += 1;
+      timeframeCounts.set(timeframe, counts);
+    }
+    for (const timeframe of timeframeKeys) {
+      const counts = timeframeCounts.get(timeframe) ?? { buy: 0, sell: 0 };
+      timeframePoints.get(timeframe)?.push({
+        at,
+        buy: counts.buy,
+        sell: counts.sell,
+        net: counts.buy - counts.sell,
+        total: counts.buy + counts.sell,
+      });
+    }
+
+    let aggregateBuy = 0;
+    let aggregateSell = 0;
+    for (const { direction } of symbolState.values()) {
+      if (direction === "buy") {
+        aggregateBuy += 1;
+      } else {
+        aggregateSell += 1;
+      }
+    }
+    aggregatePoints.push({
+      at,
+      buy: aggregateBuy,
+      sell: aggregateSell,
+      net: aggregateBuy - aggregateSell,
+      total: aggregateBuy + aggregateSell,
     });
   }
+
+  const timeframes = Array.from(timeframeKeys)
+    .sort()
+    .map((timeframe) => ({
+      timeframe,
+      points: timeframePoints.get(timeframe) ?? [],
+    }));
 
   return {
     range: input.range,
@@ -1376,8 +1479,193 @@ function buildSignalMonitorBreadthHistoryResponse(
     to: input.to,
     generatedAt: input.generatedAt,
     bucketMinutes: input.bucketMinutes,
-    points,
+    points: aggregatePoints,
+    timeframes,
   };
+}
+
+const SIGNAL_MONITOR_BREADTH_AGGREGATE_TIMEFRAME = "all";
+const SIGNAL_MONITOR_BREADTH_SNAPSHOT_INTERVAL_MS = 5 * 60_000;
+
+type SignalMonitorBreadthSnapshotRow = {
+  timeframe: string;
+  capturedAt: Date | string | null;
+  buy: number;
+  sell: number;
+};
+
+// Build the breadth response from recorded snapshots: carry the latest snapshot
+// forward across buckets so the line is continuous between captures.
+function buildSignalMonitorBreadthFromSnapshots(
+  rows: SignalMonitorBreadthSnapshotRow[],
+  input: {
+    range: SignalMonitorBreadthHistoryRange;
+    from: Date;
+    to: Date;
+    generatedAt: Date;
+    bucketMinutes: number;
+  },
+) {
+  const bucketMs = Math.max(1, input.bucketMinutes) * 60_000;
+  const fromBucketMs =
+    alignSignalMonitorBreadthBucketMs(input.from, bucketMs) ?? input.from.getTime();
+  const toBucketMs =
+    alignSignalMonitorBreadthBucketMs(input.to, bucketMs) ?? input.to.getTime();
+
+  const byTimeframe = new Map<string, Array<{ at: number; buy: number; sell: number }>>();
+  for (const row of rows) {
+    const timeframe = String(row.timeframe || "").trim().toLowerCase();
+    const at = dateOrNull(row.capturedAt)?.getTime() ?? null;
+    if (!timeframe || at == null) {
+      continue;
+    }
+    const series = byTimeframe.get(timeframe) ?? [];
+    series.push({ at, buy: Math.max(0, Number(row.buy) || 0), sell: Math.max(0, Number(row.sell) || 0) });
+    byTimeframe.set(timeframe, series);
+  }
+  for (const series of byTimeframe.values()) {
+    series.sort((a, b) => a.at - b.at);
+  }
+
+  const buildPoints = (series: Array<{ at: number; buy: number; sell: number }>) => {
+    const points = [];
+    let index = 0;
+    let last = series.length ? { buy: series[0].buy, sell: series[0].sell } : { buy: 0, sell: 0 };
+    for (let bucket = fromBucketMs; bucket <= toBucketMs; bucket += bucketMs) {
+      const bucketEnd = bucket + bucketMs;
+      while (index < series.length && series[index].at < bucketEnd) {
+        last = { buy: series[index].buy, sell: series[index].sell };
+        index += 1;
+      }
+      points.push({
+        at: new Date(bucket),
+        buy: last.buy,
+        sell: last.sell,
+        net: last.buy - last.sell,
+        total: last.buy + last.sell,
+      });
+    }
+    return points;
+  };
+
+  const timeframes = Array.from(byTimeframe.keys())
+    .filter((timeframe) => timeframe !== SIGNAL_MONITOR_BREADTH_AGGREGATE_TIMEFRAME)
+    .sort()
+    .map((timeframe) => ({ timeframe, points: buildPoints(byTimeframe.get(timeframe) ?? []) }));
+
+  return {
+    range: input.range,
+    from: input.from,
+    to: input.to,
+    generatedAt: input.generatedAt,
+    bucketMinutes: input.bucketMinutes,
+    points: buildPoints(byTimeframe.get(SIGNAL_MONITOR_BREADTH_AGGREGATE_TIMEFRAME) ?? []),
+    timeframes,
+  };
+}
+
+// Capture current standing breadth (symbols on buy vs sell) per environment and
+// timeframe, plus an aggregate row, into the snapshots table.
+export async function recordSignalMonitorBreadthSnapshot(now: Date = new Date()) {
+  const perTimeframe = await db
+    .select({
+      environment: signalMonitorProfilesTable.environment,
+      timeframe: signalMonitorSymbolStatesTable.timeframe,
+      direction: signalMonitorSymbolStatesTable.currentSignalDirection,
+      value: sql<number>`count(*)::int`,
+    })
+    .from(signalMonitorSymbolStatesTable)
+    .innerJoin(
+      signalMonitorProfilesTable,
+      eq(signalMonitorSymbolStatesTable.profileId, signalMonitorProfilesTable.id),
+    )
+    .where(
+      and(
+        eq(signalMonitorSymbolStatesTable.active, true),
+        inArray(signalMonitorSymbolStatesTable.currentSignalDirection, ["buy", "sell"]),
+      ),
+    )
+    .groupBy(
+      signalMonitorProfilesTable.environment,
+      signalMonitorSymbolStatesTable.timeframe,
+      signalMonitorSymbolStatesTable.currentSignalDirection,
+    );
+
+  // Aggregate: each symbol's latest direction across timeframes.
+  const aggregateResult = await db.execute(sql`
+    SELECT environment, direction, count(*)::int AS value
+    FROM (
+      SELECT DISTINCT ON (p.environment, s.symbol)
+        p.environment AS environment,
+        s.current_signal_direction AS direction
+      FROM signal_monitor_symbol_states s
+      JOIN signal_monitor_profiles p ON s.profile_id = p.id
+      WHERE s.active = true
+        AND s.current_signal_direction IN ('buy', 'sell')
+      ORDER BY p.environment, s.symbol, s.current_signal_at DESC NULLS LAST
+    ) latest
+    GROUP BY environment, direction
+  `);
+  const aggregateRows = (aggregateResult.rows ?? []) as Array<{
+    environment: string;
+    direction: string;
+    value: number;
+  }>;
+
+  const counts = new Map<string, { environment: string; timeframe: string; buy: number; sell: number }>();
+  const bump = (environment: string, timeframe: string, direction: unknown, value: unknown) => {
+    const normalized = normalizeBreadthDirection(direction);
+    if (!normalized || (environment !== "paper" && environment !== "live") || !timeframe) {
+      return;
+    }
+    const key = `${environment} ${timeframe}`;
+    const entry = counts.get(key) ?? { environment, timeframe, buy: 0, sell: 0 };
+    entry[normalized] += Math.max(0, Number(value) || 0);
+    counts.set(key, entry);
+  };
+  for (const row of perTimeframe) {
+    bump(String(row.environment), String(row.timeframe).toLowerCase(), row.direction, row.value);
+  }
+  for (const row of aggregateRows) {
+    bump(String(row.environment), SIGNAL_MONITOR_BREADTH_AGGREGATE_TIMEFRAME, row.direction, row.value);
+  }
+
+  const inserts = Array.from(counts.values()).map((entry) => ({
+    environment: entry.environment as "paper" | "live",
+    timeframe: entry.timeframe,
+    capturedAt: now,
+    buy: entry.buy,
+    sell: entry.sell,
+    total: entry.buy + entry.sell,
+  }));
+  if (inserts.length > 0) {
+    await db.insert(signalMonitorBreadthSnapshotsTable).values(inserts);
+  }
+  return inserts.length;
+}
+
+let signalMonitorBreadthSnapshotTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startSignalMonitorBreadthSnapshotWorker() {
+  if (signalMonitorBreadthSnapshotTimer) {
+    return;
+  }
+  const run = () => {
+    void recordSignalMonitorBreadthSnapshot().catch((error) => {
+      if (isTransientPostgresError(error)) {
+        return;
+      }
+      logger.warn({ err: error }, "Failed to record signal monitor breadth snapshot");
+    });
+  };
+  signalMonitorBreadthSnapshotTimer = setInterval(
+    run,
+    SIGNAL_MONITOR_BREADTH_SNAPSHOT_INTERVAL_MS,
+  );
+  if (typeof signalMonitorBreadthSnapshotTimer.unref === "function") {
+    signalMonitorBreadthSnapshotTimer.unref();
+  }
+  run();
 }
 
 function resolveSignalMonitorEventsPageSize(limit: unknown): number {
@@ -9432,40 +9720,87 @@ export async function listSignalMonitorBreadthHistory(input: {
     now: input.now,
   });
 
-  const bucketSeconds = window.bucketMinutes * 60;
-  const bucketExpression = sql<Date>`
-    to_timestamp(
-      floor(extract(epoch from ${signalMonitorEventsTable.signalAt}) / ${bucketSeconds})
-      * ${bucketSeconds}
-    )
-  `;
-  const bucketedEvents = db
-    .select({
-      bucket: bucketExpression.as("bucket"),
-      direction: signalMonitorEventsTable.direction,
-    })
-    .from(signalMonitorEventsTable)
-    .where(
-      and(
-        eq(signalMonitorEventsTable.environment, environment),
-        gte(signalMonitorEventsTable.signalAt, window.from),
-        lte(signalMonitorEventsTable.signalAt, window.to),
-      ),
-    )
-    .as("bucketed_signal_monitor_events");
-
   try {
-    const rows = await db
-      .select({
-        bucket: bucketedEvents.bucket,
-        direction: bucketedEvents.direction,
-        value: sql<number>`count(*)::int`,
-      })
-      .from(bucketedEvents)
-      .groupBy(bucketedEvents.bucket, bucketedEvents.direction)
-      .orderBy(bucketedEvents.bucket);
+    // Prefer recorded standing-breadth snapshots when the window has them; they
+    // are exact and universe-bounded. Wrapped so a missing table (pre-migration)
+    // or transient error degrades to event-log reconstruction instead of 500ing.
+    let snapshotRows: Array<{
+      timeframe: string;
+      capturedAt: Date;
+      buy: number;
+      sell: number;
+    }> = [];
+    try {
+      snapshotRows = await db
+        .select({
+          timeframe: signalMonitorBreadthSnapshotsTable.timeframe,
+          capturedAt: signalMonitorBreadthSnapshotsTable.capturedAt,
+          buy: signalMonitorBreadthSnapshotsTable.buy,
+          sell: signalMonitorBreadthSnapshotsTable.sell,
+        })
+        .from(signalMonitorBreadthSnapshotsTable)
+        .where(
+          and(
+            eq(signalMonitorBreadthSnapshotsTable.environment, environment),
+            gte(signalMonitorBreadthSnapshotsTable.capturedAt, window.from),
+            lte(signalMonitorBreadthSnapshotsTable.capturedAt, window.to),
+          ),
+        )
+        .orderBy(signalMonitorBreadthSnapshotsTable.capturedAt);
+    } catch (snapshotError) {
+      if (!isTransientPostgresError(snapshotError)) {
+        logger.warn(
+          { err: snapshotError, environment },
+          "Signal monitor breadth snapshot read failed; falling back to reconstruction",
+        );
+      }
+      snapshotRows = [];
+    }
+    // Only trust snapshots when they actually span the window start; otherwise
+    // (e.g. a long range still mostly older than recording) reconstruct so the
+    // deep history isn't flat-filled.
+    const earliestSnapshotMs = snapshotRows.length
+      ? dateOrNull(snapshotRows[0].capturedAt)?.getTime() ?? null
+      : null;
+    const snapshotsCoverWindow =
+      earliestSnapshotMs != null &&
+      earliestSnapshotMs <= window.from.getTime() + window.bucketMinutes * 60_000 * 2;
+    if (snapshotsCoverWindow) {
+      return buildSignalMonitorBreadthFromSnapshots(snapshotRows, window);
+    }
 
-    return buildSignalMonitorBreadthHistoryResponse(rows, window);
+    // Seed: the latest standing direction per symbol+timeframe before the
+    // window opens, so the first buckets reflect the full breadth, not just
+    // flips that happened to land inside the range.
+    const seedResult = await db.execute(sql`
+      SELECT DISTINCT ON (symbol, timeframe)
+        symbol, timeframe, direction
+      FROM signal_monitor_events
+      WHERE environment = ${environment}
+        AND signal_at < ${window.from}
+        AND direction IN ('buy', 'sell')
+      ORDER BY symbol, timeframe, signal_at DESC
+    `);
+    const seedRows = (seedResult.rows ?? []) as SignalMonitorBreadthSeedRow[];
+
+    const windowEvents = await db
+      .select({
+        symbol: signalMonitorEventsTable.symbol,
+        timeframe: signalMonitorEventsTable.timeframe,
+        direction: signalMonitorEventsTable.direction,
+        signalAt: signalMonitorEventsTable.signalAt,
+      })
+      .from(signalMonitorEventsTable)
+      .where(
+        and(
+          eq(signalMonitorEventsTable.environment, environment),
+          gte(signalMonitorEventsTable.signalAt, window.from),
+          lte(signalMonitorEventsTable.signalAt, window.to),
+        ),
+      )
+      .orderBy(signalMonitorEventsTable.signalAt);
+
+    return buildSignalMonitorBreadthHistoryResponse(windowEvents, seedRows, window);
   } catch (error) {
     if (isTransientPostgresError(error)) {
       warnSignalMonitorDbUnavailable(error, {
@@ -9474,6 +9809,7 @@ export async function listSignalMonitorBreadthHistory(input: {
       });
       return buildSignalMonitorBreadthHistoryResponse(
         runtimeSignalMonitorEvents.get(environment) ?? [],
+        [],
         window,
       );
     }

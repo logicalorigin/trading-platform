@@ -7,7 +7,11 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      // Mirrors react-query's numeric `retry: 1` (failureCount < 1) but never
+      // retries a client-side timeout — re-firing it just re-hangs against an
+      // unresponsive backend and re-consumes the freed connection.
+      retry: (failureCount, error) =>
+        error?.name !== "TimeoutError" && failureCount < 1,
       staleTime: 30_000,
       gcTime: 10 * 60_000,
     },

@@ -7,6 +7,7 @@
  */
 import type { SignalMonitorBreadthHistoryPoint } from './signalMonitorBreadthHistoryPoint';
 import type { SignalMonitorBreadthHistoryRange } from './signalMonitorBreadthHistoryRange';
+import type { SignalMonitorBreadthHistoryTimeframeSeries } from './signalMonitorBreadthHistoryTimeframeSeries';
 
 export interface SignalMonitorBreadthHistoryResponse {
   range: SignalMonitorBreadthHistoryRange;
@@ -15,4 +16,5 @@ export interface SignalMonitorBreadthHistoryResponse {
   generatedAt: Date;
   bucketMinutes: number;
   points: SignalMonitorBreadthHistoryPoint[];
+  timeframes: SignalMonitorBreadthHistoryTimeframeSeries[];
 }

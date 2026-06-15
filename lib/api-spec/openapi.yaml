@@ -12474,7 +12474,20 @@ components:
 
     SignalMonitorBreadthHistoryRange:
       type: string
-      enum: [day, week]
+      enum: [hour, day, week, month]
+
+    SignalMonitorBreadthHistoryTimeframeSeries:
+      type: object
+      properties:
+        timeframe:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorBreadthHistoryPoint"
+      required:
+        - timeframe
+        - points
 
     SignalMonitorBreadthHistoryPoint:
       type: object
@@ -12517,6 +12530,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SignalMonitorBreadthHistoryPoint"
+        timeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorBreadthHistoryTimeframeSeries"
       required:
         - range
         - from
@@ -12524,6 +12541,7 @@ components:
         - generatedAt
         - bucketMinutes
         - points
+        - timeframes
 
     SignalMonitorStateResponse:
       type: object
