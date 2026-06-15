@@ -9,6 +9,8 @@ import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize
 import { formatAppDateTime } from "../../lib/timeZone";
 import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
+import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
 import {
   ACCOUNT_RANGES,
   EmptyState,
@@ -455,6 +457,17 @@ export const EquityCurvePanel = ({
   );
   const chartHeight = compact ? CHART_HEIGHT_COMPACT : CHART_HEIGHT;
 
+  // Equity history is served stale (isStale/staleReason) when the snapshot/Flex
+  // read is degraded. Map onto the shared collector's stale/reason shape.
+  const equityIssues = useMemo(
+    () =>
+      collectWidgetIssues(
+        { stale: query.data?.isStale === true, reason: query.data?.staleReason },
+        { valueLabel: "Equity history", source: "account" },
+      ),
+    [query.data?.isStale, query.data?.staleReason],
+  );
+
   const headerControls = (
     <div
       style={{
@@ -482,7 +495,16 @@ export const EquityCurvePanel = ({
 
   return (
     <Panel
-      title="Equity Curve"
+      title={
+        equityIssues.length ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: sp(3) }}>
+            Equity Curve
+            <ResilienceMarker issues={equityIssues} />
+          </span>
+        ) : (
+          "Equity Curve"
+        )
+      }
       rightRail={baseRightRail}
       loading={equityLoading}
       error={blockingError}

@@ -28,6 +28,11 @@ import {
 } from "./accountUtils";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
+import {
+  collectWidgetIssues,
+  resilienceSeverityForReason,
+} from "../../features/platform/resilienceIssues.js";
 
 const ORDERS_PAGE_SIZE = 25;
 
@@ -110,6 +115,12 @@ export const OrdersPanel = ({
       ),
     [query.data?.orders, sourceFilter],
   );
+  // Backend serves orders with degraded/stale/reason when the broker read is
+  // backed off or failing (see BACKEND_RESILIENCE_CATALOGUE.md). Surface it.
+  const ordersIssues = useMemo(
+    () => collectWidgetIssues(query.data, { valueLabel: "Orders", source: "broker" }),
+    [query.data],
+  );
   const [page, setPage] = useState(0);
   const paginatedOrders = paginateRows(orders, page, ORDERS_PAGE_SIZE);
   const pageOrders = paginatedOrders.pageRows;
@@ -123,7 +134,19 @@ export const OrdersPanel = ({
   }, [page, paginatedOrders.safePage]);
   return (
   <Panel
-    title="Orders"
+    title={
+      ordersIssues.length ? (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: sp(3) }}>
+          Orders
+          <ResilienceMarker
+            issues={ordersIssues}
+            severity={resilienceSeverityForReason(ordersIssues[0]?.reason)}
+          />
+        </span>
+      ) : (
+        "Orders"
+      )
+    }
     rightRail={`Showing ${tab}`}
     loading={
       (query.isLoading || (query.isPending && query.fetchStatus !== "idle")) &&

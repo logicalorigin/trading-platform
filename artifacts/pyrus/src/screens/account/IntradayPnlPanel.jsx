@@ -3,6 +3,8 @@ import {
 } from "react";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { EmptyState, formatAccountSignedMoney } from "./accountUtils";
+import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
+import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
 
 const SVG_W = 320;
 const SVG_H = 74;
@@ -98,6 +100,14 @@ export const intradayMarketSessionPctElapsed = (timestampMs) => {
 
 export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false }) => {
   const series = useMemo(() => buildIntradaySeries(query?.data), [query?.data]);
+  const pnlIssues = useMemo(
+    () =>
+      collectWidgetIssues(
+        { stale: query?.data?.isStale === true, reason: query?.data?.staleReason },
+        { valueLabel: "Intraday P&L", source: "account" },
+      ),
+    [query?.data?.isStale, query?.data?.staleReason],
+  );
 
   const stats = useMemo(() => {
     if (!series.length) return null;
@@ -158,8 +168,11 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
         >
           {formatAccountSignedMoney(stats.last.pnl, currency, false, maskValues)}
         </span>
-        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
-          {formatIntradayMarketTime(stats.last.timestampMs)} ET
+        <span style={{ display: "inline-flex", alignItems: "center", gap: sp(2) }}>
+          <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
+            {formatIntradayMarketTime(stats.last.timestampMs)} ET
+          </span>
+          {pnlIssues.length ? <ResilienceMarker issues={pnlIssues} side="left" /> : null}
         </span>
       </div>
       <svg

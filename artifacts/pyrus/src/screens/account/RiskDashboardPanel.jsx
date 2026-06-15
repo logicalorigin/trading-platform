@@ -8,6 +8,34 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
+import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
+
+// Greek risk is computed from option positions; positions missing spot/mark/
+// contract/greek inputs are silently skipped (account-risk-model coverage).
+// Surface that the displayed risk is from partial coverage.
+const buildGreekCoverageIssues = (greekScenarios) => {
+  const coverage = greekScenarios?.coverage;
+  const skipped = coverage?.skippedPositions ?? 0;
+  if (!skipped) return [];
+  const s = coverage.skipped || {};
+  const causes = [
+    s.missingSpot ? `${s.missingSpot} missing spot` : null,
+    s.missingMarkPrice ? `${s.missingMarkPrice} missing mark price` : null,
+    s.missingContractData ? `${s.missingContractData} missing contract data` : null,
+    s.missingGreekSnapshot ? `${s.missingGreekSnapshot} missing greeks` : null,
+  ].filter(Boolean);
+  return collectWidgetIssues(
+    {
+      degraded: true,
+      reason: "greek_coverage_partial",
+      degradedReason: `${skipped} option position(s) excluded from greek risk${
+        causes.length ? ` (${causes.join(", ")})` : ""
+      }.`,
+    },
+    { valueLabel: "Greek risk", source: "account" },
+  );
+};
 
 const marginCushionPercent = (value, maskValues = false) =>
   value == null || Number.isNaN(Number(value))
@@ -114,6 +142,7 @@ export const RiskCompactContent = ({
   const margin = data.margin || {};
   const greeks = data.greeks || {};
   const providerFields = margin.providerFields || {};
+  const riskIssues = buildGreekCoverageIssues(data.greekScenarios);
 
   return (
     <div style={{ display: "grid", gap: sp(5) }}>
@@ -182,15 +211,17 @@ export const RiskCompactContent = ({
       </div>
 
       {greeks.warning ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: sp(4) }}>
           <Pill tone="amber">{greeks.warning}</Pill>
+          {riskIssues.length ? <ResilienceMarker issues={riskIssues} /> : null}
         </div>
       ) : greeks.coverage ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: sp(4) }}>
           <Pill tone="status-filled">
             Matched {greeks.coverage.matchedOptionPositions || 0} /{" "}
             {greeks.coverage.optionPositions || 0} options
           </Pill>
+          {riskIssues.length ? <ResilienceMarker issues={riskIssues} /> : null}
         </div>
       ) : null}
     </div>
