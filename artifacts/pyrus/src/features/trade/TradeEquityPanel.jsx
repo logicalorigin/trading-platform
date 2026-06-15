@@ -1032,7 +1032,7 @@ export const TradeEquityPanel = ({
         emptyState={{
           eyebrow: "Spot feed",
           title: equityChartStatus,
-          detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated for the broker feed yet.`,
+          detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated yet.`,
         }}
         surfaceTopOverlay={(controls) => (
           <ResearchChartWidgetHeader
