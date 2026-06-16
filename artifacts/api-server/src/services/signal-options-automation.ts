@@ -61,6 +61,7 @@ import {
   signalMonitorCompletedBarsQueryTo,
   resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
+  resolveSignalSourceEnvironment,
   resolveSignalMonitorEventLookupKeys,
   updateSignalMonitorProfile,
   withSignalMonitorUniverseScope,
@@ -2339,6 +2340,102 @@ async function readSignalMonitorEventMetadata(input: {
   };
 }
 
+// Batched equivalent of readSignalMonitorEventMetadata for many states at once:
+// accumulates every candidate event key across all states, runs ONE
+// inArray(eventKey) query (the per-state fan-out otherwise issues one query per
+// active symbol and saturates the connection pool), then resolves each state's
+// metadata in memory — picking the newest emittedAt across its candidate keys,
+// matching the per-state ORDER BY emittedAt DESC LIMIT 1. Mirrors
+// loadCanonicalSignalOptionsSignalKeys. Keyed by buildSignalKey(state, signalAt).
+async function loadSignalMonitorEventMetadataBySignalKey(
+  states: SignalMonitorState[],
+): Promise<Map<string, SignalMonitorEventMetadata>> {
+  const eventKeysBySignalKey = new Map<string, string[]>();
+  const allEventKeys = new Set<string>();
+
+  for (const state of states) {
+    if (!isUuidLike(state.profileId)) {
+      continue;
+    }
+    const signalAtIso = toIsoString(state.currentSignalAt);
+    const signalAt = dateOrNull(signalAtIso);
+    const direction = state.currentSignalDirection;
+    if (!signalAtIso || !signalAt || !direction) {
+      continue;
+    }
+    const eventKeys = resolveSignalMonitorEventLookupKeys({
+      profileId: state.profileId,
+      symbol: state.symbol,
+      timeframe: state.timeframe,
+      direction,
+      signalAt,
+    });
+    if (!eventKeys.length) {
+      continue;
+    }
+    const signalKey = buildSignalKey(state, signalAtIso);
+    eventKeysBySignalKey.set(signalKey, eventKeys);
+    eventKeys.forEach((eventKey) => allEventKeys.add(eventKey));
+  }
+
+  if (!allEventKeys.size) {
+    return new Map();
+  }
+
+  try {
+    const events = await db
+      .select({
+        eventKey: signalMonitorEventsTable.eventKey,
+        id: signalMonitorEventsTable.id,
+        source: signalMonitorEventsTable.source,
+        payload: signalMonitorEventsTable.payload,
+        emittedAt: signalMonitorEventsTable.emittedAt,
+      })
+      .from(signalMonitorEventsTable)
+      .where(inArray(signalMonitorEventsTable.eventKey, Array.from(allEventKeys)))
+      .orderBy(desc(signalMonitorEventsTable.emittedAt));
+
+    type EventCandidate = SignalMonitorEventMetadata & { emittedMs: number };
+    const eventByKey = new Map<string, EventCandidate>();
+    for (const event of events) {
+      if (eventByKey.has(event.eventKey)) {
+        continue;
+      }
+      eventByKey.set(event.eventKey, {
+        eventId: event.id,
+        source: event.source,
+        filterState: asRecord(asRecord(event.payload).filterState),
+        emittedMs: dateOrNull(event.emittedAt)?.getTime() ?? 0,
+      });
+    }
+
+    const metadataBySignalKey = new Map<string, SignalMonitorEventMetadata>();
+    for (const [signalKey, eventKeys] of eventKeysBySignalKey) {
+      let best: EventCandidate | null = null;
+      for (const eventKey of eventKeys) {
+        const candidate = eventByKey.get(eventKey);
+        if (candidate && (!best || candidate.emittedMs > best.emittedMs)) {
+          best = candidate;
+        }
+      }
+      if (best) {
+        metadataBySignalKey.set(signalKey, {
+          eventId: best.eventId,
+          source: best.source,
+          filterState: best.filterState,
+        });
+      }
+    }
+    return metadataBySignalKey;
+  } catch (error) {
+    logger.warn?.(
+      { err: error },
+      "Failed to batch-load signal monitor event metadata; building snapshots without metadata",
+    );
+    return new Map();
+  }
+}
+
 function buildCanonicalSignalOptionsSignalSnapshot(input: {
   state: SignalMonitorState;
   signalAt: string | null;
@@ -2377,7 +2474,7 @@ async function listSignalOptionsSignalSnapshots(
   const signalState = await (options.preferStoredMonitorState
     ? listSignalOptionsStoredSignalStatesFast({ deployment, universe })
     : getSignalMonitorState({
-        environment: deployment.mode,
+        environment: resolveSignalSourceEnvironment(),
       }).then((state) => ({
         states: Array.isArray(state.states)
           ? (state.states as SignalMonitorState[])
@@ -2413,28 +2510,32 @@ async function listSignalOptionsSignalSnapshots(
   const freshWindowBars = signalState.freshWindowBars;
   const requireEventMetadata = shouldRequireSignalOptionsEventMetadata(options);
 
-  const snapshots = await Promise.all(
-    visibleStates.map(async (state) => {
-      const signalAt = toIsoString(state.currentSignalAt);
-      const signalKey =
-        signalAt && state.currentSignalDirection
-          ? buildSignalKey(state, signalAt)
-          : null;
-      const metadata = signalAt && options.includeEventMetadata !== false
-        ? await readSignalMonitorEventMetadata({ state, signalAt }).catch(
-            () => null,
-          )
+  // One batched query for all states instead of one query per symbol — the
+  // per-symbol fan-out otherwise saturates the connection pool on the polled
+  // cockpit/state path.
+  const metadataBySignalKey =
+    options.includeEventMetadata !== false
+      ? await loadSignalMonitorEventMetadataBySignalKey(visibleStates)
+      : new Map<string, SignalMonitorEventMetadata>();
+
+  const snapshots = visibleStates.map((state) => {
+    const signalAt = toIsoString(state.currentSignalAt);
+    const signalKey =
+      signalAt && state.currentSignalDirection
+        ? buildSignalKey(state, signalAt)
         : null;
-      return buildCanonicalSignalOptionsSignalSnapshot({
-        state,
-        signalAt,
-        signalKey,
-        metadata,
-        freshWindowBars,
-        requireEventMetadata,
-      });
-    }),
-  );
+    const metadata = signalKey
+      ? metadataBySignalKey.get(signalKey) ?? null
+      : null;
+    return buildCanonicalSignalOptionsSignalSnapshot({
+      state,
+      signalAt,
+      signalKey,
+      metadata,
+      freshWindowBars,
+      requireEventMetadata,
+    });
+  });
 
   return snapshots
     .filter((snapshot): snapshot is SignalOptionsSignalSnapshot =>
@@ -4666,7 +4767,7 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
   const [profile] = await db
     .select()
     .from(signalMonitorProfilesTable)
-    .where(eq(signalMonitorProfilesTable.environment, input.deployment.mode))
+    .where(eq(signalMonitorProfilesTable.environment, resolveSignalSourceEnvironment()))
     .limit(1);
   if (!profile) {
     return {
@@ -4993,7 +5094,7 @@ async function loadSignalOptionsMonitorState(input: {
   throwIfSignalOptionsScanAborted(input.signal);
   if (input.universe.size > 0) {
     const profile = await getSignalMonitorProfileRow({
-      environment: input.deployment.mode,
+      environment: resolveSignalSourceEnvironment(),
       ensureWatchlist: true,
     });
     const requireWorkerLiveEdgeRefresh =
@@ -5008,7 +5109,7 @@ async function loadSignalOptionsMonitorState(input: {
         input.universe,
       );
       const evaluated = await getSignalMonitorStoredState({
-        environment: input.deployment.mode,
+        environment: resolveSignalSourceEnvironment(),
         markNonCurrentStale: true,
       });
       throwIfSignalOptionsScanAborted(input.signal);
@@ -5026,7 +5127,7 @@ async function loadSignalOptionsMonitorState(input: {
       input.universe,
     );
     const stored = await getSignalMonitorStoredState({
-      environment: input.deployment.mode,
+      environment: resolveSignalSourceEnvironment(),
       markNonCurrentStale: true,
     });
     throwIfSignalOptionsScanAborted(input.signal);
@@ -5138,7 +5239,7 @@ async function loadSignalOptionsMonitorState(input: {
   }
 
   return evaluateSignalMonitor({
-    environment: input.deployment.mode,
+    environment: resolveSignalSourceEnvironment(),
     mode: "incremental",
     barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
   });
@@ -12191,7 +12292,7 @@ async function processEntryCandidate(input: {
   signal?: AbortSignal;
 }) {
   const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
-    environment: input.deployment.mode,
+    environment: resolveSignalSourceEnvironment(),
     symbol: input.candidate.symbol,
     timeframes: signalOptionsConfiguredMtfTimeframes(input.profile),
     asOf: new Date(),
@@ -14629,7 +14730,7 @@ export async function runSignalOptionsGreekSelectorSmoke(input: {
     : baseProfile;
   const mtfTimeframes = signalOptionsConfiguredMtfTimeframes(profile);
   const signalProfile = await getSignalMonitorProfileRow({
-    environment: deployment.mode,
+    environment: resolveSignalSourceEnvironment(),
   });
   const signalUniverse = await resolveSignalMonitorProfileUniverse(signalProfile);
   const pyrusSignalsSettings = mergePyrusSignalsSettingsPatch(
@@ -15967,7 +16068,7 @@ export async function runSignalOptionsShadowBackfill(input: {
       : baseProfile;
     const mtfTimeframes = signalOptionsConfiguredMtfTimeframes(profile);
     const signalProfile = await getSignalMonitorProfileRow({
-      environment: deployment.mode,
+      environment: resolveSignalSourceEnvironment(),
     });
     const signalUniverse =
       await resolveSignalMonitorProfileUniverse(signalProfile);
@@ -16169,7 +16270,7 @@ export async function runSignalOptionsShadowBackfill(input: {
       }
 
       const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
-        environment: deployment.mode,
+        environment: resolveSignalSourceEnvironment(),
         symbol: candidate.symbol,
         timeframes: signalOptionsConfiguredMtfTimeframes(profile),
         asOf: historicalSignal.signalAt,

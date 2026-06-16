@@ -428,7 +428,13 @@ export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
     }
     const cached = deploymentListFallback(input);
     if (cached) return cached;
-    throw error;
+    // Transient DB error (pool contention or a connectivity blip) with no cached
+    // fallback yet — e.g. the cold-boot pool race before the cache is primed.
+    // Return an explicit "unavailable" marker instead of throwing a 500 so the
+    // client renders a "temporarily unavailable, refresh" state and the SSE
+    // clobber-guard preserves any already-known deployments, rather than the
+    // misleading "no deployments exist" empty state.
+    return { deployments: [], cacheStatus: "unavailable" };
   }
 }
 

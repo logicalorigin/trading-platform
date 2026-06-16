@@ -33,6 +33,7 @@ import {
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
+import { listAlgoDeployments } from "./services/automation";
 import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-usage";
 import {
   getPythonComputeDiagnostics,
@@ -245,6 +246,15 @@ function ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt = 1): void {
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
   ensureIbkrLaneRuntimeOverridesLoaded();
+  // Prime the algo deployment-list cache while the pool is still idle, BEFORE
+  // the staggered background workers below start their connect herd. The algo
+  // page's controls gate on a present deployment list; without a warm cache, a
+  // cold-load read that loses the startup pool race has nothing to fall back on
+  // and the page shows "deployment unavailable" until a later refetch lands.
+  // Caches the "all" key, which moded (paper/live) reads fall back to.
+  void listAlgoDeployments({}).catch((err) => {
+    logger.warn({ err }, "Algo deployment-list cache prime failed");
+  });
   // Stagger the DB-touching background workers instead of starting them all in
   // the same tick. Starting ~19 workers synchronously had every one call
   // pool.connect() at once on boot; against the bounded pool (and a
