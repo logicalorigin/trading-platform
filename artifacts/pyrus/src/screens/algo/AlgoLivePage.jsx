@@ -21,6 +21,7 @@ import {
   CSS_COLOR,
   RADII,
   T,
+  cssColorMix,
   dim,
   fs,
   sp,
@@ -164,7 +165,6 @@ const EmptyOperationsState = ({
                 color: CSS_COLOR.text,
                 fontSize: fs(10),
                 fontFamily: T.sans,
-                outline: "none",
               }}
             >
               {candidateDrafts.map((draft) => (
@@ -186,7 +186,6 @@ const EmptyOperationsState = ({
                 color: CSS_COLOR.text,
                 fontSize: fs(10),
                 fontFamily: T.sans,
-                outline: "none",
               }}
             />
             <input
@@ -202,7 +201,6 @@ const EmptyOperationsState = ({
                 color: CSS_COLOR.text,
                 fontSize: fs(10),
                 fontFamily: T.sans,
-                outline: "none",
               }}
             />
             <button
@@ -1116,7 +1114,6 @@ export const AlgoLivePage = ({
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
                       fontWeight: 600,
-                      outline: "none",
                     }}
                   >
                     {deployments.map((deployment) => (
@@ -1422,7 +1419,7 @@ export const AlgoLivePage = ({
                 zIndex: 100,
                 display: "flex",
                 alignItems: "flex-end",
-                background: "rgba(0,0,0,0.48)",
+                background: cssColorMix(CSS_COLOR.bg0, 48),
               }}
               onClick={() => setSettingsDrawerOpen(false)}
             >
@@ -1432,7 +1429,7 @@ export const AlgoLivePage = ({
                   height: "90vh",
                   background: CSS_COLOR.bg0,
                   borderTop: `1px solid ${CSS_COLOR.border}`,
-                  boxShadow: "0 -18px 42px rgba(0,0,0,0.45)",
+                  boxShadow: `0 -18px 42px ${cssColorMix(CSS_COLOR.bg0, 45)}`,
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,

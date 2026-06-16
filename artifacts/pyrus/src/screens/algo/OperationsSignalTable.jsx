@@ -242,7 +242,6 @@ const OperationsSignalSearchInput = ({ value, onCommit, compact }) => {
         width: "100%",
         minWidth: 0,
         border: 0,
-        outline: 0,
         background: "transparent",
         color: CSS_COLOR.text,
         fontFamily: T.sans,
@@ -1138,7 +1137,7 @@ const SortableSignalColumnRow = ({
           data-testid={`algo-signal-column-drag-${columnId}`}
           style={{
             ...iconOnlyButtonStyle(false),
-            width: dim(22),
+            width: dim(24),
             cursor: isDragging ? "grabbing" : "grab",
             touchAction: "none",
           }}
@@ -2103,7 +2102,7 @@ export const OperationsSignalTable = ({
         style={{
           overflowX: "auto",
           overflowY: signalTableCompact ? "visible" : "auto",
-          maxHeight: signalTableCompact ? "none" : 520,
+          maxHeight: signalTableCompact ? "none" : dim(520),
           minWidth: 0,
         }}
       >

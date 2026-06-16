@@ -233,6 +233,7 @@ const SegmentControl = ({ value, options, onChange }) => (
         <button
           key={option.value}
           type="button"
+          className="ra-touch-target"
           onClick={() => onChange(option.value)}
           style={{
             padding: sp("6px 9px"),
@@ -851,11 +852,11 @@ const HeatmapCard = ({ rows, spot }) => {
           >
             <thead>
               <tr>
-                <th style={heatmapCornerHeaderStyle}>
+                <th scope="col" style={heatmapCornerHeaderStyle}>
                   Strike
                 </th>
                 {model.expirations.map((expiration) => (
-                  <th key={expiration.key} style={heatmapHeaderStyle}>
+                  <th key={expiration.key} scope="col" style={heatmapHeaderStyle}>
                     <span style={heatmapExpirationHeaderStyle}>
                       <span>{expiration.dateLabel || expiration.label}</span>
                       <span style={heatmapExpirationDteStyle}>{expiration.dteLabel}</span>

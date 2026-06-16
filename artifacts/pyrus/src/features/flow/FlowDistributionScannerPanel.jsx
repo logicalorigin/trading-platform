@@ -60,7 +60,7 @@ const SegmentedToggle = ({
             fontFamily: T.sans,
             fontSize: fs(8),
             fontWeight: FONT_WEIGHTS.regular,
-            padding: "3px 7px",
+            padding: sp("3px 7px"),
           }}
         >
           {label}
@@ -103,7 +103,7 @@ const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
             fontFamily: T.sans,
             fontSize: fs(8),
             fontWeight: FONT_WEIGHTS.regular,
-            padding: "3px 7px",
+            padding: sp("3px 7px"),
           }}
         >
           {label}
@@ -236,7 +236,7 @@ export const FlowDistributionScannerPanel = ({
   const widgetGrid = empty ? (
     <Card
       data-testid="flow-premium-distribution-empty"
-      style={{ padding: "8px 10px" }}
+      style={{ padding: sp("8px 10px") }}
     >
       <DataUnavailableState
         title="Premium distribution unavailable"

@@ -716,7 +716,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
           <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>{label}</span>
           <span style={{ fontSize: fs(10), color, fontWeight: FONT_WEIGHTS.regular }}>{display?.toFixed(1)}{unit}</span>
         </div>
-        <input type="range" min={min} max={max} step={step} value={display || 0}
+        <input type="range" aria-label={label} min={min} max={max} step={step} value={display || 0}
           onChange={e => setDragState(prev => ({ ...prev, [field]: parseFloat(e.target.value) }))}
           onPointerUp={e => { setOv(prev => ({ ...prev, [field]: parseFloat(e.target.value) })); setDragState(prev => { const n = {...prev}; delete n[field]; return n; }); }}
           onTouchEnd={e => { const v = dragState[field]; if (v != null) { setOv(prev => ({ ...prev, [field]: v })); setDragState(prev => { const n = {...prev}; delete n[field]; return n; }); } }}
@@ -4205,7 +4205,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 
 function ResearchLoadingState({ theme }) {
   return (
-    <div className="ra-panel-enter" style={{ maxWidth: 760, margin: "24px auto 0" }}>
+    <div className="ra-panel-enter" style={{ animation: "fadeIn var(--ra-motion-standard) ease", maxWidth: 760, margin: "24px auto 0" }}>
       <style>
         {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
       </style>
@@ -4715,7 +4715,7 @@ export default function PhotonicsObservatory({
 
         {/* Sub-layer pills */}
         {subs.length > 0 && (
-          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4), animation: "fadeIn 0.2s ease" }}>
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4), animation: "fadeIn var(--ra-motion-standard) ease" }}>
             <button onClick={() => setSf(null)} style={{ background: !sf ? toneAlpha(CSS_COLOR.text, 0.06) : toneAlpha(CSS_COLOR.text, 0.03), border: "none", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: !sf ? CSS_COLOR.textMuted : CSS_COLOR.text, cursor: "pointer" }}>All layers</button>
             {subs.map(s => (
               <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : toneAlpha(CSS_COLOR.text, 0.03), border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: sf === s ? currentTheme.verticals[vf]?.c : CSS_COLOR.textSec, cursor: "pointer" }}>
@@ -4792,7 +4792,7 @@ export default function PhotonicsObservatory({
                   background: CSS_COLOR.bg1, borderRadius: RADII.md, border: `1px solid ${CSS_COLOR.border}`,
                   boxShadow: ELEVATION.sm,
                   display: "flex", alignItems: "center", justifyContent: "space-between",
-                  animation: "fadeIn 0.2s ease",
+                  animation: "fadeIn var(--ra-motion-standard) ease",
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Logo ticker={selCo.t} size={20} />

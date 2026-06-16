@@ -246,7 +246,7 @@ export const HeroKpi = ({
               letterSpacing: "0.04em",
             }}
           >
-            <TrendIcon size={13} />
+            <TrendIcon size={13} aria-hidden="true" />
             <span>{pnlPercentDisplay || "—"}</span>
           </div>
         </div>

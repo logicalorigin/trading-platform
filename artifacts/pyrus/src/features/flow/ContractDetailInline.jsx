@@ -739,6 +739,7 @@ export const ContractDetailInline = ({
           }}
         />
         <button
+          className="ra-touch-target"
           onClick={() => onJumpToTrade && onJumpToTrade(evt)}
           style={{
             padding: sp("5px 10px"),
@@ -756,6 +757,7 @@ export const ContractDetailInline = ({
           Open in Trade
         </button>
         <button
+          className="ra-touch-target"
           onClick={() => {
             const next = !alertSet;
             setAlertSet(next);

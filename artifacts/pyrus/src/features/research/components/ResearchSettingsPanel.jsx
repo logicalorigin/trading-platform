@@ -2,7 +2,7 @@ import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp } from "../../../l
 
 export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatus }) {
   return (
-    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(12), marginBottom: sp(10), animation: "fadeIn 0.2s ease", boxShadow: ELEVATION.sm }}>
+    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(12), marginBottom: sp(10), animation: "fadeIn var(--ra-motion-standard) ease", boxShadow: ELEVATION.sm }}>
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(8) }}>Platform Wiring</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: sp(8), alignItems: "center" }}>
         <div>

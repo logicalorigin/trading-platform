@@ -941,7 +941,6 @@ function inputStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
     color: theme.text,
     fontFamily: theme.mono,
     fontSize: scale.fs(10),
-    outline: "none",
   };
 }
 
@@ -4177,9 +4176,9 @@ export function BacktestWorkspace({
                         >
                           <span
                             style={{
-                              border: `1px solid ${cssColorAlpha(warningColor, 0.45)}`,
+                              border: `1px solid ${cssColorAlpha(warningColor, "73")}`,
                               borderRadius: scale.dim(999),
-                              background: cssColorAlpha(warningColor, 0.12),
+                              background: cssColorAlpha(warningColor, "1f"),
                               color: warningColor,
                               fontSize: scale.fs(8),
                               fontFamily: theme.mono,
@@ -6029,7 +6028,7 @@ export function BacktestWorkspace({
                                   fontFamily: theme.mono,
                                 }}
                               >
-                                {formatCurrency(trade.netPnl)}
+                                {formatSignedCurrency(trade.netPnl)}
                               </td>
                             </tr>
                             {isSelected ? (
