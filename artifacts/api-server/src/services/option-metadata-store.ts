@@ -17,6 +17,7 @@ import {
 import { logger } from "../lib/logger";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
@@ -164,6 +165,11 @@ function markDurableOptionMetadataFailure(
       { err: error, operation: input.operation, underlying: input.underlying },
       "Durable option metadata store operation failed without scoped backoff",
     );
+    return;
+  }
+  if (isPoolContentionError(error)) {
+    // Pool saturation is transient backpressure, not a durable DB failure; don't
+    // disable the scope (the next call retries instead of falling back).
     return;
   }
 

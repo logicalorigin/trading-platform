@@ -34,6 +34,7 @@ import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
@@ -859,13 +860,17 @@ async function withOptionalAccountSchemaFallback<T>(input: {
       return input.fallback();
     }
     if (isTransientPostgresError(error)) {
-      optionalAccountSchemaReadBackoff.markFailure({
-        error,
-        logger,
-        message:
-          "Account optional history database unavailable; using live-only account fallbacks",
-        nowMs: Date.now(),
-      });
+      // Pool-acquire timeouts are momentary pool saturation, not a DB outage; do
+      // not arm the lockout (next read retries). Still serve the fallback.
+      if (!isPoolContentionError(error)) {
+        optionalAccountSchemaReadBackoff.markFailure({
+          error,
+          logger,
+          message:
+            "Account optional history database unavailable; using live-only account fallbacks",
+          nowMs: Date.now(),
+        });
+      }
       return input.fallback();
     }
     throw error;
@@ -890,12 +895,14 @@ async function withAccountSnapshotReadFallback<T>(input: {
     if (!isTransientPostgresError(error)) {
       throw error;
     }
-    accountSnapshotReadBackoff.markFailure({
-      error,
-      logger,
-      message: input.message,
-      nowMs: Date.now(),
-    });
+    if (!isPoolContentionError(error)) {
+      accountSnapshotReadBackoff.markFailure({
+        error,
+        logger,
+        message: input.message,
+        nowMs: Date.now(),
+      });
+    }
     return input.fallback();
   }
 }
@@ -921,13 +928,15 @@ async function withAccountPositionLotsReadFallback<T>(input: {
     if (!isTransientPostgresError(error)) {
       throw error;
     }
-    backoff.markFailure({
-      error,
-      logger: input.logger ?? logger,
-      message:
-        "Account position lots database unavailable; returning live positions without lots",
-      nowMs: now,
-    });
+    if (!isPoolContentionError(error)) {
+      backoff.markFailure({
+        error,
+        logger: input.logger ?? logger,
+        message:
+          "Account position lots database unavailable; returning live positions without lots",
+        nowMs: now,
+      });
+    }
     return input.fallback();
   }
 }

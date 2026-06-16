@@ -8,6 +8,7 @@ import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import {
@@ -99,6 +100,11 @@ function shouldUseFallbackStorage(error: unknown): boolean {
 }
 
 function markPineScriptsDbUnavailable(error: unknown): void {
+  // Pool-acquire timeouts are momentary pool saturation, not a DB outage; don't
+  // arm the file-fallback lockout (the next read retries the DB).
+  if (isPoolContentionError(error)) {
+    return;
+  }
   pineScriptsDbBackoff.markFailure({
     error,
     logger,

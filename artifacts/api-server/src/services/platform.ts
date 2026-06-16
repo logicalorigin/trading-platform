@@ -42,6 +42,7 @@ import {
 } from "./resource-pressure";
 import {
   createTransientPostgresBackoff,
+  isPoolContentionError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import {
@@ -3829,12 +3830,16 @@ export async function listWatchlists() {
     return result;
   } catch (error) {
     if (isTransientPostgresError(error)) {
-      watchlistDbBackoff.markFailure({
-        error,
-        logger,
-        message: "watchlist database unavailable; serving built-in watchlists",
-        nowMs,
-      });
+      // Pool-acquire timeouts are momentary pool saturation, not a DB outage; do
+      // not arm the lockout (next read retries). Still serve the fallback below.
+      if (!isPoolContentionError(error)) {
+        watchlistDbBackoff.markFailure({
+          error,
+          logger,
+          message: "watchlist database unavailable; serving built-in watchlists",
+          nowMs,
+        });
+      }
       const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
       scheduleIbkrWatchlistPrewarmFromListRead(
         fallback.watchlists,
@@ -8661,6 +8666,10 @@ const barsCache = new Map<
     cachedAt: number;
     expiresAt: number;
     staleExpiresAt: number;
+    // Precomputed buildBarsScopeKey(input). The reusable-entry lookup scans the
+    // whole cache and compares scope keys; storing it avoids rebuilding the key
+    // for every entry on every /api/bars request.
+    scopeKey: string;
   }
 >();
 const barsInFlight = new Map<
@@ -9153,6 +9162,22 @@ function findReusableCachedBarsEntry(
     if (!fresh && !allowStale) {
       continue;
     }
+
+    // Cheap structural filters first. Only the entry whose scope+limit matches
+    // this request can ever be returned, so reject mismatches before the
+    // expensive per-bar synthesis scan in shouldServeBarsCacheEntry (it calls
+    // bars.some(isHistoricalSynthesisBar) over up to ~720 bars). Previously the
+    // scan ran for every non-stale cache entry on every /api/bars request,
+    // making the lookup O(cacheSize * barsPerEntry); now it runs once, on the
+    // single matching entry.
+    if (entry.scopeKey !== scopeKey) {
+      continue;
+    }
+
+    if ((entry.input.limit ?? DEFAULT_BARS_LIMIT) < desiredLimit) {
+      continue;
+    }
+
     if (
       !shouldServeBarsCacheEntry(input, entry.value, {
         ...options,
@@ -9161,14 +9186,6 @@ function findReusableCachedBarsEntry(
         allowStale: !fresh,
       })
     ) {
-      continue;
-    }
-
-    if (buildBarsScopeKey(entry.input) !== scopeKey) {
-      continue;
-    }
-
-    if ((entry.input.limit ?? DEFAULT_BARS_LIMIT) < desiredLimit) {
       continue;
     }
 
@@ -9531,6 +9548,7 @@ function refreshBarsCache(
           cachedAt: settledAt,
           expiresAt: settledAt + BARS_CACHE_TTL_MS,
           staleExpiresAt: settledAt + BARS_CACHE_STALE_TTL_MS,
+          scopeKey: buildBarsScopeKey(input),
         });
         pruneBarsCache(settledAt);
       }
