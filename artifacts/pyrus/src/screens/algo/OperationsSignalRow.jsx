@@ -2262,7 +2262,7 @@ export const OperationsSignalRow = ({
   // matrix readout must show that instead of a weighted-bias "Ready".
   const mtfAlignmentResult = resolveConfiguredMtfAlignment({
     matrixStatesByTimeframe: resolvedTfMatrix,
-    signalDirection: direction,
+    signalDirection: direction?.primitive,
     timeframes: mtfAlignmentConfig?.timeframes,
     requiredCount: mtfAlignmentConfig?.requiredCount,
     enabled: mtfAlignmentConfig?.enabled !== false,

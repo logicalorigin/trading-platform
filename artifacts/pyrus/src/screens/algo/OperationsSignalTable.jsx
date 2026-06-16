@@ -2137,7 +2137,7 @@ export const OperationsSignalTable = ({
                       : filter === "all" && sourceRows.length && matrixPendingRows.length
                       ? "Hydrating signal matrix"
                       : filter === "all"
-                      ? "Awaiting next scan"
+                      ? "No actionable signals"
                       : "No signals match this filter"
                   }
                   detail={
@@ -2148,7 +2148,7 @@ export const OperationsSignalTable = ({
                           matrixPendingRows.length === 1 ? "row is" : "rows are"
                         } waiting for ${displaySignalTimeframes.join(", ")} bubbles.`
                       : filter === "all"
-                      ? "Signals appear as soon as the monitor finishes its next pass."
+                      ? "Rows appear as soon as the signal matrix fires a buy or sell on a tracked symbol."
                       : "Switch filter to All to see signals in other states."
                   }
                   icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}

@@ -597,6 +597,8 @@ export const HaltStrip = ({
 
       {statusesByGroup.map(({ group, statuses: groupStatuses }, index) => {
         const rollup = groupRollupState(groupStatuses);
+        const standaloneFields = getCompactHaltStandaloneFields(group.id);
+        const cellCount = group.controls.length + standaloneFields.length;
         return (
         <section
           key={group.id}
@@ -639,6 +641,9 @@ export const HaltStrip = ({
           <div
             data-testid={`algo-halt-group-${group.id}`}
             className="algo-settings-grid"
+            style={{
+              gridTemplateColumns: `repeat(${cellCount}, minmax(0, 1fr))`,
+            }}
           >
             {group.controls.map((control) => (
               <ControlToggleCell
@@ -652,7 +657,7 @@ export const HaltStrip = ({
                 disabled={controlsDisabled}
               />
             ))}
-            {getCompactHaltStandaloneFields(group.id).map((field) => (
+            {standaloneFields.map((field) => (
               <CompactStandaloneSettingCell
                 key={field.path}
                 field={field}

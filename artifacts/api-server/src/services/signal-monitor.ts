@@ -3436,11 +3436,6 @@ async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
     const symbols = resolveSignalMonitorUniverseSymbols(resolved);
     if (symbols.length) {
       primeSignalMonitorLocalBarCache(symbols);
-      void refreshSignalMonitorBackfilledBaseBars({
-        symbols,
-        timeframes: [...SIGNAL_MONITOR_MATRIX_TIMEFRAMES],
-        evaluatedAt: new Date(),
-      });
     }
   } catch (error) {
     logger.warn(
@@ -3462,204 +3457,6 @@ export function startSignalMonitorLocalBarCacheWarmup(): void {
     void refreshSignalMonitorLocalBarCacheWarmup();
   }, SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS);
   signalMonitorLocalBarCacheWarmupTimer.unref?.();
-}
-
-// ---------------------------------------------------------------------------
-// Backfilled base-bar cache for the server-owned SSE producer.
-//
-// The producer evaluates synchronously off the live aggregate ring, which is
-// only a few minutes deep — far short of the pyrus indicator's warmup window,
-// so once the producer became the sole signal source the aggregated frames
-// (2m/15m/1h/1d) stopped producing signals. This cache holds a deep, backfilled
-// completed-bar base per (symbol, timeframe), sourced from stored + provider
-// history via loadSignalMonitorCompletedBars and refreshed asynchronously on a
-// per-timeframe cadence OFF the synchronous evaluation path. The producer merges
-// this base with the live edge each tick (mergeCompletedBars), so the indicator
-// sees a full current series with no await/DB read on the hot path. An empty
-// base (cold start / disabled) falls back to the prior live-ring behavior.
-type SignalMonitorBackfilledBaseEntry = {
-  bars: SignalMonitorBarSnapshot[];
-  refreshedAt: number;
-};
-const signalMonitorBackfilledBaseByCell = new Map<
-  string,
-  SignalMonitorBackfilledBaseEntry
->();
-// The base is deep warmup history (slowly changing); the per-tick live-edge
-// merge in evaluateSignalMonitorMatrixStateFromStreamBars supplies freshness, so
-// the base is refreshed far less often than the 60s warmup tick. The live ring /
-// live edge bridges the gap between refreshes.
-const SIGNAL_MONITOR_BACKFILL_REFRESH_MS: Record<
-  SignalMonitorMatrixTimeframe,
-  number
-> = {
-  "1m": 5 * 60_000,
-  "2m": 5 * 60_000,
-  "5m": 5 * 60_000,
-  "15m": 10 * 60_000,
-  "1h": 30 * 60_000,
-  "1d": 4 * 60 * 60_000,
-};
-// Dedicated, intentionally small concurrency budget for the refresher's
-// loadSignalMonitorCompletedBars calls. Kept independent of (and far below)
-// SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT so the off-path backfill cannot
-// crowd out evaluation / chart-serving bar loads.
-const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = 3;
-// Cap cells refreshed per invocation so the first tick after boot does not fire
-// the whole ~3000-cell universe at once. Most-overdue cells go first; cells not
-// reached this cycle are picked up on a later cycle (round-robin via recency).
-const SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE = 64;
-let signalMonitorBackfillRefreshInFlight = false;
-
-function signalMonitorBackfillCellKey(
-  symbol: string,
-  timeframe: string,
-): string {
-  return `${normalizeSymbol(symbol).toUpperCase()}:${timeframe}`;
-}
-
-function getSignalMonitorBackfilledBaseBars(
-  symbol: string,
-  timeframe: SignalMonitorMatrixTimeframe,
-): SignalMonitorBarSnapshot[] {
-  return (
-    signalMonitorBackfilledBaseByCell.get(
-      signalMonitorBackfillCellKey(symbol, timeframe),
-    )?.bars ?? []
-  );
-}
-
-// Pure: the backfill refresher backs OFF rather than adding to pressure, so it
-// skips a whole cycle once the API is at "high" resource pressure. "watch" and
-// "normal" keep running.
-function shouldSkipSignalMonitorBackfillForPressure(
-  resourceLevel: ApiResourcePressureLevel,
-): boolean {
-  return resourceLevel === "high";
-}
-
-type SignalMonitorBackfillCandidate = {
-  symbol: string;
-  timeframe: SignalMonitorMatrixTimeframe;
-  refreshedAt: number | null;
-};
-
-// Pure selection used by refreshSignalMonitorBackfilledBaseBars: keep only cells
-// whose per-timeframe cadence has elapsed, order the most-overdue first, and cap
-// to maxCells. Never-refreshed cells (refreshedAt == null) are maximally overdue.
-// Capping + recency ordering gives round-robin coverage across cycles instead of
-// a single thundering-herd refresh of the whole universe.
-function selectSignalMonitorBackfillDueCells(input: {
-  candidates: SignalMonitorBackfillCandidate[];
-  nowMs: number;
-  maxCells: number;
-}): Array<{ symbol: string; timeframe: SignalMonitorMatrixTimeframe }> {
-  const due = input.candidates
-    .map((candidate) => {
-      const interval =
-        SIGNAL_MONITOR_BACKFILL_REFRESH_MS[candidate.timeframe] ?? 5 * 60_000;
-      const overdueBy =
-        candidate.refreshedAt === null
-          ? Number.POSITIVE_INFINITY
-          : input.nowMs - candidate.refreshedAt - interval;
-      return { candidate, overdueBy };
-    })
-    .filter((entry) => entry.overdueBy >= 0)
-    .sort((left, right) => right.overdueBy - left.overdueBy);
-  const cap = Math.max(0, input.maxCells);
-  return due.slice(0, cap).map(({ candidate }) => ({
-    symbol: candidate.symbol,
-    timeframe: candidate.timeframe,
-  }));
-}
-
-async function refreshSignalMonitorBackfilledBaseBars(input: {
-  symbols: string[];
-  timeframes: SignalMonitorMatrixTimeframe[];
-  evaluatedAt: Date;
-}): Promise<void> {
-  if (signalMonitorBackfillRefreshInFlight) {
-    return;
-  }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return;
-  }
-  // Back OFF under pressure: the backfill is the very kind of universe-wide
-  // getBars load that feeds resource pressure, so skip this cycle entirely once
-  // the API is at "high". The live ring / per-tick live edge keeps evaluation
-  // running until pressure subsides.
-  if (
-    shouldSkipSignalMonitorBackfillForPressure(
-      getApiResourcePressureSnapshot().resourceLevel,
-    )
-  ) {
-    return;
-  }
-  signalMonitorBackfillRefreshInFlight = true;
-  const nowMs = input.evaluatedAt.getTime();
-  try {
-    const candidates: SignalMonitorBackfillCandidate[] = [];
-    for (const symbol of input.symbols) {
-      const normalized = normalizeSymbol(symbol).toUpperCase();
-      if (!normalized) {
-        continue;
-      }
-      for (const timeframe of input.timeframes) {
-        const existing = signalMonitorBackfilledBaseByCell.get(
-          signalMonitorBackfillCellKey(normalized, timeframe),
-        );
-        candidates.push({
-          symbol: normalized,
-          timeframe,
-          refreshedAt: existing?.refreshedAt ?? null,
-        });
-      }
-    }
-    const dueCells = selectSignalMonitorBackfillDueCells({
-      candidates,
-      nowMs,
-      maxCells: SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
-    });
-    for (
-      let index = 0;
-      index < dueCells.length;
-      index += SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT
-    ) {
-      const batch = dueCells.slice(
-        index,
-        index + SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
-      );
-      await Promise.all(
-        batch.map(async ({ symbol, timeframe }) => {
-          try {
-            const snapshot = await loadSignalMonitorCompletedBars({
-              symbol,
-              timeframe,
-              evaluatedAt: input.evaluatedAt,
-              limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-              priority: SIGNAL_MONITOR_MATRIX_BARS_PRIORITY,
-              includeProvisionalLiveEdge: false,
-              allowHistoricalFallback: true,
-            });
-            if (snapshot.bars.length) {
-              signalMonitorBackfilledBaseByCell.set(
-                signalMonitorBackfillCellKey(symbol, timeframe),
-                {
-                  bars: snapshot.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
-                  refreshedAt: input.evaluatedAt.getTime(),
-                },
-              );
-            }
-          } catch {
-            // Best-effort warmup; keep any prior base for this cell.
-          }
-        }),
-      );
-      await yieldSignalMonitorEventLoop();
-    }
-  } finally {
-    signalMonitorBackfillRefreshInFlight = false;
-  }
 }
 
 function signalMonitorMatrixStockAggregateSymbols(symbols: string[]): string[] {
@@ -6333,26 +6130,12 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
 }): SignalMonitorMatrixStateResult | null {
-  const streamBars = loadSignalMonitorStreamCompletedBars({
+  const completedBars = loadSignalMonitorStreamCompletedBars({
     symbol: input.symbol,
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
     limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
   });
-  // The live stream ring is only a few minutes deep — too short for the pyrus
-  // indicator to warm up on the aggregated frames. Merge the asynchronously
-  // backfilled base (deep stored/provider history) under the live edge so the
-  // indicator evaluates a full current series. mergeCompletedBars lets the live
-  // edge win on same-timestamp collisions; an empty base preserves the prior
-  // live-only behavior. This is also what lets 1d evaluate on this path, since
-  // loadSignalMonitorStreamCompletedBars returns [] for 1d.
-  const baseBars = getSignalMonitorBackfilledBaseBars(
-    input.symbol,
-    input.timeframe,
-  );
-  const completedBars = baseBars.length
-    ? mergeCompletedBars(baseBars, streamBars, SIGNAL_MONITOR_MATRIX_BARS_LIMIT)
-    : streamBars;
   if (!completedBars.length) {
     return null;
   }
@@ -9419,11 +9202,6 @@ export const __signalMonitorInternalsForTests = {
   shouldPreserveExistingSignalMonitorSymbolState,
   loadSignalMonitorStreamCompletedBars,
   mergeCompletedBars,
-  selectSignalMonitorBackfillDueCells,
-  shouldSkipSignalMonitorBackfillForPressure,
-  SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
-  SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
-  SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
   signalMonitorBarsSinceSignal,
   stableSignalMonitorPyrusBarEntries,
   selectSignalMonitorSignalEvent,

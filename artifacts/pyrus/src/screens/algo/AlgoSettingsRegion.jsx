@@ -138,10 +138,13 @@ const compactUnitLabel = (field) => {
   return field.unit;
 };
 
-// Width a numeric field needs for its widest legal value, so a 2-3 digit
-// input stops reserving a quarter-rail of empty space. Chars come from the
-// field's max magnitude (+ sign, + decimals from step); padding adds 14px.
-const numericInputWidth = (field) => {
+// Width a numeric input needs for the value it's actually showing, so a field
+// whose cap is 1,000,000 doesn't reserve 7ch to display "2500". We size to the
+// rendered value (floored for breathing room) but never wider than the widest
+// legal value, so the box still grows for genuinely large entries. Chars feed a
+// `ch` unit (pairs with the tabular T.data font); padding adds 14px (12px pad +
+// 2px border).
+const numericInputWidth = (field, value) => {
   const maxSource = Number(field?.max);
   const maxDigits = Number.isFinite(maxSource)
     ? String(Math.trunc(Math.abs(maxSource))).length
@@ -149,13 +152,15 @@ const numericInputWidth = (field) => {
   const negative = field?.min != null && Number(field.min) < 0 ? 1 : 0;
   const stepText = field?.step != null ? String(field.step) : "";
   const decimals = stepText.includes(".") ? stepText.split(".")[1].length : 0;
-  const chars = Math.max(2, maxDigits) + negative + (decimals ? decimals + 1 : 0);
+  const maxChars = Math.max(2, maxDigits) + negative + (decimals ? decimals + 1 : 0);
+  const shownChars = value == null || value === "" ? 0 : String(value).length;
+  const chars = Math.min(maxChars, Math.max(3, shownChars));
   return `calc(${chars}ch + 14px)`;
 };
 
-const compactInputStyle = ({ invalid, disabled, numeric = false, field }) => ({
+const compactInputStyle = ({ invalid, disabled, numeric = false, field, value }) => ({
   height: dim(24),
-  width: numeric ? numericInputWidth(field) : "100%",
+  width: numeric ? numericInputWidth(field, value) : "100%",
   minWidth: 0,
   maxWidth: "100%",
   padding: sp("0 6px"),
@@ -327,7 +332,7 @@ export const CompactFieldInput = ({
   draftRoot,
 }) => {
   const numeric = numericField(field);
-  const inputStyle = compactInputStyle({ invalid, disabled, numeric, field });
+  const inputStyle = compactInputStyle({ invalid, disabled, numeric, field, value });
   const patchFieldValue = (nextValue) => {
     const coerced = field.coerce ? field.coerce(nextValue) : nextValue;
     if (typeof field.patchFromValue === "function") {
@@ -1810,6 +1815,8 @@ export const ExitLadderTrack = ({
                 invalid: false,
                 disabled,
                 numeric: true,
+                field: editingMarker.field,
+                value: draftValue,
               })}
             />
             <span

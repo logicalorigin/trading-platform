@@ -34,6 +34,11 @@ test("account route cache collapses identical in-flight reads", async () => {
     60_000,
   );
 
+  // readAccountRouteResponseCache invokes the factory on a microtask
+  // (Promise.resolve().then(factory)), so flush one tick before asserting the
+  // synchronous side-effects. The in-flight entry is cached synchronously, so
+  // the second call still dedupes and factory2 never runs.
+  await Promise.resolve();
   assert.equal(factoryCalls, 1);
   assert.equal(first, second);
   assert.ok(control.resolve);

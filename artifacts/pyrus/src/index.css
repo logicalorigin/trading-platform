@@ -762,32 +762,32 @@ optgroup {
   align-items: start;
   column-gap: var(--ra-space-5);
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   min-width: 0;
   row-gap: var(--ra-space-4);
 }
 
 @container (max-width: 640px) {
   .algo-settings-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
 @container (max-width: 520px) {
   .algo-settings-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
 @container (max-width: 400px) {
   .algo-settings-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @container (max-width: 280px) {
   .algo-settings-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
