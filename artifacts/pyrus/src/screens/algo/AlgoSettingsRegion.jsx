@@ -378,10 +378,8 @@ export const CompactFieldInput = ({
         onPatch(field.relatedPresetPath, "custom");
       }
       if (field.requiredCountPath) {
-        const requiredCount = Number(getPathValue(draftRoot, field.requiredCountPath));
-        if (Number.isFinite(requiredCount) && requiredCount > nextTimeframes.length) {
-          onPatch(field.requiredCountPath, nextTimeframes.length);
-        }
+        // Selected frames must all align: required count tracks the selection.
+        onPatch(field.requiredCountPath, nextTimeframes.length);
       }
     };
     return (

@@ -166,7 +166,6 @@ export const AlgoTimeframeControlBand = ({
     const patch = buildAlgoMtfTimeframeTogglePatch({
       selectedTimeframes: mtfTimeframes,
       timeframe,
-      requiredCount: mtfRequiredCount,
     });
     patchProfileDraftPath?.("entryGate.mtfAlignment.timeframes", patch.timeframes);
     patchProfileDraftPath?.("entryGate.mtfAlignment.preset", patch.preset);

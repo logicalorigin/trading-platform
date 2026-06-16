@@ -53,7 +53,8 @@ const mtfPresetPatch = (value) => {
   return {
     "entryGate.mtfAlignment.preset": preset.value,
     "entryGate.mtfAlignment.timeframes": [...preset.timeframes],
-    "entryGate.mtfAlignment.requiredCount": preset.requiredCount,
+    // Selected frames must all align: required count tracks the selection.
+    "entryGate.mtfAlignment.requiredCount": Math.max(1, preset.timeframes.length),
   };
 };
 
@@ -752,7 +753,8 @@ export const SETTINGS_SECTIONS = [
     ],
     fields: [
       field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
-      field("entryGate.mtfAlignment.requiredCount", { compactLabel: "MTF Count" }),
+      // Required count is derived from the selected frames (all must align);
+      // shown read-only in the section summary, not editable here.
       field("entryGate.mtfAlignment.preset", { compactLabel: "MTF Preset" }),
       field("entryGate.mtfAlignment.timeframes", {
         compactLabel: "MTF Frames",

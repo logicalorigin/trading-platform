@@ -51,7 +51,6 @@ export const buildAlgoExecutionTimeframePatch = (timeframe, fallback) => ({
 export const buildAlgoMtfTimeframeTogglePatch = ({
   selectedTimeframes,
   timeframe,
-  requiredCount,
 }) => {
   const current = normalizeAlgoMtfTimeframes(selectedTimeframes);
   const normalizedTimeframe = String(timeframe || "").trim();
@@ -59,7 +58,8 @@ export const buildAlgoMtfTimeframeTogglePatch = ({
     return {
       timeframes: current,
       preset: "custom",
-      requiredCount: normalizeAlgoMtfRequiredCount(requiredCount, current),
+      // Selected frames must all align: required count tracks the selection.
+      requiredCount: Math.max(1, current.length),
     };
   }
 
@@ -76,6 +76,7 @@ export const buildAlgoMtfTimeframeTogglePatch = ({
   return {
     timeframes,
     preset: "custom",
-    requiredCount: normalizeAlgoMtfRequiredCount(requiredCount, timeframes),
+    // Selected frames must all align: required count tracks the selection.
+    requiredCount: Math.max(1, timeframes.length),
   };
 };
