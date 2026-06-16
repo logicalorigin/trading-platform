@@ -638,53 +638,6 @@ const HeaderIbkrMetricRail = ({ tiles = [] }) => (
   </div>
 );
 
-const getHeaderIbkrTile = (model, label) =>
-  model?.tiles?.find((tile) => tile.label === label) || null;
-
-const HeaderIbkrTriggerMetric = ({ label, value, tone }) => (
-  <span
-    style={{
-      display: "grid",
-      gap: sp(1),
-      minWidth: 0,
-      padding: sp("4px 6px"),
-      borderRadius: dim(RADII.sm),
-      background: `${cssColorMix(tone || CSS_COLOR.textSec, 6)}`,
-      fontFamily: T.sans,
-      lineHeight: 1.05,
-    }}
-  >
-    <span
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontSize: fs(8),
-        fontWeight: FONT_WEIGHTS.regular,
-        letterSpacing: "0.04em",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        textTransform: "uppercase",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-    <span
-      style={{
-        color: tone || CSS_COLOR.textSec,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        fontVariantNumeric: "tabular-nums",
-        minWidth: 0,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {value ?? MISSING_VALUE}
-    </span>
-  </span>
-);
-
 const HeaderIbkrTriggerSummary = ({
   model,
   connection,
@@ -704,8 +657,6 @@ const HeaderIbkrTriggerSummary = ({
     ? getHeaderIbkrIcon(model.issue.iconKey)
     : tone.Icon;
   const pingMs = resolveHeaderIbkrPingMs(connection, latencyStats);
-  const dataTile = getHeaderIbkrTile(model, "Data");
-  const streamTile = getHeaderIbkrTile(model, "Stream");
   const lineUsage = model?.lineUsage;
   const compactLineUsage = model?.compactLineUsage;
   const pendingLineCount = Number.isFinite(lineUsage?.foregroundPendingLineCount)
@@ -723,29 +674,8 @@ const HeaderIbkrTriggerSummary = ({
     pendingLineCount > 0
       ? `${lineValue} · ${Math.round(pendingLineCount).toLocaleString()} pending`
       : lineValue;
-  const showInlineLineUsage = compressed;
-  const statusLabel = issueActive
-    ? model.issue.severity === "warning"
-      ? "Attention"
-      : "Action needed"
-    : health.label || tone.label;
-  const shortStatusLabel = statusLabel
-    .replace(/^Market\s+/i, "")
-    .replace(/^Action needed$/i, "Action")
-    .replace(/^Attention$/i, "Issue");
-  const metrics = [
-    compressed ? null : dataTile,
-    compressed ? null : streamTile,
-    compressed
-      ? null
-      : lineUsage?.available
-      ? {
-          label: "Lines",
-          value: lineDisplayValue,
-          tone: compactLineUsage?.tone || CSS_COLOR.textSec,
-        }
-      : null,
-  ].filter(Boolean);
+  const showInlineLineUsage =
+    compressed && Boolean(compactLineUsage?.summary || lineUsage?.summary);
 
   return (
     <span
@@ -763,7 +693,9 @@ const HeaderIbkrTriggerSummary = ({
         style={{
           display: "grid",
           gridTemplateColumns: compressed
-            ? "auto auto auto auto auto"
+            ? showInlineLineUsage
+              ? "auto auto auto auto auto"
+              : "auto auto auto auto"
             : "auto auto minmax(0, 1fr) auto auto",
           alignItems: "center",
           gap: sp(compressed ? 4 : 6),
@@ -797,20 +729,6 @@ const HeaderIbkrTriggerSummary = ({
         >
           IBKR
         </span>
-        {compressed ? null : <span
-          style={{
-            color: statusTone,
-            fontSize: textSize(compressed ? "body" : "paragraphMuted"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontFamily: T.sans,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {compressed ? shortStatusLabel : statusLabel}
-        </span>}
         <IbkrPingWavelength connection={connection} tone={{ ...tone, color: statusTone }} />
         {showInlineLineUsage ? (
           <span
@@ -878,25 +796,6 @@ const HeaderIbkrTriggerSummary = ({
           })()}
         </span>
       </span>
-      {metrics.length ? (
-        <span
-          style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${Math.min(metrics.length, compact ? 2 : 3)}, minmax(0, 1fr))`,
-            gap: sp(4),
-            minWidth: 0,
-          }}
-        >
-          {metrics.map((metric) => (
-            <HeaderIbkrTriggerMetric
-              key={metric.label}
-              label={metric.label}
-              value={metric.value}
-              tone={metric.tone}
-            />
-          ))}
-        </span>
-      ) : null}
     </span>
   );
 };

@@ -24,12 +24,10 @@ import {
   startIbkrWatchlistPrewarmRuntime,
   startOptionsFlowScanner,
 } from "./services/platform";
-import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
 import {
   startSignalMonitorBreadthSnapshotWorker,
-  startSignalMonitorLocalBarCacheWarmup,
   startSignalMonitorServerOwnedProducer,
   startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
@@ -262,9 +260,11 @@ server.listen(port, () => {
     startIbkrWatchlistPrewarmRuntime,
     startOptionsFlowScanner,
     startFlowUniverseOptionabilityVerifier,
-    startTradeMonitorWorker,
+    // Signal-monitor bar-evaluation scan + local-bar-cache warmup workers were
+    // removed: the matrix is now fed by the live ticker SSE producer
+    // (startSignalMonitorServerOwnedProducer below). Do not re-add a scanning
+    // or warmup worker here.
     startIbkrLineUsageGenerationCoordinator,
-    startSignalMonitorLocalBarCacheWarmup,
     startSignalMonitorServerOwnedProducer,
     startSignalMonitorStateReconciliation,
     startSignalMonitorBreadthSnapshotWorker,

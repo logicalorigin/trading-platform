@@ -54,10 +54,11 @@ const isHeliumDatabase = (): boolean => {
 
 const heliumDatabase = isHeliumDatabase();
 const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
+const resolvedPoolMax = readPositiveInteger("DB_POOL_MAX", defaultPoolMax());
 
 export const pool = new Pool({
   connectionString: resolvedDatabaseUrl,
-  max: readPositiveInteger("DB_POOL_MAX", defaultPoolMax()),
+  max: resolvedPoolMax,
   ...(heliumDatabase ? { ssl: false } : {}),
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
   defaultConnectionTimeoutMillis !== undefined
@@ -73,6 +74,37 @@ export const pool = new Pool({
 });
 attachPostgresPoolErrorHandler(pool);
 export const db = drizzle(pool, { schema });
+
+export type PostgresPoolStats = {
+  /** Configured maximum pooled connections (`max`). */
+  max: number;
+  /** Connections currently open (idle + checked-out). */
+  total: number;
+  /** Idle connections available for immediate checkout. */
+  idle: number;
+  /** Checked-out connections in active use (`total - idle`). */
+  active: number;
+  /** Acquire requests queued because every connection is checked out. */
+  waiting: number;
+};
+
+/**
+ * Point-in-time snapshot of the shared Postgres pool. Observability only:
+ * `waiting > 0` means callers are blocked waiting for a connection (pool
+ * saturation), which surfaces as acquire timeouts and stale-cache "degraded"
+ * reads. Reads live node-postgres counters; takes no connection itself.
+ */
+export function getPoolStats(): PostgresPoolStats {
+  const total = pool.totalCount;
+  const idle = pool.idleCount;
+  return {
+    max: resolvedPoolMax,
+    total,
+    idle,
+    active: Math.max(0, total - idle),
+    waiting: pool.waitingCount,
+  };
+}
 
 export {
   attachPostgresClientErrorHandler,

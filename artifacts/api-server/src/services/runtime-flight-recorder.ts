@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import * as v8 from "node:v8";
+import { getPoolStats } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import type {
@@ -412,6 +413,7 @@ function buildApiHeartbeat(): JsonRecord {
       heapLimit: mb(heapStats.heap_size_limit),
     },
     apiPressure: pressure,
+    dbPool: getPoolStats(),
     requests: requestSummary(),
   };
 }
@@ -490,11 +492,48 @@ function recordMemoryPressureIfNeeded(): void {
   }
 }
 
+const DB_POOL_PRESSURE_MIN_REWARN_MS = 60_000;
+let dbPoolPressureActive = false;
+let lastDbPoolPressureWarnAt = 0;
+
+// Observability only: records an event when the shared Postgres pool saturates
+// (acquire requests queued because every connection is checked out) so a slow
+// load or a "degraded"/"stale" cockpit banner can be correlated with real pool
+// contention from the flight recorder. Takes no action and holds no connection.
+function recordDbPoolPressureIfNeeded(): void {
+  try {
+    const stats = getPoolStats();
+    if (stats.waiting <= 0) {
+      dbPoolPressureActive = false;
+      return;
+    }
+    const now = Date.now();
+    if (
+      dbPoolPressureActive &&
+      now - lastDbPoolPressureWarnAt < DB_POOL_PRESSURE_MIN_REWARN_MS
+    ) {
+      return;
+    }
+    dbPoolPressureActive = true;
+    lastDbPoolPressureWarnAt = now;
+    appendRuntimeFlightRecorderEvent("api-db-pool-pressure", {
+      waiting: stats.waiting,
+      total: stats.total,
+      idle: stats.idle,
+      active: stats.active,
+      max: stats.max,
+    });
+  } catch {
+    // Recorder writes must not affect runtime behavior.
+  }
+}
+
 export function writeRuntimeFlightRecorderHeartbeat(): JsonRecord | null {
   try {
     const heartbeat = buildApiHeartbeat();
     atomicWriteJson(path.join(recorderDir(), "api-current.json"), heartbeat);
     recordMemoryPressureIfNeeded();
+    recordDbPoolPressureIfNeeded();
     return heartbeat;
   } catch (error) {
     logger.debug({ err: error }, "Runtime flight recorder heartbeat failed");
@@ -643,6 +682,14 @@ export function getRuntimeFlightRecorderDiagnostics(): {
       apiRssMb: (apiCurrent?.["memoryMb"] as JsonRecord | undefined)?.["rss"] ?? null,
       apiRequestP95Ms:
         (apiCurrent?.["requests"] as JsonRecord | undefined)?.["p95Ms"] ?? null,
+      apiDbPoolWaiting:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ?? null,
+      apiDbPoolActive:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["active"] ?? null,
+      apiDbPoolTotal:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["total"] ?? null,
+      apiDbPoolMax:
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["max"] ?? null,
       workspaceTestProcessScanEnabled: workspaceTestProcesses.enabled,
       workspaceTestProcessCount: workspaceTestProcesses.count,
       workspaceLongRunningTestProcessCount: workspaceTestProcesses.longRunningCount,
