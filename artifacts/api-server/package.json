@@ -7,7 +7,7 @@
     "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080} NODE_ENV=development PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=false; pnpm run build && node ../../scripts/reap-dev-port.mjs && exec node --enable-source-maps ./dist/index.mjs",
     "build": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node ./build.mjs",
     "start": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; exec node --enable-source-maps ./dist/index.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "node ../../scripts/run-validation-command.mjs --label typecheck -- tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@workspace/ibkr-contracts": "workspace:*",
