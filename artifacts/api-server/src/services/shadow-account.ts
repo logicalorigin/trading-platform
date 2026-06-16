@@ -9175,18 +9175,17 @@ export async function getShadowAccountClosedTrades(input: {
       }
       try {
         await ensureShadowAccount();
-        const conditions: SQL<unknown>[] = [
-          eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
-        ];
-        if (input.to) {
-          conditions.push(lte(shadowFillsTable.occurredAt, input.to));
-        }
-        const rawFills = await db
-          .select()
-          .from(shadowFillsTable)
-          .where(and(...conditions))
-          .orderBy(shadowFillsTable.occurredAt);
-        const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+        // Share the dashboard fills+orders read (readShadowDashboardFillsWithOrders)
+        // instead of a separate query; replicate `where occurred_at <= to order by
+        // occurred_at asc` in memory on a copy (never mutate the shared cached array).
+        const toBound = input.to;
+        const { fills: allFills, ordersById } =
+          await readShadowDashboardFillsWithOrders();
+        const rawFills = (
+          toBound
+            ? allFills.filter((fill) => fill.occurredAt <= toBound)
+            : [...allFills]
+        ).sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
         const fills = source
           ? rawFills.filter((fill) =>
               shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
@@ -11085,13 +11084,14 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
     async () => {
       try {
         const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-        const rawFills = await db
-          .select()
-          .from(shadowFillsTable)
-          .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
-          .orderBy(desc(shadowFillsTable.occurredAt))
-          .limit(200);
-        const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+        // Share the dashboard fills+orders read (readShadowDashboardFillsWithOrders)
+        // instead of a separate query; replicate `order by occurred_at desc limit
+        // 200` in memory on a copy (never mutate the shared cached array).
+        const { fills: allFills, ordersById } =
+          await readShadowDashboardFillsWithOrders();
+        const rawFills = [...allFills]
+          .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+          .slice(0, 200);
         const fills = source
           ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
           : rawFills.filter((fill) =>
