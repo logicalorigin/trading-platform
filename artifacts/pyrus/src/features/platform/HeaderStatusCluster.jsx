@@ -2737,16 +2737,74 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
   );
 });
 
-// The header re-renders every second from the market clock (marketClockNow).
-// These popover-content components are heavy and receive referentially stable
-// props while connected (the popover model is memoized and the insight model is
-// null when idle), so memoizing them stops the per-second clock tick from
-// re-rendering the open broker popover subtree.
+// The market clock now ticks inside its own <HeaderMarketClock> component, so a
+// clock tick no longer re-renders the header body. These popover-content
+// components are still heavy, so they stay memoized: they receive referentially
+// stable props while connected (the popover model is memoized and the insight
+// model is null when idle), which keeps any header re-render from re-rendering the
+// open broker popover subtree.
 const HeaderIbkrTriggerSummaryMemo = memo(HeaderIbkrTriggerSummary);
 const HeaderMarketDataLineUsageMemo = memo(HeaderMarketDataLineUsage);
 const HeaderIbkrConnectionSummaryMemo = memo(HeaderIbkrConnectionSummary);
 const HeaderIbkrAdvancedDetailsMemo = memo(HeaderIbkrAdvancedDetails);
 const HeaderIbkrOperationStepperMemo = memo(HeaderIbkrOperationStepper);
+
+// The market clock ticks once per second. Isolating it in its own component keeps
+// that 1Hz re-render out of the heavy HeaderStatusCluster body, so the main-thread
+// SMIL status wave is no longer starved/jittered by a full header re-render every
+// second. The wave stays smooth UNLESS there is real main-thread work, which
+// preserves its value as a live load/health indicator. Mirrors the existing
+// HeaderMarketDataLineUsageMemo and isolated elapsed-label pattern in this file.
+const HeaderMarketClock = memo(function HeaderMarketClock({
+  compressed,
+  surfaceStyle,
+}) {
+  const { preferences } = useUserPreferences();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const marketClock = buildMarketClockState(nowMs, preferences);
+  return (
+    <AppTooltip
+      content={`${marketClock.dateLabel} · ${marketClock.timeLabel} · ${marketClock.label}`}
+    >
+      <div
+        className="ra-hover-accent-bg"
+        style={{
+          ...surfaceStyle,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "max-content",
+          minWidth: "max-content",
+          maxWidth: "none",
+          gap: sp(compressed ? 3 : 0),
+          overflow: "visible",
+          paddingLeft: sp(compressed ? 5 : 8),
+          borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
+        }}
+      >
+        <div
+          style={{
+            fontSize: textSize("body"),
+            color: marketClock.color,
+            fontFamily: T.sans,
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.2,
+            whiteSpace: "nowrap",
+            overflow: "visible",
+          }}
+        >
+          {compressed
+            ? `${marketClock.label.replace(/^Market /, "").replace("After hours", "AH")} ${marketClock.timerLabel}`
+            : `${marketClock.label} ${marketClock.timerLabel}`}
+        </div>
+      </div>
+    </AppTooltip>
+  );
+});
 
 export const HeaderStatusCluster = ({
   session,
@@ -2765,7 +2823,6 @@ export const HeaderStatusCluster = ({
   const compressed = compact || isDense || minimal;
   const bridgePopoverAsSheet = mobileSheet;
   const queryClient = useQueryClient();
-  const { preferences } = useUserPreferences();
   const toast = useToast();
   const bridgeTriggerRef = useRef(null);
   const bridgePopoverRef = useRef(null);
@@ -2776,7 +2833,6 @@ export const HeaderStatusCluster = ({
   const bridgeRecognitionRefreshTimerRef = useRef(null);
   const bridgeLaunchCancelRequestedRef = useRef(false);
   const runtimeControlReloadRef = useRef(null);
-  const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
   const [bridgePopoverOpen, setBridgePopoverOpen] = useState(false);
   const [bridgePopoverPosition, setBridgePopoverPosition] = useState(null);
   const [, setBridgeLaunchUrl] = useState(() =>
@@ -2806,14 +2862,26 @@ export const HeaderStatusCluster = ({
   const [bridgeActivationStatus, setBridgeActivationStatus] = useState(null);
   const [bridgeManualOperationModel, setBridgeManualOperationModel] =
     useState(null);
+  // The market clock now ticks inside <HeaderMarketClock>, so the header no longer
+  // re-renders every second. The only parent state that needed the clock is the
+  // launch-in-flight expiry below, which reads Date.now() at render time; this
+  // one-shot timer re-renders exactly once when the in-flight window lapses so the
+  // "launch in flight" UI still clears promptly without a per-second re-render.
+  const [, setLaunchExpiryTick] = useState(0);
   useEffect(() => {
-    const timer = window.setInterval(() => setMarketClockNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const marketClock = useMemo(
-    () => buildMarketClockState(marketClockNow, preferences),
-    [marketClockNow, preferences],
-  );
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const remainingMs = bridgeLaunchInFlightUntil - Date.now();
+    if (remainingMs <= 0) {
+      return undefined;
+    }
+    const timer = window.setTimeout(
+      () => setLaunchExpiryTick((tick) => tick + 1),
+      remainingMs + 50,
+    );
+    return () => window.clearTimeout(timer);
+  }, [bridgeLaunchInFlightUntil]);
   // getIbkrConnection returns the stable session connection when connected, but
   // a fresh fallbackConnection literal every call when disconnected. Memoizing on
   // session (stable across market-clock ticks) keeps gatewayConnection — a dep of
@@ -2873,7 +2941,7 @@ export const HeaderStatusCluster = ({
   const gatewayLatencyStats = useIbkrLatencyStats(bridgePopoverOpen);
   const activeGatewayLatencyStats = bridgePopoverOpen ? gatewayLatencyStats : null;
   const sessionIbkrRuntime = session?.runtime?.ibkr || null;
-  const bridgeLaunchSessionInFlight = bridgeLaunchInFlightUntil > marketClockNow;
+  const bridgeLaunchSessionInFlight = bridgeLaunchInFlightUntil > Date.now();
   // The snapshot is NOT a function of the 1s market clock (its launch-activity
   // gate is carried by the stable `inFlight` boolean below). Keep the raw clock
   // out of the memo so the connection snapshot — which feeds the SMIL ping wave —
@@ -3032,7 +3100,7 @@ export const HeaderStatusCluster = ({
   );
   const bridgeLaunchInFlight = Boolean(
     !gatewayConnectedForBridge &&
-      (bridgeLaunchInFlightUntil > marketClockNow ||
+      (bridgeLaunchInFlightUntil > Date.now() ||
         (bridgeActivationId &&
           bridgeManagementToken &&
           bridgeRuntimeActivationStillActive)),
@@ -4871,38 +4939,7 @@ export const HeaderStatusCluster = ({
       </div>
 
       {compact ? null : (
-      <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.timeLabel} · ${marketClock.label}`}><div
-        className="ra-hover-accent-bg"
-        style={{
-          ...surfaceStyle,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          width: "max-content",
-          minWidth: "max-content",
-          maxWidth: "none",
-          gap: sp(compressed ? 3 : 0),
-          overflow: "visible",
-          paddingLeft: sp(compressed ? 5 : 8),
-          borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
-        }}
-      >
-        <div
-          style={{
-            fontSize: textSize("body"),
-            color: marketClock.color,
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1.2,
-            whiteSpace: "nowrap",
-            overflow: "visible",
-          }}
-        >
-          {compressed
-            ? `${marketClock.label.replace(/^Market /, "").replace("After hours", "AH")} ${marketClock.timerLabel}`
-            : `${marketClock.label} ${marketClock.timerLabel}`}
-        </div>
-      </div></AppTooltip>
+        <HeaderMarketClock compressed={compressed} surfaceStyle={surfaceStyle} />
       )}
 
       {compact || minimal || !showThemeToggle ? null : (
