@@ -200,7 +200,19 @@ const goodFridayKey = (year: number): string => {
   return dateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 };
 
+// NYSE holiday records are deterministic per year, but were previously rebuilt
+// (3 years of holiday math + Easter/Good-Friday computation + sort) on every
+// holiday/session lookup. Those lookups run on every render/clock tick/signal
+// evaluation, so the uncached rebuild dominated the main thread (~3.5s CPU / 6s
+// in a profile) and starved every main-thread animation. Cache by year — the
+// records never change for a given year.
+const nyseHolidayRecordsByYear = new Map<number, NyseHoliday[]>();
+
 const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
+  const cachedHolidayRecords = nyseHolidayRecordsByYear.get(year);
+  if (cachedHolidayRecords) {
+    return cachedHolidayRecords;
+  }
   const holidays = new Map<string, string>();
   const add = (date: string | null, name: string) => {
     if (date !== null) {
@@ -250,12 +262,22 @@ const buildNyseHolidayRecords = (year: number): NyseHoliday[] => {
   addYear(year - 1);
   addYear(year);
   addYear(year + 1);
-  return [...holidays.entries()]
+  const records = [...holidays.entries()]
     .map(([date, name]) => ({ date, name }))
     .sort((left, right) => left.date.localeCompare(right.date));
+  nyseHolidayRecordsByYear.set(year, records);
+  return records;
 };
 
-const resolveNewYorkClockParts = (value: Date): NewYorkClockParts | null => {
+// resolveNewYorkClockParts output is minute-granular (it discards seconds) yet
+// runs an Intl formatToParts per call, and market-state checks call it repeatedly
+// with the current time. Memoize by NY-equivalent minute so a burst of "now"
+// checks within the same minute share one conversion. Bounded so it can't grow
+// unbounded over a long session.
+const newYorkClockPartsByMinute = new Map<number, NewYorkClockParts | null>();
+const NY_CLOCK_PARTS_CACHE_MAX = 1024;
+
+const computeNewYorkClockParts = (value: Date): NewYorkClockParts | null => {
   const parts = NEW_YORK_CLOCK_FORMATTER.formatToParts(value);
   const read = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
@@ -283,6 +305,23 @@ const resolveNewYorkClockParts = (value: Date): NewYorkClockParts | null => {
     weekday,
     minutes: hour * 60 + minute,
   };
+};
+
+const resolveNewYorkClockParts = (value: Date): NewYorkClockParts | null => {
+  const minuteKey = Math.floor(value.getTime() / 60_000);
+  const cached = newYorkClockPartsByMinute.get(minuteKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = computeNewYorkClockParts(value);
+  if (newYorkClockPartsByMinute.size >= NY_CLOCK_PARTS_CACHE_MAX) {
+    const oldest = newYorkClockPartsByMinute.keys().next().value;
+    if (oldest !== undefined) {
+      newYorkClockPartsByMinute.delete(oldest);
+    }
+  }
+  newYorkClockPartsByMinute.set(minuteKey, result);
+  return result;
 };
 
 const getNewYorkOffsetMs = (value: Date): number => {
@@ -335,7 +374,16 @@ const isWeekday = (
   return weekday !== 0 && weekday !== 6;
 };
 
+// Also deterministic per year, and far costlier per call: each record runs a
+// holiday lookup plus two NY-time ISO conversions (each ~2 Intl formatToParts).
+// Cache by year so the whole cascade is computed once.
+const nyseEarlyCloseRecordsByYear = new Map<number, NyseEarlyClose[]>();
+
 const buildNyseEarlyCloseRecords = (year: number): NyseEarlyClose[] => {
+  const cachedEarlyCloseRecords = nyseEarlyCloseRecordsByYear.get(year);
+  if (cachedEarlyCloseRecords) {
+    return cachedEarlyCloseRecords;
+  }
   const records: NyseEarlyClose[] = [];
   const addIfTradingDay = (
     parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
@@ -360,7 +408,11 @@ const buildNyseEarlyCloseRecords = (year: number): NyseEarlyClose[] => {
   );
   addIfTradingDay({ year, month: 12, day: 24 }, "Christmas Eve");
 
-  return records.sort((left, right) => left.date.localeCompare(right.date));
+  const sortedRecords = records.sort((left, right) =>
+    left.date.localeCompare(right.date),
+  );
+  nyseEarlyCloseRecordsByYear.set(year, sortedRecords);
+  return sortedRecords;
 };
 
 const resolveNyseEarlyClose = (
@@ -384,7 +436,7 @@ export const listNyseHolidays = (year: number): NyseHoliday[] => {
 };
 
 export const listNyseEarlyCloses = (year: number): NyseEarlyClose[] =>
-  Number.isInteger(year) ? buildNyseEarlyCloseRecords(year) : [];
+  Number.isInteger(year) ? [...buildNyseEarlyCloseRecords(year)] : [];
 
 const resolveNyseCalendarDayFromParts = (
   parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
@@ -458,37 +510,60 @@ type SessionInterval = {
   endAt: string;
 };
 
+// Session intervals are deterministic per trading day, but buildSessionIntervalsNear
+// computes ~12 days' worth on every call (chart/session-status hot path), each doing
+// a calendar-day resolve plus NY-time ISO conversions. Cache by day so a viewed date
+// range is computed once and reused across renders. Bounded for long sessions.
+const sessionIntervalsByDay = new Map<string, SessionInterval[]>();
+const SESSION_INTERVALS_CACHE_MAX = 512;
+
 const buildSessionIntervalsForTradingDay = (
   parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
 ): SessionInterval[] => {
-  const day = resolveNyseCalendarDayFromParts(parts);
-  if (!day.tradingDay || !day.regularOpenAt || !day.regularCloseAt) {
-    return [];
+  const dayKey = dateKey(parts.year, parts.month, parts.day);
+  const cachedIntervals = sessionIntervalsByDay.get(dayKey);
+  if (cachedIntervals !== undefined) {
+    return cachedIntervals;
   }
 
-  const overnightParts = addDaysToDateKeyParts(parts, -1);
-  return [
-    {
-      key: "overnight",
-      startAt: newYorkDateTimeToIso(overnightParts, OVERNIGHT_OPEN_MINUTES),
-      endAt: newYorkDateTimeToIso(parts, OVERNIGHT_CLOSE_MINUTES),
-    },
-    {
-      key: "pre",
-      startAt: day.extendedOpenAt as string,
-      endAt: day.regularOpenAt,
-    },
-    {
-      key: "rth",
-      startAt: day.regularOpenAt,
-      endAt: day.regularCloseAt,
-    },
-    {
-      key: "after",
-      startAt: day.regularCloseAt,
-      endAt: day.extendedCloseAt as string,
-    },
-  ];
+  const day = resolveNyseCalendarDayFromParts(parts);
+  let intervals: SessionInterval[];
+  if (!day.tradingDay || !day.regularOpenAt || !day.regularCloseAt) {
+    intervals = [];
+  } else {
+    const overnightParts = addDaysToDateKeyParts(parts, -1);
+    intervals = [
+      {
+        key: "overnight",
+        startAt: newYorkDateTimeToIso(overnightParts, OVERNIGHT_OPEN_MINUTES),
+        endAt: newYorkDateTimeToIso(parts, OVERNIGHT_CLOSE_MINUTES),
+      },
+      {
+        key: "pre",
+        startAt: day.extendedOpenAt as string,
+        endAt: day.regularOpenAt,
+      },
+      {
+        key: "rth",
+        startAt: day.regularOpenAt,
+        endAt: day.regularCloseAt,
+      },
+      {
+        key: "after",
+        startAt: day.regularCloseAt,
+        endAt: day.extendedCloseAt as string,
+      },
+    ];
+  }
+
+  if (sessionIntervalsByDay.size >= SESSION_INTERVALS_CACHE_MAX) {
+    const oldest = sessionIntervalsByDay.keys().next().value;
+    if (oldest !== undefined) {
+      sessionIntervalsByDay.delete(oldest);
+    }
+  }
+  sessionIntervalsByDay.set(dayKey, intervals);
+  return intervals;
 };
 
 const buildSessionIntervalsNear = (
@@ -594,3 +669,19 @@ export const resolveUsEquityMarketStatus = (
 export const resolveUsEquityMarketSession = (
   value: Date | number | string = new Date(),
 ): UsEquityMarketSession => resolveUsEquityMarketStatus(value).session;
+
+// Test-only hook so the per-year/day/minute memoization can be asserted. Declared
+// at end of module so every referenced builder/cache is already initialized (the
+// references are evaluated eagerly when this object literal is constructed).
+export const _testing = {
+  buildNyseHolidayRecords,
+  buildNyseEarlyCloseRecords,
+  resolveNewYorkClockParts,
+  buildSessionIntervalsForTradingDay,
+  resetCalendarCaches: () => {
+    nyseHolidayRecordsByYear.clear();
+    nyseEarlyCloseRecordsByYear.clear();
+    newYorkClockPartsByMinute.clear();
+    sessionIntervalsByDay.clear();
+  },
+};
