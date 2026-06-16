@@ -8,7 +8,7 @@ import {
 import { createSignalOptionsWorker } from "./signal-options-worker";
 import type { OvernightSpotWorkerDeployment } from "./overnight-spot-execution";
 import { createOvernightSpotWorker } from "./overnight-spot-worker";
-import { createTradeMonitorWorker } from "./trade-monitor-worker";
+import { createSignalMonitorEvaluationWorker } from "./signal-monitor-evaluation-worker";
 
 const noopLogger = {
   debug() {},
@@ -115,7 +115,7 @@ test("signal-options worker does not subscribe to aggregate signal evaluation in
 test("signal monitor worker stays idle in passive mode", async () => {
   let lockCount = 0;
   let subscribeCount = 0;
-  const worker = createTradeMonitorWorker({
+  const worker = createSignalMonitorEvaluationWorker({
     isSignalMonitorBarEvaluationEnabled: () => false,
     acquireTickLock: async () => {
       lockCount += 1;

@@ -63,7 +63,7 @@ type WorkerDependencies = {
   logger: WorkerLogger;
 };
 
-export type TradeMonitorWorkerOptions = Partial<WorkerDependencies> & {
+export type SignalMonitorEvaluationWorkerOptions = Partial<WorkerDependencies> & {
   wakeupMs?: number;
 };
 
@@ -236,7 +236,7 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
 }
 
 function defaultDependencies(
-  options: TradeMonitorWorkerOptions,
+  options: SignalMonitorEvaluationWorkerOptions,
 ): WorkerDependencies {
   const barEvaluationEnabled =
     options.isSignalMonitorBarEvaluationEnabled ??
@@ -616,8 +616,8 @@ async function runStreamProfileSymbolUnlocked(input: {
   }
 }
 
-export function createTradeMonitorWorker(
-  options: TradeMonitorWorkerOptions = {},
+export function createSignalMonitorEvaluationWorker(
+  options: SignalMonitorEvaluationWorkerOptions = {},
 ) {
   const dependencies = defaultDependencies(options);
   const wakeupMs = positiveInteger(
@@ -958,12 +958,12 @@ export function createTradeMonitorWorker(
   };
 }
 
-const defaultWorker = createTradeMonitorWorker();
+const defaultWorker = createSignalMonitorEvaluationWorker();
 
-export function startTradeMonitorWorker(): void {
+export function startSignalMonitorEvaluationWorker(): void {
   defaultWorker.start();
 }
 
-export function stopTradeMonitorWorker(): void {
+export function stopSignalMonitorEvaluationWorker(): void {
   defaultWorker.stop();
 }
