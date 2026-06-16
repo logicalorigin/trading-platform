@@ -1,12 +1,13 @@
 # Session Handoff Master
 
-Changelog and table of contents for durable per-session handoff files. Keep details in the linked session handoff; keep this file short and searchable by date, time, native Codex session ID, and summary.
+Changelog and table of contents for durable per-session handoff files. Keep details in the linked session handoff; keep this file short and searchable by date, time, session ID, and summary.
 
 ## Sessions
 
 | Last Updated (MT) | Session ID | Summary | Handoff | Status | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-06-13 10:24:43 MDT | `019ec132-92d0-78c1-a21c-4f5d378afa46` | Broker connection audit, fast-launch rebuild, bridge-status fix, direct Windows protocol credential-handoff fix, and hidden-tab launch-wait fix. | `SESSION_HANDOFF_2026-06-13_019ec132-92d0-78c1-a21c-4f5d378afa46.md` | Source/tests/typechecks pass; live watch showed helper/key ready fast but `_self` protocol navigation delayed browser credential delivery until timeout; source review also found uncapped `requestAnimationFrame` wait. | Refresh/rebuild Pyrus, cancel/replace stuck activation, then confirm `/login-key/read` and `/login-envelope` fire immediately after key publish even if the UI is hidden/backgrounded. |
+| 2026-06-16 13:31:23 MDT | `a110ef2f-bff5-445b-aabe-ae62b2b2351d` | 2026-06-16 13:31:23 MDT \| a110ef2f-bff5-445b-aabe-ae62b2b2351d \| find the 4 sessions we just dropped, use [samples/Scre… | `SESSION_HANDOFF_2026-06-16_a110ef2f-bff5-445b-aabe-ae62b2b2351d.md` | Saved; see handoff | See handoff. |
+| 2026-06-13 10:24:43 MDT | `019ec132-92d0-78c1-a21c-4f5d378afa46` | Broker connection audit, fast-launch rebuild, bridge-status fix, direct Windows protocol credential-handoff fix, and hi… | `SESSION_HANDOFF_2026-06-13_019ec132-92d0-78c1-a21c-4f5d378afa46.md` | Source/tests/typechecks pass; live watch showed helper/key ready fast but `_self` protocol navigation delayed browser c… | Refresh/rebuild Pyrus, cancel/replace stuck activation, then confirm `/login-key/read` and `/login-envelope` fire immed… |
 | 2026-06-12 18:13:34 MDT | `019ebe12-b4b7-7281-95b2-698b1d4bfc05` | 2026-06-12 18:13:34 MDT \| 019ebe12-b4b7-7281-95b2-698b1d4bfc05 \| pleas look in uncommited work for the session that jus… | `SESSION_HANDOFF_2026-06-12_019ebe12-b4b7-7281-95b2-698b1d4bfc05.md` | Saved; see handoff | See handoff. |
 | 2026-06-12 14:37:34 MDT | `019ebd74-8d06-7071-a225-67ce7a538918` | 2026-06-12 14:37:34 MDT \| 019ebd74-8d06-7071-a225-67ce7a538918 \| can you please help me with a $code-simplification? | `SESSION_HANDOFF_2026-06-12_019ebd74-8d06-7071-a225-67ce7a538918.md` | Saved; see handoff | See handoff. |
 | 2026-06-12 14:37:34 MDT | `019ebd73-c854-73d0-99dd-2c4a8b381f19` | 2026-06-12 14:37:34 MDT \| 019ebd73-c854-73d0-99dd-2c4a8b381f19 \| please find the most recent work of the 3 sessions we… | `SESSION_HANDOFF_2026-06-12_019ebd73-c854-73d0-99dd-2c4a8b381f19.md` | Saved; see handoff | See handoff. |

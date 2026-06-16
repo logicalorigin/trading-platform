@@ -811,21 +811,10 @@ try {
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
   const apiExit = exitPromise("API", api);
 
-  // Do NOT await API healthz before starting Vite — the web app handles
-  // API-not-ready gracefully at the component level. Gate removal means
-  // the preview is live within seconds even when API warmup is slow.
-  // waitForApi runs in the background only to log when the API is ready.
-  waitForApi(apiExit, api.pid)
-    .then(() => {
-      lifecyclePhase = "api-healthy";
-      writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
-      flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-    })
-    .catch((err) => {
-      console.warn(
-        `[pyrus-dev] API health background check: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+  await waitForApi(apiExit, api.pid);
+  lifecyclePhase = "api-healthy";
+  writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
   let workerExit = null;
   const workerStartup = resolveMarketDataWorkerStartup();
