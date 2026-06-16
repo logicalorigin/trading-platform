@@ -797,12 +797,26 @@ function normalizeRequest(input: MarketDataLineRequest): {
   };
 }
 
+// Memoize the expiry parse per lease. activeLeaseValues() re-filters every call
+// and runs multiple times per admission/diagnostics build over ~200 leases, so
+// a naive Date.parse(expiresAt) per check dominated CPU. The WeakMap re-parses
+// only when a lease's expiresAt string changes (renewal) and is GC'd with the
+// lease, so it needs no manual invalidation.
+const leaseExpiryParseCache = new WeakMap<
+  MarketDataLease,
+  { str: string; ms: number }
+>();
+
 function isLeaseExpiredAt(lease: MarketDataLease, now = Date.now()): boolean {
   if (!lease.expiresAt) {
     return false;
   }
-  const expiresAtMs = Date.parse(lease.expiresAt);
-  return Number.isFinite(expiresAtMs) && expiresAtMs <= now;
+  let cached = leaseExpiryParseCache.get(lease);
+  if (!cached || cached.str !== lease.expiresAt) {
+    cached = { str: lease.expiresAt, ms: Date.parse(lease.expiresAt) };
+    leaseExpiryParseCache.set(lease, cached);
+  }
+  return Number.isFinite(cached.ms) && cached.ms <= now;
 }
 
 function activeLeaseValues(now = Date.now()): MarketDataLease[] {
