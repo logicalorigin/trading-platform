@@ -3032,6 +3032,20 @@ async function readShadowFillsWithOrders() {
   };
 }
 
+// Single-flighted shared read of the account's full shadow fills+orders for the
+// dashboard widgets. The account screen mounts ~10 widget endpoints at once,
+// several of which independently re-read the same fills+orders concurrently
+// against the 12-connection pool (the startup pool-saturation root cause).
+// Routing the dashboard reads through one withShadowReadCache entry (short TTL +
+// in-flight dedup) collapses them into a single read. The raw
+// readShadowFillsWithOrders above stays for write-adjacent recompute paths that
+// need an uncached fresh read.
+function readShadowDashboardFillsWithOrders() {
+  return withShadowReadCache("dashboard:fills-with-orders", readShadowFillsWithOrders, {
+    ttlMs: SHADOW_READ_CACHE_TTL_MS,
+  });
+}
+
 async function readShadowFillsForOrderIds(
   orderIds: string[],
 ): Promise<ShadowFillRow[]> {
@@ -3211,7 +3225,7 @@ async function readShadowLedgerBundleForSource(
       const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
       const { fills, ordersById } = source
         ? await readShadowFillsWithOrdersForSource(source)
-        : await readShadowFillsWithOrders();
+        : await readShadowDashboardFillsWithOrders();
       const selectedFills = source
         ? fills.filter((fill) =>
             shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
@@ -7380,7 +7394,7 @@ export async function getShadowAccountEquityHistory(input: {
         const totals = selection.includeLiveTerminal
           ? await computeShadowEquityHistoryTerminalTotals(source)
           : null;
-        const { fills, ordersById } = await readShadowFillsWithOrders();
+        const { fills, ordersById } = await readShadowDashboardFillsWithOrders();
         const ledgerFills = source
           ? fills.filter((fill) =>
               shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
