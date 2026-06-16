@@ -8101,6 +8101,11 @@ const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
 };
 const DEFAULT_BARS_LIMIT = 200;
 const BROKER_RECENT_HISTORY_MS = 60 * 60 * 1_000;
+// Live-edge window for OPTION bars: the broker (IBKR) is only queried for the
+// most recent 30 minutes; everything older comes from Massive. Massive option
+// data is ~15m delayed, so 30m leaves ~15m of grace/overlap between the two
+// systems and keeps the broker off the wide historical range it does not need.
+const OPTION_BROKER_LIVE_EDGE_MS = 30 * 60_000;
 const BROKER_HISTORY_STEP_MS: Partial<
   Record<GetBarsInput["timeframe"], number>
 > = {
@@ -16401,14 +16406,26 @@ export async function getOptionChartBarsWithDebug(input: {
   let ibkrBarsResult: GetBarsResult | null = null;
   let ibkrBarsDebug: RequestDebugMetadata | null = null;
   let ibkrBarsError: unknown = null;
-  if (providerContractId) {
+  // Broker live edge: only ask IBKR for the most recent 30m of option bars and
+  // let Massive serve everything older (it is ~15m delayed; 30m leaves grace).
+  // shouldFetchMassiveOptionBarsForIbkrResult sees the original (older) input.from
+  // and so still pulls Massive to cover the pre-edge range, which the merge fills
+  // in behind the live IBKR bars.
+  const optionBrokerLiveEdgeFromMs = Date.now() - OPTION_BROKER_LIVE_EDGE_MS;
+  const optionBrokerWindowIntersectsLiveEdge =
+    (input.to?.getTime() ?? Date.now()) >= optionBrokerLiveEdgeFromMs;
+  const ibkrOptionFrom =
+    input.from && input.from.getTime() > optionBrokerLiveEdgeFromMs
+      ? input.from
+      : new Date(optionBrokerLiveEdgeFromMs);
+  if (providerContractId && optionBrokerWindowIntersectsLiveEdge) {
     try {
       const { debug, ...barsResult } = await getBarsWithDebug(
         {
           symbol: underlying,
           timeframe: input.timeframe,
           limit: input.limit,
-          from: input.from,
+          from: ibkrOptionFrom,
           to: input.to,
           assetClass: "option",
           providerContractId,
