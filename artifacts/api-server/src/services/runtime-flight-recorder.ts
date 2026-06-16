@@ -19,6 +19,7 @@ import type {
 } from "./diagnostics";
 import {
   getApiResourcePressureSnapshot,
+  resolveApiRssPressureThresholds,
 } from "./resource-pressure";
 import { getRecentRequestSamples } from "./request-metrics";
 
@@ -438,9 +439,24 @@ const RSS_PRESSURE_MIN_REWARN_MS = 60_000;
 let memoryPressureActive = false;
 let lastMemoryPressureWarnAt = 0;
 
-function rssPressureThresholdBytes(): number {
+let cachedDefaultRssWarnBytes: number | null = null;
+
+// Default the observability threshold to the same cgroup-derived RSS pressure
+// thresholds the user-facing signals use (resource-pressure), instead of a fixed
+// 1.5GiB. On a multi-GB container that fixed value fired this alarm every minute
+// while the app was healthy (heap ~20%, RSS well under the user-facing 6/8GB
+// watch/high lines), flooding the flight recorder with misleading
+// "memory pressure" events. The API_RSS_WARN_BYTES env override still wins.
+export function rssPressureThresholdBytes(): number {
   const raw = Number(process.env.API_RSS_WARN_BYTES);
-  return Number.isFinite(raw) && raw > 0 ? raw : 1_536 * 1024 * 1024;
+  if (Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  if (cachedDefaultRssWarnBytes === null) {
+    cachedDefaultRssWarnBytes =
+      resolveApiRssPressureThresholds().watch * 1024 * 1024;
+  }
+  return cachedDefaultRssWarnBytes;
 }
 
 // Observability only: records an event (no action taken, not a memory cap) when

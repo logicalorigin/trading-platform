@@ -8,7 +8,43 @@ import {
   __resetRequestMetricsForTests,
   recordApiRequest,
 } from "./request-metrics";
-import { writeRuntimeFlightRecorderHeartbeat } from "./runtime-flight-recorder";
+import {
+  rssPressureThresholdBytes,
+  writeRuntimeFlightRecorderHeartbeat,
+} from "./runtime-flight-recorder";
+import { resolveApiRssPressureThresholds } from "./resource-pressure";
+
+test("RSS observability threshold defaults to the cgroup-derived watch level, not a fixed 1.5GiB", () => {
+  const prev = process.env["API_RSS_WARN_BYTES"];
+  delete process.env["API_RSS_WARN_BYTES"];
+  try {
+    const expected = resolveApiRssPressureThresholds().watch * 1024 * 1024;
+    assert.equal(rssPressureThresholdBytes(), expected);
+    // Guard against regressing to the old fixed 1.5GiB, which on a multi-GB
+    // container fired the observability alarm while the app was healthy.
+    assert.notEqual(rssPressureThresholdBytes(), 1_536 * 1024 * 1024);
+  } finally {
+    if (prev == null) {
+      delete process.env["API_RSS_WARN_BYTES"];
+    } else {
+      process.env["API_RSS_WARN_BYTES"] = prev;
+    }
+  }
+});
+
+test("API_RSS_WARN_BYTES env overrides the RSS observability threshold", () => {
+  const prev = process.env["API_RSS_WARN_BYTES"];
+  process.env["API_RSS_WARN_BYTES"] = String(9 * 1024 * 1024 * 1024);
+  try {
+    assert.equal(rssPressureThresholdBytes(), 9 * 1024 * 1024 * 1024);
+  } finally {
+    if (prev == null) {
+      delete process.env["API_RSS_WARN_BYTES"];
+    } else {
+      process.env["API_RSS_WARN_BYTES"] = prev;
+    }
+  }
+});
 
 test("flight recorder recent failures include route admission context", () => {
   const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
