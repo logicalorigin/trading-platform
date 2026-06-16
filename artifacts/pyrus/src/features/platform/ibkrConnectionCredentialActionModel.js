@@ -1,5 +1,4 @@
 export const resolveIbkrCredentialActionState = ({
-  activationActive = false,
   activationId = null,
   directActivationShouldReplaceCurrentLaunch = false,
   gatewayConnected = false,
@@ -7,9 +6,15 @@ export const resolveIbkrCredentialActionState = ({
   managementToken = null,
   runtimeActivationActive = false,
 } = {}) => {
-  const activeLaunch = Boolean(
-    activationActive || launchInFlight || runtimeActivationActive,
-  );
+  // A launch counts as "active" for resume/cancel ONLY when the client has a launch
+  // currently in flight OR the backend still reports the activation as active. We
+  // deliberately do NOT trust a bare client-side "activation active" flag here: that
+  // flag (bridgeActivationActive) is not reset when the API process restarts, so with
+  // the tab left open a stale activationId in sessionStorage made resume look
+  // available and the credential submit tried to deliver to a dead activation —
+  // hanging the reconnect at "waiting desktop". This mirrors
+  // shouldAutoResumeIbkrCredentials below, which already requires runtimeActivationActive.
+  const activeLaunch = Boolean(launchInFlight || runtimeActivationActive);
   const launchCancelable = Boolean(
     !gatewayConnected &&
       activationId &&

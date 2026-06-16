@@ -54,6 +54,28 @@ test("keeps a runtime-reported active launch cancelable after local timers drift
   assert.equal(state.primaryBlockedByActiveLaunch, false);
 });
 
+test("does not offer credential resume for a stale activation after an API restart", () => {
+  // Repro of the "stuck at waiting desktop" reconnect bug: the API process
+  // restarted with the browser tab still open, so the client-only
+  // `bridgeActivationActive` flag stayed set while the backend has no active
+  // activation and the 10-min in-flight window has expired. Resume must NOT be
+  // offered (it would deliver credentials to a dead activation and hang); the
+  // submit must fall through to a fresh launch instead.
+  const state = resolveIbkrCredentialActionState({
+    activationActive: true, // stale client-only optimism, must be ignored
+    activationId: "stale-activation",
+    directActivationShouldReplaceCurrentLaunch: false,
+    gatewayConnected: false,
+    launchInFlight: false, // in-flight window expired
+    managementToken: "stale-management-token",
+    runtimeActivationActive: false, // backend has no live activation
+  });
+
+  assert.equal(state.resumeAvailable, false);
+  assert.equal(state.launchCancelable, false);
+  assert.equal(state.primaryBlockedByActiveLaunch, false);
+});
+
 test("bridge process actions do not expose deactivate for configured-only state", () => {
   const actions = resolveIbkrBridgeProcessActions({
     bridgeRuntimeOverrideActive: false,
