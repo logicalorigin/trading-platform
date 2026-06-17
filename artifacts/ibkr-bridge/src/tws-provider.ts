@@ -2270,6 +2270,14 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         this.optionContracts.delete(key);
       }
     }
+    // The executions cache is keyed by the high-cardinality scanner query shape
+    // (symbol/contractId), so without eviction it grows one retained entry per
+    // distinct query for the process lifetime. Drop aged-out entries here too.
+    for (const [key, entry] of this.executionsCache) {
+      if (now - entry.cachedAt >= EXECUTIONS_CACHE_TTL_MS) {
+        this.executionsCache.delete(key);
+      }
+    }
   }
 
   shutdown(): void {
@@ -4986,12 +4994,14 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       return cached.value;
     }
 
-    // Run on the account lane (concurrency/circuit-breaker protected, like
-    // listPositions/listOrders) so a slow execution round-trip fails fast under
-    // contention instead of hanging to the client's 12s timeout, and a single
-    // live fetch is shared via the cache below.
+    // Run on the dedicated executions lane (its own concurrency limit + circuit
+    // breaker) so a slow execution round-trip fails fast under contention instead
+    // of hanging to the client's 12s timeout — and, unlike the shared account lane,
+    // an executions timeout can't trip the breaker that gates the lighter
+    // positions/orders/account-summary reads. A single live fetch is shared via
+    // the cache below.
     return runBridgeLane(
-      "account",
+      "executions",
       async () => {
         // A concurrent caller may have filled the cache while we waited for the slot.
         const fresh = this.executionsCache.get(cacheKey);

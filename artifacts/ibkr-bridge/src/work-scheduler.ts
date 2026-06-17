@@ -7,6 +7,7 @@ import {
 export type BridgeWorkLane =
   | "control"
   | "account"
+  | "executions"
   | "market-subscriptions"
   | "historical"
   | "options-meta"
@@ -92,6 +93,17 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
     backoffMs: 10_000,
     failureThreshold: 2,
   },
+  // Executions (fill history) gets its own lane so a slow getExecutionDetails
+  // round-trip can't trip the shared `account` breaker and knock out the lighter
+  // positions/orders/account-summary reads. Still fail-fast (low timeout) and
+  // self-limiting (concurrency 1) since executions only feeds display/reporting.
+  executions: {
+    concurrency: 1,
+    timeoutMs: 8_000,
+    queueCap: 2,
+    backoffMs: 10_000,
+    failureThreshold: 2,
+  },
   "market-subscriptions": {
     concurrency: 2,
     timeoutMs: 30_000,
@@ -133,6 +145,7 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
 const state: Record<BridgeWorkLane, LaneState> = {
   control: emptyState(),
   account: emptyState(),
+  executions: emptyState(),
   "market-subscriptions": emptyState(),
   historical: emptyState(),
   "options-meta": emptyState(),
@@ -142,6 +155,7 @@ const state: Record<BridgeWorkLane, LaneState> = {
 const queues: Record<BridgeWorkLane, QueuedWork[]> = {
   control: [],
   account: [],
+  executions: [],
   "market-subscriptions": [],
   historical: [],
   "options-meta": [],

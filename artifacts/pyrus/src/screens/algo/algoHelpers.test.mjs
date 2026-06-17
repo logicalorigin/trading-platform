@@ -716,7 +716,10 @@ test("STA source selection does not reuse previous rows through empty refresh fr
   assert.equal(snapshot.candidates.length, 0);
 });
 
-test("STA source selection rejects stale cached action rows", () => {
+test("STA source selection serves cache-stale action rows as the live default", () => {
+  // "Served from stored monitor state" (cacheStatus: "stale") is the SSE-era
+  // default, not a degraded source — it must be served, not rejected. Genuine
+  // failures still surface via record.stale/degraded/refreshing/timeout.
   const snapshot = resolveStableStaActionSnapshot({
     signalOptionsState: {
       cacheStatus: "stale",
@@ -738,6 +741,50 @@ test("STA source selection rejects stale cached action rows", () => {
     },
     cockpit: {
       cacheStatus: "stale",
+      signals: [
+        {
+          symbol: "NOC",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-11T18:10:00.000Z",
+        },
+      ],
+      candidates: [],
+    },
+  });
+
+  assert.equal(snapshot.source, "state");
+  assert.equal(snapshot.signals.length, 1);
+  assert.equal(snapshot.candidates.length, 1);
+  assert.equal(snapshot.sourceHealth.stale, false);
+  assert.equal(snapshot.sourceHealth.degraded, false);
+  assert.equal(snapshot.cacheable, true);
+});
+
+test("STA source selection rejects genuinely transient action rows", () => {
+  // record.stale (and degraded/refreshing/timeout) marks a genuine failure —
+  // those sources are still rejected and surface the degraded/stale banner.
+  const snapshot = resolveStableStaActionSnapshot({
+    signalOptionsState: {
+      stale: true,
+      signals: [
+        {
+          symbol: "NOC",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-11T18:10:00.000Z",
+        },
+      ],
+      candidates: [
+        {
+          id: "SIGOPT-paper-NOC-sell-1781201400000",
+          symbol: "NOC",
+          signalAt: "2026-06-11T18:10:00.000Z",
+        },
+      ],
+    },
+    cockpit: {
+      stale: true,
       signals: [
         {
           symbol: "NOC",

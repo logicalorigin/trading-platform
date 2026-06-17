@@ -19,6 +19,15 @@ Implemented in `tws-provider.ts`:
 
 **Remaining sub-item (optional, not yet done):** persist the contract-detail cache (`optionContracts`/`stockContracts`) across reconnects so post-reconnect previews don't all cold-miss. Deferred — verify it's actually wiped on reconnect first (`stopConnectionBoundSubscriptions`) and weigh staleness vs. the existing 5-min `CONTRACT_CACHE_TTL_MS`.
 
+### Post-audit hardening (2026-06-17) — 2 HIGH findings fixed
+
+An independent adversarial audit of the committed #3 change (`fdce894`) found two HIGH issues, now fixed. Validation: bridge `typecheck` PASS + `tws-provider-account-read-path` source guard PASS. **Bridge rebuild + Windows redeploy still required for these to take effect.**
+
+1. **Unbounded `executionsCache` growth** — the cache was never evicted (high-cardinality scanner symbol/contract keys grow one retained entry per query for the process lifetime). Added an eviction pass to `pruneContractCaches` (`tws-provider.ts`) dropping entries older than `EXECUTIONS_CACHE_TTL_MS` on the periodic tickle, mirroring the existing contract-cache sweep.
+2. **Executions tripped the shared `account` circuit breaker (regression)** — routing executions onto the `account` lane meant a slow/timed-out `getExecutionDetails` could trip the account breaker and fail the lighter `listPositions`/`listAccounts`/`listOrders` reads — the exact NLV/BP/cash-emptying symptom #3 targets. Note `countsAgainstLaneHealth: () => false` does NOT fix this: a lane **timeout** always counts against health (`work-scheduler.ts` ~L611, `didTimeout || …` short-circuits the callback). Instead added a dedicated **`executions` lane** (concurrency 1, timeout 8s, own breaker/backoff) and routed `listExecutions` to it — isolating executions health from the account lane while preserving #3's fail-fast behavior.
+
+**Lower-severity audit notes (NOT fixed — open follow-ups):** `option-quotes` concurrency 6 contradicts its "=4" comment rationale; raw-vs-normalized `symbol` cache key (miss inefficiency); ~7s stacked fill-visibility latency across the 3 cache layers; no executions-cache invalidation on reconnect/account switch. Framing correction from the audit: positions/account-summary/orders are **subscription-backed (TWS push), not per-call FIFO reads**, so #3 only protects the one exposed read (executions); the real NLV/BP/cash coupling is circuit-breaker flap / line-budget churn, which **#2/#1 still address**.
+
 ---
 
 ## #2 — Socket-level priority + reserved headroom (medium risk)
