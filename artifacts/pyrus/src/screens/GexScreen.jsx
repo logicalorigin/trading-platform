@@ -1467,8 +1467,7 @@ const ProfileTable = ({ profile, spot }) => {
         <div style={{ maxHeight: dim(440), overflow: "auto", border: `1px solid ${CSS_COLOR.border}` }}>
           <table
             style={{
-              width: "100%",
-              minWidth: dim(760),
+              width: "max-content",
               borderCollapse: "separate",
               borderSpacing: 0,
               fontSize: textSize("caption"),

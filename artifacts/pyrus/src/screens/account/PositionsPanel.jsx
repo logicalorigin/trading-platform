@@ -4004,7 +4004,7 @@ export const PositionsPanel = ({
           >
             <table
               style={{
-                width: "100%",
+                width: "max-content",
                 borderCollapse: "separate",
                 borderSpacing: 0,
                 minWidth: denseTableMinWidth(visibleColumns),

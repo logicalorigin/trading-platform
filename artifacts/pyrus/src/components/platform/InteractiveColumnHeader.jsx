@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import { ChevronDown, GripVertical } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -18,7 +18,6 @@ import {
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
-  RADII,
   T,
   dim,
   sp,
@@ -74,10 +73,7 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
   children,
   className,
   dragAttributes,
-  dragHandleRef,
-  dragLabel,
   dragListeners,
-  dragTitle = "Drag to reorder column",
   iconSize = 12,
   id,
   label,
@@ -100,7 +96,15 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
   const sortColor = active ? CSS_COLOR.text : CSS_COLOR.textMuted;
   const tableCellElement = Element === "th" || Element === "td";
   const sortTooltip = sortTitle || title || `Sort by ${labelText}`;
-  const dragTooltip = dragTitle || `Drag ${labelText} column`;
+  // Reordering moved off a dedicated grip button onto the whole header: spread the
+  // dnd-kit listeners/attributes onto the header element itself (the sortable node
+  // doubles as the drag activator). Strip dnd's role="button" so the element keeps
+  // role="columnheader" / aria-sort. The 4px PointerSensor activation distance keeps
+  // a plain click firing the sort handler while a drag starts a reorder.
+  const { role: _ignoredDragRole, ...dragAttributesRest } = dragAttributes || {};
+  const reorderHandleProps = reorderable
+    ? { ...dragAttributesRest, ...dragListeners }
+    : null;
   const content = (
     <>
       <span
@@ -138,6 +142,7 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
       role={role}
       scope={scope}
       aria-sort={ariaSort}
+      {...reorderHandleProps}
       style={{
         minWidth: 0,
         display: tableCellElement ? undefined : "flex",
@@ -148,6 +153,8 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
         whiteSpace: "nowrap",
         textAlign: align,
         boxSizing: "border-box",
+        cursor: reorderable ? "grab" : undefined,
+        touchAction: reorderable ? "none" : undefined,
         ...style,
       }}
     >
@@ -162,36 +169,6 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
           overflow: "hidden",
         }}
       >
-        {reorderable ? (
-          <AppTooltip content={dragTooltip}>
-            <button
-              ref={dragHandleRef}
-              type="button"
-              aria-label={dragLabel || dragTooltip}
-              data-testid={`column-drag-${id}`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: "0 0 auto",
-                width: dim(18),
-                height: dim(18),
-                border: `1px solid ${CSS_COLOR.border}`,
-                borderRadius: dim(RADII.xs),
-                background: "transparent",
-                color: CSS_COLOR.textMuted,
-                cursor: "grab",
-                padding: 0,
-                touchAction: "none",
-              }}
-              onClick={(event) => event.stopPropagation()}
-              {...dragAttributes}
-              {...dragListeners}
-            >
-              <GripVertical size={12} strokeWidth={1.9} aria-hidden="true" />
-            </button>
-          </AppTooltip>
-        ) : null}
         {sortable ? (
           <AppTooltip content={sortTooltip}>
             <button
@@ -212,7 +189,7 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
                 border: 0,
                 background: "transparent",
                 color: sortColor,
-                cursor: "pointer",
+                cursor: reorderable ? "grab" : "pointer",
                 fontFamily: T.sans,
                 fontSize: "inherit",
                 fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
@@ -263,7 +240,6 @@ export function SortableColumnHeaderCell({
     attributes,
     isDragging,
     listeners,
-    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
@@ -274,7 +250,6 @@ export function SortableColumnHeaderCell({
       id={id}
       reorderable={reorderable}
       dragAttributes={attributes}
-      dragHandleRef={setActivatorNodeRef}
       dragListeners={listeners}
       style={{
         opacity: isDragging ? 0.72 : 1,

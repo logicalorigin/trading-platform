@@ -4332,7 +4332,7 @@ export default function SignalsScreen({
       {
         id: "symbol",
         header: "Ticker",
-        meta: { width: phone ? "minmax(72px, 0.9fr)" : "minmax(96px, 0.85fr)" },
+        meta: { width: phone ? "72px" : "96px" },
         cell: ({ row }) => {
           const item = row.original;
           const expanded = item.symbol === expandedSymbol;
@@ -4398,7 +4398,7 @@ export default function SignalsScreen({
       {
         id: "signal",
         header: "Signal",
-        meta: { width: phone ? "minmax(96px, 1fr)" : "minmax(118px, 0.95fr)" },
+        meta: { width: phone ? "96px" : "118px" },
         cell: ({ row }) => <StatusCell row={row.original} />,
       },
       {
@@ -4543,7 +4543,7 @@ export default function SignalsScreen({
         : {
             id: "coverage",
             header: "Coverage",
-            meta: { width: "minmax(100px, 1fr)" },
+            meta: { width: "100px" },
             cell: ({ row }) => <CoverageCell row={row.original} />,
           },
       {
