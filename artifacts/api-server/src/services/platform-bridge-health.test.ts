@@ -25,6 +25,7 @@ import {
   getSessionBridgeHealthFailureState,
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
+  setDesktopAgentOnlineProvider,
 } from "./platform-bridge-health";
 import { getIbkrBridgeActivationDiagnostics } from "./ibkr-bridge-runtime";
 
@@ -487,11 +488,27 @@ test("dead bridge override is abandoned via firstOpenedAt, which survives backof
     );
 
     // Recent outage relative to firstOpenedAt: a transient blip must not abandon it.
+    setDesktopAgentOnlineProvider(() => false);
     assert.equal(maybeAbandonDeadBridgeOverride(firstOpenedAt + 1_000), false);
     assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
 
-    // Sustained continuous outage past the window: the dead override is abandoned —
-    // and this only works because firstOpenedAt (not openedAt) is the clock.
+    // While the desktop agent is ONLINE, a sustained health outage must NOT abandon
+    // the override: an online agent is proof the helper/Gateway is alive and the
+    // health probes are merely failing (e.g. sidecar slowness). Abandoning here
+    // would falsely flip the UI to disconnected for a live connection.
+    setDesktopAgentOnlineProvider(() => true);
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      false,
+    );
+    assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
+
+    // Agent offline + sustained continuous outage past the window: the dead
+    // override is abandoned — and this only works because firstOpenedAt (not
+    // openedAt) is the clock.
+    setDesktopAgentOnlineProvider(() => false);
     assert.equal(
       maybeAbandonDeadBridgeOverride(
         firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
@@ -501,6 +518,7 @@ test("dead bridge override is abandoned via firstOpenedAt, which survives backof
     assert.equal(getIbkrBridgeRuntimeOverride(), null);
   } finally {
     Date.now = realNow;
+    setDesktopAgentOnlineProvider(() => false);
     __resetBridgeGovernorForTests();
   }
 });

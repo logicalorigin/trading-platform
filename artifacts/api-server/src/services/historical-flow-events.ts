@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
+import { isPoolContentionError } from "../lib/transient-db-error";
 import type {
   FlowEvent as ProviderFlowEvent,
   HistoricalOptionFlowEventsResult,
@@ -336,6 +337,13 @@ const disableHistoricalFlowStoreAfterError = (
   error: unknown,
   operation: string,
 ): void => {
+  // A pool-acquire timeout means "all connections are busy right now" (e.g. the
+  // cold-start read burst), not "the store is broken" — disabling for 5 min here
+  // forces the slow provider fallback during the exact window the pool is busy.
+  // Skip the disable for pool contention; the next call retries immediately.
+  if (isPoolContentionError(error)) {
+    return;
+  }
   historicalFlowStoreDisabled = true;
   historicalFlowStoreDisabledUntilMs =
     Date.now() + HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS;

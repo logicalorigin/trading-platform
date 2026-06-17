@@ -904,7 +904,7 @@ export const MarketActivityPanel = ({
         state?.currentSignalDirection === "sell"),
   ).length;
   const monitorMeta = signalMonitorPending
-    ? "SCANNING"
+    ? "SYNCING"
     : monitorRuntimeFallback
       ? "RUNTIME"
     : monitorDegraded

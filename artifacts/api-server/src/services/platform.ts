@@ -11030,12 +11030,17 @@ const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
   8,
 );
-// Reverted 8 -> 2 (the 337cb24 bump overwhelmed the shared DB + IB tunnel with
-// concurrent option-chain fetches/writes). Override via OPTIONS_FLOW_SCANNER_CONCURRENCY.
-const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 2;
+// Was reverted 8 -> 2 (the 337cb24 bump overwhelmed the shared DB + IB tunnel
+// with concurrent option-chain fetches/writes). Raised to 4 to speed line-budget
+// fill: the IB-tunnel side is now independently capped by the bridge work-scheduler
+// option-meta/option-quotes lanes (work-scheduler.ts), so a higher scanner
+// concurrency parallelizes symbol scans without re-flooding the tunnel. NOTE: this
+// still increases concurrent option-chain DB writes — watch DB pool pressure; dial
+// back via OPTIONS_FLOW_SCANNER_CONCURRENCY (env) if pool contention returns.
+const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 4;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
   OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY,
-  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 2),
+  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 4),
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -11170,14 +11175,12 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
       Math.max(0, Math.floor(config.scannerLineBudget || 0)),
     ),
   );
-  const pressureSnapshot = getApiResourcePressureSnapshot();
-  const scannerPressure = getOptionsFlowScannerPressureGate(pressureSnapshot);
-  const pressureAdjustedConcurrency = scannerPressure.throttled
-    ? Math.min(configuredConcurrency, 1)
-    : configuredConcurrency;
-  return flowScannerLineCap <= 0 || pressureAdjustedConcurrency <= 0
+  // Note: getOptionsFlowScannerPressureGate hardcodes throttled/hardBlocked to
+  // false, so the old resource-pressure concurrency throttle was a no-op — dropped
+  // here. (The gate is still used for diagnostics in getOptionsFlowScannerDiagnostics.)
+  return flowScannerLineCap <= 0 || configuredConcurrency <= 0
     ? 0
-    : Math.max(1, Math.min(pressureAdjustedConcurrency, flowScannerLineCap));
+    : Math.max(1, Math.min(configuredConcurrency, flowScannerLineCap));
 }
 
 function resolveOptionsFlowScannerTickerSlotCapacity(

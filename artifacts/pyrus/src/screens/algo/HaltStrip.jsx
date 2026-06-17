@@ -14,6 +14,7 @@ import {
   ServerCog,
   ShieldAlert,
   TrendingDown,
+  Wallet,
 } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
@@ -62,6 +63,7 @@ const HALT_CONTROL_ICONS = {
   dailyLoss: TrendingDown,
   openSymbols: Layers,
   premiumBudget: BadgeDollarSign,
+  tradingAllowance: Wallet,
   mtfAlignment: Activity,
   inversePutBlocklist: CopyX,
   bearishRegime: Ban,
@@ -81,6 +83,7 @@ const HALT_CONTROL_SHORT_LABELS = {
   dailyLoss: "Daily",
   openSymbols: "Symbols",
   premiumBudget: "Premium",
+  tradingAllowance: "Allowance",
   mtfAlignment: "MTF",
   inversePutBlocklist: "Inv puts",
   bearishRegime: "Bear",

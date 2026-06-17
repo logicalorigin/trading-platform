@@ -44,12 +44,10 @@ import { resolveExtendedHoursQuoteDisplay } from "./extendedHoursQuote";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
 import {
-  SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_COMPACT_HEIGHT,
   TABLE_SPARKLINE_COMPACT_WIDTH,
   TABLE_SPARKLINE_HEIGHT,
   TABLE_SPARKLINE_WIDTH,
-  buildDetailedFallbackSparklineData,
 } from "./sparklineConfig";
 import {
   WATCHLIST_SORT_MODE,
@@ -122,57 +120,7 @@ const WatchlistAddSymbolInput = memo(({ value, onCommit }) => {
 
 WatchlistAddSymbolInput.displayName = "WatchlistAddSymbolInput";
 
-const firstFiniteWatchlistNumber = (...values) => {
-  for (const value of values) {
-    if (isFiniteNumber(value)) return value;
-  }
-  return null;
-};
-
-const resolveGeneratedWatchlistPreviousPrice = (snapshot, current) => {
-  const previousClose = firstFiniteWatchlistNumber(
-    snapshot?.prevClose,
-    snapshot?.previousClose,
-  );
-  if (previousClose != null && previousClose > 0) {
-    return previousClose;
-  }
-
-  const change = firstFiniteWatchlistNumber(snapshot?.chg, snapshot?.change);
-  if (change != null) {
-    const derived = current - change;
-    if (isFiniteNumber(derived) && derived > 0) {
-      return derived;
-    }
-  }
-
-  const percent = firstFiniteWatchlistNumber(
-    snapshot?.pct,
-    snapshot?.changePercent,
-  );
-  if (percent != null && percent > -99) {
-    const derived = current / (1 + percent / 100);
-    if (isFiniteNumber(derived) && derived > 0) {
-      return derived;
-    }
-  }
-
-  return null;
-};
-
-const buildGeneratedWatchlistSparklineFallback = ({ symbol, snapshot, current }) =>
-  buildDetailedFallbackSparklineData({
-    symbol,
-    current,
-    previous: resolveGeneratedWatchlistPreviousPrice(snapshot, current),
-    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
-  });
-
-export const resolveWatchlistSparklineData = (
-  snapshot,
-  fallback,
-  generatedFallback,
-) => {
+export const resolveWatchlistSparklineData = (snapshot, fallback) => {
   if (extractSparklinePoints(snapshot?.sparkBars).length >= 2) {
     return {
       data: snapshot.sparkBars,
@@ -197,13 +145,6 @@ export const resolveWatchlistSparklineData = (
       source: "fallback-spark",
     };
   }
-  if (extractSparklinePoints(generatedFallback).length >= 2) {
-    return {
-      data: generatedFallback,
-      source: "generated-price-fallback",
-    };
-  }
-
   return {
     data: [],
     source: "empty",
@@ -342,29 +283,7 @@ const WatchlistRow = memo(
           ? `${cssColorMix(CSS_COLOR.accent, 9)}`
           : "transparent";
     const mobileDense = density === "mobile-dense";
-    const generatedSparklineFallback = useMemo(
-      () =>
-        buildGeneratedWatchlistSparklineFallback({
-          symbol: item.sym,
-          snapshot,
-          current: displayedPrice,
-        }),
-      [
-        displayedPrice,
-        item.sym,
-        snapshot?.change,
-        snapshot?.changePercent,
-        snapshot?.chg,
-        snapshot?.pct,
-        snapshot?.prevClose,
-        snapshot?.previousClose,
-      ],
-    );
-    const sparklineResolved = resolveWatchlistSparklineData(
-      snapshot,
-      fallback,
-      generatedSparklineFallback,
-    );
+    const sparklineResolved = resolveWatchlistSparklineData(snapshot, fallback);
     const sparklineData = sparklineResolved.data;
     const sparklinePoints = useMemo(
       () => extractSparklinePoints(sparklineData),

@@ -1000,10 +1000,19 @@ export const buildSignalsRows = ({
         profileTimeframe,
       });
       const latestEvent = latestEventsBySymbol.get(symbol) || null;
-      const direction = resolveDirection({
-        primaryState,
-        matrixStatesByTimeframe,
-      });
+      // Every tracked symbol has a current trend (bullish/bearish). The crossover
+      // (resolveDirection) is a sparse EVENT and is null when none is in window —
+      // so fall back to the indicator's current trend so the row shows buy/sell
+      // instead of a blank. Freshness and the backend `actionEligible` gate stay
+      // crossover-driven (a trend-only row is shown but is NOT auto-tradeable —
+      // actionEligible requires a signalAt, which a trend-only row lacks).
+      const direction =
+        resolveDirection({
+          primaryState,
+          matrixStatesByTimeframe,
+        }) ||
+        dashboardSummary?.signalDirection ||
+        null;
       const currentPrimaryState = isSignalStateCurrent(primaryState)
         ? primaryState
         : null;

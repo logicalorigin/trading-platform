@@ -45,6 +45,16 @@ let lastBridgeHealthRefreshPromise: Promise<void> | null = null;
 let lastBridgeHealthWarningAt = 0;
 let lastBridgeHealthPingMs: number | null = null;
 let lastBridgeHealthPingAt: Date | null = null;
+// Injected by ibkr-bridge-runtime (one-way dependency; avoids a circular import).
+// True when a Windows desktop agent is currently online — positive proof the
+// helper/Gateway is alive even when health probes are transiently failing.
+let desktopAgentOnlineProvider: () => boolean = () => false;
+
+export function setDesktopAgentOnlineProvider(
+  provider: () => boolean,
+): void {
+  desktopAgentOnlineProvider = provider;
+}
 
 export function getIbkrClient(): IbkrBridgeClient {
   return ibkrBridgeClientFactory();
@@ -501,6 +511,15 @@ function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
     !health.firstOpenedAt ||
     now - health.firstOpenedAt < DEAD_BRIDGE_OVERRIDE_ABANDON_MS
   ) {
+    return false;
+  }
+  // A sustained health-circuit outage does NOT mean the bridge is dead while the
+  // Windows desktop agent is still online — that's positive proof the helper (and
+  // Gateway) are alive and the health probes are merely failing/timing out (e.g.
+  // sidecar slowness). Abandoning here would wrongly flip configured.ibkr to false
+  // (UI shows "disconnected"/not-configured for a LIVE connection) and delete the
+  // persisted override so it can't recover. Only abandon when the agent is gone too.
+  if (desktopAgentOnlineProvider()) {
     return false;
   }
   clearIbkrBridgeRuntimeOverride();

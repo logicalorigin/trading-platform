@@ -6,10 +6,9 @@ import {
   shouldActivateHeaderIbkrLineUsage,
 } from "./headerIbkrLineUsagePolicy.js";
 
-test("header IBKR line usage stays active while the popover is closed", () => {
+test("header IBKR line usage stays active regardless of popover state", () => {
   assert.equal(
     shouldActivateHeaderIbkrLineUsage({
-      popoverOpen: false,
       safeQaMode: false,
       lineUsageAvailable: true,
     }),
@@ -20,7 +19,6 @@ test("header IBKR line usage stays active while the popover is closed", () => {
 test("header IBKR line usage is suppressed in safe QA mode", () => {
   assert.equal(
     shouldActivateHeaderIbkrLineUsage({
-      popoverOpen: true,
       safeQaMode: false,
       lineUsageAvailable: true,
     }),
@@ -28,7 +26,6 @@ test("header IBKR line usage is suppressed in safe QA mode", () => {
   );
   assert.equal(
     shouldActivateHeaderIbkrLineUsage({
-      popoverOpen: true,
       safeQaMode: true,
       lineUsageAvailable: true,
     }),
@@ -36,18 +33,10 @@ test("header IBKR line usage is suppressed in safe QA mode", () => {
   );
 });
 
-test("closed header popover keeps compact line usage available for the trigger model", () => {
+test("compact line usage snapshot stays available for the trigger model", () => {
   const snapshot = { updatedAt: "2026-06-08T19:30:00.000Z" };
   assert.equal(
     selectHeaderIbkrLineUsageSnapshot({
-      popoverOpen: false,
-      lineUsageSnapshot: snapshot,
-    }),
-    snapshot,
-  );
-  assert.equal(
-    selectHeaderIbkrLineUsageSnapshot({
-      popoverOpen: true,
       lineUsageSnapshot: snapshot,
     }),
     snapshot,

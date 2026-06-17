@@ -68,7 +68,7 @@ pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Opti
           lease_owner = $1,
           lease_expires_at = $2,
           last_heartbeat_at = now(),
-          attempt_count = jobs.attempt_count + 1,
+          attempt_count = jobs.attempt_count + case when jobs.status = 'queued' then 1 else 0 end,
           updated_at = now()
         where jobs.id = (select id from next_job)
         returning

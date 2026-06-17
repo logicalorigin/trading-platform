@@ -574,7 +574,7 @@ export const getIbkrConnectionTone = (connection) => {
 
   if (connection.competing) {
     return {
-      label: "compete",
+      label: "competing",
       color: CSS_COLOR.red,
       Icon: CircleAlert,
       wave: "slow",
@@ -728,7 +728,7 @@ export const getIbkrConnectionTone = (connection) => {
     proof.socketConnected === true
   ) {
     return {
-      label: "login",
+      label: "login required",
       color: CSS_COLOR.amber,
       Icon: PlugZap,
       wave: "medium",
@@ -1113,72 +1113,6 @@ export const resolveIbkrStatusWaveProfile = ({ status, wave } = {}) => {
     default:
       return { state, wave: "flat", duration: null, active: false };
   }
-};
-
-export const getIbkrGatewayBadges = ({
-  connection,
-  runtime,
-  latencyStats,
-  health,
-} = {}) => {
-  const status = health || resolveIbkrGatewayHealth({ connection, runtime });
-  const badges = [];
-  const pushStreamBadge = (state) => {
-    const canonicalState = canonicalizeStreamState(state, "offline");
-    badges.push({
-      label: STREAM_STATE_LABEL[canonicalState],
-      color: streamStateTokenVar(canonicalState),
-      background: streamStateBackgroundVar(canonicalState),
-    });
-  };
-
-  if (
-    [
-      "healthy",
-      "ready",
-      "no-subscribers",
-      "quote_standby",
-      "idle",
-      "market-closed",
-      "market_closed",
-      "quiet",
-      "checking",
-      "delayed",
-      "stale",
-      "stale_stream",
-      "capacity-limited",
-      "capacity_limited",
-      "reconnecting",
-      "reconnect_needed",
-      "login-required",
-      "login_required",
-      "offline",
-    ].includes(status.status)
-  ) {
-    pushStreamBadge(status.status);
-  } else if (status.status === "competing") {
-    badges.push({
-      label: "COMPETE",
-      color: CSS_COLOR.red,
-      background: CSS_COLOR.redBg,
-    });
-  }
-
-  const gapCount =
-    latencyStats?.stream?.recentDataGapCount ??
-    latencyStats?.stream?.recentGapCount ??
-    latencyStats?.stream?.dataGapCount ??
-    latencyStats?.stream?.streamGapCount;
-  if (Number.isFinite(gapCount) && gapCount > 0) {
-    const gapState = gapCount > 3 ? "offline" : "stale";
-    badges.push({
-      label: `GAPS ${Math.round(gapCount)}`,
-      color: streamStateTokenVar(gapState),
-      background: streamStateBackgroundVar(gapState),
-    });
-  }
-
-  return badges.slice(0, 2);
 };
 
 export const buildIbkrGatewayTitle = ({

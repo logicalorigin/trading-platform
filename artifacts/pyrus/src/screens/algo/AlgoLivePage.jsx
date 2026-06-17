@@ -15,6 +15,7 @@ import {
   Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
+  Wallet,
   X,
 } from "lucide-react";
 import {
@@ -961,6 +962,33 @@ export const AlgoLivePage = ({
       icon: riskRecord.dailyHaltActive ? ShieldAlert : ShieldCheck,
       severity: riskRecord.dailyHaltActive ? "warning" : "neutral",
     },
+    ...(cockpitKpis?.tradingAllowanceEnabled
+      ? (() => {
+          const cap = Number(cockpitKpis?.tradingAllowance ?? 0);
+          const available = Number(cockpitKpis?.allowanceAvailable ?? 0);
+          const allowanceUnrealized = Number(
+            cockpitKpis?.allowanceUnrealizedPnl ?? 0,
+          );
+          const pctUsed =
+            cap > 0
+              ? Math.min(
+                  100,
+                  Math.max(0, Math.round(((cap - available) / cap) * 100)),
+                )
+              : 0;
+          const low = available <= 0 || pctUsed >= 80;
+          return [
+            {
+              label: "Allowance",
+              value: `${formatMoney(available, 0)} left`,
+              detail: `${pctUsed}% used · ${formatMoney(cap, 0)} cap · U ${formatMoney(allowanceUnrealized, 0)}`,
+              color: low ? CSS_COLOR.amber : CSS_COLOR.green,
+              icon: Wallet,
+              severity: available <= 0 ? "warning" : "neutral",
+            },
+          ];
+        })()
+      : []),
     {
       label: "Record",
       value: hasClosedRecord ? `${wins}W / ${losses}L` : "No exits",

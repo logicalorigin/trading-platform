@@ -160,6 +160,7 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     dailyLossHaltEnabled: true,
     openSymbolCapEnabled: true,
     premiumBudgetEnabled: true,
+    tradingAllowanceEnabled: false,
   },
   entryHaltControls: {
     mtfAlignmentEnabled: true,
@@ -410,15 +411,15 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
   const candidates = staSourceArray(record.candidates);
   const activePositions = staSourceArray(record.activePositions);
   const rowCount = signals.length + candidates.length + activePositions.length;
-  const cacheStatus = normalizeMatchKey(record.cacheStatus).toLowerCase();
   const reason = normalizeMatchKey(record.reason).toLowerCase();
+  // "Served from stored monitor state" (cacheStatus="stale") is the SSE-era
+  // default, not a degraded source — it no longer marks a source transient.
+  // Genuine failures still surface via record.stale/degraded/refreshing/timeout.
   const transient = Boolean(
     record.stale === true ||
       record.degraded === true ||
       record.refreshing === true ||
-      cacheStatus === "stale" ||
-      reason.includes("timeout") ||
-      reason.includes("cache"),
+      reason.includes("timeout"),
   );
   return {
     source: sourceName,
@@ -2283,6 +2284,15 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         label: "Premium budget",
         title: "Caps entry quantity by the configured premium-per-entry budget.",
         reasons: ["premium_budget_too_small", "premium_budget_exceeded"],
+      },
+      {
+        id: "tradingAllowance",
+        section: "riskHaltControls",
+        key: "tradingAllowanceEnabled",
+        label: "Allowance",
+        title:
+          "Caps total open premium per deployment to a virtual sub-account budget (net of fees). Entries size down to fit; positions are never force-closed. Simulation only.",
+        reasons: ["trading_allowance_exhausted", "trading_allowance_sized_down"],
       },
     ],
   },

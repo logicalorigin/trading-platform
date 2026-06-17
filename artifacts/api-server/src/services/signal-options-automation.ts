@@ -116,6 +116,7 @@ import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
   computeShadowTradeDiagnostics,
+  computeSignalOptionsLedgerRealizedForDeployment,
   recordShadowAutomationEvent,
   resetSignalOptionsReplayRowsForRange,
 } from "./shadow-account";
@@ -3983,6 +3984,51 @@ export function buildSignalOptionsShadowOrderPlan(
   };
 }
 
+/**
+ * Apply a deployment's remaining trading-allowance budget to a resolved order
+ * plan, sizing the entry down to whatever the budget can afford (1-contract
+ * minimum). Returns the granted quantity/premium plus flags the caller uses to
+ * skip (exhausted) or annotate a size-down. A no-op returning the requested
+ * size when the allowance control is disabled or the budget is unbounded. The
+ * contract cost uses the same `* 100` multiplier as the per-entry premium cap
+ * above so the two sizing terms stay internally consistent.
+ */
+export function applySignalOptionsTradingAllowance(input: {
+  enabled: boolean;
+  simulatedFillPrice: number;
+  requestedQuantity: number;
+  availableBudget: number;
+}): {
+  quantity: number;
+  premiumAtRisk: number;
+  requestedQuantity: number;
+  sizedDown: boolean;
+  exhausted: boolean;
+} {
+  const { enabled, simulatedFillPrice, requestedQuantity, availableBudget } =
+    input;
+  const contractCost = simulatedFillPrice * 100;
+  const requestedPremium = Number((contractCost * requestedQuantity).toFixed(2));
+  if (!enabled || !Number.isFinite(availableBudget) || !(contractCost > 0)) {
+    return {
+      quantity: requestedQuantity,
+      premiumAtRisk: requestedPremium,
+      requestedQuantity,
+      sizedDown: false,
+      exhausted: false,
+    };
+  }
+  const affordable = Math.floor(Math.max(0, availableBudget) / contractCost);
+  const quantity = Math.max(0, Math.min(requestedQuantity, affordable));
+  return {
+    quantity,
+    premiumAtRisk: Number((contractCost * quantity).toFixed(2)),
+    requestedQuantity,
+    sizedDown: quantity > 0 && quantity < requestedQuantity,
+    exhausted: quantity <= 0,
+  };
+}
+
 function signalBarsSinceEntry(input: {
   openedAt: unknown;
   markAt: Date;
@@ -6578,8 +6624,10 @@ function skipReasonDisabledByProfile(
   profile: SignalOptionsExecutionProfile,
 ) {
   return (
-    reason === "daily_loss_halt_active" &&
-    profile.riskHaltControls.dailyLossHaltEnabled === false
+    (reason === "daily_loss_halt_active" &&
+      profile.riskHaltControls.dailyLossHaltEnabled === false) ||
+    (reason === "trading_allowance_exhausted" &&
+      profile.riskHaltControls.tradingAllowanceEnabled === false)
   );
 }
 
@@ -6602,6 +6650,8 @@ function isRetryableSignalOptionsSkip(
     currentPremiumCap?: number | null;
     dailyLossHaltEnabled?: boolean;
     premiumBudgetEnabled?: boolean;
+    tradingAllowanceEnabled?: boolean;
+    currentTradingAllowanceAvailable?: number | null;
     forceRetryMarketData?: boolean;
     gatewayReady?: boolean;
     gatewayReadinessBlockEnabled?: boolean;
@@ -6690,6 +6740,24 @@ function isRetryableSignalOptionsSkip(
     );
   }
 
+  if (reason === "trading_allowance_exhausted") {
+    // Disabling the control clears stale skips; otherwise re-evaluate only when
+    // the deployment's available budget has grown since the skip (capacity
+    // freed by a close), so a persistently-exhausted allowance does not
+    // re-process every candidate each scan.
+    if (options?.tradingAllowanceEnabled === false) {
+      return true;
+    }
+    const previousAvailable = optionalFiniteNumber(payload.available);
+    const currentAvailable = optionalFiniteNumber(
+      options?.currentTradingAllowanceAvailable,
+    );
+    return (
+      currentAvailable != null &&
+      (previousAvailable == null || currentAvailable > previousAvailable)
+    );
+  }
+
   if (reason === "same_direction_position_open") {
     if (!options?.activePositions) {
       return false;
@@ -6747,6 +6815,8 @@ function seenSignalKeys(
     currentPremiumCap?: number | null;
     dailyLossHaltEnabled?: boolean;
     premiumBudgetEnabled?: boolean;
+    tradingAllowanceEnabled?: boolean;
+    currentTradingAllowanceAvailable?: number | null;
     forceRetryMarketData?: boolean;
     gatewayReady?: boolean;
     gatewayReadinessBlockEnabled?: boolean;
@@ -7860,6 +7930,23 @@ function buildCockpitAttention(input: {
       detail: `Daily P&L ${input.risk.dailyPnl ?? 0} breached max loss ${input.risk.maxDailyLoss ?? 0}.`,
       occurredAt: new Date().toISOString(),
       action: "Pause deployment or reduce risk before the next scan.",
+    });
+  }
+
+  if (
+    input.risk.tradingAllowanceEnabled === true &&
+    Number(input.risk.allowanceAvailable ?? 0) <= 0
+  ) {
+    items.push({
+      id: "trading-allowance-exhausted",
+      severity: "info",
+      stage: "liquidity_risk_gate",
+      symbol: null,
+      summary: "Trading allowance is exhausted.",
+      detail: `Committed ${input.risk.allowanceCommitted ?? 0} of ${input.risk.tradingAllowance ?? 0} allowance; new entries pause until open positions close. Open positions are held, not closed.`,
+      occurredAt: new Date().toISOString(),
+      action:
+        "Capacity returns as open positions close — or raise the allowance.",
     });
   }
 
@@ -9137,11 +9224,31 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
         Math.abs(input.profile.riskCaps.maxDailyLoss) +
         Number(input.state.risk.dailyPnl ?? 0),
       dailyHaltActive: input.state.risk.dailyHaltActive === true,
+      tradingAllowanceEnabled:
+        input.profile.riskHaltControls.tradingAllowanceEnabled === true,
+      tradingAllowance: input.profile.riskCaps.tradingAllowance,
+      allowanceBasis: input.profile.riskCaps.allowanceBasis,
+      allowanceCommitted: Number(input.state.risk.allowanceCommitted ?? 0),
+      allowanceAvailable: input.state.risk.allowanceAvailable ?? null,
+      allowanceUnrealizedPnl: Number(input.state.risk.openUnrealizedPnl ?? 0),
       markedPositions: Math.max(
         0,
         input.state.activePositions.length - unmarkedPositions,
       ),
       unmarkedPositions,
+    },
+    allowance: {
+      enabled: input.profile.riskHaltControls.tradingAllowanceEnabled === true,
+      cap: input.profile.riskCaps.tradingAllowance,
+      basis: input.profile.riskCaps.allowanceBasis,
+      available: input.state.risk.allowanceAvailable ?? null,
+      committed: Number(input.state.risk.allowanceCommitted ?? 0),
+      skippedCount: blockerCounts["trading_allowance_exhausted"] ?? 0,
+      sizedDownCount: input.events.filter(
+        (event) =>
+          event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT &&
+          asRecord(event.payload).budgetSizeDown != null,
+      ).length,
     },
     ruleAdherence: buildRuleAdherence({
       profile: input.profile,
@@ -9203,8 +9310,23 @@ function buildSignalOptionsPerformanceColdPressureFallback(input: {
       maxDailyLoss: null,
       dailyLossRemaining: null,
       dailyHaltActive: false,
+      tradingAllowanceEnabled: false,
+      tradingAllowance: null,
+      allowanceBasis: "cost",
+      allowanceCommitted: 0,
+      allowanceAvailable: null,
+      allowanceUnrealizedPnl: 0,
       markedPositions: 0,
       unmarkedPositions: 0,
+    },
+    allowance: {
+      enabled: false,
+      cap: null,
+      basis: "cost",
+      available: null,
+      committed: 0,
+      skippedCount: 0,
+      sizedDownCount: 0,
     },
     ruleAdherence: [],
     topBlockers: [],
@@ -9504,6 +9626,33 @@ async function buildStatePayload(input: {
     events: signalEvents,
   });
 
+  // Trading-allowance display figures. Available = allowance + lifetime
+  // fee-aware realized P&L (ledger) − committed open premium, with unrealized
+  // losses also subtracted on the "mark" basis. Only read the ledger when the
+  // control is enabled.
+  const tradingAllowanceEnabled =
+    input.profile.riskHaltControls.tradingAllowanceEnabled === true;
+  let allowanceAvailable: number | null = null;
+  if (tradingAllowanceEnabled) {
+    const { realizedNet } =
+      await computeSignalOptionsLedgerRealizedForDeployment(
+        input.deployment.id,
+      );
+    const markAdjustment =
+      input.profile.riskCaps.allowanceBasis === "mark"
+        ? Math.min(0, openUnrealizedPnl)
+        : 0;
+    allowanceAvailable = Number(
+      Math.max(
+        0,
+        input.profile.riskCaps.tradingAllowance +
+          realizedNet -
+          openPremium +
+          markAdjustment,
+      ).toFixed(2),
+    );
+  }
+
   return {
     deployment: deploymentToResponse(input.deployment),
     profile: input.profile,
@@ -9526,6 +9675,11 @@ async function buildStatePayload(input: {
       dailyHaltActive:
         input.profile.riskHaltControls.dailyLossHaltEnabled !== false &&
         dailyLossBreached,
+      tradingAllowanceEnabled,
+      tradingAllowance: input.profile.riskCaps.tradingAllowance,
+      allowanceBasis: input.profile.riskCaps.allowanceBasis,
+      allowanceCommitted: Number(openPremium.toFixed(2)),
+      allowanceAvailable,
     },
     events: signalEvents.slice(0, 75).map(eventToResponse),
   };
@@ -9684,8 +9838,12 @@ function withSignalOptionsCacheMetadata<T>(
     ...record,
     cachedAt: input.cachedAt,
     cacheStatus: input.cacheStatus,
-    degraded: input.cacheStatus === "stale" ? true : record["degraded"],
-    stale: input.cacheStatus === "stale" ? true : record["stale"],
+    // Cache-staleness (served from stored monitor state) is the SSE-era default,
+    // not a health problem — do NOT conflate it with degraded/stale. Preserve any
+    // genuine degraded/stale already on the payload so real failures still surface;
+    // cacheStatus above carries the freshness signal for observability.
+    degraded: record["degraded"],
+    stale: record["stale"],
     reason:
       input.cacheStatus === "stale"
         ? (input.reason ?? "signal_options_dashboard_stale_cache")
@@ -9872,6 +10030,15 @@ function buildSignalOptionsEmptyRisk(profile: SignalOptionsExecutionProfile) {
     dailyPnl: 0,
     dailyLossBreached: false,
     dailyHaltActive: false,
+    tradingAllowanceEnabled:
+      profile.riskHaltControls.tradingAllowanceEnabled === true,
+    tradingAllowance: profile.riskCaps.tradingAllowance,
+    allowanceBasis: profile.riskCaps.allowanceBasis,
+    allowanceCommitted: 0,
+    allowanceAvailable:
+      profile.riskHaltControls.tradingAllowanceEnabled === true
+        ? profile.riskCaps.tradingAllowance
+        : null,
   };
 }
 
@@ -10579,6 +10746,12 @@ async function buildAlgoDeploymentCockpitPayload(input: {
         diagnostics.tradePath.entryEvents,
       ),
       openPositions: state.activePositions.length,
+      tradingAllowanceEnabled: state.risk.tradingAllowanceEnabled === true,
+      tradingAllowance: state.risk.tradingAllowance,
+      allowanceBasis: state.risk.allowanceBasis,
+      allowanceCommitted: state.risk.allowanceCommitted,
+      allowanceAvailable: state.risk.allowanceAvailable,
+      allowanceUnrealizedPnl: state.risk.openUnrealizedPnl,
     },
     risk: state.risk,
     signals: state.signals,
@@ -12289,6 +12462,7 @@ async function processEntryCandidate(input: {
   signalKey: string;
   executionBlocker?: SignalOptionsExecutionBlocker | null;
   recentEvents?: ExecutionEvent[] | null;
+  tradingAllowanceBudget?: { available: number } | null;
   signal?: AbortSignal;
 }) {
   const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
@@ -12595,8 +12769,8 @@ async function processEntryCandidate(input: {
     }
 
     const simulatedFillPrice = finiteNumber(orderPlan.simulatedFillPrice);
-    const quantity = finiteNumber(orderPlan.quantity);
-    const premiumAtRisk = finiteNumber(orderPlan.premiumAtRisk);
+    let quantity = finiteNumber(orderPlan.quantity);
+    let premiumAtRisk = finiteNumber(orderPlan.premiumAtRisk);
     if (
       simulatedFillPrice == null ||
       quantity == null ||
@@ -12616,6 +12790,63 @@ async function processEntryCandidate(input: {
         },
       });
       return false;
+    }
+
+    // Enforce the per-deployment trading allowance: size the entry down to what
+    // the remaining budget affords (1-contract minimum), or skip when it can't
+    // fund even one contract. Open positions are never force-closed — this only
+    // gates new entries, and the skip is retryable once capacity frees up.
+    let budgetSizeDown:
+      | {
+          requestedQuantity: number;
+          grantedQuantity: number;
+          availableBudget: number;
+        }
+      | null = null;
+    if (
+      input.profile.riskHaltControls.tradingAllowanceEnabled === true &&
+      input.tradingAllowanceBudget
+    ) {
+      const allowance = applySignalOptionsTradingAllowance({
+        enabled: true,
+        simulatedFillPrice,
+        requestedQuantity: quantity,
+        availableBudget: input.tradingAllowanceBudget.available,
+      });
+      if (allowance.exhausted) {
+        await emitSkippedCandidate({
+          deployment: input.deployment,
+          candidate: input.candidate,
+          signalKey: input.signalKey,
+          reason: "trading_allowance_exhausted",
+          detail: {
+            retryable: true,
+            allowance: input.profile.riskCaps.tradingAllowance,
+            basis: input.profile.riskCaps.allowanceBasis,
+            available: Number(input.tradingAllowanceBudget.available.toFixed(2)),
+            requestedQuantity: quantity,
+            fillPrice: simulatedFillPrice,
+            contractCost: Number((simulatedFillPrice * 100).toFixed(2)),
+            selectedContract,
+            quote,
+            orderPlan,
+            contractSelectionLease: contractSelectionLeaseDetail,
+            decisionSnapshot,
+          },
+        });
+        return false;
+      }
+      if (allowance.sizedDown) {
+        budgetSizeDown = {
+          requestedQuantity: allowance.requestedQuantity,
+          grantedQuantity: allowance.quantity,
+          availableBudget: Number(
+            input.tradingAllowanceBudget.available.toFixed(2),
+          ),
+        };
+      }
+      quantity = allowance.quantity;
+      premiumAtRisk = allowance.premiumAtRisk;
     }
 
     const stopPrice = buildInitialStopPrice(simulatedFillPrice, input.profile);
@@ -12688,8 +12919,18 @@ async function processEntryCandidate(input: {
         contractSelection: contractSelectionPayload,
         contractSelectionLease: contractSelectionLeaseDetail,
         decisionSnapshot,
+        budgetSizeDown,
       },
     });
+
+    // Decrement the in-scan allowance pot by the premium actually deployed so a
+    // single scan that opens several positions can't collectively overshoot.
+    if (input.tradingAllowanceBudget) {
+      input.tradingAllowanceBudget.available = Math.max(
+        0,
+        input.tradingAllowanceBudget.available - premiumAtRisk,
+      );
+    }
 
     return true;
   } finally {
@@ -16970,11 +17211,48 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const profileUpdatedAt = latestSignalOptionsControlUpdatedAt(
     eventsAfterMarksRuntime,
   );
+  // Per-scan trading-allowance budget. Reconstruct the deployment's available
+  // capital from its lifetime, fee-aware realized P&L (shadow ledger) minus the
+  // cost of its currently-open positions (in-memory, fresh marks); on the
+  // "mark" basis, unrealized losses reduce it too. Computed before seenSignals
+  // so an exhausted-allowance skip becomes retryable once capacity frees, and
+  // reused as a mutable pot the entry loop decrements per open so a single scan
+  // never overshoots. Left null (and unread) when the control is disabled.
+  const tradingAllowanceEnabled =
+    profile.riskHaltControls.tradingAllowanceEnabled === true;
+  let tradingAllowanceBudget: { available: number } | null = null;
+  if (tradingAllowanceEnabled) {
+    const { realizedNet } =
+      await computeSignalOptionsLedgerRealizedForDeployment(deployment.id);
+    const openCost = activePositionsAfterMarks.reduce(
+      (sum, position) => sum + (finiteNumber(position.premiumAtRisk) ?? 0),
+      0,
+    );
+    const markAdjustment =
+      profile.riskCaps.allowanceBasis === "mark"
+        ? Math.min(
+            0,
+            computeSignalOptionsOpenUnrealizedPnl(activePositionsAfterMarks),
+          )
+        : 0;
+    tradingAllowanceBudget = {
+      available: Math.max(
+        0,
+        profile.riskCaps.tradingAllowance +
+          realizedNet -
+          openCost +
+          markAdjustment,
+      ),
+    };
+  }
   const seenSignals = seenSignalKeys(eventsAfterMarksRuntime, {
     activePositions: activePositionsAfterMarks,
     currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
     dailyLossHaltEnabled: profile.riskHaltControls.dailyLossHaltEnabled,
     premiumBudgetEnabled: profile.riskHaltControls.premiumBudgetEnabled,
+    tradingAllowanceEnabled,
+    currentTradingAllowanceAvailable:
+      tradingAllowanceBudget?.available ?? null,
     forceRetryMarketData: input.forceEvaluate === true,
     gatewayReady: readiness.ready,
     gatewayReadinessBlockEnabled:
@@ -17128,6 +17406,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       signalKey,
       executionBlocker,
       recentEvents: eventsAfterMarksRuntime,
+      tradingAllowanceBudget,
       signal: input.signal,
     }).catch(async (error: unknown) => {
       throwIfSignalOptionsScanAborted(input.signal);

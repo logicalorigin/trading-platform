@@ -1,7 +1,6 @@
 import { CSS_COLOR, MISSING_VALUE, T } from "../../lib/uiTokens.jsx";
 import {
   formatIbkrPingMs,
-  getIbkrGatewayBadges,
   maskIbkrAccountId,
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus.jsx";
@@ -369,9 +368,17 @@ const buildCompactLineUsage = (lineUsage) => {
     cap && used != null
       ? Math.max(0, Math.min(100, (used / cap) * 100))
       : 0;
+  // Full utilization (free === 0) is normal, not an issue: the background flow
+  // scanner is designed to fill the line budget and yields its reserve to
+  // higher-priority demand, so "no free lines" must NOT paint the chip amber.
+  // Flag amber only on GENUINE capacity pressure: the bridge reporting a real
+  // stream state, or a recent IBKR pressure shed (IBKR actually rejected/paced
+  // subscriptions) — not merely because the scanner filled the budget.
   const state =
     source?.streamState ||
-    (free != null && free <= 0 ? "capacity-limited" : "healthy");
+    (lineUsage.pressure?.recentIbkrPressureShed === true
+      ? "capacity-limited"
+      : "healthy");
 
   return {
     used,
@@ -390,8 +397,6 @@ const buildCompactLineUsage = (lineUsage) => {
 };
 
 const buildProviderRows = ({
-  health,
-  liveDataLabel,
   runtimeDiagnostics,
   lineUsageSnapshot,
 }) => {
@@ -414,14 +419,7 @@ const buildProviderRows = ({
         ? `last ${massiveFreshness}`
         : massive?.baseUrl || MISSING_VALUE;
 
-  const rows = [
-    {
-      label: "IBKR",
-      value: health.label,
-      detail: liveDataLabel,
-      tone: health.color,
-    },
-  ];
+  const rows = [];
 
   if (!stockProviderLabel) {
     return rows;
@@ -661,7 +659,6 @@ export const buildHeaderIbkrTriggerModel = ({
 
   return {
     health,
-    badges: [],
     issue,
     tiles: [],
     providerRows: [],
@@ -841,12 +838,6 @@ export const buildHeaderIbkrPopoverModel = ({
       detail: "Gateway is authenticated and live stream events are current",
     };
   }
-  const badges = getIbkrGatewayBadges({
-    connection: detailConnection,
-    runtime,
-    latencyStats,
-    health,
-  });
   const totalLatencyP95 = latencyStats?.totalMs?.p95;
   const liveDataLabel =
     liveMarketDataAvailable === true
@@ -855,8 +846,6 @@ export const buildHeaderIbkrPopoverModel = ({
         ? "Delayed"
         : marketDataMode || "Unknown";
   const providerRows = buildProviderRows({
-    health,
-    liveDataLabel,
     runtimeDiagnostics,
     lineUsageSnapshot,
   });
@@ -1057,6 +1046,7 @@ export const buildHeaderIbkrPopoverModel = ({
                 label: "Ready reason",
                 value: strictReason,
                 tone: CSS_COLOR.amber,
+                wrap: true,
               },
             ]
           : []),
@@ -1089,13 +1079,12 @@ export const buildHeaderIbkrPopoverModel = ({
           value: formatHeaderBool(competing),
           tone: competing ? CSS_COLOR.red : competing === false ? CSS_COLOR.green : CSS_COLOR.textDim,
         },
-        { label: "Target", value: target },
-        { label: "Client ID", value: clientId },
-        { label: "Mode", value: sessionMode },
-        { label: "Account", value: accountValue },
-        { label: "Market data", value: marketDataMode },
+        { label: "Target", value: target, wrap: true },
+        { label: "Client ID", value: clientId, wrap: true },
+        { label: "Mode", value: sessionMode, wrap: true },
+        { label: "Account", value: accountValue, wrap: true },
+        { label: "Market data", value: marketDataMode, wrap: true },
         ...providerRows
-          .filter((row) => row.label !== "IBKR")
           .map((row) => ({
             label: row.label,
             value: row.detail ? `${row.value} · ${row.detail}` : row.value,
@@ -1151,7 +1140,7 @@ export const buildHeaderIbkrPopoverModel = ({
     {
       title: "Stream",
       rows: [
-        { label: "Ping", value: formatIbkrPingMs(connection?.lastPingMs) },
+        { label: "Ping p95", value: formatIbkrPingMs(totalLatencyP95) },
         { label: "Consumers", value: formatHeaderCount(streamConsumerCount) },
         { label: "Symbols", value: formatHeaderCount(streamSymbolCount) },
         { label: "Events", value: formatHeaderCount(stream.eventCount) },
@@ -1172,6 +1161,7 @@ export const buildHeaderIbkrPopoverModel = ({
                 label: "State reason",
                 value: streamStateReason,
                 tone: CSS_COLOR.textSec,
+                wrap: true,
               },
             ]
           : []),
@@ -1191,12 +1181,16 @@ export const buildHeaderIbkrPopoverModel = ({
               ? CSS_COLOR.green
               : CSS_COLOR.textDim,
         },
-        {
-          label: "Last quote event",
-          value: Number.isFinite(stream.lastEventAgeMs)
-            ? `${formatIbkrPingMs(stream.lastEventAgeMs)} ago`
-            : MISSING_VALUE,
-        },
+        ...(Number.isFinite(stream.lastEventAgeMs) &&
+        (!Number.isFinite(runtime?.lastStreamEventAgeMs) ||
+          Math.abs(stream.lastEventAgeMs - runtime.lastStreamEventAgeMs) > 1_000)
+          ? [
+              {
+                label: "Last quote event",
+                value: `${formatIbkrPingMs(stream.lastEventAgeMs)} ago`,
+              },
+            ]
+          : []),
         { label: "Reconnects", value: formatHeaderCount(stream.reconnectCount) },
         {
           label: "Data gaps",
@@ -1290,7 +1284,6 @@ export const buildHeaderIbkrPopoverModel = ({
 
   return {
     health,
-    badges,
     issue,
     tiles,
     providerRows,

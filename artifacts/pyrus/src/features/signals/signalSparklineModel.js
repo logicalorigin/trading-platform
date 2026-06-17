@@ -114,7 +114,14 @@ export const buildSignalSparklinePointColors = ({
     return null;
   }
   transitions.sort((left, right) => left.ms - right.ms || left.order - right.order);
-  const firstSignalColor = signalColorForDirection(transitions[0]?.direction);
+  // Sparklines are never neutral: every point is buy or sell. Before the first
+  // known signal we show the opposite stance, so a lone signal still flips color
+  // at the moment it fired (e.g. red→blue on a buy).
+  const oppositeSignalDirection = (direction) =>
+    direction === "buy" ? "sell" : direction === "sell" ? "buy" : direction;
+  const preSignalColor = signalColorForDirection(
+    oppositeSignalDirection(transitions[0]?.direction),
+  );
   const latestSignalColor = signalColorForDirection(transitions.at(-1)?.direction);
   if (!sparklinePoints.some((point) => point.ms != null)) {
     return latestSignalColor
@@ -127,7 +134,7 @@ export const buildSignalSparklinePointColors = ({
     if (point.ms == null) {
       return transitionIndex >= 0
         ? signalColorForDirection(transitions[transitionIndex]?.direction)
-        : firstSignalColor;
+        : preSignalColor;
     }
     while (
       transitionIndex + 1 < transitions.length &&
@@ -137,6 +144,6 @@ export const buildSignalSparklinePointColors = ({
     }
     return transitionIndex >= 0
       ? signalColorForDirection(transitions[transitionIndex]?.direction)
-      : firstSignalColor;
+      : preSignalColor;
   });
 };

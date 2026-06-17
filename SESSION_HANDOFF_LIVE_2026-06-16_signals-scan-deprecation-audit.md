@@ -26,10 +26,12 @@
 - ✅ **`pnpm run audit:replit-startup`** — PASS at resume (`[check-replit-startup-guards] ok`). Was required because the artifact dev script was edited.
 - ✅ **`pnpm --filter @workspace/api-server run typecheck`** — PASS at resume (clean; confirms index.ts import removals leave no dangling refs).
 
-## Working-tree caveat (DO NOT mis-commit)
-- `git diff` mixes **three** workstreams. When committing the signals work, stage ONLY `artifacts/api-server/src/index.ts` + `artifacts/api-server/package.json` (+ any remaining signals edits). Leave these for their own commits:
-  - **Broker-connection UI audit:** `HeaderStatusCluster.jsx`, `AccountScreen.jsx` (see `BROKER_CONNECTION_UI_AUDIT_2026-06-16.md`).
-  - **Signal-score-threshold rescale (0–10 → 0–100):** `artifacts/pyrus/src/components/platform/signal-language/thresholds.js`.
+## Working-tree caveat (UPDATED 2026-06-16 — original caveat now historical)
+- ✅ The three workstreams below were **already committed together** in Replit full-checkpoint `c4ba2e5` ("Transitioned from Plan to Build mode", 13:01 MT), so they are **no longer uncommitted** and the original "stage only `index.ts` + `package.json`, leave the rest for their own commits" warning is moot. Verified via `git show --stat c4ba2e5`:
+  - **Signals scan-deprecation:** `artifacts/api-server/src/index.ts`, `artifacts/api-server/package.json` — committed in `c4ba2e5`.
+  - **Broker-connection UI audit:** `HeaderStatusCluster.jsx`, `AccountScreen.jsx` (see `BROKER_CONNECTION_UI_AUDIT_2026-06-16.md`) — committed in `c4ba2e5`.
+  - **Signal-score-threshold rescale (0–10 → 0–100):** `artifacts/pyrus/src/components/platform/signal-language/thresholds.js` — **DONE / committed in `c4ba2e5`**, verified fully applied across all consumers and both client+server score engines (no 0–10 stragglers).
+- Note: the original caveat reflected the pre-13:01 working tree. Later signals work (e.g. the `trade-monitor-worker.ts` → `signal-monitor-evaluation-worker.ts` rename) lands as its own separate, still-uncommitted change set — keep staging by workstream.
 
 ## Blocked right now
 - ~~Bash (grep/typecheck/psql) transient classifier-unavailable window~~ → **CLEARED at resume.** typecheck / `audit:replit-startup` / psql are runnable again.

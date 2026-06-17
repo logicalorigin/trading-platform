@@ -852,25 +852,11 @@ const buildIbkrDeactivatedPopoverModel = (model) => {
           : tile,
       )
     : model.tiles;
-  const providerRows = Array.isArray(model.providerRows)
-    ? model.providerRows.map((row) =>
-        row.label === "IBKR"
-          ? {
-              ...row,
-              value: detachBridge ? "Detached" : "Deactivated",
-              detail: detachBridge ? "Bridge detached" : "Gateway stopped",
-              tone: CSS_COLOR.green,
-            }
-          : row,
-      )
-    : model.providerRows;
-
   return {
     ...model,
     health: deactivatedHealth,
     issue: deactivatedIssue,
     tiles,
-    providerRows,
     priorityDetailGroup: null,
     autoOpenDetails: false,
   };
@@ -1676,7 +1662,7 @@ const HeaderGenericProviderRow = ({ row }) => (
 
 const HeaderIbkrProviderRows = ({ rows }) => {
   const visibleRows = Array.isArray(rows)
-    ? rows.filter((row) => row?.label && row.label !== "IBKR")
+    ? rows.filter((row) => row?.label)
     : [];
   if (!visibleRows.length) {
     return null;
@@ -2877,7 +2863,6 @@ export const HeaderStatusCluster = ({
     !safeQaMode && gatewayBrokerSnapshot.lineUsageEnabled,
   );
   const gatewayLineUsageActive = shouldActivateHeaderIbkrLineUsage({
-    popoverOpen: bridgePopoverOpen,
     safeQaMode,
     lineUsageAvailable: gatewayLineUsageAvailable,
   });
@@ -2906,7 +2891,6 @@ export const HeaderStatusCluster = ({
     [gatewayBrokerSnapshot.runtimeDiagnostics],
   );
   const gatewayLineUsageSnapshot = selectHeaderIbkrLineUsageSnapshot({
-    popoverOpen: bridgePopoverOpen,
     lineUsageSnapshot: lineUsageControl.lineUsageSnapshot,
   });
   const gatewayTriggerModel = useMemo(
@@ -3297,6 +3281,32 @@ export const HeaderStatusCluster = ({
     }
     return Promise.allSettled(pending);
   }, [queryClient]);
+
+  // The session (connection status) only refetches every ~20s, but line usage
+  // polls faster and reflects live subscriptions sooner. If lines are actively
+  // being consumed — positive proof the bridge is up — while the session still
+  // reports disconnected, pull a fresh session immediately so the indicator
+  // stops lagging reality during reconnect/bring-up. One-shot, debounced; it
+  // self-stops once the refreshed session reports connected.
+  const connectionResyncAtRef = useRef(0);
+  useEffect(() => {
+    const activeLineCount = Number(
+      gatewayLineUsageSnapshot?.admission?.pressure?.activeLineCount ?? 0,
+    );
+    if (activeLineCount <= 0 || gatewayConnectedForBridge) {
+      return;
+    }
+    const now = Date.now();
+    if (now - connectionResyncAtRef.current < 5_000) {
+      return;
+    }
+    connectionResyncAtRef.current = now;
+    void refreshIbkrConnectionStatus();
+  }, [
+    gatewayLineUsageSnapshot,
+    gatewayConnectedForBridge,
+    refreshIbkrConnectionStatus,
+  ]);
 
   const openBridgeReconnectPopover = useCallback(() => {
     setBridgePopoverOpen(true);
@@ -4320,7 +4330,13 @@ export const HeaderStatusCluster = ({
         variant: action.stepperVariant,
         ...state,
       });
-    const queueRemoteShutdown = action.queueRemoteShutdown === true;
+    // Only queue + wait on a Windows desktop shutdown when there is a live
+    // Gateway to stop. When the bridge is already off, queueing a remote
+    // shutdown leaves the "Desktop" step animating on a job no desktop will
+    // ever claim (a 35s wait that reads as "stuck detaching"). In that case the
+    // detach is idempotent: clear the runtime and settle immediately.
+    const queueRemoteShutdown =
+      action.queueRemoteShutdown === true && gatewayConnectedForBridge;
     const detachingBridgeOnly = action.stepperVariant === "clear-state";
 
     setBridgeLauncherBusy(true);
@@ -4368,6 +4384,7 @@ export const HeaderStatusCluster = ({
             body: {
               managementToken: bridgeManagementToken,
             },
+            timeoutMs: 15000,
           });
         } catch (error) {
           if (error?.code !== "invalid_ibkr_bridge_detach_token") {
@@ -4378,6 +4395,7 @@ export const HeaderStatusCluster = ({
             {
               method: "POST",
               body: { force: true },
+              timeoutMs: 15000,
             },
           );
         }
@@ -4387,6 +4405,12 @@ export const HeaderStatusCluster = ({
           {
             method: "POST",
             body: { force: true },
+            // Bound the clear so a stalled connection (e.g. browser request
+            // queued behind live SSE streams) can't leave the detach control
+            // animating forever. On timeout this throws → catch surfaces a
+            // retryable error and the finally re-enables the button. The clear
+            // is idempotent, so retrying is safe.
+            timeoutMs: 15000,
           },
         );
       }
@@ -4538,6 +4562,7 @@ export const HeaderStatusCluster = ({
   }, [
     bridgeDeactivateAction,
     bridgeManagementToken,
+    gatewayConnectedForBridge,
     queryClient,
     refreshIbkrConnectionStatus,
   ]);

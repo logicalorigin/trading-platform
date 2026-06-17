@@ -36,8 +36,10 @@ const defaultPoolMax = (): number => {
   try {
     // A single dashboard request fans out into ~10 concurrent shadow sub-reads
     // alongside background mark-refresh writers; a pool of 6 saturates and the
-    // resulting acquire timeouts get misread as a DB outage. helium's server
-    // max_connections has ample headroom, so allow more pooled connections.
+    // resulting acquire timeouts get misread as a DB outage. helium's provider
+    // plan HARD-CAPS at 12 client connections — the Postgres max_connections GUC
+    // is higher but is NOT the binding limit, so 12 is the ceiling. Do not raise
+    // it: relief must come from reducing concurrent demand, not more connections.
     return new URL(resolvedDatabaseUrl).hostname === "helium" ? 12 : 10;
   } catch {
     return 10;
@@ -54,6 +56,14 @@ const isHeliumDatabase = (): boolean => {
 
 const heliumDatabase = isHeliumDatabase();
 const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
+// Circuit-breaker for the hard 12-connection ceiling: one query stalled for tens
+// of seconds (lock wait, contention-stalled scan) pins a scarce connection and
+// cascades into pool-acquire timeouts that surface as flapping "degraded"/error
+// reads. Cap server-side execution so a stalled query releases its connection
+// instead of hanging to the 30s acquire timeout. 15s sits well above the slowest
+// legitimate query (GET /bars ~6s p95) and far above normal writes (ms), so it
+// only fires on pathological stalls. Override with DB_STATEMENT_TIMEOUT_MS.
+const defaultStatementTimeoutMillis = heliumDatabase ? 15_000 : undefined;
 const resolvedPoolMax = readPositiveInteger("DB_POOL_MAX", defaultPoolMax());
 
 export const pool = new Pool({
@@ -69,7 +79,14 @@ export const pool = new Pool({
       }
     : {}),
   ...optionalIntegerOption("DB_QUERY_TIMEOUT_MS", "query_timeout"),
-  ...optionalIntegerOption("DB_STATEMENT_TIMEOUT_MS", "statement_timeout"),
+  ...(readOptionalPositiveInteger("DB_STATEMENT_TIMEOUT_MS") !== undefined ||
+  defaultStatementTimeoutMillis !== undefined
+    ? {
+        statement_timeout:
+          readOptionalPositiveInteger("DB_STATEMENT_TIMEOUT_MS") ??
+          defaultStatementTimeoutMillis,
+      }
+    : {}),
   ...optionalIntegerOption("DB_IDLE_TIMEOUT_MS", "idleTimeoutMillis"),
 });
 attachPostgresPoolErrorHandler(pool);

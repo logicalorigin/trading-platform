@@ -3434,7 +3434,12 @@ const buildChartOptions = (
   });
 
   return {
-    autoSize: false,
+    // lightweight-charts v5 sizes itself to its container via its own
+    // ResizeObserver. The previous manual chart.resize(plotSize) path went stale
+    // (sized the chart to ~192px inside a ~240px container), so the chart only
+    // filled part of its cell. autoSize keeps it filling the container on every
+    // screen (market grid + trade workspace, all via this one createChart).
+    autoSize: true,
     layout: {
       background: { type: ColorType.Solid, color: theme.bg2 },
       textColor: theme.textMuted,
@@ -9916,6 +9921,25 @@ const ResearchChartSurfaceComponent = ({
     theme.textMuted,
   ]);
 
+  // Coalesce the heavy overlay rebuild below to ~14fps. Each live quote nudges
+  // the price axis (auto-scale), which moves every signal-zone/overlay shape by
+  // >0.5px and forces a full overlay restyle on every tick (~700 style writes/s),
+  // saturating the main thread so SMIL/main-thread animations skip. The candle and
+  // legend keep updating live; only the overlay repositioning is throttled, with a
+  // trailing run so overlays settle on the final position after ticks stop.
+  const overlaySyncLastRunRef = useRef(0);
+  const overlaySyncTrailingTimerRef = useRef<number | null>(null);
+  const [overlaySyncTrailingTick, setOverlaySyncTrailingTick] = useState(0);
+  useEffect(
+    () => () => {
+      if (overlaySyncTrailingTimerRef.current != null) {
+        window.clearTimeout(overlaySyncTrailingTimerRef.current);
+        overlaySyncTrailingTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
   useLayoutEffect(() => {
     if (
       !chartRef.current ||
@@ -9944,6 +9968,26 @@ const ResearchChartSurfaceComponent = ({
       syncSelectedTradeExitBadgeState(null);
       return;
     }
+
+    const OVERLAY_SYNC_MIN_INTERVAL_MS = 70;
+    const overlaySyncNow = nowMs();
+    const overlaySyncSinceLast = overlaySyncNow - overlaySyncLastRunRef.current;
+    if (overlaySyncSinceLast < OVERLAY_SYNC_MIN_INTERVAL_MS) {
+      // Too soon since the last rebuild: skip now and arm a single trailing run
+      // so the overlays settle on the latest position once the tick burst eases.
+      if (overlaySyncTrailingTimerRef.current == null) {
+        overlaySyncTrailingTimerRef.current = window.setTimeout(() => {
+          overlaySyncTrailingTimerRef.current = null;
+          setOverlaySyncTrailingTick((tick) => tick + 1);
+        }, OVERLAY_SYNC_MIN_INTERVAL_MS - overlaySyncSinceLast);
+      }
+      return;
+    }
+    if (overlaySyncTrailingTimerRef.current != null) {
+      window.clearTimeout(overlaySyncTrailingTimerRef.current);
+      overlaySyncTrailingTimerRef.current = null;
+    }
+    overlaySyncLastRunRef.current = overlaySyncNow;
 
     const overlaySyncStartedAt = nowMs();
     const viewportWidth = resolveChartDrawableWidth(
@@ -10167,6 +10211,7 @@ const ResearchChartSurfaceComponent = ({
     theme.red,
     theme.text,
     theme.textMuted,
+    overlaySyncTrailingTick,
   ]);
 
   const displayBar =
@@ -10327,7 +10372,8 @@ const ResearchChartSurfaceComponent = ({
       return;
     }
 
-    chartRef.current.resize?.(plotSize.width, plotSize.height);
+    // Sizing is handled by autoSize (chart options); resize() is a no-op under
+    // autoSize in v5. plotSize is still measured for overlay coordinates below.
     if (autoScale && showRightPriceScale) {
       chartRef.current.priceScale?.("right", 0)?.setAutoScale?.(true);
     }

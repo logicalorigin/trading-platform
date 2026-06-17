@@ -55,7 +55,9 @@ export const bridgeRuntimeTone = (session) => {
       }
       return { label: "reconnect", color: CSS_COLOR.amber, pulse: true };
     }
-    return { label: "offline", color: CSS_COLOR.red };
+    // Not configured is a neutral absence, not an error — match the chip
+    // (getIbkrConnectionTone) which uses the dim tone for the unconfigured state.
+    return { label: "offline", color: CSS_COLOR.textDim };
   }
   const bridge = session?.ibkrBridge;
   if (bridge?.competing) {
@@ -112,10 +114,10 @@ export const bridgeRuntimeTone = (session) => {
     bridge?.socketConnected === true &&
     bridge?.accountsLoaded !== false
   ) {
-    return { label: "live", color: CSS_COLOR.green };
+    return { label: "online", color: CSS_COLOR.green };
   }
   if (isStreamLifecycleOnlyState(bridge, streamMeta)) {
-    return { label: "live", color: CSS_COLOR.green };
+    return { label: "online", color: CSS_COLOR.green };
   }
   if (streamMeta) {
     return {
@@ -125,7 +127,7 @@ export const bridgeRuntimeTone = (session) => {
     };
   }
   if (bridge?.strictReady === true) {
-    return { label: "live", color: CSS_COLOR.green };
+    return { label: "online", color: CSS_COLOR.green };
   }
   if (bridge?.authenticated && bridge?.streamFresh === false) {
     return { label: "quote stale", color: CSS_COLOR.amber, pulse: true };

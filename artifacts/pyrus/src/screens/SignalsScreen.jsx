@@ -67,7 +67,6 @@ import {
   SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_HEIGHT,
   TABLE_SPARKLINE_WIDTH,
-  buildDetailedFallbackSparklineData,
 } from "../features/platform/sparklineConfig";
 import {
   CSS_COLOR,
@@ -285,12 +284,15 @@ const SPARKLINE_FILL_STYLE = Object.freeze({ width: "100%", height: "100%" });
 // synthetic fallback line ("old data") before real bars arrive. A settled fetch
 // stores an array ([] when genuinely empty), so `!Array.isArray` means pending.
 const SIGNAL_SPARKLINE_PENDING = "pending";
+const SIGNAL_SPARKLINE_FAILED = "failed";
 const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
-const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
+// Trimmed 240 (4h) -> 120 (2h): the cell draws <=24 points, and a wider window
+// forces expensive provider gap-fill per /bars/batch row. 2h still covers recent
+// signals' color flips while cutting DB/provider load roughly in half.
+const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
 const SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT = 64;
-const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
 const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 680;
 const SIGNALS_TABLE_MIN_HEIGHT_COMPACT = 620;
 const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 560;
@@ -368,71 +370,6 @@ const fetchSignalSparklineBarsBatch = async (rows, signal) => {
   }
   const payload = await response.json();
   return Array.isArray(payload?.items) ? payload.items : [];
-};
-
-const signalSparklineFallbackPrice = (state, fallbackPrice) => {
-  const currentSignalPrice = Number(state?.currentSignalPrice);
-  if (Number.isFinite(currentSignalPrice) && currentSignalPrice > 0) {
-    return currentSignalPrice;
-  }
-  const close = Number(state?.close);
-  if (Number.isFinite(close) && close > 0) {
-    return close;
-  }
-  const rowFallbackPrice = Number(fallbackPrice);
-  return Number.isFinite(rowFallbackPrice) && rowFallbackPrice > 0
-    ? rowFallbackPrice
-    : null;
-};
-
-const signalRowSparklineFallbackPrice = (row) => {
-  for (const value of [
-    row?.currentSignalPrice,
-    row?.latestEvent?.signalPrice,
-    row?.latestEvent?.close,
-    row?.primaryState?.currentSignalPrice,
-  ]) {
-    const price = Number(value);
-    if (Number.isFinite(price) && price > 0) {
-      return price;
-    }
-  }
-  return null;
-};
-
-const signalSparklineSyntheticFallbackPrice = (symbol) => {
-  const normalizedSymbol = String(symbol || "SIGNAL").trim().toUpperCase();
-  let hash = 0;
-  for (let index = 0; index < normalizedSymbol.length; index += 1) {
-    hash = (hash * 31 + normalizedSymbol.charCodeAt(index)) % 10_000;
-  }
-  return 50 + (hash % 250);
-};
-
-const buildSignalsTableFallbackSparklineData = ({
-  symbol,
-  state,
-  direction,
-  fallbackPrice,
-}) => {
-  const current =
-    signalSparklineFallbackPrice(state, fallbackPrice) ??
-    signalSparklineSyntheticFallbackPrice(symbol);
-  if (current == null) {
-    return [];
-  }
-  const previous =
-    direction === "sell"
-      ? current * 1.0025
-      : direction === "buy"
-        ? current * 0.9975
-        : current * 0.999;
-  return buildDetailedFallbackSparklineData({
-    symbol,
-    current,
-    previous,
-    pointCount: SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS,
-  });
 };
 
 const toneForDirection = (direction) =>
@@ -1783,11 +1720,11 @@ function CompactIntervalCell({
   timeframe,
   state,
   rowDirection = "",
-  fallbackPrice = null,
   sparklineData = [],
   sparklinePoints: sourceSparklinePoints = null,
   signalEvents = EMPTY_SIGNAL_EVENTS,
   loading = false,
+  failed = false,
 }) {
   const status = normalizeSignalStatus(state);
   const pending = status === "pending";
@@ -1804,33 +1741,19 @@ function CompactIntervalCell({
     latestSignalSparklineEventDirection(signalEvents),
   );
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
-  const fallbackSparklineData = useMemo(
-    () =>
-      buildSignalsTableFallbackSparklineData({
-        symbol,
-        state,
-        direction: direction || sparklineFallbackDirection,
-        fallbackPrice,
-      }),
-    [direction, fallbackPrice, sparklineFallbackDirection, state, symbol],
-  );
   const usesFetchedSparklineData =
     Array.isArray(sparklineData) && sparklineData.length >= 2;
-  // While the symbol's real bars are still loading, render a neutral placeholder
-  // instead of the synthetic fallback so we never flash "old"/fake data before
-  // the real series arrives.
+  // When real bars aren't available we render a neutral placeholder (never a
+  // synthetic line) — honest "empty"/"failed" instead of fabricated data.
   const displaySparklineData = usesFetchedSparklineData
     ? sparklineData
+    : EMPTY_SPARKLINE_SERIES;
+  const sparklineSource = usesFetchedSparklineData
+    ? "bars"
     : loading
-      ? EMPTY_SPARKLINE_SERIES
-      : fallbackSparklineData;
-  const sparklineSource =
-    usesFetchedSparklineData
-      ? "bars"
-      : loading
-        ? "loading"
-        : fallbackSparklineData.length >= 2
-        ? "fallback"
+      ? "loading"
+      : failed
+        ? "failed"
         : "empty";
   const sparklinePoints = useMemo(
     () =>
@@ -1966,9 +1889,9 @@ function CompactIntervalCell({
                 width: "100%",
                 height: "100%",
                 borderRadius: dim(RADII.xs),
-                boxShadow: `inset 0 -1px 0 ${cssColorMix(CSS_COLOR.textMuted, 24)}`,
-                background: cssColorMix(CSS_COLOR.textMuted, 7),
-                opacity: hydrated || stale ? 0.75 : 0.35,
+                boxShadow: `inset 0 -1px 0 ${cssColorMix(failed ? CSS_COLOR.amber : CSS_COLOR.textMuted, 24)}`,
+                background: cssColorMix(failed ? CSS_COLOR.amber : CSS_COLOR.textMuted, 7),
+                opacity: failed ? 0.6 : hydrated || stale ? 0.75 : 0.35,
               }}
             />
           )}
@@ -4060,7 +3983,7 @@ export default function SignalsScreen({
               next[item.key] =
                 item?.status === "fulfilled"
                   ? thinBarsForSignalsTableSparkline(item.bars || [])
-                  : [];
+                  : SIGNAL_SPARKLINE_FAILED;
             });
             return next;
           });
@@ -4071,7 +3994,7 @@ export default function SignalsScreen({
           setSignalSparklineBarsBySymbol((current) => {
             const next = { ...current };
             batch.forEach((row) => {
-              next[row.key] = [];
+              next[row.key] = SIGNAL_SPARKLINE_FAILED;
             });
             return next;
           });
@@ -4426,10 +4349,10 @@ export default function SignalsScreen({
               timeframe={timeframe}
               state={row.original.matrixStatesByTimeframe?.[timeframe] || null}
               rowDirection={row.original.direction}
-              fallbackPrice={signalRowSparklineFallbackPrice(row.original)}
               sparklineData={Array.isArray(barsValue) ? barsValue : EMPTY_SPARKLINE_SERIES}
               sparklinePoints={signalSparklinePointsBySymbol[symbolKey] || null}
               loading={barsValue === SIGNAL_SPARKLINE_PENDING}
+              failed={barsValue === SIGNAL_SPARKLINE_FAILED}
               signalEvents={
                 signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS
               }

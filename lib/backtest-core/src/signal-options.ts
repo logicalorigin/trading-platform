@@ -73,6 +73,8 @@ export type SignalOptionsExecutionProfile = {
     maxContracts: number;
     maxOpenSymbols: number;
     maxDailyLoss: number;
+    tradingAllowance: number;
+    allowanceBasis: "cost" | "mark";
   };
   entryGate: {
     mtfAlignment: {
@@ -129,6 +131,7 @@ export type SignalOptionsExecutionProfile = {
     dailyLossHaltEnabled: boolean;
     openSymbolCapEnabled: boolean;
     premiumBudgetEnabled: boolean;
+    tradingAllowanceEnabled: boolean;
   };
   entryHaltControls: {
     mtfAlignmentEnabled: boolean;
@@ -223,6 +226,8 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       maxContracts: 3,
       maxOpenSymbols: 5,
       maxDailyLoss: 1_000,
+      tradingAllowance: 10_000,
+      allowanceBasis: "cost",
     },
     entryGate: {
       mtfAlignment: {
@@ -304,6 +309,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       dailyLossHaltEnabled: true,
       openSymbolCapEnabled: true,
       premiumBudgetEnabled: true,
+      tradingAllowanceEnabled: false,
     },
     entryHaltControls: {
       mtfAlignmentEnabled: true,
@@ -794,6 +800,16 @@ export function resolveSignalOptionsExecutionProfile(
         1,
         10_000_000,
       ),
+      tradingAllowance: finiteNumber(
+        riskCaps.tradingAllowance ?? root.tradingAllowance,
+        defaults.riskCaps.tradingAllowance,
+        100,
+        10_000_000,
+      ),
+      allowanceBasis:
+        (riskCaps.allowanceBasis ?? root.allowanceBasis) === "mark"
+          ? "mark"
+          : "cost",
     },
     entryGate: {
       mtfAlignment: {
@@ -1022,6 +1038,11 @@ export function resolveSignalOptionsExecutionProfile(
       premiumBudgetEnabled: booleanValue(
         riskHaltControls.premiumBudgetEnabled ?? root.premiumBudgetEnabled,
         defaults.riskHaltControls.premiumBudgetEnabled,
+      ),
+      tradingAllowanceEnabled: booleanValue(
+        riskHaltControls.tradingAllowanceEnabled ??
+          root.tradingAllowanceEnabled,
+        defaults.riskHaltControls.tradingAllowanceEnabled,
       ),
     },
     entryHaltControls: {

@@ -649,6 +649,29 @@ export const CompactSettingCell = ({
           {field.min}-{field.max}
         </span>
       ) : null}
+      {!invalid && field.path === "riskCaps.tradingAllowance"
+        ? (() => {
+            const maxPremium = Number(
+              getPathValue(draftRoot, "riskCaps.maxPremiumPerEntry") ?? 0,
+            );
+            const allowance = Number(value ?? 0);
+            if (maxPremium > 0 && allowance > 0 && allowance < maxPremium) {
+              return (
+                <span
+                  style={{
+                    color: CSS_COLOR.amber,
+                    fontFamily: T.sans,
+                    fontSize: textSize("micro"),
+                  }}
+                >
+                  Below max premium/entry — most entries size down. Denominates
+                  option premium, not account cash.
+                </span>
+              );
+            }
+            return null;
+          })()
+        : null}
     </label>
   );
 };

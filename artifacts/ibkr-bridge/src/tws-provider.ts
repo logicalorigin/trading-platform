@@ -138,6 +138,10 @@ const ACCOUNT_SUMMARY_TAGS = [
 
 const ACCOUNT_SUMMARY_REQUEST = ACCOUNT_SUMMARY_TAGS.join(",");
 const CONTRACT_CACHE_TTL_MS = 5 * 60_000;
+// Executions are a live IBKR round-trip per call and are the most exposed account
+// read (previously unprotected by a bridge lane). A short TTL coalesces repeated
+// polls so scanner bursts can't keep re-issuing them on the shared socket.
+const EXECUTIONS_CACHE_TTL_MS = 5_000;
 
 type SummarySnapshot = {
   accountType: string | null;
@@ -2056,6 +2060,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     { placedAt: Date; updatedAt: Date }
   >();
   private readonly liveOrdersById = new Map<string, BrokerOrderSnapshot>();
+  private readonly executionsCache = new Map<
+    string,
+    { value: BrokerExecutionSnapshot[]; cachedAt: number }
+  >();
   private readonly baseSubscriptionStops: Array<() => void> = [];
   // Coalesced quote-emit fan-out: keys (providerContractId/symbol) marked dirty
   // by per-tick cache writes, flushed once per quoteEmitCoalesceMs window so heavy
@@ -4958,6 +4966,50 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   }
 
   async listExecutions(input: {
+    accountId?: string;
+    mode: RuntimeMode;
+    days?: number;
+    limit?: number;
+    symbol?: string;
+    providerContractId?: string | null;
+  }): Promise<BrokerExecutionSnapshot[]> {
+    const cacheKey = JSON.stringify({
+      accountId: input.accountId ?? null,
+      mode: input.mode,
+      days: input.days ?? 7,
+      limit: input.limit ?? 50,
+      symbol: input.symbol ?? null,
+      providerContractId: input.providerContractId ?? null,
+    });
+    const cached = this.executionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < EXECUTIONS_CACHE_TTL_MS) {
+      return cached.value;
+    }
+
+    // Run on the account lane (concurrency/circuit-breaker protected, like
+    // listPositions/listOrders) so a slow execution round-trip fails fast under
+    // contention instead of hanging to the client's 12s timeout, and a single
+    // live fetch is shared via the cache below.
+    return runBridgeLane(
+      "account",
+      async () => {
+        // A concurrent caller may have filled the cache while we waited for the slot.
+        const fresh = this.executionsCache.get(cacheKey);
+        if (fresh && Date.now() - fresh.cachedAt < EXECUTIONS_CACHE_TTL_MS) {
+          return fresh.value;
+        }
+        const snapshots = await this.fetchExecutionsLive(input);
+        this.executionsCache.set(cacheKey, {
+          value: snapshots,
+          cachedAt: Date.now(),
+        });
+        return snapshots;
+      },
+      { timeoutMs: Math.max(5_000, this.openOrdersRequestTimeoutMs + 3_000) },
+    );
+  }
+
+  private async fetchExecutionsLive(input: {
     accountId?: string;
     mode: RuntimeMode;
     days?: number;

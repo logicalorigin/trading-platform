@@ -54,17 +54,6 @@ enum Command {
         #[arg(long)]
         symbol: String,
     },
-    #[command(hide = true)]
-    Backfill {
-        #[arg(long)]
-        kind: String,
-        #[arg(long, value_delimiter = ',')]
-        symbols: Vec<String>,
-        #[arg(long)]
-        from: Option<String>,
-        #[arg(long)]
-        to: Option<String>,
-    },
     Retention {
         #[arg(long)]
         execute: bool,
@@ -86,17 +75,6 @@ async fn main() -> Result<()> {
         Command::Doctor => diagnostics::run_doctor(&config).await,
         Command::Run { max_jobs } => run_loop(config, max_jobs).await,
         Command::Once { kind, symbol } => run_once(config, &kind, &symbol).await,
-        Command::Backfill {
-            kind,
-            symbols,
-            from,
-            to,
-        } => {
-            bail!(
-                "{}",
-                backfill_not_implemented_message(&kind, &symbols, &from, &to)
-            )
-        }
         Command::Retention { execute } => {
             let pool = connect_pool(&config).await?;
             retention::run_retention(&pool, &config, execute).await
@@ -104,16 +82,14 @@ async fn main() -> Result<()> {
     }
 }
 
-fn backfill_not_implemented_message(
-    kind: &str,
-    symbols: &[String],
-    from: &Option<String>,
-    to: &Option<String>,
-) -> String {
-    format!(
-        "backfill is not implemented yet (kind={kind}, symbols={}, from={from:?}, to={to:?})",
-        symbols.join(",")
-    )
+/// Build the provider HTTP client with bounded request/connect timeouts. Without these a hung
+/// provider socket blocks the serial worker forever while the heartbeat keeps renewing the lease,
+/// so the job never recovers. `reqwest::Client` is cheap to clone and meant to be reused.
+fn build_http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?)
 }
 
 async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> {
@@ -123,7 +99,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             let provider = config.market_data_provider.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
             })?;
-            let client = reqwest::Client::new();
+            let client = build_http_client()?;
             let started_at = Instant::now();
             let snapshot = match fetch_stock_snapshot(&client, provider, symbol).await {
                 Ok(fetch) => {
@@ -175,7 +151,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             let provider = config.market_data_provider.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
             })?;
-            let client = reqwest::Client::new();
+            let client = build_http_client()?;
             let started_at = Instant::now();
             let fetch = match fetch_option_chain_snapshots(
                 &client,
@@ -305,12 +281,28 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
                         if let Err(error) = process_job(&pool, &config, &job).await {
                             warn!(err = %error, job_id = %job.id, kind = %job.kind, symbol = %job.symbol, "market-data job failed");
                             let transient = is_transient_job_error(&error);
-                            if !fail_job(&pool, &job, &error.to_string(), transient).await? {
-                                warn!(job_id = %job.id, lease_owner = %job.lease_owner, "market-data job failure was not recorded because the lease moved");
+                            // A transient DB error while recording the failure must not kill the
+                            // worker: log and continue. The lease will expire and the job re-runs.
+                            match fail_job(&pool, &job, &error.to_string(), transient).await {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    warn!(job_id = %job.id, lease_owner = %job.lease_owner, "market-data job failure was not recorded because the lease moved");
+                                }
+                                Err(e) => {
+                                    error!(err = %e, job_id = %job.id, "market-data worker failed to record job failure");
+                                }
                             }
                         } else {
-                            if !complete_job(&pool, &job).await? {
-                                warn!(job_id = %job.id, lease_owner = %job.lease_owner, "market-data job completion was not recorded because the lease moved");
+                            // As above: a DB blip recording completion must not kill the worker.
+                            // The lease expires and the job re-runs (kinds are idempotent).
+                            match complete_job(&pool, &job).await {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    warn!(job_id = %job.id, lease_owner = %job.lease_owner, "market-data job completion was not recorded because the lease moved");
+                                }
+                                Err(e) => {
+                                    error!(err = %e, job_id = %job.id, "market-data worker failed to record job completion");
+                                }
                             }
                         }
                         completed_jobs += 1;
@@ -338,7 +330,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
             let provider = config.market_data_provider.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
             })?;
-            let client = reqwest::Client::new();
+            let client = build_http_client()?;
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
                 let snapshot = match fetch_stock_snapshot(&client, provider, &job.symbol).await {
@@ -400,7 +392,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
             let provider = config.market_data_provider.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
             })?;
-            let client = reqwest::Client::new();
+            let client = build_http_client()?;
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
                 let fetch = match fetch_option_chain_snapshots(
@@ -576,15 +568,42 @@ fn is_transient_job_error(error: &anyhow::Error) -> bool {
         .downcast_ref::<reqwest::Error>()
         .and_then(|error| error.status())
     {
+        // 429 and 5xx are worth retrying; any other provider 4xx is a permanent client error.
         return status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
     }
 
     let message = error.to_string();
-    !(message.contains("unsupported market-data job kind")
+    let lower = message.to_ascii_lowercase();
+
+    // Explicitly permanent failures: re-running them will never succeed, so fail fast instead
+    // of burning the retry budget. We keep the default conservative (transient-by-default for
+    // genuinely unknown / connection / 5xx / 429 / timeout errors).
+    let permanent =
+        // Pre-existing non-retryable conditions (bad config / unsupported input / bad provider data).
+        message.contains("unsupported market-data job kind")
         || message.contains("unsupported once job kind")
         || message.contains("symbol is required")
         || message.contains("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
         || message.contains("provider returned no usable stock snapshot")
         || message.contains("provider returned no option-chain snapshots")
-        || message.contains("option-chain snapshot truncated"))
+        || message.contains("option-chain snapshot truncated")
+        // DB constraint violations (e.g. unique/foreign-key/check) won't fix themselves on retry.
+        || lower.contains("constraint")
+        || lower.contains("violates")
+        || lower.contains("duplicate key")
+        // serde / parse / schema-shape problems indicate bad data, not a blip. We intentionally
+        // omit a bare "decode" match: reqwest renders a mid-stream truncated body as
+        // "error decoding response body", which is transient — genuine shape mismatches are still
+        // caught by "deserialize"/"invalid json"/"missing field". "schema mismatch" (not bare
+        // "schema") avoids penalizing transient "no schema has been selected" connection blips.
+        || lower.contains("parse")
+        || lower.contains("deserialize")
+        || lower.contains("invalid json")
+        || lower.contains("missing field")
+        || lower.contains("unknown column")
+        || lower.contains("no such column")
+        || lower.contains("column mismatch")
+        || lower.contains("schema mismatch");
+
+    !permanent
 }

@@ -106,6 +106,14 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
     backoffMs: 30_000,
     failureThreshold: 3,
   },
+  // Scanner lanes (options-meta + option-quotes) feed the SAME single IBKR socket
+  // as the account/control/order reads. Sized to match the flow-scanner's symbol
+  // concurrency (OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 4) so line-budget fill isn't
+  // bottlenecked here, while staying BELOW the historical 8 that starved reads:
+  // the account/control lanes remain separate, and a stray read timeout no longer
+  // causes a false disconnect (the runtime-override abandon is gated on the desktop
+  // agent being online). Watch /positions+/executions latency; if reads starve,
+  // dial back via IBKR_BRIDGE_OPTIONS_META_/_OPTION_QUOTES_ env overrides.
   "options-meta": {
     concurrency: 4,
     timeoutMs: 45_000,
@@ -114,7 +122,7 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
     failureThreshold: 3,
   },
   "option-quotes": {
-    concurrency: 8,
+    concurrency: 6,
     timeoutMs: 30_000,
     queueCap: 32,
     backoffMs: 30_000,

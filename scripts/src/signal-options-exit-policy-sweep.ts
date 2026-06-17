@@ -11,6 +11,15 @@ import { pool } from "@workspace/db";
 import { runSignalOptionsShadowBackfill } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
 
+// The shadow backfill replays historical bars and refuses to run unless bar
+// evaluation is opted in (signal-options-automation.ts:15997). That gate is
+// deliberately OFF for the live api-server (the SSE producer is the live signal
+// source). This sweep is a historical replay, so enable it for THIS process
+// only. Without it every sweep variant fails with "Signal Options backfill
+// requires explicit Signal Monitor bar-evaluation opt-in". Read at call time, so
+// setting it before the backfill runs is sufficient. `??=` lets a caller override.
+process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"] ??= "1";
+
 type JsonRecord = Record<string, unknown>;
 
 export type ExitPolicyVariant = {

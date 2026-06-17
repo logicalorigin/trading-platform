@@ -129,3 +129,18 @@ test("transitions over time recolor each point by the active signal", () => {
   });
   assert.deepEqual(colors, [BLUE, BLUE, RED]);
 });
+
+test("before a buy shows the opposite stance (sell), then flips to buy — never grey", () => {
+  const events = buildSignalEventsBySymbol([
+    { symbol: "AAPL", direction: "buy", timeframe: "5m", signalAt: at(2000) },
+  ]).get("AAPL");
+
+  const colors = buildSignalSparklinePointColors({
+    points: pointsAt([1000, 1500, 2500, 3000]),
+    row: { timeframe: "5m" },
+    signalEvents: events,
+    colorTimeframe: "5m",
+  });
+  // Points before the 2000 buy are sell (red); points at/after turn buy (blue).
+  assert.deepEqual(colors, [RED, RED, BLUE, BLUE]);
+});

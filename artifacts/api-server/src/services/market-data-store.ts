@@ -14,6 +14,10 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
+import {
+  createTransientPostgresBackoff,
+  isPoolContentionError,
+} from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import type {
   BrokerBarSnapshot,
@@ -60,10 +64,17 @@ export type MarketDataStoreBarInput = {
 
 const DEFAULT_RECENT_WINDOW_MINUTES = 60;
 const STORE_BATCH_SIZE = 500;
-let marketDataStoreDisabled = false;
+// The durable store self-heals instead of disabling permanently. A pool-acquire
+// timeout (e.g. the cold-start read burst) does NOT back off — the next call
+// retries immediately; any other DB error opens a short, time-boxed backoff that
+// auto-clears on the next successful read or write.
+const marketDataStoreBackoff = createTransientPostgresBackoff({
+  backoffMs: 15_000,
+  warningCooldownMs: 60_000,
+});
 
-export function __setMarketDataStoreDisabledForTests(disabled: boolean): void {
-  marketDataStoreDisabled = disabled;
+export function __resetMarketDataStoreBackoffForTests(): void {
+  marketDataStoreBackoff.resetForTest();
 }
 
 const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
@@ -172,7 +183,7 @@ export function normalizeBarsToStoreTimeframe<T extends MarketDataStoreBarInput>
 export const shouldUseDurableMarketDataStore = (
   input: MarketDataStoreRequest,
 ): boolean => {
-  if (marketDataStoreDisabled) {
+  if (marketDataStoreBackoff.isActive(Date.now())) {
     return false;
   }
   if (input.assetClass === "option" || input.providerContractId?.trim()) {
@@ -248,13 +259,26 @@ async function ensureStoreInstrument(input: {
   return created?.id ?? null;
 }
 
-const disableStoreAfterError = (error: unknown, operation: string): void => {
-  marketDataStoreDisabled = true;
-  logger.debug(
-    { err: error, operation },
-    "durable market data store disabled after database error",
-  );
+const handleStoreError = (error: unknown, operation: string): void => {
+  // Pool-acquire timeouts mean "all connections are busy right now" (e.g. the
+  // cold-start read burst), not "the store is broken" — backing off here would
+  // bypass the cache during the exact window the pool is saturated, so we let the
+  // next call retry immediately. Every other error opens a short, self-healing
+  // backoff instead of the old permanent disable.
+  if (isPoolContentionError(error)) {
+    return;
+  }
+  marketDataStoreBackoff.markFailure({
+    error,
+    logger,
+    message: `durable market data store temporarily unavailable (${operation}); serving provider fallback`,
+    nowMs: Date.now(),
+  });
 };
+
+export function __handleMarketDataStoreErrorForTests(error: unknown): void {
+  handleStoreError(error, "test");
+}
 
 export async function loadStoredMarketBars(
   input: MarketDataStoreRequest & { sourceName: string },
@@ -292,6 +316,9 @@ export async function loadStoredMarketBars(
           .orderBy(desc(barCacheTable.startsAt))
           .limit(limit);
 
+    // A successful read proves the store is healthy again — clear any backoff.
+    marketDataStoreBackoff.clear();
+
     const normalizedSourceName = input.sourceName.toLowerCase();
     const delayed =
       normalizedSourceName.includes("delayed") ||
@@ -324,7 +351,7 @@ export async function loadStoredMarketBars(
       input.timeframe,
     ).slice(-desiredLimit);
   } catch (error) {
-    disableStoreAfterError(error, "loadStoredMarketBars");
+    handleStoreError(error, "loadStoredMarketBars");
     return [];
   }
 }
@@ -392,9 +419,11 @@ export async function persistMarketDataBars(input: {
           });
       }
     }
+    // A successful write proves the store is healthy again — clear any backoff.
+    marketDataStoreBackoff.clear();
     return true;
   } catch (error) {
-    disableStoreAfterError(error, "persistMarketDataBars");
+    handleStoreError(error, "persistMarketDataBars");
     return false;
   }
 }

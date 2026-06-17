@@ -1,9 +1,35 @@
 use anyhow::{anyhow, Result};
-use chrono::{Datelike, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgPool, Row};
 use std::collections::BTreeSet;
+
+/// Maximum age (in seconds) of the underlying spot/chain data before the GEX
+/// snapshot is considered stale. There is no existing freshness threshold in
+/// this crate, so we pick a conservative default for a live trading UI.
+const GEX_STALE_AFTER_SECS: i64 = 120;
+
+/// Derive whether the data backing this GEX snapshot is stale based on the age
+/// of the spot quote and the option chain. If either age cannot be determined
+/// (e.g. the chain has no timestamps), we mark it stale rather than fabricating
+/// freshness we cannot confirm.
+fn is_gex_data_stale(
+    computed_at: DateTime<Utc>,
+    spot_as_of: DateTime<Utc>,
+    chain_updated_at: Option<DateTime<Utc>>,
+) -> bool {
+    let chain_updated_at = match chain_updated_at {
+        Some(value) => value,
+        None => return true,
+    };
+    let spot_age = computed_at.signed_duration_since(spot_as_of).num_seconds();
+    let chain_age = computed_at
+        .signed_duration_since(chain_updated_at)
+        .num_seconds();
+    let oldest_age = spot_age.max(chain_age);
+    oldest_age > GEX_STALE_AFTER_SECS
+}
 
 const LOAD_LATEST_OPTION_SNAPSHOTS_SQL: &str = r#"
 with latest_contract_snapshots as (
@@ -320,6 +346,9 @@ fn build_gex_payload(
         .iter()
         .filter_map(|contract| contract.updated_at)
         .max();
+    let is_stale = is_gex_data_stale(computed_at, spot_quote.as_of, chain_updated_at);
+    let quote_freshness = if is_stale { "delayed" } else { "live" };
+    let market_data_mode = if is_stale { "delayed" } else { "live" };
     let with_gamma = contracts
         .iter()
         .filter(|contract| contract.gamma.is_some())
@@ -358,8 +387,8 @@ fn build_gex_payload(
                 "sharesPerContract": contract.shares_per_contract,
                 "volume": contract.volume.unwrap_or_default(),
                 "updatedAt": contract.updated_at.map(|date| date.to_rfc3339()),
-                "quoteFreshness": "live",
-                "marketDataMode": "live"
+                "quoteFreshness": quote_freshness,
+                "marketDataMode": market_data_mode
             })
         })
         .collect();
@@ -390,7 +419,7 @@ fn build_gex_payload(
         },
         "spot": summary.spot,
         "timestamp": computed_at.to_rfc3339(),
-        "isStale": false,
+        "isStale": is_stale,
         "options": options,
         "snapshots": [{ "ts": computed_at.to_rfc3339(), "netGex": summary.net_gex }],
         "flowContext": null,

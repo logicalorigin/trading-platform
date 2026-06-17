@@ -609,7 +609,12 @@ const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
     typeof bridge.diagnostics?.pressure === "string"
       ? bridge.diagnostics.pressure
       : "unknown";
-  const degraded = pressure === "degraded" || pressure === "backoff" || pressure === "stalled";
+  // The data-LINE indicator reflects line-capacity health, not stream quietness.
+  // A "stalled"/"degraded"/"backoff" STREAM (e.g. quiet/after-hours, no recent
+  // quotes) is NOT a line-capacity problem and must not paint the lines amber.
+  // Flag capacity-limited only on a genuine IBKR line shed (subscriptions
+  // actually rejected/paced); plain full or a quiet stream stays healthy/green.
+  const degraded = admission?.pressure?.recentIbkrPressureShed === true;
   const available = Number.isFinite(used) || Number.isFinite(cap);
   const streamState = bridgeLineUsageState(used, cap, degraded);
   return {
@@ -781,6 +786,10 @@ const normalizeLinePressure = (admission) => {
     optionReserveLineCount: firstFiniteNumber(pressure.optionReserveLineCount),
     protectedPriorityLineCount: firstFiniteNumber(pressure.protectedPriorityLineCount),
     usableRemainingLineCount,
+    // Genuine capacity pressure: set when IBKR actually rejected/paced
+    // subscriptions and the scanner was shed. Distinct from mere full utilization,
+    // this is the signal that should flag the data-lines indicator amber.
+    recentIbkrPressureShed: pressure.recentIbkrPressureShed === true,
   };
 };
 

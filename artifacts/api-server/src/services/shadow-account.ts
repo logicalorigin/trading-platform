@@ -3494,6 +3494,39 @@ async function computeShadowTotals(): Promise<ShadowTotals> {
   return computeShadowTotalsForSource(null);
 }
 
+/**
+ * Lifetime, fee-aware realized P&L (and total fees) for a single algo
+ * deployment, reconstructed from the shadow ledger — the source of truth for
+ * fills. Scoped to the "automation" source, which excludes synthetic
+ * replay/backtest trades while including real live trades and their idempotent
+ * backfill-repair mirrors (deduped by positionKey/clientOrderId), so it is
+ * replay-safe. Open exposure and unrealized P&L are intentionally NOT returned:
+ * the signal-options scan loop already holds the deployment's fresh in-memory
+ * open positions and computes those from live marks.
+ */
+export async function computeSignalOptionsLedgerRealizedForDeployment(
+  deploymentId: string,
+): Promise<{ realizedNet: number; fees: number }> {
+  if (!deploymentId) {
+    return { realizedNet: 0, fees: 0 };
+  }
+  const bundle = await readShadowLedgerBundleForSource("automation");
+  let realizedNet = 0;
+  let fees = 0;
+  for (const fill of bundle.selectedFills) {
+    const order = bundle.ordersById.get(fill.orderId) ?? null;
+    if (sourceDeploymentIdFromShadowOrder(order) !== deploymentId) {
+      continue;
+    }
+    realizedNet += toNumber(fill.realizedPnl) ?? 0;
+    fees += toNumber(fill.fees) ?? 0;
+  }
+  return {
+    realizedNet: Number(realizedNet.toFixed(2)),
+    fees: Number(fees.toFixed(2)),
+  };
+}
+
 function buildShadowCashActivityTotalsFromAccount(account: ShadowAccountRow): ShadowTotals {
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
   const cash = toNumber(account.cash) ?? startingBalance;

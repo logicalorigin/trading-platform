@@ -10,6 +10,7 @@ import {
 import {
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
+  setDesktopAgentOnlineProvider,
 } from "./platform-bridge-health";
 import {
   hasActiveConnectionAttempt,
@@ -17,6 +18,14 @@ import {
   recordConnectionLiveState,
   type ConnectionAuditActor,
 } from "./ibkr-connection-audit";
+
+// Let platform-bridge-health consult live desktop-agent state without importing
+// this module (which would be circular). While an agent is online, a failing
+// health circuit must NOT abandon the runtime override / flip the UI to
+// disconnected. getIbkrBridgeRuntimeSessionState is a hoisted declaration below.
+setDesktopAgentOnlineProvider(
+  () => getIbkrBridgeRuntimeSessionState().desktopAgentOnline,
+);
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;

@@ -75,6 +75,7 @@ import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineC
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
 import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
+import { readSignalMatrixStateActivityMs } from "../../features/signals/signalMatrixStateMerge.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   asRecord,
@@ -1485,7 +1486,9 @@ export const OperationsSignalTable = ({
     [page, rows],
   );
   const rowSparklineSymbolsKey = useMemo(
-    () => rowSparklineSymbols.join(","),
+    // Sort for a stable key: the same symbol SET re-sorting on live data must NOT
+    // churn the query key (which would refetch /bars/batch every tick).
+    () => [...rowSparklineSymbols].sort().join(","),
     [rowSparklineSymbols],
   );
   const signalRowHydrationQueriesEnabled = Boolean(
@@ -1593,12 +1596,17 @@ export const OperationsSignalTable = ({
     const contractStageCount = Number(contractStageRecord.count);
     const contractSelectionResolved =
       Number.isFinite(contractStageCount) && contractStageCount > 0;
-    const latestBarMs = timestampMs(scanStageRecord.latestSignalBarAt);
+    // SSE re-base: freshness comes from the live matrix push (latest bar / signal
+    // / evaluation across states), not the deprecated scan stage.
+    const latestMatrixMs = (signalMatrixStates || []).reduce(
+      (latest, state) => Math.max(latest, readSignalMatrixStateActivityMs(state)),
+      0,
+    );
     const latestScanMs =
       timestampMs(scanStageRecord.lastSignalScanAt) ||
       timestampMs(scanStageRecord.latestAt) ||
       timestampMs(cockpitGeneratedAt);
-    const signalSourceLatestMs = Math.max(latestSignalMs, latestBarMs);
+    const signalSourceLatestMs = Math.max(latestSignalMs, latestMatrixMs);
     const signalSourceAgeMs = signalSourceLatestMs
       ? Date.now() - signalSourceLatestMs
       : null;
@@ -1633,7 +1641,7 @@ export const OperationsSignalTable = ({
       scanStageRecord.heavyWorkDeferred === true && !contractSelectionResolved;
     return {
       latestSignalAt: latestSignalMs ? new Date(latestSignalMs).toISOString() : null,
-      latestBarAt: latestBarMs ? new Date(latestBarMs).toISOString() : null,
+      latestBarAt: latestMatrixMs ? new Date(latestMatrixMs).toISOString() : null,
       latestScanAt: latestScanMs ? new Date(latestScanMs).toISOString() : null,
       scanRunning: scanStageRecord.status === "running",
       scanPhase: activePhase,
@@ -1645,7 +1653,13 @@ export const OperationsSignalTable = ({
           ? scanStageRecord.detail.trim()
           : null,
     };
-  }, [cockpitGeneratedAt, cockpitStageItems, signals, staFilteredRows]);
+  }, [
+    cockpitGeneratedAt,
+    cockpitStageItems,
+    signalMatrixStates,
+    signals,
+    staFilteredRows,
+  ]);
 
   const sourceHealth = asRecord(signalOptionsSourceHealth);
   const sourceHealthLabel =

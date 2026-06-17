@@ -69,9 +69,7 @@ test("watchlist sparkline resolver ignores non-drawable live fallback data", () 
   );
 });
 
-test("watchlist sparkline resolver uses generated price fallback when live data is missing", () => {
-  const generatedSparkline = [{ v: 511.11 }, { v: 512.34 }];
-
+test("watchlist sparkline resolver returns empty when live data is missing (no synthetic fallback)", () => {
   assert.deepEqual(
     resolveWatchlistSparklineData(
       {
@@ -83,18 +81,15 @@ test("watchlist sparkline resolver uses generated price fallback when live data 
       {
         price: 512.34,
       },
-      generatedSparkline,
     ),
     {
-      data: generatedSparkline,
-      source: "generated-price-fallback",
+      data: [],
+      source: "empty",
     },
   );
 });
 
-test("watchlist sparkline resolver does not let non-drawable live data mask generated fallback", () => {
-  const generatedSparkline = [{ v: 511.11 }, { v: 512.34 }];
-
+test("watchlist sparkline resolver returns empty when live data is non-drawable (no synthetic fallback)", () => {
   assert.deepEqual(
     resolveWatchlistSparklineData(
       {
@@ -102,11 +97,10 @@ test("watchlist sparkline resolver does not let non-drawable live data mask gene
         spark: [{ timestamp: "2026-06-08T20:00:00.000Z" }],
       },
       {},
-      generatedSparkline,
     ),
     {
-      data: generatedSparkline,
-      source: "generated-price-fallback",
+      data: [],
+      source: "empty",
     },
   );
 });
