@@ -46,6 +46,7 @@ Options:
   --no-live-runtime-guard   Disable live-runtime admission checks.
 
 Environment overrides:
+  PYRUS_ENFORCE_HOT_VALIDATION=1  Re-enable the hot app refusal (default: OFF).
   PYRUS_ALLOW_HOT_VALIDATION=1   Bypass hot app refusal intentionally.
   CI=1                           Bypass hot app refusal for CI.
 `);
@@ -299,6 +300,16 @@ function shouldAllowHotApp(options) {
   );
 }
 
+// The hot-runtime signal (supervisor lock + flight-recorder) has been firing
+// false positives: the live app is reported "hot" while effectively idle, which
+// wrongly refuses harmless validation. Per owner decision 2026-06-17 the
+// hot-runtime refusal is DISABLED BY DEFAULT — we assume the hot signal is not
+// trustworthy. Set PYRUS_ENFORCE_HOT_VALIDATION=1 to re-enable the refusal once
+// the hotRuntime detection is reliable again.
+function hotRuntimeGuardEnforced() {
+  return process.env.PYRUS_ENFORCE_HOT_VALIDATION === "1";
+}
+
 function commandSummary(command) {
   return command.join(" ");
 }
@@ -325,6 +336,7 @@ async function main() {
 
   if (
     options.liveRuntimeGuard &&
+    hotRuntimeGuardEnforced() &&
     runtime.hotRuntime &&
     !shouldAllowHotApp(options)
   ) {

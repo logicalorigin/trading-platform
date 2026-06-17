@@ -72,11 +72,15 @@ directory to define separate Replit app runners.
 - `run-validation-command.mjs` wraps broad validation commands that can contend
   with the live PYRUS app. Root `typecheck:libs` runs through this wrapper, which
   reads `.pyrus-runtime/flight-recorder/current.json` and the
-  `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` owner process, refuses while the
+  `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` owner process to detect whether the
   Replit-owned supervisor is hot, writes a JSONL ledger to
   `.pyrus-runtime/validation/commands.jsonl`, and holds a single-validation lock.
-  Use targeted package tests during live app work; set
-  `PYRUS_ALLOW_HOT_VALIDATION=1` only for an intentional maintenance window.
+  The hot-runtime refusal is **disabled by default** (the hot signal was firing
+  false positives — app reported hot while idle — wrongly blocking harmless
+  checks); the wrapper logs the detected state but runs anyway. Set
+  `PYRUS_ENFORCE_HOT_VALIDATION=1` to re-enable the refusal once detection is
+  trustworthy. Use targeted package tests during live app work;
+  `PYRUS_ALLOW_HOT_VALIDATION=1` stays a one-off bypass when the refusal is enforced.
 - `diagnose-agent-restarts.mjs` is observe-only restart attribution. It
   correlates `.pyrus-runtime/flight-recorder` incidents with surviving Codex
   session JSONL, Codex SQLite logs, Replit runtime file mtimes, and workflow log
