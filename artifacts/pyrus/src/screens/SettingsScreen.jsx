@@ -2936,7 +2936,7 @@ function SignalMonitorSettingsPanel({ enabled, watchlists }) {
         <StateRow label="Environment" value={liveProfile?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
         <StateRow label="Configured symbols" value={statusSnapshot.configuredMaxSymbols ?? MISSING_VALUE} />
         <StateRow label="Resolved symbols" value={statusSnapshot.resolvedSymbols ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? CSS_COLOR.amber : CSS_COLOR.textSec} />
-        <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.total} />
+        <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.symbols} />
         <StateRow label="Pinned symbols" value={statusSnapshot.pinnedSymbols ?? MISSING_VALUE} />
         <StateRow label="Expanded symbols" value={statusSnapshot.expansionSymbols ?? MISSING_VALUE} />
         <StateRow label="High Beta 500" value={highBetaUniverseStatus.label} tone={highBetaUniverseStatus.tone} />

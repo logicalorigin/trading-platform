@@ -45,6 +45,11 @@ export const summarizeSignalMonitorStates = (states) => {
   const list = Array.isArray(states) ? states : [];
   const summary = {
     total: list.length,
+    symbols: new Set(
+      list
+        .map((state) => String(state?.symbol || "").trim().toUpperCase())
+        .filter(Boolean),
+    ).size,
     fresh: 0,
     ok: 0,
     stale: 0,
@@ -121,50 +126,5 @@ export const buildSignalMonitorStatusSnapshot = ({
     universeSource: universe?.source ?? null,
     universeFallbackUsed: Boolean(universe?.fallbackUsed),
     universeDegradedReason: universe?.degradedReason ?? null,
-  };
-};
-
-export const resolveSignalMonitorStatus = ({
-  profile,
-  pending = false,
-  requestErrored = false,
-} = {}) => {
-  const runtimeFallback = isSignalMonitorRuntimeFallbackProfile(profile);
-  const degraded = isSignalMonitorDegradedProfile(profile);
-  const enabled = Boolean(profile?.enabled) && !degraded;
-  const errored = Boolean(requestErrored || (degraded && !runtimeFallback));
-
-  if (pending) {
-    return {
-      degraded,
-      enabled,
-      errored,
-      label: "SCANNING",
-    };
-  }
-
-  if (runtimeFallback) {
-    return {
-      degraded,
-      enabled,
-      errored,
-      label: "RUNTIME",
-    };
-  }
-
-  if (errored) {
-    return {
-      degraded,
-      enabled,
-      errored,
-      label: "SCAN ERROR",
-    };
-  }
-
-  return {
-    degraded,
-    enabled,
-    errored,
-    label: enabled ? "SCAN ON" : "SCAN OFF",
   };
 };

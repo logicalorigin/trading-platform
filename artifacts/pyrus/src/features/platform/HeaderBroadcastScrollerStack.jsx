@@ -1858,7 +1858,7 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "healthy"
       : "no-subscribers";
   const signalStatusLabel = signalHasError
-    ? "SCAN ERROR"
+    ? "STREAM ERROR"
     : signalDegraded
       ? signalRuntimeFallback
         ? "RUNTIME"
@@ -1870,10 +1870,10 @@ export const HeaderBroadcastScrollerStack = memo(({
     : signalScanPending
       ? "UPDATING"
       : signalEvaluationPending || signalSnapshot?.pending
-        ? "SCANNING"
+        ? "SYNCING"
         : signalScanEnabled
-        ? "SCAN ON"
-        : "SCAN OFF";
+        ? "LIVE"
+        : "OFF";
   const flowWaveStatus = flowScanHasError
     ? "offline"
     : flowScanDegraded || flowSessionQuietWithRetainedEvents || flowScanStale
