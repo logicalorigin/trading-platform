@@ -392,6 +392,19 @@ function resolveEnvironment(environment?: RuntimeMode): RuntimeMode {
   return environment ?? getRuntimeMode();
 }
 
+// Signals are ONE universal upstream source — NOT scoped to a deployment/runtime
+// environment (shadow/paper/live is a downstream execution concern). Every
+// signal reader (the page + all deployments) resolves to this single canonical
+// signal profile so they all see the same feed. We reuse the enabled "paper"
+// profile as the canonical key to avoid a data migration; the producer already
+// generates it. (resolveEnvironment above remains for legacy per-env read paths
+// until they are migrated in later stages.)
+const CANONICAL_SIGNAL_ENVIRONMENT: RuntimeMode = "paper";
+
+export function resolveSignalSourceEnvironment(): RuntimeMode {
+  return CANONICAL_SIGNAL_ENVIRONMENT;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -1017,6 +1030,9 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     active: state.active,
     lastEvaluatedAt: state.lastEvaluatedAt ?? null,
     lastError: state.lastError ?? null,
+    // Always-defined current trend (bullish/bearish), persisted alongside the
+    // sparse crossover so the bootstrap can surface a direction for every symbol.
+    trendDirection: state.trendDirection ?? null,
     actionEligible: actionability.actionEligible,
     actionBlocker: actionability.actionBlocker,
   };
@@ -1107,6 +1123,7 @@ function buildUnavailableSignalMonitorSnapshotState(input: {
     active: true,
     lastEvaluatedAt: input.evaluatedAt,
     lastError: "No signal monitor state is available for this symbol/timeframe.",
+    trendDirection: null,
     actionEligible: false,
     actionBlocker: "no_signal",
   };
@@ -3581,9 +3598,13 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
   if (signalMonitorBackfillRefreshInFlight) {
     return;
   }
-  if (!isSignalMonitorBarEvaluationEnabled()) {
-    return;
-  }
+  // The legacy bar-eval flag does NOT gate this backfill: it is the
+  // server-owned SSE producer's own deep-history bar supply — what the
+  // aggregated 2m/5m/15m/1h/1d frames need to warm the pyrus indicator — not
+  // the legacy scan. It must keep running while
+  // PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED is off so the producer stays
+  // self-sufficient. (Only the native 1m frame needs no backfill, which is why
+  // it alone kept generating after this supply was switched off.)
   // Back OFF under pressure: the backfill is the very kind of universe-wide
   // getBars load that feeds resource pressure, so skip this cycle entirely once
   // the API is at "high". The live ring / per-tick live edge keeps evaluation
@@ -3640,6 +3661,10 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
               priority: SIGNAL_MONITOR_MATRIX_BARS_PRIORITY,
               includeProvisionalLiveEdge: false,
               allowHistoricalFallback: true,
+              // Producer-owned backfill: allowed to load provider history even
+              // while the legacy bar-eval flag is off (this is the producer's
+              // bar supply, not the legacy scan).
+              bypassPassiveSourceGate: true,
             });
             if (snapshot.bars.length) {
               signalMonitorBackfilledBaseByCell.set(
@@ -4591,6 +4616,7 @@ async function upsertSymbolState(input: {
   status: SignalMonitorStatus;
   evaluatedAt: Date;
   lastError?: string | null;
+  trendDirection?: string | null;
 }) {
   const currentSignalAt = await resolveStoredSignalMonitorSignalAt(input);
   const values = {
@@ -4608,6 +4634,7 @@ async function upsertSymbolState(input: {
     active: true,
     lastEvaluatedAt: input.evaluatedAt,
     lastError: input.lastError ?? null,
+    trendDirection: input.trendDirection ?? null,
     updatedAt: input.evaluatedAt,
   };
   const existing = await readStoredSignalMonitorSymbolState({
@@ -4881,9 +4908,14 @@ export async function loadSignalMonitorCompletedBars(input: {
   includeProvisionalLiveEdge?: boolean;
   allowHistoricalFallback?: boolean;
   signal?: AbortSignal;
+  // When true, this load runs even while the legacy bar-eval flag is off. Used
+  // only by the server-owned producer's deep-history backfill — the producer's
+  // own bar supply, not the legacy scan/on-demand evaluate paths (which stay
+  // gated so scan-deprecation holds).
+  bypassPassiveSourceGate?: boolean;
 }): Promise<SignalMonitorCompletedBarsSnapshot> {
   throwIfSignalMonitorAborted(input.signal);
-  if (!isSignalMonitorBarEvaluationEnabled()) {
+  if (!input.bypassPassiveSourceGate && !isSignalMonitorBarEvaluationEnabled()) {
     throw new HttpError(503, SIGNAL_MONITOR_PASSIVE_SIGNAL_SOURCE_MESSAGE, {
       code: "signal_monitor_passive_signal_source",
     });
@@ -6273,6 +6305,9 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             status,
             evaluatedAt: dateOrNull(state.lastEvaluatedAt) ?? input.evaluatedAt,
             lastError: null,
+            // Persist the always-defined current trend so the bootstrap can show
+            // a buy/sell direction on load; rides with the crossover, not actionable.
+            trendDirection: state.indicatorSnapshot?.trendDirection ?? null,
           });
           await persistSignalMonitorMatrixStateEventBestEffort({
             profile: input.profile,
@@ -6293,6 +6328,65 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       "Signal monitor matrix state persistence failed",
     );
   }
+}
+
+// Coalescing single-flight for state persistence. The 150ms stream-flush delta
+// and the request/runtime-driven full-matrix persist both fire un-awaited; under
+// load they stacked, each holding up to `evaluationConcurrency` of the
+// hard-capped 12 DB connections and cascading into pool-acquire timeouts that
+// surface as flapping "degraded"/error reads in the UI. This caps persistence to
+// ONE in-flight run per profile: concurrent requests merge into a pending set
+// (latest state per symbol/timeframe wins) that drains after the in-flight run
+// completes. Persistence stays best-effort and idempotent — coalescing only
+// delays durability slightly and the live stream is unaffected.
+const signalMonitorPersistInFlight = new Set<string>();
+const signalMonitorPersistPending = new Map<
+  string,
+  {
+    profile: DbSignalMonitorProfile;
+    states: Map<string, SignalMonitorMatrixStateResult>;
+    evaluatedAt: Date;
+  }
+>();
+
+function schedulePersistSignalMonitorMatrixStatesBestEffort(input: {
+  profile: DbSignalMonitorProfile;
+  states: SignalMonitorMatrixStateResult[];
+  evaluatedAt: Date;
+}) {
+  const key = input.profile.id;
+  const merged = signalMonitorPersistPending.get(key) ?? {
+    profile: input.profile,
+    states: new Map<string, SignalMonitorMatrixStateResult>(),
+    evaluatedAt: input.evaluatedAt,
+  };
+  for (const state of input.states) {
+    merged.states.set(`${state.symbol} ${state.timeframe}`, state);
+  }
+  merged.profile = input.profile;
+  merged.evaluatedAt = input.evaluatedAt;
+  signalMonitorPersistPending.set(key, merged);
+
+  if (signalMonitorPersistInFlight.has(key)) {
+    return;
+  }
+  signalMonitorPersistInFlight.add(key);
+  void (async () => {
+    try {
+      let next = signalMonitorPersistPending.get(key);
+      while (next) {
+        signalMonitorPersistPending.delete(key);
+        await persistSignalMonitorMatrixStatesBestEffort({
+          profile: next.profile,
+          states: Array.from(next.states.values()),
+          evaluatedAt: next.evaluatedAt,
+        });
+        next = signalMonitorPersistPending.get(key);
+      }
+    } finally {
+      signalMonitorPersistInFlight.delete(key);
+    }
+  })();
 }
 
 function buildSignalMonitorMatrixErrorState(input: {
@@ -6566,13 +6660,17 @@ function signalMonitorMatrixStreamActiveScope() {
 export function getSignalMonitorMatrixStreamStatus(
   scope?: SignalMonitorMatrixStreamScope,
 ): SignalMonitorMatrixStreamStatusEvent {
-  const barEvaluationEnabled = isSignalMonitorBarEvaluationEnabled();
+  // The server-owned producer generates matrix signals independent of the
+  // legacy bar-eval flag (its deep-history backfill is producer-driven, not the
+  // legacy scan), so stream availability must reflect the real stock-aggregate
+  // stream — NOT isSignalMonitorBarEvaluationEnabled() — otherwise the header
+  // reports "unavailable" while signals are actually flowing.
   const diagnostics = getStockAggregateStreamDiagnostics();
   const diagnosticSource = signalMonitorMatrixStreamSourceFromDiagnostics(
     diagnostics.provider,
   );
-  const source = barEvaluationEnabled ? diagnosticSource : "none";
-  const activeProvider = barEvaluationEnabled && diagnostics.activeProvider
+  const source = diagnosticSource;
+  const activeProvider = diagnostics.activeProvider
     ? signalMonitorMatrixStreamSourceFromDiagnostics(diagnostics.activeProvider)
     : null;
   const activeScope = scope
@@ -6581,10 +6679,7 @@ export function getSignalMonitorMatrixStreamStatus(
         cells: signalMonitorMatrixStreamCellCount(scope),
       }
     : signalMonitorMatrixStreamActiveScope();
-  const available =
-    barEvaluationEnabled &&
-    source !== "none" &&
-    isStockAggregateStreamingAvailable();
+  const available = source !== "none" && isStockAggregateStreamingAvailable();
   const streaming = Boolean(diagnostics.quoteSubscriptionActive);
   const state = !available ? "unavailable" : streaming ? "open" : "degraded";
   const fallbackState: SignalMonitorMatrixStreamFallbackState = !available
@@ -6874,7 +6969,7 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
   }
 
   persistByProfile.forEach((entry) => {
-    void persistSignalMonitorMatrixStatesBestEffort({
+    schedulePersistSignalMonitorMatrixStatesBestEffort({
       profile: entry.profile,
       states: entry.states,
       evaluatedAt,
@@ -7186,6 +7281,18 @@ async function refreshSignalMonitorServerOwnedProducers(): Promise<void> {
           environment: universe.profile.environment,
           profile: universe.profile,
           scope,
+        });
+        // Keep the producer self-sufficient: refresh the deep-history backfill
+        // the aggregated frames (2m/5m/15m/1h/1d) need to warm the indicator.
+        // This was previously driven by startSignalMonitorLocalBarCacheWarmup
+        // (removed from backgroundWorkers during scan-deprecation, which dropped
+        // the producer's deep-history supply and stopped generation for every
+        // frame except native 1m). Driving it from the producer ties the bar
+        // supply to the consumer and keeps it independent of the legacy scan.
+        void refreshSignalMonitorBackfilledBaseBars({
+          symbols,
+          timeframes,
+          evaluatedAt: new Date(),
         });
         activeEnvironments.add(universe.profile.environment);
       } catch (error) {
@@ -8183,7 +8290,21 @@ function storedSignalStateToMatrixState(
       dateOrNull(state.latestBarAt) ??
       new Date(0),
     lastError: state.lastError,
-    indicatorSnapshot: null,
+    // Surface the persisted current trend so the DB-sourced bootstrap carries a
+    // buy/sell direction for every symbol on load (live deltas already do).
+    indicatorSnapshot:
+      state.trendDirection === "bullish" || state.trendDirection === "bearish"
+        ? {
+            trendDirection: state.trendDirection,
+            trendAgeBars: null,
+            trendAgeBucket: null,
+            adx: null,
+            strength: null,
+            volatilityScore: null,
+            mtf: [],
+            filterState: null,
+          }
+        : null,
     canonicalSignalEvent: null,
   } as SignalMonitorMatrixStateResult;
 }
@@ -9159,7 +9280,7 @@ export async function evaluateSignalMonitorMatrix(input: {
       skippedSymbols,
       sourceRequestCount,
     };
-    void persistSignalMonitorMatrixStatesBestEffort({
+    schedulePersistSignalMonitorMatrixStatesBestEffort({
       profile,
       states,
       evaluatedAt,

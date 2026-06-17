@@ -52,6 +52,10 @@ export const signalMonitorSymbolStatesTable = pgTable(
     symbol: varchar("symbol", { length: 32 }).notNull(),
     timeframe: varchar("timeframe", { length: 16 }).notNull(),
     currentSignalDirection: varchar("current_signal_direction", { length: 8 }),
+    // Always-defined current trend (bullish/bearish) from the indicator, persisted
+    // alongside the sparse crossover so the matrix bootstrap can show a direction
+    // for every warmed-up symbol on load. NOT used for actionability.
+    trendDirection: varchar("trend_direction", { length: 8 }),
     currentSignalAt: timestamp("current_signal_at", { withTimezone: true }),
     currentSignalPrice: numeric("current_signal_price", {
       precision: 18,
