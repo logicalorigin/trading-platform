@@ -365,7 +365,7 @@ test("buildMachineStateDiagramModel ignores malformed incident event entries", (
   const incidents = nodeById(model, "diagnostics-incidents");
   assert.equal(incidents.status, "healthy");
   assert.equal(incidents.canonicalState, "IncidentResolved");
-  assert.match(incidents.detail, /0 active/);
+  assert.match(incidents.detail, /0 open/);
 });
 
 test("buildMachineStateDiagramModel shows an idle Massive provider as neutral idle", () => {
@@ -588,4 +588,185 @@ test("buildMachineStateDiagramGroups derives the 27 locked master edges", () => 
   ]) {
     assert.ok(ids.includes(expected), `expected master edge ${expected}`);
   }
+});
+
+// --- Database card (persistence sink) ---------------------------------------
+// Sourced from the existing `storage` (connectivity / size / table freshness)
+// and `resource-pressure` (connection pool) snapshots — no new backend subsystem.
+const latestWithDatabase = ({ storage, resourcePressure } = {}) => {
+  const latest = baseLatest();
+  if (storage) {
+    latest.snapshots.push({
+      subsystem: "storage",
+      status: storage.status ?? "ok",
+      severity: "success",
+      metrics: storage,
+    });
+  }
+  if (resourcePressure) {
+    latest.snapshots.push({
+      subsystem: "resource-pressure",
+      status: "ok",
+      severity: "success",
+      metrics: resourcePressure,
+    });
+  }
+  return latest;
+};
+
+const healthyStorageMetrics = {
+  status: "ok",
+  reachable: true,
+  readWriteVerified: true,
+  pingMs: 6,
+  databaseMb: 1200,
+  warningDatabaseMb: 15360,
+  storagePressureLevel: "ok",
+  monitoredTables: [
+    { table: "quote_cache", rowEstimate: 1000, newestAt: "2026-06-12T11:59:55.000Z" },
+    { table: "bar_cache", rowEstimate: 500, newestAt: "2026-06-12T11:59:50.000Z" },
+  ],
+};
+
+const healthyPoolMetrics = {
+  dbPoolMax: 10,
+  dbPoolActive: 2,
+  dbPoolWaiting: 0,
+  dbPoolIdle: 8,
+};
+
+const dbMaster = (model) =>
+  model.groups.masters.find((master) => master.id === "database");
+
+test("database card reads unknown when storage and pool snapshots are absent", () => {
+  const model = buildModel();
+  for (const id of [
+    "database-health",
+    "database-pool",
+    "database-storage",
+    "database-tables",
+  ]) {
+    const node = nodeById(model, id);
+    assert.equal(node.status, "unknown", `${id} should be unknown without telemetry`);
+    assert.equal(node.evidence, "unknown");
+  }
+  assert.equal(dbMaster(model).status, "unknown");
+});
+
+test("database card is healthy when storage is reachable and the pool is not saturated", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: healthyStorageMetrics,
+      resourcePressure: healthyPoolMetrics,
+    }),
+  });
+  assert.equal(nodeById(model, "database-health").status, "healthy");
+  assert.equal(nodeById(model, "database-health").canonicalState, "StorageReachable");
+  assert.equal(nodeById(model, "database-pool").status, "healthy");
+  assert.equal(nodeById(model, "database-storage").status, "healthy");
+  assert.equal(nodeById(model, "database-tables").status, "healthy");
+  assert.equal(dbMaster(model).status, "healthy");
+});
+
+test("database master goes down when storage is unreachable, even with a healthy pool", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: { status: "unavailable", reachable: false, readWriteVerified: false },
+      resourcePressure: healthyPoolMetrics,
+    }),
+  });
+  assert.equal(nodeById(model, "database-health").status, "down");
+  assert.equal(nodeById(model, "database-health").canonicalState, "StorageUnreachable");
+  // Pool still reads its own healthy telemetry (truth bias: no cascade)...
+  assert.equal(nodeById(model, "database-pool").status, "healthy");
+  // ...but the master takes the worst-of its children.
+  assert.equal(dbMaster(model).status, "down");
+});
+
+test("database card flags pool saturation and storage pressure as degraded", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: { ...healthyStorageMetrics, storagePressureLevel: "warning" },
+      resourcePressure: { ...healthyPoolMetrics, dbPoolWaiting: 4 },
+    }),
+  });
+  assert.equal(nodeById(model, "database-pool").status, "degraded");
+  assert.equal(nodeById(model, "database-pool").canonicalState, "PoolSaturated");
+  assert.equal(nodeById(model, "database-storage").status, "degraded");
+  assert.equal(dbMaster(model).status, "degraded");
+});
+
+// --- Attribution: where pressure / incidents come from ----------------------
+test("incidents node attributes open events by subsystem", () => {
+  const latest = baseLatest();
+  latest.events = [
+    { subsystem: "runtime", severity: "warning", status: "open" },
+    { subsystem: "runtime", severity: "warning", status: "open" },
+    { subsystem: "ibkr", severity: "warning", status: "open" },
+    { subsystem: "api", severity: "warning", status: "resolved" },
+  ];
+  const incidents = nodeById(buildModel({ latest }), "diagnostics-incidents");
+  assert.equal(incidents.status, "degraded");
+  assert.match(incidents.detail, /3 open: runtime 2 · ibkr 1/);
+  assert.equal(incidents.metric, "runtime 2"); // dominant source shown on the row
+});
+
+test("api pressure ranks drivers worst-first and marks the source card", () => {
+  const latest = baseLatest();
+  latest.snapshots.push({
+    subsystem: "resource-pressure",
+    status: "warning",
+    severity: "warning",
+    metrics: {
+      pressureLevel: "high",
+      dbPoolMax: 12,
+      dbPoolActive: 12,
+      dbPoolWaiting: 7,
+      dbPoolIdle: 0,
+      // Backend order is structural, NOT severity-sorted: a "watch" driver leads
+      // here, ahead of two "high" drivers. The model must re-rank worst-first.
+      dominantDrivers: [
+        { kind: "api-event-loop", label: "API event loop", level: "watch", detail: "95 ms" },
+        { kind: "api-latency", label: "API latency", level: "high", detail: "4106 ms" },
+        { kind: "db-pool", label: "DB pool", level: "high", detail: "12/12 active, 7 waiting" },
+        { kind: "browser-memory", label: "Browser memory", level: "normal", detail: "20%" },
+      ],
+    },
+  });
+  const apiPressure = nodeById(buildModel({ latest }), "api-pressure");
+  // The "high" driver headlines, NOT the "watch" one that led the backend array.
+  assert.equal(apiPressure.metric, "API latency");
+  assert.match(
+    apiPressure.detail,
+    /from API latency \(4106 ms\), DB pool \(12\/12 active, 7 waiting\), API event loop \(95 ms\)/,
+  );
+  assert.doesNotMatch(apiPressure.detail, /Browser memory/); // normal-level excluded
+  // db-pool maps to the Database card, so it is surfaced as a pressure source.
+  assert.deepEqual(
+    buildModel({ latest }).pressureSources.map((source) => source.cardId),
+    ["database"],
+  );
+});
+
+test("database bus row counts sum monitored tables per owning card", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: {
+        ...healthyStorageMetrics,
+        monitoredTables: [
+          // `table` is the real backend field (diagnostics.ts), not `name`.
+          { table: "quote_cache", rowEstimate: 200_000 },
+          { table: "bar_cache", rowEstimate: 50_000 },
+          { table: "flow_events", rowEstimate: 30_000 },
+          { table: "diagnostic_snapshots", rowEstimate: 9_000 },
+          { table: "unmapped_table", rowEstimate: 999 },
+        ],
+      },
+    }),
+  });
+  assert.equal(model.databaseRowCounts.market, 250_000); // quote_cache + bar_cache
+  assert.equal(model.databaseRowCounts.flow, 30_000);
+  assert.equal(model.databaseRowCounts.diagnostics, 9_000);
+  assert.equal(model.databaseRowCounts.gex, undefined); // no monitored table
+  assert.equal(model.databaseRowCounts.unmapped, undefined); // table not owned by a card
 });

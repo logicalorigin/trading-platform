@@ -58,7 +58,7 @@ Other relevant cadences: runtime-control React Query poll 5s
 DiagnosticsScreen.jsx:724-731); backend line-usage refresh 2s
 (ibkr-line-usage.ts:78).
 
-## Master model groups (12) and child sensors (24) — visual structure
+## Master model groups (13) and child sensors (28) — visual structure
 
 Latest visual refinement (user-confirmed, 2026-06-12): Diagnostics and Client
 are **not** part of the normal bottom data pipeline. Diagnostics renders as a
@@ -73,12 +73,17 @@ reference, but the lane **chrome is not drawn** — no dashed lane boxes and no
 stage labels are rendered. Cards and edges float on the canvas; each card's own
 title provides orientation.
 
-View-only edge rule: the model still derives every verified master edge, but
-the renderer draws ONLY the hand-authored pipeline flow. No connectors are
-drawn into the observability rail at all (the earlier attention-status alert
-overlay was removed). Trouble surfaces through the Diagnostics card status and
-the bottom attention strip instead, so the pipeline never implies normal
-telemetry/data flow into the rail.
+View-only edge rule: the model still derives every verified master edge, but the
+renderer draws a curated, fully ORTHOGONAL view — NOT the 27 model master edges. It
+has three parts: the hand-authored pipeline flow (`VISUAL_FLOW_EDGES` via
+`edgePath`), the Database bus (`buildDatabaseHighway`), and the Algo convergence bus
+(`buildAlgoConvergence`). The one set of connectors drawn into the observability
+rail goes to the **Database** card: every card persists into it — a deliberate
+exception to the otherwise edge-free rail, by explicit product decision (see
+"Persistence + convergence buses" below). The Diagnostics card still takes no
+incoming edges; its trouble surfaces through the card status and the bottom
+attention strip, so the pipeline never implies normal telemetry/data flow into the
+rail.
 
 Market Data fan-out is column-anchored: the rendered card is a 2-column table
 (Equities | Options), and the three downstream edges leave from their actual
@@ -194,8 +199,8 @@ Pressure lives here as a server resource sample, not as a normal pipeline hop.
 |---|---|---|---|
 | diagnostics-collector "Collector" | `latest.timestamp/status/severity` (collectDiagnosticSnapshot diagnostics.ts:3712, 15s) | top-level status/severity | latest |
 | diagnostics-stream "Diagnostics SSE" | client-side EventSource state (/api/diagnostics/stream, routes/diagnostics.ts:321) | streamState mapping | client |
-| diagnostics-incidents "Incidents" | `latest.events` open/resolved + severity | open events → ≥ degraded; malformed entries ignored | latest |
-| api-pressure "API Pressure" | SERVER-only: memoryPressureState.server.pressureLevel + resource-pressure metrics + apiHeapUsedPercent | pressure level; heap ≥ 75% → degraded. Browser memory deliberately excluded (lives on Client) | latest |
+| diagnostics-incidents "Incidents" | `latest.events` open/resolved + severity, grouped by subsystem | open events → ≥ degraded; malformed ignored. Detail breaks down by subsystem (`runtime 5 · ibkr 2 …`); dominant subsystem shown inline | latest |
+| api-pressure "API Pressure" | SERVER-only: pressureLevel + resource-pressure `dominantDrivers` + apiHeapUsedPercent | pressure level; heap ≥ 75% → degraded. Detail names the elevated drivers (re-ranked worst-first); worst driver shown inline. Browser memory excluded (lives on Client) | latest |
 
 ### Client rail signals — `client`
 Client is a model group, not a card. Its children render as rail sections so
@@ -208,6 +213,20 @@ container.
 | client-transport "Transport" | EventSource state (DiagnosticsScreen.jsx:961-991) | streamState mapping — error shows amber here, not green | client |
 | browser-events "Browser Events" | `latest` browser snapshot (classifyBrowserSnapshot diagnostics.ts:1393), fed by the audit loop below | snapshot severity + event/warning counts | latest |
 | browser-memory "Browser Memory" | performance.memory sampling (memoryPressureStore, 5–15s) via memoryPressureState/footerSignal | % of limit: ≥75 degraded, ≥60 checking (mirrors diagnostics.ts:247-248) | client |
+
+### Database — `database`
+The persistence sink, rendered as a card in the observability rail below the
+Client sections. Reuses existing diagnostics telemetry (no new backend
+subsystem): the `storage` subsystem snapshot (`storage-health.ts` +
+`buildStorageMetrics` diagnostics.ts:2863) and the `resource-pressure` snapshot
+connection-pool metrics (diagnostics.ts:2745-2750). Each sensor colors by its own
+telemetry and reads `unknown` when its backing snapshot did not arrive.
+| Bubble | Sensor | Status rule | Source |
+|---|---|---|---|
+| database-health "Connectivity" | `storage` metrics: status / reachable / pingMs / readWriteVerified (storage-health.ts) | ok+reachable → healthy; degraded → degraded; unavailable/unreachable → down | latest |
+| database-pool "Connection Pool" | `resource-pressure` metrics: dbPoolActive/Max/Waiting/Idle (diagnostics.ts:2745-2750) | waiting > 0 → degraded; else healthy | latest |
+| database-storage "Storage" | `storage` metrics: databaseMb / warningDatabaseMb / storagePressureLevel (diagnostics.ts:2844-2860) | storagePressureLevel `warning` → degraded; else healthy | latest |
+| database-tables "Data Freshness" | `storage` metrics: monitoredTables[] newest/oldest (buildMonitoredStorageTableStats diagnostics.ts:2809) | tables present → healthy; empty/absent → unknown | latest |
 
 ## Master model edges (27)
 
@@ -247,6 +266,60 @@ rail rule above before drawing.
 
 Edge animation ⟺ evidence ≠ unknown ∧ status ∈ {healthy, checking} ∧ neither
 endpoint idle ∧ neither endpoint stale.
+
+### Persistence + convergence buses (orthogonal routing)
+
+All rendered edges are orthogonal (manhattan) and **render-only** — the model graph
+above stays at 27 master edges; the `database` master contributes none.
+
+**Database bus** (`buildDatabaseHighway`): every card persists into the Database
+card, so the 9 persistence edges render as ONE tight, non-crossing bus rather than
+9 diagonals. Each source feeds a vertical trunk in the right-hand gutter (clear of
+every card); lanes ride tightly so the trunk reads as one transport line, then
+DIVERGE into the card's left edge as a labeled, status-colored column
+(massive…account, top to bottom). No crossings: lane-x decreases as entry-y
+increases, so an exiting lane never crosses one still descending. Diagnostics drops
+straight down the narrow gutter between the card and the Client rail into the top
+edge. Broker and Massive are external feeds (persisted only via the Market Data
+caches) → **dashed** lanes. Drawing edges into the observability rail deliberately
+overrides the otherwise edge-free rail rule (explicit product decision).
+
+**Algo convergence bus** (`buildAlgoConvergence`): Signals/Flow/GEX feed Algo from
+the row above and merge into a tight bundle entering Algo's top edge (ordered by
+source-x, non-crossing); Account rises into the bottom edge.
+
+**Pipeline edges** (`VISUAL_FLOW_EDGES` via `edgePath`): the remaining
+broker/massive→Market, Market→Signals/Flow/GEX fan-out, and Algo→Account also route
+orthogonally through the inter-row gutters. Market fan-out stays column-anchored
+(`marketColumnPortX`) and its gutter legs are disjoint by construction.
+
+## Attribution — where pressure and incidents come from
+
+The diagram doesn't just flag trouble, it attributes it to a source, all from data
+the backend already computes:
+
+- **Pressure drivers.** `api-pressure` reads the resource-pressure `dominantDrivers`
+  (diagnostics.ts), keeps the elevated ones, and **re-ranks them worst-first by
+  severity** (the backend array is structurally ordered, not severity-sorted). The
+  detail names them (`from DB pool (12/12 active, 7 waiting), API latency (4106 ms)…`);
+  the worst driver shows inline as the node metric.
+- **Incident breakdown.** `diagnostics-incidents` groups open events by subsystem
+  (`runtime 5 · ibkr 2 · resource-pressure 1 …`); the dominant subsystem shows inline,
+  the full breakdown rides the detail.
+- **Pressure-source cards.** A driver kind that maps to a positioned card
+  (`PRESSURE_DRIVER_CARD`, e.g. `db-pool → database`) marks that card with a
+  `⚡ pressure` badge (`model.pressureSources`).
+- **Source → pressure links.** A faint dashed connector runs from each pressure-source
+  card up the rail gutter into the Diagnostics card, where API Pressure aggregates
+  (`buildPressureLinks`). This is the second sanctioned rail-edge exception (after the
+  Database bus).
+- **Per-lane row counts.** Each Database bus lane shows how many rows that source
+  persists, summed from `storage.monitoredTables[].rowEstimate` by owning card
+  (`DB_TABLE_SOURCE`, e.g. market = quote/bar/option-chain/ticker caches). Sources with
+  no monitored table carry no count.
+
+Every readout derives from observed telemetry only and is absent (no badge, no count,
+no driver) when its data did not arrive — the truth bias holds.
 
 ## Documented limitations
 

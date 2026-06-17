@@ -40,6 +40,28 @@ const EVIDENCE_ORDER = Object.freeze({
 
 const MISSING_VALUE = "n/a";
 
+// Which Backend Data Machine card owns each monitored storage table (diagnostics.ts
+// MONITORED_STORAGE_TABLES). Drives the per-lane row count on the Database bus.
+// Tables with no owning card here simply carry no lane count.
+const DB_TABLE_SOURCE = Object.freeze({
+  quote_cache: "market",
+  bar_cache: "market",
+  option_chain_snapshots: "market",
+  ticker_reference_cache: "market",
+  flow_events: "flow",
+  flow_event_hydration_sessions: "flow",
+  diagnostic_snapshots: "diagnostics",
+  diagnostic_events: "diagnostics",
+});
+
+// Which positioned card a pressure driver (diagnostics.ts dominantDrivers.kind)
+// maps to, so the diagram can mark the card as a pressure source and trace it to
+// API Pressure. Only drivers with a real card are mapped; the rest stay attributed
+// in the API Pressure node detail. db-pool is the actionable one today.
+const PRESSURE_DRIVER_CARD = Object.freeze({
+  "db-pool": "database",
+});
+
 const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -460,17 +482,35 @@ const incidentNode = ({ latest, observedAt }) => {
     : openEvents.length
       ? worstStatus(incidentStatus, "degraded")
       : "healthy";
+  // Attribute open incidents to their subsystem so the node says WHERE they come
+  // from (e.g. "runtime 5 · ibkr 2 · …"), worst-count first.
+  const bySubsystem = {};
+  for (const event of openEvents) {
+    const sub = firstString(event.subsystem, event.source) || "other";
+    bySubsystem[sub] = (bySubsystem[sub] ?? 0) + 1;
+  }
+  const rankedSubsystems = Object.entries(bySubsystem).sort((a, b) => b[1] - a[1]);
+  const breakdown = rankedSubsystems
+    .map(([sub, count]) => `${sub} ${count}`)
+    .join(" · ");
+  // Dominant source shown inline on the row; full breakdown rides the detail.
+  const topSubsystem = rankedSubsystems.length
+    ? `${rankedSubsystems[0][0]} ${rankedSubsystems[0][1]}`
+    : null;
   return makeNode({
     id: "diagnostics-incidents",
     label: "Incidents",
     lane: "Diagnostics",
     canonicalState: openEvents.length ? "IncidentOpen" : "IncidentResolved",
     status,
-    detail: eventsObserved
-      ? `${formatCount(openEvents.length)} active / ${formatCount(events.length)} sampled`
-      : "event list not observed",
+    detail: !eventsObserved
+      ? "event list not observed"
+      : openEvents.length
+        ? `${formatCount(openEvents.length)} open: ${breakdown}`
+        : `0 open / ${formatCount(events.length)} sampled`,
     observedAt,
     evidence: eventsObserved ? "observed" : "unknown",
+    metric: topSubsystem,
   });
 };
 
@@ -612,6 +652,21 @@ export const MACHINE_STATE_GROUPS = Object.freeze([
       "route-admission",
       "browser-events",
       "browser-memory",
+    ]),
+  },
+  // Persistence sink. Sensors reuse the existing `storage` (connectivity, size,
+  // table freshness) and `resource-pressure` (connection pool) snapshots — no
+  // new backend subsystem. Rendered in the observability rail with edges drawn
+  // from every card (see MachineStateDiagram.jsx VISUAL_FLOW_EDGES + the rail
+  // override note in MACHINE_STATE_WIRING.md).
+  {
+    id: "database",
+    label: "Database",
+    children: Object.freeze([
+      "database-health",
+      "database-pool",
+      "database-storage",
+      "database-tables",
     ]),
   },
 ]);
@@ -766,6 +821,7 @@ export const buildMachineStateDiagramModel = ({
   const automationSnapshot = snapshotBySubsystem(latestRecord, "automation");
   const browserSnapshot = snapshotBySubsystem(latestRecord, "browser");
   const resourcePressureSnapshot = snapshotBySubsystem(latestRecord, "resource-pressure");
+  const storageSnapshot = snapshotBySubsystem(latestRecord, "storage");
   const apiMetrics = safeRecord(apiSnapshot?.metrics);
   const ibkrMetrics = safeRecord(ibkrSnapshot?.metrics);
   const marketDataMetrics = safeRecord(marketDataSnapshot?.metrics);
@@ -776,6 +832,64 @@ export const buildMachineStateDiagramModel = ({
   const automationMetrics = safeRecord(automationSnapshot?.metrics);
   const browserMetrics = safeRecord(browserSnapshot?.metrics);
   const resourceMetrics = safeRecord(resourcePressureSnapshot?.metrics);
+  const storageMetrics = safeRecord(storageSnapshot?.metrics);
+
+  // Database (persistence sink). Reuses the `storage` subsystem snapshot
+  // (connectivity / size / per-table freshness) and the `resource-pressure`
+  // snapshot (connection pool). Each sensor colors by its own telemetry and
+  // reads "unknown" when its backing snapshot did not arrive (truth bias).
+  const storageObserved = Boolean(storageSnapshot);
+  const dbStatusText = firstString(storageMetrics.status).toLowerCase();
+  const dbReachable = storageMetrics.reachable === true;
+  const dbHealthStatus = !storageObserved
+    ? "unknown"
+    : dbStatusText === "ok" && dbReachable
+      ? "healthy"
+      : dbStatusText === "degraded"
+        ? "degraded"
+        : "down";
+  const dbPingMs = firstFiniteNumber(storageMetrics.pingMs);
+  const dbReadWriteVerified = storageMetrics.readWriteVerified === true;
+
+  const dbPoolMax = firstFiniteNumber(resourceMetrics.dbPoolMax);
+  const dbPoolActive = firstFiniteNumber(resourceMetrics.dbPoolActive);
+  const dbPoolWaiting = firstFiniteNumber(resourceMetrics.dbPoolWaiting);
+  const dbPoolIdle = firstFiniteNumber(resourceMetrics.dbPoolIdle);
+  const poolObserved = dbPoolMax != null;
+  const dbPoolStatus = !poolObserved
+    ? "unknown"
+    : dbPoolWaiting != null && dbPoolWaiting > 0
+      ? "degraded"
+      : "healthy";
+
+  const dbSizeMb = firstFiniteNumber(storageMetrics.databaseMb);
+  const dbWarnMb = firstFiniteNumber(storageMetrics.warningDatabaseMb);
+  const dbPressureLevel = firstString(storageMetrics.storagePressureLevel).toLowerCase();
+  const dbStorageStatus =
+    !storageObserved || dbSizeMb == null
+      ? "unknown"
+      : dbPressureLevel === "warning"
+        ? "degraded"
+        : "healthy";
+
+  const dbMonitoredTables = arrayOrEmpty(storageMetrics.monitoredTables);
+  const dbNewestTableMs = dbMonitoredTables.reduce((newest, table) => {
+    const ms = timestampMs(safeRecord(table).newestAt);
+    return ms != null && (newest == null || ms > newest) ? ms : newest;
+  }, null);
+  const dbTablesStatus =
+    !storageObserved || dbMonitoredTables.length === 0 ? "unknown" : "healthy";
+  // Sum monitored-table row estimates per owning card, so each Database bus lane
+  // can show how many rows that source persists.
+  const databaseRowCounts = {};
+  for (const entry of dbMonitoredTables) {
+    const record = safeRecord(entry);
+    const source = DB_TABLE_SOURCE[firstString(record.table, record.name)];
+    const rows = firstFiniteNumber(record.rowEstimate);
+    if (source && rows != null) {
+      databaseRowCounts[source] = (databaseRowCounts[source] ?? 0) + rows;
+    }
+  }
   const runtimeSnapshot = runtimeSnapshotFrom(runtimeControl);
   const lineUsage = safeRecord(runtimePart(runtimeControl, "lineUsage"));
   const streams = safeRecord(runtimePart(runtimeControl, "streams"));
@@ -962,6 +1076,50 @@ export const buildMachineStateDiagramModel = ({
     hasRecordKeys(serverPressureRecord) ||
     Boolean(resourcePressureSnapshot) ||
     apiHeapUsedPercent != null;
+  // Dominant pressure drivers (diagnostics.ts resource-pressure dominantDrivers):
+  // names exactly which subsystem is driving server pressure (DB pool, API latency,
+  // event loop, workload…) so the API Pressure node attributes it instead of just
+  // reading "high". The backend array is in a fixed structural order, NOT sorted by
+  // severity, so keep the elevated ones and re-rank worst-first ourselves.
+  const elevatedPressureDrivers = arrayOrEmpty(resourceMetrics.dominantDrivers)
+    .map((driver) => safeRecord(driver))
+    .filter((driver) => {
+      const level = firstString(driver.level).toLowerCase();
+      return level && level !== "normal" && level !== "low" && level !== "ok";
+    })
+    .sort(
+      (a, b) =>
+        STATUS_ORDER[statusFromPressureLevel(b.level)] -
+        STATUS_ORDER[statusFromPressureLevel(a.level)],
+    );
+  const pressureDrivers = elevatedPressureDrivers.map((driver) => {
+    const name = firstString(driver.label, driver.kind);
+    const detail = firstString(driver.detail);
+    return detail ? `${name} (${detail})` : name;
+  });
+  // The worst-severity driver, shown inline on the card so the pressure source is
+  // visible without hovering.
+  const topPressureDriver = elevatedPressureDrivers.length
+    ? firstString(
+        elevatedPressureDrivers[0].label,
+        elevatedPressureDrivers[0].kind,
+      )
+    : null;
+  // Elevated drivers that map to a positioned card → the diagram marks those
+  // cards as pressure sources and links them to API Pressure.
+  const pressureSources = elevatedPressureDrivers
+    .map((driver) => {
+      const cardId = PRESSURE_DRIVER_CARD[firstString(driver.kind)];
+      return cardId
+        ? {
+            cardId,
+            label: firstString(driver.label, driver.kind),
+            detail: firstString(driver.detail),
+            level: firstString(driver.level),
+          }
+        : null;
+    })
+    .filter(Boolean);
   const browserMemoryMb = firstFiniteNumber(
     memoryRecord.browserMemoryMb,
     footerRecord.browserMemoryMb,
@@ -1388,15 +1546,15 @@ export const buildMachineStateDiagramModel = ({
       detail: apiPressureObserved
         ? metricDetail([
             `level=${serverPressureLevel || MISSING_VALUE}`,
+            pressureDrivers.length ? `from ${pressureDrivers.join(", ")}` : null,
             apiHeapUsedPercent != null
               ? `heap ${Math.round(apiHeapUsedPercent)}%`
               : null,
-            runtimeSnapshot.workloadStats ? "workload observed" : null,
-            runtimeSnapshot.hydrationStats ? "hydration observed" : null,
           ])
         : "server pressure not observed",
       observedAt,
       evidence: apiPressureObserved ? "observed" : "unknown",
+      metric: topPressureDriver,
     }),
     makeNode({
       id: "diagnostics-collector",
@@ -1485,6 +1643,81 @@ export const buildMachineStateDiagramModel = ({
       evidence: browserMemoryMb != null ? "observed" : "unknown",
       source: "client",
     }),
+    makeNode({
+      id: "database-health",
+      label: "Connectivity",
+      lane: "Persistence",
+      canonicalState:
+        dbHealthStatus === "down" ? "StorageUnreachable" : "StorageReachable",
+      status: dbHealthStatus,
+      detail: storageObserved
+        ? metricDetail([
+            dbReachable ? "reachable" : "unreachable",
+            dbPingMs != null ? `${formatMs(dbPingMs)} ping` : null,
+            `read/write ${dbReadWriteVerified ? "ok" : "no"}`,
+          ])
+        : "storage snapshot not observed",
+      observedAt,
+      evidence: storageObserved ? "observed" : "unknown",
+    }),
+    makeNode({
+      id: "database-pool",
+      label: "Connection Pool",
+      lane: "Persistence",
+      canonicalState: dbPoolStatus === "degraded" ? "PoolSaturated" : "PoolReady",
+      status: dbPoolStatus,
+      detail: poolObserved
+        ? metricDetail([
+            `${formatCount(dbPoolActive)}/${formatCount(dbPoolMax)} active`,
+            `${formatCount(dbPoolWaiting)} waiting`,
+            dbPoolIdle != null ? `${formatCount(dbPoolIdle)} idle` : null,
+          ])
+        : "pool stats not observed",
+      observedAt,
+      evidence: poolObserved ? "observed" : "unknown",
+      metric: poolObserved
+        ? `${formatCount(dbPoolActive)}/${formatCount(dbPoolMax)}`
+        : null,
+    }),
+    makeNode({
+      id: "database-storage",
+      label: "Storage",
+      lane: "Persistence",
+      canonicalState:
+        dbStorageStatus === "degraded" ? "StoragePressure" : "StorageSteady",
+      status: dbStorageStatus,
+      detail:
+        dbSizeMb != null
+          ? metricDetail([
+              `${formatCount(dbSizeMb)}mb`,
+              dbWarnMb != null ? `of ${formatCount(dbWarnMb)}mb warn` : null,
+              dbPressureLevel ? `pressure ${dbPressureLevel}` : null,
+            ])
+          : "database size not observed",
+      observedAt,
+      evidence: storageObserved && dbSizeMb != null ? "observed" : "unknown",
+      metric: dbSizeMb != null ? `${formatCount(dbSizeMb)}mb` : null,
+    }),
+    makeNode({
+      id: "database-tables",
+      label: "Data Freshness",
+      lane: "Persistence",
+      canonicalState: "SourceRead",
+      status: dbTablesStatus,
+      detail: dbMonitoredTables.length
+        ? metricDetail([
+            `${formatCount(dbMonitoredTables.length)} tables`,
+            dbNewestTableMs != null
+              ? `newest ${formatAge(dbNewestTableMs, nowMs)}`
+              : null,
+          ])
+        : "table stats not observed",
+      observedAt,
+      evidence: dbMonitoredTables.length ? "observed" : "unknown",
+      metric: dbMonitoredTables.length
+        ? `${formatCount(dbMonitoredTables.length)} tbl`
+        : null,
+    }),
   ];
 
   const decayedNodes = applySnapshotDecay(nodes, snapshotAgeMs);
@@ -1542,6 +1775,8 @@ export const buildMachineStateDiagramModel = ({
     summary: summaryFromNodes(decayedNodes, snapshotAgeMs),
     nodes: decayedNodes,
     edges,
+    databaseRowCounts,
+    pressureSources,
   };
   return { ...model, groups: buildMachineStateDiagramGroups(model) };
 };

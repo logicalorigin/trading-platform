@@ -156,10 +156,42 @@ test("contract: renderer status glyphs, funnel stages, and observability rail ma
   // is only read by the removed render; viewBox uses band.x/y/w/h, not label).
   assert.doesNotMatch(componentSource, /band\.label/);
   assert.match(componentSource, /const ATTENTION_STATUSES = new Set\(\["checking", "degraded", "down"\]\)/);
-  // No connectors are drawn into the observability rail: the alert overlay was
-  // removed, so trouble surfaces via the Diagnostics card + attention strip only.
+  // Connectors into the observability rail are limited to the Database card: the
+  // alert overlay was removed, so trouble surfaces via the Diagnostics card +
+  // attention strip only, and the Diagnostics card itself takes no incoming edges.
   assert.doesNotMatch(componentSource, /viewKind: "alert"/);
   assert.doesNotMatch(componentSource, /to: "diagnostics"/);
+  // The Database card (also in the rail) is the one deliberate exception: every
+  // card persists into it. The persistence edges render as a single tight,
+  // non-crossing BUS (buildDatabaseHighway, not VISUAL_FLOW_EDGES): feeders merge
+  // into one trunk in the right gutter and diverge into the card's labeled left
+  // edge. Lock the bus and all 8 left-feeding sources.
+  assert.match(componentSource, /const buildDatabaseHighway = /);
+  assert.match(componentSource, /const DB_HIGHWAY_SOURCES = /);
+  for (const id of [
+    "massive",
+    "broker",
+    "market",
+    "gex",
+    "signals",
+    "flow",
+    "algo",
+    "account",
+  ]) {
+    assert.match(
+      componentSource,
+      new RegExp(`id: "${id}", feeder:`),
+      `expected ${id} as a Database bus source`,
+    );
+  }
+  // Diagnostics persists too, routed straight down the rail gutter into the top.
+  assert.match(componentSource, /id: "diagnostics->database"/);
+  // No crossings: lane-x DECREASES as entry-y increases (outer/top lane exits
+  // first), so an exiting lane never crosses one still descending.
+  assert.match(componentSource, /\(mid - i\) \* DB_HIGHWAY_LANE_GAP/);
+  // Signals/Flow/GEX/Account converge into Algo as the same kind of bus.
+  assert.match(componentSource, /const buildAlgoConvergence = /);
+  assert.match(componentSource, /id: "account->algo"/);
   // Position Quotes (and any split node) renders a single worst-of glyph; the
   // live/shadow breakdown lives in the card footer detail, not a doubled glyph.
   assert.doesNotMatch(componentSource, /child\.split \?/);

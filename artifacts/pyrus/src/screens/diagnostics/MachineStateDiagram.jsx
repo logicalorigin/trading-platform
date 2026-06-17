@@ -36,6 +36,11 @@ const GROUP_XY = Object.freeze({
   algo: { x: 196, y: 388, w: 230 },
   account: { x: 206, y: 496, w: 210 },
   diagnostics: { x: 716, y: 48, w: 230 },
+  // Persistence sink in the observability rail, below the Client rail (ends
+  // y≈386) and within the observability band (bottom y≈620). Right edge aligns
+  // with the Diagnostics card. Every card persists into it as a tight bus
+  // (deliberate rail-edge exception — see buildDatabaseHighway / MACHINE_STATE_WIRING.md).
+  database: { x: 716, y: 408, w: 230 },
 });
 
 // Market Data card renders a fixed-height 2x2 provider table, not bubble rows.
@@ -266,30 +271,6 @@ const VISUAL_FLOW_EDGES = Object.freeze([
     transports: [{ means: "IBKR realtime", detail: "option chains via bridge", fresh: true }],
   },
   {
-    from: "signals",
-    to: "algo",
-    label: "signals",
-    transports: [{ means: "In-process", detail: "signal engine worker state", fresh: true }],
-  },
-  {
-    from: "flow",
-    to: "algo",
-    label: "flow",
-    transports: [{ means: "In-process", detail: "flow events via worker state", fresh: true }],
-  },
-  {
-    from: "gex",
-    to: "algo",
-    label: "gex",
-    transports: [{ means: "In-process", detail: "gex projection via worker state", fresh: true }],
-  },
-  {
-    from: "account",
-    to: "algo",
-    label: "positions / risk",
-    transports: [{ means: "In-process", detail: "positions/risk via worker state", fresh: true }],
-  },
-  {
     from: "algo",
     to: "account",
     label: "orders / exits",
@@ -343,27 +324,6 @@ const centerOf = (rect) => ({
   y: rect.y + rect.height / 2,
 });
 
-// Same-row pairs with edges in both directions (diagnostics<->client) get a
-// small vertical offset so the two connectors do not overlap.
-const sideOffset = (fromRect, toRect) => (fromRect.x > toRect.x ? 7 : -7);
-
-const sameBand = (fromRect, toRect) => Math.abs(fromRect.y - toRect.y) < 40;
-
-// True when another card occupies the horizontal corridor between two
-// same-band cards (a straight side connector would cross it).
-const hasCardBetween = (fromRect, toRect, rects) => {
-  const left = Math.min(fromRect.x + fromRect.width, toRect.x + toRect.width);
-  const right = Math.max(fromRect.x, toRect.x);
-  return Object.values(rects).some(
-    (rect) =>
-      rect !== fromRect &&
-      rect !== toRect &&
-      Math.abs(rect.y - fromRect.y) < 60 &&
-      rect.x < right &&
-      rect.x + rect.width > left,
-  );
-};
-
 // Pick the bottom/top exit port nearest the target: edges leaving toward a
 // far-left/right target exit near the matching card corner.
 const exitX = (fromRect, targetX) => {
@@ -385,101 +345,59 @@ const marketColumnPortX = (rect, col, bias = 0) => {
   return rect.x + gridLeft + col * colW + colW / 2 + bias * colW;
 };
 
-// Cubic bezier point at t=0.5, used to drop the transport dot on the curve.
-const cubicMid = (p0, p1, p2, p3) => ({
-  x: (p0.x + 3 * p1.x + 3 * p2.x + p3.x) / 8,
-  y: (p0.y + 3 * p1.y + 3 * p2.y + p3.y) / 8,
-});
+// Orthogonal (manhattan) routing: every edge is right-angled, matching the bus
+// look. A port edge (Market fan-out) enters the target at its center; a port-less
+// edge enters at the source's own x (clamped into the target) so it drops more or
+// less straight down with no stray horizontal. The horizontal leg rides the gutter
+// just outside the target edge.
+const enterTargetX = (fromX, toRect, toCenterX, fromPortX) =>
+  fromPortX != null
+    ? toCenterX
+    : Math.min(Math.max(fromX, toRect.x + 18), toRect.x + toRect.width - 18);
 
-// Returns { d, mid }: the SVG path and its on-curve midpoint (for the dot).
-const edgePath = (fromRect, toRect, rects, fromPortX = null) => {
+const edgePath = (fromRect, toRect, fromPortX = null) => {
   const from = centerOf(fromRect);
   const to = centerOf(toRect);
 
-  if (sameBand(fromRect, toRect)) {
-    // Same-band pairs with cards between them bow underneath the band so the
-    // connector never crosses the intervening cards.
-    if (hasCardBetween(fromRect, toRect, rects)) {
-      const fromBottom = { x: from.x, y: fromRect.y + fromRect.height };
-      const toBottom = { x: to.x, y: toRect.y + toRect.height };
-      const dipY = Math.max(fromBottom.y, toBottom.y) + 34;
-      const c1 = { x: fromBottom.x, y: dipY };
-      const c2 = { x: toBottom.x, y: dipY };
-      return {
-        d: `M ${fromBottom.x} ${fromBottom.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${toBottom.x} ${toBottom.y}`,
-        mid: cubicMid(fromBottom, c1, c2, toBottom),
-      };
-    }
-    const offset = sideOffset(fromRect, toRect);
-    const leftToRight = fromRect.x < toRect.x;
-    const fromSide = leftToRight
-      ? { x: fromRect.x + fromRect.width, y: from.y + offset }
-      : { x: fromRect.x, y: from.y + offset };
-    const toSide = leftToRight
-      ? { x: toRect.x, y: to.y + offset }
-      : { x: toRect.x + toRect.width, y: to.y + offset };
-    const midX = (fromSide.x + toSide.x) / 2;
-    const c1 = { x: midX, y: fromSide.y };
-    const c2 = { x: midX, y: toSide.y };
+  if (fromRect.y !== toRect.y) {
+    const down = fromRect.y < toRect.y;
+    const fromX = fromPortX ?? exitX(fromRect, to.x);
+    const fromY = down ? fromRect.y + fromRect.height : fromRect.y;
+    const toX = enterTargetX(fromX, toRect, to.x, fromPortX);
+    const toY = down ? toRect.y : toRect.y + toRect.height;
+    const gutterY = down
+      ? Math.max(toY - 12, fromY + 6)
+      : Math.min(toY + 12, fromY - 6);
     return {
-      d: `M ${fromSide.x} ${fromSide.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${toSide.x} ${toSide.y}`,
-      mid: cubicMid(fromSide, c1, c2, toSide),
+      d: `M ${fromX} ${fromY} L ${fromX} ${gutterY} L ${toX} ${gutterY} L ${toX} ${toY}`,
+      mid: { x: (fromX + toX) / 2, y: gutterY },
     };
   }
 
-  if (fromRect.y < toRect.y) {
-    // Exit from a port biased toward the target so siblings below the source
-    // (e.g. the governor under the broker) are never crossed, then travel
-    // horizontally in the gutter just above the target row.
-    const fromBottom = { x: fromPortX ?? exitX(fromRect, to.x), y: fromRect.y + fromRect.height };
-    const toTop = { x: to.x, y: toRect.y };
-    const gutterY = Math.max(toRect.y - 18, fromBottom.y + 8);
-    const c1 = { x: fromBottom.x, y: gutterY };
-    const c2 = { x: toTop.x, y: gutterY };
-    return {
-      d: `M ${fromBottom.x} ${fromBottom.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${toTop.x} ${toTop.y}`,
-      mid: cubicMid(fromBottom, c1, c2, toTop),
-    };
-  }
-
-  const fromTop = { x: exitX(fromRect, to.x), y: fromRect.y };
-  const toBottom = { x: to.x, y: toRect.y + toRect.height };
-  const gutterY = Math.min(toBottom.y + 18, fromTop.y - 8);
-  const c1 = { x: fromTop.x, y: gutterY };
-  const c2 = { x: toBottom.x, y: gutterY };
+  // Same-row: step out the near side, through a mid gutter, into the far side.
+  const leftToRight = fromRect.x < toRect.x;
+  const fromX = leftToRight ? fromRect.x + fromRect.width : fromRect.x;
+  const toX = leftToRight ? toRect.x : toRect.x + toRect.width;
+  const midX = (fromX + toX) / 2;
   return {
-    d: `M ${fromTop.x} ${fromTop.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${toBottom.x} ${toBottom.y}`,
-    mid: cubicMid(fromTop, c1, c2, toBottom),
+    d: `M ${fromX} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${toX} ${to.y}`,
+    mid: { x: midX, y: (from.y + to.y) / 2 },
   };
 };
 
-const edgeLabelPosition = (fromRect, toRect, rects, fromPortX = null) => {
+const edgeLabelPosition = (fromRect, toRect, fromPortX = null) => {
   const from = centerOf(fromRect);
   const to = centerOf(toRect);
-
-  if (sameBand(fromRect, toRect)) {
-    if (hasCardBetween(fromRect, toRect, rects)) {
-      const dipY =
-        Math.max(fromRect.y + fromRect.height, toRect.y + toRect.height) + 34;
-      return { x: (from.x + to.x) / 2, y: dipY - 5 };
-    }
-    return {
-      x: (from.x + to.x) / 2,
-      y: from.y + sideOffset(fromRect, toRect) * 2 - 3,
-    };
+  if (fromRect.y !== toRect.y) {
+    const down = fromRect.y < toRect.y;
+    const fromX = fromPortX ?? exitX(fromRect, to.x);
+    const toX = enterTargetX(fromX, toRect, to.x, fromPortX);
+    const gutterY = down
+      ? Math.max(toRect.y - 12, fromRect.y + fromRect.height + 6)
+      : Math.min(toRect.y + toRect.height + 12, fromRect.y - 6);
+    return { x: (fromX + toX) / 2, y: gutterY - 4 };
   }
-
-  if (fromRect.y < toRect.y) {
-    return {
-      x: ((fromPortX ?? exitX(fromRect, to.x)) + to.x) / 2,
-      y: Math.max(toRect.y - 18, fromRect.y + fromRect.height + 8) - 4,
-    };
-  }
-
-  return {
-    x: (exitX(fromRect, to.x) + to.x) / 2,
-    y: Math.min(toRect.y + toRect.height + 18, fromRect.y - 8) + 9,
-  };
+  return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 4 };
 };
 
 const isAttentionStatus = (status) => ATTENTION_STATUSES.has(status);
@@ -515,6 +433,219 @@ const buildVisibleMasterEdges = (masters) => {
     ];
   });
 };
+
+// --- Database highway -------------------------------------------------------
+// The Database card lives in the observability rail and every card persists into
+// it. Rather than 9 long diagonals crossing the diagram, the persistence edges
+// MERGE into one tight vertical trunk in the right-hand gutter (clear of every
+// card) and travel together as a single transport line, then DIVERGE into the
+// Database card's left edge — one labeled, status-colored lane per source. Lanes
+// ride tightly (small gap) so the trunk reads as one line. Order is the trick
+// that kills crossings: lane-x DECREASES as entry-y increases, so the outer/top
+// lane exits highest and no exiting lane ever crosses one still descending.
+// Broker/Massive are external feeds (persisted only via the Market Data caches)
+// → dashed lanes. Diagnostics sits in the rail directly above the card and drops
+// straight down the narrow gutter between the card and the Client rail.
+const DB_HIGHWAY_TRUNK_X = 650;
+const DB_HIGHWAY_LANE_GAP = 1.7; // tight: the bundle should read as one line
+const DB_HIGHWAY_DROP = 12;
+// feeder "right": exit the card's right edge straight into the trunk.
+// feeder "drop": exit the bottom into the gutter below the card, then run to the
+// trunk — used when a straight side exit would cross another card.
+// Ordered top-to-bottom by where each feeder joins the trunk.
+const DB_HIGHWAY_SOURCES = Object.freeze([
+  { id: "massive", feeder: "right", label: "massive", dashed: true, detail: "persisted via Market Data caches" },
+  { id: "broker", feeder: "drop", label: "broker", dashed: true, detail: "persisted via Market Data caches" },
+  { id: "market", feeder: "right", label: "market", detail: "quote / bar / option-chain caches" },
+  { id: "gex", feeder: "right", label: "gex", detail: "gex_snapshots" },
+  { id: "signals", feeder: "drop", label: "signals", detail: "signal scan state" },
+  { id: "flow", feeder: "drop", label: "flow", detail: "flow_events" },
+  { id: "algo", feeder: "right", label: "algo", detail: "execution_events / deployments / shadow positions" },
+  { id: "account", feeder: "right", label: "account", detail: "positions / fills via the worker lane" },
+]);
+
+const orthogonalPath = (pts) =>
+  pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+
+// Compact row count for the Database bus lanes: 1234 → "1k", 220000 → "220k".
+const compactCount = (value) => {
+  if (!Number.isFinite(value)) return "";
+  if (value < 1000) return String(Math.round(value));
+  if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
+  return `${(value / 1_000_000).toFixed(1)}M`;
+};
+
+// Build the per-source highway lanes feeding the Database card. Geometry derives
+// from the live card rects, so it follows any card move. Returns render-ready
+// lanes (orthogonal path + dot + status + terminal label).
+const buildDatabaseHighway = (rects, masterById, rowCounts = {}) => {
+  const db = rects.database;
+  if (!db) return [];
+  const dbStatus = masterById.get("database")?.status || "unknown";
+  const laneStatus = (id) =>
+    worstStatus(masterById.get(id)?.status || "unknown", dbStatus);
+  const n = DB_HIGHWAY_SOURCES.length;
+  const mid = (n - 1) / 2;
+  const entryStep = (db.height - 28) / (n - 1);
+
+  const lanes = DB_HIGHWAY_SOURCES.map((src, i) => {
+    const rect = rects[src.id];
+    if (!rect) return null;
+    // lane-x DECREASES as i (and entry-y) increases: the outer/top lane exits
+    // first, so no exit segment ever crosses a lane still descending.
+    const laneX = DB_HIGHWAY_TRUNK_X + (mid - i) * DB_HIGHWAY_LANE_GAP;
+    const entryY = db.y + 14 + i * entryStep;
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    const bottom = rect.y + rect.height;
+    const pts =
+      src.feeder === "right"
+        ? [
+            { x: rect.x + rect.width, y: cy },
+            { x: laneX, y: cy },
+            { x: laneX, y: entryY },
+            { x: db.x, y: entryY },
+          ]
+        : [
+            { x: cx, y: bottom },
+            { x: cx, y: bottom + DB_HIGHWAY_DROP },
+            { x: laneX, y: bottom + DB_HIGHWAY_DROP },
+            { x: laneX, y: entryY },
+            { x: db.x, y: entryY },
+          ];
+    return {
+      id: `${src.id}->database`,
+      source: src.id,
+      label: src.label,
+      detail: src.detail,
+      dashed: Boolean(src.dashed),
+      status: laneStatus(src.id),
+      rowCount: rowCounts[src.id] ?? null,
+      d: orthogonalPath(pts),
+      labelPos: { x: db.x - 5, y: entryY + 2 },
+    };
+  }).filter(Boolean);
+
+  // Diagnostics rides the rail directly above the card; drop it straight down the
+  // narrow gutter between the card's left edge and the Client rail into the top.
+  const diag = rects.diagnostics;
+  if (diag) {
+    const gx = db.x + 3;
+    const midY = (diag.y + diag.height + db.y) / 2;
+    lanes.push({
+      id: "diagnostics->database",
+      source: "diagnostics",
+      label: "diag",
+      detail: "diagnostic_snapshots / diagnostic_events",
+      dashed: false,
+      status: laneStatus("diagnostics"),
+      rowCount: rowCounts["diagnostics"] ?? null,
+      d: orthogonalPath([
+        { x: gx, y: diag.y + diag.height },
+        { x: gx, y: db.y },
+      ]),
+      labelPos: { x: gx - 4, y: midY + 2 },
+    });
+  }
+  return lanes;
+};
+
+// --- Algo convergence bus ---------------------------------------------------
+// Signals, Flow and GEX feed the Algo engine from the row directly above; Account
+// feeds it from below. Same bus treatment as the Database highway: the three upper
+// sources drop into a shared collector gutter above Algo and enter its top edge as
+// tight lanes, ordered by source-x so they never cross. Account rises straight into
+// the bottom edge. Sources sit right next to Algo, so lanes are self-evident and
+// carry no label (unlike the 8-deep Database bundle).
+const ALGO_BUS_LANE_GAP = 5;
+const ALGO_BUS_TOP = Object.freeze([
+  { id: "signals", detail: "signal engine worker state" },
+  { id: "flow", detail: "flow events via worker state" },
+  { id: "gex", detail: "gex projection via worker state" },
+]);
+
+const buildAlgoConvergence = (rects, masterById) => {
+  const algo = rects.algo;
+  if (!algo) return [];
+  const algoStatus = masterById.get("algo")?.status || "unknown";
+  const laneStatus = (id) =>
+    worstStatus(masterById.get(id)?.status || "unknown", algoStatus);
+  const collectorY = algo.y - 16;
+  const centerX = algo.x + algo.width / 2;
+  const mid = (ALGO_BUS_TOP.length - 1) / 2;
+
+  const lanes = ALGO_BUS_TOP.map((src, i) => {
+    const rect = rects[src.id];
+    if (!rect) return null;
+    const laneX = centerX + (i - mid) * ALGO_BUS_LANE_GAP;
+    const cx = rect.x + rect.width / 2;
+    return {
+      id: `${src.id}->algo`,
+      source: src.id,
+      detail: src.detail,
+      status: laneStatus(src.id),
+      d: orthogonalPath([
+        { x: cx, y: rect.y + rect.height },
+        { x: cx, y: collectorY },
+        { x: laneX, y: collectorY },
+        { x: laneX, y: algo.y },
+      ]),
+    };
+  }).filter(Boolean);
+
+  const account = rects.account;
+  if (account) {
+    const cx = Math.min(
+      Math.max(account.x + account.width / 2, algo.x + 16),
+      algo.x + algo.width - 16,
+    );
+    lanes.push({
+      id: "account->algo",
+      source: "account",
+      detail: "positions / risk via worker state",
+      status: laneStatus("account"),
+      d: orthogonalPath([
+        { x: cx, y: account.y },
+        { x: cx, y: algo.y + algo.height },
+      ]),
+    });
+  }
+  return lanes;
+};
+
+// --- Pressure source links --------------------------------------------------
+// When a card is a dominant pressure driver (model.pressureSources, e.g. the DB
+// pool), draw a faint connector from it up the rail gutter into the Diagnostics
+// card, where API Pressure aggregates — so pressure traces back to its origin.
+const buildPressureLinks = (rects, pressureSources) => {
+  const diag = rects.diagnostics;
+  if (!diag) return [];
+  return pressureSources
+    .map((source) => {
+      const rect = rects[source.cardId];
+      if (!rect || rect === diag) return null;
+      const gx = Math.min(rect.x, diag.x) - 10;
+      const startY = rect.y;
+      const endY = diag.y + diag.height;
+      return {
+        id: `pressure:${source.cardId}`,
+        label: source.label,
+        detail: source.detail,
+        d: orthogonalPath([
+          { x: rect.x + 10, y: startY },
+          { x: gx, y: startY },
+          { x: gx, y: endY },
+          { x: diag.x + 10, y: endY },
+        ]),
+        labelPos: { x: gx - 3, y: (startY + endY) / 2 },
+      };
+    })
+    .filter(Boolean);
+};
+
+// Pressure attribution accent — distinct from status colors so a "pressure
+// source" marker reads as a cause, not just another degraded card.
+const PRESSURE_TONE = "#e8a13a";
 
 const FOOTER_ABBREVIATIONS = [
   [" of ", "/"],
@@ -633,7 +764,7 @@ const chipStyle = (status) => {
   };
 };
 
-const MasterCard = ({ master, rect }) => {
+const MasterCard = ({ master, rect, pressureSource = false }) => {
   const meta = statusMeta(master.status);
   const single = master.children.length <= 1;
   const footerChars = Math.max(10, charsForWidth(rect.width - 24, CARD_DETAIL_SIZE, DETAIL_CHAR_EM));
@@ -668,6 +799,30 @@ const MasterCard = ({ master, rect }) => {
       >
         {truncate(master.label, charsForWidth(rect.width - 24, CARD_TITLE_SIZE, TITLE_CHAR_EM))}
       </text>
+      {pressureSource ? (
+        <g transform={`translate(${rect.width - 60} 4)`}>
+          <title>This card is a dominant source of server pressure.</title>
+          <rect
+            width="56"
+            height="12.5"
+            rx="3"
+            fill={cssColorAlpha(PRESSURE_TONE, 0.16)}
+            stroke={PRESSURE_TONE}
+            strokeWidth="0.8"
+          />
+          <text
+            x="28"
+            y="9.2"
+            textAnchor="middle"
+            fill={PRESSURE_TONE}
+            fontFamily={T.sans}
+            fontSize="7.5"
+            fontWeight={FONT_WEIGHTS.medium}
+          >
+            ⚡ pressure
+          </text>
+        </g>
+      ) : null}
       {single
         ? null
         : master.children.map((child, index) => {
@@ -695,6 +850,18 @@ const MasterCard = ({ master, rect }) => {
                 >
                   {truncate(child.label, charsForWidth(rect.width - 40, BUBBLE_LABEL_SIZE, LABEL_CHAR_EM))}
                 </text>
+                {child.metric ? (
+                  <text
+                    x={rect.width - 11}
+                    y={rowY}
+                    textAnchor="end"
+                    fill={CSS_COLOR.textMuted}
+                    fontFamily={T.sans}
+                    fontSize={BUBBLE_LABEL_SIZE}
+                  >
+                    {truncate(child.metric, 16)}
+                  </text>
+                ) : null}
               </g>
             );
           })}
@@ -990,6 +1157,31 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
     () => buildVisibleMasterEdges(displayMasters),
     [displayMasters],
   );
+  const masterById = useMemo(
+    () => new Map(displayMasters.map((master) => [master.id, master])),
+    [displayMasters],
+  );
+  const databaseRowCounts = model?.databaseRowCounts;
+  const databaseHighway = useMemo(
+    () => buildDatabaseHighway(groupRects, masterById, databaseRowCounts || {}),
+    [groupRects, masterById, databaseRowCounts],
+  );
+  const algoConvergence = useMemo(
+    () => buildAlgoConvergence(groupRects, masterById),
+    [groupRects, masterById],
+  );
+  const pressureSources = useMemo(
+    () => (Array.isArray(model?.pressureSources) ? model.pressureSources : []),
+    [model],
+  );
+  const pressureSourceIds = useMemo(
+    () => new Set(pressureSources.map((source) => source.cardId)),
+    [pressureSources],
+  );
+  const pressureLinks = useMemo(
+    () => buildPressureLinks(groupRects, pressureSources),
+    [groupRects, pressureSources],
+  );
   const clientMaster =
     displayMasters.find((master) => master.id === "client") || null;
   const positionedMasters = displayMasters.filter(
@@ -1075,14 +1267,9 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                 edge.from === "market" && typeof edge.fromCol === "number"
                   ? marketColumnPortX(fromRect, edge.fromCol, edge.portBias || 0)
                   : null;
-              const labelPosition = edgeLabelPosition(
-                fromRect,
-                toRect,
-                edgeEndpointRects,
-                fromPortX,
-              );
+              const labelPosition = edgeLabelPosition(fromRect, toRect, fromPortX);
               const baseStrokeWidth = edge.isPrimary ? 1.8 : 1;
-              const geom = edgePath(fromRect, toRect, edgeEndpointRects, fromPortX);
+              const geom = edgePath(fromRect, toRect, fromPortX);
               // Each transport (means of moving data) draws its own parallel
               // line + dot. A delayed/historical path (fresh:false) is dashed so
               // it reads as a distinct source, never merged with the realtime line.
@@ -1118,6 +1305,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                             fresh ? (edge.isPrimary ? undefined : "2 7") : "5 4"
                           }
                           strokeLinecap="round"
+                          strokeLinejoin="round"
                           markerEnd={
                             edge.isPrimary ? "url(#diagnostics-machine-arrow)" : undefined
                           }
@@ -1163,6 +1351,88 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                 </g>
               );
             })}
+            {databaseHighway.map((lane) => {
+              const meta = statusMeta(lane.status);
+              const tip = `${lane.source} → database · ${lane.detail}`;
+              return (
+                <g key={lane.id} data-db-lane={lane.source}>
+                  <path
+                    className="diagnostics-machine-edge"
+                    d={lane.d}
+                    fill="none"
+                    stroke={meta.tone}
+                    strokeWidth={1.2}
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    strokeDasharray={lane.dashed ? "4 4" : undefined}
+                    markerEnd="url(#diagnostics-machine-arrow)"
+                    style={{ opacity: lane.dashed ? 0.55 : 0.8 }}
+                  >
+                    <title>{tip}</title>
+                  </path>
+                  <text
+                    x={lane.labelPos.x}
+                    y={lane.labelPos.y}
+                    textAnchor="end"
+                    fontFamily={T.sans}
+                    fontSize={7.5}
+                    fontWeight={FONT_WEIGHTS.medium}
+                    fill={meta.tone}
+                    stroke={CSS_COLOR.bg1}
+                    strokeWidth="2.5"
+                    paintOrder="stroke"
+                  >
+                    <title>
+                      {lane.rowCount != null
+                        ? `${tip} · ${lane.rowCount.toLocaleString()} rows`
+                        : tip}
+                    </title>
+                    {lane.label}
+                    {lane.rowCount != null ? (
+                      <tspan dx="3" fill={CSS_COLOR.textMuted}>
+                        {compactCount(lane.rowCount)}
+                      </tspan>
+                    ) : null}
+                  </text>
+                </g>
+              );
+            })}
+            {algoConvergence.map((lane) => {
+              const meta = statusMeta(lane.status);
+              return (
+                <path
+                  key={lane.id}
+                  className="diagnostics-machine-edge"
+                  data-algo-lane={lane.source}
+                  d={lane.d}
+                  fill="none"
+                  stroke={meta.tone}
+                  strokeWidth={1.2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  markerEnd="url(#diagnostics-machine-arrow)"
+                  style={{ opacity: 0.8 }}
+                >
+                  <title>{`${lane.source} → algo · ${lane.detail}`}</title>
+                </path>
+              );
+            })}
+            {pressureLinks.map((link) => (
+              <path
+                key={link.id}
+                data-pressure-link={link.id}
+                d={link.d}
+                fill="none"
+                stroke={PRESSURE_TONE}
+                strokeWidth={1}
+                strokeDasharray="2 4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                style={{ opacity: 0.55 }}
+              >
+                <title>{`${link.label} → API Pressure · ${link.detail}`}</title>
+              </path>
+            ))}
             {positionedMasters.map((master) =>
               master.id === "market" ? (
                 <MarketDataCard
@@ -1176,6 +1446,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                   key={master.id}
                   master={master}
                   rect={groupRects[master.id]}
+                  pressureSource={pressureSourceIds.has(master.id)}
                 />
               ),
             )}
