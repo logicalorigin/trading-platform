@@ -85,7 +85,7 @@ export const resolveSignalDotGlyph = (state) => {
 // icon (below) is required, otherwise the flex slot squishes the SVG back down
 // to ~8px and the size has no effect. Sized via dim() so it tracks the UI
 // scale. Attention (stale/unhydrated) shows as a small amber accent dot.
-const SIGNAL_DOT_GLYPH_SIZE = 14;
+const SIGNAL_DOT_GLYPH_SIZE = 16;
 const SIGNAL_DOT_GLYPH_STROKE = 2.5;
 
 const SignalDotGlyph = ({ kind, tone, fresh, attention }) => {
