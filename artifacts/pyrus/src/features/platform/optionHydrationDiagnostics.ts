@@ -54,8 +54,6 @@ type PersistedSession = {
 
 export const OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY =
   "pyrus.optionHydrationDiagnostics.v1";
-export const LEGACY_OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY =
-  "pyrus.optionHydrationDiagnostics.v1";
 const STORAGE_KEY = OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY;
 const SAMPLE_LIMIT = 120;
 const HISTORY_LIMIT = 100;
@@ -119,9 +117,7 @@ const summarize = (values: number[]) => ({
 const readHistory = (): PersistedSession[] => {
   if (typeof window === "undefined" || !window.localStorage) return [];
   try {
-    const raw =
-      window.localStorage.getItem(STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     const parsed = JSON.parse(raw || "[]");
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -139,7 +135,6 @@ const writeHistory = (history: PersistedSession[]) => {
   }
   try {
     window.localStorage.setItem(STORAGE_KEY, serialized);
-    window.localStorage.removeItem(LEGACY_OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY);
   } catch {
     // Diagnostics must never interrupt trading UI.
   }
@@ -205,7 +200,6 @@ export const setOptionHydrationDiagnostics = (
 export const clearOptionHydrationDiagnosticsHistory = (): void => {
   if (typeof window !== "undefined" && window.localStorage) {
     window.localStorage.removeItem(STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY);
   }
   emit();
 };

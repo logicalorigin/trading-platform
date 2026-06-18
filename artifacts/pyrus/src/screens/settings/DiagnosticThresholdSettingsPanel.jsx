@@ -22,7 +22,6 @@ import {
 } from "../../lib/uiTokens.jsx";
 
 const THRESHOLD_EVENT = "pyrus:diagnostic-thresholds-updated";
-const LEGACY_THRESHOLD_EVENT = "pyrus:diagnostic-thresholds-updated";
 
 function smallButton({ active = false } = {}) {
   return {
@@ -85,7 +84,6 @@ export function useDiagnosticThresholdSettings() {
         applyThresholdPayload(payload);
         setError(null);
         window.dispatchEvent(new CustomEvent(THRESHOLD_EVENT));
-        window.dispatchEvent(new CustomEvent(LEGACY_THRESHOLD_EVENT));
         toast.push({
           kind: "success",
           title: "Diagnostic thresholds saved",
@@ -126,10 +124,8 @@ export function useDiagnosticThresholdSettings() {
   useEffect(() => {
     const listener = () => load();
     window.addEventListener(THRESHOLD_EVENT, listener);
-    window.addEventListener(LEGACY_THRESHOLD_EVENT, listener);
     return () => {
       window.removeEventListener(THRESHOLD_EVENT, listener);
-      window.removeEventListener(LEGACY_THRESHOLD_EVENT, listener);
     };
   }, [load]);
 

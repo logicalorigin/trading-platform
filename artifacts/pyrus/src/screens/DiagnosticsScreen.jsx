@@ -87,8 +87,6 @@ import {
 import { isPyrusSafeQaMode } from "../app/qa-mode";
 
 const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
-const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
-  "pyrus:diagnostic-alert-preferences-updated";
 
 const TABS = [
   "Overview",
@@ -804,10 +802,8 @@ export default function DiagnosticsScreen({
       setAlertPreferences(readLocalAlertPreferences());
     };
     window.addEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
-    window.addEventListener(LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT, listener);
     return () => {
       window.removeEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
-      window.removeEventListener(LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT, listener);
     };
   }, []);
 

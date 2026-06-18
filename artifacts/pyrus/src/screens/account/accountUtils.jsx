@@ -817,14 +817,13 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
 };
 
 const COLLAPSIBLE_STORAGE_PREFIX = "pyrus:account:";
-const LEGACY_COLLAPSIBLE_STORAGE_PREFIX = "pyrus:account:";
 
 const readStoredOpen = (storageKey) => {
   if (typeof window === "undefined" || !storageKey) return null;
   try {
-    const raw =
-      window.localStorage.getItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`) ??
-      window.localStorage.getItem(`${LEGACY_COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`);
+    const raw = window.localStorage.getItem(
+      `${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`,
+    );
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : null;
@@ -836,8 +835,10 @@ const readStoredOpen = (storageKey) => {
 const writeStoredOpen = (storageKey, map) => {
   if (typeof window === "undefined" || !storageKey) return;
   try {
-    window.localStorage.setItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`, JSON.stringify(map));
-    window.localStorage.removeItem(`${LEGACY_COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`);
+    window.localStorage.setItem(
+      `${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`,
+      JSON.stringify(map),
+    );
   } catch {
     /* ignore */
   }

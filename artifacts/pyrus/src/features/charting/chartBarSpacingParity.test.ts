@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,11 @@ import {
   resolveBarSpacing,
   resolveFootprintCandleWidth,
 } from "./ResearchChartSurface";
+
+const surfaceSource = readFileSync(
+  new URL("./ResearchChartSurface.tsx", import.meta.url),
+  "utf8",
+);
 
 // Minimal chart stub exposing the canonical lightweight-charts bar spacing (the
 // single pixels-per-bar value candles render from).
@@ -63,4 +69,13 @@ test("falls back to the measured spacing when the lib value is unavailable", () 
   const model = { chartBars: [{ time: 0 }, { time: 1 }, { time: 2 }] } as never;
   const chart = chartFallback({ 0: 0, 1: 8, 2: 16 });
   assert.equal(resolveBarSpacing(chart, model), 8);
+});
+
+test("chart scale preferences use the current storage key directly", () => {
+  assert.doesNotMatch(surfaceSource, /LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX/);
+  assert.doesNotMatch(surfaceSource, /buildLegacyChartScalePrefsStorageKey/);
+  assert.match(
+    surfaceSource,
+    /const raw = window\.localStorage\.getItem\(storageKey\);/,
+  );
 });

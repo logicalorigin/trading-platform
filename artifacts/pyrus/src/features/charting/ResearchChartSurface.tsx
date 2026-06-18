@@ -567,8 +567,6 @@ export type GexChartOverlay = {
 };
 
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
-const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
-
 type DrawMode = "horizontal" | "vertical" | "box";
 
 type ResearchDrawing = {
@@ -2326,11 +2324,6 @@ const buildChartScalePrefsStorageKey = (
 ): string | null =>
   uiStateKey ? `${CHART_SCALE_PREFS_STORAGE_PREFIX}${uiStateKey}` : null;
 
-const buildLegacyChartScalePrefsStorageKey = (
-  uiStateKey?: string | null,
-): string | null =>
-  uiStateKey ? `${LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX}${uiStateKey}` : null;
-
 const readStoredChartScalePrefs = (
   uiStateKey?: string | null,
 ): ChartScalePreferences => {
@@ -2344,9 +2337,7 @@ const readStoredChartScalePrefs = (
   }
 
   try {
-    const raw =
-      window.localStorage.getItem(storageKey) ??
-      window.localStorage.getItem(buildLegacyChartScalePrefsStorageKey(uiStateKey) || "");
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) {
       return {};
     }
@@ -2372,10 +2363,6 @@ const writeStoredChartScalePrefs = (
 
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(prefs));
-    const legacyStorageKey = buildLegacyChartScalePrefsStorageKey(uiStateKey);
-    if (legacyStorageKey && legacyStorageKey !== storageKey) {
-      window.localStorage.removeItem(legacyStorageKey);
-    }
   } catch (_error) {}
 };
 

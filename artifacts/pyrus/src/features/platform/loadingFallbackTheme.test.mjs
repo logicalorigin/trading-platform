@@ -8,8 +8,10 @@ const read = (relativePath) =>
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
 const brandLoader = read("src/components/BrandLoader.tsx");
+const crashDiagnostics = read("src/app/crashDiagnostics.tsx");
 const pyrusLoaderMark = read("src/components/brand/pyrus-loader-mark.tsx");
 const pyrusMark = read("src/components/brand/pyrus-mark.tsx");
+const pyrusWordmark = read("src/components/brand/pyrus-wordmark.tsx");
 const platformShell = read("src/features/platform/PlatformShell.jsx");
 const screenRegistry = read("src/features/platform/screenRegistry.jsx");
 
@@ -18,6 +20,7 @@ test("React boot loader uses theme tokens instead of forcing dark mode", () => {
   assert.doesNotMatch(brandLoader, /BRAND_LOADER_(?:SHELL|PANEL)_BG = "#050914"/);
   assert.match(brandLoader, /var\(--ra-surface-0, #F7FAFF\)/);
   assert.match(brandLoader, /PyrusWordmark/);
+  assert.doesNotMatch(brandLoader, /<img\b/);
   assert.doesNotMatch(indexCss, /\.brand-loader-word\s*\{[^}]*mix-blend-mode:\s*screen/s);
 });
 
@@ -27,13 +30,22 @@ test("static boot loader has a light default and an explicit dark override", () 
     indexHtml,
     /html\[data-pyrus-theme="dark"\] \.pyrus-boot-loader\s*\{[^}]*background: #050914/s,
   );
-  assert.match(indexHtml, /pyrus-wordmark-tight-light\.png/);
+  assert.match(indexHtml, /<div class="pyrus-boot-word">PYRUS<\/div>/);
 });
 
-test("boot and React loaders use the primary Pyrus mark asset", () => {
-  for (const source of [indexHtml, pyrusLoaderMark, pyrusMark]) {
+test("boot and React loaders do not reference retired Pyrus brand image assets", () => {
+  for (const source of [
+    indexHtml,
+    crashDiagnostics,
+    pyrusLoaderMark,
+    pyrusMark,
+    pyrusWordmark,
+  ]) {
+    assert.doesNotMatch(source, /\/brand\//);
     assert.doesNotMatch(source, /pyrus-loader-mark-dark\.svg/);
-    assert.match(source, /pyrus-mark-dark\.svg/);
+    assert.doesNotMatch(source, /pyrus-mark-dark\.svg/);
+    assert.doesNotMatch(source, /pyrus-mark\.png/);
+    assert.doesNotMatch(source, /pyrus-wordmark-tight(?:-light)?\.png/);
   }
 });
 

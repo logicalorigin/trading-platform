@@ -1,5 +1,4 @@
 export const LOCAL_ALERT_STORAGE_KEY = "pyrus.diagnostics.localAlerts.v1";
-export const LEGACY_LOCAL_ALERT_STORAGE_KEY = "pyrus.diagnostics.localAlerts.v1";
 export const LOCAL_ALERT_REPEAT_COOLDOWN_MS = 15 * 60_000;
 export const LOCAL_ALERT_DISMISS_TTL_MS = 24 * 60 * 60_000;
 export const MAX_LOCAL_ALERTS = 50;
@@ -329,9 +328,7 @@ export function readLocalAlertPreferences(storage = getLocalAlertStorage()) {
     return emptyPreferences();
   }
   try {
-    const raw =
-      target.getItem(LOCAL_ALERT_STORAGE_KEY) ??
-      target.getItem(LEGACY_LOCAL_ALERT_STORAGE_KEY);
+    const raw = target.getItem(LOCAL_ALERT_STORAGE_KEY);
     const parsed = JSON.parse(raw || "null");
     return pruneLocalAlertPreferences(parsed);
   } catch {
@@ -349,7 +346,6 @@ export function writeLocalAlertPreferences(preferences, storage = getLocalAlertS
       LOCAL_ALERT_STORAGE_KEY,
       JSON.stringify(pruneLocalAlertPreferences(preferences)),
     );
-    target.removeItem(LEGACY_LOCAL_ALERT_STORAGE_KEY);
   } catch {
     // Local storage is best effort; diagnostics should keep running without it.
   }

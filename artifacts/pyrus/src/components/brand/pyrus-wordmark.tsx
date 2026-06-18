@@ -1,7 +1,5 @@
 import React, { type CSSProperties } from "react";
 
-const PYRUS_WORDMARK_DARK_SRC = "/brand/pyrus-wordmark-tight.png";
-const PYRUS_WORDMARK_LIGHT_SRC = "/brand/pyrus-wordmark-tight-light.png";
 const WORDMARK_WIDTH = 852;
 const WORDMARK_HEIGHT = 104;
 const WORDMARK_ASPECT_RATIO = WORDMARK_HEIGHT / WORDMARK_WIDTH;
@@ -20,6 +18,7 @@ export function PyrusWordmark({
   style,
 }: WordmarkProps) {
   const height = Math.max(1, Math.round(width * WORDMARK_ASPECT_RATIO));
+  const text = title || "PYRUS";
 
   return (
     <span
@@ -28,35 +27,19 @@ export function PyrusWordmark({
       className={["pyrus-wordmark", className].filter(Boolean).join(" ")}
       role={title ? "img" : undefined}
       style={{
-        display: "block",
+        alignItems: "center",
+        display: "inline-flex",
+        fontSize: Math.max(12, Math.min(26, Math.round(width * 0.16))),
+        fontWeight: 700,
         height,
-        lineHeight: 0,
+        justifyContent: "center",
+        letterSpacing: 0,
+        lineHeight: 1,
         width,
         ...style,
       }}
     >
-      <img
-        alt=""
-        aria-hidden="true"
-        className="pyrus-wordmark-image pyrus-wordmark-image--dark"
-        decoding="async"
-        draggable={false}
-        height={height}
-        loading="eager"
-        src={PYRUS_WORDMARK_DARK_SRC}
-        width={width}
-      />
-      <img
-        alt=""
-        aria-hidden="true"
-        className="pyrus-wordmark-image pyrus-wordmark-image--light"
-        decoding="async"
-        draggable={false}
-        height={height}
-        loading="eager"
-        src={PYRUS_WORDMARK_LIGHT_SRC}
-        width={width}
-      />
+      {text}
     </span>
   );
 }

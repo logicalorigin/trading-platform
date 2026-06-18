@@ -1,8 +1,6 @@
 import { clampNumber } from "../../lib/formatters";
 
 export const MARKET_GRID_TRACK_SESSION_KEY = "pyrus:market-grid-track-sizes";
-export const LEGACY_MARKET_GRID_TRACK_SESSION_KEY =
-  "pyrus:market-grid-track-sizes";
 export const LEGACY_MARKET_GRID_CARD_SIZE_SESSION_KEY =
   "pyrus:market-grid-card-size";
 export const LEGACY_MARKET_GRID_CARD_SCALE_SESSION_KEY =
@@ -59,9 +57,7 @@ export const readMarketGridTrackSession = () => {
       return {};
     }
 
-    const raw =
-      window.sessionStorage.getItem(MARKET_GRID_TRACK_SESSION_KEY) ??
-      window.sessionStorage.getItem(LEGACY_MARKET_GRID_TRACK_SESSION_KEY);
+    const raw = window.sessionStorage.getItem(MARKET_GRID_TRACK_SESSION_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : {};
@@ -80,7 +76,6 @@ export const writeMarketGridTrackSession = (nextState) => {
       MARKET_GRID_TRACK_SESSION_KEY,
       JSON.stringify(nextState || {}),
     );
-    window.sessionStorage.removeItem(LEGACY_MARKET_GRID_TRACK_SESSION_KEY);
     window.sessionStorage.removeItem(LEGACY_MARKET_GRID_CARD_SIZE_SESSION_KEY);
     window.sessionStorage.removeItem(LEGACY_MARKET_GRID_CARD_SCALE_SESSION_KEY);
   } catch (error) {}

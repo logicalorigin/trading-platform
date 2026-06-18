@@ -139,7 +139,7 @@ const SETTINGS_TABS = [
 ];
 
 const SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
-const SIGNAL_MONITOR_ENVIRONMENT = "paper";
+const SIGNAL_MONITOR_ENVIRONMENT = "shadow";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
   { value: "selected_watchlist", label: "Selected Watchlist" },
@@ -251,15 +251,9 @@ const CHART_TIMEFRAME_ROLES = [
   { value: "option", label: "Option Chart" },
 ];
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
-const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 const OPTION_HYDRATION_HISTORY_STORAGE_KEY = "pyrus.optionHydrationDiagnostics.v1";
-const LEGACY_OPTION_HYDRATION_HISTORY_STORAGE_KEY =
-  "pyrus.optionHydrationDiagnostics.v1";
 const MARKET_GRID_TRACK_SESSION_KEY = "pyrus:market-grid-track-sizes";
-const LEGACY_MARKET_GRID_TRACK_SESSION_KEY = "pyrus:market-grid-track-sizes";
 const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
-const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
-  "pyrus:diagnostic-alert-preferences-updated";
 const TIME_ZONE_OPTIONS = [
   { value: "America/New_York", label: "New York / ET" },
   { value: "America/Denver", label: "Denver / MT" },
@@ -448,7 +442,7 @@ function AboutPanel({ summary, providers }) {
   const tradingTone =
     summary?.tradingMode === "live"
       ? CSS_COLOR.red
-      : summary?.tradingMode === "paper"
+      : summary?.tradingMode === "shadow"
         ? CSS_COLOR.green
         : CSS_COLOR.textDim;
   const stockDataProvider = resolveStockDataProvider(providers);
@@ -1228,12 +1222,9 @@ function useDiagnosticAlertPreferences() {
     writeLocalAlertPreferences(nextPreferences);
     const normalized = readLocalAlertPreferences();
     setPreferences(normalized);
-    for (const eventName of [
-      DIAGNOSTIC_ALERT_PREF_EVENT,
-      LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
-    ]) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail: normalized }));
-    }
+    window.dispatchEvent(
+      new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }),
+    );
     return normalized;
   }, []);
 
@@ -1242,12 +1233,9 @@ function useDiagnosticAlertPreferences() {
       const next = { ...current, ...patchValue };
       writeLocalAlertPreferences(next);
       const normalized = readLocalAlertPreferences();
-      for (const eventName of [
-        DIAGNOSTIC_ALERT_PREF_EVENT,
-        LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
-      ]) {
-        window.dispatchEvent(new CustomEvent(eventName, { detail: normalized }));
-      }
+      window.dispatchEvent(
+        new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }),
+      );
       return normalized;
     });
   }, []);
@@ -1912,9 +1900,7 @@ function BrowserStorageFootprintPanel() {
           type="button"
           onClick={() =>
             storage.clearLocalKeys(
-              (key) =>
-                key.startsWith(CHART_SCALE_PREFS_STORAGE_PREFIX) ||
-                key.startsWith(LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX),
+              (key) => key.startsWith(CHART_SCALE_PREFS_STORAGE_PREFIX),
             )
           }
           style={smallButton()}
@@ -1925,9 +1911,7 @@ function BrowserStorageFootprintPanel() {
           type="button"
           onClick={() =>
             storage.clearLocalKeys(
-              (key) =>
-                key === OPTION_HYDRATION_HISTORY_STORAGE_KEY ||
-                key === LEGACY_OPTION_HYDRATION_HISTORY_STORAGE_KEY,
+              (key) => key === OPTION_HYDRATION_HISTORY_STORAGE_KEY,
             )
           }
           style={smallButton()}
@@ -1937,10 +1921,7 @@ function BrowserStorageFootprintPanel() {
         <button
           type="button"
           onClick={() =>
-            storage.clearSessionKeys([
-              MARKET_GRID_TRACK_SESSION_KEY,
-              LEGACY_MARKET_GRID_TRACK_SESSION_KEY,
-            ])
+            storage.clearSessionKeys([MARKET_GRID_TRACK_SESSION_KEY])
           }
           style={smallButton()}
         >
@@ -2332,12 +2313,9 @@ function NotificationPreferencePanel({ userPreferences }) {
           : {}),
       };
       writeLocalAlertPreferences(next);
-      for (const eventName of [
-        DIAGNOSTIC_ALERT_PREF_EVENT,
-        LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
-      ]) {
-        window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
-      }
+      window.dispatchEvent(
+        new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: next }),
+      );
     }
     if (
       patch.desktopNotifications === "on" &&
@@ -2968,7 +2946,7 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
     },
     {
       label: "Trading",
-      value: summary.tradingMode || "paper",
+      value: summary.tradingMode || "shadow",
       tone: summary.tradingMode === "live" ? CSS_COLOR.red : CSS_COLOR.green,
     },
     {

@@ -21,8 +21,19 @@ const assertNoConsecutiveDuplicateLine = (source, line) => {
 
 test("platform diagnostics and root preference effects avoid duplicate no-op writes", () => {
   const platformSource = readLocalSource("./PlatformApp.jsx");
+  const diagnosticsSource = readLocalSource("../../screens/DiagnosticsScreen.jsx");
+  const memoryPressurePreferencesSource = readLocalSource(
+    "./memoryPressurePreferences.js",
+  );
   const memoryPressureSource = readLocalSource("./useMemoryPressureSignal.js");
   const settingsSource = readLocalSource("../../screens/SettingsScreen.jsx");
+  const diagnosticThresholdSettingsSource = readLocalSource(
+    "../../screens/settings/DiagnosticThresholdSettingsPanel.jsx",
+  );
+  const localAlertsSource = readLocalSource("../../screens/diagnostics/localAlerts.js");
+  const optionHydrationDiagnosticsSource = readLocalSource(
+    "./optionHydrationDiagnostics.ts",
+  );
   const gexZeroGammaSource = readLocalSource("../gex/useGexZeroGamma.js");
   const tradingAnalysisSource = readLocalSource(
     "../../screens/account/TradingAnalysisWorkbench.jsx",
@@ -54,6 +65,93 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
   assertNoConsecutiveDuplicateLine(
     settingsSource,
     'document.documentElement.setAttribute("data-pyrus-accent-preset", value);',
+  );
+  assert.doesNotMatch(
+    settingsSource,
+    /LEGACY_MARKET_GRID_TRACK_SESSION_KEY/,
+    "Expected market grid sizing reset to remove the current session key once",
+  );
+  assert.doesNotMatch(
+    settingsSource,
+    /LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX/,
+    "Expected chart scale cleanup to use the current storage prefix once",
+  );
+  assert.doesNotMatch(
+    settingsSource,
+    /LEGACY_OPTION_HYDRATION_HISTORY_STORAGE_KEY/,
+    "Expected option hydration cleanup to use the current storage key once",
+  );
+  for (const source of [settingsSource, diagnosticsSource]) {
+    assert.doesNotMatch(
+      source,
+      /LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT/,
+      "Expected diagnostic alert preference events to use the current event name once",
+    );
+  }
+  assert.doesNotMatch(
+    memoryPressurePreferencesSource,
+    /LEGACY_(?:STORAGE_KEY|EVENT_NAME)/,
+    "Expected memory pressure preferences to use current storage and event names once",
+  );
+  assert.match(
+    memoryPressurePreferencesSource,
+    /const raw = window\.localStorage\.getItem\(STORAGE_KEY\);/,
+    "Expected memory pressure preferences to read the current storage key directly",
+  );
+  assert.doesNotMatch(
+    optionHydrationDiagnosticsSource,
+    /LEGACY_OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY/,
+    "Expected option hydration diagnostics to use the current storage key once",
+  );
+  assert.match(
+    optionHydrationDiagnosticsSource,
+    /const raw = window\.localStorage\.getItem\(STORAGE_KEY\);/,
+    "Expected option hydration diagnostics to read the current storage key directly",
+  );
+  assert.doesNotMatch(
+    localAlertsSource,
+    /LEGACY_LOCAL_ALERT_STORAGE_KEY/,
+    "Expected local alert preferences to use the current storage key once",
+  );
+  assert.match(
+    localAlertsSource,
+    /const raw = target\.getItem\(LOCAL_ALERT_STORAGE_KEY\);/,
+    "Expected local alert preferences to read the current storage key directly",
+  );
+  assert.doesNotMatch(
+    diagnosticThresholdSettingsSource,
+    /LEGACY_THRESHOLD_EVENT/,
+    "Expected diagnostic threshold settings to use the current event name once",
+  );
+  assert.equal(
+    diagnosticThresholdSettingsSource.match(/new CustomEvent\(THRESHOLD_EVENT/g)?.length,
+    1,
+    "Expected diagnostic threshold settings to dispatch one threshold update event",
+  );
+  assert.equal(
+    diagnosticThresholdSettingsSource.match(/addEventListener\(THRESHOLD_EVENT/g)?.length,
+    1,
+    "Expected diagnostic threshold settings to register one threshold update listener",
+  );
+  assert.equal(
+    memoryPressurePreferencesSource.match(/window\.dispatchEvent\(new CustomEvent\(EVENT_NAME/g)?.length,
+    1,
+    "Expected memory pressure preferences to dispatch one preference update event",
+  );
+  assert.match(
+    settingsSource,
+    /storage\.clearSessionKeys\(\[MARKET_GRID_TRACK_SESSION_KEY\]\)/,
+    "Expected market grid sizing reset to clear the current session key directly",
+  );
+  assert.match(
+    settingsSource,
+    /key\) => key\.startsWith\(CHART_SCALE_PREFS_STORAGE_PREFIX\)/,
+    "Expected chart scale cleanup to match the current storage prefix directly",
+  );
+  assert.match(
+    settingsSource,
+    /key\) => key === OPTION_HYDRATION_HISTORY_STORAGE_KEY/,
+    "Expected option hydration cleanup to match the current storage key directly",
   );
   assert.equal(
     gexZeroGammaSource.match(/"data-pyrus-theme"/g)?.length,

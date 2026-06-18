@@ -349,16 +349,16 @@ export function RootCrashDiagnosticsFallback({
               flexWrap: "wrap",
             }}
           >
-            <img
-              src="/brand/pyrus-mark-dark.svg"
-              alt=""
-              style={{ height: 42, width: 42, objectFit: "contain" }}
-            />
-            <img
-              src="/brand/pyrus-wordmark-tight.png"
-              alt="PYRUS"
-              style={{ height: 28, width: "auto", objectFit: "contain" }}
-            />
+            <div
+              style={{
+                color: "#F2EFE9",
+                fontSize: 18,
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              PYRUS
+            </div>
           </div>
           <div
             style={{

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,9 @@ import {
   formatMoney,
   formatNumber,
 } from "./accountUtils.jsx";
+
+const readLocalSource = (filename) =>
+  readFileSync(new URL(filename, import.meta.url), "utf8");
 
 test("account numeric formatters keep existing display semantics", () => {
   assert.equal(
@@ -24,4 +28,19 @@ test("account numeric formatters keep existing display semantics", () => {
   );
   assert.equal(formatMoney(1234.5, "USD", true), "$1.2K");
   assert.equal(formatAccountPrice(1234.5, 2, true), ACCOUNT_VALUE_MASK);
+});
+
+test("account collapsible storage uses the current prefix once", () => {
+  const accountUtilsSource = readLocalSource("./accountUtils.jsx");
+
+  assert.doesNotMatch(
+    accountUtilsSource,
+    /LEGACY_COLLAPSIBLE_STORAGE_PREFIX/,
+    "Expected account collapsible storage to avoid same-value legacy prefixes",
+  );
+  assert.equal(
+    accountUtilsSource.match(/window\.localStorage\.getItem/g)?.length,
+    1,
+    "Expected account collapsible storage to read the current key directly",
+  );
 });
