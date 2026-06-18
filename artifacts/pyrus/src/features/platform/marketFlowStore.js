@@ -79,6 +79,16 @@ let flowScannerControlVersion = 0;
 const DEFAULT_FLOW_SCANNER_ENABLED = true;
 const MANUAL_FLOW_SCANNER_OWNER = "manual";
 
+const getLocalStorage = () =>
+  typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+
+const readCurrentWorkspaceState = () => {
+  const storage = getLocalStorage();
+  if (!storage) return null;
+  const raw = storage.getItem(PYRUS_STORAGE_KEY);
+  return raw ? JSON.parse(raw) : {};
+};
+
 const buildPersistedFlowScannerConfigPayload = (current, config) => ({
   ...current,
   flowScannerConfig: normalizeFlowScannerConfig(config),
@@ -87,11 +97,10 @@ const buildPersistedFlowScannerConfigPayload = (current, config) => ({
 
 const readPersistedFlowScannerConfig = () => {
   try {
-    if (typeof window === "undefined" || !window.localStorage) {
+    const parsed = readCurrentWorkspaceState();
+    if (!parsed) {
       return normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG);
     }
-    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
     const hasPersistedConfig = Boolean(parsed.flowScannerConfig);
     const storedVersion = Number(parsed.flowScannerConfigVersion);
     const isLegacyConfig =
@@ -123,11 +132,11 @@ const readPersistedFlowScannerConfig = () => {
 
 const persistFlowScannerConfig = (config) => {
   try {
-    if (typeof window === "undefined" || !window.localStorage) return;
-    const current = JSON.parse(
-      window.localStorage.getItem(PYRUS_STORAGE_KEY) || "{}",
-    );
-    window.localStorage.setItem(
+    const storage = getLocalStorage();
+    if (!storage) return;
+    const current = readCurrentWorkspaceState();
+    if (!current) return;
+    storage.setItem(
       PYRUS_STORAGE_KEY,
       JSON.stringify(buildPersistedFlowScannerConfigPayload(current, config)),
     );
@@ -240,9 +249,6 @@ export const buildMarketFlowStoreKey = (symbols = []) =>
   normalizeSymbols(symbols).join(",");
 
 const normalizeStoreKey = (storeKey) => storeKey || "__empty__";
-
-const getLocalStorage = () =>
-  typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
 
 const limitedArray = (value, limit = MARKET_FLOW_LAST_SNAPSHOT_EVENT_LIMIT) =>
   Array.isArray(value) ? value.slice(0, limit) : [];
