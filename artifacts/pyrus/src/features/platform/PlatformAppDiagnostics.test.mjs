@@ -82,6 +82,21 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     /const raw = window\.localStorage\?\.getItem\(PYRUS_STORAGE_KEY\);/,
     "Expected crash diagnostics to read the current workspace storage key directly",
   );
+  assert.match(
+    crashDiagnosticsSource,
+    /import \{ PYRUS_STORAGE_KEY \} from "\.\.\/lib\/workspaceStorage";/,
+    "Expected crash diagnostics to reuse the shared workspace storage key",
+  );
+  assert.doesNotMatch(
+    crashDiagnosticsSource,
+    /const PYRUS_STORAGE_KEY = "pyrus:state:v1";/,
+    "Expected crash diagnostics not to duplicate the workspace storage key literal",
+  );
+  assert.doesNotMatch(
+    crashDiagnosticsSource,
+    /readPyrusWorkspaceState/,
+    "Expected crash diagnostics to preserve direct current-key read behavior",
+  );
   for (const [source, label] of [
     [appContentSource, "app content"],
     [crashDiagnosticsSource, "crash diagnostics"],

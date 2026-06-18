@@ -7,8 +7,8 @@ import {
   type PyrusRuntimeFingerprint,
 } from "./runtimeDiagnostics";
 import { FONT_CSS_VAR } from "../lib/typography";
+import { PYRUS_STORAGE_KEY } from "../lib/workspaceStorage";
 
-const PYRUS_STORAGE_KEY = "pyrus:state:v1";
 const LAST_CRASH_KEY = "pyrus:last-crash-diagnostics:v1";
 const RECENT_BROWSER_EVENTS_KEY = "pyrus:recent-browser-diagnostics:v1";
 const MAX_RECENT_BROWSER_EVENTS = 8;
