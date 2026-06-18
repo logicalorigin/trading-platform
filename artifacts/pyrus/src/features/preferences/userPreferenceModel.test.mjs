@@ -43,6 +43,11 @@ test("preference model reuses shared workspace state storage migration", () => {
     /export const USER_PREFERENCES_STORAGE_KEY = PYRUS_STORAGE_KEY;/,
     "Expected preference storage key export to alias the shared workspace storage key",
   );
+  assert.doesNotMatch(
+    preferenceSource,
+    /export\s*\{\s*PYRUS_WORKSPACE_SETTINGS_EVENT\s*\}/,
+    "Expected workspace settings event ownership to stay in workspaceStorage",
+  );
   assert.match(
     workspaceStorageSource,
     /const RETIRED_WORKSPACE_STORAGE_KEY = \["ray", "algo:state:v1"\]\.join\(""\);/,

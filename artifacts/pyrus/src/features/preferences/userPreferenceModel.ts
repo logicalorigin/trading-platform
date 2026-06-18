@@ -6,7 +6,6 @@ import {
 
 export const USER_PREFERENCES_UPDATED_EVENT = "pyrus:user-preferences-updated";
 export const USER_PREFERENCES_STORAGE_KEY = PYRUS_STORAGE_KEY;
-export { PYRUS_WORKSPACE_SETTINGS_EVENT };
 export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
 const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
