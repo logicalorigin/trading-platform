@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -17,30 +19,14 @@ import {
   Zap,
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   aggregateMetrics,
-  buildIntradaySnapshots,
   computeSignals,
   computeSqueeze,
   expConcentration,
   formatGexStrikePrice,
-  gexByExpiry,
   isFiniteNumber,
   normalizeGexResponseOptions,
   normalizeGexTicker,
-  oiByStrike,
   resolveSqueezeNarrative,
 } from "../features/gex/gexModel.js";
 import {
@@ -71,7 +57,6 @@ import {
   GEX_DASHBOARD_QUERY_REFETCH_MS,
   GEX_DASHBOARD_QUERY_STALE_MS,
 } from "../features/gex/useGexZeroGamma.js";
-import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
 import { collectCoverageDataIssues } from "../features/platform/dataIssueModel.js";
 import {
@@ -97,12 +82,31 @@ import {
 import { Button } from "../components/ui/Button.jsx";
 import { _initialState, persistState } from "../lib/workspaceState";
 
-const GEX_CALL_TONE = toneForOptionSide("call");
-const GEX_PUT_TONE = toneForOptionSide("put");
-const GEX_BULLISH_TONE = toneForDirectionalIntent("bullish");
-const GEX_BEARISH_TONE = toneForDirectionalIntent("bearish");
-const toneForNetGex = (value) =>
+export const GEX_CALL_TONE = toneForOptionSide("call");
+export const GEX_PUT_TONE = toneForOptionSide("put");
+export const GEX_BULLISH_TONE = toneForDirectionalIntent("bullish");
+export const GEX_BEARISH_TONE = toneForDirectionalIntent("bearish");
+export const toneForNetGex = (value) =>
   value == null ? CSS_COLOR.textDim : value >= 0 ? GEX_BULLISH_TONE : GEX_BEARISH_TONE;
+
+// Chart components live in a lazy chunk so the recharts vendor bundle
+// (~71 kB gzip) stays off GexScreen's cold path; they render behind Suspense
+// with height-reserving fallbacks. All four pull the same chunk (Vite dedupes).
+const LazyStrikeProfileChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.StrikeProfileChart })),
+);
+const LazyExpiryChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.ExpiryChart })),
+);
+const LazyOiChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.OiChart })),
+);
+const LazyIntradayCard = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.IntradayCard })),
+);
+const GexChartFallback = ({ minHeight }) => (
+  <div style={{ minHeight: dim(minHeight) }} aria-hidden="true" />
+);
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
@@ -134,7 +138,7 @@ const GexTickerInput = ({ value, onCommit, isPhone }) => {
   );
 };
 
-const fmtCurrency = (value) => {
+export const fmtCurrency = (value) => {
   if (!isFiniteNumber(value)) return "—";
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
@@ -144,7 +148,7 @@ const fmtCurrency = (value) => {
   return `${sign}$${abs.toFixed(2)}`;
 };
 
-const fmtNumber = (value) =>
+export const fmtNumber = (value) =>
   isFiniteNumber(value)
     ? Math.round(value).toLocaleString("en-US")
     : "—";
@@ -152,7 +156,7 @@ const fmtNumber = (value) =>
 const fmtPrice = (value) =>
   isFiniteNumber(value) ? `$${value.toFixed(value >= 100 ? 2 : 3)}` : "—";
 
-const fmtPercent = (value, digits = 1) =>
+export const fmtPercent = (value, digits = 1) =>
   isFiniteNumber(value)
     ? `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`
     : "—";
@@ -219,7 +223,7 @@ const fieldStyle = {
   outline: "none",
 };
 
-const SegmentControl = ({ value, options, onChange }) => (
+export const SegmentControl = ({ value, options, onChange }) => (
   <div
     style={{
       display: "inline-flex",
@@ -253,7 +257,7 @@ const SegmentControl = ({ value, options, onChange }) => (
   </div>
 );
 
-const SectionTitle = ({ children, right }) => (
+export const SectionTitle = ({ children, right }) => (
   <div
     style={{
       display: "flex",
@@ -483,7 +487,7 @@ const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
   );
 };
 
-const ChartShell = ({ title, subtitle, right, children, minHeight = 260 }) => (
+export const ChartShell = ({ title, subtitle, right, children, minHeight = 260 }) => (
   <Card noPad style={{ minHeight: dim(minHeight) }}>
     <SectionTitle right={right}>{title}</SectionTitle>
     {subtitle ? (
@@ -518,254 +522,6 @@ const SectionHeading = ({ title }) => (
   </div>
 );
 
-const GexTooltip = ({ active, payload, spot }) => {
-  if (!active || !payload?.length) return null;
-  const row = payload[0].payload;
-  return (
-    <div
-      style={{
-        background: CSS_COLOR.bg1,
-        border: `1px solid ${CSS_COLOR.borderLight}`,
-        padding: sp(8),
-        color: CSS_COLOR.text,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        boxShadow: ELEVATION.md,
-      }}
-    >
-      <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
-        {formatGexStrikePrice(row.strike)} · {fmtPercent((row.strike - spot) / spot)}
-      </div>
-      <div style={{ color: toneForNetGex(row.netGex) }}>
-        Net {fmtCurrency(row.netGex)}
-      </div>
-      <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
-      <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
-      <div style={{ color: CSS_COLOR.textSec }}>Call OI {fmtNumber(row.callOi)}</div>
-      <div style={{ color: CSS_COLOR.textSec }}>Put OI {fmtNumber(row.putOi)}</div>
-    </div>
-  );
-};
-
-const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
-  const [range, setRange] = useState("near");
-  const data = useMemo(
-    () =>
-      range === "all"
-        ? profile
-        : profile.filter((row) => Math.abs((row.strike - spot) / spot) <= 0.05),
-    [profile, range, spot],
-  );
-
-  return (
-    <ChartShell
-      title="Strike Profile"
-      right={
-        <SegmentControl
-          value={range}
-          onChange={setRange}
-          options={[
-            { value: "near", label: "Near" },
-            { value: "all", label: "All" },
-          ]}
-        />
-      }
-      minHeight={340}
-    >
-      <MeasuredChartFrame
-        height={286}
-        minHeight={286}
-        placeholderLabel="Preparing strike profile"
-        testId="gex-strike-profile-frame"
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
-          <XAxis
-            dataKey="strike"
-            tickFormatter={formatGexStrikePrice}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-            minTickGap={18}
-          />
-          <YAxis
-            tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }} content={<GexTooltip spot={spot} />} />
-          <ReferenceLine
-            x={Math.round(spot)}
-            stroke={CSS_COLOR.cyan}
-            strokeDasharray="4 4"
-            label={{ value: "Spot", fill: CSS_COLOR.cyan, fontSize: fs(10), position: "top" }}
-          />
-          {series === "net" ? (
-            <Bar dataKey="netGex" isAnimationActive={false}>
-              {data.map((row) => (
-                <Cell
-                  key={row.strike}
-                  fill={toneForNetGex(row.netGex)}
-                  stroke={
-                    row.strike === callWall || row.strike === putWall
-                      ? CSS_COLOR.text
-                      : "transparent"
-                  }
-                  strokeWidth={row.strike === callWall || row.strike === putWall ? 2 : 0}
-                />
-              ))}
-            </Bar>
-          ) : (
-            <>
-              <Bar dataKey="callGex" fill={GEX_CALL_TONE} isAnimationActive={false} />
-              <Bar dataKey="putGex" fill={GEX_PUT_TONE} isAnimationActive={false} />
-            </>
-          )}
-          </BarChart>
-        </ResponsiveContainer>
-      </MeasuredChartFrame>
-    </ChartShell>
-  );
-};
-
-const ExpiryChart = ({ rows, spot }) => {
-  const data = useMemo(() => gexByExpiry(rows, spot), [rows, spot]);
-  return (
-    <ChartShell
-      title="Gamma Exposure by Expiry"
-      subtitle="Gamma exposure by expiration date (in millions)"
-    >
-      <MeasuredChartFrame
-        height={220}
-        minHeight={220}
-        placeholderLabel="Preparing expiry chart"
-        testId="gex-expiry-frame"
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
-          <XAxis
-            dataKey="label"
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
-            content={({ active, payload }) => {
-              if (!active || !payload?.length) return null;
-              const row = payload[0].payload;
-              return (
-                <div style={tooltipBoxStyle}>
-                  <b>{row.label}</b>
-                  <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
-                  <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
-                  <div style={{ color: toneForNetGex(row.netGex) }}>
-                    Net {fmtCurrency(row.netGex)}
-                  </div>
-                </div>
-              );
-            }}
-          />
-          <Bar dataKey="callGex" fill={GEX_CALL_TONE} stackId="expiry" isAnimationActive={false} />
-          <Bar dataKey="putGex" fill={GEX_PUT_TONE} stackId="expiry" isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
-      </MeasuredChartFrame>
-    </ChartShell>
-  );
-};
-
-const tooltipBoxStyle = {
-  background: CSS_COLOR.bg1,
-  border: `1px solid ${CSS_COLOR.borderLight}`,
-  padding: sp(8),
-  color: CSS_COLOR.text,
-  fontFamily: T.sans,
-  fontSize: textSize("caption"),
-  boxShadow: ELEVATION.md,
-};
-
-const OiChart = ({ rows, spot }) => {
-  const [range, setRange] = useState("near");
-  const allRows = useMemo(() => oiByStrike(rows), [rows]);
-  const data = useMemo(
-    () =>
-      range === "all"
-        ? allRows
-        : allRows.filter((row) => Math.abs((row.strike - spot) / spot) <= 0.05),
-    [allRows, range, spot],
-  );
-
-  return (
-    <ChartShell
-      title="OI Strike Profile"
-      subtitle="Open interest by strike price (in contracts)"
-      right={
-        <SegmentControl
-          value={range}
-          onChange={setRange}
-          options={[
-            { value: "near", label: "Near" },
-            { value: "all", label: "All" },
-          ]}
-        />
-      }
-    >
-      <MeasuredChartFrame
-        height={220}
-        minHeight={220}
-        placeholderLabel="Preparing OI strike profile"
-        testId="gex-oi-profile-frame"
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
-          <XAxis
-            dataKey="strike"
-            tickFormatter={formatGexStrikePrice}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-            minTickGap={18}
-          />
-          <YAxis
-            tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <ReferenceLine x={Math.round(spot)} stroke={CSS_COLOR.cyan} strokeDasharray="4 4" />
-          <Tooltip
-            cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
-            content={({ active, payload }) => {
-              if (!active || !payload?.length) return null;
-              const row = payload[0].payload;
-              return (
-                <div style={tooltipBoxStyle}>
-                  <b>{formatGexStrikePrice(row.strike)}</b>
-                  <div style={{ color: GEX_CALL_TONE }}>Call OI {fmtNumber(row.callOi)}</div>
-                  <div style={{ color: GEX_PUT_TONE }}>Put OI {fmtNumber(row.putOi)}</div>
-                </div>
-              );
-            }}
-          />
-          <Bar dataKey="callOi" fill={GEX_CALL_TONE} stackId="oi" isAnimationActive={false} />
-          <Bar dataKey="putOi" fill={GEX_PUT_TONE} stackId="oi" isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
-      </MeasuredChartFrame>
-    </ChartShell>
-  );
-};
 
 const HeatmapCard = ({ rows, spot }) => {
   const [expanded, setExpanded] = useState(false);
@@ -2128,16 +1884,20 @@ export default function GexScreen({
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <StrikeProfileChart
-                    profile={metrics.profile}
-                    spot={spot}
-                    series={series}
-                    callWall={metrics.callWall}
-                    putWall={metrics.putWall}
-                  />
+                  <Suspense fallback={<GexChartFallback minHeight={340} />}>
+                    <LazyStrikeProfileChart
+                      profile={metrics.profile}
+                      spot={spot}
+                      series={series}
+                      callWall={metrics.callWall}
+                      putWall={metrics.putWall}
+                    />
+                  </Suspense>
                 </div>
                 <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                  <IntradayCard snapshots={snapshots} />
+                  <Suspense fallback={<GexChartFallback minHeight={180} />}>
+                    <LazyIntradayCard snapshots={snapshots} />
+                  </Suspense>
                   <SignalsCard signals={signals} />
                   <SqueezeCard squeeze={squeeze} source={gexData?.source} />
                 </div>
@@ -2155,13 +1915,19 @@ export default function GexScreen({
               }}
             >
               <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                <ExpiryChart rows={filteredRows} spot={spot} />
+                <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                  <LazyExpiryChart rows={filteredRows} spot={spot} />
+                </Suspense>
                 <SectionHeading title="Open Interest Analysis" />
-                <OiChart rows={filteredRows} spot={spot} />
+                <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                  <LazyOiChart rows={filteredRows} spot={spot} />
+                </Suspense>
               </div>
               {view === "table" ? (
                 <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                  <IntradayCard snapshots={snapshots} />
+                  <Suspense fallback={<GexChartFallback minHeight={180} />}>
+                    <LazyIntradayCard snapshots={snapshots} />
+                  </Suspense>
                   <SignalsCard signals={signals} />
                   <SqueezeCard squeeze={squeeze} source={gexData?.source} />
                 </div>
@@ -2196,149 +1962,3 @@ const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
   </div>
 );
 
-const IntradayDeltaPill = ({ label, value, testId }) => {
-  const tone =
-    toneForNetGex(value);
-  const formatted =
-    value == null
-      ? "—"
-      : `${value >= 0 ? "+" : ""}${fmtCurrency(value)}`;
-  return (
-    <div
-      data-testid={testId}
-      style={{
-        flex: 1,
-        minWidth: 0,
-        background: CSS_COLOR.bg0,
-        border: "none",
-        padding: sp(8),
-        display: "grid",
-        gap: sp(3),
-      }}
-    >
-      <div
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ color: tone, fontSize: fs(16), fontWeight: FONT_WEIGHTS.emphasis }}>
-        {formatted}
-      </div>
-    </div>
-  );
-};
-
-const IntradayChartTooltip = ({ active, payload }) => {
-  if (!active || !payload || !payload.length) return null;
-  const point = payload[0].payload;
-  const ts = Number.isFinite(point?.ts) ? new Date(point.ts) : null;
-  return (
-    <div
-      style={{
-        background: CSS_COLOR.bg0,
-        border: "none",
-        padding: sp(6),
-        fontSize: textSize("caption"),
-        fontFamily: T.sans,
-      }}
-    >
-      <div style={{ color: CSS_COLOR.textDim }}>
-        {ts ? ts.toLocaleTimeString() : "--"}
-      </div>
-      <div
-        style={{
-          color: toneForNetGex(point?.netGex),
-          fontWeight: FONT_WEIGHTS.emphasis,
-        }}
-      >
-        Net GEX: {fmtCurrency(point?.netGex)}
-      </div>
-    </div>
-  );
-};
-
-const IntradayCard = ({ snapshots }) => {
-  const intraday = buildIntradaySnapshots(snapshots);
-  const hasSeries = intraday.series.length >= 2;
-  const lastTone =
-    intraday.series.length > 0 &&
-    intraday.series[intraday.series.length - 1].netGex >= 0
-      ? GEX_BULLISH_TONE
-      : GEX_BEARISH_TONE;
-  return (
-    <Card noPad>
-      <SectionTitle>Intraday ΔGEX</SectionTitle>
-      <div style={{ padding: sp(10), display: "grid", gap: sp(8) }}>
-        <div style={{ display: "flex", gap: sp(6), minWidth: 0 }}>
-          <IntradayDeltaPill
-            label="Δ Session"
-            value={hasSeries ? intraday.deltaSession : null}
-            testId="gex-intraday-delta-session"
-          />
-          <IntradayDeltaPill
-            label="Δ Recent"
-            value={hasSeries ? intraday.deltaRecent : null}
-            testId="gex-intraday-delta-recent"
-          />
-        </div>
-        {hasSeries ? (
-          <MeasuredChartFrame
-            height={96}
-            minHeight={96}
-            placeholderLabel="Preparing intraday GEX"
-            testId="gex-intraday-chart"
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={intraday.series}
-                margin={{ top: 4, right: 6, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid
-                  stroke={CSS_COLOR.borderLight || CSS_COLOR.border}
-                  strokeDasharray="0"
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="ts"
-                  type="number"
-                  domain={["dataMin", "dataMax"]}
-                  hide
-                />
-                <YAxis hide />
-                <ReferenceLine y={0} stroke={CSS_COLOR.textDim} strokeDasharray="2 2" />
-                <Tooltip content={<IntradayChartTooltip />} />
-                <Area
-                  type="monotone"
-                  dataKey="netGex"
-                  stroke={lastTone}
-                  fill={lastTone}
-                  fillOpacity={0.18}
-                  strokeWidth={1.4}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </MeasuredChartFrame>
-        ) : (
-          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-            {intraday.series.length === 1
-              ? "Awaiting a second snapshot to plot intraday change."
-              : "No intraday snapshots yet for this session."}
-          </div>
-        )}
-        <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-          {snapshots.length} full-chain IBKR snapshot{snapshots.length === 1 ? "" : "s"}
-          {intraday.isSparse && hasSeries
-            ? " · sparse — Δ Recent uses last 5 points"
-            : ""}
-        </div>
-      </div>
-    </Card>
-  );
-};

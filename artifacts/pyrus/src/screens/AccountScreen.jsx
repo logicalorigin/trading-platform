@@ -108,7 +108,6 @@ import {
 } from "./account/accountSafeQaFixtures.js";
 import { useAccountSection } from "../features/platform/useAccountSection.js";
 import TodaySnapshotPanel from "./account/TodaySnapshotPanel.jsx";
-import TradingAnalysisWorkbench from "./account/TradingAnalysisWorkbench.jsx";
 import { OrdersPanel } from "./account/TradesOrdersPanel.jsx";
 import { AccountHeroBlock } from "./account/AccountHeroBlock";
 import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
@@ -174,6 +173,22 @@ const loadEquityCurvePanel = () => {
   }
   return equityCurvePanelImport;
 };
+// TradingAnalysisWorkbench also pulls recharts; lazy-load it so recharts stays
+// off the Account cold path entirely (it already renders inside a
+// DeferredPanelSuspense boundary). Default export, so no named-export mapping.
+let tradingAnalysisWorkbenchImport = null;
+const loadTradingAnalysisWorkbench = () => {
+  if (!tradingAnalysisWorkbenchImport) {
+    tradingAnalysisWorkbenchImport = retryDynamicImport(
+      () => import("./account/TradingAnalysisWorkbench.jsx"),
+      { label: "TradingAnalysisWorkbench" },
+    ).catch((error) => {
+      tradingAnalysisWorkbenchImport = null;
+      throw error;
+    });
+  }
+  return tradingAnalysisWorkbenchImport;
+};
 
 const LazyCashFundingPanel = lazy(loadCashFundingPanel);
 const LazySetupHealthPanel = lazy(loadSetupHealthPanel);
@@ -185,6 +200,7 @@ const LazyPortfolioExposurePanel = lazy(() =>
 const LazyEquityCurvePanel = lazy(() =>
   loadEquityCurvePanel().then((mod) => ({ default: mod.EquityCurvePanel })),
 );
+const LazyTradingAnalysisWorkbench = lazy(loadTradingAnalysisWorkbench);
 export const preloadScreenModules = () => Promise.resolve();
 
 const finiteAccountNumber = (value) => {
@@ -2618,7 +2634,7 @@ const AccountScreenInner = ({
               },
             ]}
           >
-            <TradingAnalysisWorkbench
+            <LazyTradingAnalysisWorkbench
               query={accountAnalysisQuery}
               trades={accountAnalysisTrades}
               allTrades={accountAnalysisTrades}

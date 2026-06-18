@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useCallback,
   useMemo,
@@ -6,16 +8,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import {
   Calendar,
   Clock,
@@ -116,7 +108,6 @@ import {
   sp,
   textSize,
 } from "../lib/uiTokens.jsx";
-import { chartTooltipContentStyle } from "../lib/tooltipStyles";
 import { formatAppTimeForPreferences, getAppTimeZoneLabel } from "../lib/timeZone";
 import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 import {
@@ -1751,6 +1742,10 @@ const PremiumDistributionWidget = ({
     </div>
   );
 };
+
+const LazyFlowPremiumTideChart = lazy(
+  () => import("./flow/FlowPremiumTideChart.jsx"),
+);
 
 const FlowOverviewPanel = ({
   onJumpToTrade,
@@ -5806,53 +5801,18 @@ const FlowOverviewPanel = ({
                     </span>
                   </div>
                 </div>
-                <MeasuredChartFrame
-                  height={200}
-                  minHeight={200}
-                  placeholderLabel="Preparing premium tide"
-                  testId="flow-premium-tide-frame"
+                <Suspense
+                  fallback={
+                    <MeasuredChartFrame
+                      height={200}
+                      minHeight={200}
+                      placeholderLabel="Preparing premium tide"
+                      testId="flow-premium-tide-frame"
+                    />
+                  }
                 >
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={flowTide}>
-                      <CartesianGrid
-                        stroke={CSS_COLOR.borderLight || CSS_COLOR.border}
-                        strokeDasharray="0"
-                        vertical={false}
-                      />
-                      <XAxis
-                        dataKey="time"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: textSize("caption"), fill: CSS_COLOR.textMuted }}
-                      />
-                      <YAxis
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: textSize("caption"), fill: CSS_COLOR.textMuted }}
-                        tickFormatter={(value) => `$${(value / 1e6).toFixed(1)}M`}
-                      />
-                      <Tooltip
-                        contentStyle={chartTooltipContentStyle}
-                        formatter={(value) =>
-                          `${value >= 0 ? "+" : ""}$${(value / 1e6).toFixed(2)}M`
-                        }
-                      />
-                      <ReferenceLine
-                        y={0}
-                        stroke={CSS_COLOR.textMuted}
-                        strokeDasharray="0"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="cumNet"
-                        stroke={CSS_COLOR.accent}
-                        strokeWidth={1.25}
-                        fill={CSS_COLOR.accent}
-                        fillOpacity={0.18}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </MeasuredChartFrame>
+                  <LazyFlowPremiumTideChart flowTide={flowTide} />
+                </Suspense>
               </div>
 
               <Card style={{ padding: sp("8px 10px") }}>
