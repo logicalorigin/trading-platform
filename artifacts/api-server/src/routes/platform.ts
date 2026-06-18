@@ -86,6 +86,7 @@ import {
 } from "../services/platform";
 import type { FootprintSourcePreference } from "@workspace/ibkr-contracts";
 import {
+  buildGexDashboardHttpCacheMetadata,
   getCachedGexDashboardHttpCacheEntry,
   getGexDashboardData,
   getGexProjectionData,
@@ -2182,20 +2183,20 @@ router.get("/gex/:underlying", async (req, res) => {
   const data = parseGexDashboardResponseOnce(rawData);
   const responseEntry =
     cachedEntry ?? getCachedGexDashboardHttpCacheEntry(req.params.underlying);
-  if (responseEntry) {
-    setGexDashboardHttpCacheHeaders(res, responseEntry);
-    if (
-      responseEntry.data === rawData &&
-      isHttpResourceNotModified({
-        etag: responseEntry.eTag,
-        lastModified: responseEntry.lastModified,
-        ifNoneMatch: req.get("if-none-match"),
-        ifModifiedSince: req.get("if-modified-since"),
-      })
-    ) {
-      res.status(304).end();
-      return;
-    }
+  const responseMetadata =
+    responseEntry ?? buildGexDashboardHttpCacheMetadata(rawData);
+  setGexDashboardHttpCacheHeaders(res, responseMetadata);
+  if (
+    responseEntry?.data === rawData &&
+    isHttpResourceNotModified({
+      etag: responseMetadata.eTag,
+      lastModified: responseMetadata.lastModified,
+      ifNoneMatch: req.get("if-none-match"),
+      ifModifiedSince: req.get("if-modified-since"),
+    })
+  ) {
+    res.status(304).end();
+    return;
   }
 
   res.json(data);

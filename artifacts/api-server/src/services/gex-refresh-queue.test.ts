@@ -6,6 +6,7 @@ import {
   __setGexIngestFacadeForTests,
   __setGexPlatformDataClientFactoryForTests,
   __setGexProjectionRatesProviderForTests,
+  buildGexDashboardHttpCacheMetadata,
   getCachedGexDashboardHttpCacheMetadata,
   getGexDashboardData,
   getGexProjectionData,
@@ -157,6 +158,30 @@ test("cached GEX dashboard exposes stable HTTP validator metadata while fresh", 
 
   __expireGexDashboardCacheForTests("QQQ");
   assert.equal(getCachedGexDashboardHttpCacheMetadata("QQQ"), null);
+});
+
+test("stale returned GEX dashboard can still derive HTTP validator metadata", () => {
+  const fresh = makeGexResponse("2026-06-17T16:35:48.753Z");
+  const stale: GexResponse = {
+    ...fresh,
+    isStale: true,
+    source: {
+      ...fresh.source,
+      status: "partial",
+      message: "Returning the previous zero-gamma dashboard while the refresh is loading.",
+    },
+  };
+
+  assert.equal(getCachedGexDashboardHttpCacheMetadata("QQQ"), null);
+
+  const metadata = buildGexDashboardHttpCacheMetadata(stale);
+  assert.equal(metadata.ticker, "QQQ");
+  assert.match(metadata.eTag, /^W\/"gex-[A-Za-z0-9_-]+"$/);
+  assert.equal(metadata.lastModified, "Wed, 17 Jun 2026 16:35:48 GMT");
+  assert.notEqual(
+    metadata.eTag,
+    buildGexDashboardHttpCacheMetadata(fresh).eTag,
+  );
 });
 
 test("stale persisted GEX refreshes reuse the stale snapshot bucket across minute boundaries", async () => {

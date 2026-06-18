@@ -298,6 +298,16 @@ function buildGexDashboardLastModified(data: GexResponse): string {
   return new Date(Number.isFinite(timestamp) ? timestamp : Date.now()).toUTCString();
 }
 
+export function buildGexDashboardHttpCacheMetadata(
+  data: GexResponse,
+): GexDashboardHttpCacheMetadata {
+  return {
+    ticker: data.ticker,
+    eTag: buildGexDashboardETag(data),
+    lastModified: buildGexDashboardLastModified(data),
+  };
+}
+
 export function getCachedGexDashboardHttpCacheEntry(
   underlying: string,
 ): GexDashboardHttpCacheEntry | null {
@@ -307,10 +317,10 @@ export function getCachedGexDashboardHttpCacheEntry(
   if (!cached?.data || cached.pending || cached.expiresAt <= Date.now()) {
     return null;
   }
+  const metadata = buildGexDashboardHttpCacheMetadata(cached.data);
   return {
+    ...metadata,
     ticker,
-    eTag: buildGexDashboardETag(cached.data),
-    lastModified: buildGexDashboardLastModified(cached.data),
     data: cached.data,
   };
 }
