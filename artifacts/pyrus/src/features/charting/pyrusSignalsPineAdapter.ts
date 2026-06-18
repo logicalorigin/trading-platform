@@ -2440,7 +2440,6 @@ const pushKeyLevelZone = (
     labelPosition: "right",
     labelFillColor: withHexAlpha(color, "b3"),
     labelOffsetBars,
-    extendBars: labelOffsetBars,
     labelSize,
   });
 };

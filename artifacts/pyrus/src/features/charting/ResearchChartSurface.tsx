@@ -4704,9 +4704,15 @@ const buildZoneOverlays = (
       const fill = (meta.fillColor as string | undefined) || defaultFill;
       const label = typeof zone.label === "string" ? zone.label : undefined;
       const isFillBand = style === "fill-band";
+      const resolvedLabelPosition = resolveOverlayLabelPosition(
+        meta.labelPosition,
+      );
+      const lineReachesViewportRight =
+        style === "line-overlay" && resolvedLabelPosition === "right";
 
       if (style === "line-overlay") {
-        const xSpan = clipSpanToViewport(left, right, viewportWidth, 2);
+        const lineRight = lineReachesViewportRight ? viewportWidth : right;
+        const xSpan = clipSpanToViewport(left, lineRight, viewportWidth, 2);
         const rawLineTop = (top + bottom) / 2;
 
         if (!xSpan || rawLineTop < 0 || rawLineTop > viewportHeight) {
@@ -4737,7 +4743,7 @@ const buildZoneOverlays = (
           borderWidth: resolveFiniteMetaNumber(meta.borderWidth, 1),
           borderVisible: true,
           label,
-          labelPosition: resolveOverlayLabelPosition(meta.labelPosition),
+          labelPosition: resolvedLabelPosition,
           labelOffsetX:
             resolveFiniteMetaNumber(meta.labelOffsetBars, 0) * barSpacing,
           labelColor: (meta.labelColor as string | undefined) || "#ffffff",
@@ -6539,6 +6545,7 @@ const ResearchChartSurfaceComponent = ({
   const viewportPointerActiveRef = useRef(false);
   const lastPlotViewportIntentAtRef = useRef(0);
   const lastPlotResizeAtRef = useRef(0);
+  const plotAutosizeOverlayRafRef = useRef<number | null>(null);
   const plotPanRef = useRef<ChartPlotPanState | null>(null);
   const nativePlotDragRef = useRef<{
     pointerId: number | null;
@@ -10337,6 +10344,40 @@ const ResearchChartSurfaceComponent = ({
       observers.forEach((observer) => observer.disconnect());
     };
   }, [showToolbar, showLegend, Boolean(displayBar), drawMode]);
+  // Lightweight Charts owns canvas autosize; custom overlays need one settled
+  // frame before reading chart-space widths and coordinates after plot resizes.
+  useEffect(() => {
+    if (!chartRef.current || !plotSize.width || !plotSize.height) {
+      return undefined;
+    }
+
+    const refreshOverlays = () => {
+      plotAutosizeOverlayRafRef.current = null;
+      setOverlayRevision((value) => value + 1);
+    };
+
+    if (typeof window === "undefined") {
+      refreshOverlays();
+      return undefined;
+    }
+
+    if (plotAutosizeOverlayRafRef.current != null) {
+      window.cancelAnimationFrame(plotAutosizeOverlayRafRef.current);
+    }
+
+    plotAutosizeOverlayRafRef.current =
+      window.requestAnimationFrame(refreshOverlays);
+
+    return () => {
+      if (
+        plotAutosizeOverlayRafRef.current != null &&
+        typeof window !== "undefined"
+      ) {
+        window.cancelAnimationFrame(plotAutosizeOverlayRafRef.current);
+        plotAutosizeOverlayRafRef.current = null;
+      }
+    };
+  }, [plotSize.height, plotSize.width]);
   useLayoutEffect(() => {
     if (
       !chartRef.current ||
@@ -12530,8 +12571,12 @@ const ResearchChartSurfaceComponent = ({
                             overlay.labelPosition === "center"
                               ? "50%"
                               : overlay.labelPosition === "right"
-                                ? overlay.width + (overlay.labelOffsetX ?? 0)
+                                ? undefined
                                 : 4,
+                          right:
+                            overlay.labelPosition === "right"
+                              ? Math.max(4, overlay.labelOffsetX ?? 4)
+                              : undefined,
                           top: overlay.labelPosition === "top-left" ? -14 : 0,
                           transform:
                             overlay.labelPosition === "center"

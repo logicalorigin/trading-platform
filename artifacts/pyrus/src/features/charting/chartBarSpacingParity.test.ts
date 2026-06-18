@@ -13,6 +13,10 @@ const surfaceSource = readFileSync(
   new URL("./ResearchChartSurface.tsx", import.meta.url),
   "utf8",
 );
+const pyrusSignalsPineAdapterSource = readFileSync(
+  new URL("./pyrusSignalsPineAdapter.ts", import.meta.url),
+  "utf8",
+);
 
 // Minimal chart stub exposing the canonical lightweight-charts bar spacing (the
 // single pixels-per-bar value candles render from).
@@ -77,5 +81,28 @@ test("chart scale preferences use the current storage key directly", () => {
   assert.match(
     surfaceSource,
     /const raw = window\.localStorage\.getItem\(storageKey\);/,
+  );
+});
+
+test("right-labeled Pyrus line overlays share chart viewport width", () => {
+  assert.match(
+    surfaceSource,
+    /const lineReachesViewportRight =\s*style === "line-overlay" && resolvedLabelPosition === "right";/,
+  );
+  assert.match(
+    surfaceSource,
+    /const lineRight = lineReachesViewportRight \? viewportWidth : right;/,
+  );
+  assert.match(
+    surfaceSource,
+    /const xSpan = clipSpanToViewport\(left, lineRight, viewportWidth, 2\);/,
+  );
+  assert.match(
+    surfaceSource,
+    /right:\s*overlay\.labelPosition === "right"\s*\?\s*Math\.max\(4, overlay\.labelOffsetX \?\? 4\)/,
+  );
+  assert.doesNotMatch(
+    pyrusSignalsPineAdapterSource,
+    /extendBars:\s*labelOffsetBars/,
   );
 });
