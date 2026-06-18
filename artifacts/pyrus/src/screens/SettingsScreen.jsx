@@ -27,6 +27,7 @@ import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
 import {
+  LOCAL_ALERT_PREFERENCES_EVENT,
   readLocalAlertPreferences,
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
@@ -253,7 +254,6 @@ const CHART_TIMEFRAME_ROLES = [
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 const OPTION_HYDRATION_HISTORY_STORAGE_KEY = "pyrus.optionHydrationDiagnostics.v1";
 const MARKET_GRID_TRACK_SESSION_KEY = "pyrus:market-grid-track-sizes";
-const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
 const TIME_ZONE_OPTIONS = [
   { value: "America/New_York", label: "New York / ET" },
   { value: "America/Denver", label: "Denver / MT" },
@@ -342,9 +342,7 @@ const estimateStorageBytes = (key, value) =>
 
 function readWorkspaceState() {
   try {
-    const raw =
-      window.localStorage.getItem(PYRUS_STORAGE_KEY) ??
-      window.localStorage.getItem(PYRUS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -1223,7 +1221,7 @@ function useDiagnosticAlertPreferences() {
     const normalized = readLocalAlertPreferences();
     setPreferences(normalized);
     window.dispatchEvent(
-      new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }),
+      new CustomEvent(LOCAL_ALERT_PREFERENCES_EVENT, { detail: normalized }),
     );
     return normalized;
   }, []);
@@ -1234,7 +1232,7 @@ function useDiagnosticAlertPreferences() {
       writeLocalAlertPreferences(next);
       const normalized = readLocalAlertPreferences();
       window.dispatchEvent(
-        new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }),
+        new CustomEvent(LOCAL_ALERT_PREFERENCES_EVENT, { detail: normalized }),
       );
       return normalized;
     });
@@ -2314,7 +2312,7 @@ function NotificationPreferencePanel({ userPreferences }) {
       };
       writeLocalAlertPreferences(next);
       window.dispatchEvent(
-        new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: next }),
+        new CustomEvent(LOCAL_ALERT_PREFERENCES_EVENT, { detail: next }),
       );
     }
     if (

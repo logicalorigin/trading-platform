@@ -69,6 +69,16 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
   );
   assert.doesNotMatch(
     settingsSource,
+    /window\.localStorage\.getItem\(PYRUS_STORAGE_KEY\)\s*\?\?\s*window\.localStorage\.getItem\(PYRUS_STORAGE_KEY\)/,
+    "Expected workspace settings to read localStorage once per path",
+  );
+  assert.match(
+    settingsSource,
+    /const raw = window\.localStorage\.getItem\(PYRUS_STORAGE_KEY\);/,
+    "Expected workspace settings to read the current storage key directly",
+  );
+  assert.doesNotMatch(
+    settingsSource,
     /LEGACY_MARKET_GRID_TRACK_SESSION_KEY/,
     "Expected market grid sizing reset to remove the current session key once",
   );
@@ -88,7 +98,22 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
       /LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT/,
       "Expected diagnostic alert preference events to use the current event name once",
     );
+    assert.doesNotMatch(
+      source,
+      /"pyrus:diagnostic-alert-preferences-updated"/,
+      "Expected diagnostic alert preference event literals to live with local alert helpers",
+    );
+    assert.match(
+      source,
+      /LOCAL_ALERT_PREFERENCES_EVENT/,
+      "Expected diagnostic alert preference event consumers to share the local alert event constant",
+    );
   }
+  assert.match(
+    localAlertsSource,
+    /export const LOCAL_ALERT_PREFERENCES_EVENT =\s*\n\s*"pyrus:diagnostic-alert-preferences-updated";/,
+    "Expected local alert helpers to own the diagnostic alert preference event name",
+  );
   assert.doesNotMatch(
     memoryPressurePreferencesSource,
     /LEGACY_(?:STORAGE_KEY|EVENT_NAME)/,

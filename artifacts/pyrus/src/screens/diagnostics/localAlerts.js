@@ -1,4 +1,6 @@
 export const LOCAL_ALERT_STORAGE_KEY = "pyrus.diagnostics.localAlerts.v1";
+export const LOCAL_ALERT_PREFERENCES_EVENT =
+  "pyrus:diagnostic-alert-preferences-updated";
 export const LOCAL_ALERT_REPEAT_COOLDOWN_MS = 15 * 60_000;
 export const LOCAL_ALERT_DISMISS_TTL_MS = 24 * 60 * 60_000;
 export const MAX_LOCAL_ALERTS = 50;

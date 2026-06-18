@@ -32,6 +32,7 @@ import { useRuntimeWorkloadStats } from "../features/platform/workloadStats";
 import { useHydrationCoordinatorStats } from "../features/platform/hydrationCoordinator";
 import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import {
+  LOCAL_ALERT_PREFERENCES_EVENT,
   dismissAllLocalAlertPreferences,
   dismissLocalAlertPreference,
   isLocalAlertDismissed,
@@ -85,8 +86,6 @@ import {
   buildMemoryPressureFailurePoint,
 } from "../features/platform/failurePointModel.js";
 import { isPyrusSafeQaMode } from "../app/qa-mode";
-
-const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
 
 const TABS = [
   "Overview",
@@ -801,9 +800,9 @@ export default function DiagnosticsScreen({
     const listener = () => {
       setAlertPreferences(readLocalAlertPreferences());
     };
-    window.addEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+    window.addEventListener(LOCAL_ALERT_PREFERENCES_EVENT, listener);
     return () => {
-      window.removeEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+      window.removeEventListener(LOCAL_ALERT_PREFERENCES_EVENT, listener);
     };
   }, []);
 
