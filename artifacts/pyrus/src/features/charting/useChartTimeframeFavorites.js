@@ -10,7 +10,7 @@ import {
 } from "../../lib/workspaceState";
 import {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
-} from "../../lib/uiTokens.jsx";
+} from "../../lib/workspaceStorage";
 
 export const persistChartTimeframeFavorites = (role, favorites) => {
   const current = readPersistedState();

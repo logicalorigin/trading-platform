@@ -2,7 +2,7 @@ import {
   PYRUS_STORAGE_KEY,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   readPyrusWorkspaceState,
-} from "./uiTokens.jsx";
+} from "./workspaceStorage";
 
 export const readPersistedState = () => {
   return readPyrusWorkspaceState();

@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { PYRUS_STORAGE_KEY } from "../../lib/uiTokens";
+import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_CONFIG_VERSION,

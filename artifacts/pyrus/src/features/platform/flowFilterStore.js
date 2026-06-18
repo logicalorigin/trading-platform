@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { PYRUS_STORAGE_KEY } from "../../lib/uiTokens";
+import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 
 export const FLOW_TAPE_FILTER_OPTIONS = Object.freeze([
