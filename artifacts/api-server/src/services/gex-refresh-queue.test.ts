@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import {
@@ -34,6 +37,15 @@ async function waitForEnqueuedJobs(
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.equal(enqueued.length, count);
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 function makeGexResponse(timestamp: string): GexResponse {
@@ -100,6 +112,37 @@ function makeGexResponse(timestamp: string): GexResponse {
       },
       message: null,
     },
+  };
+}
+
+function makePlatformOptionContract() {
+  return {
+    contract: {
+      ticker: "QQQ260619C00500000",
+      underlying: "QQQ",
+      expirationDate: new Date("2026-06-19T00:00:00.000Z"),
+      strike: 500,
+      right: "call",
+      providerContractId: "test-contract-1",
+      multiplier: 100,
+      sharesPerContract: 100,
+    },
+    gamma: 0.01,
+    delta: 0.5,
+    theta: -0.02,
+    vega: 0.1,
+    openInterest: 100,
+    impliedVolatility: 0.2,
+    bid: 1,
+    ask: 1.2,
+    mark: 1.1,
+    volume: 10,
+    underlyingPrice: 500,
+    dataUpdatedAt: new Date("2026-06-17T16:35:48.753Z"),
+    quoteUpdatedAt: new Date("2026-06-17T16:35:48.753Z"),
+    updatedAt: new Date("2026-06-17T16:35:48.753Z"),
+    quoteFreshness: "live",
+    marketDataMode: "live",
   };
 }
 
@@ -182,6 +225,131 @@ test("stale returned GEX dashboard can still derive HTTP validator metadata", ()
     metadata.eTag,
     buildGexDashboardHttpCacheMetadata(fresh).eTag,
   );
+});
+
+test("GEX dashboard route sets validators on stale refresh fallback responses", async () => {
+  let failRefresh = false;
+  let quoteCalls = 0;
+
+  // The route test only needs the fields read by the GEX mapper.
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => {
+      quoteCalls += 1;
+      if (failRefresh) {
+        throw new Error("forced refresh quote failure");
+      }
+      return {
+        delayed: false,
+        fallbackUsed: false,
+        quotes: [
+          {
+            symbol: "QQQ",
+            price: 500,
+            low: 495,
+            high: 505,
+            delayed: false,
+            source: "ibkr",
+            freshness: "live",
+            marketDataMode: "live",
+            dataUpdatedAt: "2026-06-17T16:35:48.753Z",
+            updatedAt: "2026-06-17T16:35:48.753Z",
+          },
+        ],
+        transport: null,
+      };
+    },
+    getOptionExpirationsWithDebug: async () => {
+      if (failRefresh) {
+        throw new Error("forced refresh expirations failure");
+      }
+      return {
+        underlying: "QQQ",
+        expirations: [{ expirationDate: new Date("2026-06-19T00:00:00.000Z") }],
+        debug: {
+          cacheStatus: "hit",
+          totalMs: 0,
+          upstreamMs: null,
+          degraded: false,
+          reason: null,
+        },
+      };
+    },
+    batchOptionChains: async () => {
+      if (failRefresh) {
+        throw new Error("forced refresh chain failure");
+      }
+      return {
+        underlying: "QQQ",
+        results: [
+          {
+            expirationDate: new Date("2026-06-19T00:00:00.000Z"),
+            status: "loaded",
+            contracts: [makePlatformOptionContract()],
+            error: null,
+            debug: {
+              cacheStatus: "hit",
+              totalMs: 0,
+              upstreamMs: null,
+              degraded: false,
+              reason: null,
+            },
+          },
+        ],
+        debug: {
+          cacheStatus: "hit",
+          totalMs: 0,
+          upstreamMs: null,
+          degraded: false,
+          reason: null,
+          requestedExpirationCount: 1,
+          loadedExpirationCount: 1,
+          failedExpirationCount: 0,
+        },
+      };
+    },
+  }) as any);
+
+  setNow("2026-06-17T16:35:48.753Z");
+  const { default: app } = await import("../app");
+  const server = app.listen(0);
+  try {
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const first = await fetch(`${baseUrl}/api/gex/QQQ`, {
+      headers: { "accept-encoding": "identity" },
+    });
+    assert.equal(first.status, 200);
+    assert.ok(first.headers.get("etag"));
+    const firstLastModified = first.headers.get("last-modified");
+    assert.ok(firstLastModified);
+    assert.equal(
+      first.headers.get("cache-control"),
+      "private, max-age=0, must-revalidate, no-transform",
+    );
+    await first.json();
+
+    __expireGexDashboardCacheForTests("QQQ");
+    failRefresh = true;
+    const second = await fetch(`${baseUrl}/api/gex/QQQ`, {
+      headers: { "accept-encoding": "identity" },
+    });
+    assert.equal(second.status, 200);
+    assert.ok(second.headers.get("etag"));
+    assert.equal(second.headers.get("last-modified"), firstLastModified);
+    assert.equal(
+      second.headers.get("cache-control"),
+      "private, max-age=0, must-revalidate, no-transform",
+    );
+    assert.match(second.headers.get("vary") ?? "", /accept-encoding/i);
+    const stale = await second.json() as GexResponse;
+    assert.equal(stale.isStale, true);
+    assert.equal(getCachedGexDashboardHttpCacheMetadata("QQQ"), null);
+    assert.equal(quoteCalls, 2);
+  } finally {
+    await closeServer(server);
+  }
 });
 
 test("stale persisted GEX refreshes reuse the stale snapshot bucket across minute boundaries", async () => {
