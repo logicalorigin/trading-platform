@@ -13,6 +13,9 @@ export type ChartTimeframeDefinition = {
 const minuteMs = 60_000;
 const hourMs = 60 * minuteMs;
 const dayMs = 24 * hourMs;
+const weekMs = 7 * dayMs;
+const monthMs = 30 * dayMs;
+const yearMs = 365 * dayMs;
 
 const defineLimits = (
   initial: number,
@@ -110,6 +113,18 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     },
   },
   {
+    value: "10m",
+    label: "10m",
+    stepMs: 10 * minuteMs,
+    baseTimeframe: "10m",
+    streamable: true,
+    supports: { primary: true, option: true },
+    limits: {
+      primary: defineLimits(360, 1_800, 10_000),
+      option: defineLimits(240, 720, 2_400),
+    },
+  },
+  {
     value: "15m",
     label: "15m",
     stepMs: 15 * minuteMs,
@@ -158,6 +173,18 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     },
   },
   {
+    value: "12h",
+    label: "12h",
+    stepMs: 12 * hourMs,
+    baseTimeframe: "12h",
+    streamable: true,
+    supports: { primary: true, option: true },
+    limits: {
+      primary: defineLimits(180, 720, 2_000),
+      option: defineLimits(120, 360, 720),
+    },
+  },
+  {
     value: "1d",
     label: "1d",
     stepMs: dayMs,
@@ -167,6 +194,42 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     limits: {
       primary: defineLimits(252, 756, 2_500),
       option: defineLimits(126, 252, 756),
+    },
+  },
+  {
+    value: "1w",
+    label: "1w",
+    stepMs: weekMs,
+    baseTimeframe: "1w",
+    streamable: true,
+    supports: { primary: true, option: false },
+    limits: {
+      primary: defineLimits(156, 520, 1_500),
+      option: defineLimits(0, 0, 0),
+    },
+  },
+  {
+    value: "1month",
+    label: "1mo",
+    stepMs: monthMs,
+    baseTimeframe: "1month",
+    streamable: true,
+    supports: { primary: true, option: false },
+    limits: {
+      primary: defineLimits(120, 360, 1_000),
+      option: defineLimits(0, 0, 0),
+    },
+  },
+  {
+    value: "1year",
+    label: "1y",
+    stepMs: yearMs,
+    baseTimeframe: "1year",
+    streamable: true,
+    supports: { primary: true, option: false },
+    limits: {
+      primary: defineLimits(20, 80, 500),
+      option: defineLimits(0, 0, 0),
     },
   },
 ];
@@ -205,7 +268,19 @@ export const DEFAULT_CHART_TIMEFRAME_FAVORITES: Record<
   ChartTimeframeRole,
   string[]
 > = {
-  primary: ["5s", "1m", "5m", "15m", "1h", "1d"],
+  primary: [
+    "5s",
+    "1m",
+    "5m",
+    "10m",
+    "15m",
+    "1h",
+    "12h",
+    "1d",
+    "1w",
+    "1month",
+    "1year",
+  ],
   option: ["5s", "1m", "5m", "15m", "1h", "1d"],
 };
 
@@ -290,6 +365,82 @@ export const getChartTimeframeStepMs = (
   timeframe: string | null | undefined,
 ): number => getChartTimeframeDefinition(timeframe)?.stepMs || 0;
 
+// Markets MTF View: build the timeframe ladder for one ticker across N charts.
+// Chart 1 keeps the current timeframe; each subsequent chart steps to the
+// next-LONGEST timeframe among the user's favorites, then to non-favorite
+// longer timeframes (spec: longer + favorites first). If the current timeframe
+// is near the longest (not enough longer slots to fill the grid), pad DOWNWARD
+// (shorter favorites first, then shorter others, descending) so an N-slot grid
+// still fills with a sensible multi-timeframe spread. Returns up to `count`
+// distinct timeframes, all drawn from `available` (e.g. MARKET_CHART_TIMEFRAMES).
+export const buildMtfTimeframeSequence = ({
+  current,
+  favorites,
+  available,
+  count = 1,
+  role = "primary",
+}: {
+  current?: string | null;
+  favorites?: unknown;
+  available?: readonly string[];
+  count?: number;
+  role?: ChartTimeframeRole;
+} = {}): string[] => {
+  const orderedAvailable = Array.from(
+    new Set(
+      (Array.isArray(available) && available.length
+        ? available
+        : getChartTimeframeValues(role)
+      ).map((timeframe) => normalizeChartTimeframe(timeframe)),
+    ),
+  )
+    .filter(Boolean)
+    .sort(
+      (left, right) =>
+        getChartTimeframeStepMs(left) - getChartTimeframeStepMs(right),
+    );
+
+  if (!orderedAvailable.length) {
+    return [];
+  }
+
+  const normalizedCurrent = normalizeChartTimeframe(current);
+  const start = orderedAvailable.includes(normalizedCurrent)
+    ? normalizedCurrent
+    : orderedAvailable[0];
+  const startStep = getChartTimeframeStepMs(start);
+
+  const favoriteSet = new Set(
+    resolveChartTimeframeFavorites(favorites, role).map((timeframe) =>
+      normalizeChartTimeframe(timeframe),
+    ),
+  );
+  const favoritesFirst = (list: string[]): string[] => [
+    ...list.filter((timeframe) => favoriteSet.has(timeframe)),
+    ...list.filter((timeframe) => !favoriteSet.has(timeframe)),
+  ];
+
+  const longer = orderedAvailable.filter(
+    (timeframe) => getChartTimeframeStepMs(timeframe) > startStep,
+  );
+  const shorter = orderedAvailable
+    .filter((timeframe) => getChartTimeframeStepMs(timeframe) < startStep)
+    .reverse();
+
+  const sequence: string[] = [];
+  for (const timeframe of [
+    start,
+    ...favoritesFirst(longer),
+    ...favoritesFirst(shorter),
+  ]) {
+    if (timeframe && !sequence.includes(timeframe)) {
+      sequence.push(timeframe);
+    }
+  }
+
+  return sequence.slice(0, Math.max(1, Math.floor(count) || 1));
+};
+
 const BROKER_LIVE_EDGE_WINDOW_MINUTES_BY_TIMEFRAME: Record<string, number> = {
   "5s": 240,
   "15s": 240,
@@ -297,11 +448,16 @@ const BROKER_LIVE_EDGE_WINDOW_MINUTES_BY_TIMEFRAME: Record<string, number> = {
   "1m": 1_440,
   "2m": 1_440,
   "5m": 1_440,
+  "10m": 1_440,
   "15m": 2_880,
   "30m": 2_880,
   "1h": 4_320,
   "4h": 4_320,
+  "12h": 10_080,
   "1d": 14_400,
+  "1w": 43_200,
+  "1month": 131_400,
+  "1year": 525_600,
 };
 
 export const getChartBrokerRecentWindowMinutes = (

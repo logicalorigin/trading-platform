@@ -4,9 +4,8 @@ import test from "node:test";
 
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
-  buildStaSparklineHydrationSymbols,
-  buildStaSignalSparklineBatchRequest,
   buildStaSignalStatusSummary,
+  hasStaCandidateAction,
   hasUsableSparklineData,
   resolveRowTickerSnapshot,
   splitStaRowsBySignalMatrixHydration,
@@ -17,6 +16,25 @@ const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.u
 test("STA table does not request Signal Matrix hydration", () => {
   assert.doesNotMatch(source, /onRequestSignalMatrixHydration/);
   assert.doesNotMatch(source, /buildAlgoSignalMatrixHydrationRequest/);
+});
+
+test("STA source-health banner only fires on a genuinely empty matrix", () => {
+  // Event-loop stalls flip the cockpit + signal-options-state queries to isError
+  // together, but the matrix is the real STA row source. The "STA action source is
+  // currently unavailable" banner must stay gated on an empty matrix so a transient
+  // metrics stall does not read as a hard data outage while rows are present.
+  assert.match(
+    source,
+    /const sourceHealthBanner =\s*\(sourceHealth\.degraded \|\| sourceHealth\.stale\) && !staFilteredRows\.length/,
+  );
+});
+
+test("STA candidate action counting tolerates null action payloads", () => {
+  assert.equal(hasStaCandidateAction(null), false);
+  assert.equal(hasStaCandidateAction({ action: null }), false);
+  assert.equal(hasStaCandidateAction({ action: undefined }), false);
+  assert.equal(hasStaCandidateAction({ action: {} }), false);
+  assert.equal(hasStaCandidateAction({ action: { orderType: "market" } }), true);
 });
 
 test("STA status summary separates rows, received signals, actions, and history", () => {
@@ -227,54 +245,8 @@ test("STA sparkline hydration ignores non-drawable fallback bars", () => {
   );
 });
 
-test("STA sparkline hydration requests compact visible batch bars", () => {
-  const request = buildStaSignalSparklineBatchRequest([" spy ", "NVDA"]);
-
-  assert.deepEqual(
-    request.requests.map((item) => item.key),
-    ["SPY", "NVDA"],
-  );
-  assert.deepEqual(
-    request.requests.map((item) => item.responseShape),
-    ["sparkline", "sparkline"],
-  );
-  assert.deepEqual(
-    request.requests.map((item) => item.timeframe),
-    ["1m", "1m"],
-  );
-  assert.deepEqual(
-    request.requests.map((item) => item.brokerRecentWindowMinutes),
-    [0, 0],
-  );
-});
-
-test("STA sparkline hydration preloads adjacent rows without stale fallback bars", () => {
-  const rows = Array.from({ length: 80 }, (_, index) => ({
-    signal: {
-      symbol: `SYM${String(index + 1).padStart(2, "0")}`,
-      ...(index === 21
-        ? {
-            bars: [{ timestamp: "2026-06-08T20:00:00.000Z" }],
-          }
-        : null),
-      ...(index === 22
-        ? {
-            sparkBars: [{ close: 100 }, { close: 101 }],
-          }
-        : null),
-    },
-  }));
-
-  const symbols = buildStaSparklineHydrationSymbols({
-    rows,
-    page: 2,
-    pageSize: 20,
-    maxSymbols: 60,
-  });
-
-  assert.equal(symbols[0], "SYM01");
-  assert.equal(symbols.includes("SYM22"), true);
-  assert.equal(symbols.includes("SYM23"), false);
-  assert.equal(symbols.at(-1), "SYM60");
-  assert.equal(symbols.length, 59);
+test("STA row sparklines do not use DB-backed bars batch hydration", () => {
+  assert.doesNotMatch(source, /\/api\/bars\/batch/);
+  assert.doesNotMatch(source, /algo-signal-row-sparklines/);
+  assert.doesNotMatch(source, /fetchStaSignalSparklineBarsBatch/);
 });

@@ -13,7 +13,6 @@ import {
   getGetSignalOptionsPerformanceQueryKey,
   getListAlgoDeploymentsQueryKey,
   useGetAccountPositions,
-  useGetSignalMonitorProfile,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
   useGetAlgoDeploymentCockpit,
@@ -84,6 +83,11 @@ import {
   bridgeRuntimeTone,
   hasGatewayLiveDataProof,
 } from "../features/platform/bridgeRuntimeModel";
+import {
+  clearAlgoStaExecutionTimeframe,
+  publishAlgoStaExecutionTimeframe,
+  publishAlgoStaMtfTimeframes,
+} from "../features/platform/algoStaExecutionTimeframeStore.js";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import {
@@ -97,21 +101,9 @@ import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
   CSS_COLOR,
-  cssColorMix,
-  FONT_WEIGHTS,
   MISSING_VALUE,
-  RADII,
-  T,
-  dim,
-  fs,
   sp,
-  textSize,
 } from "../lib/uiTokens.jsx";
-import {
-  joinMotionClasses,
-  motionRowStyle,
-  motionVars,
-} from "../lib/motion";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
@@ -463,9 +455,6 @@ export const AlgoScreen = ({
   const algoBackgroundQueriesEnabled = Boolean(
     algoDerivedRestQueriesEnabled && !safeQaMode,
   );
-  const algoVisibleRowHydrationQueriesEnabled = Boolean(
-    algoLiveDataQueriesEnabled && !safeQaMode,
-  );
   const algoPostPrimaryQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
       !shadowAccountStreamFreshness.accountFresh,
@@ -573,18 +562,6 @@ export const AlgoScreen = ({
       },
     },
   );
-  const signalMonitorProfileQuery = useGetSignalMonitorProfile(
-    { environment: focusedDeployment?.mode || environment },
-    {
-      query: {
-        ...QUERY_DEFAULTS,
-        enabled: Boolean(algoDerivedRestQueriesEnabled && focusedDeployment?.id),
-        refetchInterval: algoDerivedRefetchInterval,
-        placeholderData: retainPreviousData,
-        retry: false,
-      },
-    },
-  );
   const signalOptionsLedgerPositionsQuery = useGetAccountPositions(
     "shadow",
     {
@@ -625,15 +602,9 @@ export const AlgoScreen = ({
       (cockpitQuery.data || cockpitQuery.isFetched)) ||
       cockpitQuery.isError,
   );
-  const signalMonitorProfileSettled = Boolean(
-    signalMonitorProfileQuery.data ||
-      signalMonitorProfileQuery.isFetched ||
-      signalMonitorProfileQuery.isError,
-  );
   const algoSetupDataSettled = Boolean(deploymentsSettled && draftsSettled);
   const algoDerivedRestSettled = Boolean(
-    !focusedDeployment?.id ||
-      (cockpitSettled && signalMonitorProfileSettled),
+    !focusedDeployment?.id || cockpitSettled,
   );
   const algoDerivedReady = Boolean(
     isVisible &&
@@ -690,14 +661,16 @@ export const AlgoScreen = ({
   const [activitySummary, setActivitySummary] = useState(null);
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
-  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
-  const signalScanPausedReason =
-    signalMonitorProfile?.enabled === false
-      ? "Signal Monitor is paused; enable it to run fresh signal scans."
-      : null;
-  const signalScanReady = !signalScanPausedReason;
-  const signalScanProfileCheckSettled = Boolean(
-    signalMonitorProfileSettled || algoCockpitStreamFreshness.algoFullFresh,
+  const signalMonitorProfile = signalMonitorState?.profile || null;
+  const signalScanReady = true;
+  const signalMatrixRowsAvailable = Boolean(
+    Array.isArray(signalMatrixStates) && signalMatrixStates.length,
+  );
+  const signalMatrixFeedSettled = Boolean(
+    signalMatrixRowsAvailable ||
+      signalMonitorEventsLoaded ||
+      signalMonitorState ||
+      algoCockpitStreamFreshness.algoFullFresh,
   );
   const deploymentSignalOptionsBaselineAvailable = useMemo(() => {
     const config = asRecord(focusedDeployment?.config);
@@ -1041,6 +1014,19 @@ export const AlgoScreen = ({
   const staActionSignalTimeframes = useMemo(
     () => normalizeStrategySignalTimeframes(strategySettingsDraft?.signalTimeframe),
     [strategySettingsDraft?.signalTimeframe],
+  );
+  useEffect(() => {
+    // Publish BOTH the live-draft execution TF and the live-draft MTF companion
+    // set so the Algo Monitor sidebar reflects the same selection as the STA
+    // table (which reads profileDraft directly). Cleared on unmount below.
+    publishAlgoStaExecutionTimeframe(staActionSignalTimeframes[0] || "");
+    publishAlgoStaMtfTimeframes(staSignalTimeframes);
+  }, [staActionSignalTimeframes, staSignalTimeframes]);
+  useEffect(
+    () => () => {
+      clearAlgoStaExecutionTimeframe();
+    },
+    [],
   );
 
   useEffect(() => {
@@ -1653,27 +1639,18 @@ export const AlgoScreen = ({
           : null,
     };
   }, [signalMonitorProfile, visibleSignalRows]);
-  const signalScanFallbackDetail = signalTableScanFallback.lastSignalScanAt
-    ? signalScanPausedReason
-      ? "showing cached signals; Signal Monitor is paused"
-      : "signal stream cache current"
-    : signalScanPausedReason
-      ? signalScanPausedReason
-      : signalScanProfileCheckSettled
-        ? signalMonitorProfileQuery.isError
-          ? "Signal Monitor profile check failed; scan will retry server-side"
-          : "ready to scan from Signal Monitor data"
-        : "checking Signal Monitor profile";
+  const signalMatrixFreshnessDetail = signalTableScanFallback.lastSignalScanAt
+    ? "signal matrix current"
+    : signalMatrixFeedSettled
+      ? "waiting for live signal matrix data"
+      : "connecting to Signal Matrix";
   const cockpitStageItems = cockpitPipelineStages.length
     ? cockpitPipelineStages
     : [
         {
           id: "scan_universe",
           label: "Signal Symbols",
-          status:
-            signalScanPausedReason && !signalTableScanFallback.lastSignalScanAt
-              ? "blocked"
-              : "waiting",
+          status: signalTableScanFallback.lastSignalScanAt ? "healthy" : "waiting",
           count:
             visibleSignalRows.length ||
             focusedDeployment?.symbolUniverse?.length ||
@@ -1687,7 +1664,7 @@ export const AlgoScreen = ({
           latestSignalAt: signalTableScanFallback.latestSignalAt,
           pollIntervalMs: signalTableScanFallback.pollIntervalMs,
           signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
-          detail: signalScanFallbackDetail,
+          detail: signalMatrixFreshnessDetail,
         },
       ];
   const algoExecutionScanRunning = cockpitStageItems.some((stage) => {
@@ -1725,48 +1702,6 @@ export const AlgoScreen = ({
         minWidth: 0,
       }}
     >
-      {signalScanPausedReason && (
-        <div
-          className="ra-panel-enter ra-focus-rail"
-          style={{
-            ...motionVars({ accent: CSS_COLOR.amber }),
-            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
-            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
-            borderRadius: dim(RADII.sm),
-            padding: sp("10px 12px"),
-            display: "flex",
-            justifyContent: "space-between",
-            gap: sp(12),
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-            <span
-              style={{
-                fontSize: fs(11),
-                fontWeight: FONT_WEIGHTS.regular,
-                fontFamily: T.sans,
-                color: CSS_COLOR.amber,
-                letterSpacing: "0.04em",
-              }}
-            >
-              SIGNAL SCANS PAUSED
-            </span>
-            <span
-              style={{
-                fontSize: textSize("caption"),
-                color: CSS_COLOR.textSec,
-                fontFamily: T.sans,
-                lineHeight: 1.45,
-              }}
-            >
-              {signalScanPausedReason}
-            </span>
-          </div>
-        </div>
-      )}
-
       <div
         data-testid="algo-live-content"
         className="ra-panel-enter"
@@ -1804,7 +1739,7 @@ export const AlgoScreen = ({
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
             gatewayReady={gatewayReady}
             signalScanReady={signalScanReady}
-            signalScanBlockedReason={signalScanPausedReason}
+            signalScanBlockedReason={null}
             transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}
             signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
@@ -1816,8 +1751,6 @@ export const AlgoScreen = ({
             staSignalTimeframes={staSignalTimeframes}
             onOpenCandidateInTrade={handleOpenCandidateInTrade}
             safeQaMode={safeQaMode}
-            backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
-            rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
             signalOptionsPositions={signalOptionsPositions}
             signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
             symbolIndex={symbolIndex}

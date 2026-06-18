@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildPlatformPressureCaps,
   buildPlatformWorkSchedule,
+  shouldRunSignalMonitorDisplay,
 } from "./appWorkScheduler.js";
 
 test("watch pressure reduces passive sparkline concurrency", () => {
@@ -55,6 +56,22 @@ test("massive stock realtime can drive market quotes and charting without broker
   assert.equal(schedule.streams.accountRealtime, false);
 });
 
+test("massive stock realtime can drive signal-surface aggregate streams", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: false,
+    brokerAuthenticated: false,
+    massiveStockRealtimeConfigured: true,
+    activeScreen: "signals",
+    screenWarmupPhase: "ready",
+    memoryPressure: { level: "normal", observedAt: "2026-06-17T21:20:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.marketStockAggregates, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
+});
+
 test("watch pressure degrades hydration without blocking near-priority work", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,
@@ -81,4 +98,32 @@ test("high pressure backs off non-visible hydration work", () => {
   });
 
   assert.equal(schedule.hydrationPressure, "backoff");
+});
+
+test("foreground signal matrix display ignores legacy disabled scan profile", () => {
+  assert.equal(
+    shouldRunSignalMonitorDisplay({
+      workVisible: true,
+      firstScreenReady: true,
+      foregroundReady: true,
+      profileEnabled: false,
+      profileFetched: true,
+      profileError: false,
+    }),
+    true,
+  );
+});
+
+test("background signal display still respects a disabled scan profile", () => {
+  assert.equal(
+    shouldRunSignalMonitorDisplay({
+      workVisible: true,
+      firstScreenReady: true,
+      foregroundReady: false,
+      profileEnabled: false,
+      profileFetched: true,
+      profileError: false,
+    }),
+    false,
+  );
 });

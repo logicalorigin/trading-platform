@@ -7,6 +7,17 @@ import { resolveWatchlistSparklineData } from "./PlatformWatchlist.jsx";
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
 
+test("watchlist renders the visible extended-hours badge (not hover-only)", () => {
+  // Regression guard: 5b68e05 moved the after-hours session line to a hover-only
+  // title; it must render as a VISIBLE badge in the row (session label + price +
+  // tone-colored move, dimmed when delayed/stale). Guards against re-regressing.
+  const source = readLocalSource("./PlatformWatchlist.jsx");
+  assert.match(source, /const renderExtendedHoursBadge\s*=/);
+  assert.match(source, /\{renderExtendedHoursBadge\(\)\}/);
+  assert.match(source, /data-testid="watchlist-extended-hours"/);
+  assert.match(source, /extendedHoursPositive/);
+});
+
 test("watchlist sparkline resolver uses live snapshot spark bars first", () => {
   const snapshotSparkBars = [{ close: 100 }, { close: 101 }];
   const snapshotSpark = [100, 101, 102];
@@ -123,9 +134,82 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketDataSource,
     /useHydrationGate\(\{\s*enabled:\s*sparklineHistoryEnabled,\s*priority:\s*BARS_REQUEST_PRIORITY\.background,\s*family:\s*"sparkline",?\s*\}\)/s,
   );
+  const marketSparklineQueryBlock =
+    marketDataSource.match(
+      /const sparklineQuery = useQuery\(\{[\s\S]*?const signalSparklinePrioritySeedQuery = useQuery/s,
+    )?.[0] || "";
+  assert.match(
+    marketSparklineQueryBlock,
+    /queryFn:\s*\(\) =>\s*fetchSparklineSeedInChunks\(historySparklineSymbols/s,
+  );
+  assert.match(
+    marketSparklineQueryBlock,
+    /enabled:\s*sparklineHistoryEnabled/,
+  );
+  assert.doesNotMatch(
+    marketSparklineQueryBlock,
+    /getBarsRequest\(/,
+  );
+  assert.doesNotMatch(
+    marketDataSource,
+    /const SPARKLINE_HISTORY_LIMIT = 720/,
+  );
   assert.match(
     marketDataSource,
-    /getBarsRequest\([\s\S]*sparklineHydrationGate\.requestOptions/s,
+    /"signal-sparkline-seed"[\s\S]*"priority"[\s\S]*signalSparklinePrioritySeedSymbols/s,
+  );
+  assert.match(
+    marketDataSource,
+    /"signal-sparkline-seed"[\s\S]*"background"[\s\S]*signalSparklineBackgroundSeedSymbols/s,
+  );
+  assert.doesNotMatch(
+    marketDataSource,
+    /signalSparkline(?:Priority|Background)?SeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
+  );
+  assert.match(
+    marketDataSource,
+    /SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT/,
+  );
+  assert.match(
+    marketDataSource,
+    /SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE/,
+  );
+  assert.match(
+    marketDataSource,
+    /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineBackgroundSeedSymbols\)/s,
+  );
+  assert.match(
+    marketDataSource,
+    /const hasSeedBars = hasUsableSparklineBars\(seedBars\);[\s\S]*if \(aggregateOnlySparklineSymbolSet\.has\(normalized\)\) \{[\s\S]*return hasUsableSparklineBars\(signalSparklineBars\)[\s\S]*: null;/s,
+  );
+});
+
+test("signal matrix surfaces seed sparklines without the market history bars path", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+
+  assert.match(
+    source,
+    /const runtimeHistorySparklineSymbols = useMemo\(\s*\(\) => \(signalMatrixRouteRequestActive \? \[\] : runtimeSparklineSymbols\)/,
+  );
+  assert.match(
+    source,
+    /const runtimePrioritySparklineSymbols = useMemo\(\s*\(\) => \(signalMatrixRouteRequestActive \? \[\] : prioritySparklineSymbols\)/,
+  );
+  assert.match(
+    source,
+    /const runtimeAggregateOnlySparklineSymbols = useMemo\([\s\S]*\.\.\.runtimeSparklineSymbols,[\s\S]*\.\.\.prioritySparklineSymbols,[\s\S]*\.\.\.signalMonitorDisplaySymbols/s,
+  );
+  assert.match(
+    source,
+    /sparklineSymbols=\{safeQaMode \? \[\] : runtimeHistorySparklineSymbols\}/,
+  );
+  assert.match(
+    source,
+    /prioritySparklineSymbols=\{safeQaMode \? \[\] : runtimePrioritySparklineSymbols\}/,
+  );
+  assert.match(
+    source,
+    /aggregateOnlySparklineSymbols=\{\s*safeQaMode \? \[\] : runtimeAggregateOnlySparklineSymbols\s*\}/,
   );
 });
 
@@ -141,6 +225,8 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   const shellCallSource = source.slice(shellCallStart, shellCallEnd);
 
   assert.equal(source.includes("signalMatrixStates={signalMatrixSnapshot.states}"), false);
+  assert.equal(source.includes("readSignalMatrixSnapshotCache"), false);
+  assert.equal(source.includes("writeSignalMatrixSnapshotCache"), false);
   // Matrix truth is states only: the backend latches identity and reconciles
   // stored states from canonical events, so the client never overlays events
   // onto matrix cells.
@@ -204,6 +290,10 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(shellSource, /signalMatrixStates=\{watchlistSignalMatrixStates\}/);
   assert.match(shellSource, /signalMatrixStates=\{activitySignalMatrixStates\}/);
+  assert.match(
+    shellSource,
+    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled,?\s*\);/s,
+  );
   assert.match(shellCallSource, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
   assert.equal(
     shellCallSource.includes("signalMonitorStates={signalMonitorStates}"),
@@ -217,4 +307,14 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
     headerSource,
     /signalMatrixStates=\{headerSignalMatrixStates\}/,
   );
+});
+
+test("platform signal matrix subscription narrowing does not prune published rows", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+
+  assert.match(
+    source,
+    /Pressure caps narrow new Signal Matrix subscriptions[\s\S]*must not[\s\S]*prune rows/,
+  );
+  assert.doesNotMatch(source, /knownSymbols:\s*signalMatrixUniverseSymbols/);
 });

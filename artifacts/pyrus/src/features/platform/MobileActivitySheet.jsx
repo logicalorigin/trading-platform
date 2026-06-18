@@ -12,6 +12,7 @@ export const MobileActivitySheet = ({
   signalMatrixStates = [],
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
+  signalActionTimeframe,
   onOpenAlgo,
   onOpenTradeSymbol,
 }) => (
@@ -39,6 +40,7 @@ export const MobileActivitySheet = ({
         signalMatrixStates={signalMatrixStates}
         signalMonitorEvents={signalMonitorEvents}
         signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+        signalActionTimeframe={signalActionTimeframe}
         onOpenAlgo={onOpenAlgo}
         onOpenTradeSymbol={onOpenTradeSymbol}
         compactLayout

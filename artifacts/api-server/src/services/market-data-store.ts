@@ -33,11 +33,16 @@ export type MarketDataStoreTimeframe =
   | "1m"
   | "2m"
   | "5m"
+  | "10m"
   | "15m"
   | "30m"
   | "1h"
   | "4h"
-  | "1d";
+  | "12h"
+  | "1d"
+  | "1w"
+  | "1month"
+  | "1year";
 
 export type MarketDataStoreRequest = {
   symbol: string;
@@ -85,11 +90,16 @@ const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
   "1m": 60_000,
   "2m": 2 * 60_000,
   "5m": 5 * 60_000,
+  "10m": 10 * 60_000,
   "15m": 15 * 60_000,
   "30m": 30 * 60_000,
   "1h": 60 * 60_000,
   "4h": 4 * 60 * 60_000,
+  "12h": 12 * 60 * 60_000,
   "1d": 24 * 60 * 60_000,
+  "1w": 7 * 24 * 60 * 60_000,
+  "1month": 30 * 24 * 60 * 60_000,
+  "1year": 365 * 24 * 60 * 60_000,
 };
 
 const numberFromDb = (value: unknown): number => {
@@ -132,19 +142,30 @@ const expandStoredRowsLimit = (
   timeframe: MarketDataStoreTimeframe,
 ): number => {
   const stepMs = TIMEFRAME_STEP_MS[timeframe];
-  if (!stepMs || stepMs <= 1_000 || timeframe === "1d") {
+  if (
+    !stepMs ||
+    stepMs <= 1_000 ||
+    ["10m", "12h", "1d", "1w", "1month", "1year"].includes(timeframe)
+  ) {
     return limit;
   }
   const assumedContaminatedBaseMs = stepMs < 60_000 ? 1_000 : 60_000;
   return Math.max(limit, Math.ceil((limit * stepMs) / assumedContaminatedBaseMs));
 };
 
+export function __expandStoredRowsLimitForTests(
+  limit: number,
+  timeframe: MarketDataStoreTimeframe,
+): number {
+  return expandStoredRowsLimit(limit, timeframe);
+}
+
 export function normalizeBarsToStoreTimeframe<T extends MarketDataStoreBarInput>(
   bars: T[],
   timeframe: MarketDataStoreTimeframe,
 ): T[] {
   const stepMs = TIMEFRAME_STEP_MS[timeframe];
-  if (!stepMs || stepMs <= 1_000) {
+  if (!stepMs || stepMs <= 1_000 || ["1w", "1month", "1year"].includes(timeframe)) {
     return [...bars].sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
   }
 
@@ -353,6 +374,131 @@ export async function loadStoredMarketBars(
   } catch (error) {
     handleStoreError(error, "loadStoredMarketBars");
     return [];
+  }
+}
+
+export async function loadStoredMarketBarsBySymbol(input: {
+  symbols: string[];
+  timeframe: MarketDataStoreTimeframe;
+  limit?: number;
+  from?: Date;
+  to?: Date;
+  sourceName: string;
+  outsideRth?: boolean;
+}): Promise<Record<string, BrokerBarSnapshot[]>> {
+  const symbols = Array.from(
+    new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  if (!symbols.length) {
+    return {};
+  }
+
+  const desiredLimit = Math.max(1, Math.min(720, Math.floor(input.limit ?? 120)));
+  const expandedLimit = expandStoredRowsLimit(desiredLimit, input.timeframe);
+  const symbolValues = sql.join(
+    symbols.map((symbol) => sql`${symbol}`),
+    sql`, `,
+  );
+  const fromCondition = input.from
+    ? sql`and starts_at >= ${input.from}`
+    : sql``;
+  const toCondition = input.to
+    ? sql`and starts_at <= ${input.to}`
+    : sql``;
+  type BulkBarCacheRow = {
+    symbol: string;
+    starts_at: Date | string;
+    open: string | number;
+    high: string | number;
+    low: string | number;
+    close: string | number;
+    volume: string | number;
+  };
+
+  try {
+    const result = await db.execute(sql<BulkBarCacheRow>`
+      select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+      from unnest(array[${symbolValues}]::text[]) as s(symbol)
+      cross join lateral (
+        select symbol, starts_at, open, high, low, close, volume
+        from bar_cache
+        where symbol = s.symbol
+          and timeframe = ${input.timeframe}
+          and source = ${input.sourceName}
+          ${fromCondition}
+          ${toCondition}
+        order by starts_at desc
+        limit ${expandedLimit}
+      ) b
+      order by b.symbol, b.starts_at
+    `);
+    const rows = result.rows as BulkBarCacheRow[];
+
+    const rowsBySymbol = new Map<string, BulkBarCacheRow[]>();
+    rows.forEach((row) => {
+      const symbol = normalizeSymbol(row.symbol);
+      if (!symbol) {
+        return;
+      }
+      const current = rowsBySymbol.get(symbol) || [];
+      if (current.length >= expandedLimit) {
+        return;
+      }
+      current.push(row);
+      rowsBySymbol.set(symbol, current);
+    });
+
+    const normalizedSourceName = input.sourceName.toLowerCase();
+    const delayed =
+      normalizedSourceName.includes("delayed") ||
+      (normalizedSourceName.includes("massive") &&
+        !isMassiveStocksRealtimeConfigured());
+    const transport = normalizedSourceName.includes("websocket")
+      ? "massive_websocket"
+      : "massive_rest";
+    const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
+
+    return Object.fromEntries(
+      symbols
+        .map((symbol) => {
+          const symbolRows = rowsBySymbol.get(symbol) || [];
+          const bars = normalizeBarsToStoreTimeframe(
+            symbolRows
+              .map((row): BrokerBarSnapshot => {
+                const timestamp =
+                  row.starts_at instanceof Date
+                    ? row.starts_at
+                    : new Date(row.starts_at);
+                return {
+                  timestamp,
+                  open: numberFromDb(row.open),
+                  high: numberFromDb(row.high),
+                  low: numberFromDb(row.low),
+                  close: numberFromDb(row.close),
+                  volume: numberFromDb(row.volume),
+                  source: input.sourceName,
+                  providerContractId: null,
+                  outsideRth: input.outsideRth !== false,
+                  partial: false,
+                  transport,
+                  delayed,
+                  freshness,
+                  dataUpdatedAt: timestamp,
+                };
+              })
+              .sort(
+                (left, right) =>
+                  left.timestamp.getTime() - right.timestamp.getTime(),
+              ),
+            input.timeframe,
+          ).slice(-desiredLimit);
+          return bars.length ? [symbol, bars] : null;
+        })
+        .filter((entry): entry is [string, BrokerBarSnapshot[]] => entry !== null),
+    );
+  } catch (error) {
+    logger.warn({ error }, "bulk durable market data sparkline seed failed");
+    throw error;
   }
 }
 

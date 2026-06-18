@@ -4512,11 +4512,28 @@ const estimateMonoTextWidth = (
   horizontalPadding: number,
 ): number => text.length * fontSize * 0.68 + horizontalPadding * 2 + 2;
 
-const resolveBarSpacing = (
+// Canonical chart-space sizing source: the chart's own bar spacing (pixels per
+// bar) -- the single value lightweight-charts renders candles from, recomputed
+// by the lib on every zoom/resize. ALL chart-space overlay widths/shading must
+// derive from this so they track candles. Returns null until the lib has laid
+// the time scale out, so callers can fall back to a measured estimate.
+export const getChartBarSpacing = (chart: ChartApi): number | null => {
+  const spacing = chart.timeScale().options().barSpacing;
+  return typeof spacing === "number" && spacing > 0 ? spacing : null;
+};
+
+export const resolveBarSpacing = (
   chart: ChartApi,
   model: ChartModel,
   minimumSpacing = 2,
 ): number => {
+  const canonical = getChartBarSpacing(chart);
+  if (canonical != null) {
+    return Math.max(minimumSpacing, canonical);
+  }
+
+  // Fallback only while the lib bar spacing is unavailable: average the rendered
+  // gap between recent bars (an approximation of the canonical spacing).
   const sample = model.chartBars.slice(-40);
   const diffs: number[] = [];
 
@@ -4529,7 +4546,7 @@ const resolveBarSpacing = (
   }
 
   if (!diffs.length) {
-    return 8;
+    return Math.max(minimumSpacing, 8);
   }
 
   return Math.max(
@@ -5510,26 +5527,32 @@ const buildFlowChartEventClusterOverlays = (
   });
 };
 
-const estimateBarOverlayWidth = (
+export const estimateBarOverlayWidth = (
   chart: ChartApi,
   bars: ChartModel["chartBars"],
   index: number,
 ): number => {
-  const currentX = chart.timeScale().timeToCoordinate(bars[index]?.time);
-  const previousX =
-    index > 0 ? chart.timeScale().timeToCoordinate(bars[index - 1]?.time) : null;
-  const nextX =
-    index < bars.length - 1
-      ? chart.timeScale().timeToCoordinate(bars[index + 1]?.time)
-      : null;
-  const distances = [previousX, nextX]
-    .map((x) =>
-      isFiniteNumber(x) && isFiniteNumber(currentX)
-        ? Math.abs(Number(x) - Number(currentX))
-        : null,
-    )
-    .filter((value): value is number => typeof value === "number" && value > 0);
-  const width = distances.length ? Math.min(...distances) * 0.62 : 6;
+  // Derive from the canonical bar spacing (what candles use) so flow overlays
+  // track candle width on zoom/resize; keep the body fraction + legibility clamp.
+  let base = getChartBarSpacing(chart);
+  if (base == null) {
+    const currentX = chart.timeScale().timeToCoordinate(bars[index]?.time);
+    const previousX =
+      index > 0 ? chart.timeScale().timeToCoordinate(bars[index - 1]?.time) : null;
+    const nextX =
+      index < bars.length - 1
+        ? chart.timeScale().timeToCoordinate(bars[index + 1]?.time)
+        : null;
+    const distances = [previousX, nextX]
+      .map((x) =>
+        isFiniteNumber(x) && isFiniteNumber(currentX)
+          ? Math.abs(Number(x) - Number(currentX))
+          : null,
+      )
+      .filter((value): value is number => typeof value === "number" && value > 0);
+    base = distances.length ? Math.min(...distances) : null;
+  }
+  const width = base != null ? base * 0.62 : 6;
   return clampCoordinate(width, 3, 14);
 };
 
@@ -5643,29 +5666,35 @@ const resolveFootprintLevelText = (
   )}`;
 };
 
-const resolveFootprintCandleWidth = (
+export const resolveFootprintCandleWidth = (
   chart: ChartApi,
   candles: ChartFootprintCandle[],
   index: number,
 ): number => {
-  const currentTime = Date.parse(candles[index]?.time ?? "") / 1000;
-  const currentX = chart.timeScale().timeToCoordinate(currentTime);
-  const previousTime =
-    index > 0 ? Date.parse(candles[index - 1]?.time ?? "") / 1000 : null;
-  const nextTime =
-    index < candles.length - 1
-      ? Date.parse(candles[index + 1]?.time ?? "") / 1000
-      : null;
-  const previousX = previousTime ? chart.timeScale().timeToCoordinate(previousTime) : null;
-  const nextX = nextTime ? chart.timeScale().timeToCoordinate(nextTime) : null;
-  const distances = [previousX, nextX]
-    .map((x) =>
-      isFiniteNumber(x) && isFiniteNumber(currentX)
-        ? Math.abs(Number(x) - Number(currentX))
-        : null,
-    )
-    .filter((value): value is number => typeof value === "number" && value > 0);
-  const width = distances.length ? Math.min(...distances) * 0.84 : 42;
+  // Derive from the canonical bar spacing (what candles use) so footprint cells
+  // track candle width on zoom/resize; keep the body fraction + legibility clamp.
+  let base = getChartBarSpacing(chart);
+  if (base == null) {
+    const currentTime = Date.parse(candles[index]?.time ?? "") / 1000;
+    const currentX = chart.timeScale().timeToCoordinate(currentTime);
+    const previousTime =
+      index > 0 ? Date.parse(candles[index - 1]?.time ?? "") / 1000 : null;
+    const nextTime =
+      index < candles.length - 1
+        ? Date.parse(candles[index + 1]?.time ?? "") / 1000
+        : null;
+    const previousX = previousTime ? chart.timeScale().timeToCoordinate(previousTime) : null;
+    const nextX = nextTime ? chart.timeScale().timeToCoordinate(nextTime) : null;
+    const distances = [previousX, nextX]
+      .map((x) =>
+        isFiniteNumber(x) && isFiniteNumber(currentX)
+          ? Math.abs(Number(x) - Number(currentX))
+          : null,
+      )
+      .filter((value): value is number => typeof value === "number" && value > 0);
+    base = distances.length ? Math.min(...distances) : null;
+  }
+  const width = base != null ? base * 0.84 : 42;
   return clampCoordinate(width, 28, 72);
 };
 

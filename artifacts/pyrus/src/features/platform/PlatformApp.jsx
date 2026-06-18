@@ -130,6 +130,7 @@ import {
 } from "./screenReadinessPolicy.js";
 import {
   readBootWarmStart,
+  shouldRunStartupRefresh,
   writeBootWarmStart,
 } from "./bootWarmStartCache.js";
 import {
@@ -142,10 +143,6 @@ import { publishMarketAlertsSnapshot } from "./marketAlertsStore";
 import {
   publishSignalMonitorSnapshot,
 } from "./signalMonitorStore";
-import {
-  readSignalMatrixSnapshotCache,
-  writeSignalMatrixSnapshotCache,
-} from "../signals/signalMatrixSnapshotCache.js";
 import {
   isSignalMonitorDegradedProfile,
   isSignalMonitorRuntimeFallbackProfile,
@@ -173,6 +170,7 @@ import { setHydrationPressureState } from "./hydrationCoordinator";
 import {
   buildPlatformPressureCaps,
   buildPlatformWorkSchedule,
+  shouldRunSignalMonitorDisplay,
 } from "./appWorkScheduler.js";
 import {
   createPlatformFreshnessBus,
@@ -730,6 +728,13 @@ export default function PlatformApp() {
     () => resolveBootBlockingTaskIds(initialScreen),
     [initialScreen],
   );
+  const bootWarmStart = useMemo(
+    () => (safeQaMode ? null : readBootWarmStart()),
+    [safeQaMode],
+  );
+  const startupRefreshEnabled = shouldRunStartupRefresh({
+    warmStart: bootWarmStart,
+  });
   const latencyDebugEnabled = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -793,11 +798,7 @@ export default function PlatformApp() {
     ].forEach((taskId) => startBootProgressTask(taskId));
   }, []);
   useEffect(() => {
-    if (safeQaMode) {
-      return;
-    }
-    const warmStart = readBootWarmStart();
-    if (!warmStart) {
+    if (!bootWarmStart) {
       return;
     }
     // Warm reload: the heavy screen data is already hydrated from localStorage /
@@ -814,8 +815,7 @@ export default function PlatformApp() {
           detail: "Restored from last session",
         }),
       );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootWarmStart, initialScreen]);
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
@@ -1681,7 +1681,7 @@ export default function PlatformApp() {
     watchlistMarketDataSymbols,
     watchlistSymbols,
   ]);
-  const streamedAggregateSymbols = useMemo(
+  const baseStreamedAggregateSymbols = useMemo(
     () => [
       ...new Set(
         [
@@ -2247,6 +2247,7 @@ export default function PlatformApp() {
   useEffect(() => {
     if (
       startupRefreshQueuedRef.current ||
+      !startupRefreshEnabled ||
       !platformRealtimeWorkActive ||
       !firstScreenReady ||
       startupProtectionActive
@@ -2319,6 +2320,7 @@ export default function PlatformApp() {
     platformRealtimeWorkActive,
     queryClient,
     signalMonitorEnvironment,
+    startupRefreshEnabled,
     startupProtectionActive,
   ]);
 
@@ -3008,17 +3010,14 @@ export default function PlatformApp() {
     signalMatrixPressureCaps.signalDisplayPollMinMs || 0,
   );
   const signalMonitorForegroundReady = Boolean(signalMatrixRequestActive);
-  const signalMonitorProfileAllowsDisplay = Boolean(
-    signalMonitorProfile?.enabled ||
-      (signalMonitorForegroundReady &&
-        !signalMonitorProfileQuery.isFetched &&
-        !signalMonitorProfileQuery.isError),
-  );
-  const signalMonitorDisplayReady = Boolean(
-    signalMonitorWorkVisible &&
-      firstScreenReady &&
-      signalMonitorProfileAllowsDisplay,
-  );
+  const signalMonitorDisplayReady = shouldRunSignalMonitorDisplay({
+    workVisible: signalMonitorWorkVisible,
+    firstScreenReady,
+    foregroundReady: signalMonitorForegroundReady,
+    profileEnabled: Boolean(signalMonitorProfile?.enabled),
+    profileFetched: signalMonitorProfileQuery.isFetched,
+    profileError: signalMonitorProfileQuery.isError,
+  });
   const signalMonitorEventsReady = signalMonitorDisplayReady;
   const signalMonitorStateQuery = useGetSignalMonitorState(
     signalMonitorParams,
@@ -3142,7 +3141,10 @@ export default function PlatformApp() {
       signalMonitorProfileQuery.isFetched ||
       signalMonitorProfileQuery.isError
     ) {
-      if (!signalMonitorProfileQuery.data?.enabled) {
+      if (
+        !signalMonitorForegroundReady &&
+        !signalMonitorProfileQuery.data?.enabled
+      ) {
         skipBootProgressTasks(["signal-state"], "Signal monitor disabled");
         return;
       }
@@ -3174,6 +3176,7 @@ export default function PlatformApp() {
     completeBootProgressTask("signal-state", { detail: "Signal state loaded" });
   }, [
     signalMonitorDisplayReady,
+    signalMonitorForegroundReady,
     signalMonitorProfileQuery.data,
     signalMonitorProfileQuery.isError,
     signalMonitorProfileQuery.isFetched,
@@ -3273,17 +3276,17 @@ export default function PlatformApp() {
       },
     },
   });
-  const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => {
-    const cachedSnapshot = readSignalMatrixSnapshotCache({
-      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-    });
-    return cachedSnapshot || {
-      states: [],
-      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-    };
-  });
+  const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => ({
+    states: [],
+    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+  }));
   const signalMatrixUniverseRef = useRef([]);
   const signalMatrixStatesRef = useRef(signalMatrixSnapshot.states || []);
+  // High-water mark of the last REST-reported signal-monitor universe. Retained
+  // across transient runtime-fallback flaps so the SSE matrix/quote stream symbol
+  // sets do not collapse to empty (which churns the stream URL and tears the
+  // EventSource down/up every poll — the visible backoff/fallback/reload cycle).
+  const lastSignalMonitorUniverseRef = useRef(EMPTY_UNIVERSE_SYMBOLS);
   const signalMonitorStates =
     signalMonitorStateRuntimeFallback
       ? EMPTY_SIGNAL_MONITOR_STATES
@@ -3308,15 +3311,24 @@ export default function PlatformApp() {
   // [] every render cascaded through quoteStreamRotationSymbols into a setState
   // effect that re-fired every render — an infinite render loop ("Maximum update
   // depth exceeded") that kept the page re-rendering and never let it settle.
-  const signalMonitorStateUniverseSymbols = useMemo(
-    () =>
-      Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
-        ? signalMonitorStateRuntimeFallback
-          ? EMPTY_UNIVERSE_SYMBOLS
-          : signalMonitorStateQuery.data.universeSymbols
-        : EMPTY_UNIVERSE_SYMBOLS,
-    [signalMonitorStateQuery.data?.universeSymbols, signalMonitorStateRuntimeFallback],
-  );
+  const signalMonitorStateUniverseSymbols = useMemo(() => {
+    const fresh = Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
+      ? signalMonitorStateQuery.data.universeSymbols
+      : null;
+    // During a transient runtime-fallback flap the REST universe collapses to
+    // empty. Blanking it here churns the SSE matrix stream's symbol key (the
+    // stream URL identity is the joined universe), so the EventSource is torn
+    // down and reopened every poll — the visible backoff/fallback/reload cycle.
+    // Retain the last known-good universe across the flap; the fresh universe
+    // replaces it the moment the REST source recovers. Returning the stable ref
+    // also preserves the array-identity guarantee that quoteStreamRotationSymbols
+    // relies on to avoid the documented infinite render loop.
+    if (signalMonitorStateRuntimeFallback || !fresh) {
+      return lastSignalMonitorUniverseRef.current;
+    }
+    lastSignalMonitorUniverseRef.current = fresh;
+    return fresh;
+  }, [signalMonitorStateQuery.data?.universeSymbols, signalMonitorStateRuntimeFallback]);
   const headerSignalContextSymbols = useMemo(
     () =>
       buildHeaderSignalContextSymbols({
@@ -3835,7 +3847,9 @@ export default function PlatformApp() {
     !signalMonitorWorkVisible ||
       !firstScreenReady ||
       signalMonitorProfileQuery.isError ||
-      (signalMonitorProfileQuery.isFetched && !signalMonitorProfile?.enabled) ||
+      (signalMonitorProfileQuery.isFetched &&
+        !signalMonitorForegroundReady &&
+        !signalMonitorProfile?.enabled) ||
       signalMonitorPublishedStates.length > 0 ||
       signalMonitorStateBootstrapUsable ||
       (signalMonitorStateQuery.isFetched &&
@@ -3855,28 +3869,15 @@ export default function PlatformApp() {
   useEffect(() => {
     signalMatrixUniverseRef.current = signalMatrixUniverseSymbols;
     setSignalMatrixSnapshot((current) => {
-      const nextStates = mergeSignalMatrixStates({
-        currentStates: current.states,
-        knownSymbols: signalMatrixUniverseSymbols,
-      });
-      if (signalMatrixStatesEqual(current.states, nextStates)) {
-        return current.coverage ? { ...current, coverage: null } : current;
-      }
-      return {
-        ...current,
-        states: nextStates,
-        coverage: null,
-      };
+      // Pressure caps narrow new Signal Matrix subscriptions. They must not
+      // prune rows that were already published into the visible matrix.
+      if (!current.coverage) return current;
+      return { ...current, coverage: null };
     });
   }, [signalMatrixUniverseSymbols, signalMatrixSymbolsKey]);
   useEffect(() => {
     signalMatrixStatesRef.current = signalMatrixSnapshot.states;
   }, [signalMatrixSnapshot.states]);
-  useEffect(() => {
-    writeSignalMatrixSnapshotCache(signalMatrixSnapshot, {
-      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-    });
-  }, [signalMatrixSnapshot]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -4022,6 +4023,10 @@ export default function PlatformApp() {
     () => [...new Set([...sparklineSymbols, ...openPositionMarketDataSymbols])],
     [openPositionMarketDataSymbols, sparklineSymbols],
   );
+  const runtimeHistorySparklineSymbols = useMemo(
+    () => (signalMatrixRouteRequestActive ? [] : runtimeSparklineSymbols),
+    [runtimeSparklineSymbols, signalMatrixRouteRequestActive],
+  );
   const prioritySparklineSymbols = useMemo(
     () => {
       const symbols = [
@@ -4042,13 +4047,40 @@ export default function PlatformApp() {
       watchlistMarketDataSymbols,
     ],
   );
+  const runtimePrioritySparklineSymbols = useMemo(
+    () => (signalMatrixRouteRequestActive ? [] : prioritySparklineSymbols),
+    [prioritySparklineSymbols, signalMatrixRouteRequestActive],
+  );
   const runtimeStreamedQuoteSymbols = useMemo(
     () => [...new Set(streamedQuoteSymbols)],
     [streamedQuoteSymbols],
   );
+  const runtimeAggregateOnlySparklineSymbols = useMemo(
+    () =>
+      signalMatrixRouteRequestActive
+        ? [
+            ...new Set([
+              ...runtimeSparklineSymbols,
+              ...prioritySparklineSymbols,
+              ...signalMonitorDisplaySymbols,
+            ]),
+          ]
+        : [],
+    [
+      prioritySparklineSymbols,
+      runtimeSparklineSymbols,
+      signalMatrixRouteRequestActive,
+      signalMonitorDisplaySymbols,
+    ],
+  );
   const runtimeStreamedAggregateSymbols = useMemo(
-    () => [...new Set(streamedAggregateSymbols)],
-    [streamedAggregateSymbols],
+    () => [
+      ...new Set([
+        ...baseStreamedAggregateSymbols,
+        ...runtimeAggregateOnlySparklineSymbols,
+      ]),
+    ],
+    [baseStreamedAggregateSymbols, runtimeAggregateOnlySparklineSymbols],
   );
   const headerBroadcastSignalMatrixStates = useMemo(
     () =>
@@ -4746,8 +4778,11 @@ export default function PlatformApp() {
         activeWatchlistItems={activeWatchlist?.items}
         quoteSymbols={safeQaMode ? [] : runtimeQuoteSymbols}
         activeVisibleQuoteSymbols={safeQaMode ? [] : activeVisibleQuoteSymbols}
-        sparklineSymbols={safeQaMode ? [] : runtimeSparklineSymbols}
-        prioritySparklineSymbols={safeQaMode ? [] : prioritySparklineSymbols}
+        sparklineSymbols={safeQaMode ? [] : runtimeHistorySparklineSymbols}
+        prioritySparklineSymbols={safeQaMode ? [] : runtimePrioritySparklineSymbols}
+        aggregateOnlySparklineSymbols={
+          safeQaMode ? [] : runtimeAggregateOnlySparklineSymbols
+        }
         streamedQuoteSymbols={safeQaMode ? [] : runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={safeQaMode ? [] : runtimeStreamedAggregateSymbols}
         quoteStreamRuntimeEnabled={
@@ -4817,6 +4852,7 @@ export default function PlatformApp() {
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={watchlistSignalMonitorStates}
             signalMonitorProfile={signalMonitorProfile}
+            signalActionTimeframe={signalMonitorProfile?.timeframe}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={Boolean(
               signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,

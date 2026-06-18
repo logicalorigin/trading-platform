@@ -278,6 +278,7 @@ export function useOptionChartBars({
       queryClient,
       queryKey,
       read: () => readCachedChartBars(runtimeCacheKey),
+      invalidate: false,
     });
   }, [queryClient, queryEnabled, queryKey, runtimeCacheKey]);
   const query = useQuery({

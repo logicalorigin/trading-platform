@@ -3295,7 +3295,7 @@ export const getBarsQueryBrokerRecentWindowMinutesMin = 0;
 
 export const GetBarsQueryParams = zod.object({
   "symbol": zod.coerce.string(),
-  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '15m', '30m', '1h', '4h', '1d']),
+  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '10m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1month', '1year']),
   "limit": zod.coerce.number().min(1).max(getBarsQueryLimitMax).optional(),
   "from": zod.date().optional(),
   "to": zod.date().optional(),
@@ -3313,7 +3313,7 @@ export const GetBarsQueryParams = zod.object({
 
 export const GetBarsResponse = zod.object({
   "symbol": zod.string(),
-  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '15m', '30m', '1h', '4h', '1d']),
+  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '10m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1month', '1year']),
   "bars": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
   "open": zod.number(),
@@ -3635,7 +3635,7 @@ export const GetOptionChartBarsQueryParams = zod.object({
   "right": zod.enum(['call', 'put']),
   "optionTicker": zod.coerce.string().nullish().describe('Provider-native OPRA option ticker to use for option aggregate fallback.'),
   "providerContractId": zod.coerce.string().nullish(),
-  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '15m', '30m', '1h', '4h', '1d']),
+  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '10m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1month', '1year']),
   "limit": zod.coerce.number().min(1).max(getOptionChartBarsQueryLimitMax).optional(),
   "from": zod.date().optional(),
   "to": zod.date().optional(),
@@ -3654,7 +3654,7 @@ export const getOptionChartBarsResponseTwoDebugBridgeChunksMin = 0;
 
 export const GetOptionChartBarsResponse = zod.object({
   "symbol": zod.string(),
-  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '15m', '30m', '1h', '4h', '1d']),
+  "timeframe": zod.enum(['1s', '5s', '15s', '30s', '1m', '2m', '5m', '10m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1month', '1year']),
   "bars": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
   "open": zod.number(),

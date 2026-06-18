@@ -1,4 +1,4 @@
-const PYRUS_MARK_SRC = "/brand/pyrus-mark.png";
+const PYRUS_MARK_SRC = "/brand/pyrus-mark-dark.svg";
 const PYRUS_ANIMATED_MARK_SRC = "/brand/pyrus-loader-mark-dark.svg";
 
 function cn(...classes: Array<string | false | null | undefined>) {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __algoAutomationInternalsForTests } from "./automation";
+import {
+  __algoAutomationInternalsForTests,
+  applyDeploymentToListCache,
+} from "./automation";
 
 test("strategy settings accept 2m signal timeframe", () => {
   assert.equal(
@@ -163,6 +166,58 @@ test("algo deployment list cache serves mode fallback from all-deployments cache
     );
   } finally {
     __algoAutomationInternalsForTests.clearDeploymentListCacheForTests();
+  }
+});
+
+// Regression: a deployment mutation must write through to the in-memory list
+// cache, or the pool-contention fallback keeps serving pre-save "old control
+// inputs" until a later uncontended read overwrites it.
+test("applyDeploymentToListCache keeps the fallback cache fresh after a mutation", () => {
+  const {
+    clearDeploymentListCacheForTests,
+    rememberDeploymentListCache,
+    buildDeploymentListResponse,
+    readDeploymentListCache,
+  } = __algoAutomationInternalsForTests;
+  const base = {
+    id: "deployment-paper",
+    strategyId: "strategy-signal-options",
+    name: "Pyrus Signals Options Shadow Paper",
+    mode: "paper",
+    enabled: false,
+    providerAccountId: "U24762790",
+    symbolUniverse: ["SPY"],
+    config: { signalOptions: { version: 1 } },
+    lastEvaluatedAt: null,
+    lastSignalAt: null,
+    lastError: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+  clearDeploymentListCacheForTests();
+  try {
+    rememberDeploymentListCache({}, buildDeploymentListResponse([base] as never));
+
+    // A save flips `enabled`; write-through must update the cached row.
+    applyDeploymentToListCache({ ...base, enabled: true } as never);
+    const updated = readDeploymentListCache({});
+    assert.ok(updated);
+    assert.equal(updated.deployments.length, 1);
+    assert.equal(updated.deployments[0].enabled, true);
+
+    // A brand-new deployment is inserted (prepended, newest-first).
+    applyDeploymentToListCache({
+      ...base,
+      id: "deployment-paper-2",
+      name: "Custom Paper",
+    } as never);
+    const after = readDeploymentListCache({});
+    assert.deepEqual(
+      after?.deployments.map((deployment) => deployment.id),
+      ["deployment-paper-2", "deployment-paper"],
+    );
+  } finally {
+    clearDeploymentListCacheForTests();
   }
 });
 

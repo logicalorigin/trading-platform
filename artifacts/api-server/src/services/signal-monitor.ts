@@ -123,9 +123,9 @@ export type SignalMonitorCanonicalEventCandidate = {
 export type SignalMonitorMatrixStreamSource =
   | StockMinuteAggregateSource
   | "none";
-type SignalMonitorMatrixStreamFallbackState =
+type SignalMonitorMatrixStreamSourceState =
   | "streaming"
-  | "bootstrap-fallback"
+  | "bootstrap"
   | "unavailable";
 export type SignalMonitorMatrixStreamScope = {
   environment: RuntimeMode;
@@ -191,7 +191,7 @@ export type SignalMonitorMatrixStreamStatusEvent = {
   eventCount: number;
   lastEventAt: string | null;
   lastEventAgeMs: number | null;
-  fallbackState: SignalMonitorMatrixStreamFallbackState;
+  sourceState: SignalMonitorMatrixStreamSourceState;
 };
 export type SignalMonitorMatrixStreamBootstrapEvent = {
   stream: "signal-matrix";
@@ -4473,9 +4473,20 @@ async function insertSignalEventBestEffort(input: {
   try {
     await insertSignalEvent(input);
   } catch (error) {
+    const diagnostic = recordSignalMonitorDbFallback(error, {
+      operation: "persist_signal_monitor_event",
+      environment: input.profile.environment,
+      sourceStatus: "persistence-failed",
+    });
     logger.warn(
       {
         err: error,
+        dbError: diagnostic.dbError,
+        operation: diagnostic.operation,
+        environment: diagnostic.environment,
+        sourceStatus: diagnostic.sourceStatus,
+        transient: diagnostic.transient,
+        poolContention: diagnostic.poolContention,
         symbol: input.symbol,
         timeframe: input.timeframe,
         profileId: input.profile.id,
@@ -6259,6 +6270,9 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
   states: SignalMonitorMatrixStateResult[];
   evaluatedAt: Date;
 }) {
+  if (!isSignalMonitorUuidLike(input.profile.id)) {
+    return;
+  }
   const states = input.states.filter((state) =>
     shouldPersistSignalMonitorMatrixState(state),
   );
@@ -6319,9 +6333,20 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       );
     }
   } catch (error) {
+    const diagnostic = recordSignalMonitorDbFallback(error, {
+      operation: "persist_signal_monitor_matrix_states",
+      environment: input.profile.environment,
+      sourceStatus: "persistence-failed",
+    });
     logger.warn(
       {
         err: error,
+        dbError: diagnostic.dbError,
+        operation: diagnostic.operation,
+        environment: diagnostic.environment,
+        sourceStatus: diagnostic.sourceStatus,
+        transient: diagnostic.transient,
+        poolContention: diagnostic.poolContention,
         profileId: input.profile.id,
         stateCount: states.length,
       },
@@ -6681,12 +6706,12 @@ export function getSignalMonitorMatrixStreamStatus(
     : signalMonitorMatrixStreamActiveScope();
   const available = source !== "none" && isStockAggregateStreamingAvailable();
   const streaming = Boolean(diagnostics.quoteSubscriptionActive);
-  const state = !available ? "unavailable" : streaming ? "open" : "degraded";
-  const fallbackState: SignalMonitorMatrixStreamFallbackState = !available
+  const state = available ? "open" : "unavailable";
+  const sourceState: SignalMonitorMatrixStreamSourceState = !available
     ? "unavailable"
     : streaming
       ? "streaming"
-      : "bootstrap-fallback";
+      : "bootstrap";
 
   return {
     stream: "signal-matrix",
@@ -6705,7 +6730,7 @@ export function getSignalMonitorMatrixStreamStatus(
     eventCount: signalMonitorMatrixStreamAggregateEventCount,
     lastEventAt: signalMonitorMatrixStreamLastAggregateAt?.toISOString() ?? null,
     lastEventAgeMs: signalMonitorMatrixStreamLastEventAgeMs(),
-    fallbackState,
+    sourceState,
   };
 }
 
@@ -6953,12 +6978,14 @@ export function emitSignalMonitorMatrixStreamAggregateDelta(input: {
       continue;
     }
 
-    const persisted = persistByProfile.get(subscriber.profile.id) ?? {
-      profile: subscriber.profile,
-      states: [],
-    };
-    persisted.states.push(...changedStates);
-    persistByProfile.set(subscriber.profile.id, persisted);
+    if (isSignalMonitorUuidLike(subscriber.profile.id)) {
+      const persisted = persistByProfile.get(subscriber.profile.id) ?? {
+        profile: subscriber.profile,
+        states: [],
+      };
+      persisted.states.push(...changedStates);
+      persistByProfile.set(subscriber.profile.id, persisted);
+    }
     void subscriber.onEvent(
       buildSignalMonitorMatrixStreamDeltaEvent({
         scope: subscriber.scope,

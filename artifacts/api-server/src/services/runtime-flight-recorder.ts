@@ -11,7 +11,11 @@ import {
 } from "node:fs";
 import path from "node:path";
 import * as v8 from "node:v8";
-import { getPoolStats } from "@workspace/db";
+import {
+  getPoolStats,
+  setPostgresPoolDiagnosticListener,
+  type PostgresPoolDiagnosticEvent,
+} from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import type {
@@ -44,6 +48,7 @@ const MAX_IMPORTED_INCIDENT_IDS = 500;
 const DEFAULT_TEST_PROCESS_MIN_AGE_MS = 30_000;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let processHandlersInstalled = false;
+let dbDiagnosticsInstalled = false;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -549,6 +554,26 @@ export function startRuntimeFlightRecorder(): void {
     writeRuntimeFlightRecorderHeartbeat();
   }, Number.isFinite(HEARTBEAT_INTERVAL_MS) && HEARTBEAT_INTERVAL_MS > 0 ? HEARTBEAT_INTERVAL_MS : 5000);
   heartbeatTimer.unref?.();
+}
+
+export function installRuntimeFlightRecorderDbDiagnostics(): void {
+  if (dbDiagnosticsInstalled) return;
+  dbDiagnosticsInstalled = true;
+  setPostgresPoolDiagnosticListener((event: PostgresPoolDiagnosticEvent) => {
+    const eventName =
+      event.type === "acquire"
+        ? "api-db-pool-acquire-slow"
+        : "api-db-query-slow";
+    appendRuntimeFlightRecorderEvent(eventName, {
+      source: event.source,
+      durationMs: event.durationMs,
+      sql: event.sql,
+      queryName: event.queryName,
+      error: event.error,
+      pool: event.pool,
+      stack: event.stack,
+    });
+  });
 }
 
 export function installRuntimeFlightRecorderProcessHandlers(): void {

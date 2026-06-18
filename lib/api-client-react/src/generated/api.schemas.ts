@@ -319,11 +319,16 @@ export const ChartBarTimeframe = {
   '1m': '1m',
   '2m': '2m',
   '5m': '5m',
+  '10m': '10m',
   '15m': '15m',
   '30m': '30m',
   '1h': '1h',
   '4h': '4h',
+  '12h': '12h',
   '1d': '1d',
+  '1w': '1w',
+  '1month': '1month',
+  '1year': '1year',
 } as const;
 
 export type SignalMonitorTimeframe = typeof SignalMonitorTimeframe[keyof typeof SignalMonitorTimeframe];

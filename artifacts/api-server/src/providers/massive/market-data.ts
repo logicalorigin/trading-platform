@@ -26,9 +26,14 @@ type BarTimeframe =
   | "1m"
   | "2m"
   | "5m"
+  | "10m"
   | "15m"
   | "1h"
-  | "1d";
+  | "12h"
+  | "1d"
+  | "1w"
+  | "1month"
+  | "1year";
 type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
 type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
@@ -812,9 +817,14 @@ const TIMEFRAME_TO_MASSIVE_RANGE: Record<
   "1m": { multiplier: 1, timespan: "minute", stepMs: 60_000 },
   "2m": { multiplier: 2, timespan: "minute", stepMs: 120_000 },
   "5m": { multiplier: 5, timespan: "minute", stepMs: 300_000 },
+  "10m": { multiplier: 10, timespan: "minute", stepMs: 600_000 },
   "15m": { multiplier: 15, timespan: "minute", stepMs: 900_000 },
   "1h": { multiplier: 1, timespan: "hour", stepMs: 3_600_000 },
+  "12h": { multiplier: 12, timespan: "hour", stepMs: 43_200_000 },
   "1d": { multiplier: 1, timespan: "day", stepMs: 86_400_000 },
+  "1w": { multiplier: 1, timespan: "week", stepMs: 604_800_000 },
+  "1month": { multiplier: 1, timespan: "month", stepMs: 30 * 86_400_000 },
+  "1year": { multiplier: 1, timespan: "year", stepMs: 365 * 86_400_000 },
 };
 
 const MASSIVE_DELAYED_INTRADAY_LAG_MS = 15 * 60 * 1_000;
@@ -837,7 +847,7 @@ const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONCURRENCY = 4;
 const OPTION_QUOTE_ACCESS_PROBE_CACHE_TTL_MS = 5 * 60_000;
 
 function isIntradayTimeframe(timeframe: BarTimeframe): boolean {
-  return timeframe !== "1d";
+  return !["1d", "1w", "1month", "1year"].includes(timeframe);
 }
 
 function resolveAggregateBaseLimit(timeframe: BarTimeframe, desiredBars: number): number {
@@ -856,11 +866,18 @@ function resolveAggregateBaseLimit(timeframe: BarTimeframe, desiredBars: number)
       return safeBars * 2;
     case "5m":
       return safeBars * 5;
+    case "10m":
+      return safeBars * 10;
     case "15m":
       return safeBars * 15;
     case "1h":
       return safeBars * 60;
+    case "12h":
+      return safeBars * 12 * 60;
     case "1d":
+    case "1w":
+    case "1month":
+    case "1year":
       return safeBars;
     default:
       return safeBars;

@@ -5,13 +5,15 @@ import {
   gte,
   inArray,
   like,
-  lt,
+  not,
   or,
+  sql,
 } from "drizzle-orm";
 import {
+  algoDeploymentsTable,
   db,
   instrumentsTable,
-  optionChainSnapshotsTable,
+  optionChainLatestTable,
   optionContractsTable,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -89,13 +91,13 @@ const OPTION_METADATA_QUERY_LIMIT = readPositiveIntegerEnv(
   "OPTION_METADATA_QUERY_LIMIT",
   5_000,
 );
-// Keep API-side metadata pruning scoped away from full-chain worker sources.
-const OPTION_METADATA_PRUNABLE_SOURCES = [
-  "ibkr",
-  "ibkr-metadata",
-  "ibkr-snapshot",
-] as const;
-const OPTION_METADATA_PRUNABLE_SIGNAL_OPTIONS_PREFIX = "signal-options:";
+const OPTION_METADATA_DECISION_SOURCE_PREFIX = "signal-options:decision:";
+const OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS = readPositiveIntegerEnv(
+  "OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS",
+  5 * 60_000,
+);
+
+let nextOptionMetadataDecisionPruneAtMs = 0;
 
 function isDurableOptionMetadataEnvDisabled(): boolean {
   const value = process.env["OPTION_METADATA_DISABLED"]?.trim().toLowerCase();
@@ -473,22 +475,51 @@ function hasSnapshotFields(contract: OptionChainContract): boolean {
   ].some((value) => value !== null && value !== undefined);
 }
 
-async function pruneOldSnapshots(now = Date.now()): Promise<void> {
-  const cutoff = new Date(now - OPTION_METADATA_SNAPSHOT_RETENTION_MS);
-  const prunableSourceFilter = or(
-    inArray(optionChainSnapshotsTable.source, [
-      ...OPTION_METADATA_PRUNABLE_SOURCES,
-    ]),
-    like(
-      optionChainSnapshotsTable.source,
-      `${OPTION_METADATA_PRUNABLE_SIGNAL_OPTIONS_PREFIX}%`,
-    ),
+async function pruneObsoleteLatestDecisionSnapshots(
+  nowMs = Date.now(),
+): Promise<void> {
+  if (nowMs < nextOptionMetadataDecisionPruneAtMs) {
+    return;
+  }
+  nextOptionMetadataDecisionPruneAtMs =
+    nowMs + OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS;
+
+  const activeDeploymentRows = await db
+    .select({ id: algoDeploymentsTable.id })
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.enabled, true));
+  const activeDecisionSources = activeDeploymentRows.map(
+    (row) => `${OPTION_METADATA_DECISION_SOURCE_PREFIX}${row.id}`,
   );
+  const obsoleteDecisionSourceFilter =
+    activeDecisionSources.length > 0
+      ? and(
+          like(
+            optionChainLatestTable.source,
+            `${OPTION_METADATA_DECISION_SOURCE_PREFIX}%`,
+          ),
+          not(inArray(optionChainLatestTable.source, activeDecisionSources)),
+        )
+      : like(
+          optionChainLatestTable.source,
+          `${OPTION_METADATA_DECISION_SOURCE_PREFIX}%`,
+        );
   const deleted = await db
-    .delete(optionChainSnapshotsTable)
-    .where(and(lt(optionChainSnapshotsTable.asOf, cutoff), prunableSourceFilter))
-    .returning({ id: optionChainSnapshotsTable.id });
+    .delete(optionChainLatestTable)
+    .where(obsoleteDecisionSourceFilter)
+    .returning({ id: optionChainLatestTable.id });
   counters.prunedRows += deleted.length;
+}
+
+async function pruneObsoleteLatestDecisionSnapshotsBestEffort(): Promise<void> {
+  try {
+    await pruneObsoleteLatestDecisionSnapshots();
+  } catch (error) {
+    logger.debug(
+      { err: error },
+      "Durable option metadata latest cleanup skipped after database error",
+    );
+  }
 }
 
 export async function persistDurableOptionChain(input: {
@@ -538,11 +569,43 @@ export async function persistDurableOptionChain(input: {
 
     for (let index = 0; index < snapshotRows.length; index += 500) {
       const values = snapshotRows.slice(index, index + 500);
-      if (values.length) {
-        await db.insert(optionChainSnapshotsTable).values(values);
+      if (!values.length) {
+        continue;
       }
+      // One source/asOf can include duplicate contracts; a single Postgres
+      // upsert statement cannot update the same conflict target twice.
+      const upsertValues = [
+        ...new Map(values.map((row) => [row.optionContractId, row])).values(),
+      ];
+      await db
+        .insert(optionChainLatestTable)
+        .values(upsertValues)
+        .onConflictDoUpdate({
+          target: [
+            optionChainLatestTable.optionContractId,
+            optionChainLatestTable.source,
+          ],
+          set: {
+            bid: sql`excluded.bid`,
+            ask: sql`excluded.ask`,
+            last: sql`excluded.last`,
+            mark: sql`excluded.mark`,
+            impliedVolatility: sql`excluded.implied_volatility`,
+            delta: sql`excluded.delta`,
+            gamma: sql`excluded.gamma`,
+            theta: sql`excluded.theta`,
+            vega: sql`excluded.vega`,
+            openInterest: sql`excluded.open_interest`,
+            volume: sql`excluded.volume`,
+            asOf: sql`excluded.as_of`,
+            updatedAt: sql`now()`,
+          },
+          setWhere: sql`excluded.as_of >= ${optionChainLatestTable.asOf}`,
+        });
     }
-    await pruneOldSnapshots(asOf.getTime());
+    if (snapshotRows.length > 0) {
+      await pruneObsoleteLatestDecisionSnapshotsBestEffort();
+    }
     clearDurableOptionMetadataBackoff(scope);
     counters.writeSuccess += 1;
   } catch (error) {
@@ -825,31 +888,31 @@ export async function loadDurableOptionChain(input: {
       const contractIds = filteredRows.slice(index, index + 500).map((row) => row.id);
       const snapshotRows = await db
         .select({
-          optionContractId: optionChainSnapshotsTable.optionContractId,
-          bid: optionChainSnapshotsTable.bid,
-          ask: optionChainSnapshotsTable.ask,
-          last: optionChainSnapshotsTable.last,
-          mark: optionChainSnapshotsTable.mark,
-          impliedVolatility: optionChainSnapshotsTable.impliedVolatility,
-          delta: optionChainSnapshotsTable.delta,
-          gamma: optionChainSnapshotsTable.gamma,
-          theta: optionChainSnapshotsTable.theta,
-          vega: optionChainSnapshotsTable.vega,
-          openInterest: optionChainSnapshotsTable.openInterest,
-          volume: optionChainSnapshotsTable.volume,
-          asOf: optionChainSnapshotsTable.asOf,
+          optionContractId: optionChainLatestTable.optionContractId,
+          bid: optionChainLatestTable.bid,
+          ask: optionChainLatestTable.ask,
+          last: optionChainLatestTable.last,
+          mark: optionChainLatestTable.mark,
+          impliedVolatility: optionChainLatestTable.impliedVolatility,
+          delta: optionChainLatestTable.delta,
+          gamma: optionChainLatestTable.gamma,
+          theta: optionChainLatestTable.theta,
+          vega: optionChainLatestTable.vega,
+          openInterest: optionChainLatestTable.openInterest,
+          volume: optionChainLatestTable.volume,
+          asOf: optionChainLatestTable.asOf,
         })
-        .from(optionChainSnapshotsTable)
+        .from(optionChainLatestTable)
         .where(
           and(
-            inArray(optionChainSnapshotsTable.optionContractId, contractIds),
+            inArray(optionChainLatestTable.optionContractId, contractIds),
             gte(
-              optionChainSnapshotsTable.asOf,
+              optionChainLatestTable.asOf,
               new Date(Date.now() - input.staleMaxAgeMs),
             ),
           ),
         )
-        .orderBy(desc(optionChainSnapshotsTable.asOf))
+        .orderBy(desc(optionChainLatestTable.asOf))
         .limit(contractIds.length * 8);
 
       for (const snapshot of snapshotRows) {
@@ -959,4 +1022,5 @@ export function __resetDurableOptionMetadataStoreForTests(): void {
   counters.writeFailure = 0;
   counters.disabled = 0;
   counters.prunedRows = 0;
+  nextOptionMetadataDecisionPruneAtMs = 0;
 }

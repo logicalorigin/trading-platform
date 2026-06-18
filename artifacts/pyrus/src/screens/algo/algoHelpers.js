@@ -12,6 +12,44 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 
+// Classifies an algo deployment by its control surface so the UI can route
+// overnight/equity deployments to their own panel instead of the signal-options
+// controls (answers the user's "which deployment am I controlling?"). Options =
+// explicit signal_options execution mode; overnight/equity = an overnight-spot
+// config block (config.overnightSpot -- the block the backend's
+// resolveOvernightSpotProfile reads). Type only, independent of enabled/disabled,
+// so a paused overnight deployment is still surfaced for control.
+export const ALGO_DEPLOYMENT_KIND = {
+  SIGNAL_OPTIONS: "signal_options",
+  OVERNIGHT_SPOT: "overnight_spot",
+  OTHER: "other",
+};
+
+export const ALGO_DEPLOYMENT_KIND_LABELS = {
+  [ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS]: "Options",
+  [ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT]: "Overnight",
+  [ALGO_DEPLOYMENT_KIND.OTHER]: "Algo",
+};
+
+export const resolveAlgoDeploymentKind = (deployment) => {
+  const config = deployment?.config ?? {};
+  const parameters = config?.parameters ?? {};
+  if (parameters?.executionMode === "signal_options") {
+    return ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS;
+  }
+  // Overnight config lives at config.overnightSpot or, in the parameters block,
+  // at overnightSpotTrading (the canonical backend key resolved by
+  // resolveOvernightSpotProfile) -- overnightSpot is accepted as a lenient alias.
+  if (
+    config?.overnightSpot != null ||
+    parameters?.overnightSpotTrading != null ||
+    parameters?.overnightSpot != null
+  ) {
+    return ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT;
+  }
+  return ALGO_DEPLOYMENT_KIND.OTHER;
+};
+
 export const SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS = [
   { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
   { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },

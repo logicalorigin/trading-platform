@@ -9,9 +9,11 @@ import { useQueries } from "@tanstack/react-query";
 import { listFlowEvents as listFlowEventsRequest } from "@workspace/api-client-react";
 import {
   getChartTimeframeDefinition,
+  buildMtfTimeframeSequence,
   getChartTimeframeValues,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
+import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
 import { clearStoredChartViewportSnapshot } from "../charting/chartViewportStorage";
 import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
 import {
@@ -280,6 +282,21 @@ export const MultiChartGrid = ({
   const [syncCrosshair, setSyncCrosshair] = useState(
     Boolean(_initialState.marketGridSyncCrosshair),
   );
+  // MTF View: an ephemeral overlay that shows the selected ticker across the
+  // grid at a multi-timeframe ladder. It snapshots the real multi-symbol layout
+  // on enable and restores it on disable; it is NOT persisted (see persist
+  // effect below, which writes the snapshot, not the MTF slots).
+  const [mtfView, setMtfView] = useState(false);
+  const mtfRestoreRef = useRef(null);
+  const mtfAnchorTimeframeRef = useRef(null);
+  const { favoriteTimeframes: mtfFavoriteTimeframes } =
+    useChartTimeframeFavorites("primary");
+  // Stable string key for the MTF effect dependency. useChartTimeframeFavorites
+  // re-resolves to a NEW array (same values) on every PYRUS_WORKSPACE_SETTINGS_EVENT
+  // — which this grid's own persistState dispatches — so depending on the array
+  // identity would retrigger the MTF effect on every persist and spin into
+  // "Maximum update depth exceeded". A value-equal string key has stable identity.
+  const mtfFavoritesKey = mtfFavoriteTimeframes.join(",");
   const [slots, setSlots] = useState(() =>
     buildInitialMarketChartSlots(activeSym),
   );
@@ -361,6 +378,69 @@ export const MultiChartGrid = ({
   }, []);
   const cfg = MULTI_CHART_LAYOUTS[layout] || MULTI_CHART_LAYOUTS["2x3"];
   const defaults = defaultSymbolsRef.current;
+
+  const toggleMtfView = () => {
+    setMtfView((current) => {
+      const next = !current;
+      if (next) {
+        // Snapshot the real multi-symbol layout so we can restore it on exit,
+        // and pin chart 1's current timeframe as the MTF ladder anchor.
+        mtfRestoreRef.current = { slots, syncTimeframes };
+        mtfAnchorTimeframeRef.current =
+          slots[soloSlotIndex]?.tf || slots[0]?.tf || "15m";
+        setSyncTimeframes(false);
+      } else {
+        const restore = mtfRestoreRef.current;
+        mtfRestoreRef.current = null;
+        mtfAnchorTimeframeRef.current = null;
+        if (restore) {
+          setSyncTimeframes(Boolean(restore.syncTimeframes));
+          setSlots(restore.slots);
+        }
+      }
+      return next;
+    });
+  };
+
+  // While MTF View is on, drive every slot to the selected ticker at the
+  // computed timeframe ladder. Re-applies when the selected ticker or the
+  // user's favorite timeframes change, so the view tracks the selection.
+  useEffect(() => {
+    if (!mtfView) {
+      return;
+    }
+    const ticker =
+      normalizeTickerSymbol(activeSym) || defaultSymbolsRef.current[0] || "SPY";
+    const sequence = buildMtfTimeframeSequence({
+      current: mtfAnchorTimeframeRef.current || "15m",
+      favorites: mtfFavoriteTimeframes,
+      available: MARKET_CHART_TIMEFRAMES,
+      count: MAX_MULTI_CHART_SLOTS,
+      role: "primary",
+    });
+    if (!sequence.length) {
+      return;
+    }
+    setSlots((current) => {
+      let changed = false;
+      const next = current.map((slot, index) => {
+        const tf = sequence[index] || sequence[sequence.length - 1];
+        if (slot.ticker === ticker && slot.tf === tf) {
+          return slot;
+        }
+        changed = true;
+        return hydrateMarketChartSlot(
+          { ...slot, ticker, tf },
+          defaultSymbolsRef.current[index],
+        );
+      });
+      // No-op when slots already match: returning `current` keeps the array
+      // identity so React bails — the persist effect does not fire, so the
+      // persist -> settings-event -> favorites-refresh path cannot loop.
+      return changed ? next : current;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mtfView, activeSym, mtfFavoritesKey]);
   const layoutTrackState = useMemo(
     () =>
       normalizeMarketGridTrackLayoutState(
@@ -436,10 +516,19 @@ export const MultiChartGrid = ({
     [visibleSlotEntries],
   );
   const streamedSymbolsKey = streamedSymbols.join(",");
+  const visibleChartHydrationKey = visibleSlotEntries
+    .map((entry, visibleIndex) => {
+      const symbol = normalizeTickerSymbol(entry.slot?.ticker) || "";
+      const timeframe = normalizeChartTimeframe(entry.slot?.tf) || "";
+      return `${visibleIndex}:${entry.index}:${symbol}:${timeframe}`;
+    })
+    .join("|");
   const initialHydrationSlotLimit = chartHydrationGate.enabled
     ? Math.min(
         visibleSlotEntries.length,
-        layout === "1x1" ? 1 : MARKET_CHART_INITIAL_HYDRATION_SLOTS,
+        mtfView || layout === "1x1"
+          ? visibleSlotEntries.length
+          : MARKET_CHART_INITIAL_HYDRATION_SLOTS,
       )
     : 0;
   const effectiveHydrationSlotLimit = chartHydrationGate.enabled
@@ -448,12 +537,12 @@ export const MultiChartGrid = ({
         Math.max(initialHydrationSlotLimit, hydrationSlotLimit),
       )
     : 0;
-  const chartReadySignalKey = `${streamedSymbolsKey}:${initialHydrationSlotLimit}`;
+  const chartReadySignalKey = `${visibleChartHydrationKey}:${initialHydrationSlotLimit}`;
   useEffect(() => {
     setHydrationSlotLimit(initialHydrationSlotLimit);
     readySignaledRef.current = false;
     setFirstChartReady(false);
-  }, [initialHydrationSlotLimit, streamedSymbolsKey]);
+  }, [initialHydrationSlotLimit, visibleChartHydrationKey]);
   useEffect(() => {
     if (
       !isVisible ||
@@ -492,7 +581,7 @@ export const MultiChartGrid = ({
     allowProgressiveChartHydration,
     effectiveHydrationStaggerMs,
     isVisible,
-    streamedSymbolsKey,
+    visibleChartHydrationKey,
     visibleSlotEntries.length,
   ]);
   const historicalChartFlowEnabled = Boolean(
@@ -854,13 +943,22 @@ export const MultiChartGrid = ({
     persistState({
       marketGridLayout: layout,
       marketGridSoloSlotIndex: soloSlotIndex,
-      marketGridSyncTimeframes: syncTimeframes,
+      // While MTF View is active, persist the user's REAL (pre-MTF) Sync TF
+      // setting, not the `false` that enabling MTF forced — otherwise a reload
+      // while MTF is on corrupts it. Mirrors the marketGridSlots snapshot below.
+      marketGridSyncTimeframes:
+        mtfView && mtfRestoreRef.current
+          ? mtfRestoreRef.current.syncTimeframes
+          : syncTimeframes,
       marketGridSyncCrosshair: syncCrosshair,
-      marketGridSlots: slots,
+      // MTF View is ephemeral: persist the snapshot of the real multi-symbol
+      // layout, never the transient MTF slots, so a reload restores the layout.
+      marketGridSlots:
+        mtfView && mtfRestoreRef.current ? mtfRestoreRef.current.slots : slots,
       marketGridRecentTickers: recentTickers,
       marketGridRecentTickerRows: recentTickerRows,
     });
-  }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncCrosshair, syncTimeframes, slots]);
+  }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncCrosshair, syncTimeframes, slots, mtfView]);
 
   useEffect(() => {
     writeMarketGridTrackSession(marketGridTrackState);
@@ -1293,7 +1391,7 @@ export const MultiChartGrid = ({
               whiteSpace: "nowrap",
             }}
           >
-            {syncTimeframes ? "sync tf" : "independent"}
+            {mtfView ? "mtf view" : syncTimeframes ? "sync tf" : "independent"}
             {syncCrosshair ? " · sync x" : ""} · broker-backed bars ·{" "}
             {focusedLabel}
           </span>
@@ -1353,6 +1451,12 @@ export const MultiChartGrid = ({
             <>
               <button
                 type="button"
+                disabled={mtfView}
+                title={
+                  mtfView
+                    ? "Disabled while MTF View is on (MTF sets each chart's timeframe)"
+                    : undefined
+                }
                 onClick={() => {
                   setSyncTimeframes((current) => {
                     const next = !current;
@@ -1382,7 +1486,8 @@ export const MultiChartGrid = ({
                   color: syncTimeframes ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
                   border: "none",
                   borderRadius: dim(RADII.xs),
-                  cursor: "pointer",
+                  cursor: mtfView ? "default" : "pointer",
+                  opacity: mtfView ? 0.5 : 1,
                   letterSpacing: "0.04em",
                 }}
               >
@@ -1406,6 +1511,26 @@ export const MultiChartGrid = ({
                 }}
               >
                 SYNC X
+              </button>
+              <button
+                type="button"
+                onClick={toggleMtfView}
+                data-testid="market-chart-mtf-view"
+                title="MTF View: show the selected ticker across multiple timeframes (chart 1 keeps the current timeframe; the rest step up your favorite, then longer, timeframes)"
+                style={{
+                  padding: sp("3px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  background: mtfView ? CSS_COLOR.accent : CSS_COLOR.bg3,
+                  color: mtfView ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  cursor: "pointer",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                MTF VIEW
               </button>
             </>
           ) : null}

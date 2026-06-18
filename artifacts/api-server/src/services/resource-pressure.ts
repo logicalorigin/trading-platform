@@ -23,11 +23,11 @@ export type ApiResourcePressureCaps = {
 
 export type ApiResourcePressureSnapshot = {
   level: ApiResourcePressureLevel;
-  // Server-saturation level: rss + heap + event-loop delay only. Trading caps
-  // gate on this, NOT on request latency — a slow external (broker) route
-  // inflates request latency without saturating the server, and must not freeze
-  // signal/action work. `level` (which includes request latency) still drives
-  // general shedding (deferred analytics) and display.
+  // Server-saturation level: rss + heap + event-loop delay + local DB pool
+  // exhaustion. Trading caps gate on this, NOT on request latency — a slow
+  // external (broker) route inflates request latency without saturating the
+  // server, and must not freeze signal/action work. `level` (which includes
+  // request latency) still drives general shedding and display.
   resourceLevel: ApiResourcePressureLevel;
   observedAt: string;
   drivers: ApiResourcePressureDriver[];
@@ -43,6 +43,9 @@ export type ApiResourcePressureSnapshot = {
     apiP95LatencyMs: number | null;
     dominantSlowRouteP95Ms: number | null;
     eventLoopDelayP95Ms: number | null;
+    dbPoolActive: number | null;
+    dbPoolWaiting: number | null;
+    dbPoolMax: number | null;
     clientLevel: ApiResourcePressureLevel | null;
     cacheLevel: ApiResourcePressureLevel | null;
     automationActiveLongScanCount: number | null;
@@ -63,6 +66,9 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   apiP95LatencyMs: null,
   dominantSlowRouteP95Ms: null,
   eventLoopDelayP95Ms: null,
+  dbPoolActive: null,
+  dbPoolWaiting: null,
+  dbPoolMax: null,
   clientLevel: null,
   cacheLevel: null,
   automationActiveLongScanCount: null,
@@ -191,6 +197,37 @@ function eventLoopDelayLevel(value: number | null): ApiResourcePressureLevel {
   return value >= API_EVENT_LOOP_DELAY_WATCH_MS ? "watch" : "normal";
 }
 
+function dbPoolLevel(input: {
+  active: number | null;
+  waiting: number | null;
+  max: number | null;
+}): ApiResourcePressureLevel {
+  const waiting = input.waiting ?? 0;
+  if (waiting > 0) return "high";
+  if (input.active === null || input.max === null || input.max <= 0) {
+    return "normal";
+  }
+  return input.active >= input.max ? "watch" : "normal";
+}
+
+function dbPoolDetail(input: {
+  active: number | null;
+  waiting: number | null;
+  max: number | null;
+}): string | null {
+  if (input.active === null && input.waiting === null && input.max === null) {
+    return null;
+  }
+  const active =
+    input.active === null
+      ? "unknown"
+      : input.max && input.max > 0
+        ? `${input.active}/${input.max} active`
+        : `${input.active} active`;
+  const waiting = input.waiting === null ? null : `${input.waiting} waiting`;
+  return waiting ? `${active}, ${waiting}` : active;
+}
+
 function driver(input: {
   kind: string;
   label: string;
@@ -273,6 +310,11 @@ function buildSnapshot(
   const eventLoopLevel = eventLoopDelayLevel(
     inputs.eventLoopDelayP95Ms ?? null,
   );
+  const poolLevel = dbPoolLevel({
+    active: inputs.dbPoolActive,
+    waiting: inputs.dbPoolWaiting,
+    max: inputs.dbPoolMax,
+  });
   const rawClientLevel = inputs.clientLevel ?? "normal";
   const clientLevel = capLevel(rawClientLevel, "watch");
   const rawCacheLevel = inputs.cacheLevel ?? "normal";
@@ -282,13 +324,15 @@ function buildSnapshot(
   const level = maxLevel(
     rssLevel,
     heapLevel,
+    poolLevel,
     slowRouteLevel,
     clientLevel,
     cacheLevel,
   );
-  // Actual server saturation: memory + event-loop only. Request latency is
-  // excluded so a slow external (broker) route can't freeze signal/action work.
-  const resourceLevel = maxLevel(rssLevel, heapLevel, eventLoopLevel);
+  // Actual server saturation: memory + event-loop + local DB pool exhaustion.
+  // Request latency is excluded so a slow external (broker) route can't freeze
+  // signal/action work.
+  const resourceLevel = maxLevel(rssLevel, heapLevel, eventLoopLevel, poolLevel);
 
   const drivers = [
     driver({
@@ -324,6 +368,17 @@ function buildSnapshot(
           ? null
           : `${Math.round(inputs.eventLoopDelayP95Ms)} ms`,
       score: inputs.eventLoopDelayP95Ms,
+    }),
+    driver({
+      kind: "db-pool",
+      label: "DB pool",
+      level: poolLevel,
+      detail: dbPoolDetail({
+        active: inputs.dbPoolActive,
+        waiting: inputs.dbPoolWaiting,
+        max: inputs.dbPoolMax,
+      }),
+      score: inputs.dbPoolWaiting ?? null,
     }),
     driver({
       kind: "client-pressure",
@@ -394,6 +449,9 @@ export function updateApiResourcePressure(
           key === "apiP95LatencyMs" ||
           key === "dominantSlowRouteP95Ms" ||
           key === "eventLoopDelayP95Ms" ||
+          key === "dbPoolActive" ||
+          key === "dbPoolWaiting" ||
+          key === "dbPoolMax" ||
           key === "automationActiveLongScanCount"
         ) {
           return [key, normalizeNumber(value)];

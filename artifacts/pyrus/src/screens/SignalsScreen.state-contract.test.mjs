@@ -4,6 +4,45 @@ import test from "node:test";
 
 const source = () => readFileSync(new URL("./SignalsScreen.jsx", import.meta.url), "utf8");
 
+test("Signals scope resets hydration + selection on environment/universe change", () => {
+  const screenSource = source();
+  // Scope key is composite (environment + authoritative universe), not env-only,
+  // so a universe change also resets stale matrix/event symbols + hydration.
+  assert.match(screenSource, /buildSignalsSourceScopeKey\(/);
+  // Selection is cleared on scope reset so it can't survive a source/universe switch.
+  assert.match(screenSource, /if \(reset\) \{\s*setSelectedSymbol\(""\);/);
+});
+
+test("Signals rows are bounded to the authoritative universe", () => {
+  assert.match(source(), /boundSignalsRowsToUniverse\(/);
+});
+
+test("Signals overview metrics follow the filtered table when filters are active", () => {
+  const screenSource = source();
+  assert.match(screenSource, /signalsFiltersActive\(/);
+  assert.match(screenSource, /summarizeSignalsRows\(overviewMetricRows\)/);
+});
+
+test("Signals overview metrics do not spread a key prop into JSX", () => {
+  const screenSource = source();
+  // key must be destructured out before the spread (avoids the React warning
+  // about a key prop being spread into JSX).
+  assert.doesNotMatch(screenSource, /key=\{metric\.key\} \{\.\.\.metric\}/);
+  assert.match(screenSource, /metrics\.map\(\(\{ key, \.\.\.metricProps \}\)/);
+});
+
+test("Signals selection never resolves to a filtered-out (hidden) row", () => {
+  const screenSource = source();
+  // The selectedRow fallback to the UNFILTERED rows list (which let a hidden
+  // symbol stay selected) must be gone.
+  assert.doesNotMatch(
+    screenSource,
+    /selectedSymbol\) \|\|\s*\n\s*rows\.find\(\(row\) => row\.symbol === selectedSymbol\)/,
+  );
+  // The auto-select effect re-picks when the selection is hidden, not only empty.
+  assert.match(screenSource, /const selectionVisible =/);
+});
+
 test("Signals screen does not request or display UI-side Signal Matrix hydration", () => {
   const screenSource = source();
 
@@ -43,4 +82,16 @@ test("Signals table loading/errored do not mask pushed matrix state", () => {
     screenSource,
     /const loading = effectiveStateLoading \|\| \(!profile && effectiveProfileLoading\);/,
   );
+});
+
+test("Signals table sparklines use runtime snapshots instead of DB-backed bars batch", () => {
+  const screenSource = source();
+
+  assert.match(screenSource, /useRuntimeTickerSnapshots/);
+  assert.match(screenSource, /runtime-ticker-stream/);
+  assert.doesNotMatch(screenSource, /fetchSignalSparklineBarsBatch/);
+  assert.doesNotMatch(screenSource, /signals-table-sparkline/);
+  assert.doesNotMatch(screenSource, /\/api\/bars\/batch/);
+  assert.doesNotMatch(screenSource, /SIGNAL_SPARKLINE_PENDING/);
+  assert.doesNotMatch(screenSource, /SIGNAL_SPARKLINE_FAILED/);
 });

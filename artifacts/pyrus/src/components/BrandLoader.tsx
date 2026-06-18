@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { PyrusLoaderMark } from "./brand/pyrus-loader-mark";
+import { PyrusWordmark } from "./brand/pyrus-wordmark";
 import { FONT_CSS_VAR } from "../lib/typography";
 
 export type BrandLoaderTone = "app" | "panel";
@@ -21,8 +22,8 @@ export type BrandLoaderProps = {
   progress?: BrandLoaderProgress | null;
 };
 
-const BRAND_LOADER_SHELL_BG = "#050914";
-const BRAND_LOADER_PANEL_BG = "#050914";
+const BRAND_LOADER_SHELL_BG = "var(--ra-surface-0, #F7FAFF)";
+const BRAND_LOADER_PANEL_BG = "var(--ra-surface-1, #FFFFFF)";
 
 const normalizeMinHeight = (value: string | number): string =>
   typeof value === "number" ? `${value}px` : value;
@@ -62,7 +63,6 @@ export function BrandLoader({
       role="status"
       aria-label={label}
       data-testid={testId}
-      data-theme="dark"
       data-tone={tone}
       data-boot-handoff={normalizedBootHandoffElapsedMs === null ? undefined : "phase"}
       data-progress={progressPercent === null ? undefined : progressPercent}
@@ -75,6 +75,7 @@ export function BrandLoader({
         justifyContent: "center",
         position: "relative",
         background: isPanel ? BRAND_LOADER_PANEL_BG : BRAND_LOADER_SHELL_BG,
+        color: "var(--ra-text-primary, #101827)",
         fontFamily: FONT_CSS_VAR.sans,
         ...bootHandoffStyle,
       }}
@@ -85,13 +86,10 @@ export function BrandLoader({
             className={isPanel ? "h-[60px] w-[60px]" : "h-[104px] w-[104px]"}
           />
         </div>
-        <img
-          src="/brand/pyrus-wordmark-tight.png"
-          alt="Pyrus"
+        <PyrusWordmark
+          title=""
           className="brand-loader-word"
-          height={isPanel ? 18 : 26}
           width={isPanel ? 148 : 213}
-          style={{ mixBlendMode: "screen" }}
         />
       </div>
       {progressPercent === null ? null : (

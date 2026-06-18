@@ -634,8 +634,6 @@ export const AlgoLivePage = ({
   staSignalTimeframes,
   onOpenCandidateInTrade,
   safeQaMode = false,
-  backgroundQueriesEnabled = false,
-  rowHydrationQueriesEnabled = false,
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
@@ -1396,8 +1394,6 @@ export const AlgoLivePage = ({
             algoIsPhone={algoIsPhone}
             algoIsNarrow={algoIsNarrow}
             safeQaMode={safeQaMode}
-            backgroundQueriesEnabled={backgroundQueriesEnabled}
-            rowHydrationQueriesEnabled={rowHydrationQueriesEnabled}
             onOpenCandidateInTrade={onOpenCandidateInTrade}
           />
 

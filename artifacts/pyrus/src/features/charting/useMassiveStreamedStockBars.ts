@@ -155,7 +155,7 @@ type LiveFrameScheduler<T> = {
 };
 
 const HISTORICAL_BAR_STREAM_TIMEFRAMES = new Set(["5s", "1m", "5m", "15m", "1h", "1d"]);
-const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d"]);
+const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "2m", "5m", "10m", "15m", "30m", "1h", "4h", "12h", "1d"]);
 const LIVE_BAR_STREAM_STALE_MS = 45_000;
 const LIVE_BAR_STREAM_RECONNECT_MS = 5_000;
 const LIVE_BAR_FALLBACK_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;

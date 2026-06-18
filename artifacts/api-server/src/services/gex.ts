@@ -233,6 +233,7 @@ const GEX_CHART_PROJECTION_CHAIN_TIMEOUT = Symbol(
 type GexOptionChainBatchPayload = Awaited<
   ReturnType<GexPlatformDataClient["batchOptionChains"]>
 >;
+type ChartGexDataMode = "active" | "snapshot";
 
 let gexMarketDataClientFactory: GexMarketDataClientFactory | null = null;
 let gexPlatformDataClientFactory: GexPlatformDataClientFactory | null = null;
@@ -567,8 +568,14 @@ async function waitForChartGexProjectionChain(
 async function queueGexSnapshotRefresh(
   ticker: string,
   reason: string,
+  options: { dedupeBucket?: number | null } = {},
 ): Promise<GexSnapshotRefreshOutcome> {
-  const dedupeBucket = Math.floor(Date.now() / 60_000);
+  const dedupeBucket =
+    typeof options.dedupeBucket === "number" &&
+    Number.isSafeInteger(options.dedupeBucket) &&
+    options.dedupeBucket >= 0
+      ? options.dedupeBucket
+      : Math.floor(Date.now() / 60_000);
   const facade = getGexIngestFacade();
   const baseInput = {
     symbol: ticker,
@@ -627,6 +634,17 @@ async function queueGexSnapshotRefresh(
     workerLikelyInactive: Boolean(diagnostics?.workerLikelyInactive),
     workerInactiveReason: diagnostics?.workerInactiveReason ?? null,
   };
+}
+
+function resolveGexSnapshotRefreshDedupeBucket(
+  snapshot: LatestGexSnapshot | null | undefined,
+): number {
+  const computedAtMs =
+    snapshot?.computedAt instanceof Date &&
+    Number.isFinite(snapshot.computedAt.getTime())
+      ? snapshot.computedAt.getTime()
+      : Date.now();
+  return Math.max(0, Math.floor(computedAtMs / 60_000));
 }
 
 type GexSnapshotRefreshJobKind =
@@ -742,7 +760,9 @@ function schedulePersistedGexSnapshotRefresh(
   reason: string,
 ): GexResponse {
   const stale = cachePersistedGexSnapshotStale(ticker, snapshot, null);
-  void queueGexSnapshotRefresh(ticker, reason)
+  void queueGexSnapshotRefresh(ticker, reason, {
+    dedupeBucket: resolveGexSnapshotRefreshDedupeBucket(snapshot),
+  })
     .then((outcome) => {
       const current = gexDashboardCache.get(ticker);
       if (
@@ -1636,43 +1656,29 @@ export async function getGexDashboardData(input: {
   return pending;
 }
 
-export async function getGexZeroGammaData(input: {
-  underlying: string;
-  signal?: AbortSignal;
-}): Promise<GexZeroGammaResponse> {
-  let data: GexResponse;
-  try {
-    data = await getGexDashboardData(input);
-  } catch (error) {
-    if (
-      isHttpError(error) &&
-      [
-        "gex_snapshot_pending",
-        "gex_snapshot_enqueue_failed",
-        "gex_snapshot_worker_inactive",
-      ].includes(String(error.code))
-    ) {
-      const ticker = normalizeSymbol(input.underlying);
-      return {
-        ticker,
-        spot: null,
-        zeroGamma: null,
-        asOf: null,
-        isStale: true,
-        source: {
-          provider: "ibkr",
-          status: "unavailable",
-          optionCount: 0,
-          usableOptionCount: 0,
-          message:
-            error.detail ||
-            error.message ||
-            "GEX snapshot is pending while market-data ingest catches up.",
-        },
-      };
-    }
-    throw error;
-  }
+function buildUnavailableGexZeroGammaData(
+  ticker: string,
+  message: string,
+): GexZeroGammaResponse {
+  return {
+    ticker,
+    spot: null,
+    zeroGamma: null,
+    asOf: null,
+    isStale: true,
+    source: {
+      provider: "ibkr",
+      status: "unavailable",
+      optionCount: 0,
+      usableOptionCount: 0,
+      message,
+    },
+  };
+}
+
+function buildGexZeroGammaDataFromDashboard(
+  data: GexResponse,
+): GexZeroGammaResponse {
   const spot = finiteOrNull(data.spot);
   const zeroGamma = spot != null ? findGexZeroGamma(data.options, spot) : null;
 
@@ -1690,6 +1696,67 @@ export async function getGexZeroGammaData(input: {
       message: data.source.message,
     },
   };
+}
+
+export async function getGexZeroGammaData(input: {
+  underlying: string;
+  signal?: AbortSignal;
+  mode?: ChartGexDataMode;
+}): Promise<GexZeroGammaResponse> {
+  const mode: ChartGexDataMode =
+    input.mode === "snapshot" ? "snapshot" : "active";
+  const ticker = normalizeSymbol(input.underlying);
+  if (mode === "snapshot") {
+    if (!ticker) {
+      throw new HttpError(400, "GEX ticker is required.", {
+        code: "gex_ticker_required",
+      });
+    }
+    if (!shouldUsePersistedGexSnapshots()) {
+      return buildUnavailableGexZeroGammaData(
+        ticker,
+        "Persisted GEX snapshots are not configured.",
+      );
+    }
+    const snapshot = await loadLatestPassiveZeroGammaSnapshot(ticker);
+    if (!snapshot?.payload?.options?.length) {
+      return buildUnavailableGexZeroGammaData(
+        ticker,
+        "No persisted GEX snapshot is available.",
+      );
+    }
+    const compact = compactPersistedGexDashboard(snapshot.payload);
+    const data = snapshot.stale
+      ? markGexDashboardStale(
+          compact,
+          "Persisted GEX snapshot is stale; no refresh was queued for passive chart mode.",
+        )
+      : compact;
+    return buildGexZeroGammaDataFromDashboard(data);
+  }
+
+  let data: GexResponse;
+  try {
+    data = await getGexDashboardData(input);
+  } catch (error) {
+    if (
+      isHttpError(error) &&
+      [
+        "gex_snapshot_pending",
+        "gex_snapshot_enqueue_failed",
+        "gex_snapshot_worker_inactive",
+      ].includes(String(error.code))
+    ) {
+      return buildUnavailableGexZeroGammaData(
+        ticker,
+        error.detail ||
+          error.message ||
+          "GEX snapshot is pending while market-data ingest catches up.",
+      );
+    }
+    throw error;
+  }
+  return buildGexZeroGammaDataFromDashboard(data);
 }
 
 function buildProjectionSource(data: GexResponse): GexProjectionSourceInput {
@@ -1855,23 +1922,39 @@ function summarizeChartProjectionRows(rows: GexOptionRow[]) {
   };
 }
 
-async function buildChartGexProjectionFromLatestSnapshot(input: {
-  ticker: string;
-  rates: GexProjectionRatesInput;
-}): Promise<GexProjectionResponse | null> {
+async function loadLatestChartGexSnapshot(
+  ticker: string,
+): Promise<LatestGexSnapshot | null> {
   const facade = getGexIngestFacade();
-  const snapshot =
-    (await facade.getLatestChartGexSnapshot(input.ticker, GEX_SNAPSHOT_MAX_AGE_MS, {
+  return (
+    (await facade.getLatestChartGexSnapshot(ticker, GEX_SNAPSHOT_MAX_AGE_MS, {
       maxExpirations: GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS,
       strikesAroundMoney: GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY,
     })) ??
-    (await facade.getLatestGexSnapshot(input.ticker, GEX_SNAPSHOT_MAX_AGE_MS));
+    (await facade.getLatestGexSnapshot(ticker, GEX_SNAPSHOT_MAX_AGE_MS))
+  );
+}
+
+async function loadLatestPassiveZeroGammaSnapshot(
+  ticker: string,
+): Promise<LatestGexSnapshot | null> {
+  const facade = getGexIngestFacade();
+  return (
+    (await facade.getLatestGexSnapshot(ticker, GEX_SNAPSHOT_MAX_AGE_MS)) ??
+    (await facade.getLatestChartGexSnapshot(ticker, GEX_SNAPSHOT_MAX_AGE_MS, {
+      maxExpirations: GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS,
+      strikesAroundMoney: GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY,
+    }))
+  );
+}
+
+function buildChartGexProjectionFromPersistedSnapshot(input: {
+  ticker: string;
+  rates: GexProjectionRatesInput;
+  snapshot: LatestGexSnapshot;
+}): GexProjectionResponse | null {
+  const snapshot = input.snapshot;
   if (!snapshot?.payload?.options?.length) {
-    if (facade.isConfigured()) {
-      void queueGexSnapshotRefresh(input.ticker, "chart_gex_projection_empty").catch(
-        () => {},
-      );
-    }
     return null;
   }
 
@@ -1928,15 +2011,67 @@ async function buildChartGexProjectionFromLatestSnapshot(input: {
   });
 }
 
+async function buildChartGexProjectionFromLatestSnapshot(input: {
+  ticker: string;
+  rates: GexProjectionRatesInput;
+  queueRefreshOnEmpty?: boolean;
+}): Promise<GexProjectionResponse | null> {
+  const snapshot = await loadLatestChartGexSnapshot(input.ticker);
+  if (!snapshot?.payload?.options?.length) {
+    if (input.queueRefreshOnEmpty !== false) {
+      const facade = getGexIngestFacade();
+      if (facade.isConfigured()) {
+        void queueGexSnapshotRefresh(input.ticker, "chart_gex_projection_empty").catch(
+          () => {},
+        );
+      }
+    }
+    return null;
+  }
+
+  return buildChartGexProjectionFromPersistedSnapshot({
+    ticker: input.ticker,
+    rates: input.rates,
+    snapshot,
+  });
+}
+
 async function getChartGexProjectionData(input: {
   underlying: string;
   signal?: AbortSignal;
+  mode?: ChartGexDataMode;
 }): Promise<GexProjectionResponse> {
   const ticker = normalizeSymbol(input.underlying);
   if (!ticker) {
     throw new HttpError(400, "GEX ticker is required.", {
       code: "gex_ticker_required",
     });
+  }
+
+  const mode: ChartGexDataMode =
+    input.mode === "snapshot" ? "snapshot" : "active";
+  if (mode === "snapshot") {
+    if (!shouldUsePersistedGexSnapshots()) {
+      return buildUnavailableGexProjection({
+        ticker,
+        message: "Persisted chart GEX snapshots are not configured.",
+      });
+    }
+    const snapshot = await loadLatestChartGexSnapshot(ticker);
+    if (!snapshot?.payload?.options?.length) {
+      return buildUnavailableGexProjection({
+        ticker,
+        message: "No persisted chart GEX snapshot is available.",
+      });
+    }
+    const rates = await getChartGexProjectionRates({ signal: input.signal });
+    return (
+      buildChartGexProjectionFromPersistedSnapshot({ ticker, rates, snapshot }) ??
+      buildUnavailableGexProjection({
+        ticker,
+        message: "Persisted chart GEX snapshot has no usable projection rows.",
+      })
+    );
   }
 
   const rates = await getChartGexProjectionRates({ signal: input.signal });
@@ -2151,6 +2286,7 @@ export async function getGexProjectionData(input: {
   underlying: string;
   signal?: AbortSignal;
   scope?: "full" | "chart";
+  mode?: ChartGexDataMode;
 }): Promise<GexProjectionResponse> {
   if (input.scope === "chart") {
     return getChartGexProjectionData(input);

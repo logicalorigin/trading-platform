@@ -5,6 +5,7 @@ import {
   BOOT_WARM_START_CACHE_KEY,
   BOOT_WARM_START_FRESH_MS,
   readBootWarmStart,
+  shouldRunStartupRefresh,
   writeBootWarmStart,
 } from "./bootWarmStartCache.js";
 
@@ -78,4 +79,20 @@ test("boot warm-start cache normalizes an unrecognized environment to null", () 
   const cached = readBootWarmStart({ storage, nowMs: nowMs + 60_000 });
   assert.ok(cached);
   assert.equal(cached.environment, null);
+});
+
+test("startup refresh fanout still runs without a warm-start snapshot", () => {
+  assert.equal(shouldRunStartupRefresh({ warmStart: null }), true);
+});
+
+test("startup refresh fanout is skipped for a usable warm-start snapshot", () => {
+  assert.equal(
+    shouldRunStartupRefresh({
+      warmStart: {
+        environment: "paper",
+        savedAt: Date.parse("2026-06-11T18:00:00.000Z"),
+      },
+    }),
+    false,
+  );
 });

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import { after, test } from "node:test";
 
+import { pool } from "@workspace/db";
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
 const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
@@ -9,10 +10,84 @@ const routeSource = readFileSync(
   new URL("../routes/signal-monitor.ts", import.meta.url),
   "utf8",
 );
+const serviceSource = readFileSync(
+  new URL("./signal-monitor.ts", import.meta.url),
+  "utf8",
+);
+
+after(async () => {
+  await pool.end();
+});
 
 test("signal monitor routes do not expose on-demand matrix evaluation", () => {
   assert.doesNotMatch(routeSource, /router\.post\("\/signal-monitor\/matrix"/);
   assert.doesNotMatch(routeSource, /await evaluateSignalMonitorMatrix/);
+});
+
+
+test("signal matrix stream status uses a source bootstrap state, not fallback", () => {
+  const statusTypeStart = serviceSource.indexOf(
+    "type SignalMonitorMatrixStreamSourceState",
+  );
+  const statusTypeEnd = serviceSource.indexOf(
+    "export type SignalMonitorMatrixStreamScope",
+    statusTypeStart,
+  );
+  const statusStart = serviceSource.indexOf(
+    "export function getSignalMonitorMatrixStreamStatus",
+  );
+  const statusEnd = serviceSource.indexOf(
+    "export function buildSignalMonitorMatrixStreamCoverage",
+    statusStart,
+  );
+  assert.notEqual(statusTypeStart, -1);
+  assert.notEqual(statusTypeEnd, -1);
+  assert.notEqual(statusStart, -1);
+  assert.notEqual(statusEnd, -1);
+  const statusTypeBlock = serviceSource.slice(statusTypeStart, statusTypeEnd);
+  const statusBlock = serviceSource.slice(statusStart, statusEnd);
+
+  assert.doesNotMatch(statusTypeBlock, /bootstrap-fallback|fallbackState/);
+  assert.doesNotMatch(statusBlock, /bootstrap-fallback|fallbackState/);
+  assert.match(statusTypeBlock, /"bootstrap"/);
+  assert.match(statusBlock, /const state = available \? "open" : "unavailable";/);
+  assert.match(statusBlock, /sourceState/);
+});
+
+test("signal matrix persistence failures update DB fallback diagnostics", () => {
+  const persistStart = serviceSource.indexOf(
+    "async function persistSignalMonitorMatrixStatesBestEffort",
+  );
+  const persistEnd = serviceSource.indexOf(
+    "// Coalescing single-flight for state persistence",
+    persistStart,
+  );
+  assert.notEqual(persistStart, -1);
+  assert.notEqual(persistEnd, -1);
+  const persistBlock = serviceSource.slice(persistStart, persistEnd);
+
+  assert.match(persistBlock, /if \(!isSignalMonitorUuidLike\(input\.profile\.id\)\) \{\s*return;/s);
+  assert.match(persistBlock, /recordSignalMonitorDbFallback\(\s*error,\s*\{/s);
+  assert.match(persistBlock, /operation:\s*"persist_signal_monitor_matrix_states"/);
+  assert.match(persistBlock, /sourceStatus:\s*"persistence-failed"/);
+});
+
+test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
+  const emitStart = serviceSource.indexOf(
+    "export function emitSignalMonitorMatrixStreamAggregateDelta",
+  );
+  const emitEnd = serviceSource.indexOf(
+    "persistByProfile.forEach",
+    emitStart,
+  );
+  assert.notEqual(emitStart, -1);
+  assert.notEqual(emitEnd, -1);
+  const emitBlock = serviceSource.slice(emitStart, emitEnd);
+
+  assert.match(
+    emitBlock,
+    /if \(isSignalMonitorUuidLike\(subscriber\.profile\.id\)\) \{/,
+  );
 });
 
 function profile(id = "profile-test") {

@@ -125,6 +125,7 @@ export const TradeEquityPanel = ({
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
   gexProjectionEnabled = true,
+  gexProjectionMode = "active",
   gexOverlay = null,
   positionOverlaysEnabled = true,
 }) => {
@@ -177,6 +178,7 @@ export const TradeEquityPanel = ({
   );
   const gexProjection = useGexProjectionConeOverlay(ticker, {
     enabled: Boolean(gexProjectionEnabled && ticker && historicalDataEnabled),
+    mode: gexProjectionMode,
   });
   const chartGexOverlay = useMemo(
     () => ({
@@ -407,6 +409,7 @@ export const TradeEquityPanel = ({
       queryClient,
       queryKey: barsQueryKey,
       read: () => readCachedChartBars(barsRuntimeCacheKey),
+      invalidate: false,
     });
   }, [
     barsQueryKey,

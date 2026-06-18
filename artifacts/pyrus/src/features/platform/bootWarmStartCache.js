@@ -50,6 +50,9 @@ export const readBootWarmStart = ({
   }
 };
 
+export const shouldRunStartupRefresh = ({ warmStart } = {}) =>
+  !Boolean(warmStart && Number.isFinite(Number(warmStart.savedAt)));
+
 export const writeBootWarmStart = (
   { environment } = {},
   { storage = browserStorage(), nowMs = Date.now() } = {},

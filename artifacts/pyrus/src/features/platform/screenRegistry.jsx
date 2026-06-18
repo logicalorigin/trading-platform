@@ -83,8 +83,8 @@ const createPreloadableScreen = (screenId, label) => {
           justifyItems: "center",
           gap: 10,
           padding: 20,
-          color: "var(--foreground, #f8fafc)",
-          background: "var(--background, #020617)",
+          color: "var(--ra-text-primary, #101827)",
+          background: "var(--ra-surface-0, #F7FAFF)",
         }}
       >
         <div style={{ fontSize: 15 }}>Screen failed to load</div>
@@ -99,8 +99,8 @@ const createPreloadableScreen = (screenId, label) => {
       null
     ) : (
       // Module is still loading. Render a centered spinner instead of null so a
-      // navigation to a not-yet-loaded screen shows a loader, not a black panel
-      // on the dark app canvas while the chunk resolves.
+      // navigation to a not-yet-loaded screen shows a loader, not a blank panel
+      // on the themed app canvas while the chunk resolves.
       <div
         data-testid={`screen-loading-${screenId}`}
         role="status"
@@ -112,7 +112,7 @@ const createPreloadableScreen = (screenId, label) => {
           flex: 1,
           display: "grid",
           placeItems: "center",
-          background: "var(--background, #050814)",
+          background: "var(--ra-surface-0, #F7FAFF)",
         }}
       >
         <LoadingSpinner size={22} />

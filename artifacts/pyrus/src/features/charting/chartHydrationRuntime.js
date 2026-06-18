@@ -203,8 +203,14 @@ export const resolveVisibleRangeHydrationAction = ({
     resolveFiniteCount(maxLimit, resolvedTargetLimit),
   );
 
+  // Cursor-based older-history prepend is allowed at the left edge even before
+  // the initial window has reached targetLimit. PREPEND_OLDER is NOT shed by the
+  // hydration pressure gate (only its page size shrinks), whereas the
+  // EXPAND_LIMIT fallback below IS gate-shed — so under DB pressure a left-edge
+  // pan could otherwise never reach the older fetch (initial window stuck below
+  // target). Older history is contiguous from oldestLoadedAtMs backward, so
+  // prepending while the window is still filling does not create a gap.
   if (
-    resolvedRequestedLimit >= resolvedTargetLimit &&
     canPrependOlderHistory &&
     !hasExhaustedOlderHistory &&
     Number.isFinite(oldestLoadedAtMs)

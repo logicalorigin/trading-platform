@@ -124,11 +124,14 @@ import {
   recordAccountPageStreamWrite,
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
+import { loadStoredMarketBarsBySymbol } from "../services/market-data-store";
 import {
   getCurrentStockMinuteAggregates,
+  getRecentStockMinuteAggregateHistory,
   getStockAggregateStreamDiagnostics,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
+  type StockMinuteAggregateMessage,
 } from "../services/stock-aggregate-stream";
 import { getVolumeFootprints } from "../services/volume-footprints";
 import {
@@ -200,6 +203,7 @@ import {
 
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
+const STOCK_AGGREGATE_STREAM_SNAPSHOT_HISTORY_LIMIT = 24;
 
 const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
 
@@ -764,6 +768,23 @@ const BARS_BATCH_MAX_REQUESTS = 72;
 const BARS_BATCH_CONCURRENCY = 6;
 const BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT = 40;
 const BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT = 240;
+const SPARKLINE_SEED_MAX_SYMBOLS = 600;
+const SPARKLINE_SEED_DB_BATCH_SIZE = 32;
+const SPARKLINE_SEED_DB_CONCURRENCY = 4;
+const SPARKLINE_SEED_DEFAULT_LIMIT = 120;
+const SPARKLINE_SEED_MAX_LIMIT = 240;
+const SPARKLINE_SEED_DEFAULT_POINT_LIMIT = 48;
+const SPARKLINE_SEED_MAX_POINT_LIMIT = 120;
+const SPARKLINE_SEED_TIMEFRAMES = new Set([
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "4h",
+  "1d",
+]);
 type BarsBatchResponseShape = "bars" | "sparkline";
 
 function validateBarsRequestWindow(
@@ -823,6 +844,109 @@ function readBarsBatchSparklinePointLimit(value: unknown): number {
     2,
     Math.min(BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT, Math.floor(numeric)),
   );
+}
+
+function readSparklineSeedPositiveInteger(
+  value: unknown,
+  fallback: number,
+  max: number,
+): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(2, Math.min(max, Math.floor(numeric)));
+}
+
+function readSparklineSeedSymbols(value: unknown): string[] {
+  const rawSymbols = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return Array.from(
+    new Set(
+      rawSymbols
+        .map((symbol) =>
+          typeof symbol === "string" ? symbol.trim().toUpperCase() : "",
+        )
+        .filter(Boolean),
+    ),
+  ).slice(0, SPARKLINE_SEED_MAX_SYMBOLS);
+}
+
+function parseSparklineSeedBody(body: unknown) {
+  const record =
+    body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  const timeframe = String(record.timeframe || "1m").trim();
+  return {
+    symbols: readSparklineSeedSymbols(record.symbols),
+    timeframe: SPARKLINE_SEED_TIMEFRAMES.has(timeframe) ? timeframe : "1m",
+    limit: readSparklineSeedPositiveInteger(
+      record.limit,
+      SPARKLINE_SEED_DEFAULT_LIMIT,
+      SPARKLINE_SEED_MAX_LIMIT,
+    ),
+    pointLimit: readSparklineSeedPositiveInteger(
+      record.pointLimit,
+      SPARKLINE_SEED_DEFAULT_POINT_LIMIT,
+      SPARKLINE_SEED_MAX_POINT_LIMIT,
+    ),
+  };
+}
+
+const chunkArray = <T>(items: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index]);
+      }
+    }),
+  );
+
+  return results;
+}
+
+async function loadSparklineSeedBarsBySymbol(
+  body: ReturnType<typeof parseSparklineSeedBody>,
+) {
+  const chunks = chunkArray(body.symbols, SPARKLINE_SEED_DB_BATCH_SIZE);
+  const chunkResults = await mapWithConcurrency(
+    chunks,
+    SPARKLINE_SEED_DB_CONCURRENCY,
+    (symbols) =>
+      loadStoredMarketBarsBySymbol({
+        symbols,
+        timeframe: body.timeframe as Parameters<
+          typeof loadStoredMarketBarsBySymbol
+        >[0]["timeframe"],
+        limit: body.limit,
+        sourceName: "massive-history",
+        outsideRth: true,
+      }),
+  );
+
+  return Object.assign({}, ...chunkResults);
 }
 
 function readBatchBarCloseValue(bar: unknown): number | null {
@@ -2004,10 +2128,12 @@ router.get("/gex/:underlying", async (req, res) => {
 
 router.get("/gex/:underlying/projection", async (req, res) => {
   const view = String(req.query.view || "").trim().toLowerCase();
+  const mode = String(req.query.mode || "").trim().toLowerCase();
   const projection = await getGexProjectionData({
     underlying: req.params.underlying,
     signal: createRequestAbortSignal(req, res),
     scope: view === "chart" ? "chart" : "full",
+    mode: view === "chart" && mode === "snapshot" ? "snapshot" : "active",
   });
 
   if (view === "chart") {
@@ -2025,10 +2151,12 @@ router.get("/gex/:underlying/projection", async (req, res) => {
 });
 
 router.get("/gex/:underlying/zero-gamma", async (req, res) => {
+  const mode = String(req.query.mode || "").trim().toLowerCase();
   res.json(
     await getGexZeroGammaData({
       underlying: req.params.underlying,
       signal: createRequestAbortSignal(req, res),
+      mode: mode === "snapshot" ? "snapshot" : "active",
     }),
   );
 });
@@ -2173,6 +2301,42 @@ router.get("/bars", async (req, res) => {
   const data = GetBarsResponse.parse(raw);
 
   res.json(data);
+});
+
+router.post("/sparklines/seed", async (req, res) => {
+  const body = parseSparklineSeedBody(req.body);
+  if (!body.symbols.length) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/sparkline-seed-invalid",
+      title: "Sparkline seed request is invalid",
+      status: 400,
+      detail: "Body must include one or more symbols.",
+      code: "SPARKLINE_SEED_SYMBOLS_REQUIRED",
+    });
+    return;
+  }
+
+  const barsBySymbol = await loadSparklineSeedBarsBySymbol(body);
+  const items = body.symbols.map((symbol) => {
+    const normalized = symbol.trim().toUpperCase();
+    const bars = barsBySymbol[normalized] || [];
+    return {
+      symbol: normalized,
+      status: bars.length ? "fulfilled" : "empty",
+      bars: compactBarsForBatchSparkline(bars, body.pointLimit),
+      source: "bar_cache",
+      historySource: "massive-history",
+    };
+  });
+
+  res.json({
+    timeframe: body.timeframe,
+    source: "bar_cache",
+    historySource: "massive-history",
+    requestedSymbolCount: body.symbols.length,
+    hydratedSymbolCount: items.filter((item) => item.bars.length >= 2).length,
+    items,
+  });
 });
 
 router.get("/options/chains", async (req, res) => {
@@ -3398,7 +3562,32 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 
   await startSse(req, res, "stock-aggregates", async ({ writeEvent }) => {
     const writeSnapshotAggregates = async (nextSymbols: string[]) => {
-      const snapshotAggregates = getCurrentStockMinuteAggregates(nextSymbols);
+      const snapshotBySymbolMinute = new Map<
+        string,
+        StockMinuteAggregateMessage
+      >();
+      nextSymbols.forEach((symbol) => {
+        getRecentStockMinuteAggregateHistory({
+          symbol,
+          limit: STOCK_AGGREGATE_STREAM_SNAPSHOT_HISTORY_LIMIT,
+        }).forEach((aggregate) => {
+          snapshotBySymbolMinute.set(
+            `${aggregate.symbol}:${aggregate.startMs}`,
+            aggregate,
+          );
+        });
+      });
+      getCurrentStockMinuteAggregates(nextSymbols).forEach((aggregate) => {
+        snapshotBySymbolMinute.set(
+          `${aggregate.symbol}:${aggregate.startMs}`,
+          aggregate,
+        );
+      });
+      const snapshotAggregates = Array.from(snapshotBySymbolMinute.values()).sort(
+        (left, right) =>
+          String(left.symbol).localeCompare(String(right.symbol)) ||
+          Number(left.startMs) - Number(right.startMs),
+      );
       for (const aggregate of snapshotAggregates) {
         await writeEvent("aggregate", {
           ...aggregate,

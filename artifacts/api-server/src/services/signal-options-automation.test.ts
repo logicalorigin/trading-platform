@@ -40,6 +40,44 @@ test("Signal Options does not evaluate Signal Matrix directly", () => {
   assert.doesNotMatch(source, /enrichSignalOptionsCandidateWithMatrixMtf/);
 });
 
+test("Signal Options default state endpoint bypasses cached fast-summary state", () => {
+  const stateFunctionStart = source.indexOf(
+    "export async function listSignalOptionsAutomationState",
+  );
+  const cockpitFunctionStart = source.indexOf(
+    "async function buildAlgoDeploymentCockpitPayload",
+  );
+  assert.notEqual(stateFunctionStart, -1);
+  assert.notEqual(cockpitFunctionStart, -1);
+  const stateFunction = source.slice(stateFunctionStart, cockpitFunctionStart);
+
+  assert.doesNotMatch(
+    stateFunction,
+    /return buildSignalOptionsFastSummaryState\(input\)/,
+  );
+  assert.match(stateFunction, /getSignalOptionsDashboardSnapshot\(\{\s*\.\.\.input,/);
+  assert.match(stateFunction, /withFreshSignalOptionsStateSignals\(snapshot, input\)/);
+});
+
+test("Signal Options default cockpit summary bypasses cached fast-summary state", () => {
+  const cockpitFunctionStart = source.indexOf(
+    "async function buildAlgoDeploymentCockpitPayload",
+  );
+  const cockpitExportStart = source.indexOf(
+    "export async function getAlgoDeploymentCockpit",
+  );
+  assert.notEqual(cockpitFunctionStart, -1);
+  assert.notEqual(cockpitExportStart, -1);
+  const cockpitFunction = source.slice(cockpitFunctionStart, cockpitExportStart);
+
+  assert.doesNotMatch(
+    cockpitFunction,
+    /buildSignalOptionsFastSummarySnapshot/,
+  );
+  assert.match(cockpitFunction, /getSignalOptionsDashboardSnapshot\(\{\s*deploymentId: input\.deploymentId,/);
+  assert.match(cockpitFunction, /withFreshSignalOptionsStateSignals\(snapshot, \{/);
+});
+
 test("Signal Options backfill requires explicit bar-evaluation opt-in", async () => {
   const previousPyrusFlag =
     process.env["PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED"];

@@ -64,7 +64,6 @@ import {
 } from "../features/platform/queryDefaults";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import {
-  SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_HEIGHT,
   TABLE_SPARKLINE_WIDTH,
 } from "../features/platform/sparklineConfig";
@@ -103,6 +102,11 @@ import {
   summarizeSignalsTimeframeDirections,
 } from "../features/signals/signalsRowModel.js";
 import {
+  boundSignalsRowsToUniverse,
+  buildSignalsSourceScopeKey,
+  signalsFiltersActive,
+} from "../features/signals/signalsScope.js";
+import {
   buildSignalsHydrationManifest,
   buildSignalsMatrixHydrationPlan,
 } from "../features/signals/signalsMatrixHydration.js";
@@ -118,6 +122,7 @@ import {
   isProblemSignalState,
   normalizeSignalStatus,
 } from "../features/signals/signalStateFreshness.js";
+import { useRuntimeTickerSnapshots } from "../features/platform/runtimeTickerStore";
 
 const SIGNALS_EVENT_LIMIT = 250;
 const SIGNAL_STATUS_FILTERS = [
@@ -279,27 +284,9 @@ const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
 const EMPTY_SIGNAL_SPARKLINE_POINTS = Object.freeze({});
 const EMPTY_SPARKLINE_SERIES = Object.freeze([]);
 const SPARKLINE_FILL_STYLE = Object.freeze({ width: "100%", height: "100%" });
-// Cache marker for a symbol whose real bars are still being fetched. Lets the
-// cell show a neutral placeholder while loading instead of flashing the
-// synthetic fallback line ("old data") before real bars arrive. A settled fetch
-// stores an array ([] when genuinely empty), so `!Array.isArray` means pending.
-const SIGNAL_SPARKLINE_PENDING = "pending";
-const SIGNAL_SPARKLINE_FAILED = "failed";
-const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
-// Trimmed 240 (4h) -> 120 (2h): the cell draws <=24 points, and a wider window
-// forces expensive provider gap-fill per /bars/batch row. 2h still covers recent
-// signals' color flips while cutting DB/provider load roughly in half.
-const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
-const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
-const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
-const SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT = 64;
 const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 680;
 const SIGNALS_TABLE_MIN_HEIGHT_COMPACT = 620;
 const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 560;
-const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
-  BARS_REQUEST_PRIORITY.visible,
-  "signals-table-sparkline",
-);
 
 const readSignalsRouteDataTimingNow = () =>
   typeof performance !== "undefined" &&
@@ -313,63 +300,16 @@ const readSignalsRouteDataTimingNow = () =>
 const signalSparklineRowKey = (symbol) =>
   String(symbol || "").trim().toUpperCase();
 
-const barCloseValue = (bar) => {
-  const close = Number(bar?.close ?? bar?.c);
-  return Number.isFinite(close) ? close : null;
-};
+const hasDrawableSparkline = (bars) => extractSparklinePoints(bars).length >= 2;
 
-const thinBarsForSignalsTableSparkline = (bars) => {
-  const validBars = Array.isArray(bars)
-    ? bars.filter((bar) => barCloseValue(bar) != null)
-    : [];
-  if (validBars.length <= SPARKLINE_RENDER_POINT_LIMIT) {
-    return validBars;
+const resolveRuntimeSignalSparklineBars = (snapshot) => {
+  if (hasDrawableSparkline(snapshot?.sparkBars)) {
+    return snapshot.sparkBars;
   }
-
-  const lastIndex = validBars.length - 1;
-  return Array.from({ length: SPARKLINE_RENDER_POINT_LIMIT }, (_, index) => {
-    const sourceIndex = Math.round(
-      (index * lastIndex) / (SPARKLINE_RENDER_POINT_LIMIT - 1),
-    );
-    return validBars[sourceIndex];
-  });
-};
-
-const chunkSignalSparklineRows = (rows, chunkSize) => {
-  const chunks = [];
-  for (let index = 0; index < rows.length; index += chunkSize) {
-    chunks.push(rows.slice(index, index + chunkSize));
+  if (hasDrawableSparkline(snapshot?.spark)) {
+    return snapshot.spark;
   }
-  return chunks;
-};
-
-const fetchSignalSparklineBarsBatch = async (rows, signal) => {
-  const headers = new Headers(SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS.headers);
-  headers.set("content-type", "application/json");
-  const response = await fetch("/api/bars/batch", {
-    ...SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS,
-    method: "POST",
-    signal,
-    headers,
-    body: JSON.stringify({
-      requests: rows.map((row) => ({
-        key: row.key,
-        symbol: row.symbol,
-        timeframe: row.timeframe || SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
-        limit: SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT,
-        outsideRth: true,
-        source: "trades",
-        brokerRecentWindowMinutes: 0,
-        responseShape: "sparkline",
-        sparklinePointLimit: SPARKLINE_RENDER_POINT_LIMIT,
-      })),
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`Bars batch request failed with ${response.status}`);
-  }
-  const payload = await response.json();
-  return Array.isArray(payload?.items) ? payload.items : [];
+  return EMPTY_SPARKLINE_SERIES;
 };
 
 const toneForDirection = (direction) =>
@@ -1610,8 +1550,10 @@ function SignalsOverviewPanel({
           minWidth: 0,
         }}
       >
-        {metrics.map((metric) => (
-          <SignalsOverviewMetric key={metric.key} {...metric} />
+        {metrics.map(({ key, ...metricProps }) => (
+          // Destructure key out of the spread so React doesn't warn about a key
+          // prop being spread into JSX.
+          <SignalsOverviewMetric key={key} {...metricProps} />
         ))}
       </div>
       <TimeframeSignalGroupedBars
@@ -3437,10 +3379,6 @@ export default function SignalsScreen({
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol] = useState(
-    EMPTY_SIGNAL_SPARKLINE_BARS,
-  );
-  const signalSparklineBarsBySymbolRef = useRef(EMPTY_SIGNAL_SPARKLINE_BARS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState(() =>
     resolveSignalMonitorSettingsDraft(DEFAULT_PYRUS_SIGNALS_SETTINGS),
@@ -3453,7 +3391,7 @@ export default function SignalsScreen({
   const active = isVisible !== false;
   const signalsTimingStagesRef = useRef(new Set());
   const signalsRouteDataStageDetailsRef = useRef(new Map());
-  const signalsHydrationManifestScopeRef = useRef(environment);
+  const signalsHydrationManifestScopeRef = useRef(null);
   const [signalsHydrationManifestSymbols, setSignalsHydrationManifestSymbols] =
     useState([]);
   const markSignalsRouteDataTiming = useCallback((stage, detail = {}) => {
@@ -3658,10 +3596,19 @@ export default function SignalsScreen({
     if (!active) {
       return;
     }
+    // Scope = environment + the authoritative universe. When it changes, reset
+    // the hydration manifest AND the current selection so symbols/counts from a
+    // previous source/universe don't linger. (Epicurus Signals audit.)
+    const scopeKey = buildSignalsSourceScopeKey({
+      environment,
+      universeSymbols: signalsHydrationSourceUniverseSymbols,
+    });
+    const reset = signalsHydrationManifestScopeRef.current !== scopeKey;
+    signalsHydrationManifestScopeRef.current = scopeKey;
+    if (reset) {
+      setSelectedSymbol("");
+    }
     setSignalsHydrationManifestSymbols((currentSymbols) => {
-      const reset =
-        signalsHydrationManifestScopeRef.current !== environment;
-      signalsHydrationManifestScopeRef.current = environment;
       const nextSymbols = buildSignalsHydrationManifest({
         currentSymbols,
         nextSymbols: signalsHydrationSourceUniverseSymbols,
@@ -3744,12 +3691,17 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage(
         "rows-built",
         () =>
-          buildSignalsRows({
-            stateResponse,
-            matrixStates: signalMatrixStates,
-            events: signalEventsForRows,
-            watchlists,
-          }),
+          // Bound to the authoritative universe so symbols from a previous
+          // source/universe don't linger (pass-through while it's unavailable).
+          boundSignalsRowsToUniverse(
+            buildSignalsRows({
+              stateResponse,
+              matrixStates: signalMatrixStates,
+              events: signalEventsForRows,
+              watchlists,
+            }),
+            signalsHydrationSourceUniverseSymbols,
+          ),
         (value) => ({
           events: signalEventsForRows.length,
           matrixStates: signalMatrixStates.length,
@@ -3764,6 +3716,7 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage,
       signalEventsForRows,
       signalMatrixStates,
+      signalsHydrationSourceUniverseSymbols,
       stateResponse,
       watchlists,
     ],
@@ -3865,15 +3818,10 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage(
         "sparkline-rows-planned",
         () => {
-          const sparklineSourceRows = filteredRows.slice(
-            0,
-            SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT,
-          );
-          const rowSparklines = sparklineSourceRows
+          const rowSparklines = filteredRows
             .map((row) => ({
               key: signalSparklineRowKey(row.symbol),
               symbol: row.symbol,
-              timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
             }))
             .filter((rowSparkline) => rowSparkline.key);
           return Array.from(
@@ -3888,8 +3836,7 @@ export default function SignalsScreen({
         (value) => ({
           sparklineRows: value.length,
           sourceRows: filteredRows.length,
-          fetchRowLimit: SIGNALS_TABLE_SPARKLINE_FETCH_ROW_LIMIT,
-          timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+          source: "runtime-ticker-stream",
         }),
       ),
     [captureSignalsRouteDataStage, filteredRows],
@@ -3914,108 +3861,28 @@ export default function SignalsScreen({
     () => signalSparklineRows.map((row) => row.key).join(","),
     [signalSparklineRows],
   );
-  const signalSparklineFetchReady = Boolean(
-    active &&
-      !effectiveStateLoading &&
-      !effectiveProfileLoading &&
-      signalSparklineRows.length,
+  const signalSparklineSymbols = useMemo(
+    () => signalSparklineRows.map((row) => row.key),
+    [signalSparklineRows],
   );
-  useEffect(() => {
-    signalSparklineBarsBySymbolRef.current = signalSparklineBarsBySymbol;
-  }, [signalSparklineBarsBySymbol]);
-  useEffect(() => {
-    if (!signalSparklineFetchReady) {
-      setSignalSparklineBarsBySymbol(EMPTY_SIGNAL_SPARKLINE_BARS);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    const activeKeys = new Set(signalSparklineRows.map((row) => row.key));
-    const currentCache = signalSparklineBarsBySymbolRef.current || EMPTY_SIGNAL_SPARKLINE_BARS;
-    const rowsNeedingFetch = signalSparklineRows.filter(
-      (row) => !Object.prototype.hasOwnProperty.call(currentCache, row.key),
-    );
-    const batches = chunkSignalSparklineRows(
-      rowsNeedingFetch,
-      SIGNALS_TABLE_SPARKLINE_BATCH_SIZE,
-    );
-    let cancelled = false;
-    let nextBatchIndex = 0;
-
-    setSignalSparklineBarsBySymbol((current) => {
-      const entries = Object.entries(current).filter(([key]) =>
-        activeKeys.has(key),
-      );
-      const next = entries.length ? Object.fromEntries(entries) : {};
-      rowsNeedingFetch.forEach((row) => {
-        if (!Object.prototype.hasOwnProperty.call(next, row.key)) {
-          next[row.key] = SIGNAL_SPARKLINE_PENDING;
-        }
-      });
-      const nextCache = Object.keys(next).length
-        ? next
-        : EMPTY_SIGNAL_SPARKLINE_BARS;
-      signalSparklineBarsBySymbolRef.current = nextCache;
-      return nextCache;
-    });
-
-    if (!rowsNeedingFetch.length) {
-      return undefined;
-    }
-
-    const runBatchWorker = async () => {
-      while (!cancelled && !controller.signal.aborted && nextBatchIndex < batches.length) {
-        const batchIndex = nextBatchIndex;
-        nextBatchIndex += 1;
-        const batch = batches[batchIndex];
-        try {
-          const items = await fetchSignalSparklineBarsBatch(
-            batch,
-            controller.signal,
-          );
-          if (cancelled || controller.signal.aborted) {
-            return;
-          }
-          setSignalSparklineBarsBySymbol((current) => {
-            const next = { ...current };
-            items.forEach((item) => {
-              if (!activeKeys.has(item?.key)) return;
-              next[item.key] =
-                item?.status === "fulfilled"
-                  ? thinBarsForSignalsTableSparkline(item.bars || [])
-                  : SIGNAL_SPARKLINE_FAILED;
-            });
-            return next;
-          });
-        } catch {
-          if (cancelled || controller.signal.aborted) {
-            return;
-          }
-          setSignalSparklineBarsBySymbol((current) => {
-            const next = { ...current };
-            batch.forEach((row) => {
-              next[row.key] = SIGNAL_SPARKLINE_FAILED;
-            });
-            return next;
-          });
-        }
-      }
-    };
-
-    const workerCount = Math.max(
-      1,
-      Math.min(SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY, batches.length),
-    );
-    void Promise.allSettled(
-      Array.from({ length: workerCount }, runBatchWorker),
-    );
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
+  const signalSparklineRuntimeSnapshots = useRuntimeTickerSnapshots(
+    active ? signalSparklineSymbols : [],
+  );
+  const signalSparklineBarsBySymbol = useMemo(() => {
+    const entries = signalSparklineSymbols
+      .map((symbolKey) => {
+        const bars = resolveRuntimeSignalSparklineBars(
+          signalSparklineRuntimeSnapshots[symbolKey],
+        );
+        return hasDrawableSparkline(bars) ? [symbolKey, bars] : null;
+      })
+      .filter(Boolean);
+    return entries.length
+      ? Object.fromEntries(entries)
+      : EMPTY_SIGNAL_SPARKLINE_BARS;
   }, [
-    signalSparklineFetchReady,
+    signalSparklineRuntimeSnapshots,
+    signalSparklineSymbols,
     signalSparklineRowsKey,
   ]);
   const signalSparklinePointsBySymbol = useMemo(() => {
@@ -4109,11 +3976,26 @@ export default function SignalsScreen({
     matrixHydrationPlan.symbols.length,
     stateResponseReady,
   ]);
-  const summary = useMemo(() => summarizeSignalsRows(rows), [rows]);
-  const netBias = useMemo(() => summarizeSignalsNetBias(rows), [rows]);
+  // Overview metrics match the visible table: derive from filtered rows whenever
+  // a search/status/direction filter is active, else from all rows. (Option A.)
+  const overviewMetricRows = signalsFiltersActive({
+    query,
+    statusFilter,
+    directionFilter,
+  })
+    ? filteredRows
+    : rows;
+  const summary = useMemo(
+    () => summarizeSignalsRows(overviewMetricRows),
+    [overviewMetricRows],
+  );
+  const netBias = useMemo(
+    () => summarizeSignalsNetBias(overviewMetricRows),
+    [overviewMetricRows],
+  );
   const timeframeSignalSummary = useMemo(
-    () => summarizeSignalsTimeframeDirections(rows),
-    [rows],
+    () => summarizeSignalsTimeframeDirections(overviewMetricRows),
+    [overviewMetricRows],
   );
   const breadthHistory = useMemo(
     () => normalizeSignalsBreadthHistory(breadthHistoryQuery.data),
@@ -4121,11 +4003,12 @@ export default function SignalsScreen({
   );
   const selectedRow = useMemo(
     () =>
+      // Only from the VISIBLE (filtered) rows -- never resolve a selection to a
+      // row that search/filters have hidden; fall back to the first visible row.
       filteredRows.find((row) => row.symbol === selectedSymbol) ||
-      rows.find((row) => row.symbol === selectedSymbol) ||
       filteredRows[0] ||
       null,
-    [filteredRows, rows, selectedSymbol],
+    [filteredRows, selectedSymbol],
   );
   useEffect(() => {
     onReadinessChange?.({
@@ -4137,7 +4020,15 @@ export default function SignalsScreen({
   }, [active, onReadinessChange]);
 
   useEffect(() => {
-    if (!selectedSymbol && filteredRows[0]?.symbol) {
+    if (!filteredRows.length) {
+      return;
+    }
+    // Re-pick the first visible row when nothing is selected OR the current
+    // selection has been filtered/searched out of view (no stale hidden selection).
+    const selectionVisible =
+      selectedSymbol &&
+      filteredRows.some((row) => row.symbol === selectedSymbol);
+    if (!selectionVisible) {
       setSelectedSymbol(filteredRows[0].symbol);
     }
   }, [filteredRows, selectedSymbol]);
@@ -4351,8 +4242,8 @@ export default function SignalsScreen({
               rowDirection={row.original.direction}
               sparklineData={Array.isArray(barsValue) ? barsValue : EMPTY_SPARKLINE_SERIES}
               sparklinePoints={signalSparklinePointsBySymbol[symbolKey] || null}
-              loading={barsValue === SIGNAL_SPARKLINE_PENDING}
-              failed={barsValue === SIGNAL_SPARKLINE_FAILED}
+              loading={false}
+              failed={false}
               signalEvents={
                 signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS
               }

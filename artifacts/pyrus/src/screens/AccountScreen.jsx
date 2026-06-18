@@ -514,6 +514,7 @@ const useRuntimeAccountHistoryCache = ({
       queryClient,
       queryKey,
       read: () => readCachedAccountHistory(cacheKey),
+      invalidate: false,
     });
   }, [cacheKey, enabled, queryClient, queryKey]);
 

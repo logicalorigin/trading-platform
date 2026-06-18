@@ -13,6 +13,10 @@ import { Badge } from "../../components/platform/primitives.jsx";
 import { PulseDot } from "../../components/ui/PulseDot.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
+import {
+  resolveAlgoDeploymentKind,
+  ALGO_DEPLOYMENT_KIND_LABELS,
+} from "./algoHelpers.js";
 
 const resolveDeploymentAccountLabel = ({ deployment, accountId }) => {
   const providerAccountId = deployment?.providerAccountId || null;
@@ -129,7 +133,7 @@ export const AlgoStatusBar = ({
           >
             {deployments.map((deployment) => (
               <option key={deployment.id} value={deployment.id}>
-                {normalizeLegacyAlgoBrandText(deployment.name)} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "on" : "off"}
+                {normalizeLegacyAlgoBrandText(deployment.name)} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "on" : "off"} · {ALGO_DEPLOYMENT_KIND_LABELS[resolveAlgoDeploymentKind(deployment)]}
               </option>
             ))}
           </select>

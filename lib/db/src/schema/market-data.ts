@@ -67,6 +67,19 @@ export const barCacheTable = pgTable(
     ),
     index("bar_cache_instrument_idx").on(table.instrumentId),
     index("bar_cache_symbol_timeframe_idx").on(table.symbol, table.timeframe),
+    // Covering index for the hot read path (loadStoredMarketBars,
+    // market-data-store.ts): filters (symbol, timeframe, source) + a starts_at
+    // range, ORDER BY starts_at. Without it the planner uses (symbol, timeframe)
+    // then heap-filters source + starts_at and SORTS the full match set — the
+    // over-fetch that hit the 6s statement_timeout on high-volume symbols and
+    // drained the 12-slot pool. Subsumes bar_cache_symbol_timeframe_idx, which
+    // is dropped in the follow-up migration once this is verified in prod.
+    index("bar_cache_symbol_timeframe_source_starts_at_idx").on(
+      table.symbol,
+      table.timeframe,
+      table.source,
+      table.startsAt,
+    ),
     index("bar_cache_starts_at_idx").on(table.startsAt),
   ],
 );
@@ -105,6 +118,41 @@ export const optionChainSnapshotsTable = pgTable(
       table.optionContractId,
       table.asOf.desc(),
     ),
+  ],
+);
+
+// Upsert "latest" table: one row per (option_contract_id, source), updated in
+// place — replaces the append-only option_chain_snapshots firehose. NO FK
+// references (derived cache; integrity maintained by ingest order; avoids a
+// blocking lock on the hot parent tables during migration). See
+// docs/plans/option-chain-upsert-latest-redesign.md.
+export const optionChainLatestTable = pgTable(
+  "option_chain_latest",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    underlyingInstrumentId: uuid("underlying_instrument_id").notNull(),
+    optionContractId: uuid("option_contract_id").notNull(),
+    bid: numeric("bid", { precision: 18, scale: 6 }),
+    ask: numeric("ask", { precision: 18, scale: 6 }),
+    last: numeric("last", { precision: 18, scale: 6 }),
+    mark: numeric("mark", { precision: 18, scale: 6 }),
+    impliedVolatility: numeric("implied_volatility", { precision: 18, scale: 6 }),
+    delta: numeric("delta", { precision: 18, scale: 6 }),
+    gamma: numeric("gamma", { precision: 18, scale: 6 }),
+    theta: numeric("theta", { precision: 18, scale: 6 }),
+    vega: numeric("vega", { precision: 18, scale: 6 }),
+    openInterest: integer("open_interest"),
+    volume: integer("volume"),
+    source: text("source").notNull().default("massive"),
+    asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("option_chain_latest_contract_source_key").on(
+      table.optionContractId,
+      table.source,
+    ),
+    index("option_chain_latest_underlying_idx").on(table.underlyingInstrumentId),
   ],
 );
 

@@ -233,7 +233,6 @@ const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS = 120_000;
-const SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS = 10 * 60_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS = 30_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS = 300_000;
 const SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS = 120_000;
@@ -9746,14 +9745,6 @@ const signalOptionsSummaryDashboardInFlight = new Map<
   string,
   SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
 >();
-const signalOptionsFastSummaryInFlight = new Map<
-  string,
-  SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
->();
-const signalOptionsFastSignalRefreshInFlight = new Map<
-  string,
-  SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
->();
 const signalOptionsContractPreviewBackoff = new Map<string, number>();
 const signalOptionsCockpitCache = new Map<
   string,
@@ -9798,8 +9789,6 @@ export function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
     signalOptionsSummaryDashboardCache.clear();
     signalOptionsDashboardInFlight.clear();
     signalOptionsSummaryDashboardInFlight.clear();
-    signalOptionsFastSummaryInFlight.clear();
-    signalOptionsFastSignalRefreshInFlight.clear();
     signalOptionsCockpitCache.clear();
     signalOptionsCockpitSummaryCache.clear();
     signalOptionsCockpitInFlight.clear();
@@ -9812,8 +9801,6 @@ export function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
   signalOptionsSummaryDashboardCache.delete(deploymentId);
   signalOptionsDashboardInFlight.delete(deploymentId);
   signalOptionsSummaryDashboardInFlight.delete(deploymentId);
-  signalOptionsFastSummaryInFlight.delete(deploymentId);
-  signalOptionsFastSignalRefreshInFlight.delete(deploymentId);
   signalOptionsCockpitCache.delete(deploymentId);
   signalOptionsCockpitSummaryCache.delete(deploymentId);
   signalOptionsCockpitInFlight.delete(deploymentId);
@@ -10048,18 +10035,25 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
 }): Promise<SignalOptionsDashboardSnapshot> {
   const cacheMode = input.cacheMode ?? "normal";
   const now = Date.now();
-  const cached = signalOptionsDashboardCache.get(input.deploymentId);
-  if (cached && cached.expiresAt > now) {
-    return cached;
-  }
-  if (cached && cached.staleExpiresAt > now) {
-    return {
-      ...cached,
-      state: withSignalOptionsCacheMetadata(cached.state, {
-        cachedAt: cached.cachedAt,
-        cacheStatus: "stale",
-      }),
-    };
+  if (cacheMode === "cache-only") {
+    const cached = signalOptionsDashboardCache.get(input.deploymentId);
+    if (cached && cached.expiresAt > now) {
+      return cached;
+    }
+    if (cached && cached.staleExpiresAt > now) {
+      return {
+        ...cached,
+        state: withSignalOptionsCacheMetadata(cached.state, {
+          cachedAt: cached.cachedAt,
+          cacheStatus: "stale",
+        }),
+      };
+    }
+    return buildSignalOptionsColdDashboardSnapshot({
+      deploymentId: input.deploymentId,
+      view: "full",
+      reason: "signal_options_dashboard_cold_cache_only_fallback",
+    });
   }
 
   const inFlight = readSignalOptionsDashboardInFlight(
@@ -10069,14 +10063,6 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
   );
   if (inFlight) {
     return inFlight;
-  }
-
-  if (cacheMode === "cache-only") {
-    return buildSignalOptionsColdDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      view: "full",
-      reason: "signal_options_dashboard_cold_cache_only_fallback",
-    });
   }
 
   const work = (async () => {
@@ -10122,27 +10108,35 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
 }): Promise<SignalOptionsDashboardSnapshot> {
   const cacheMode = input.cacheMode ?? "normal";
   const now = Date.now();
-  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
-  if (cached && cached.expiresAt > now) {
-    return cached;
-  }
-  if (cached && cached.staleExpiresAt > now) {
-    return {
-      ...cached,
-      state: withSignalOptionsCacheMetadata(cached.state, {
-        cachedAt: cached.cachedAt,
-        cacheStatus: "stale",
-      }),
-    };
-  }
+  if (cacheMode === "cache-only") {
+    const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
+    if (cached && cached.expiresAt > now) {
+      return cached;
+    }
+    if (cached && cached.staleExpiresAt > now) {
+      return {
+        ...cached,
+        state: withSignalOptionsCacheMetadata(cached.state, {
+          cachedAt: cached.cachedAt,
+          cacheStatus: "stale",
+        }),
+      };
+    }
 
-  const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
-  if (fullCached && fullCached.staleExpiresAt > now) {
-    return writeSignalOptionsSummarySnapshotFromFullSnapshot(
-      fullCached,
-      input.deploymentId,
-      now,
-    );
+    const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
+    if (fullCached && fullCached.staleExpiresAt > now) {
+      return writeSignalOptionsSummarySnapshotFromFullSnapshot(
+        fullCached,
+        input.deploymentId,
+        now,
+      );
+    }
+
+    return buildSignalOptionsColdDashboardSnapshot({
+      deploymentId: input.deploymentId,
+      view: "summary",
+      reason: "signal_options_summary_cold_cache_only_fallback",
+    });
   }
 
   const inFlight = readSignalOptionsDashboardInFlight(
@@ -10166,14 +10160,6 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
         input.deploymentId,
       ),
     );
-  }
-
-  if (cacheMode === "cache-only") {
-    return buildSignalOptionsColdDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      view: "summary",
-      reason: "signal_options_summary_cold_cache_only_fallback",
-    });
   }
 
   const work = (async () => {
@@ -10301,341 +10287,16 @@ async function withFreshSignalOptionsStateSignals(
   }
 }
 
-function signalOptionsCachedSummarySnapshot(
-  cached: SignalOptionsDashboardSnapshot,
-  input: {
-    now: number;
-    expired?: boolean;
-  },
-): SignalOptionsDashboardSnapshot {
-  return {
-    ...cached,
-    state: withSignalOptionsCacheMetadata(cached.state, {
-      cachedAt: cached.cachedAt,
-      cacheStatus: cached.expiresAt > input.now ? "hit" : "stale",
-      reason: input.expired
-        ? "signal_options_state_summary_expired_cache_refreshing"
-        : undefined,
-    }),
-  };
-}
-
-function signalOptionsExpiredSummaryCacheStillUseful(
-  cached: SignalOptionsDashboardSnapshot,
-  now: number,
-) {
-  const cachedAtMs = Date.parse(cached.cachedAt);
-  return (
-    Number.isFinite(cachedAtMs) &&
-    now - cachedAtMs <= SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS
-  );
-}
-
-function signalOptionsCachedSummaryRefreshFallbackSnapshot(input: {
-  deploymentId: string;
-  now: number;
-  reason: string;
-}): SignalOptionsDashboardSnapshot | null {
-  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
-  const cachedExpiredButUseful =
-    cached !== undefined &&
-    cached.expiresAt <= input.now &&
-    cached.staleExpiresAt <= input.now &&
-    signalOptionsExpiredSummaryCacheStillUseful(cached, input.now);
-  if (
-    cached &&
-    (cached.expiresAt > input.now ||
-      cached.staleExpiresAt > input.now ||
-      cachedExpiredButUseful)
-  ) {
-    return {
-      ...cached,
-      state: withSignalOptionsCacheMetadata(cached.state, {
-        cachedAt: cached.cachedAt,
-        cacheStatus: cached.expiresAt > input.now ? "hit" : "stale",
-        reason:
-          cached.expiresAt > input.now
-            ? undefined
-            : cachedExpiredButUseful
-              ? "signal_options_state_summary_expired_cache_refreshing"
-              : input.reason,
-      }),
-    };
-  }
-
-  const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
-  const fullExpiredButUseful =
-    fullCached !== undefined &&
-    fullCached.expiresAt <= input.now &&
-    fullCached.staleExpiresAt <= input.now &&
-    signalOptionsExpiredSummaryCacheStillUseful(fullCached, input.now);
-  if (
-    fullCached &&
-    (fullCached.expiresAt > input.now ||
-      fullCached.staleExpiresAt > input.now ||
-      fullExpiredButUseful)
-  ) {
-    const summarySnapshot = writeSignalOptionsSummarySnapshotFromFullSnapshot(
-      fullCached,
-      input.deploymentId,
-      input.now,
-    );
-    return {
-      ...summarySnapshot,
-      state: withSignalOptionsCacheMetadata(summarySnapshot.state, {
-        cachedAt: summarySnapshot.cachedAt,
-        cacheStatus: fullCached.expiresAt > input.now ? "hit" : "stale",
-        reason:
-          fullCached.expiresAt > input.now
-            ? undefined
-            : fullExpiredButUseful
-              ? "signal_options_state_summary_expired_cache_refreshing"
-              : input.reason,
-      }),
-    };
-  }
-
-  return null;
-}
-
-function startSignalOptionsFastSummaryRefresh(input: {
-  deploymentId: string;
-  cacheMode?: SignalOptionsDashboardCacheMode;
-  refreshSignalsFromMonitorState?: boolean;
-}): Promise<SignalOptionsDashboardSnapshot> {
-  const forceFreshSignals = input.refreshSignalsFromMonitorState === true;
-  const inFlightMap = forceFreshSignals
-    ? signalOptionsFastSignalRefreshInFlight
-    : signalOptionsFastSummaryInFlight;
-  const inFlight = readSignalOptionsDashboardInFlight(
-    inFlightMap,
-    input.deploymentId,
-    SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS,
-  );
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const work = (async () => {
-    const deployment = await getDeploymentOrThrow(input.deploymentId);
-    const profile = resolveDeploymentProfile(deployment);
-    const preferStoredMonitorState = !forceFreshSignals;
-    let signalRefreshFailed = false;
-    const signalSnapshots = await listSignalOptionsSignalSnapshots(deployment, {
-      preferStoredMonitorState,
-      includeEventMetadata: false,
-    }).catch((error) => {
-      signalRefreshFailed = true;
-      logger.warn?.(
-        { err: error, deploymentId: deployment.id },
-        preferStoredMonitorState
-          ? "Signal Options fast summary returned without stored signal state"
-          : "Signal Options fast summary returned without refreshed signal state",
-      );
-      if (forceFreshSignals) {
-        throw error;
-      }
-      return [] as Awaited<ReturnType<typeof listSignalOptionsSignalSnapshots>>;
-    });
-    const refreshedAt = Date.now();
-    const cachedAt = new Date(refreshedAt).toISOString();
-    const signals = signalSnapshots.map((signal) => ({
-      ...signal,
-      contractPreview: null,
-    }));
-    const candidateShells = buildSignalOptionsCandidateShellsFromSignals({
-      deployment,
-      signals: signalSnapshots,
-      contractSelectionStatus: signalOptionsCandidateShellContractSelectionStatus(
-        deployment.id,
-      ),
-    });
-    const candidateIds = new Set(candidateShells.map((candidate) => candidate.id));
-    const candidateEventsById = new Map<string, ExecutionEvent[]>();
-    const candidatesById = new Map<string, SignalOptionsCandidate>(
-      candidateShells.map((candidate) => [candidate.id, candidate]),
-    );
-    let recentEvents: ExecutionEvent[] = [];
-    if (candidateIds.size > 0) {
-      try {
-        recentEvents = runtimeSignalOptionsEvents(
-          await listDeploymentEvents(
-            deployment.id,
-            SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
-          ),
-        ).filter((event) => !skipEventDisabledByProfile(event, profile));
-      } catch (error) {
-        logger.warn?.(
-          { err: error, deploymentId: deployment.id },
-          "Signal Options fast summary returned without recent candidate events",
-        );
-      }
-    }
-    const currentCandidateEvents: ExecutionEvent[] = [];
-    for (const event of [...recentEvents].sort(
-      (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
-    )) {
-      const candidate = candidateFromEvent(event);
-      if (!candidate || !candidateIds.has(candidate.id)) {
-        continue;
-      }
-      const existing = candidatesById.get(candidate.id);
-      candidatesById.set(
-        candidate.id,
-        mergeSignalOptionsCandidate(existing, candidate),
-      );
-      candidateEventsById.set(candidate.id, [
-        ...(candidateEventsById.get(candidate.id) ?? []),
-        event,
-      ]);
-      currentCandidateEvents.push(event);
-    }
-    const candidates = [...candidatesById.values()]
-      .map((candidate) => {
-        const eventsForCandidate = candidateEventsById.get(candidate.id) ?? [];
-        const { actionStatus, syncStatus } = deriveCandidateActionStatus({
-          candidate,
-          events: eventsForCandidate,
-        });
-        return {
-          ...candidate,
-          actionStatus,
-          syncStatus,
-          timeline: eventsForCandidate.map((event) => eventTimelineItem(event)),
-        };
-      })
-      .sort(compareSignalOptionsCandidatesForDisplay)
-      .map(signalOptionsCandidateToDashboardCandidate);
-    const state = withSignalOptionsCacheMetadata(
-      {
-        deployment: deploymentToResponse(deployment),
-        profile,
-        mode: "shadow" as const,
-        signals,
-        candidates,
-        dataQuality: buildSignalOptionsDataQualityReport({
-          candidates,
-          events: currentCandidateEvents,
-        }),
-        activePositions: [],
-        risk: buildSignalOptionsEmptyRisk(profile),
-        events: currentCandidateEvents
-          .slice()
-          .sort(
-            (left, right) =>
-              right.occurredAt.getTime() - left.occurredAt.getTime(),
-          )
-          .slice(0, SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT)
-          .map(eventToResponse),
-      },
-      {
-        cachedAt,
-        cacheStatus:
-          !preferStoredMonitorState && !signalRefreshFailed ? "hit" : "stale",
-        reason:
-          !preferStoredMonitorState && !signalRefreshFailed
-            ? undefined
-            : preferStoredMonitorState
-              ? "signal_options_state_summary_fast_signal_state"
-              : "signal_options_state_summary_fast_signal_refresh_failed",
-      },
-    );
-    const snapshot = {
-      deployment,
-      profile,
-      events: currentCandidateEvents,
-      state,
-      cachedAt,
-      expiresAt: refreshedAt + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
-      staleExpiresAt: refreshedAt + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
-    };
-    signalOptionsSummaryDashboardCache.set(deployment.id, snapshot);
-    if (deployment.id !== input.deploymentId) {
-      signalOptionsSummaryDashboardCache.set(input.deploymentId, snapshot);
-    }
-    return snapshot;
-  })();
-  work.catch(() => {}).finally(() => {
-    inFlightMap.delete(input.deploymentId);
-  });
-
-  inFlightMap.set(input.deploymentId, {
-    promise: work,
-    startedAt: Date.now(),
-  });
-  return work;
-}
-
-async function buildSignalOptionsFastSummarySnapshot(input: {
-  deploymentId: string;
-  cacheMode?: SignalOptionsDashboardCacheMode;
-  refreshSignalsFromMonitorState?: boolean;
-}): Promise<SignalOptionsDashboardSnapshot> {
-  const now = Date.now();
-  const shouldRefreshStoredSignals =
-    input.refreshSignalsFromMonitorState === true;
-  if (shouldRefreshStoredSignals) {
-    if (input.cacheMode === "cache-only") {
-      return buildSignalOptionsColdDashboardSnapshot({
-        deploymentId: input.deploymentId,
-        view: "summary",
-        reason:
-          "signal_options_state_summary_fast_cache_only_signal_state_fallback",
-      });
-    }
-    return startSignalOptionsFastSummaryRefresh(input);
-  }
-
-  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
-  if (cached && cached.expiresAt > now) {
-    return signalOptionsCachedSummarySnapshot(cached, { now });
-  }
-
-  const cachedStale = Boolean(cached && cached.staleExpiresAt > now);
-  const cachedExpiredButUseful =
-    cached !== undefined &&
-    !cachedStale &&
-    signalOptionsExpiredSummaryCacheStillUseful(cached, now);
-  if (cached && (cachedStale || cachedExpiredButUseful)) {
-    const staleFallback = signalOptionsCachedSummarySnapshot(cached, {
-      now,
-      expired: Boolean(cachedExpiredButUseful),
-    });
-    if (input.cacheMode === "cache-only") {
-      return staleFallback;
-    }
-    return startSignalOptionsFastSummaryRefresh(input);
-  }
-
-  if (input.cacheMode === "cache-only") {
-    return buildSignalOptionsColdDashboardSnapshot({
-      deploymentId: input.deploymentId,
-      view: "summary",
-      reason: "signal_options_state_summary_fast_cache_only_fallback",
-    });
-  }
-
-  return startSignalOptionsFastSummaryRefresh(input);
-}
-
-async function buildSignalOptionsFastSummaryState(input: {
-  deploymentId: string;
-  cacheMode?: SignalOptionsDashboardCacheMode;
-  refreshSignalsFromMonitorState?: boolean;
-}) {
-  return (await buildSignalOptionsFastSummarySnapshot(input)).state;
-}
-
 export async function listSignalOptionsAutomationState(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
   view?: SignalOptionsDashboardView;
   refreshSignalsFromMonitorState?: boolean;
 }) {
-  if ((input.view ?? "summary") !== "full") {
-    return buildSignalOptionsFastSummaryState(input);
-  }
-  const snapshot = await getSignalOptionsDashboardSnapshot(input);
+  const snapshot = await getSignalOptionsDashboardSnapshot({
+    ...input,
+    view: input.view ?? "summary",
+  });
   return withFreshSignalOptionsStateSignals(snapshot, input);
 }
 
@@ -10644,16 +10305,14 @@ async function buildAlgoDeploymentCockpitPayload(input: {
   view?: SignalOptionsDashboardView;
 }) {
   const view = input.view ?? "summary";
-  const snapshot =
-    view === "full"
-      ? await getSignalOptionsDashboardSnapshot({
-          deploymentId: input.deploymentId,
-          view,
-        })
-      : await buildSignalOptionsFastSummarySnapshot({
-          deploymentId: input.deploymentId,
-        });
-  const { deployment, profile, events, state } = snapshot;
+  const snapshot = await getSignalOptionsDashboardSnapshot({
+    deploymentId: input.deploymentId,
+    view,
+  });
+  const state = await withFreshSignalOptionsStateSignals(snapshot, {
+    view,
+  });
+  const { deployment, profile, events } = snapshot;
   const [readiness, fleetRows] = await Promise.all([
     getAlgoGatewayReadiness(),
     db
@@ -10769,6 +10428,7 @@ export async function getAlgoDeploymentCockpit(input: {
   view?: SignalOptionsDashboardView;
 }) {
   const view = input.view ?? "summary";
+  const cacheMode = input.cacheMode ?? "normal";
   const cockpitCache =
     view === "full"
       ? signalOptionsCockpitCache
@@ -10777,16 +10437,23 @@ export async function getAlgoDeploymentCockpit(input: {
     view === "full"
       ? signalOptionsCockpitInFlight
       : signalOptionsCockpitSummaryInFlight;
-  const cached = readSignalOptionsCachedPayload(
-    cockpitCache,
-    input.deploymentId,
-    input.cacheMode ?? "normal",
-    {
-      allowStale: view === "full" || input.cacheMode === "cache-only",
-    },
-  );
-  if (cached) {
-    return cached;
+  if (cacheMode === "cache-only") {
+    const cached = readSignalOptionsCachedPayload(
+      cockpitCache,
+      input.deploymentId,
+      cacheMode,
+      {
+        allowStale: true,
+      },
+    );
+    if (cached) {
+      return cached;
+    }
+    throw new HttpError(503, "Signal-options cockpit cache unavailable.", {
+      code: "signal_options_cockpit_cache_unavailable",
+      detail:
+        "API pressure requires a cached signal-options cockpit payload, but no usable payload is available yet.",
+    });
   }
   const inFlight = readSignalOptionsDashboardInFlight(
     cockpitInFlight,
@@ -10795,13 +10462,6 @@ export async function getAlgoDeploymentCockpit(input: {
   );
   if (inFlight) {
     return inFlight;
-  }
-  if (input.cacheMode === "cache-only") {
-    throw new HttpError(503, "Signal-options cockpit cache unavailable.", {
-      code: "signal_options_cockpit_cache_unavailable",
-      detail:
-        "API pressure requires a cached signal-options cockpit payload, but no usable payload is available yet.",
-    });
   }
   const work = (async () => {
     const payload = await buildAlgoDeploymentCockpitPayload({

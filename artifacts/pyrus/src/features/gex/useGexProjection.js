@@ -4,20 +4,35 @@ import { isFiniteNumber } from "./gexModel.js";
 
 export const GEX_PROJECTION_QUERY_STALE_MS = 60_000;
 export const GEX_PROJECTION_QUERY_REFETCH_MS = 60_000;
+export const GEX_PROJECTION_MODE_ACTIVE = "active";
+export const GEX_PROJECTION_MODE_SNAPSHOT = "snapshot";
 
 const normalizeGexTicker = (ticker) =>
   String(ticker || "")
     .trim()
     .toUpperCase();
 
-export const fetchGexProjection = async (ticker, { signal } = {}) => {
+const normalizeGexProjectionMode = (mode) =>
+  mode === GEX_PROJECTION_MODE_SNAPSHOT
+    ? GEX_PROJECTION_MODE_SNAPSHOT
+    : GEX_PROJECTION_MODE_ACTIVE;
+
+export const fetchGexProjection = async (
+  ticker,
+  { signal, mode = GEX_PROJECTION_MODE_ACTIVE } = {},
+) => {
   const normalizedTicker = normalizeGexTicker(ticker);
   if (!normalizedTicker) {
     return null;
   }
+  const normalizedMode = normalizeGexProjectionMode(mode);
+  const params = new URLSearchParams({ view: "chart" });
+  if (normalizedMode === GEX_PROJECTION_MODE_SNAPSHOT) {
+    params.set("mode", GEX_PROJECTION_MODE_SNAPSHOT);
+  }
 
   const response = await fetch(
-    `/api/gex/${encodeURIComponent(normalizedTicker)}/projection?view=chart`,
+    `/api/gex/${encodeURIComponent(normalizedTicker)}/projection?${params.toString()}`,
     { signal },
   );
   if (!response.ok) {
@@ -71,15 +86,29 @@ export const buildGexProjectionConeOverlay = (payload) => {
   };
 };
 
-export const useGexProjection = (ticker, { enabled = true } = {}) => {
+export const useGexProjection = (
+  ticker,
+  {
+    enabled = true,
+    mode = GEX_PROJECTION_MODE_ACTIVE,
+  } = {},
+) => {
   const normalizedTicker = normalizeGexTicker(ticker);
+  const normalizedMode = normalizeGexProjectionMode(mode);
+  const refetchInterval =
+    enabled && normalizedMode !== GEX_PROJECTION_MODE_SNAPSHOT
+      ? GEX_PROJECTION_QUERY_REFETCH_MS
+      : false;
   return useQuery({
-    queryKey: ["gex-projection", normalizedTicker],
+    queryKey: ["gex-projection", normalizedTicker, normalizedMode],
     enabled: Boolean(enabled && normalizedTicker),
-    queryFn: ({ signal }) => fetchGexProjection(normalizedTicker, { signal }),
+    queryFn: ({ signal }) =>
+      fetchGexProjection(normalizedTicker, { signal, mode: normalizedMode }),
     staleTime: GEX_PROJECTION_QUERY_STALE_MS,
-    refetchInterval: enabled ? GEX_PROJECTION_QUERY_REFETCH_MS : false,
-    placeholderData: (previousData) => previousData,
+    refetchInterval,
+    ...(normalizedMode === GEX_PROJECTION_MODE_SNAPSHOT
+      ? {}
+      : { placeholderData: (previousData) => previousData }),
   });
 };
 

@@ -292,6 +292,39 @@ function rememberDeploymentListCache(
   });
 }
 
+// Keep the in-memory deployment-list cache coherent with a single mutated
+// deployment. The cache is served as the pool-contention fallback (see
+// listAlgoDeployments / deploymentListFallback); without this, a save updates
+// the DB but the fallback keeps returning the pre-save deployment, so the algo
+// controls render stale "old" inputs (and a "deployment unavailable" window
+// never reflects the new value) until a later uncontended read overwrites the
+// cache. Write-through (not invalidate) so the fallback stays both useful and
+// fresh under contention. Patches the "all" entry and the deployment's
+// mode-keyed entry; a retired deployment is removed instead of inserted.
+export function applyDeploymentToListCache(deployment: AlgoDeploymentRow) {
+  const response =
+    visibleDeploymentRows([deployment]).length > 0
+      ? deploymentToResponse(deployment)
+      : null;
+  for (const key of ["all", deployment.mode]) {
+    const entry = deploymentListCache.get(key);
+    if (!entry) {
+      continue;
+    }
+    const deployments = entry.response.deployments.filter(
+      (existing) => existing.id !== deployment.id,
+    );
+    if (response) {
+      deployments.unshift(response);
+    }
+    deploymentListCache.set(key, {
+      ...entry,
+      response: { ...entry.response, deployments },
+      updatedAtMs: Date.now(),
+    });
+  }
+}
+
 function clearDeploymentListCacheForTests() {
   deploymentListCache.clear();
 }
@@ -413,7 +446,9 @@ function executionEventToResponse(
   };
 }
 
-export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
+export async function listAlgoDeployments(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentListResponse> {
   const nowMs = Date.now();
   if (deploymentListDbBackoff.isActive(nowMs)) {
     const cached = deploymentListFallback(input);
@@ -487,6 +522,7 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
+  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -539,6 +575,7 @@ export async function setAlgoDeploymentEnabled(input: {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
+  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -630,6 +667,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   });
 
   invalidateSignalOptionsDashboardCaches(deployment.id);
+  applyDeploymentToListCache(deployment);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,

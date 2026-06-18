@@ -38,6 +38,49 @@ test("runtime market-data sync rejects non-drawable sparkline bars", () => {
   delete TRADE_TICKER_INFO.FFAI_TEST;
 });
 
+test("runtime market-data sync clears seed-gated sparklines until durable bars arrive", () => {
+  delete TRADE_TICKER_INFO.SEED_GATE_TEST;
+
+  syncRuntimeMarketData(["SEED_GATE_TEST"], [], [], {
+    sparklineBarsBySymbol: {
+      SEED_GATE_TEST: [
+        { close: 10.1, timestamp: "2026-06-08T20:00:00.000Z" },
+        { close: 10.4, timestamp: "2026-06-08T20:01:00.000Z" },
+      ],
+    },
+  });
+
+  assert.equal(
+    extractSparklinePoints(TRADE_TICKER_INFO.SEED_GATE_TEST.sparkBars).length,
+    2,
+  );
+
+  syncRuntimeMarketData(["SEED_GATE_TEST"], [], [], {
+    sparklineBarsBySymbol: {},
+    clearSparklineSymbols: ["SEED_GATE_TEST"],
+  });
+
+  assert.deepEqual(TRADE_TICKER_INFO.SEED_GATE_TEST.sparkBars, []);
+  assert.deepEqual(TRADE_TICKER_INFO.SEED_GATE_TEST.spark, []);
+
+  syncRuntimeMarketData(["SEED_GATE_TEST"], [], [], {
+    sparklineBarsBySymbol: {
+      SEED_GATE_TEST: [
+        { close: 11.1, timestamp: "2026-06-08T20:02:00.000Z" },
+        { close: 11.4, timestamp: "2026-06-08T20:03:00.000Z" },
+      ],
+    },
+    clearSparklineSymbols: ["SEED_GATE_TEST"],
+  });
+
+  assert.equal(
+    extractSparklinePoints(TRADE_TICKER_INFO.SEED_GATE_TEST.sparkBars).length,
+    2,
+  );
+
+  delete TRADE_TICKER_INFO.SEED_GATE_TEST;
+});
+
 test("runtime market-data sync carries extended-hours baseline fields", () => {
   delete TRADE_TICKER_INFO.EXT_TEST;
 

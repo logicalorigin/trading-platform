@@ -64,7 +64,12 @@ const buildPercentFormatter = () => (value) => {
 };
 
 const buildChartOptions = ({ compact }) => ({
-  autoSize: false,
+  // Canvas autowidth protocol (matches ResearchChartSurface.tsx:3442):
+  // lightweight-charts' own ResizeObserver fills the container on every
+  // viewport/page-width change. Replaces the prior manual
+  // getBoundingClientRect -> chart.resize() path, which went stale (sized to
+  // the wrong width inside its container) -- the same pattern RCS abandoned.
+  autoSize: true,
   layout: {
     background: { type: ColorType.Solid, color: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1) },
     textColor: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
@@ -213,22 +218,12 @@ const EquityCurveChartInner = ({
     );
     chartRef.current = chart;
 
-    const handleResize = () => {
-      if (!containerRef.current || !chartRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const width = Math.max(64, Math.floor(rect.width));
-      const measuredHeight = Math.max(64, Math.floor(rect.height));
-      chartRef.current.resize(width, measuredHeight);
-    };
-
-    handleResize();
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(containerRef.current);
-
+    // autoSize:true (see buildChartOptions) lets lightweight-charts' own
+    // ResizeObserver size the canvas to the container on every viewport/page
+    // resize; no manual getBoundingClientRect -> chart.resize() needed.
     onChartReady?.(chart);
 
     return () => {
-      resizeObserver.disconnect();
       try {
         chart.remove();
       } catch (error) {

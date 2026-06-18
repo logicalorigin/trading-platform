@@ -13,6 +13,8 @@ export const GEX_ZERO_GAMMA_QUERY_STALE_MS = 60_000;
 export const GEX_ZERO_GAMMA_QUERY_REFETCH_MS = 60_000;
 export const GEX_ZERO_GAMMA_STALE_MS = 15 * 60_000;
 export const GEX_ZERO_GAMMA_LABEL = "γ flip";
+export const GEX_ZERO_GAMMA_MODE_ACTIVE = "active";
+export const GEX_ZERO_GAMMA_MODE_SNAPSHOT = "snapshot";
 
 const GEX_ZERO_GAMMA_TOKEN = "--ra-gex-zero-gamma";
 const GEX_ZERO_GAMMA_FALLBACK = "#24C8DB";
@@ -71,6 +73,11 @@ const normalizeGexTicker = (ticker) =>
     .trim()
     .toUpperCase();
 
+const normalizeGexZeroGammaMode = (mode) =>
+  mode === GEX_ZERO_GAMMA_MODE_SNAPSHOT
+    ? GEX_ZERO_GAMMA_MODE_SNAPSHOT
+    : GEX_ZERO_GAMMA_MODE_ACTIVE;
+
 const resolveGexAsOf = (data) =>
   data?.timestamp ||
   data?.source?.chainUpdatedAt ||
@@ -85,14 +92,23 @@ const isStaleAsOf = (asOf, nowMs) => {
   return Number.isFinite(asOfMs) && nowMs - asOfMs > GEX_ZERO_GAMMA_STALE_MS;
 };
 
-export const fetchGexZeroGamma = async (ticker, { signal } = {}) => {
+export const fetchGexZeroGamma = async (
+  ticker,
+  { signal, mode = GEX_ZERO_GAMMA_MODE_ACTIVE } = {},
+) => {
   const normalizedTicker = normalizeGexTicker(ticker);
   if (!normalizedTicker) {
     return null;
   }
+  const normalizedMode = normalizeGexZeroGammaMode(mode);
+  const params = new URLSearchParams();
+  if (normalizedMode === GEX_ZERO_GAMMA_MODE_SNAPSHOT) {
+    params.set("mode", GEX_ZERO_GAMMA_MODE_SNAPSHOT);
+  }
+  const query = params.toString();
 
   const response = await fetch(
-    `/api/gex/${encodeURIComponent(normalizedTicker)}/zero-gamma`,
+    `/api/gex/${encodeURIComponent(normalizedTicker)}/zero-gamma${query ? `?${query}` : ""}`,
     { signal },
   );
   if (!response.ok) {
@@ -242,15 +258,22 @@ export function useGexZeroGammaReferenceLine(overlay) {
 export function useGexZeroGamma(ticker, options = {}) {
   const normalizedTicker = useMemo(() => normalizeGexTicker(ticker), [ticker]);
   const enabled = Boolean((options.enabled ?? true) && normalizedTicker);
+  const mode = normalizeGexZeroGammaMode(options.mode);
+  const refetchInterval =
+    enabled && mode !== GEX_ZERO_GAMMA_MODE_SNAPSHOT
+      ? GEX_ZERO_GAMMA_QUERY_REFETCH_MS
+      : false;
   const query = useQuery({
-    queryKey: ["gex-zero-gamma", normalizedTicker],
+    queryKey: ["gex-zero-gamma", normalizedTicker, mode],
     queryFn: ({ signal }) =>
-      fetchGexZeroGamma(normalizedTicker, { signal }),
+      fetchGexZeroGamma(normalizedTicker, { signal, mode }),
     enabled,
     staleTime: GEX_ZERO_GAMMA_QUERY_STALE_MS,
-    refetchInterval: enabled ? GEX_ZERO_GAMMA_QUERY_REFETCH_MS : false,
+    refetchInterval,
     refetchOnWindowFocus: false,
-    placeholderData: (previousData) => previousData,
+    ...(mode === GEX_ZERO_GAMMA_MODE_SNAPSHOT
+      ? {}
+      : { placeholderData: (previousData) => previousData }),
     retry: 1,
   });
 

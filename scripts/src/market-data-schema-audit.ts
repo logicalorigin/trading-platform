@@ -49,6 +49,12 @@ const TABLES: TableSpec[] = [
       "bar_cache_instrument_timeframe_source_starts_at_idx",
       "bar_cache_instrument_idx",
       "bar_cache_symbol_timeframe_idx",
+      // Covering index for the hot loadStoredMarketBars read; see
+      // db-pool-saturation-index-fix.md. Regression guard: if this is ever
+      // dropped, /bars falls back to the 6s-timeout plan. (instrument_idx +
+      // symbol_timeframe_idx are removed from this list when the follow-up
+      // drop-redundant migration lands.)
+      "bar_cache_symbol_timeframe_source_starts_at_idx",
       "bar_cache_starts_at_idx",
     ],
   },
@@ -171,10 +177,7 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
-const migrationPath = path.join(
-  repoRoot,
-  "lib/db/migrations/20260529_market_data_ingest.sql",
-);
+const migrationsDir = path.join(repoRoot, "lib/db/migrations");
 
 type AuditRow = {
   table: string;
@@ -243,17 +246,26 @@ async function audit(): Promise<AuditRow[]> {
 }
 
 function auditMigrationFile(): string[] {
-  if (!fs.existsSync(migrationPath)) {
-    return [`missing migration file: ${migrationPath}`];
+  if (!fs.existsSync(migrationsDir)) {
+    return [`missing migrations dir: ${migrationsDir}`];
   }
-  const sql = fs.readFileSync(migrationPath, "utf8").toLowerCase();
+  // Scan ALL migrations: indexes are added in dated migrations over time, not
+  // only the 20260529 baseline. Match "if not exists <name>" (not
+  // "index if not exists <name>") so both `CREATE INDEX IF NOT EXISTS` and
+  // `CREATE INDEX CONCURRENTLY IF NOT EXISTS` satisfy the check.
+  const sql = fs
+    .readdirSync(migrationsDir)
+    .filter((file) => file.endsWith(".sql"))
+    .map((file) => fs.readFileSync(path.join(migrationsDir, file), "utf8"))
+    .join("\n")
+    .toLowerCase();
   const failures: string[] = [];
   for (const spec of TABLES) {
     if (!sql.includes(`create table if not exists ${spec.name}`)) {
       failures.push(`migration missing table ${spec.name}`);
     }
     for (const indexName of spec.indexes) {
-      if (!sql.includes(`index if not exists ${indexName}`)) {
+      if (!sql.includes(`if not exists ${indexName}`)) {
         failures.push(`migration missing index ${indexName}`);
       }
     }

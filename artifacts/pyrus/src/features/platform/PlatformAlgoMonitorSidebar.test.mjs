@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   buildAlgoMonitorStaSignalRows,
+  resolveAlgoMonitorActionSignalTimeframes,
   resolveAlgoMonitorReadinessStatus,
   splitAlgoMonitorSignalRowsByMatrixHydration,
 } from "./PlatformAlgoMonitorSidebar.jsx";
+import {
+  getAlgoStaExecutionTimeframeForTests,
+  publishAlgoStaExecutionTimeframe,
+  resetAlgoStaExecutionTimeframeForTests,
+} from "./algoStaExecutionTimeframeStore.js";
+
+const readLocalSource = (filename) =>
+  readFileSync(new URL(filename, import.meta.url), "utf8");
 
 test("Algo monitor sidebar includes received signal history rows", () => {
   const rows = buildAlgoMonitorStaSignalRows({
@@ -79,6 +89,121 @@ test("Algo monitor sidebar includes pushed Signal Matrix rows before options sna
   assert.equal(rows[0].symbol, "TSM");
   assert.equal(rows[0].timeframe, "5m");
   assert.equal(rows[0].sourceType, "signal_matrix_state");
+});
+
+test("Algo monitor sidebar can render pushed matrix rows before deployment metadata", () => {
+  const rows = buildAlgoMonitorStaSignalRows({
+    signals: [],
+    candidates: [],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "QQQ",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-17T16:55:00.000Z",
+        fresh: true,
+        status: "ok",
+      },
+    ],
+    signalTimeframes: ["5m"],
+    signalActionTimeframes: ["5m"],
+    universeSymbols: [],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, "QQQ");
+  assert.equal(rows[0].sourceType, "signal_matrix_state");
+});
+
+test("Algo monitor sidebar action timeframe follows the STA profile timeframe first", () => {
+  assert.deepEqual(
+    resolveAlgoMonitorActionSignalTimeframes({
+      signalActionTimeframe: "5m",
+      automationProfileTimeframe: "15m",
+      deploymentSignalTimeframe: "1m",
+    }),
+    ["5m"],
+  );
+  assert.deepEqual(
+    resolveAlgoMonitorActionSignalTimeframes({
+      automationProfileTimeframe: "15m",
+      deploymentSignalTimeframe: "1m",
+    }),
+    ["15m"],
+  );
+  assert.deepEqual(
+    resolveAlgoMonitorActionSignalTimeframes({
+      signalActionTimeframe: "bad",
+      automationProfileTimeframe: "2m",
+      deploymentSignalTimeframe: "1m",
+    }),
+    ["2m"],
+  );
+});
+
+test("Algo STA execution timeframe store publishes the active selector value", () => {
+  resetAlgoStaExecutionTimeframeForTests();
+  publishAlgoStaExecutionTimeframe("2m");
+  assert.equal(getAlgoStaExecutionTimeframeForTests(), "2m");
+  resetAlgoStaExecutionTimeframeForTests();
+  assert.equal(getAlgoStaExecutionTimeframeForTests(), "");
+});
+
+test("Platform shells pass the STA profile timeframe into the algo monitor sidebar", () => {
+  const appSource = readLocalSource("./PlatformApp.jsx");
+  const algoScreenSource = readLocalSource("../../screens/AlgoScreen.jsx");
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+  const mobileSource = readLocalSource("./MobileActivitySheet.jsx");
+  const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
+
+  assert.match(
+    appSource,
+    /signalActionTimeframe=\{signalMonitorProfile\?\.timeframe\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /publishAlgoStaExecutionTimeframe\(staActionSignalTimeframes\[0\] \|\| ""\)/,
+  );
+  assert.match(
+    algoScreenSource,
+    /clearAlgoStaExecutionTimeframe\(\)/,
+  );
+  assert.match(
+    shellSource,
+    /signalActionTimeframe=\{signalActionTimeframe\}/,
+  );
+  assert.match(
+    mobileSource,
+    /signalActionTimeframe=\{signalActionTimeframe\}/,
+  );
+  assert.match(
+    sidebarSource,
+    /useAlgoStaExecutionTimeframe\(\)/,
+  );
+  assert.match(
+    sidebarSource,
+    /signalActionTimeframe:\s*activeStaExecutionTimeframe \|\| signalActionTimeframe/,
+  );
+  assert.match(
+    sidebarSource,
+    /signalActionTimeframe,\s*automationProfileTimeframe:\s*automationState\?\.profile\?\.timeframe/s,
+  );
+});
+
+test("Algo monitor sidebar first paint is not coupled to shadow account position fallback", () => {
+  const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
+
+  assert.equal(sidebarSource.includes("useGetAccountPositions"), false);
+  assert.equal(sidebarSource.includes("rowDeploymentIds"), false);
+  assert.match(
+    sidebarSource,
+    /const loading =[\s\S]*deploymentsQuery\.isLoading[\s\S]*!hasSignalActionRows;/,
+  );
+  assert.match(
+    sidebarSource,
+    /const canRenderSignalSurface = Boolean\(focusedDeployment \|\| hasSignalActionRows\);/,
+  );
 });
 
 test("Algo monitor sidebar does not withhold action rows for companion bubbles", () => {

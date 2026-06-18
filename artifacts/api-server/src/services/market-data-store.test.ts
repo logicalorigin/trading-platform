@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __expandStoredRowsLimitForTests,
   __handleMarketDataStoreErrorForTests,
   __resetMarketDataStoreBackoffForTests,
   shouldUseDurableMarketDataStore,
@@ -39,4 +40,20 @@ test("a non-contention DB error time-boxes the store, then it self-heals", () =>
     true,
     "store recovers once the backoff clears",
   );
+});
+
+test("native long timeframes do not expand durable cache reads", () => {
+  for (const timeframe of ["10m", "12h", "1w", "1month", "1year"] as const) {
+    assert.equal(
+      __expandStoredRowsLimitForTests(360, timeframe),
+      360,
+      `${timeframe} should read exactly the requested cached row count`,
+    );
+  }
+});
+
+test("synthetic rollup timeframes still expand cache reads enough to normalize", () => {
+  assert.equal(__expandStoredRowsLimitForTests(10, "15s"), 150);
+  assert.equal(__expandStoredRowsLimitForTests(10, "30m"), 300);
+  assert.equal(__expandStoredRowsLimitForTests(10, "4h"), 2400);
 });

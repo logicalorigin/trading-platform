@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>PYRUS Platform</title>
-    <link rel="icon" type="image/png" href="/brand/pyrus-mark.png" />
+    <link rel="icon" type="image/svg+xml" href="/brand/pyrus-mark-dark.svg" />
     <script>
       (() => {
         const storageKey = "pyrus:state:v1";
@@ -475,14 +475,19 @@
 
       .pyrus-boot-loader {
         align-items: center;
-        background: #050914;
-        color: #f4f8ff;
+        background: #F7FAFF;
+        color: #101827;
         display: flex;
         flex-direction: column;
         font-family: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         justify-content: center;
         min-height: 100vh;
         min-height: 100dvh;
+      }
+
+      html[data-pyrus-theme="dark"] .pyrus-boot-loader {
+        background: #050914;
+        color: #f4f8ff;
       }
 
       .pyrus-boot-lockup {
@@ -511,11 +516,22 @@
       .pyrus-boot-word {
         display: block;
         height: 26px;
-        mix-blend-mode: screen;
         object-fit: contain;
         opacity: 1;
         user-select: none;
         width: 213px;
+      }
+
+      .pyrus-boot-word--light {
+        display: none;
+      }
+
+      html[data-pyrus-theme="light"] .pyrus-boot-word--dark {
+        display: none;
+      }
+
+      html[data-pyrus-theme="light"] .pyrus-boot-word--light {
+        display: block;
       }
 
       .pyrus-boot-sr {
@@ -538,7 +554,7 @@
 
       .pyrus-boot-progress-row {
         align-items: center;
-        color: rgba(244, 248, 255, 0.86);
+        color: #2F4058;
         display: flex;
         font-size: 12px;
         font-weight: 600;
@@ -556,14 +572,14 @@
       }
 
       .pyrus-boot-progress-percent {
-        color: #f4f8ff;
+        color: #101827;
         flex: 0 0 auto;
         font-variant-numeric: tabular-nums;
       }
 
       .pyrus-boot-progress-track {
-        background: rgba(244, 248, 255, 0.12);
-        border: 1px solid rgba(244, 248, 255, 0.14);
+        background: rgba(16, 24, 39, 0.08);
+        border: 1px solid rgba(16, 24, 39, 0.14);
         border-radius: 999px;
         height: 7px;
         overflow: hidden;
@@ -576,6 +592,19 @@
         height: 100%;
         min-width: 2px;
         width: 0;
+      }
+
+      html[data-pyrus-theme="dark"] .pyrus-boot-progress-row {
+        color: rgba(244, 248, 255, 0.86);
+      }
+
+      html[data-pyrus-theme="dark"] .pyrus-boot-progress-percent {
+        color: #f4f8ff;
+      }
+
+      html[data-pyrus-theme="dark"] .pyrus-boot-progress-track {
+        background: rgba(244, 248, 255, 0.12);
+        border-color: rgba(244, 248, 255, 0.14);
       }
 
       @keyframes pyrus-boot-mark {
@@ -641,8 +670,18 @@
             draggable="false"
           />
           <img
-            class="pyrus-boot-word"
+            class="pyrus-boot-word pyrus-boot-word--dark"
             src="/brand/pyrus-wordmark-tight.png"
+            alt=""
+            decoding="async"
+            fetchpriority="high"
+            draggable="false"
+            width="213"
+            height="26"
+          />
+          <img
+            class="pyrus-boot-word pyrus-boot-word--light"
+            src="/brand/pyrus-wordmark-tight-light.png"
             alt=""
             decoding="async"
             fetchpriority="high"

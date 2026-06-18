@@ -33,6 +33,7 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     "window.__PYRUS_PERF_WARMUP_SNAPSHOT__ = snapshot;",
     "window.__PYRUS_MEMORY_DIAGNOSTICS__ = getMemoryDiagnostics;",
     "delete window.__PYRUS_PERF_WARMUP_SNAPSHOT__;",
+    "const startupRefreshEnabled = shouldRunStartupRefresh({",
     "document.documentElement.dataset.pyrusTheme = normalizedTheme;",
     "root.dataset.pyrusAccentPreset = normalizedAccentPreset;",
     "root.dataset.pyrusDensity = normalizedDensity;",
@@ -71,5 +72,10 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     ),
     false,
     "Expected memory diagnostics cleanup to run once",
+  );
+  assert.match(
+    platformSource,
+    /startupRefreshQueuedRef\.current \|\|\s*!startupRefreshEnabled \|\|/,
+    "Expected warm-start policy to gate the broad startup invalidation fanout",
   );
 });

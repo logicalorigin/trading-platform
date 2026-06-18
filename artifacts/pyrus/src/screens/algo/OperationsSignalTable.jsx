@@ -21,7 +21,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowDown,
@@ -60,18 +59,7 @@ import {
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
 import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
-import {
-  BARS_QUERY_DEFAULTS,
-  BARS_REQUEST_PRIORITY,
-  HEAVY_PAYLOAD_GC_MS,
-  buildBarsRequestOptions,
-} from "../../features/platform/queryDefaults";
-import {
-  publishRuntimeTickerSnapshot,
-  useRuntimeTickerSnapshot,
-} from "../../features/platform/runtimeTickerStore";
-import { useMemoryPressureSnapshot } from "../../features/platform/memoryPressureStore";
-import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
+import { useRuntimeTickerSnapshot } from "../../features/platform/runtimeTickerStore";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
 import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
@@ -88,7 +76,6 @@ import {
   buildSignalAuditProgressions,
   signalAuditRowKey,
 } from "./algoAuditModel";
-import { shouldPauseAlgoSignalRowSparklines } from "./algoSignalSparklinePressure.js";
 import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_COLUMN_ORDER,
@@ -111,14 +98,6 @@ const FILTER_OPTIONS = [
 ];
 
 const SIGNALS_PAGE_SIZE = 20;
-const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
-const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
-const SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS = 30_000;
-const SIGNAL_TABLE_SPARKLINE_BATCH_SYMBOL_LIMIT = 60;
-const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
-  BARS_REQUEST_PRIORITY.visible,
-  "algo-signal-sparkline",
-);
 const SIGNAL_COLUMN_VISIBILITY_VERSION = 8;
 const PRIOR_DEFAULT_SIGNAL_COLUMN_ORDER = [
   "signal",
@@ -278,109 +257,10 @@ const defaultSortDirection = (sortKey) => DEFAULT_SORT_DIRECTIONS[sortKey] || "d
 
 const toggleSortDirection = (direction) => (direction === "asc" ? "desc" : "asc");
 
-const barCloseValue = (bar) => {
-  const close = Number(bar?.close ?? bar?.c);
-  return Number.isFinite(close) ? close : null;
-};
-
-const thinBarsForSignalSparkline = (bars) => {
-  const validBars = Array.isArray(bars)
-    ? bars.filter((bar) => barCloseValue(bar) != null)
-    : [];
-  if (validBars.length <= SPARKLINE_RENDER_POINT_LIMIT) return validBars;
-
-  const lastIndex = validBars.length - 1;
-  return Array.from({ length: SPARKLINE_RENDER_POINT_LIMIT }, (_, index) => {
-    const sourceIndex = Math.round(
-      (index * lastIndex) / (SPARKLINE_RENDER_POINT_LIMIT - 1),
-    );
-    return validBars[sourceIndex];
-  });
-};
-
 export const hasUsableSparklineData = (value) =>
   extractSparklinePoints(value?.sparkBars).length >= 2 ||
   extractSparklinePoints(value?.spark).length >= 2 ||
   extractSparklinePoints(value?.bars).length >= 2;
-
-export const buildStaSignalSparklineBatchRequest = (symbols) => ({
-  requests: (Array.isArray(symbols) ? symbols : [])
-    .map((symbol) => String(symbol || "").trim().toUpperCase())
-    .filter(Boolean)
-    .map((symbol) => ({
-      key: symbol,
-      symbol,
-      timeframe: SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
-      limit: SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT,
-      outsideRth: true,
-      assetClass: "equity",
-      source: "trades",
-      brokerRecentWindowMinutes: 0,
-      responseShape: "sparkline",
-      sparklinePointLimit: SPARKLINE_RENDER_POINT_LIMIT,
-    })),
-});
-
-export const buildStaSparklineHydrationSymbols = ({
-  rows = [],
-  page = 1,
-  pageSize = SIGNALS_PAGE_SIZE,
-  maxSymbols = SIGNAL_TABLE_SPARKLINE_BATCH_SYMBOL_LIMIT,
-} = {}) => {
-  const safePageSize = Math.max(
-    1,
-    Math.floor(Number(pageSize) || SIGNALS_PAGE_SIZE),
-  );
-  const safeMaxSymbols = Math.max(1, Math.floor(Number(maxSymbols) || 1));
-  const safePage = Math.max(1, Math.floor(Number(page) || 1));
-  const start = Math.max(0, (safePage - 2) * safePageSize);
-  const end = start + Math.max(safePageSize, safeMaxSymbols);
-  const symbols = [];
-  const seen = new Set();
-
-  rows.slice(start, end).forEach(({ signal }) => {
-    const signalRecord = asRecord(signal);
-    const symbol = String(signalRecord.symbol || "").trim().toUpperCase();
-    if (!symbol || seen.has(symbol) || hasUsableSparklineData(signalRecord)) {
-      return;
-    }
-    seen.add(symbol);
-    symbols.push(symbol);
-  });
-
-  return symbols.slice(0, safeMaxSymbols);
-};
-
-const fetchStaSignalSparklineBarsBatch = async (symbols, signal) => {
-  const request = buildStaSignalSparklineBatchRequest(symbols);
-  if (!request.requests.length) return {};
-
-  const headers = new Headers(SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS?.headers);
-  headers.set("content-type", "application/json");
-  const response = await fetch("/api/bars/batch", {
-    ...SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
-    method: "POST",
-    signal,
-    headers,
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) {
-    throw new Error(`STA row sparkline bars batch failed with ${response.status}`);
-  }
-  const payload = await response.json();
-  const next = Object.fromEntries(
-    request.requests.map((item) => [item.key, []]),
-  );
-  (Array.isArray(payload?.items) ? payload.items : []).forEach((item) => {
-    const key = String(item?.key || item?.symbol || "").trim().toUpperCase();
-    if (!key) return;
-    next[key] =
-      item?.status === "fulfilled"
-        ? thinBarsForSignalSparkline(item?.bars || [])
-        : [];
-  });
-  return next;
-};
 
 const firstPresent = (...values) => {
   for (const value of values) {
@@ -455,7 +335,6 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   timeframes,
   executionTimeframe = null,
   signalEvents = [],
-  rowSparklineSnapshotsBySymbol = {},
   alt,
   columns,
   compact,
@@ -467,7 +346,6 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   const tickerSnapshot = resolveRowTickerSnapshot(
     runtimeTickerSnapshot,
     null,
-    rowSparklineSnapshotsBySymbol?.[symbolKey] || null,
   );
 
   return (
@@ -736,6 +614,9 @@ export const classifySignal = (signal, candidate) => {
   if (candidateRecord.reason) return "blocked";
   return "ready";
 };
+
+export const hasStaCandidateAction = (candidate) =>
+  Object.keys(asRecord(asRecord(candidate).action)).length > 0;
 
 export const isHistoricalSignalRow = (row) =>
   String(asRecord(asRecord(row).signal).sourceType || "") === "signal_monitor_event";
@@ -1346,8 +1227,6 @@ export const OperationsSignalTable = ({
   algoIsPhone,
   algoIsNarrow = false,
   safeQaMode = false,
-  backgroundQueriesEnabled = false,
-  rowHydrationQueriesEnabled = false,
   onOpenCandidateInTrade,
 }) => {
   const [filter, setFilter] = useState("all");
@@ -1477,66 +1356,6 @@ export const OperationsSignalTable = ({
     [page, rows],
   );
   const pageRows = paginatedRows.pageRows;
-  const rowSparklineSymbols = useMemo(
-    () =>
-      buildStaSparklineHydrationSymbols({
-        rows,
-        page,
-      }),
-    [page, rows],
-  );
-  const rowSparklineSymbolsKey = useMemo(
-    // Sort for a stable key: the same symbol SET re-sorting on live data must NOT
-    // churn the query key (which would refetch /bars/batch every tick).
-    () => [...rowSparklineSymbols].sort().join(","),
-    [rowSparklineSymbols],
-  );
-  const signalRowHydrationQueriesEnabled = Boolean(
-    (rowHydrationQueriesEnabled || backgroundQueriesEnabled) && !safeQaMode,
-  );
-  const memoryPressureSnapshot = useMemoryPressureSnapshot(
-    signalRowHydrationQueriesEnabled,
-  );
-  const rowSparklinePressurePaused = shouldPauseAlgoSignalRowSparklines(
-    memoryPressureSnapshot,
-  );
-  const rowSparklineHydrationEnabled = Boolean(
-    signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey,
-  );
-  const rowSparklineQuery = useQuery({
-    queryKey: ["algo-signal-row-sparklines", rowSparklineSymbolsKey],
-    queryFn: ({ signal }) =>
-      fetchStaSignalSparklineBarsBatch(rowSparklineSymbols, signal),
-    ...BARS_QUERY_DEFAULTS,
-    enabled: rowSparklineHydrationEnabled,
-    staleTime: 15_000,
-    refetchInterval: rowSparklineHydrationEnabled && !rowSparklinePressurePaused
-      ? SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS
-      : false,
-    refetchOnMount: true,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  const rowSparklineSnapshotsBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(rowSparklineQuery.data || {})
-          .map(([symbol, sparkBars]) => {
-            const normalized = String(symbol || "").toUpperCase();
-            return normalized && extractSparklinePoints(sparkBars).length >= 2
-              ? [normalized, { symbol: normalized, sparkBars }]
-              : null;
-          })
-          .filter(Boolean),
-      ),
-    [rowSparklineQuery.data],
-  );
-  useEffect(() => {
-    Object.entries(rowSparklineQuery.data || {}).forEach(([symbol, sparkBars]) => {
-      if (!Array.isArray(sparkBars) || sparkBars.length < 2) return;
-      publishRuntimeTickerSnapshot(symbol, symbol, { sparkBars });
-    });
-  }, [rowSparklineQuery.dataUpdatedAt, rowSparklineQuery.data]);
   useEffect(() => {
     setPage(0);
   }, [filter, searchQuery, sortDirection, sortKey]);
@@ -1575,7 +1394,7 @@ export const OperationsSignalTable = ({
   const actionMappedCount = useMemo(
     () =>
       (candidates || []).filter(
-        (candidate) => Object.keys(asRecord(candidate).action).length > 0,
+        (candidate) => hasStaCandidateAction(candidate),
       ).length,
     [candidates],
   );
@@ -1700,7 +1519,7 @@ export const OperationsSignalTable = ({
           .join(" ")
       : null;
   const sourceHealthBanner =
-    sourceHealth.degraded || sourceHealth.stale
+    (sourceHealth.degraded || sourceHealth.stale) && !staFilteredRows.length
       ? [
           "STA action source is currently unavailable.",
           Array.isArray(sourceHealth.failedSources) && sourceHealth.failedSources.length
@@ -2195,7 +2014,6 @@ export const OperationsSignalTable = ({
                     signalEvents={
                       signalEventsBySymbol.get(String(symbol || "").toUpperCase()) || []
                     }
-                    rowSparklineSnapshotsBySymbol={rowSparklineSnapshotsBySymbol}
                     alt={rowIndex % 2 === 1}
                     columns={visibleColumns}
                     compact={signalTableCompact}

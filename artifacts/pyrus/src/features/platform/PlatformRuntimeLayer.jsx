@@ -9,6 +9,7 @@ export const PlatformRuntimeLayer = ({
   activeVisibleQuoteSymbols,
   sparklineSymbols,
   prioritySparklineSymbols = [],
+  aggregateOnlySparklineSymbols = [],
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled,
@@ -36,6 +37,7 @@ export const PlatformRuntimeLayer = ({
     activeVisibleQuoteSymbols={activeVisibleQuoteSymbols}
     sparklineSymbols={sparklineSymbols}
     prioritySparklineSymbols={prioritySparklineSymbols}
+    aggregateOnlySparklineSymbols={aggregateOnlySparklineSymbols}
     streamedQuoteSymbols={streamedQuoteSymbols}
     streamedAggregateSymbols={streamedAggregateSymbols}
     quoteStreamRuntimeEnabled={quoteStreamRuntimeEnabled}

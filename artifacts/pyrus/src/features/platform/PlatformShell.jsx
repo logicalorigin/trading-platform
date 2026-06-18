@@ -133,7 +133,7 @@ const renderBloombergLiveDock = () => (
 );
 
 // Shown while a screen's lazy children suspend. Non-null so a suspending screen
-// renders a loader instead of nothing on the dark canvas (the "black screen on
+// renders a loader instead of nothing on the themed canvas (the "blank screen on
 // navigation" failure mode).
 const ScreenSuspenseFallback = () => (
   <div
@@ -145,7 +145,7 @@ const ScreenSuspenseFallback = () => (
       minHeight: 0,
       display: "grid",
       placeItems: "center",
-      background: "var(--background, #050814)",
+      background: "var(--ra-surface-0, #F7FAFF)",
     }}
   >
     <LoadingSpinner size={22} />
@@ -696,6 +696,7 @@ export const PlatformShell = ({
   watchlistSymbols,
   signalMonitorStates,
   signalMonitorProfile,
+  signalActionTimeframe,
   signalMonitorEvents,
   signalMonitorEventsLoaded = false,
   headerSignalMatrixStates = [],
@@ -855,9 +856,9 @@ export const PlatformShell = ({
     auxiliaryDrawerViewport && mobileActivityOpen,
   );
   const algoMonitorSurfaceDataEnabled = Boolean(
-    algoFrameRuntimeEnabled ||
-      (frameAuxiliaryDataEnabled &&
-        (desktopActivitySidebarVisible || mobileActivityVisible)),
+    desktopActivitySidebarVisible ||
+      mobileActivityVisible ||
+      algoFrameRuntimeEnabled,
   );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
@@ -1117,6 +1118,7 @@ export const PlatformShell = ({
       signalMatrixStates={activitySignalMatrixStates}
       signalMonitorEvents={signalMonitorEvents}
       signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+      signalActionTimeframe={signalActionTimeframe}
       onOpenAlgo={(focus) => {
         setMobileActivityOpen(false);
         handleSetScreen("algo", focus);
@@ -1282,6 +1284,7 @@ export const PlatformShell = ({
             signalMatrixStates={activitySignalMatrixStates}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+            signalActionTimeframe={signalActionTimeframe}
             externalStreamFreshness={
               algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
             }

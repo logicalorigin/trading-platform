@@ -113,3 +113,42 @@ test("event-loop watch does not defer signal-options action work", () => {
 
   __resetApiResourcePressureForTests();
 });
+
+test("db pool waiters drive high resource pressure", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+
+  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
+  assert.equal(snapshot.level, "high");
+  assert.equal(snapshot.resourceLevel, "high");
+  assert.equal(driver?.level, "high");
+  assert.equal(driver?.detail, "12/12 active, 4 waiting");
+  assert.equal(driver?.score, 4);
+  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("fully occupied db pool without waiters is watch pressure", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 0,
+    dbPoolMax: 12,
+  });
+
+  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
+  assert.equal(snapshot.level, "watch");
+  assert.equal(snapshot.resourceLevel, "watch");
+  assert.equal(driver?.level, "watch");
+  assert.equal(driver?.detail, "12/12 active, 0 waiting");
+  assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
+});

@@ -8,9 +8,12 @@ import {
 } from "react";
 import { getChartTimeframeValues, normalizeChartTimeframe } from "../charting/timeframes";
 import {
+  GEX_ZERO_GAMMA_MODE_SNAPSHOT,
   useGexZeroGamma,
   useGexZeroGammaReferenceLine,
 } from "../gex/useGexZeroGamma.js";
+import { GEX_PROJECTION_MODE_SNAPSHOT } from "../gex/useGexProjection.js";
+import { resolveMarketChartGexProjectionEnabled } from "../gex/gexProjectionCoverage.js";
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { WATCHLIST } from "./marketReferenceData";
@@ -141,11 +144,13 @@ export const MarketChartCell = ({
     ? hydratedTimeframe
     : "5m";
   const chartGexOverlayEnabled = Boolean(ticker && historicalDataEnabled);
-  const chartGexProjectionEnabled = Boolean(
-    ticker && historicalDataEnabled && (isActive || fullFrame),
-  );
+  const chartGexProjectionEnabled = resolveMarketChartGexProjectionEnabled({
+    ticker,
+    historicalDataEnabled,
+  });
   const gexZeroGamma = useGexZeroGamma(ticker, {
     enabled: chartGexOverlayEnabled,
+    mode: GEX_ZERO_GAMMA_MODE_SNAPSHOT,
   });
   const gexZeroGammaReferenceLine =
     useGexZeroGammaReferenceLine(gexZeroGamma);
@@ -558,6 +563,7 @@ export const MarketChartCell = ({
               onWorkspaceChartChange={handleWorkspaceChartChange}
               gexOverlay={gexOverlay}
               gexProjectionEnabled={chartGexProjectionEnabled}
+              gexProjectionMode={GEX_PROJECTION_MODE_SNAPSHOT}
               crosshairSyncGroupId={crosshairSyncGroupId}
               crosshairSyncInstanceId={crosshairSyncInstanceId}
             />

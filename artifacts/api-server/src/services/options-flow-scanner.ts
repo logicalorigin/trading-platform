@@ -136,8 +136,8 @@ type QueuedScan = {
 };
 
 // Keep the default fan-out conservative. A 2->8 bump (commit 337cb24) overwhelmed
-// the shared DB (multi-second option_chain_snapshots writes) and the IB tunnel;
-// reverted to 2. Raise only with headroom verified on the target DB/bridge.
+// the shared DB while option-chain persistence was still append-heavy and also
+// stressed the IB tunnel; raise only with headroom verified on the target DB/bridge.
 const DEFAULT_MAX_CONCURRENCY = 2;
 const DEFAULT_SNAPSHOT_TTL_MS = 60_000;
 const DEFAULT_SNAPSHOT_STALE_TTL_MS = 5 * 60_000;

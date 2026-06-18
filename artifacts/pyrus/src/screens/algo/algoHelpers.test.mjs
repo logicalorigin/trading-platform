@@ -2,14 +2,64 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ALGO_DEPLOYMENT_KIND,
   buildStaSignalHistoryRows,
   buildVisibleSignalRows,
   findSignalOptionsCandidateForSignal,
+  resolveAlgoDeploymentKind,
   resolveStableStaActionSnapshot,
   resolveSignalAge,
   resolveSignalMove,
   signalActionLabel,
 } from "./algoHelpers.js";
+
+test("resolveAlgoDeploymentKind routes deployments to the right control surface", () => {
+  // Signal-options deployments are identified by their executionMode.
+  assert.equal(
+    resolveAlgoDeploymentKind({
+      config: { parameters: { executionMode: "signal_options" } },
+    }),
+    ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS,
+  );
+  // Overnight/equity deployments are identified by an overnightSpot config block
+  // (config.overnightSpot, the block the backend's resolveOvernightSpotProfile
+  // reads) -- regardless of enabled/disabled, so a paused one still routes here.
+  assert.equal(
+    resolveAlgoDeploymentKind({
+      config: { overnightSpot: { executionMode: "disabled" } },
+    }),
+    ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT,
+  );
+  assert.equal(
+    resolveAlgoDeploymentKind({
+      config: { parameters: { overnightSpot: { executionMode: "shadow" } } },
+    }),
+    ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT,
+  );
+  // Canonical backend parameters key (overnightSpotTrading).
+  assert.equal(
+    resolveAlgoDeploymentKind({
+      config: {
+        parameters: { overnightSpotTrading: { executionMode: "shadow" } },
+      },
+    }),
+    ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT,
+  );
+  // Explicit signal_options wins even if an overnight block is also present.
+  assert.equal(
+    resolveAlgoDeploymentKind({
+      config: {
+        overnightSpot: { executionMode: "shadow" },
+        parameters: { executionMode: "signal_options" },
+      },
+    }),
+    ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS,
+  );
+  // Unrecognized -> "other"; null/undefined never throw.
+  assert.equal(resolveAlgoDeploymentKind({ config: {} }), ALGO_DEPLOYMENT_KIND.OTHER);
+  assert.equal(resolveAlgoDeploymentKind(null), ALGO_DEPLOYMENT_KIND.OTHER);
+  assert.equal(resolveAlgoDeploymentKind(undefined), ALGO_DEPLOYMENT_KIND.OTHER);
+});
 
 test("poll-derived Signal Options state/candidates do not create STA rows (live matrix is the sole source)", () => {
   // Signal-options does not produce signals; it only evaluates matrix signals.

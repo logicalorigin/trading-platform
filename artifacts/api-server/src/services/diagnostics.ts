@@ -17,6 +17,7 @@ import {
   diagnosticSnapshotsTable,
   diagnosticThresholdOverridesTable,
   executionEventsTable,
+  getPoolStats,
   pool,
   shadowPositionsTable,
   type DiagnosticEvent,
@@ -187,6 +188,7 @@ type FooterMemoryPressureDriver = NonNullable<
 const FOOTER_MEMORY_DRIVER_KINDS = new Set([
   "api-heap",
   "api-rss",
+  "db-pool",
   "browser-memory",
   "chart-hydration",
   "client-pressure",
@@ -340,6 +342,17 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     enabled: true,
     audible: false,
     description: "Node heap used as a percentage of the V8 heap limit.",
+  },
+  {
+    metricKey: "resource_pressure.db_pool_waiting",
+    label: "DB pool waiting",
+    subsystem: "resource-pressure",
+    unit: "count",
+    warning: 1,
+    enabled: true,
+    audible: true,
+    description:
+      "Postgres acquire requests queued because every shared Node pool connection is checked out.",
   },
   {
     metricKey: "resource_pressure.browser_memory_mb",
@@ -2627,6 +2640,7 @@ function buildResourcePressureMetrics(
   const clientPressure = asJsonRecord(latest?.memoryPressure);
   const resourceCaches = asJsonRecord(asJsonRecord(runtime["api"])["resourceCaches"]);
   const heapUsedPercent = numeric(api["heapUsedPercent"]);
+  const dbPool = getPoolStats();
   const apiRssThresholds = resolveApiRssPressureThresholds();
   const heapLevel = pressureLevelFromRatio(
     heapUsedPercent === null ? null : heapUsedPercent / 100,
@@ -2675,6 +2689,9 @@ function buildResourcePressureMetrics(
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
     eventLoopDelayP95Ms: numeric(api["eventLoopP95Ms"]),
+    dbPoolActive: dbPool.active,
+    dbPoolWaiting: dbPool.waiting,
+    dbPoolMax: dbPool.max,
     clientLevel: clientLevel
       ? normalizeApiResourcePressureLevel(clientLevel)
       : null,
@@ -2725,6 +2742,16 @@ function buildResourcePressureMetrics(
     rssMb: api["rssMb"],
     apiRssThresholds,
     eventLoopP95Ms: api["eventLoopP95Ms"],
+    dbPoolActive: dbPool.active,
+    dbPoolWaiting: dbPool.waiting,
+    dbPoolMax: dbPool.max,
+    dbPoolTotal: dbPool.total,
+    dbPoolIdle: dbPool.idle,
+    dbPoolActivePercent:
+      dbPool.max > 0 ? roundMetric((dbPool.active / dbPool.max) * 100) : null,
+    db_pool_waiting: dbPool.waiting,
+    db_pool_active_percent:
+      dbPool.max > 0 ? roundMetric((dbPool.active / dbPool.max) * 100) : null,
     browserMemoryMb,
     browser_memory_mb: browserMemoryMb,
     browserMemoryLimitMb,
@@ -2780,38 +2807,38 @@ const MONITORED_STORAGE_TABLES = [
 ] as const;
 
 async function buildMonitoredStorageTableStats() {
-  return Promise.all(
-    MONITORED_STORAGE_TABLES.map(async (table) => {
-      const result = await pool.query<{
-        row_count: string;
-        dead_row_count: string;
-        total_bytes: string;
-        oldest_at: Date | null;
-        newest_at: Date | null;
-      }>(
-        `select coalesce(s.n_live_tup, 0)::text as row_count,
-                coalesce(s.n_dead_tup, 0)::text as dead_row_count,
-                coalesce(pg_total_relation_size(c.oid), 0)::text as total_bytes,
-                (select min(${table.column}) from ${table.table}) as oldest_at,
-                (select max(${table.column}) from ${table.table}) as newest_at
-           from pg_class c
-           join pg_namespace n on n.oid = c.relnamespace
-           left join pg_stat_user_tables s on s.relid = c.oid
-          where n.nspname = 'public'
-            and c.relname = $1`,
-        [table.table],
-      );
-      const row = result.rows[0];
-      return {
-        table: table.table,
-        rowEstimate: Number(row?.row_count ?? 0),
-        deadRowEstimate: Number(row?.dead_row_count ?? 0),
-        totalMb: roundMetric(Number(row?.total_bytes ?? 0) / 1024 / 1024),
-        oldestAt: row?.oldest_at?.toISOString?.() ?? null,
-        newestAt: row?.newest_at?.toISOString?.() ?? null,
-      };
-    }),
-  );
+  const stats: JsonRecord[] = [];
+  for (const table of MONITORED_STORAGE_TABLES) {
+    const result = await pool.query<{
+      row_count: string;
+      dead_row_count: string;
+      total_bytes: string;
+      oldest_at: Date | null;
+      newest_at: Date | null;
+    }>(
+      `select coalesce(s.n_live_tup, 0)::text as row_count,
+              coalesce(s.n_dead_tup, 0)::text as dead_row_count,
+              coalesce(pg_total_relation_size(c.oid), 0)::text as total_bytes,
+              (select min(${table.column}) from ${table.table}) as oldest_at,
+              (select max(${table.column}) from ${table.table}) as newest_at
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+         left join pg_stat_user_tables s on s.relid = c.oid
+        where n.nspname = 'public'
+          and c.relname = $1`,
+      [table.table],
+    );
+    const row = result.rows[0];
+    stats.push({
+      table: table.table,
+      rowEstimate: Number(row?.row_count ?? 0),
+      deadRowEstimate: Number(row?.dead_row_count ?? 0),
+      totalMb: roundMetric(Number(row?.total_bytes ?? 0) / 1024 / 1024),
+      oldestAt: row?.oldest_at?.toISOString?.() ?? null,
+      newestAt: row?.newest_at?.toISOString?.() ?? null,
+    });
+  }
+  return stats;
 }
 
 async function buildDatabaseStorageStats(): Promise<JsonRecord> {
@@ -3035,21 +3062,32 @@ function isCollectorManagedEvent(event: DiagnosticEventPayload): boolean {
   return event.subsystem === "storage" && event.category === "collector";
 }
 
-async function persistSnapshot(snapshot: DiagnosticSnapshotPayload): Promise<void> {
+function diagnosticSnapshotRow(snapshot: DiagnosticSnapshotPayload) {
   const raw = compactDiagnosticRaw(snapshot.raw, snapshot.severity);
+  return {
+    observedAt: new Date(snapshot.observedAt),
+    subsystem: snapshot.subsystem,
+    status: snapshot.status,
+    severity: snapshot.severity,
+    summary: snapshot.summary,
+    dimensions: snapshot.dimensions,
+    metrics: snapshot.metrics,
+    raw,
+  };
+}
+
+async function persistSnapshots(
+  snapshots: DiagnosticSnapshotPayload[],
+): Promise<void> {
+  if (!snapshots.length) {
+    return;
+  }
   await safeDb(
-    "insert diagnostic snapshot",
+    "insert diagnostic snapshots",
     async () => {
-      await db.insert(diagnosticSnapshotsTable).values({
-        observedAt: new Date(snapshot.observedAt),
-        subsystem: snapshot.subsystem,
-        status: snapshot.status,
-        severity: snapshot.severity,
-        summary: snapshot.summary,
-        dimensions: snapshot.dimensions,
-        metrics: snapshot.metrics,
-        raw,
-      });
+      await db
+        .insert(diagnosticSnapshotsTable)
+        .values(snapshots.map(diagnosticSnapshotRow));
     },
     undefined,
   );
@@ -3216,7 +3254,9 @@ async function resolveInactiveCollectorEvents(
     }
   });
 
-  await Promise.all(Array.from(candidatesByKey.values()).map(resolveEvent));
+  for (const event of candidatesByKey.values()) {
+    await resolveEvent(event);
+  }
 }
 
 function filterMemorySnapshots(input: {
@@ -3485,59 +3525,57 @@ async function evaluateThresholds(
 ): Promise<Set<string>> {
   const activeIncidentKeys = new Set<string>();
   const thresholds = await getDiagnosticThresholds();
-  await Promise.all(
-    snapshots.flatMap((snapshot) =>
-      thresholds
-      .filter(
-        (threshold) =>
-          threshold.enabled &&
-          threshold.subsystem === snapshot.subsystem &&
-          !suppressedMetricKeys.has(threshold.metricKey),
-      )
-      .map(async (threshold) => {
-        const localKey = threshold.metricKey.split(".").at(-1);
-        const value =
-          numeric(snapshot.metrics[threshold.metricKey]) ??
-          (localKey ? numeric(snapshot.metrics[localKey]) : null);
-        if (value === null) {
-          return;
-        }
+  for (const snapshot of snapshots) {
+    for (const threshold of thresholds) {
+      if (
+        !threshold.enabled ||
+        threshold.subsystem !== snapshot.subsystem ||
+        suppressedMetricKeys.has(threshold.metricKey)
+      ) {
+        continue;
+      }
+      const localKey = threshold.metricKey.split(".").at(-1);
+      const value =
+        numeric(snapshot.metrics[threshold.metricKey]) ??
+        (localKey ? numeric(snapshot.metrics[localKey]) : null);
+      if (value === null) {
+        continue;
+      }
 
-        const severity = value >= threshold.warning ? "warning" : null;
-        if (!severity) {
-          return;
-        }
+      const severity = value >= threshold.warning ? "warning" : null;
+      if (!severity) {
+        continue;
+      }
 
-        const eventInput = {
-          subsystem: threshold.subsystem,
-          category: "threshold",
-          code: threshold.metricKey,
-          severity,
-          message: `${threshold.label} ${value}${threshold.unit} breached ${severity} threshold`,
-          dimensions: { metricKey: threshold.metricKey, unit: threshold.unit },
-          raw: { threshold, value, snapshot },
-          countOccurrence: false,
-        } satisfies DiagnosticEventInput;
-        const key = incidentKey(eventInput);
-        const existing = memoryEvents.get(key);
-        const shouldBroadcastThreshold =
-          existing?.status !== "open" || existing.severity !== severity;
-        activeIncidentKeys.add(key);
-        await upsertEvent(eventInput);
-        if (shouldBroadcastThreshold) {
-          broadcast({
-            type: "threshold-breach",
-            payload: {
-              threshold,
-              value,
-              severity,
-              observedAt: snapshot.observedAt,
-            },
-          });
-        }
-      }),
-    ),
-  );
+      const eventInput = {
+        subsystem: threshold.subsystem,
+        category: "threshold",
+        code: threshold.metricKey,
+        severity,
+        message: `${threshold.label} ${value}${threshold.unit} breached ${severity} threshold`,
+        dimensions: { metricKey: threshold.metricKey, unit: threshold.unit },
+        raw: { threshold, value, snapshot },
+        countOccurrence: false,
+      } satisfies DiagnosticEventInput;
+      const key = incidentKey(eventInput);
+      const existing = memoryEvents.get(key);
+      const shouldBroadcastThreshold =
+        existing?.status !== "open" || existing.severity !== severity;
+      activeIncidentKeys.add(key);
+      await upsertEvent(eventInput);
+      if (shouldBroadcastThreshold) {
+        broadcast({
+          type: "threshold-breach",
+          payload: {
+            threshold,
+            value,
+            severity,
+            observedAt: snapshot.observedAt,
+          },
+        });
+      }
+    }
+  }
   return activeIncidentKeys;
 }
 
@@ -4201,16 +4239,14 @@ export async function collectDiagnosticSnapshot(
     });
   }
 
-  await Promise.all(
-    activeEvents.map((event) => {
-      activeIncidentKeys.add(incidentKey(event));
-      return upsertEvent({ ...event, countOccurrence: false });
-    }),
-  );
+  for (const event of activeEvents) {
+    activeIncidentKeys.add(incidentKey(event));
+    await upsertEvent({ ...event, countOccurrence: false });
+  }
 
   memorySnapshots.push(...snapshots);
   trimMemorySnapshots();
-  await Promise.all(snapshots.map((snapshot) => persistSnapshot(snapshot)));
+  await persistSnapshots(snapshots);
   const suppressedThresholdMetricKeys = new Set<string>();
   suppressedThresholdMetricKeys.add("api.heap_used_mb");
   if (staleTunnelRootCauseIncidentKey) {

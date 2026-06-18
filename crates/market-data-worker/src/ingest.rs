@@ -179,7 +179,7 @@ pub async fn persist_option_chain_snapshots(
         let option_contract_ids =
             ensure_option_contracts_tx(&mut tx, underlying_id, &option_instrument_ids, batch)
                 .await?;
-        insert_option_chain_snapshots_tx(
+        upsert_option_chain_latest_tx(
             &mut tx,
             underlying_id,
             provider,
@@ -457,7 +457,7 @@ async fn ensure_option_contracts_tx(
         .collect()
 }
 
-async fn insert_option_chain_snapshots_tx(
+async fn upsert_option_chain_latest_tx(
     tx: &mut Transaction<'_, Postgres>,
     underlying_instrument_id: Uuid,
     provider: &str,
@@ -501,6 +501,10 @@ async fn insert_option_chain_snapshots_tx(
         volumes.push(snapshot.volume);
     }
 
+    // One latest row per (contract, source). This replaces the old append-only
+    // option_chain_snapshots write path that saturated the shared Postgres I/O.
+    // The monotonicity guard keeps an out-of-order/older fetch from regressing a
+    // fresher row.
     sqlx::query(
         r#"
         with input as (
@@ -545,7 +549,7 @@ async fn insert_option_chain_snapshots_tx(
             volume
           )
         )
-        insert into option_chain_snapshots (
+        insert into option_chain_latest (
           underlying_instrument_id,
           option_contract_id,
           bid,
@@ -581,6 +585,21 @@ async fn insert_option_chain_snapshots_tx(
           $15,
           now()
         from input
+        on conflict (option_contract_id, source) do update set
+          bid = excluded.bid,
+          ask = excluded.ask,
+          last = excluded.last,
+          mark = excluded.mark,
+          implied_volatility = excluded.implied_volatility,
+          delta = excluded.delta,
+          gamma = excluded.gamma,
+          theta = excluded.theta,
+          vega = excluded.vega,
+          open_interest = excluded.open_interest,
+          volume = excluded.volume,
+          as_of = excluded.as_of,
+          updated_at = now()
+        where excluded.as_of >= option_chain_latest.as_of
         "#,
     )
     .bind(underlying_instrument_id)

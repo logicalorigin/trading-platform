@@ -251,12 +251,15 @@ const WatchlistRow = memo(
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
     const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({ quote: snapshot });
-    // Extended-hours detail is tertiary, so it lives on row hover instead of an
-    // always-on third line that would make pre/after-market rows taller than the
-    // rest. Keeps every row at a uniform height.
-    const extendedHoursSummary = extendedHoursDisplay
-      ? `${extendedHoursDisplay.sessionLabel} ${formatQuotePrice(extendedHoursDisplay.price)} ${formatSignedQuoteMove(extendedHoursDisplay.change)} (${formatSignedPercent(extendedHoursDisplay.changePercent)})${extendedHoursDisplay.delayed || extendedHoursDisplay.freshness === "stale" ? " · delayed" : ""}`
-      : null;
+    // Visible extended-hours line (pre/after-market): a third line under the price
+    // showing session label + extended-hours price + move, tone-colored and dimmed
+    // when delayed/stale. (Restores the styling 5b68e05 had moved to hover-only.)
+    const extendedHoursPositive =
+      extendedHoursDisplay?.tone === "positive"
+        ? true
+        : extendedHoursDisplay?.tone === "negative"
+          ? false
+          : null;
     const priceValue = isFiniteNumber(snapshot?.price) ? snapshot.price : null;
     const quotePriceForFlash = isFiniteNumber(snapshot?.price)
       ? snapshot.price
@@ -390,6 +393,45 @@ const WatchlistRow = memo(
         {formatSignedPercent(snapshot?.pct)}
       </span>
     );
+    const renderExtendedHoursBadge = () =>
+      extendedHoursDisplay ? (
+        <span
+          data-testid="watchlist-extended-hours"
+          title={`${extendedHoursDisplay.sessionLabel} move from regular close`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(4),
+            maxWidth: "100%",
+            color:
+              extendedHoursPositive == null
+                ? CSS_COLOR.textMuted
+                : extendedHoursPositive
+                  ? CSS_COLOR.green
+                  : CSS_COLOR.red,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1,
+            opacity:
+              extendedHoursDisplay.delayed ||
+              extendedHoursDisplay.freshness === "stale"
+                ? 0.72
+                : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{ color: CSS_COLOR.textMuted }}>
+            {extendedHoursDisplay.sessionLabel}
+          </span>
+          <span>{formatQuotePrice(extendedHoursDisplay.price)}</span>
+          <span>
+            {formatSignedQuoteMove(extendedHoursDisplay.change)} (
+            {formatSignedPercent(extendedHoursDisplay.changePercent)})
+          </span>
+        </span>
+      ) : null;
     const renderSignalPill = () =>
       hasSignal ? (
         <AppTooltip
@@ -578,7 +620,6 @@ const WatchlistRow = memo(
         data-testid="watchlist-row"
         data-symbol={item.sym}
         data-source={item.source}
-        title={extendedHoursSummary || undefined}
         className={joinMotionClasses(
           "ra-row-enter",
           "ra-interactive",
@@ -761,6 +802,7 @@ const WatchlistRow = memo(
                 fontSize: textSize("caption"),
                 justifySelf: "end",
               })}
+              {renderExtendedHoursBadge()}
             </span>
           </div>
         </div>

@@ -14,6 +14,11 @@ import {
 import { AlgoDiagnosticsFooter } from "./AlgoDiagnosticsFooter";
 import { AlgoSaveBar } from "./AlgoSaveBar";
 import { AlgoSettingsRegion } from "./AlgoSettingsRegion";
+import { OvernightControlPanel } from "./OvernightControlPanel.jsx";
+import {
+  resolveAlgoDeploymentKind,
+  ALGO_DEPLOYMENT_KIND,
+} from "./algoHelpers.js";
 import { AlgoTimeframeControlBand } from "./AlgoTimeframeControlBand";
 import { HaltStrip } from "./HaltStrip";
 import {
@@ -293,46 +298,58 @@ export const AlgoRightRail = ({
             minWidth: 0,
           }}
         >
-          <WireTrailStatusBand
-            profile={profileDraft}
-            positions={signalOptionsPositions}
-          />
-          <AlgoTimeframeControlBand
-            profileDraft={profileDraft}
-            profileBaseline={profileBaseline}
-            strategySettingsDraft={strategySettingsDraft}
-            strategyBaseline={strategyBaseline}
-            patchProfileDraftPath={patchProfileDraftPath}
-            patchStrategySettingsPath={patchStrategySettingsPath}
-            disabled={!controlsReady || pending}
-          />
-          <HaltStrip
-            cockpit={cockpit}
-            profileBaseline={profileBaseline}
-            profileDraft={profileDraft}
-            patchProfileDraftPath={patchProfileDraftPath}
-            focusedDeployment={focusedDeployment}
-            controlBaselineReady={controlsReady}
-            updateProfileMutation={updateProfileMutation}
-          />
-          <div data-testid="algo-settings-container">
-            <AlgoSettingsRegion
-              cockpit={cockpit}
-              signalOptionsPositions={signalOptionsPositions}
-              profileDraft={profileDraft}
-              profileBaseline={profileBaseline}
-              strategySettingsDraft={strategySettingsDraft}
-              strategyBaseline={strategyBaseline}
-              patchProfileDraftPath={patchProfileDraftPath}
-              patchStrategySettingsPath={patchStrategySettingsPath}
-              dirtyFields={settingDirtyFields}
-              focusedDeployment={focusedDeployment}
-              controlBaselineReady={controlsReady}
-              handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-              updateProfileMutation={updateProfileMutation}
-              updateStrategySettingsMutation={updateStrategySettingsMutation}
-            />
-          </div>
+          {resolveAlgoDeploymentKind(focusedDeployment) ===
+          ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT ? (
+            // Overnight/equity deployments show ONLY the overnight panel here --
+            // the options-only bands (wire trail, timeframe, halt, strike/DTE/MTF
+            // settings) are signal-options-profile-driven and don't apply.
+            <div data-testid="algo-settings-container">
+              <OvernightControlPanel deployment={focusedDeployment} />
+            </div>
+          ) : (
+            <>
+              <WireTrailStatusBand
+                profile={profileDraft}
+                positions={signalOptionsPositions}
+              />
+              <AlgoTimeframeControlBand
+                profileDraft={profileDraft}
+                profileBaseline={profileBaseline}
+                strategySettingsDraft={strategySettingsDraft}
+                strategyBaseline={strategyBaseline}
+                patchProfileDraftPath={patchProfileDraftPath}
+                patchStrategySettingsPath={patchStrategySettingsPath}
+                disabled={!controlsReady || pending}
+              />
+              <HaltStrip
+                cockpit={cockpit}
+                profileBaseline={profileBaseline}
+                profileDraft={profileDraft}
+                patchProfileDraftPath={patchProfileDraftPath}
+                focusedDeployment={focusedDeployment}
+                controlBaselineReady={controlsReady}
+                updateProfileMutation={updateProfileMutation}
+              />
+              <div data-testid="algo-settings-container">
+                <AlgoSettingsRegion
+                  cockpit={cockpit}
+                  signalOptionsPositions={signalOptionsPositions}
+                  profileDraft={profileDraft}
+                  profileBaseline={profileBaseline}
+                  strategySettingsDraft={strategySettingsDraft}
+                  strategyBaseline={strategyBaseline}
+                  patchProfileDraftPath={patchProfileDraftPath}
+                  patchStrategySettingsPath={patchStrategySettingsPath}
+                  dirtyFields={settingDirtyFields}
+                  focusedDeployment={focusedDeployment}
+                  controlBaselineReady={controlsReady}
+                  handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+                  updateProfileMutation={updateProfileMutation}
+                  updateStrategySettingsMutation={updateStrategySettingsMutation}
+                />
+              </div>
+            </>
+          )}
         </div>
         <div
           data-testid="algo-diagnostics-container"

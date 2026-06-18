@@ -32,15 +32,6 @@ fn is_gex_data_stale(
 }
 
 const LOAD_LATEST_OPTION_SNAPSHOTS_SQL: &str = r#"
-with latest_contract_snapshots as (
-  select distinct on (snap.option_contract_id)
-      snap.*
-  from option_chain_snapshots snap
-  join instruments underlying on underlying.id = snap.underlying_instrument_id
-  where underlying.symbol = $1
-    and snap.source in ('massive', 'massive')
-  order by snap.option_contract_id, snap.as_of desc, snap.updated_at desc, snap.id desc
-)
 select
     snap.option_contract_id,
     snap.bid::float8 as bid,
@@ -60,8 +51,11 @@ select
     contract."right"::text as right,
     contract.multiplier,
     contract.shares_per_contract
-from latest_contract_snapshots snap
+from option_chain_latest snap
+join instruments underlying on underlying.id = snap.underlying_instrument_id
 join option_contracts contract on contract.id = snap.option_contract_id
+where underlying.symbol = $1
+  and snap.source = 'massive'
 order by contract.expiration_date asc, contract.strike asc
 "#;
 

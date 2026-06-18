@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Supervisor"
+  short_description: "Coordinate agents and clean commits"
+  default_prompt: "Use $agent-supervisor to coordinate worker agents, finish the task board, audit uncommitted work, and prepare a clean commit."

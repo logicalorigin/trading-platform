@@ -9,6 +9,7 @@ import {
 import {
   appendRuntimeFlightRecorderEvent,
   importRuntimeFlightRecorderIncidents,
+  installRuntimeFlightRecorderDbDiagnostics,
   installRuntimeFlightRecorderProcessHandlers,
   startRuntimeFlightRecorder,
 } from "./services/runtime-flight-recorder";
@@ -61,6 +62,7 @@ if (Number.isNaN(port) || port <= 0) {
 const server = createServer(app);
 attachOptionQuoteWebSocket(server);
 installRuntimeFlightRecorderProcessHandlers();
+installRuntimeFlightRecorderDbDiagnostics();
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

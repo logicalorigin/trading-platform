@@ -2712,6 +2712,24 @@ function nsToMs(value: number): number {
   return Math.round((value / 1_000_000) * 10) / 10;
 }
 
+// `monitorEventLoopDelay` accumulates for the whole process lifetime. Left unreset, mean/max/p95
+// only ever ratchet up, so a single early spike pins the derived `resourceLevel` at "high" forever
+// (an errant "pressure" signal that sheds the deferred sparkline /bars path and stalls the signals
+// table). Window it like ibkr-perf-capture.ts: snapshot the last full window, then reset, so the
+// reported delay decays with real load instead of being cumulative-since-boot.
+const EVENT_LOOP_DELAY_WINDOW_MS = 10_000;
+const readEventLoopDelayWindowMs = () => ({
+  mean: nsToMs(eventLoopDelay.mean),
+  max: nsToMs(eventLoopDelay.max),
+  p95: nsToMs(eventLoopDelay.percentile(95)),
+});
+let eventLoopDelayWindowMs = readEventLoopDelayWindowMs();
+const eventLoopDelayWindowTimer = setInterval(() => {
+  eventLoopDelayWindowMs = readEventLoopDelayWindowMs();
+  eventLoopDelay.reset();
+}, EVENT_LOOP_DELAY_WINDOW_MS);
+eventLoopDelayWindowTimer.unref();
+
 function orderReadTimeoutMs(): number {
   const configured = Number.parseInt(
     process.env["IBKR_ORDER_READ_TIMEOUT_MS"] ?? "9000",
@@ -3408,11 +3426,7 @@ export async function getRuntimeDiagnostics() {
       accountPage: getAccountPageStreamDiagnostics(),
       shadowAccountReads: getShadowAccountReadDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),
-      eventLoopDelayMs: {
-        mean: nsToMs(eventLoopDelay.mean),
-        max: nsToMs(eventLoopDelay.max),
-        p95: nsToMs(eventLoopDelay.percentile(95)),
-      },
+      eventLoopDelayMs: { ...eventLoopDelayWindowMs },
     },
     providers: {
       massive: getRuntimeMassiveProviderDiagnostics({
@@ -8077,11 +8091,16 @@ const BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
   "1m": 20_000,
   "2m": 10_000,
   "5m": 20_000,
+  "10m": 15_000,
   "15m": 15_000,
   "30m": 6_000,
   "1h": 10_000,
   "4h": 2_500,
+  "12h": 2_500,
   "1d": 5_000,
+  "1w": 1_500,
+  "1month": 1_000,
+  "1year": 500,
 };
 const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
   Record<GetBarsInput["timeframe"], number>
@@ -8093,11 +8112,16 @@ const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
   "1m": 5_000,
   "2m": 2_500,
   "5m": 5_000,
+  "10m": 2_500,
   "15m": 5_000,
   "30m": 2_500,
   "1h": 5_000,
   "4h": 1_250,
+  "12h": 1_250,
   "1d": 1_000,
+  "1w": 500,
+  "1month": 250,
+  "1year": 100,
 };
 const DEFAULT_BARS_LIMIT = 200;
 const BROKER_RECENT_HISTORY_MS = 60 * 60 * 1_000;
@@ -9587,11 +9611,16 @@ const BAR_TIMEFRAME_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
   "1m": 60_000,
   "2m": 2 * 60_000,
   "5m": 5 * 60_000,
+  "10m": 10 * 60_000,
   "15m": 15 * 60_000,
   "30m": 30 * 60_000,
   "1h": 60 * 60_000,
   "4h": 4 * 60 * 60_000,
+  "12h": 12 * 60 * 60_000,
   "1d": 24 * 60 * 60_000,
+  "1w": 7 * 24 * 60 * 60_000,
+  "1month": 30 * 24 * 60 * 60_000,
+  "1year": 365 * 24 * 60 * 60_000,
 };
 
 const BASE_TIMEFRAME_BY_TIMEFRAME: Record<
@@ -9605,11 +9634,16 @@ const BASE_TIMEFRAME_BY_TIMEFRAME: Record<
   "1m": "1m",
   "2m": "1m",
   "5m": "5m",
+  "10m": "10m",
   "15m": "15m",
   "30m": "15m",
   "1h": "1h",
   "4h": "1h",
+  "12h": "12h",
   "1d": "1d",
+  "1w": "1w",
+  "1month": "1month",
+  "1year": "1year",
 };
 
 function getBaseBarsTimeframe(

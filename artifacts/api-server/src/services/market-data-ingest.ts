@@ -139,6 +139,8 @@ async function cancelSupersededForwardRefreshJobs(
     return;
   }
 
+  // A running option-chain/GEX prerequisite may be the only path to unblock the
+  // next GEX job; let the worker finish it instead of discarding useful work.
   await pool.query(
     `
     update market_data_ingest_jobs
@@ -150,7 +152,7 @@ async function cancelSupersededForwardRefreshJobs(
            updated_at = now()
      where symbol = $1
        and kind = any($3::text[])
-       and status in ('queued', 'running', 'failed')
+       and status in ('queued', 'failed')
        and coalesce(payload->>'dedupeBucket', '') ~ '^[0-9]+$'
        and (payload->>'dedupeBucket')::bigint < $2::bigint
     `,

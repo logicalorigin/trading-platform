@@ -68,6 +68,20 @@ export const buildPlatformPressureCaps = (level) => ({
   ...PRESSURE_CAPS[normalizeMemoryPressureLevel(level)],
 });
 
+export const shouldRunSignalMonitorDisplay = ({
+  workVisible = false,
+  firstScreenReady = false,
+  foregroundReady = false,
+  profileEnabled = false,
+  profileFetched = false,
+  profileError = false,
+} = {}) => {
+  if (!workVisible || !firstScreenReady) return false;
+  if (foregroundReady) return true;
+  if (profileEnabled) return true;
+  return !profileFetched && !profileError;
+};
+
 const memoryHydrationPressureState = (memoryPressureLevel) => {
   const level = normalizeMemoryPressureLevel(memoryPressureLevel);
   if (level === "high") return "backoff";
@@ -148,6 +162,9 @@ export const buildPlatformWorkSchedule = ({
   const flow = screen === "flow";
   const trade = screen === "trade";
   const account = screen === "account";
+  const signals = screen === "signals";
+  const algo = screen === "algo";
+  const signalMatrixSurface = signals || algo;
   const historyScreen = market || flow || trade || account;
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
@@ -218,7 +235,9 @@ export const buildPlatformWorkSchedule = ({
     streams: {
       watchlistQuoteStream,
       positionQuoteStream,
-      marketStockAggregates: Boolean(foregroundStockAggregates && market),
+      marketStockAggregates: Boolean(
+        foregroundStockAggregates && (market || signalMatrixSurface),
+      ),
       accountRealtime,
       shadowAccountRealtime: Boolean(backgroundIbkr && account),
       sharedFlowRuntime: false,
