@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { HttpError, isHttpError } from "../lib/errors";
 import { getMassiveRuntimeConfig, type MassiveRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
@@ -262,6 +264,68 @@ let gexDashboardLoadTimeoutMsForTests: number | null = null;
 let gexChartProjectionChainWaitMsForTests: number | null = null;
 let gexChartProjectionQuoteWaitMsForTests: number | null = null;
 let gexChartProjectionSnapshotWaitMsForTests: number | null = null;
+
+export type GexDashboardHttpCacheMetadata = {
+  ticker: string;
+  eTag: string;
+  lastModified: string;
+};
+
+export type GexDashboardHttpCacheEntry = GexDashboardHttpCacheMetadata & {
+  data: GexResponse;
+};
+
+function buildGexDashboardETag(data: GexResponse): string {
+  const version = [
+    data.ticker,
+    data.timestamp,
+    data.isStale ? "stale" : "fresh",
+    data.source.provider,
+    data.source.status,
+    data.source.message ?? "",
+    String(data.source.optionCount),
+    String(data.options.length),
+  ].join("\0");
+  const digest = createHash("sha256")
+    .update(version)
+    .digest("base64url")
+    .slice(0, 32);
+  return `W/"gex-${digest}"`;
+}
+
+function buildGexDashboardLastModified(data: GexResponse): string {
+  const timestamp = Date.parse(data.timestamp);
+  return new Date(Number.isFinite(timestamp) ? timestamp : Date.now()).toUTCString();
+}
+
+export function getCachedGexDashboardHttpCacheEntry(
+  underlying: string,
+): GexDashboardHttpCacheEntry | null {
+  const ticker = normalizeSymbol(underlying);
+  if (!ticker) return null;
+  const cached = gexDashboardCache.get(ticker);
+  if (!cached?.data || cached.pending || cached.expiresAt <= Date.now()) {
+    return null;
+  }
+  return {
+    ticker,
+    eTag: buildGexDashboardETag(cached.data),
+    lastModified: buildGexDashboardLastModified(cached.data),
+    data: cached.data,
+  };
+}
+
+export function getCachedGexDashboardHttpCacheMetadata(
+  underlying: string,
+): GexDashboardHttpCacheMetadata | null {
+  const entry = getCachedGexDashboardHttpCacheEntry(underlying);
+  if (!entry) return null;
+  return {
+    ticker: entry.ticker,
+    eTag: entry.eTag,
+    lastModified: entry.lastModified,
+  };
+}
 
 export function __setGexMarketDataClientFactoryForTests(
   factory: GexMarketDataClientFactory | null,

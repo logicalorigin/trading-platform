@@ -86,6 +86,7 @@ import {
 } from "../services/platform";
 import type { FootprintSourcePreference } from "@workspace/ibkr-contracts";
 import {
+  getCachedGexDashboardHttpCacheEntry,
   getGexDashboardData,
   getGexProjectionData,
   getGexZeroGammaData,
@@ -156,6 +157,7 @@ import {
   testFlexToken,
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";
+import { isHttpResourceNotModified } from "../lib/http-cache";
 import { getProviderConfiguration, type RuntimeMode } from "../lib/runtime";
 import {
   buildRealAccountUnavailableProblem,
@@ -204,6 +206,8 @@ import {
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
 const STOCK_AGGREGATE_STREAM_SNAPSHOT_HISTORY_LIMIT = 24;
+type ParsedGexDashboardResponse = ReturnType<typeof GetGexDashboardResponse.parse>;
+const parsedGexDashboardResponses = new WeakMap<object, ParsedGexDashboardResponse>();
 
 const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
 
@@ -748,6 +752,44 @@ function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
   }
 
   return controller.signal;
+}
+
+function addVaryHeader(res: Response, value: string): void {
+  const current = res.getHeader("Vary");
+  if (!current) {
+    res.setHeader("Vary", value);
+    return;
+  }
+  const currentValue = Array.isArray(current) ? current.join(", ") : String(current);
+  const hasValue = currentValue
+    .split(",")
+    .some((part) => part.trim().toLowerCase() === value.toLowerCase());
+  if (!hasValue) {
+    res.setHeader("Vary", `${currentValue}, ${value}`);
+  }
+}
+
+function setGexDashboardHttpCacheHeaders(
+  res: Response,
+  metadata: {
+    eTag: string;
+    lastModified: string;
+  },
+): void {
+  res.setHeader("Cache-Control", "private, max-age=0, must-revalidate, no-transform");
+  res.setHeader("ETag", metadata.eTag);
+  res.setHeader("Last-Modified", metadata.lastModified);
+  addVaryHeader(res, "Accept-Encoding");
+}
+
+function parseGexDashboardResponseOnce(
+  data: Awaited<ReturnType<typeof getGexDashboardData>>,
+): ParsedGexDashboardResponse {
+  const cached = parsedGexDashboardResponses.get(data);
+  if (cached) return cached;
+  const parsed = GetGexDashboardResponse.parse(data);
+  parsedGexDashboardResponses.set(data, parsed);
+  return parsed;
 }
 
 const BARS_REQUEST_MAX_WINDOW_DAYS: Record<string, number> = {
@@ -2116,12 +2158,45 @@ router.get("/quotes/snapshot", async (req, res) => {
 });
 
 router.get("/gex/:underlying", async (req, res) => {
-  const data = GetGexDashboardResponse.parse(
-    await getGexDashboardData({
-      underlying: req.params.underlying,
-      signal: createRequestAbortSignal(req, res),
-    }),
-  );
+  const cachedEntry = getCachedGexDashboardHttpCacheEntry(req.params.underlying);
+  if (cachedEntry) {
+    setGexDashboardHttpCacheHeaders(res, cachedEntry);
+    if (
+      parsedGexDashboardResponses.has(cachedEntry.data) &&
+      isHttpResourceNotModified({
+        etag: cachedEntry.eTag,
+        lastModified: cachedEntry.lastModified,
+        ifNoneMatch: req.get("if-none-match"),
+        ifModifiedSince: req.get("if-modified-since"),
+      })
+    ) {
+      res.status(304).end();
+      return;
+    }
+  }
+
+  const rawData = await getGexDashboardData({
+    underlying: req.params.underlying,
+    signal: createRequestAbortSignal(req, res),
+  });
+  const data = parseGexDashboardResponseOnce(rawData);
+  const responseEntry =
+    cachedEntry ?? getCachedGexDashboardHttpCacheEntry(req.params.underlying);
+  if (responseEntry) {
+    setGexDashboardHttpCacheHeaders(res, responseEntry);
+    if (
+      responseEntry.data === rawData &&
+      isHttpResourceNotModified({
+        etag: responseEntry.eTag,
+        lastModified: responseEntry.lastModified,
+        ifNoneMatch: req.get("if-none-match"),
+        ifModifiedSince: req.get("if-modified-since"),
+      })
+    ) {
+      res.status(304).end();
+      return;
+    }
+  }
 
   res.json(data);
 });

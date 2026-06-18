@@ -6,6 +6,7 @@ import {
   __setGexIngestFacadeForTests,
   __setGexPlatformDataClientFactoryForTests,
   __setGexProjectionRatesProviderForTests,
+  getCachedGexDashboardHttpCacheMetadata,
   getGexDashboardData,
   getGexProjectionData,
   getGexZeroGammaData,
@@ -116,6 +117,46 @@ test.afterEach(() => {
   __setGexIngestFacadeForTests(null);
   __setGexPlatformDataClientFactoryForTests(null);
   __setGexProjectionRatesProviderForTests(null);
+});
+
+test("cached GEX dashboard exposes stable HTTP validator metadata while fresh", async () => {
+  const snapshot: LatestGexSnapshot = {
+    computedAt: new Date("2026-06-17T16:35:48.753Z"),
+    ageMs: 1_000,
+    stale: false,
+    payload: makeGexResponse("2026-06-17T16:35:48.753Z"),
+  };
+  let snapshotReads = 0;
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => {
+      snapshotReads += 1;
+      return snapshot;
+    },
+    enqueueMarketDataJob: async (input) => {
+      return { queued: true, dedupeKey: buildIngestDedupeKey(input) };
+    },
+  });
+
+  setNow("2026-06-17T16:35:50.000Z");
+  assert.equal(getCachedGexDashboardHttpCacheMetadata("QQQ"), null);
+
+  const first = await getGexDashboardData({ underlying: "QQQ" });
+  assert.equal(first.timestamp, "2026-06-17T16:35:48.753Z");
+
+  const metadata = getCachedGexDashboardHttpCacheMetadata(" qqq ");
+  assert.ok(metadata);
+  assert.equal(metadata.ticker, "QQQ");
+  assert.match(metadata.eTag, /^W\/"gex-[A-Za-z0-9_-]+"$/);
+  assert.equal(metadata.lastModified, "Wed, 17 Jun 2026 16:35:48 GMT");
+  assert.equal(snapshotReads, 1);
+
+  const repeated = getCachedGexDashboardHttpCacheMetadata("QQQ");
+  assert.deepEqual(repeated, metadata);
+
+  __expireGexDashboardCacheForTests("QQQ");
+  assert.equal(getCachedGexDashboardHttpCacheMetadata("QQQ"), null);
 });
 
 test("stale persisted GEX refreshes reuse the stale snapshot bucket across minute boundaries", async () => {
