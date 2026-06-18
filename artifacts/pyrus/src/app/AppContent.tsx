@@ -249,7 +249,7 @@ function DevCrashTrigger({ mode }: { mode: string | null }) {
 
 function postClientDiagnosticEvent(input: {
   category: string;
-  severity: "info" | "warning" | "warning";
+  severity: "info" | "warning";
   code?: string | null;
   message: string;
   raw?: Record<string, unknown>;

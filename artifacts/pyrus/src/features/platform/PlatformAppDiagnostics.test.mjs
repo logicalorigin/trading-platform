@@ -21,7 +21,11 @@ const assertNoConsecutiveDuplicateLine = (source, line) => {
 
 test("platform diagnostics and root preference effects avoid duplicate no-op writes", () => {
   const platformSource = readLocalSource("./PlatformApp.jsx");
+  const appContentSource = readLocalSource("../../app/AppContent.tsx");
   const crashDiagnosticsSource = readLocalSource("../../app/crashDiagnostics.tsx");
+  const platformErrorBoundarySource = readLocalSource(
+    "../../components/platform/PlatformErrorBoundary.tsx",
+  );
   const diagnosticsSource = readLocalSource("../../screens/DiagnosticsScreen.jsx");
   const memoryPressurePreferencesSource = readLocalSource(
     "./memoryPressurePreferences.js",
@@ -74,11 +78,17 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     /const raw = window\.localStorage\?\.getItem\(PYRUS_STORAGE_KEY\);/,
     "Expected crash diagnostics to read the current workspace storage key directly",
   );
-  assert.doesNotMatch(
-    crashDiagnosticsSource,
-    /"warning"\s*\|\s*"warning"/,
-    "Expected crash diagnostics severity type to avoid duplicate warning union branches",
-  );
+  for (const [source, label] of [
+    [appContentSource, "app content"],
+    [crashDiagnosticsSource, "crash diagnostics"],
+    [platformErrorBoundarySource, "platform error boundary"],
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /"warning"\s*\|\s*"warning"/,
+      `Expected ${label} severity types to avoid duplicate warning union branches`,
+    );
+  }
   assertNoConsecutiveDuplicateLine(
     settingsSource,
     'document.documentElement.setAttribute("data-pyrus-accent-preset", value);',
