@@ -163,6 +163,29 @@ test("STA signal rows do not wait for companion timeframe bubbles", () => {
   assert.deepEqual(split.rows[0].matrixHydration.missingTimeframes, ["1m"]);
 });
 
+test("STA rows require a backing selected Signal Matrix cell", () => {
+  const split = splitStaRowsBySignalMatrixHydration({
+    rows: [
+      {
+        signal: {
+          symbol: "HIST",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-09T13:35:00.000Z",
+        },
+      },
+    ],
+    signalMatrixBySymbol: {},
+    timeframes: ["5m"],
+  });
+
+  assert.deepEqual(split.hydratedRows, []);
+  assert.equal(split.pendingRows.length, 1);
+  assert.deepEqual(split.pendingRows[0].matrixHydration.blockingMissingTimeframes, [
+    "5m",
+  ]);
+});
+
 test("STA normal rows accept evaluated diagnostic signal bubbles", () => {
   const rows = [
     {

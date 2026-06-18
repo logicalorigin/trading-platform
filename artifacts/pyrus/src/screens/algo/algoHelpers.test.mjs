@@ -344,7 +344,7 @@ test("STA action rows trust backend-authored actionability over local inference"
   assert.equal(bySymbol.AMD.actionBlocker, null);
 });
 
-test("visible signal rows keep received history on the execution timeframe only", () => {
+test("visible signal rows ignore received history without a matrix cell", () => {
   const rows = buildVisibleSignalRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),
     includeSignalHistory: true,
@@ -371,10 +371,7 @@ test("visible signal rows keep received history on the execution timeframe only"
     ],
   });
 
-  assert.deepEqual(
-    rows.map((row) => [row.symbol, row.timeframe, row.sourceType]),
-    [["VRT", "5m", "signal_monitor_event"]],
-  );
+  assert.deepEqual(rows, []);
 });
 
 test("STA signal history keeps received events from the fetched lookback window", () => {
@@ -418,7 +415,7 @@ test("STA signal history keeps received events from the fetched lookback window"
   assert.equal(rows[1].emittedAt, "2026-06-08T20:05:00.695Z");
 });
 
-test("visible signal rows overlay current matrix action rows on received history", () => {
+test("visible signal rows keep matrix action rows and ignore unmatched received history", () => {
   const rows = buildVisibleSignalRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),
     includeSignalHistory: true,
@@ -466,15 +463,8 @@ test("visible signal rows overlay current matrix action rows on received history
 
   assert.deepEqual(
     rows.map((row) => [row.symbol, row.signalAt, row.sourceType]),
-    [
-      ["VRT", "2026-06-09T14:05:00.000Z", "signal_matrix_state"],
-      ["ALIT", "2026-06-08T20:05:00.000Z", "signal_monitor_event"],
-    ],
+    [["VRT", "2026-06-09T14:05:00.000Z", "signal_matrix_state"]],
   );
-  assert.equal(rows[1].signalPrice, 9.42);
-  assert.equal(rows[1].close, 9.4);
-  assert.equal(rows[1].latestBarAt, "2026-06-08T20:05:00.000Z");
-  assert.deepEqual(rows[1].filterState, { adx: 21.1, sessionPass: true });
 });
 
 test("STA selected execution timeframe keeps the matrix row over newer received history", () => {
@@ -547,13 +537,14 @@ test("matrix and received-history rows collapse to one matrix-owned cell despite
     ],
   };
 
-  // Control: the case/whitespace history row is a real, buildable row on its own,
-  // so the collapse below is merging two rows rather than silently dropping one.
-  const historyOnly = buildVisibleSignalRows(args);
+  // Control: the case/whitespace history row is a real, buildable history row,
+  // but the visible action surface must not render it without a Matrix cell.
+  const historyOnly = buildStaSignalHistoryRows(args);
   assert.equal(historyOnly.length, 1);
   assert.equal(historyOnly[0].symbol, "SPY");
   assert.equal(historyOnly[0].timeframe, "5m");
   assert.equal(historyOnly[0].sourceType, "signal_monitor_event");
+  assert.deepEqual(buildVisibleSignalRows(args), []);
 
   // With a (stale) Matrix cell for the same canonical key, both collapse to one
   // Matrix-owned row regardless of the newer history timestamp.
@@ -580,7 +571,7 @@ test("matrix and received-history rows collapse to one matrix-owned cell despite
   assert.equal(rows[0].sourceType, "signal_matrix_state");
 });
 
-test("visible signal rows collapse to one row per cell (no signal multiples)", () => {
+test("visible signal rows ignore repeated received history without matrix state", () => {
   const rows = buildVisibleSignalRows({
     now: Date.parse("2026-06-09T14:00:00.000Z"),
     includeSignalHistory: true,
@@ -625,10 +616,7 @@ test("visible signal rows collapse to one row per cell (no signal multiples)", (
     ],
   });
 
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].symbol, "USO");
-  assert.equal(rows[0].timeframe, "1m");
-  assert.equal(rows[0].signalAt, "2026-06-09T13:25:00.000Z");
+  assert.deepEqual(rows, []);
 });
 
 test("STA candidate lookup does not attach newer candidates to historical signal rows", () => {

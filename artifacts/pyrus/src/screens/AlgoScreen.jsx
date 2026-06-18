@@ -288,7 +288,6 @@ export const AlgoScreen = ({
   environment,
   accounts = [],
   selectedAccountId = null,
-  signalMonitorEvents = [],
   signalMonitorEventsSourceStatus = "database",
   signalMonitorEventsLoaded = false,
   signalMonitorState = null,
@@ -1575,52 +1574,17 @@ export const AlgoScreen = ({
     ],
   ];
 
-  const staActionRowsAvailable = Boolean(
-    signalOptionsSignals.length ||
-      signalOptionsCandidates.length ||
-      signalOptionsPositions.length ||
-      (Array.isArray(signalMatrixStates) &&
-        signalMatrixStates.some((state) => {
-          const record = asRecord(state);
-          const direction = String(
-            record.currentSignalDirection || record.direction || "",
-          )
-            .trim()
-            .toLowerCase();
-          return (
-            (direction === "buy" || direction === "sell") &&
-            (record.currentSignalAt || record.signalAt)
-          );
-        })),
-  );
-  const staActionSourcesSettled = Boolean(
-    algoCockpitStreamFreshness.algoFullFresh ||
-      signalOptionsStateSettled ||
-      cockpitSettled,
-  );
-  const includeStaSignalHistory = Boolean(
-    signalMonitorEventsLoaded &&
-      (staActionRowsAvailable || staActionSourcesSettled),
-  );
   const visibleSignalRows = useMemo(
     () =>
       buildVisibleSignalRows({
-        signals: signalOptionsSignals,
-        candidates: signalOptionsCandidates,
         signalMatrixStates,
         signalTimeframes: staSignalTimeframes,
         signalActionTimeframes: staActionSignalTimeframes,
-        signalEvents: includeStaSignalHistory ? signalMonitorEvents : [],
         universeSymbols: focusedDeployment?.symbolUniverse || [],
-        includeSignalHistory: includeStaSignalHistory,
       }),
     [
       focusedDeployment?.symbolUniverse,
-      includeStaSignalHistory,
       signalMatrixStates,
-      signalMonitorEvents,
-      signalOptionsCandidates,
-      signalOptionsSignals,
       staActionSignalTimeframes,
       staSignalTimeframes,
     ],

@@ -425,8 +425,7 @@ const signalActionSetupDetail = (candidate) =>
 export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = [] } = {}) => {
   const signalList = Array.isArray(signals) ? signals : [];
   const candidateList = Array.isArray(candidates) ? candidates : [];
-  const rows = signalList.length
-    ? signalList.map((signal, index) => {
+  const rows = signalList.map((signal, index) => {
         const signalRecord = asRecord(signal);
         const candidateRecord = asRecord(
           findSignalOptionsCandidateForSignal(candidateList, signalRecord),
@@ -443,22 +442,6 @@ export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = []
           signal: signalRecord,
           candidate: candidateRecord,
         };
-      })
-    : candidateList.map((candidate, index) => {
-        const candidateRecord = asRecord(candidate);
-        const signal = nonEmptyRecord(candidateRecord.signal) || candidateRecord;
-        const symbol = readSignalSymbol(signal, candidateRecord);
-        return {
-          id: firstText(
-            candidateRecord.id,
-            candidateRecord.candidateId,
-            candidateRecord.signalKey,
-            signal.signalKey,
-            `${symbol || "signal"}-${index}`,
-          ),
-          signal,
-          candidate: candidateRecord,
-        };
       });
 
   return rows.sort((a, b) => {
@@ -473,24 +456,16 @@ export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = []
 };
 
 export const buildAlgoMonitorStaSignalRows = ({
-  signals = [],
-  candidates = [],
-  signalEvents = [],
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
   signalActionTimeframes = signalTimeframes,
   universeSymbols = [],
-  signalMonitorEventsLoaded = false,
 } = {}) =>
   buildVisibleSignalRows({
-    signals,
-    candidates,
-    signalEvents: signalMonitorEventsLoaded ? signalEvents : [],
     signalMatrixStates,
     signalTimeframes,
     signalActionTimeframes,
     universeSymbols,
-    includeSignalHistory: signalMonitorEventsLoaded,
   });
 
 export const resolveAlgoMonitorActionSignalTimeframes = ({
@@ -534,20 +509,6 @@ const isAlgoMonitorSignalBubbleHydrated = (state) => {
   );
 };
 
-const hasConcreteAlgoMonitorSignalPayload = (row) => {
-  const signal = asRecord(asRecord(row).signal);
-  const symbol = readSignalSymbol(signal, row?.candidate);
-  const direction = String(signal.direction || signal.currentSignalDirection || "")
-    .trim()
-    .toLowerCase();
-  return Boolean(
-    symbol &&
-      String(signal.timeframe || "").trim() &&
-      (direction === "buy" || direction === "sell") &&
-      (signal.signalAt || signal.currentSignalAt),
-  );
-};
-
 export const splitAlgoMonitorSignalRowsByMatrixHydration = ({
   rows = [],
   signalMatrixBySymbol = {},
@@ -581,11 +542,8 @@ export const splitAlgoMonitorSignalRowsByMatrixHydration = ({
     const hydrated = Boolean(
       symbol &&
         rowRequiredTimeframes.length &&
-        (
-          hasConcreteAlgoMonitorSignalPayload(row) ||
-          rowRequiredTimeframes.every((timeframe) =>
-            isAlgoMonitorSignalBubbleHydrated(statesByTimeframe[timeframe]),
-          )
+        rowRequiredTimeframes.every((timeframe) =>
+          isAlgoMonitorSignalBubbleHydrated(statesByTimeframe[timeframe]),
         ),
     );
     if (hydrated) {
@@ -1153,8 +1111,6 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   externalStreamFreshness = null,
   environment = "paper",
   signalMatrixStates = [],
-  signalMonitorEvents = [],
-  signalMonitorEventsLoaded = false,
   signalActionTimeframe = "",
   headerAccessory = null,
   onOpenAlgo,
@@ -1326,28 +1282,19 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
     ],
   );
-  const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];
   const staSignalRows = useMemo(
     () =>
       buildAlgoMonitorStaSignalRows({
-        signals: signalOptionsSignals,
-        candidates: signalOptionsCandidates,
-        signalEvents: signalMonitorEventRows,
         signalMatrixStates,
         signalTimeframes: displaySignalTimeframes,
         signalActionTimeframes: actionSignalTimeframes,
         universeSymbols: focusedDeployment?.symbolUniverse || [],
-        signalMonitorEventsLoaded,
       }),
     [
       actionSignalTimeframes,
       displaySignalTimeframes,
       focusedDeployment?.symbolUniverse,
-      signalMonitorEventRows,
-      signalMonitorEventsLoaded,
       signalMatrixStates,
-      signalOptionsCandidates,
-      signalOptionsSignals,
     ],
   );
   const signalActionRows = useMemo(() => {

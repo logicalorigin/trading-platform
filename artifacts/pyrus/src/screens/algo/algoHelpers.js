@@ -849,15 +849,10 @@ export const buildStaSignalHistoryRows = ({
 };
 
 export const buildVisibleSignalRows = ({
-  signals,
-  candidates,
-  signalEvents,
   signalMatrixStates,
   signalTimeframes,
   signalActionTimeframes,
   universeSymbols,
-  now,
-  includeSignalHistory = false,
 } = {}) => {
   const rows = [];
   const seen = new Set();
@@ -867,14 +862,6 @@ export const buildVisibleSignalRows = ({
     universeSymbols,
     timeframes: signalActionTimeframes ?? signalTimeframes,
   });
-  const historySignals = includeSignalHistory
-    ? buildStaSignalHistoryRows({
-        signalEvents,
-        universeSymbols,
-        timeframes: signalActionTimeframes ?? signalTimeframes,
-        now,
-      })
-    : [];
 
   const addRow = (signal, fallbackId = null) => {
     const signalRecord = asRecord(signal);
@@ -901,15 +888,8 @@ export const buildVisibleSignalRows = ({
     }
   });
 
-  if (includeSignalHistory) {
-    historySignals.forEach((signal) => {
-      addRow(signal);
-    });
-  }
-
   // Collapse to one row per (symbol, timeframe). The live Signal Matrix owns
-  // current/action cells; received history can fill cells without matrix state
-  // but must not replace the matrix row for the same symbol/timeframe.
+  // current/action cells; received history is kept out of this action surface.
   const collapsedByCell = new Map();
   rows.forEach((row) => {
     const symbol = normalizeMatchToken(row.symbol);

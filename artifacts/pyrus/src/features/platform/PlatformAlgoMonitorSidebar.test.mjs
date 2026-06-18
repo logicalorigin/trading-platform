@@ -17,7 +17,7 @@ import {
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
 
-test("Algo monitor sidebar includes received signal history rows", () => {
+test("Algo monitor sidebar ignores received history without a matrix cell", () => {
   const rows = buildAlgoMonitorStaSignalRows({
     signals: [],
     signalMatrixStates: [
@@ -48,10 +48,7 @@ test("Algo monitor sidebar includes received signal history rows", () => {
 
   assert.deepEqual(
     rows.map((row) => [row.symbol, row.signalAt, row.sourceType]),
-    [
-      ["VRT", "2026-06-09T14:05:00.000Z", "signal_matrix_state"],
-      ["ALIT", "2026-06-08T20:05:00.000Z", "signal_monitor_event"],
-    ],
+    [["VRT", "2026-06-09T14:05:00.000Z", "signal_matrix_state"]],
   );
 });
 
@@ -89,6 +86,24 @@ test("Algo monitor sidebar includes pushed Signal Matrix rows before options sna
   assert.equal(rows[0].symbol, "TSM");
   assert.equal(rows[0].timeframe, "5m");
   assert.equal(rows[0].sourceType, "signal_matrix_state");
+});
+
+test("Algo monitor sidebar does not build action rows from candidates alone", () => {
+  const rows = buildAlgoMonitorStaSignalRows({
+    candidates: [
+      {
+        id: "candidate-without-matrix",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-09T14:05:00.000Z",
+      },
+    ],
+    signalMatrixStates: [],
+    universeSymbols: ["SPY"],
+  });
+
+  assert.deepEqual(rows, []);
 });
 
 test("Algo monitor sidebar can render pushed matrix rows before deployment metadata", () => {
@@ -253,6 +268,11 @@ test("Algo monitor sidebar does not withhold action rows for companion bubbles",
           active: true,
           latestBarAt: "2026-06-09T14:30:00.000Z",
         },
+        "5m": {
+          status: "ok",
+          active: true,
+          currentSignalAt: "2026-06-09T14:25:00.000Z",
+        },
       },
     },
   });
@@ -262,6 +282,32 @@ test("Algo monitor sidebar does not withhold action rows for companion bubbles",
     ["sta-hydrated", "sta-companion-missing"],
   );
   assert.deepEqual(split.pendingRows, []);
+});
+
+test("Algo monitor sidebar rows require a backing selected Signal Matrix bubble", () => {
+  const split = splitAlgoMonitorSignalRowsByMatrixHydration({
+    rows: [
+      {
+        id: "candidate-row",
+        signal: {
+          symbol: "HIST",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-09T13:35:00.000Z",
+        },
+        candidate: {
+          id: "candidate-row",
+          symbol: "HIST",
+          timeframe: "5m",
+        },
+      },
+    ],
+    signalMatrixBySymbol: {},
+    timeframes: ["5m"],
+  });
+
+  assert.deepEqual(split.hydratedRows, []);
+  assert.equal(split.pendingRows.length, 1);
 });
 
 test("Algo monitor sidebar treats evaluated diagnostic signal bubbles as hydrated", () => {

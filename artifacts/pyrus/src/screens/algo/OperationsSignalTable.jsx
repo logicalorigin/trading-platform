@@ -717,20 +717,6 @@ const rowSignalSymbol = (row) =>
     .trim()
     .toUpperCase();
 
-const hasConcreteStaSignalPayload = (row) => {
-  const signal = asRecord(asRecord(row).signal);
-  const direction = String(signal.direction || signal.currentSignalDirection || "")
-    .trim()
-    .toLowerCase();
-  const signalAt = signal.signalAt || signal.currentSignalAt;
-  return Boolean(
-    rowSignalSymbol(row) &&
-      String(signal.timeframe || "").trim() &&
-      (direction === "buy" || direction === "sell") &&
-      signalAt,
-  );
-};
-
 const NON_HYDRATED_STA_MATRIX_STATUSES = new Set(["pending", "unknown"]);
 
 const isStaSignalMatrixCellHydrated = (state) => {
@@ -794,14 +780,9 @@ export const resolveStaSignalMatrixHydration = ({
     hydrated: Boolean(
       symbol &&
         blockingTimeframes.length &&
-        (
-          hasConcreteStaSignalPayload(row) ||
-          (
-            blockingMissingTimeframes.length === 0 &&
-            blockingPendingTimeframes.length === 0 &&
-            blockingProblemTimeframes.length === 0
-          )
-        ),
+        blockingMissingTimeframes.length === 0 &&
+        blockingPendingTimeframes.length === 0 &&
+        blockingProblemTimeframes.length === 0,
     ),
     symbol,
     timeframes: selectedTimeframes,
