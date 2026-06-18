@@ -1,16 +1,23 @@
-import { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
+import { normalizeAccountRange } from "./accountRanges";
 import { accountDateFilterBoundaryIso } from "./accountCalendarData";
 import {
   feeDragBucket,
   getAccountTradeId,
   holdDurationBucket,
 } from "./accountTradingAnalysis";
+import {
+  buildAccountAnalysisQueryParams,
+  buildRangeDateBounds,
+  defaultTradingAnalysisFilters,
+  normalizeTradingAnalysisFilters,
+  resolveTradingAnalysisDateScope,
+  tradingAnalysisFilterReducer,
+} from "./tradingAnalysisFilters";
 import { normalizeAccountPositionTypeFilter } from "../../features/account/accountPositionTypes";
 
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 
 const EMPTY_ARRAY = Object.freeze([]);
-const DAY_MS = 86_400_000;
 const RECENT_TRADE_LIMIT = 25;
 const HOUR_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -37,11 +44,6 @@ const tradeRealizedPnl = (trade) =>
     ? null
     : finiteNumber(trade.realizedPnl);
 
-const normalizeSelectValue = (value, fallback = "all") => {
-  const text = normalizeText(value, fallback);
-  return text || fallback;
-};
-
 const normalizeCloseHour = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -57,169 +59,13 @@ export const closeDateMatchesTradingAnalysisHour = (closeDate, closeHour) => {
   return HOUR_FORMATTER.format(parsed) === normalizedHour;
 };
 
-const toDateInput = (date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const addDays = (date, days) => new Date(date.getTime() + days * DAY_MS);
-
-const rangeStartDate = (range, now) => {
-  const normalized = normalizeAccountRange(range);
-  if (normalized === "ALL") return "";
-  if (normalized === "YTD") return `${now.getFullYear()}-01-01`;
-  const lookbackDays =
-    normalized === "1D"
-      ? 0
-      : normalized === "1W"
-        ? 6
-        : normalized === "1M"
-          ? 30
-          : normalized === "3M"
-            ? 90
-            : normalized === "6M"
-              ? 180
-              : normalized === "1Y"
-                ? 365
-                : 0;
-  return toDateInput(addDays(now, -lookbackDays));
-};
-
-const normalizeStringArray = (value) =>
-  Array.from(
-    new Set(
-      arrayValue(value)
-        .map((entry) => normalizeText(entry))
-        .filter(Boolean),
-    ),
-  );
-
-export const defaultTradingAnalysisFilters = () => ({
-  symbol: "",
-  assetClass: "all",
-  pnlSign: "all",
-  side: "all",
-  holdDurations: [],
-  feeDrags: [],
-  sourceType: "all",
-  strategy: "all",
-  from: "",
-  to: "",
-  closeHour: null,
-  recentOnly: false,
-});
-
-export const normalizeTradingAnalysisFilters = (filters = {}) => ({
-  ...defaultTradingAnalysisFilters(),
-  ...filters,
-  symbol: normalizeSymbol(filters.symbol),
-  assetClass: normalizeAccountPositionTypeFilter(filters.assetClass),
-  pnlSign: normalizeSelectValue(filters.pnlSign),
-  side: normalizeSelectValue(filters.side).toLowerCase(),
-  holdDurations: normalizeStringArray(
-    filters.holdDurations || (filters.holdDuration ? [filters.holdDuration] : []),
-  ).filter((value) => value !== "all"),
-  feeDrags: normalizeStringArray(
-    filters.feeDrags || (filters.feeDrag ? [filters.feeDrag] : []),
-  ).filter((value) => value !== "all"),
-  sourceType: normalizeSelectValue(filters.sourceType),
-  strategy: normalizeSelectValue(filters.strategy),
-  from: normalizeText(filters.from),
-  to: normalizeText(filters.to),
-  closeHour: filters.closeHour == null || filters.closeHour === "" ? null : String(filters.closeHour),
-  recentOnly: Boolean(filters.recentOnly),
-});
-
-export const tradingAnalysisFilterReducer = (state, action = {}) => {
-  const current = normalizeTradingAnalysisFilters(state);
-  if (action.type === "reset") {
-    return defaultTradingAnalysisFilters();
-  }
-  if (action.type === "clearDateRange") {
-    return { ...current, from: "", to: "" };
-  }
-  if (action.type === "patch") {
-    return normalizeTradingAnalysisFilters({ ...current, ...(action.patch || {}) });
-  }
-  if (action.type === "toggleArray") {
-    const key = action.key;
-    const value = normalizeText(action.value);
-    if (!key || !value) return current;
-    const rows = new Set(arrayValue(current[key]));
-    if (rows.has(value)) rows.delete(value);
-    else rows.add(value);
-    return normalizeTradingAnalysisFilters({ ...current, [key]: Array.from(rows) });
-  }
-  if (action.type === "remove") {
-    const key = action.key;
-    if (key === "holdDurations" || key === "feeDrags") {
-      const value = normalizeText(action.value);
-      return normalizeTradingAnalysisFilters({
-        ...current,
-        [key]: arrayValue(current[key]).filter((entry) => entry !== value),
-      });
-    }
-    if (key === "recentOnly") return { ...current, recentOnly: false };
-    if (key === "closeHour") return { ...current, closeHour: null };
-    if (key === "from" || key === "to" || key === "dateRange") {
-      return { ...current, from: "", to: "" };
-    }
-    if (key === "symbol") return { ...current, symbol: "" };
-    return normalizeTradingAnalysisFilters({ ...current, [key]: defaultTradingAnalysisFilters()[key] });
-  }
-  return current;
-};
-
-export const buildRangeDateBounds = (range, nowMs = Date.now()) => {
-  const normalized = normalizeAccountRange(range);
-  if (!ACCOUNT_RANGES.includes(normalized) || normalized === "ALL") {
-    return { from: "", to: "" };
-  }
-  const now = new Date(nowMs);
-  return {
-    from: rangeStartDate(normalized, now),
-    to: "",
-  };
-};
-
-export const resolveTradingAnalysisDateScope = ({
-  filters = {},
-  range = "ALL",
-  nowMs = Date.now(),
-} = {}) => {
-  const normalized = normalizeTradingAnalysisFilters(filters);
-  if (normalized.from || normalized.to) {
-    return { from: normalized.from, to: normalized.to, source: "custom" };
-  }
-  return { ...buildRangeDateBounds(range, nowMs), source: normalizeAccountRange(range) };
-};
-
-export const buildAccountAnalysisQueryParams = ({
-  modeParams = {},
-  filters = {},
-  range = "ALL",
-  nowMs = Date.now(),
-} = {}) => {
-  const normalized = normalizeTradingAnalysisFilters(filters);
-  const scope = resolveTradingAnalysisDateScope({ filters: normalized, range, nowMs });
-  const holdDurations = arrayValue(normalized.holdDurations);
-  return {
-    ...modeParams,
-    symbol: normalized.symbol || undefined,
-    assetClass:
-      normalized.assetClass && normalized.assetClass !== "all"
-        ? normalized.assetClass
-        : undefined,
-    pnlSign:
-      normalized.pnlSign && normalized.pnlSign !== "all"
-        ? normalized.pnlSign
-        : undefined,
-    holdDuration: holdDurations.length === 1 ? holdDurations[0] : undefined,
-    from: accountDateFilterBoundaryIso(scope.from),
-    to: accountDateFilterBoundaryIso(scope.to, { endOfDay: true }),
-  };
+export {
+  buildAccountAnalysisQueryParams,
+  buildRangeDateBounds,
+  defaultTradingAnalysisFilters,
+  normalizeTradingAnalysisFilters,
+  resolveTradingAnalysisDateScope,
+  tradingAnalysisFilterReducer,
 };
 
 const tradeCloseMs = (trade) => {
