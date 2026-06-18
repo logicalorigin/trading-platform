@@ -354,11 +354,7 @@ function writeWorkspaceState(patch) {
     const current = readWorkspaceState();
     const next = { ...current, ...patch };
     window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(next));
-    for (const eventName of [
-      PYRUS_WORKSPACE_SETTINGS_EVENT,
-    ]) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
-    }
+    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: next }));
     return next;
   } catch {
     return null;
@@ -1133,11 +1129,7 @@ function useWorkspaceDefaults() {
       delete current[key];
     });
     window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(current));
-    for (const eventName of [
-      PYRUS_WORKSPACE_SETTINGS_EVENT,
-    ]) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail: current }));
-    }
+    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: current }));
     setState(current);
   }, []);
 
@@ -1166,11 +1158,9 @@ function useStorageFootprint() {
         if (key && predicate(key)) keys.push(key);
       }
       keys.forEach((key) => window.localStorage.removeItem(key));
-      for (const eventName of [
-        PYRUS_WORKSPACE_SETTINGS_EVENT,
-      ]) {
-        window.dispatchEvent(new CustomEvent(eventName, { detail: readWorkspaceState() }));
-      }
+      window.dispatchEvent(
+        new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: readWorkspaceState() }),
+      );
       refresh();
     } catch {}
   }, [refresh]);

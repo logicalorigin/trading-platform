@@ -30,11 +30,7 @@ export const writeAccountSection = (value) => {
     const parsed = raw ? JSON.parse(raw) : {};
     const next = { ...parsed, [STORAGE_KEY_FIELD]: value === "shadow" ? "shadow" : "real" };
     window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(next));
-    for (const eventName of [
-      PYRUS_WORKSPACE_SETTINGS_EVENT,
-    ]) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
-    }
+    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: next }));
   } catch {
     /* swallow quota errors */
   }

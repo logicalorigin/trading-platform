@@ -32,6 +32,10 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
   );
   const memoryPressureSource = readLocalSource("./useMemoryPressureSignal.js");
   const settingsSource = readLocalSource("../../screens/SettingsScreen.jsx");
+  const chartTimeframeFavoritesSource = readLocalSource(
+    "../charting/useChartTimeframeFavorites.js",
+  );
+  const accountSectionSource = readLocalSource("./useAccountSection.js");
   const diagnosticThresholdSettingsSource = readLocalSource(
     "../../screens/settings/DiagnosticThresholdSettingsPanel.jsx",
   );
@@ -103,6 +107,17 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     /const raw = window\.localStorage\.getItem\(PYRUS_STORAGE_KEY\);/,
     "Expected workspace settings to read the current storage key directly",
   );
+  for (const [source, label] of [
+    [settingsSource, "settings workspace state"],
+    [chartTimeframeFavoritesSource, "chart timeframe favorites"],
+    [accountSectionSource, "account section"],
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /for \(const eventName of \[\s*PYRUS_WORKSPACE_SETTINGS_EVENT,\s*\]\)/,
+      `Expected ${label} to dispatch the workspace settings event directly`,
+    );
+  }
   assert.doesNotMatch(
     settingsSource,
     /LEGACY_MARKET_GRID_TRACK_SESSION_KEY/,

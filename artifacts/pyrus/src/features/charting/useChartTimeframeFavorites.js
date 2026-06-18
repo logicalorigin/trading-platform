@@ -22,11 +22,7 @@ export const persistChartTimeframeFavorites = (role, favorites) => {
   });
   try {
     const detail = readPersistedState();
-    for (const eventName of [
-      PYRUS_WORKSPACE_SETTINGS_EVENT,
-    ]) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail }));
-    }
+    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail }));
   } catch (_error) {}
 };
 
