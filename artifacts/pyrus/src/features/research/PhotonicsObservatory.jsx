@@ -173,8 +173,6 @@ const fmtFS = n => {
   return n < 0 ? "(" + str + ")" : str;
 };
 
-const fmtPct = n => (n > 0 ? "+" : "") + n.toFixed(1) + "%";
-
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
 function resolveResearchPrice(co, live = null) {
