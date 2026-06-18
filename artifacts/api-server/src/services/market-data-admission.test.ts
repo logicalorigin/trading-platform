@@ -451,6 +451,7 @@ test("execution and automation share priority without preempting each other", ()
 
 test("IBKR pressure sheds half of charged flow scanner lines once", () => {
   __resetMarketDataAdmissionForTests();
+  const observedAt = Date.now();
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 20,
     flowScannerConcurrency: 1,
@@ -477,26 +478,30 @@ test("IBKR pressure sheds half of charged flow scanner lines once", () => {
     state: "backpressure",
     reason: "Output exceeded limit (was: 100031)",
     source: "option-stream",
-    observedAt: Date.parse("2026-06-12T12:00:00.000Z"),
+    observedAt,
   });
   const diagnostics = getMarketDataAdmissionDiagnostics();
 
   assert.equal(diagnostics.accountMonitorLineCount, 1);
-  assert.equal(diagnostics.pressure.ibkrPressure?.policy, "one-shot-scanner-shed");
+  assert.equal(diagnostics.pressure.ibkrPressure?.policy, "scanner-shed-damping");
   assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountBefore, 10);
   assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 5);
   assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountAfter, 5);
   assert.equal(diagnostics.pressure.ibkrPressure?.demotedLeaseCount, 5);
+  assert.equal(diagnostics.pressure.ibkrPressure?.dampingActive, true);
   assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
+  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
+  assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
+  assert.equal(diagnostics.pressure.scannerPressureDampingActive, true);
   assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
   assert.equal(diagnostics.poolUsageRanking[0]?.id, "flow-scanner");
   assert.equal(diagnostics.poolUsageRanking[0]?.recentIbkrPressureShed, true);
   assert.equal(demoted.length, 5);
 });
 
-test("IBKR pressure does not install a sticky scanner cap", () => {
+test("IBKR pressure damps scanner refill without changing configured cap", () => {
   __resetMarketDataAdmissionForTests();
+  const observedAt = Date.now();
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 20,
     flowScannerConcurrency: 1,
@@ -516,7 +521,7 @@ test("IBKR pressure does not install a sticky scanner cap", () => {
     state: "backpressure",
     reason: "Output exceeded limit (was: 100031)",
     source: "option-stream",
-    observedAt: Date.parse("2026-06-12T12:00:00.000Z"),
+    observedAt,
   });
 
   const refill = admitMarketDataLeases({
@@ -533,9 +538,12 @@ test("IBKR pressure does not install a sticky scanner cap", () => {
 
   assert.equal(refill.rejected.length, 0);
   assert.equal(refill.admitted.length, 5);
+  assert.equal(refill.demoted.length, 5);
   assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
+  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
+  assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
+  assert.equal(diagnostics.pressure.scannerPressureDampingActive, true);
+  assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
 });
 
 test("IBKR pressure leaves configured flow scanner env overrides unchanged", () => {
@@ -557,14 +565,69 @@ test("IBKR pressure leaves configured flow scanner env overrides unchanged", () 
       state: "backpressure",
       reason: "Output exceeded limit (was: 100031)",
       source: "option-stream",
-      observedAt: Date.parse("2026-06-12T12:00:00.000Z"),
+      observedAt: Date.now(),
     });
     const diagnostics = getMarketDataAdmissionDiagnostics();
 
     assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 50);
-    assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 50);
+    assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
+    assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
     assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
   } finally {
+    if (previous === undefined) {
+      delete process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+    } else {
+      process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = previous;
+    }
+  }
+});
+
+test("IBKR pressure damping expires and restores scanner capacity", () => {
+  __resetMarketDataAdmissionForTests();
+  const originalDateNow = Date.now;
+  const previous = process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+  let now = new Date("2026-06-18T12:00:00.000Z").getTime();
+  Date.now = () => now;
+  process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = "50";
+  try {
+    admitMarketDataLeases({
+      owner: "flow-scanner:SPY",
+      intent: "flow-scanner-live",
+      requests: Array.from({ length: 10 }, (_, index) => ({
+        assetClass: "option",
+        symbol: "SPY",
+        providerContractId: `SPY-C-${index}`,
+      })),
+      fallbackProvider: "none",
+    });
+    recordMarketDataAdmissionIbkrPressure({
+      state: "backpressure",
+      reason: "pacing violation",
+      source: "option-stream",
+      observedAt: now,
+    });
+    const active = getMarketDataAdmissionDiagnostics();
+
+    assert.equal(active.pressure.scannerConfiguredLineCap, 50);
+    assert.equal(active.pressure.scannerEffectiveLineCap, 5);
+    assert.equal(active.pressure.scannerPressureLineCap, 5);
+    assert.equal(active.pressure.scannerPressureDampingActive, true);
+    assert.equal(active.pressure.ibkrPressure?.dampingActive, true);
+    assert.equal(active.poolUsageRanking[0]?.id, "flow-scanner");
+    assert.equal(active.poolUsageRanking[0]?.recentIbkrPressureShed, true);
+
+    now += 60_001;
+    const expired = getMarketDataAdmissionDiagnostics();
+
+    assert.equal(expired.pressure.scannerConfiguredLineCap, 50);
+    assert.equal(expired.pressure.scannerEffectiveLineCap, 50);
+    assert.equal(expired.pressure.scannerPressureLineCap, null);
+    assert.equal(expired.pressure.scannerPressureDampingActive, false);
+    assert.equal(expired.pressure.ibkrPressure?.dampingActive, false);
+    assert.equal(expired.poolUsageRanking[0]?.id, "flow-scanner");
+    assert.equal(expired.poolUsageRanking[0]?.recentIbkrPressureShed, false);
+  } finally {
+    Date.now = originalDateNow;
     if (previous === undefined) {
       delete process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
     } else {

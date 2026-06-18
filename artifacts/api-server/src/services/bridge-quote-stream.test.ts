@@ -30,7 +30,8 @@ test("quote stream capacity pressure feeds IBKR admission shedding", () => {
   const detectorBlock = source.slice(detectorStart, detectorEnd);
   const handlerBlock = source.slice(handlerStart, handlerEnd);
 
-  assert.match(detectorBlock, /output exceeded/);
+  assert.doesNotMatch(detectorBlock, /output exceeded/);
+  assert.match(detectorBlock, /lane queue is full/);
   assert.match(detectorBlock, /paced/);
   assert.match(handlerBlock, /recordMarketDataAdmissionIbkrPressure\(/);
   assert.match(handlerBlock, /source: "quote-stream"/);

@@ -390,7 +390,6 @@ function isIbkrBackpressureMessage(message: string): boolean {
   return (
     message.includes("ibkr_bridge_lane_queue_full") ||
     message.includes("lane queue is full") ||
-    message.includes("output exceeded") ||
     message.includes("paced") ||
     message.includes("pacing violation")
   );

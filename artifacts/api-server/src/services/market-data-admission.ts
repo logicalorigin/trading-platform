@@ -205,6 +205,7 @@ const DEFAULT_VISIBLE_OPTION_QUOTE_LINE_RESERVE =
   DEFAULT_VISIBLE_OPTION_QUOTE_CONTRACT_LIMIT + 1;
 const BRIDGE_LINE_BUDGET_TTL_MS = 30_000;
 const IBKR_PRESSURE_SCANNER_REMAINING_RATIO = 0.5;
+const IBKR_PRESSURE_SCANNER_DAMPING_WINDOW_MS = 60_000;
 const TARGET_FILL_LINES_ENV = "IBKR_MARKET_DATA_TARGET_FILL_LINES";
 const MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT = 20;
 const OPERATOR_POOL_IDS: MarketDataPoolId[] = [
@@ -286,11 +287,12 @@ let runtimeBridgeLineBudget:
 let runtimeFlowScannerLineCap: number | null = null;
 let lastIbkrPressureEvent:
   | {
-      policy: "one-shot-scanner-shed";
+      policy: "scanner-shed-damping";
       state: MarketDataIbkrPressureState;
       reason: string;
       source: string;
       observedAt: number;
+      dampingExpiresAt: number;
       scannerLineCountBefore: number;
       scannerLineTarget: number;
       scannerLineCountAfter: number;
@@ -551,17 +553,25 @@ export function recordMarketDataAdmissionIbkrPressure(input: {
   const source = normalizePressureText(input.source, "ibkr");
   const shed = shedFlowScannerLeasesForIbkrPressure("ibkr_pressure_shed");
   lastIbkrPressureEvent = {
-    policy: "one-shot-scanner-shed",
+    policy: "scanner-shed-damping",
     state: input.state,
     reason,
     source,
     observedAt,
+    dampingExpiresAt: observedAt + IBKR_PRESSURE_SCANNER_DAMPING_WINDOW_MS,
     scannerLineCountBefore: shed.scannerLineCountBefore,
     scannerLineTarget: shed.scannerLineTarget,
     scannerLineCountAfter: shed.scannerLineCountAfter,
     demotedLeaseCount: shed.demoted.length,
   };
   return shed.demoted;
+}
+
+function getActiveIbkrPressureDampingEvent(now = Date.now()) {
+  if (!lastIbkrPressureEvent) return null;
+  return lastIbkrPressureEvent.dampingExpiresAt > now
+    ? lastIbkrPressureEvent
+    : null;
 }
 
 function resolveRuntimeBridgeLineBudget(now = Date.now()):
@@ -1889,6 +1899,12 @@ function buildFlowScannerDynamicLineCap(
     0,
     Math.min(budget.flowScannerLineCap, dynamicScannerLineCap),
   );
+  const ibkrPressureCap =
+    getActiveIbkrPressureDampingEvent()?.scannerLineTarget ?? null;
+  const dampedScannerLineCap =
+    ibkrPressureCap === null
+      ? effectiveScannerLineCap
+      : Math.max(0, Math.min(effectiveScannerLineCap, ibkrPressureCap));
   return {
     optionBudgetLineCount,
     nonScannerOptionLineCount: nonScannerOptionLineIds.size,
@@ -1897,7 +1913,9 @@ function buildFlowScannerDynamicLineCap(
     protectedPriorityLineCount,
     dynamicScannerLineCap,
     scannerStaticLineCap: budget.flowScannerLineCap,
-    scannerEffectiveLineCap: effectiveScannerLineCap,
+    scannerEffectiveLineCap: dampedScannerLineCap,
+    scannerPressureLineCap: ibkrPressureCap,
+    scannerPressureDampingActive: ibkrPressureCap !== null,
     scannerActiveLineCount: scannerLineIds.size,
     scannerChargedLineCount: scannerChargedLineIds.size,
     scannerSharedLineCount: scannerSharedLineIds.size,
@@ -1974,6 +1992,7 @@ export function getMarketDataLinePressureSnapshot() {
     "flow-scanner",
     budget,
   );
+  const activeIbkrPressureEvent = getActiveIbkrPressureDampingEvent();
   const constrainedByActiveDemand = false;
   const utilizationLevel = marketDataLineUtilizationLevel({
     utilization,
@@ -2015,6 +2034,9 @@ export function getMarketDataLinePressureSnapshot() {
     scannerConfiguredLineCap,
     scannerStaticLineCap,
     scannerEffectiveLineCap,
+    scannerPressureLineCap: flowScannerDynamic.scannerPressureLineCap,
+    scannerPressureDampingActive:
+      flowScannerDynamic.scannerPressureDampingActive,
     scannerDynamicLineCap: flowScannerDynamic.dynamicScannerLineCap,
     optionBudgetLineCount: flowScannerDynamic.optionBudgetLineCount,
     nonScannerOptionLineCount: flowScannerDynamic.nonScannerOptionLineCount,
@@ -2038,6 +2060,11 @@ export function getMarketDataLinePressureSnapshot() {
       ? {
           ...lastIbkrPressureEvent,
           observedAt: new Date(lastIbkrPressureEvent.observedAt).toISOString(),
+          dampingExpiresAt: new Date(
+            lastIbkrPressureEvent.dampingExpiresAt,
+          ).toISOString(),
+          dampingActive:
+            activeIbkrPressureEvent === lastIbkrPressureEvent,
         }
       : null,
   };
@@ -2498,7 +2525,8 @@ export function getMarketDataAdmissionDiagnostics() {
       usagePercent: Math.round(usageRatio * 1_000) / 10,
       dynamic: usage.dynamic,
       recentIbkrPressureShed:
-        usage.id === "flow-scanner" && lastIbkrPressureEvent !== null,
+        usage.id === "flow-scanner" &&
+        getActiveIbkrPressureDampingEvent() !== null,
     };
   })
     .sort(

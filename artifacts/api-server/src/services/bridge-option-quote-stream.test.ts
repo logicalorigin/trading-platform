@@ -160,7 +160,7 @@ test("a genuine upstream error still records a connection error", async () => {
   );
 });
 
-test("option stream Output exceeded pressure sheds flow scanner demand", async () => {
+test("option stream generic Output exceeded error does not shed scanner demand", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
@@ -213,12 +213,12 @@ test("option stream Output exceeded pressure sheds flow scanner demand", async (
   streamError(new Error("Output exceeded limit (was: 100031)"));
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.pressure.ibkrPressure?.state, "backpressure");
-  assert.equal(diagnostics.pressure.ibkrPressure?.source, "option-stream");
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountBefore, 10);
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 5);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
+  assert.equal(diagnostics.pressure.ibkrPressure, null);
+  assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
+  assert.match(
+    __getBridgeOptionQuoteLastErrorForTests() ?? "",
+    /Output exceeded limit/,
+  );
 
   unsubscribe();
 });
