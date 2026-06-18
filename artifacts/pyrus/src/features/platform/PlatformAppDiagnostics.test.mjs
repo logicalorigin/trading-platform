@@ -34,6 +34,7 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
   const optionHydrationDiagnosticsSource = readLocalSource(
     "./optionHydrationDiagnostics.ts",
   );
+  const bloombergLiveDockSource = readLocalSource("./BloombergLiveDock.jsx");
   const gexZeroGammaSource = readLocalSource("../gex/useGexZeroGamma.js");
   const tradingAnalysisSource = readLocalSource(
     "../../screens/account/TradingAnalysisWorkbench.jsx",
@@ -137,6 +138,25 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     memoryPressurePreferencesSource.match(/window\.dispatchEvent\(new CustomEvent\(EVENT_NAME/g)?.length,
     1,
     "Expected memory pressure preferences to dispatch one preference update event",
+  );
+  assert.doesNotMatch(
+    bloombergLiveDockSource,
+    /LEGACY_BLOOMBERG_(?:LAST_GOOD_SOURCE_STORAGE_KEY|DIAGNOSTICS_GLOBAL)/,
+    "Expected Bloomberg dock to use current storage and diagnostics names once",
+  );
+  assert.equal(
+    bloombergLiveDockSource.match(
+      /window\.localStorage\.getItem\(\s*BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY,\s*\)/g,
+    )?.length,
+    1,
+    "Expected Bloomberg dock to read the current source cache key directly",
+  );
+  assert.equal(
+    bloombergLiveDockSource.match(
+      /window\[BLOOMBERG_DIAGNOSTICS_GLOBAL\] = getDiagnostics/g,
+    )?.length,
+    1,
+    "Expected Bloomberg dock to publish one diagnostics global",
   );
   assert.match(
     settingsSource,

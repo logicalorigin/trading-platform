@@ -37,3 +37,16 @@ test("the one-time reload guard and terminal throw remain intact", () => {
   assert.match(source, /maybeReloadOnceForDynamicImport\(label\)/);
   assert.match(source, /\n {2}throw lastError;\n/);
 });
+
+test("dynamic import reload guard uses the current storage key once", () => {
+  assert.doesNotMatch(
+    source,
+    /LEGACY_DYNAMIC_IMPORT_RELOAD_KEY_PREFIX/,
+    "Expected dynamic import reload guard to avoid same-value legacy prefixes",
+  );
+  assert.equal(
+    source.match(/window\.sessionStorage\.getItem\(key\)/g)?.length,
+    1,
+    "Expected dynamic import reload guard to check the current key once",
+  );
+});

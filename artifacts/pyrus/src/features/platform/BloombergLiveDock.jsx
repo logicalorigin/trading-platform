@@ -42,8 +42,6 @@ const BLOOMBERG_SOURCE_MODE_AUTO = "auto";
 const BLOOMBERG_SOURCE_MODE_MANUAL = "manual";
 const BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY =
   "pyrus:bloomberg:lastGoodSource:v1";
-const LEGACY_BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY =
-  "pyrus:bloomberg:lastGoodSource:v1";
 const BLOOMBERG_LAST_GOOD_SOURCE_TTL_MS = 24 * 60 * 60 * 1000;
 const BLOOMBERG_SOURCE_COOLDOWN_MS = 5 * 60 * 1000;
 const BLOOMBERG_WATCHDOG_INTERVAL_MS = 3_000;
@@ -51,8 +49,6 @@ const BLOOMBERG_WATCHDOG_STALL_MS = 10_000;
 const BLOOMBERG_WATCHDOG_EMPTY_BUFFER_MS = 8_000;
 const BLOOMBERG_WATCHDOG_RELOAD_LIMIT = 1;
 const BLOOMBERG_DIAGNOSTICS_GLOBAL =
-  "__PYRUS_BLOOMBERG_DIAGNOSTICS__";
-const LEGACY_BLOOMBERG_DIAGNOSTICS_GLOBAL =
   "__PYRUS_BLOOMBERG_DIAGNOSTICS__";
 const BLOOMBERG_DOCK_Z_INDEX = 10020;
 const BLOOMBERG_DVR_BUFFER_SECONDS = 30;
@@ -100,9 +96,9 @@ const getConfiguredWindowNumber = (name, fallback, legacyName = null) => {
 const readLastGoodBloombergSource = () => {
   if (typeof window === "undefined") return null;
   try {
-    const raw =
-      window.localStorage.getItem(BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(
+      BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY,
+    );
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const sourceIndex = getBloombergSourceIndexById(parsed?.sourceId);
@@ -112,7 +108,6 @@ const readLastGoodBloombergSource = () => {
       Date.now() - parsed.storedAt > BLOOMBERG_LAST_GOOD_SOURCE_TTL_MS
     ) {
       window.localStorage.removeItem(BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
-      window.localStorage.removeItem(LEGACY_BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
       return null;
     }
     return {
@@ -142,7 +137,6 @@ const rememberLastGoodBloombergSource = (source) => {
         storedAt: Date.now(),
       }),
     );
-    window.localStorage.removeItem(LEGACY_BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
   } catch {
     /* Storage can be unavailable in private contexts. */
   }
@@ -877,13 +871,9 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
     });
 
     window[BLOOMBERG_DIAGNOSTICS_GLOBAL] = getDiagnostics;
-    window[LEGACY_BLOOMBERG_DIAGNOSTICS_GLOBAL] = getDiagnostics;
     return () => {
       if (window[BLOOMBERG_DIAGNOSTICS_GLOBAL] === getDiagnostics) {
         delete window[BLOOMBERG_DIAGNOSTICS_GLOBAL];
-      }
-      if (window[LEGACY_BLOOMBERG_DIAGNOSTICS_GLOBAL] === getDiagnostics) {
-        delete window[LEGACY_BLOOMBERG_DIAGNOSTICS_GLOBAL];
       }
     };
   }, []);
