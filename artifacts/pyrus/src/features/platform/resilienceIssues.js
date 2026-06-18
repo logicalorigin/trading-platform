@@ -1,4 +1,4 @@
-import { collectDataIssuesFromRecord, combineDataIssues } from "./dataIssueModel.js";
+import { collectDataIssuesFromRecord } from "./dataIssueModel.js";
 
 // Plain-language text for backend resilience reason codes. Source of the codes:
 // BACKEND_RESILIENCE_CATALOGUE.md (orders/options/bridge/db/stream reasons).
@@ -62,5 +62,3 @@ export const collectWidgetIssues = (record, options = {}) => {
     return friendly ? { ...issue, summary: friendly } : issue;
   });
 };
-
-export { combineDataIssues };

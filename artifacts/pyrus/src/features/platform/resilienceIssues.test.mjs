@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,9 @@ import {
   humanizeResilienceReason,
   resilienceSeverityForReason,
 } from "./resilienceIssues.js";
+
+const readLocalSource = (filename) =>
+  readFileSync(new URL(filename, import.meta.url), "utf8");
 
 test("collectWidgetIssues surfaces a stale record", () => {
   const issues = collectWidgetIssues(
@@ -53,4 +57,14 @@ test("every reason code has friendly text", () => {
     assert.equal(typeof text, "string");
     assert.ok(text.length > 0, `${code} has text`);
   }
+});
+
+test("combineDataIssues stays owned by dataIssueModel", () => {
+  const resilienceSource = readLocalSource("./resilienceIssues.js");
+
+  assert.doesNotMatch(
+    resilienceSource,
+    /combineDataIssues/,
+    "Expected resilienceIssues to avoid re-exporting dataIssueModel helpers",
+  );
 });
