@@ -116,6 +116,12 @@ const LazyIvTermChart = lazy(() =>
 const LazyVolumeProfileChart = lazy(() =>
   import("./gex/GexCharts.jsx").then((m) => ({ default: m.VolumeProfileChart })),
 );
+const LazyVexProfileChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.VexProfileChart })),
+);
+const LazyThetaDecayChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.ThetaDecayChart })),
+);
 const GexChartFallback = ({ minHeight }) => (
   <div style={{ minHeight: dim(minHeight) }} aria-hidden="true" />
 );
@@ -1973,6 +1979,23 @@ export default function GexScreen({
               </Suspense>
               <Suspense fallback={<GexChartFallback minHeight={260} />}>
                 <LazyIvTermChart rows={filteredRows} spot={spot} />
+              </Suspense>
+            </div>
+
+            <SectionHeading title="Vega & Theta" />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                gap: sp(10),
+                alignItems: "start",
+              }}
+            >
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyVexProfileChart rows={filteredRows} spot={spot} />
+              </Suspense>
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyThetaDecayChart rows={filteredRows} />
               </Suspense>
             </div>
           </>

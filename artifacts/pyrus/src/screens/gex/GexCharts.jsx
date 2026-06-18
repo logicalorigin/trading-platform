@@ -41,6 +41,8 @@ import {
   ivSkewByStrike,
   ivTermStructure,
   oiByStrike,
+  thetaDecayByExpiry,
+  vexByStrike,
   volumeByStrike,
 } from "../../features/gex/gexModel.js";
 import {
@@ -768,6 +770,137 @@ const VolumeProfileChart = ({ rows, spot }) => {
   );
 };
 
+// --- Vega Exposure (VEX) profile ------------------------------------------
+const VexProfileChart = ({ rows, spot }) => {
+  const [range, setRange] = useState("near");
+  const allRows = useMemo(() => vexByStrike(rows), [rows]);
+  const data = useMemo(
+    () =>
+      range === "all"
+        ? allRows
+        : allRows.filter((row) => Math.abs((row.strike - spot) / spot) <= 0.05),
+    [allRows, range, spot],
+  );
+
+  return (
+    <ChartShell
+      title="Vega Exposure (VEX)"
+      subtitle="Dealer vol sensitivity by strike — vega·OI (where vol-of-vol risk sits)"
+      right={
+        <SegmentControl
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: "near", label: "Near" },
+            { value: "all", label: "All" },
+          ]}
+        />
+      }
+    >
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing vega exposure"
+        testId="gex-vex-profile-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="strike"
+              tickFormatter={formatGexStrikePrice}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              minTickGap={18}
+            />
+            <YAxis
+              tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <ReferenceLine x={Math.round(spot)} stroke={CSS_COLOR.cyan} strokeDasharray="4 4" />
+            <Tooltip
+              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{formatGexStrikePrice(row.strike)}</b>
+                    <div style={{ color: GEX_CALL_TONE }}>Call VEX {fmtCurrency(row.callVex)}</div>
+                    <div style={{ color: GEX_PUT_TONE }}>Put VEX {fmtCurrency(row.putVex)}</div>
+                    <div style={{ color: CSS_COLOR.text }}>Total {fmtCurrency(row.totalVex)}</div>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="callVex" fill={GEX_CALL_TONE} stackId="vex" isAnimationActive={false} />
+            <Bar dataKey="putVex" fill={GEX_PUT_TONE} stackId="vex" isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
+// --- Theta decay by expiry ------------------------------------------------
+const ThetaDecayChart = ({ rows }) => {
+  const data = useMemo(() => thetaDecayByExpiry(rows), [rows]);
+  return (
+    <ChartShell
+      title="Theta Decay"
+      subtitle="Daily $ time decay by expiration — theta·OI (negative = decay)"
+    >
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing theta decay"
+        testId="gex-theta-decay-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{row.label}</b>
+                    <div style={{ color: GEX_CALL_TONE }}>Call θ {fmtCurrency(row.callTheta)}</div>
+                    <div style={{ color: GEX_PUT_TONE }}>Put θ {fmtCurrency(row.putTheta)}</div>
+                    <div style={{ color: toneForNetGex(row.netTheta) }}>Net θ {fmtCurrency(row.netTheta)}</div>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="netTheta" isAnimationActive={false}>
+              {data.map((row) => (
+                <Cell key={row.key} fill={row.netTheta < 0 ? GEX_PUT_TONE : GEX_CALL_TONE} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
 export {
   StrikeProfileChart,
   ExpiryChart,
@@ -777,4 +910,6 @@ export {
   IvSkewChart,
   IvTermChart,
   VolumeProfileChart,
+  VexProfileChart,
+  ThetaDecayChart,
 };

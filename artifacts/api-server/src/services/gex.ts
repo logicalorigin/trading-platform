@@ -49,10 +49,13 @@ export type GexOptionRow = {
   providerContractId?: string | null;
   gamma: number;
   delta: number;
+  theta?: number;
+  vega?: number;
   openInterest: number;
   impliedVol: number;
   bid: number;
   ask: number;
+  mark?: number;
   multiplier: number;
   sharesPerContract?: number;
   volume?: number;
@@ -1285,6 +1288,20 @@ function compactPersistedGexOption(row: GexOptionRow): GexOptionRow | null {
     volume:
       typeof row.volume === "number" && Number.isFinite(row.volume)
         ? row.volume
+        : undefined,
+    // theta/vega/mark (massive populates theta+vega ~90%, mark ~84%) power the
+    // vega-exposure profile, theta-decay map, and premium notional.
+    theta:
+      typeof row.theta === "number" && Number.isFinite(row.theta)
+        ? row.theta
+        : undefined,
+    vega:
+      typeof row.vega === "number" && Number.isFinite(row.vega)
+        ? row.vega
+        : undefined,
+    mark:
+      typeof row.mark === "number" && Number.isFinite(row.mark)
+        ? row.mark
         : undefined,
   };
 }

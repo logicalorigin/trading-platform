@@ -216,10 +216,13 @@ export const normalizeGexResponseOptions = (options = []) => {
       cp,
       gamma: gamma ?? 0,
       delta: finiteOrNull(option?.delta),
+      theta: finiteOrNull(option?.theta),
+      vega: finiteOrNull(option?.vega),
       openInterest: Math.max(0, openInterest ?? 0),
       impliedVol: impliedVolatility ?? 0,
       bid: finiteOrNull(option?.bid),
       ask: finiteOrNull(option?.ask),
+      mark: finiteOrNull(option?.mark),
       multiplier,
       sharesPerContract: finiteOrNull(option?.sharesPerContract) ?? multiplier,
       volume: finiteOrNull(option?.volume),
@@ -614,6 +617,79 @@ export const volumeMetrics = (rows = []) => {
     putCallVolumeRatio: callVol > 0 ? putVol / callVol : null,
     volOiRatio: totalOi > 0 ? totalVol / totalOi : null,
   };
+};
+
+// --- Vega Exposure (VEX) ---------------------------------------------------
+// Dealer vega exposure: $ sensitivity per 1 vol-point move, weighted by OI.
+// Vega is always >= 0, so VEX is a concentration measure (where vol-of-vol risk
+// sits) shown as call/put magnitude by strike — no dealer-sign assumption.
+export const contractVex = (option) => {
+  const vega = finiteOrNull(option?.vega);
+  if (vega == null) return 0;
+  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  return (
+    Math.max(0, vega) * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier
+  );
+};
+
+export const vexByStrike = (rows = []) => {
+  const map = new Map();
+  rows.forEach((option) => {
+    const strike = finiteOrNull(option.strike);
+    if (!isFiniteNumber(strike) || finiteOrNull(option.vega) == null) return;
+    const current =
+      map.get(strike) || { strike, callVex: 0, putVex: 0, totalVex: 0 };
+    const vex = contractVex(option);
+    if (option.cp === "C") current.callVex += vex;
+    else current.putVex += vex;
+    current.totalVex = current.callVex + current.putVex;
+    map.set(strike, current);
+  });
+  return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
+};
+
+// --- Theta decay -----------------------------------------------------------
+// Daily $ time decay by expiration: theta * OI * multiplier. Theta is negative,
+// so values are negative (decay pressure); near expirations dominate.
+export const contractTheta = (option) => {
+  const theta = finiteOrNull(option?.theta);
+  if (theta == null) return 0;
+  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  return theta * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier;
+};
+
+export const thetaDecayByExpiry = (rows = [], now = new Date()) => {
+  const map = new Map();
+  rows.forEach((option) => {
+    const key = option.expirationDate;
+    if (!key || finiteOrNull(option.theta) == null) return;
+    const days = expirationDayDistance(option, now);
+    const expDate = new Date(
+      Date.UTC(option.expireYear, option.expireMonth - 1, option.expireDay),
+    );
+    const current =
+      map.get(key) || {
+        key,
+        days,
+        label:
+          days === 0
+            ? "0DTE"
+            : expDate.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                timeZone: "UTC",
+              }),
+        callTheta: 0,
+        putTheta: 0,
+        netTheta: 0,
+      };
+    const decay = contractTheta(option);
+    if (option.cp === "C") current.callTheta += decay;
+    else current.putTheta += decay;
+    current.netTheta = current.callTheta + current.putTheta;
+    map.set(key, current);
+  });
+  return Array.from(map.values()).sort((left, right) => left.days - right.days);
 };
 
 const formatPriceForNarrative = (value) => {
