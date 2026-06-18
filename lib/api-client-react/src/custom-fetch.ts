@@ -348,6 +348,14 @@ function resolveDefaultRequestTimeoutMs(
   if (normalizedUrl.pathname.startsWith("/api/streams/")) {
     return null;
   }
+  // The GEX dashboard ships the full option chain (multi-MB for liquid names
+  // like SPY: ~13k rows). It is a heavy GET on a parameterized path
+  // (/api/gex/{symbol}[, /projection, /zero-gamma]), which the static-path Set
+  // below cannot match, so without this it would inherit the 20s default and
+  // intermittently time out ("GEX chain unavailable"). Give it heavy headroom.
+  if (normalizedUrl.pathname.startsWith("/api/gex/")) {
+    return HEAVY_API_GET_TIMEOUT_MS;
+  }
   // Heavy data endpoints (bars, option chains, flow) can legitimately run long
   // under load; give them more headroom before the safety net fires.
   if (HEAVY_GET_PATHS.has(normalizedUrl.pathname)) {
