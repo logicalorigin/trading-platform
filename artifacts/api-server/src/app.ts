@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import path from "node:path";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
@@ -56,6 +57,58 @@ function applyIsolationHeaders(_req: express.Request, res: express.Response, nex
     res.setHeader("Cross-Origin-Opener-Policy-Report-Only", `${coop}; report-to="pyrus"`);
     res.setHeader("Cross-Origin-Embedder-Policy-Report-Only", `${coep}; report-to="pyrus"`);
   }
+  next();
+}
+
+// Gzip large JSON API responses. Some payloads are multi-MB uncompressed (e.g.
+// the full GEX option chain, ~3.5 MB for SPY); gzip cuts that ~88% on the wire
+// with zero data loss. Scoped to res.json so streaming responses (SSE via
+// res.write) are never buffered. gzip runs async so the event loop stays free;
+// small bodies and clients that don't accept gzip pass straight through.
+const GZIP_JSON_MIN_BYTES = 1024;
+function gzipJsonResponses(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  const acceptsGzip = /\bgzip\b/i.test(
+    String(req.headers["accept-encoding"] ?? ""),
+  );
+  if (!acceptsGzip || req.method === "HEAD") {
+    next();
+    return;
+  }
+  const originalJson = res.json.bind(res);
+  res.json = (body?: unknown): express.Response => {
+    if (res.headersSent || res.getHeader("Content-Encoding")) {
+      return originalJson(body);
+    }
+    let payload: string;
+    try {
+      payload = JSON.stringify(body);
+    } catch {
+      return originalJson(body);
+    }
+    if (Buffer.byteLength(payload) < GZIP_JSON_MIN_BYTES) {
+      return originalJson(body);
+    }
+    res.setHeader("Vary", "Accept-Encoding");
+    zlib.gzip(payload, { level: 5 }, (error, compressed) => {
+      if (res.headersSent) {
+        return;
+      }
+      if (error) {
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(payload);
+        return;
+      }
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Content-Length", String(compressed.length));
+      res.end(compressed);
+    });
+    return res;
+  };
   next();
 }
 
@@ -133,6 +186,7 @@ app.use(cors());
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
 app.use(apiRouteAdmissionMiddleware);
+app.use(gzipJsonResponses);
 
 app.use("/api", router);
 
