@@ -42,14 +42,14 @@ export const GEX_GLOSSARY = Object.freeze({
   callWall: {
     label: "Call Wall",
     definition:
-      "The strike with the largest positive call gamma concentration.",
+      "The above-spot strike with the strongest positive net gamma concentration.",
     interpretation:
       "Acts as resistance: dealers sell into rallies near the wall to stay hedged. Breakouts above can squeeze.",
   },
   putWall: {
     label: "Put Wall",
     definition:
-      "The strike with the largest negative put gamma concentration.",
+      "The below-spot strike with the strongest negative net gamma concentration.",
     interpretation:
       "Acts as support: dealer buying defends the wall. Breakdowns below typically expand realized volatility.",
   },

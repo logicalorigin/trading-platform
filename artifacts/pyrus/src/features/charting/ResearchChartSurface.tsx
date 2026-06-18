@@ -2934,7 +2934,7 @@ const buildGexProjectionAutoscaleInfoProvider = ({
   };
 };
 
-const buildGexProjectionConeSvgOverlay = ({
+export const buildGexProjectionConeSvgOverlay = ({
   chart,
   series,
   model,
@@ -3119,7 +3119,7 @@ const buildGexProjectionConeSvgOverlay = ({
     innerPath: `${buildSvgPath(innerUpper, svgXBounds)} L ${buildSvgPath(innerLower, svgXBounds).replace(/^M /, "")} Z`,
     centerPath: buildSvgPath(center, svgXBounds),
     centerDots: projected.map((point) => ({
-      x: point.x,
+      x: clampProjectionCoordinate(point.x, svgXBounds.minX, svgXBounds.maxX),
       y: point.center,
       price:
         visiblePoints.find(
@@ -8298,7 +8298,7 @@ const ResearchChartSurfaceComponent = ({
     }
 
     try {
-      chartRef.current.priceScale("right", 0).setAutoScale?.(true);
+      chartRef.current.priceScale("right").setAutoScale?.(true);
     } catch (error) {
       console.warn("[pyrus] GEX projection autoscale update skipped", error);
     }
@@ -9500,7 +9500,7 @@ const ResearchChartSurfaceComponent = ({
     });
     volumeSeries.applyOptions({ visible: showVolume });
     try {
-      chartRef.current.priceScale("right", 0).applyOptions({
+      chartRef.current.priceScale("right").applyOptions({
         autoScale,
         invertScale,
         visible: showRightPriceScale,

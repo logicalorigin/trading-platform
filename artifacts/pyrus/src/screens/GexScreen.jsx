@@ -27,6 +27,7 @@ import {
   isFiniteNumber,
   normalizeGexResponseOptions,
   normalizeGexTicker,
+  resolveHeadlineZeroGamma,
   resolveSqueezeNarrative,
 } from "../features/gex/gexModel.js";
 import {
@@ -56,6 +57,7 @@ import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import {
   GEX_DASHBOARD_QUERY_REFETCH_MS,
   GEX_DASHBOARD_QUERY_STALE_MS,
+  useGexZeroGamma,
 } from "../features/gex/useGexZeroGamma.js";
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
 import { collectCoverageDataIssues } from "../features/platform/dataIssueModel.js";
@@ -1441,17 +1443,6 @@ export default function GexScreen({
   );
   const flowContext =
     gexData?.flowContextStatus === "ok" ? gexData.flowContext : null;
-  const signals = useMemo(
-    () => (metrics && spot != null ? computeSignals(metrics, spot) : []),
-    [metrics, spot],
-  );
-  const squeeze = useMemo(
-    () =>
-      metrics && spot != null && flowContext
-        ? computeSqueeze(metrics, spot, flowContext)
-        : null,
-    [flowContext, metrics, spot],
-  );
   const snapshots = gexData?.snapshots || [];
 
   const loading =
@@ -1483,6 +1474,29 @@ export default function GexScreen({
     (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
   ).length;
   const dataReady = Boolean(metrics && spot != null && filteredRows.length);
+  const zeroGammaQuery = useGexZeroGamma(ticker, {
+    enabled: Boolean(isVisible && dataReady),
+  });
+  const headlineZeroGamma = useMemo(
+    () => resolveHeadlineZeroGamma(metrics, zeroGammaQuery.data),
+    [metrics, zeroGammaQuery.data],
+  );
+  const displayMetrics = useMemo(
+    () => (metrics ? { ...metrics, zeroGamma: headlineZeroGamma } : null),
+    [headlineZeroGamma, metrics],
+  );
+  const signals = useMemo(
+    () =>
+      displayMetrics && spot != null ? computeSignals(displayMetrics, spot) : [],
+    [displayMetrics, spot],
+  );
+  const squeeze = useMemo(
+    () =>
+      displayMetrics && spot != null && flowContext
+        ? computeSqueeze(displayMetrics, spot, flowContext)
+        : null,
+    [displayMetrics, flowContext, spot],
+  );
   const routeDataSettled = Boolean(
     dataReady ||
       chainError ||
@@ -1874,8 +1888,12 @@ export default function GexScreen({
               />
               <MetricTile
                 label="Zero Gamma"
-                value={fmtPrice(metrics.zeroGamma)}
-                sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "—"}
+                value={fmtPrice(displayMetrics.zeroGamma)}
+                sub={
+                  displayMetrics.zeroGamma
+                    ? fmtPercent((displayMetrics.zeroGamma - spot) / spot)
+                    : "—"
+                }
                 color={CSS_COLOR.cyan}
                 glossaryKey="zeroGamma"
               />
@@ -2026,4 +2044,3 @@ const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
     </div>
   </div>
 );
-

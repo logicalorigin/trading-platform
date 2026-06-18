@@ -304,6 +304,44 @@ const findZeroGamma = (profile) => {
   return null;
 };
 
+const chooseNearestTie = (candidate, best, spot) => {
+  if (!best) return candidate;
+  const price = finiteOrNull(spot);
+  if (price == null) return best;
+  const candidateDistance = Math.abs(candidate.strike - price);
+  const bestDistance = Math.abs(best.strike - price);
+  return candidateDistance < bestDistance ? candidate : best;
+};
+
+const selectNetWallRow = (profile, spot, direction) => {
+  const price = finiteOrNull(spot);
+  const isCallWall = direction === "call";
+  const isNetCandidate = (row) =>
+    isCallWall ? row.netGex > 0 : row.netGex < 0;
+  const isSideCandidate = (row) =>
+    price == null
+      ? true
+      : isCallWall
+        ? row.strike >= price
+        : row.strike <= price;
+  const valueForRow = (row) => (isCallWall ? row.netGex : -row.netGex);
+
+  const findBest = (rows) =>
+    rows.reduce((best, row) => {
+      const currentValue = valueForRow(row);
+      const bestValue = best ? valueForRow(best) : -Infinity;
+      if (currentValue > bestValue) return row;
+      if (currentValue === bestValue) return chooseNearestTie(row, best, spot);
+      return best;
+    }, null);
+
+  return (
+    findBest(profile.filter((row) => isNetCandidate(row) && isSideCandidate(row))) ||
+    findBest(profile.filter(isNetCandidate)) ||
+    null
+  );
+};
+
 export const aggregateMetrics = (rows = [], spot) => {
   const profile = aggregateProfile(rows, spot);
   const callGex = profile.reduce((sum, row) => sum + row.callGex, 0);
@@ -311,14 +349,16 @@ export const aggregateMetrics = (rows = [], spot) => {
   const netGex = callGex + putGex;
   const totalGex = Math.abs(callGex) + Math.abs(putGex);
   const ratio = Math.abs(putGex) === 0 ? Infinity : callGex / Math.abs(putGex);
-  const callWallRow = profile.reduce(
+  const rawCallWallRow = profile.reduce(
     (best, row) => (row.callGex > (best?.callGex ?? -Infinity) ? row : best),
     null,
   );
-  const putWallRow = profile.reduce(
+  const rawPutWallRow = profile.reduce(
     (best, row) => (row.putGex < (best?.putGex ?? Infinity) ? row : best),
     null,
   );
+  const callWallRow = selectNetWallRow(profile, spot, "call") || rawCallWallRow;
+  const putWallRow = selectNetWallRow(profile, spot, "put") || rawPutWallRow;
   const peakGexRow = profile.reduce((best, row) => {
     const current = Math.abs(row.callGex) + Math.abs(row.putGex);
     const previous = best ? Math.abs(best.callGex) + Math.abs(best.putGex) : -1;
@@ -339,6 +379,12 @@ export const aggregateMetrics = (rows = [], spot) => {
     putOi: profile.reduce((sum, row) => sum + row.putOi, 0),
     peakGexStrike: peakGexRow?.strike ?? null,
   };
+};
+
+export const resolveHeadlineZeroGamma = (metrics, zeroGammaData) => {
+  const serverZeroGamma = finiteOrNull(zeroGammaData?.zeroGamma);
+  if (serverZeroGamma != null) return serverZeroGamma;
+  return finiteOrNull(metrics?.zeroGamma);
 };
 
 const expirationDayDistance = (option, now = new Date()) => {

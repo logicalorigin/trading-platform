@@ -5,7 +5,7 @@ import {
   type HighBetaUniversePreview,
 } from "./high-beta-universe";
 import {
-  enqueueMarketDataJob,
+  enqueueMarketDataJobs,
   isMarketDataIngestDatabaseConfigured,
   type EnqueueMarketDataJobInput,
   type EnqueueMarketDataJobResult,
@@ -17,22 +17,12 @@ const DEFAULT_GEX_UNIVERSE_LIMIT = 500;
 const MAX_GEX_UNIVERSE_LIMIT = 500;
 const DEFAULT_GEX_UNIVERSE_BATCH_SIZE = 25;
 const MAX_GEX_UNIVERSE_BATCH_SIZE = 100;
-const DEFAULT_GEX_UNIVERSE_ENQUEUE_CONCURRENCY = 25;
-const MAX_GEX_UNIVERSE_ENQUEUE_CONCURRENCY = 50;
 const GEX_UNIVERSE_PROJECTION_MAX_EXPIRATIONS = 8;
 const GEX_UNIVERSE_PROJECTION_STRIKES_AROUND_MONEY = 8;
 const GEX_UNIVERSE_PROJECTION_EXPIRATION_UTC_HOUR = 20;
 const DEFAULT_GEX_UNIVERSE_STALE_AFTER_MS = readPositiveIntegerEnv(
   "GEX_UNIVERSE_REFRESH_STALE_AFTER_MS",
   readPositiveIntegerEnv("GEX_SNAPSHOT_MAX_AGE_MS", 60_000),
-);
-const GEX_UNIVERSE_ENQUEUE_CONCURRENCY = normalizePositiveInteger(
-  readPositiveIntegerEnv(
-    "GEX_UNIVERSE_REFRESH_ENQUEUE_CONCURRENCY",
-    DEFAULT_GEX_UNIVERSE_ENQUEUE_CONCURRENCY,
-  ),
-  DEFAULT_GEX_UNIVERSE_ENQUEUE_CONCURRENCY,
-  MAX_GEX_UNIVERSE_ENQUEUE_CONCURRENCY,
 );
 
 const GEX_UNIVERSE_REFRESH_JOB_KINDS = [
@@ -207,9 +197,9 @@ export type RefreshGexUniverseSnapshotsDependencies = {
   readInventory?: (
     symbols: string[],
   ) => Promise<GexUniverseRefreshInventory>;
-  enqueueMarketDataJob?: (
-    input: EnqueueMarketDataJobInput,
-  ) => Promise<EnqueueMarketDataJobResult>;
+  enqueueMarketDataJobs?: (
+    inputs: EnqueueMarketDataJobInput[],
+  ) => Promise<EnqueueMarketDataJobResult[]>;
 };
 
 type DbModule = {
@@ -1184,8 +1174,8 @@ async function enqueueGexUniverseRefreshJobs(input: {
   reason: string;
   now: Date;
   enqueue: (
-    job: EnqueueMarketDataJobInput,
-  ) => Promise<EnqueueMarketDataJobResult>;
+    jobs: EnqueueMarketDataJobInput[],
+  ) => Promise<EnqueueMarketDataJobResult[]>;
 }): Promise<{
   enqueuedJobCount: number;
   enqueueFailures: RefreshGexUniverseSnapshotsResult["enqueueFailures"];
@@ -1209,30 +1199,22 @@ async function enqueueGexUniverseRefreshJobs(input: {
       })),
   );
 
-  for (
-    let offset = 0;
-    offset < jobs.length;
-    offset += GEX_UNIVERSE_ENQUEUE_CONCURRENCY
-  ) {
-    const chunk = jobs.slice(offset, offset + GEX_UNIVERSE_ENQUEUE_CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map(async (job) => ({
-        job,
-        result: await input.enqueue(job),
-      })),
-    );
-    for (const { job, result } of results) {
-      if (result.queued) {
-        enqueuedJobCount += 1;
-        continue;
-      }
-      enqueueFailures.push({
-        symbol: job.symbol,
-        kind: job.kind,
-        reason: result.reason ?? "enqueue_failed",
-        dedupeKey: result.dedupeKey,
-      });
+  // Single bulk enqueue holds at most one pool connection for the whole
+  // refresh, instead of one connection per job via Promise.all.
+  const results = await input.enqueue(jobs);
+  for (let i = 0; i < jobs.length; i += 1) {
+    const job = jobs[i]!;
+    const result = results[i];
+    if (result?.queued) {
+      enqueuedJobCount += 1;
+      continue;
     }
+    enqueueFailures.push({
+      symbol: job.symbol,
+      kind: job.kind,
+      reason: result?.reason ?? "enqueue_failed",
+      dedupeKey: result?.dedupeKey ?? "",
+    });
   }
 
   return { enqueuedJobCount, enqueueFailures };
@@ -1274,7 +1256,7 @@ export async function refreshGexUniverseSnapshots(
     plan,
     reason: input.reason?.trim() || "gex_universe_refresh",
     now,
-    enqueue: dependencies.enqueueMarketDataJob ?? enqueueMarketDataJob,
+    enqueue: dependencies.enqueueMarketDataJobs ?? enqueueMarketDataJobs,
   });
 
   return {

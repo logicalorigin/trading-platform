@@ -37,6 +37,10 @@ import {
   type GexProjectionResponse,
   type GexProjectionSourceInput,
 } from "./gex-projection";
+import {
+  buildGexZeroGammaSimulation,
+  type GexZeroGammaSimulation,
+} from "./gex-zero-gamma-simulation";
 import { fetchTreasuryYieldCurveRates } from "./treasury-yield-curve";
 
 export type GexOptionRow = {
@@ -148,6 +152,7 @@ export type GexZeroGammaResponse = {
   zeroGamma: number | null;
   asOf: string | null;
   isStale: boolean;
+  simulation?: GexZeroGammaSimulation | null;
   source: {
     provider: GexResponse["source"]["provider"];
     status: GexResponse["source"]["status"];
@@ -1756,6 +1761,7 @@ function buildUnavailableGexZeroGammaData(
     zeroGamma: null,
     asOf: null,
     isStale: true,
+    simulation: null,
     source: {
       provider: "ibkr",
       status: "unavailable",
@@ -1770,14 +1776,27 @@ function buildGexZeroGammaDataFromDashboard(
   data: GexResponse,
 ): GexZeroGammaResponse {
   const spot = finiteOrNull(data.spot);
-  const zeroGamma = spot != null ? findGexZeroGamma(data.options, spot) : null;
+  const asOf = resolveGexZeroGammaAsOf(data);
+  const simulation =
+    spot != null && asOf
+      ? buildGexZeroGammaSimulation({
+          ticker: data.ticker,
+          spot,
+          asOf,
+          options: data.options,
+        })
+      : null;
+  const legacyZeroGamma =
+    spot != null ? findGexZeroGamma(data.options, spot) : null;
+  const zeroGamma = simulation?.zeroGamma ?? legacyZeroGamma;
 
   return {
     ticker: data.ticker,
     spot,
     zeroGamma,
-    asOf: resolveGexZeroGammaAsOf(data),
+    asOf,
     isStale: Boolean(data.isStale),
+    simulation,
     source: {
       provider: data.source.provider,
       status: data.source.status,
