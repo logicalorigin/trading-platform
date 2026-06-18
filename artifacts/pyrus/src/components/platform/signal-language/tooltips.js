@@ -23,9 +23,6 @@ export const freshnessTooltip = ({
   return `Signal fired ${Math.round(bars)} bars ago. Goes stale at ${denom} bars.`;
 };
 
-export const confluenceTooltip = ({ agreeCount = 0, total = 3 } = {}) =>
-  `${agreeCount}/${total} timeframes agree.`;
-
 export const spreadTooltip = ({ spreadPct } = {}) => {
   const value = finiteNumber(spreadPct);
   return value == null

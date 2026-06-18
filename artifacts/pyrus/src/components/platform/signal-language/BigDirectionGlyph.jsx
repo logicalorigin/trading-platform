@@ -10,7 +10,7 @@ const clampRatio = (value) => {
   return Math.max(0, Math.min(1, numeric));
 };
 
-export const directionGlyphTone = (direction, tone) => {
+const directionGlyphTone = (direction, tone) => {
   if (tone) return tone;
   if (direction === "buy") return getTone("buy");
   if (direction === "sell") return getTone("sell");

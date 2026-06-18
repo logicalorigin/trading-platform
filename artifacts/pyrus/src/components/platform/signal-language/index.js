@@ -1,5 +1,4 @@
-export { BigDirectionGlyph, directionGlyphTone } from "./BigDirectionGlyph.jsx";
-export { ConfluenceChip } from "./ConfluenceChip.jsx";
+export { BigDirectionGlyph } from "./BigDirectionGlyph.jsx";
 export { SignalDots } from "./SignalDots.jsx";
 export {
   SpreadGauge,

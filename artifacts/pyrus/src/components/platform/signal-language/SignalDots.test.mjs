@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   resolveSignalDotGlyph,
@@ -8,6 +11,16 @@ import {
 import { CSS_COLOR, cssColorMix } from "../../../lib/uiTokens.jsx";
 
 const NEUTRAL_TONE = cssColorMix(CSS_COLOR.textDim, 58);
+const SIGNAL_LANGUAGE_DIR = dirname(fileURLToPath(import.meta.url));
+
+test("signal-language public surface excludes retired confluence helpers", () => {
+  const indexSource = readFileSync(join(SIGNAL_LANGUAGE_DIR, "index.js"), "utf8");
+  const tooltipSource = readFileSync(join(SIGNAL_LANGUAGE_DIR, "tooltips.js"), "utf8");
+
+  assert.doesNotMatch(indexSource, /\bConfluenceChip\b/);
+  assert.doesNotMatch(indexSource, /\bdirectionGlyphTone\b/);
+  assert.doesNotMatch(tooltipSource, /\bconfluenceTooltip\b/);
+});
 
 test("signal dots mark aged display signals for the amber attention ring", () => {
   const meta = resolveSignalDotHydrationMeta({
