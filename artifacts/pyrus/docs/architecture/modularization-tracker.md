@@ -84,7 +84,7 @@ This replan is based on current workspace files only. No separate untracked tran
 - Shared chart hydration helpers are now extracted: `buildChartBarScopeKey`, measured chart-model construction, progressive bar limits, visible-range expansion, and chart request timing.
 - `MultiChartGrid` now lives under `src/features/market/MultiChartGrid.jsx`; Phase 4 should split its chart runtime helpers, grid track sizing, and premium-flow overlay model into narrower chart/market modules.
 - Keep flow inspection option-chart smoke coverage around the extracted `ContractDetailInline`.
-- Trade panels now live under `src/features/trade/TradePanels.jsx`; Phase 4 should split that module into equity chart, order ticket, L2/flow, positions/orders, and shared broker-confirmation helpers.
+- Trade panels now live as dedicated modules under `src/features/trade`; Phase 4 should keep equity chart, order ticket, L2/flow, positions/orders, and shared broker-confirmation helpers split by responsibility.
 - Success gate: `PyrusPlatform.jsx` owns platform orchestration only; chart/trade components live under `features/charting`, `features/market`, `features/flow`, and `features/trade`.
 - Current progress:
   - Moved broker action confirmation UI and timeout/error formatting into `src/features/trade/BrokerActionConfirmDialog.jsx`.
@@ -94,7 +94,7 @@ This replan is based on current workspace files only. No separate untracked tran
   - Moved market grid track sizing/session persistence into `src/features/market/marketGridTrackState.js`, including the missing `clampNumber` dependency found during the audit.
   - Split market mini-chart rendering into `src/features/market/MiniChartCell.jsx` and premium-flow overlay rendering into `src/features/market/MiniChartPremiumFlowIndicator.jsx`; `MultiChartGrid.jsx` now owns orchestration.
   - Moved broker execution/order helpers into `src/features/trade/tradeBrokerRequests.js`, fixing the missing execution/status helper risks found during the audit.
-  - Split `src/features/trade/TradePanels.jsx` into `PayoffDiagram.jsx`, `TradeOrderTicket.jsx`, `TradeL2Panel.jsx`, `TradePositionsPanel.jsx`, and `TradeEquityPanel.jsx`; `TradePanels.jsx` is now a compatibility barrel.
+  - Split `src/features/trade/TradePanels.jsx` into `PayoffDiagram.jsx`, `TradeOrderTicket.jsx`, `TradeL2Panel.jsx`, `TradePositionsPanel.jsx`, and `TradeEquityPanel.jsx`; the temporary compatibility barrel has since been removed after source imports moved direct.
   - Removed stale embedded trade option chart/chain code that was no longer exported after the Phase 3 screen move.
   - Follow-up audit fixed runtime-only missing imports/helpers in the split modules: trade mutations/value flash/platform JSON requests, market grid viewport persistence helpers, mini-chart study normalization, and premium-flow symbol/time formatting.
   - Moved `platformJsonRequest` into `src/features/platform/platformJsonRequest.js` and re-exported it from `PyrusPlatform.jsx` to avoid duplicate request-helper drift.
