@@ -84,12 +84,14 @@ import {
 } from "../features/account/accountPositionTypes";
 import {
   ACCOUNT_RANGES,
+  normalizeAccountRange,
+} from "./account/accountRanges";
+import {
   Panel,
   Pill,
   formatAccountMoney,
   formatAccountPercent,
   formatNumber,
-  normalizeAccountRange,
 } from "./account/accountUtils";
 import {
   buildAccountAnalysisQueryParams,

@@ -11,8 +11,8 @@ import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
 import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
+import { ACCOUNT_RANGES } from "./accountRanges";
 import {
-  ACCOUNT_RANGES,
   EmptyState,
   Panel,
   Pill,

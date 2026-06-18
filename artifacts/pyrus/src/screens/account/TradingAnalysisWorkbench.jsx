@@ -43,8 +43,8 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
+import { ACCOUNT_RANGES } from "./accountRanges";
 import {
-  ACCOUNT_RANGES,
   Panel,
   formatAccountMoney,
   formatAccountPercent,

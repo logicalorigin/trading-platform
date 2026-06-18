@@ -22,8 +22,6 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import { SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
 
-export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
-
 const NUMBER_FORMATTER_CACHE_LIMIT = 64;
 const numberFormatterCache = new Map();
 

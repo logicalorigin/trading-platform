@@ -44,3 +44,13 @@ test("account collapsible storage uses the current prefix once", () => {
     "Expected account collapsible storage to read the current key directly",
   );
 });
+
+test("account range helpers stay owned by accountRanges", () => {
+  const accountUtilsSource = readLocalSource("./accountUtils.jsx");
+
+  assert.doesNotMatch(
+    accountUtilsSource,
+    /export\s*\{\s*ACCOUNT_RANGES,\s*normalizeAccountRange\s*\}\s*from\s*["']\.\/accountRanges["']/,
+    "Expected accountUtils to avoid re-exporting account range helpers",
+  );
+});
