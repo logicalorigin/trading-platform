@@ -440,6 +440,182 @@ export const maxPainStrike = (rows = []) => {
   return bestStrike;
 };
 
+// --- Delta Exposure (DEX) -------------------------------------------------
+// Massive supplies per-contract delta; the page historically discarded it.
+// DEX is the directional analog of GEX: dollar delta per 1-point move,
+// weighted by open interest. Delta carries its natural sign (calls positive,
+// puts negative), so netDex reads as net market delta positioning. (We do NOT
+// apply a dealer-short flip here — that convention is provider-specific; the
+// axis is labeled "net delta exposure" so the reading is unambiguous.)
+export const contractDex = (option, spot) => {
+  const price = finiteOrNull(spot);
+  const delta = finiteOrNull(option?.delta);
+  if (!price || price <= 0 || delta == null) return 0;
+  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  return delta * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier * price;
+};
+
+export const aggregateDexProfile = (rows = [], spot) => {
+  const map = new Map();
+  rows.forEach((option) => {
+    const strike = finiteOrNull(option.strike);
+    if (!isFiniteNumber(strike) || finiteOrNull(option.delta) == null) return;
+    const current =
+      map.get(strike) || { strike, callDex: 0, putDex: 0, netDex: 0 };
+    const dex = contractDex(option, spot);
+    if (option.cp === "C") current.callDex += dex;
+    else current.putDex += dex;
+    current.netDex = current.callDex + current.putDex;
+    map.set(strike, current);
+  });
+  return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
+};
+
+// Zero-DEX: interpolated strike where cumulative net delta exposure flips sign.
+export const findZeroDex = (profile = []) => {
+  if (!profile.length) return null;
+  let previousStrike = profile[0].strike;
+  let previousCum = profile[0].netDex;
+  if (previousCum === 0) return previousStrike;
+  for (let index = 1; index < profile.length; index += 1) {
+    const row = profile[index];
+    const nextCum = previousCum + row.netDex;
+    if (
+      (previousCum < 0 && nextCum >= 0) ||
+      (previousCum > 0 && nextCum <= 0) ||
+      nextCum === 0
+    ) {
+      const denominator = Math.abs(previousCum) + Math.abs(nextCum);
+      const t = denominator > 0 ? Math.abs(previousCum) / denominator : 0;
+      return previousStrike + t * (row.strike - previousStrike);
+    }
+    previousStrike = row.strike;
+    previousCum = nextCum;
+  }
+  return null;
+};
+
+export const aggregateDexMetrics = (rows = [], spot) => {
+  const profile = aggregateDexProfile(rows, spot);
+  const callDex = profile.reduce((sum, row) => sum + row.callDex, 0);
+  const putDex = profile.reduce((sum, row) => sum + row.putDex, 0);
+  return {
+    profile,
+    callDex,
+    putDex,
+    netDex: callDex + putDex,
+    zeroDex: findZeroDex(profile),
+  };
+};
+
+// --- Implied volatility (skew + term structure) ---------------------------
+// impliedVol defaults to 0 during normalization, so treat <= 0 as missing.
+const usableIv = (value) => {
+  const iv = finiteOrNull(value);
+  return iv != null && iv > 0 ? iv : null;
+};
+
+// Per-strike call/put IV for a single expiration (the vol smile / skew).
+export const ivSkewByStrike = (rows = [], expirationDate = null) => {
+  const map = new Map();
+  rows.forEach((option) => {
+    if (expirationDate && option.expirationDate !== expirationDate) return;
+    const strike = finiteOrNull(option.strike);
+    const iv = usableIv(option.impliedVol);
+    if (!isFiniteNumber(strike) || iv == null) return;
+    const current = map.get(strike) || { strike, callIv: null, putIv: null };
+    if (option.cp === "C") current.callIv = iv;
+    else current.putIv = iv;
+    map.set(strike, current);
+  });
+  return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
+};
+
+// ATM implied vol per expiration across the chain (the vol term structure).
+export const ivTermStructure = (rows = [], spot, now = new Date()) => {
+  const price = finiteOrNull(spot);
+  const byExpiry = new Map();
+  rows.forEach((option) => {
+    const iv = usableIv(option.impliedVol);
+    const strike = finiteOrNull(option.strike);
+    if (iv == null || !isFiniteNumber(strike) || !option.expirationDate) return;
+    const key = option.expirationDate;
+    const group =
+      byExpiry.get(key) || {
+        key,
+        days: expirationDayDistance(option, now),
+        contracts: [],
+      };
+    group.contracts.push({ strike, iv });
+    byExpiry.set(key, group);
+  });
+  return Array.from(byExpiry.values())
+    .map((group) => {
+      const anchor = price && price > 0 ? price : group.contracts[0]?.strike;
+      const atm = group.contracts.reduce(
+        (best, row) =>
+          best == null ||
+          Math.abs(row.strike - anchor) < Math.abs(best.strike - anchor)
+            ? row
+            : best,
+        null,
+      );
+      return {
+        key: group.key,
+        days: group.days,
+        label: group.days === 0 ? "0DTE" : `${group.days}d`,
+        atmIv: atm?.iv ?? null,
+        atmStrike: atm?.strike ?? null,
+      };
+    })
+    .filter((row) => row.atmIv != null)
+    .sort((left, right) => left.days - right.days);
+};
+
+// --- Volume profile (today's traded volume vs resting OI) -----------------
+// NOTE: massive `volume` is daily/cumulative traded volume, NOT a buy/sell
+// flow split — do not present it as directional flow.
+export const volumeByStrike = (rows = []) => {
+  const map = new Map();
+  rows.forEach((option) => {
+    const strike = finiteOrNull(option.strike);
+    const volume = finiteOrNull(option.volume);
+    if (!isFiniteNumber(strike) || volume == null) return;
+    const current =
+      map.get(strike) || { strike, callVol: 0, putVol: 0, totalVol: 0 };
+    if (option.cp === "C") current.callVol += Math.max(0, volume);
+    else current.putVol += Math.max(0, volume);
+    current.totalVol = current.callVol + current.putVol;
+    map.set(strike, current);
+  });
+  return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
+};
+
+export const volumeMetrics = (rows = []) => {
+  let callVol = 0;
+  let putVol = 0;
+  let totalOi = 0;
+  let hasVolume = false;
+  rows.forEach((option) => {
+    const volume = finiteOrNull(option.volume);
+    if (volume != null) {
+      hasVolume = true;
+      if (option.cp === "C") callVol += Math.max(0, volume);
+      else putVol += Math.max(0, volume);
+    }
+    totalOi += Math.max(0, finiteOrZero(option.openInterest));
+  });
+  const totalVol = callVol + putVol;
+  return {
+    hasVolume,
+    callVol,
+    putVol,
+    totalVol,
+    putCallVolumeRatio: callVol > 0 ? putVol / callVol : null,
+    volOiRatio: totalOi > 0 ? totalVol / totalOi : null,
+  };
+};
+
 const formatPriceForNarrative = (value) => {
   if (!isFiniteNumber(value)) return "?";
   return `$${value.toFixed(value >= 100 ? 2 : 3)}`;

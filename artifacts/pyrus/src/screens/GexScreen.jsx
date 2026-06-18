@@ -104,6 +104,18 @@ const LazyOiChart = lazy(() =>
 const LazyIntradayCard = lazy(() =>
   import("./gex/GexCharts.jsx").then((m) => ({ default: m.IntradayCard })),
 );
+const LazyDexProfileChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.DexProfileChart })),
+);
+const LazyIvSkewChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.IvSkewChart })),
+);
+const LazyIvTermChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.IvTermChart })),
+);
+const LazyVolumeProfileChart = lazy(() =>
+  import("./gex/GexCharts.jsx").then((m) => ({ default: m.VolumeProfileChart })),
+);
 const GexChartFallback = ({ minHeight }) => (
   <div style={{ minHeight: dim(minHeight) }} aria-hidden="true" />
 );
@@ -1894,6 +1906,16 @@ export default function GexScreen({
                     />
                   </Suspense>
                 </div>
+                <div style={{ minWidth: 0 }}>
+                  <Suspense fallback={<GexChartFallback minHeight={340} />}>
+                    <LazyDexProfileChart
+                      rows={filteredRows}
+                      spot={spot}
+                      callWall={metrics.callWall}
+                      putWall={metrics.putWall}
+                    />
+                  </Suspense>
+                </div>
                 <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
                   <Suspense fallback={<GexChartFallback minHeight={180} />}>
                     <LazyIntradayCard snapshots={snapshots} />
@@ -1922,6 +1944,9 @@ export default function GexScreen({
                 <Suspense fallback={<GexChartFallback minHeight={260} />}>
                   <LazyOiChart rows={filteredRows} spot={spot} />
                 </Suspense>
+                <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                  <LazyVolumeProfileChart rows={filteredRows} spot={spot} />
+                </Suspense>
               </div>
               {view === "table" ? (
                 <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
@@ -1932,6 +1957,23 @@ export default function GexScreen({
                   <SqueezeCard squeeze={squeeze} source={gexData?.source} />
                 </div>
               ) : null}
+            </div>
+
+            <SectionHeading title="Implied Volatility" />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                gap: sp(10),
+                alignItems: "start",
+              }}
+            >
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyIvSkewChart rows={filteredRows} spot={spot} />
+              </Suspense>
+              <Suspense fallback={<GexChartFallback minHeight={260} />}>
+                <LazyIvTermChart rows={filteredRows} spot={spot} />
+              </Suspense>
             </div>
           </>
         )}

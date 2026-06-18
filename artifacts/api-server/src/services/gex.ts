@@ -1279,6 +1279,13 @@ function compactPersistedGexOption(row: GexOptionRow): GexOptionRow | null {
     bid: finiteOrZero(row.bid),
     ask: finiteOrZero(row.ask),
     multiplier,
+    // Pass through traded volume (massive populates it ~84% of rows) so the GEX
+    // page can render the volume profile / Vol-OI ratio. Preserve missing as
+    // undefined rather than coercing to 0 so coverage stays accurate.
+    volume:
+      typeof row.volume === "number" && Number.isFinite(row.volume)
+        ? row.volume
+        : undefined,
   };
 }
 

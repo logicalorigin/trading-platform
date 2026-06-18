@@ -13,6 +13,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -32,10 +34,14 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import {
+  aggregateDexMetrics,
   buildIntradaySnapshots,
   formatGexStrikePrice,
   gexByExpiry,
+  ivSkewByStrike,
+  ivTermStructure,
   oiByStrike,
+  volumeByStrike,
 } from "../../features/gex/gexModel.js";
 import {
   ChartShell,
@@ -447,4 +453,328 @@ const IntradayCard = ({ snapshots }) => {
   );
 };
 
-export { StrikeProfileChart, ExpiryChart, OiChart, IntradayCard };
+// --- Delta Exposure (DEX) profile -----------------------------------------
+const DexProfileChart = ({ rows, spot, callWall, putWall }) => {
+  const [range, setRange] = useState("near");
+  const { profile, zeroDex } = useMemo(
+    () => aggregateDexMetrics(rows, spot),
+    [rows, spot],
+  );
+  const data = useMemo(
+    () =>
+      range === "all"
+        ? profile
+        : profile.filter((row) => Math.abs((row.strike - spot) / spot) <= 0.05),
+    [profile, range, spot],
+  );
+
+  return (
+    <ChartShell
+      title="Delta Exposure (DEX)"
+      subtitle="Net dealer delta by strike — directional analog of GEX (Δ·OI·spot)"
+      right={
+        <SegmentControl
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: "near", label: "Near" },
+            { value: "all", label: "All" },
+          ]}
+        />
+      }
+      minHeight={340}
+    >
+      <MeasuredChartFrame
+        height={286}
+        minHeight={286}
+        placeholderLabel="Preparing delta exposure"
+        testId="gex-dex-profile-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="strike"
+              tickFormatter={formatGexStrikePrice}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              minTickGap={18}
+            />
+            <YAxis
+              tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{formatGexStrikePrice(row.strike)}</b>
+                    <div style={{ color: GEX_CALL_TONE }}>Call Δ {fmtCurrency(row.callDex)}</div>
+                    <div style={{ color: GEX_PUT_TONE }}>Put Δ {fmtCurrency(row.putDex)}</div>
+                    <div style={{ color: toneForNetGex(row.netDex) }}>
+                      Net Δ {fmtCurrency(row.netDex)}
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <ReferenceLine
+              x={Math.round(spot)}
+              stroke={CSS_COLOR.cyan}
+              strokeDasharray="4 4"
+              label={{ value: "Spot", fill: CSS_COLOR.cyan, fontSize: fs(10), position: "top" }}
+            />
+            {zeroDex != null ? (
+              <ReferenceLine
+                x={Math.round(zeroDex)}
+                stroke={CSS_COLOR.text}
+                strokeDasharray="2 4"
+                label={{ value: "0-DEX", fill: CSS_COLOR.text, fontSize: fs(10), position: "insideTopRight" }}
+              />
+            ) : null}
+            <Bar dataKey="netDex" isAnimationActive={false}>
+              {data.map((row) => (
+                <Cell
+                  key={row.strike}
+                  fill={toneForNetGex(row.netDex)}
+                  stroke={
+                    row.strike === callWall || row.strike === putWall
+                      ? CSS_COLOR.text
+                      : "transparent"
+                  }
+                  strokeWidth={row.strike === callWall || row.strike === putWall ? 2 : 0}
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
+// --- Implied volatility skew (front-month smile) --------------------------
+const IvSkewChart = ({ rows, spot }) => {
+  const { data, expirationLabel } = useMemo(() => {
+    // Default to the nearest expiration with IV coverage (the front-month smile).
+    const expirations = Array.from(
+      new Set(rows.map((row) => row.expirationDate).filter(Boolean)),
+    ).sort();
+    const nearest = expirations[0] || null;
+    return {
+      data: ivSkewByStrike(rows, nearest),
+      expirationLabel: nearest || "—",
+    };
+  }, [rows]);
+
+  return (
+    <ChartShell
+      title="IV Skew"
+      subtitle={`Implied vol smile by strike · ${expirationLabel}`}
+    >
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing IV skew"
+        testId="gex-iv-skew-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="strike"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={formatGexStrikePrice}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              minTickGap={24}
+            />
+            <YAxis
+              tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              width={38}
+            />
+            <Tooltip
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{formatGexStrikePrice(row.strike)}</b>
+                    {row.callIv != null ? (
+                      <div style={{ color: GEX_CALL_TONE }}>Call IV {(row.callIv * 100).toFixed(1)}%</div>
+                    ) : null}
+                    {row.putIv != null ? (
+                      <div style={{ color: GEX_PUT_TONE }}>Put IV {(row.putIv * 100).toFixed(1)}%</div>
+                    ) : null}
+                  </div>
+                );
+              }}
+            />
+            {spot ? (
+              <ReferenceLine x={Math.round(spot)} stroke={CSS_COLOR.cyan} strokeDasharray="4 4" />
+            ) : null}
+            <Line type="monotone" dataKey="callIv" stroke={GEX_CALL_TONE} dot={false} strokeWidth={1.5} isAnimationActive={false} connectNulls />
+            <Line type="monotone" dataKey="putIv" stroke={GEX_PUT_TONE} dot={false} strokeWidth={1.5} isAnimationActive={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
+// --- Implied volatility term structure (ATM IV per expiry) ----------------
+const IvTermChart = ({ rows, spot }) => {
+  const data = useMemo(() => ivTermStructure(rows, spot), [rows, spot]);
+  return (
+    <ChartShell
+      title="IV Term Structure"
+      subtitle="ATM implied vol across expirations (contango / backwardation)"
+    >
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing IV term structure"
+        testId="gex-iv-term-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              width={38}
+            />
+            <Tooltip
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{row.label}</b>
+                    <div>ATM IV {(row.atmIv * 100).toFixed(1)}%</div>
+                    <div style={{ color: CSS_COLOR.textSec }}>
+                      {formatGexStrikePrice(row.atmStrike)}
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="atmIv"
+              stroke={CSS_COLOR.accent}
+              fill={CSS_COLOR.accent}
+              fillOpacity={0.18}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
+// --- Volume profile (today's traded volume by strike) ---------------------
+const VolumeProfileChart = ({ rows, spot }) => {
+  const [range, setRange] = useState("near");
+  const allRows = useMemo(() => volumeByStrike(rows), [rows]);
+  const data = useMemo(
+    () =>
+      range === "all"
+        ? allRows
+        : allRows.filter((row) => Math.abs((row.strike - spot) / spot) <= 0.05),
+    [allRows, range, spot],
+  );
+
+  return (
+    <ChartShell
+      title="Volume Profile"
+      subtitle="Today's traded contract volume by strike (not buy/sell flow)"
+      right={
+        <SegmentControl
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: "near", label: "Near" },
+            { value: "all", label: "All" },
+          ]}
+        />
+      }
+    >
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing volume profile"
+        testId="gex-volume-profile-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="strike"
+              tickFormatter={formatGexStrikePrice}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+              minTickGap={18}
+            />
+            <YAxis
+              tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <ReferenceLine x={Math.round(spot)} stroke={CSS_COLOR.cyan} strokeDasharray="4 4" />
+            <Tooltip
+              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{formatGexStrikePrice(row.strike)}</b>
+                    <div style={{ color: GEX_CALL_TONE }}>Call Vol {fmtNumber(row.callVol)}</div>
+                    <div style={{ color: GEX_PUT_TONE }}>Put Vol {fmtNumber(row.putVol)}</div>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="callVol" fill={GEX_CALL_TONE} stackId="vol" isAnimationActive={false} />
+            <Bar dataKey="putVol" fill={GEX_PUT_TONE} stackId="vol" isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
+    </ChartShell>
+  );
+};
+
+export {
+  StrikeProfileChart,
+  ExpiryChart,
+  OiChart,
+  IntradayCard,
+  DexProfileChart,
+  IvSkewChart,
+  IvTermChart,
+  VolumeProfileChart,
+};
