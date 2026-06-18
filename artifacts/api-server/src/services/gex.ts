@@ -268,7 +268,6 @@ let gexChartProjectionSnapshotWaitMsForTests: number | null = null;
 export type GexDashboardHttpCacheMetadata = {
   ticker: string;
   eTag: string;
-  lastModified: string;
 };
 
 export type GexDashboardHttpCacheEntry = GexDashboardHttpCacheMetadata & {
@@ -293,18 +292,12 @@ function buildGexDashboardETag(data: GexResponse): string {
   return `W/"gex-${digest}"`;
 }
 
-function buildGexDashboardLastModified(data: GexResponse): string {
-  const timestamp = Date.parse(data.timestamp);
-  return new Date(Number.isFinite(timestamp) ? timestamp : Date.now()).toUTCString();
-}
-
 export function buildGexDashboardHttpCacheMetadata(
   data: GexResponse,
 ): GexDashboardHttpCacheMetadata {
   return {
     ticker: data.ticker,
     eTag: buildGexDashboardETag(data),
-    lastModified: buildGexDashboardLastModified(data),
   };
 }
 
@@ -333,7 +326,6 @@ export function getCachedGexDashboardHttpCacheMetadata(
   return {
     ticker: entry.ticker,
     eTag: entry.eTag,
-    lastModified: entry.lastModified,
   };
 }
 

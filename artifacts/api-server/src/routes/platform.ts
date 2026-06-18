@@ -774,12 +774,10 @@ function setGexDashboardHttpCacheHeaders(
   res: Response,
   metadata: {
     eTag: string;
-    lastModified: string;
   },
 ): void {
   res.setHeader("Cache-Control", "private, max-age=0, must-revalidate, no-transform");
   res.setHeader("ETag", metadata.eTag);
-  res.setHeader("Last-Modified", metadata.lastModified);
   addVaryHeader(res, "Accept-Encoding");
 }
 
@@ -2166,7 +2164,6 @@ router.get("/gex/:underlying", async (req, res) => {
       parsedGexDashboardResponses.has(cachedEntry.data) &&
       isHttpResourceNotModified({
         etag: cachedEntry.eTag,
-        lastModified: cachedEntry.lastModified,
         ifNoneMatch: req.get("if-none-match"),
         ifModifiedSince: req.get("if-modified-since"),
       })
@@ -2190,7 +2187,6 @@ router.get("/gex/:underlying", async (req, res) => {
     responseEntry?.data === rawData &&
     isHttpResourceNotModified({
       etag: responseMetadata.eTag,
-      lastModified: responseMetadata.lastModified,
       ifNoneMatch: req.get("if-none-match"),
       ifModifiedSince: req.get("if-modified-since"),
     })

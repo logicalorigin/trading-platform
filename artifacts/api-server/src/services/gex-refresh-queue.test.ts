@@ -193,7 +193,6 @@ test("cached GEX dashboard exposes stable HTTP validator metadata while fresh", 
   assert.ok(metadata);
   assert.equal(metadata.ticker, "QQQ");
   assert.match(metadata.eTag, /^W\/"gex-[A-Za-z0-9_-]+"$/);
-  assert.equal(metadata.lastModified, "Wed, 17 Jun 2026 16:35:48 GMT");
   assert.equal(snapshotReads, 1);
 
   const repeated = getCachedGexDashboardHttpCacheMetadata("QQQ");
@@ -220,7 +219,6 @@ test("stale returned GEX dashboard can still derive HTTP validator metadata", ()
   const metadata = buildGexDashboardHttpCacheMetadata(stale);
   assert.equal(metadata.ticker, "QQQ");
   assert.match(metadata.eTag, /^W\/"gex-[A-Za-z0-9_-]+"$/);
-  assert.equal(metadata.lastModified, "Wed, 17 Jun 2026 16:35:48 GMT");
   assert.notEqual(
     metadata.eTag,
     buildGexDashboardHttpCacheMetadata(fresh).eTag,
@@ -321,23 +319,35 @@ test("GEX dashboard route sets validators on stale refresh fallback responses", 
       headers: { "accept-encoding": "identity" },
     });
     assert.equal(first.status, 200);
-    assert.ok(first.headers.get("etag"));
-    const firstLastModified = first.headers.get("last-modified");
-    assert.ok(firstLastModified);
+    const firstEtag = first.headers.get("etag");
+    assert.ok(firstEtag);
+    assert.equal(first.headers.get("last-modified"), null);
     assert.equal(
       first.headers.get("cache-control"),
       "private, max-age=0, must-revalidate, no-transform",
     );
     await first.json();
 
+    const cachedConditional = await fetch(`${baseUrl}/api/gex/QQQ`, {
+      headers: {
+        "accept-encoding": "identity",
+        "if-none-match": firstEtag,
+      },
+    });
+    assert.equal(cachedConditional.status, 304);
+    assert.equal(await cachedConditional.text(), "");
+
     __expireGexDashboardCacheForTests("QQQ");
     failRefresh = true;
     const second = await fetch(`${baseUrl}/api/gex/QQQ`, {
-      headers: { "accept-encoding": "identity" },
+      headers: {
+        "accept-encoding": "identity",
+        "if-modified-since": "Thu, 18 Jun 2026 16:35:48 GMT",
+      },
     });
     assert.equal(second.status, 200);
     assert.ok(second.headers.get("etag"));
-    assert.equal(second.headers.get("last-modified"), firstLastModified);
+    assert.equal(second.headers.get("last-modified"), null);
     assert.equal(
       second.headers.get("cache-control"),
       "private, max-age=0, must-revalidate, no-transform",
