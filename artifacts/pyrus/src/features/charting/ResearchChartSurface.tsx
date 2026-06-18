@@ -157,7 +157,6 @@ export type {
   ScaleMode,
   VisibleLogicalRange,
 } from "./chartViewportStorage";
-export { resolveCanvasColor } from "./chartCanvasColors";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
   "ResearchChartSurface@20260518-basis-aware-flow-markers-v2";
