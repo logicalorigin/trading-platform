@@ -39,9 +39,12 @@ import { fetchTreasuryYieldCurveRates } from "./treasury-yield-curve";
 
 export type GexOptionRow = {
   strike: number;
-  expireYear: number;
-  expireMonth: number;
-  expireDay: number;
+  // Optional on the served (compacted) payload — derived client-side from
+  // expirationDate to keep the multi-MB chain response smaller. Still populated
+  // on the live/internal paths.
+  expireYear?: number;
+  expireMonth?: number;
+  expireDay?: number;
   cp: "C" | "P";
   ticker?: string | null;
   underlying?: string | null;
@@ -1266,9 +1269,9 @@ function compactPersistedGexOption(row: GexOptionRow): GexOptionRow | null {
 
   return {
     strike,
-    expireYear: expiration.year,
-    expireMonth: expiration.month,
-    expireDay: expiration.day,
+    // expireYear/Month/Day are intentionally NOT emitted: they duplicate
+    // expirationDate, and across ~13k rows the repeated keys/values are dead
+    // weight on the wire. The client derives them from expirationDate.
     cp,
     expirationDate:
       row.expirationDate ||
@@ -1873,17 +1876,31 @@ function buildUnavailableGexProjection(input: {
 const GEX_PROJECTION_EXPIRATION_UTC_HOUR = 20;
 
 function gexRowExpirationTimeMs(row: GexOptionRow): number | null {
+  let year = row.expireYear;
+  let month = row.expireMonth;
+  let day = row.expireDay;
+  // expireYear/Month/Day are omitted from the compacted served payload; fall
+  // back to parsing the always-present expirationDate ("YYYY-MM-DD").
+  if (year == null || month == null || day == null) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(row.expirationDate ?? "");
+    if (!match) {
+      return null;
+    }
+    year = Number(match[1]);
+    month = Number(match[2]);
+    day = Number(match[3]);
+  }
   if (
-    !Number.isInteger(row.expireYear) ||
-    !Number.isInteger(row.expireMonth) ||
-    !Number.isInteger(row.expireDay)
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
   ) {
     return null;
   }
   const time = Date.UTC(
-    row.expireYear,
-    row.expireMonth - 1,
-    row.expireDay,
+    year,
+    month - 1,
+    day,
     GEX_PROJECTION_EXPIRATION_UTC_HOUR,
     0,
     0,

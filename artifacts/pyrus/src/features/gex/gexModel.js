@@ -173,9 +173,23 @@ export const normalizeGexResponseOptions = (options = []) => {
     coverage.total += 1;
     const cp = normalizeRight(option?.cp);
     const strike = finiteOrNull(option?.strike);
-    const expireYear = finiteOrNull(option?.expireYear);
-    const expireMonth = finiteOrNull(option?.expireMonth);
-    const expireDay = finiteOrNull(option?.expireDay);
+    let expireYear = finiteOrNull(option?.expireYear);
+    let expireMonth = finiteOrNull(option?.expireMonth);
+    let expireDay = finiteOrNull(option?.expireDay);
+    // The served payload drops the redundant expireYear/Month/Day (they duplicate
+    // expirationDate). Derive them from the date string when absent so downstream
+    // consumers (gexByExpiry, thetaDecayByExpiry, expirationDayDistance) still work.
+    if (
+      (expireYear == null || expireMonth == null || expireDay == null) &&
+      option?.expirationDate
+    ) {
+      const parts = parseExpirationDateParts(option.expirationDate);
+      if (parts) {
+        expireYear = parts.year;
+        expireMonth = parts.month;
+        expireDay = parts.day;
+      }
+    }
     const gamma = finiteOrNull(option?.gamma);
     const openInterest = finiteOrNull(option?.openInterest);
     const impliedVolatility = finiteOrNull(option?.impliedVol);
@@ -200,9 +214,11 @@ export const normalizeGexResponseOptions = (options = []) => {
     coverage.withOpenInterest += openInterest != null ? 1 : 0;
     coverage.withImpliedVolatility += impliedVolatility != null ? 1 : 0;
 
-    const expirationDate = `${String(expireYear).padStart(4, "0")}-${String(
-      expireMonth,
-    ).padStart(2, "0")}-${String(expireDay).padStart(2, "0")}`;
+    const expirationDate =
+      option?.expirationDate ||
+      `${String(expireYear).padStart(4, "0")}-${String(
+        expireMonth,
+      ).padStart(2, "0")}-${String(expireDay).padStart(2, "0")}`;
 
     rows.push({
       ticker: option?.ticker || null,
