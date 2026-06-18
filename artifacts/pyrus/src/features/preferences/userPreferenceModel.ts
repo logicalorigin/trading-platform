@@ -1,9 +1,14 @@
+import {
+  PYRUS_STORAGE_KEY,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
+  readPyrusWorkspaceState,
+} from "../../lib/workspaceStorage";
+
 export const USER_PREFERENCES_UPDATED_EVENT = "pyrus:user-preferences-updated";
-export const USER_PREFERENCES_STORAGE_KEY = "pyrus:state:v1";
-export const PYRUS_WORKSPACE_SETTINGS_EVENT = "pyrus:workspace-settings-updated";
+export const USER_PREFERENCES_STORAGE_KEY = PYRUS_STORAGE_KEY;
+export { PYRUS_WORKSPACE_SETTINGS_EVENT };
 export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
-const RETIRED_WORKSPACE_STORAGE_KEY = ["ray", "algo:state:v1"].join("");
 const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
 const TIME_ZONE_VALIDATION_CACHE_LIMIT = 64;
 const DATE_TIME_FORMATTER_CACHE_LIMIT = 128;
@@ -393,20 +398,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
 }
 
 const readWorkspaceState = (): JsonRecord => {
-  try {
-    let raw = window.localStorage.getItem(USER_PREFERENCES_STORAGE_KEY);
-    if (!raw) {
-      const retiredRaw = window.localStorage.getItem(RETIRED_WORKSPACE_STORAGE_KEY);
-      if (retiredRaw) {
-        window.localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, retiredRaw);
-        window.localStorage.removeItem(RETIRED_WORKSPACE_STORAGE_KEY);
-        raw = retiredRaw;
-      }
-    }
-    return raw ? recordValue(JSON.parse(raw)) : {};
-  } catch {
-    return {};
-  }
+  return recordValue(readPyrusWorkspaceState());
 };
 
 export const readCachedUserPreferences = (): UserPreferences => {
