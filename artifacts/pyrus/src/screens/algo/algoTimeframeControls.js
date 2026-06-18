@@ -33,6 +33,37 @@ const orderedMtfTimeframes = (timeframes) => {
   );
 };
 
+const normalizeOptionalExecutionTimeframe = (value) => {
+  const timeframe = String(value || "").trim();
+  return STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe) &&
+    SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(timeframe)
+    ? timeframe
+    : "";
+};
+
+const buildMtfSelectionPatch = (timeframes) => {
+  const selectedTimeframes = orderedMtfTimeframes(timeframes);
+  return {
+    timeframes: selectedTimeframes,
+    preset: "custom",
+    // Selected frames must all align: required count tracks the selection.
+    requiredCount: Math.max(1, selectedTimeframes.length),
+  };
+};
+
+export const normalizeAlgoAlignedMtfTimeframes = (
+  selectedTimeframes,
+  executionTimeframe,
+  fallback = SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
+) => {
+  const current = normalizeAlgoMtfTimeframes(selectedTimeframes, fallback);
+  const normalizedExecutionTimeframe =
+    normalizeOptionalExecutionTimeframe(executionTimeframe);
+  return normalizedExecutionTimeframe
+    ? orderedMtfTimeframes([...current, normalizedExecutionTimeframe])
+    : current;
+};
+
 export const normalizeAlgoMtfRequiredCount = (
   value,
   selectedTimeframes,
@@ -44,39 +75,53 @@ export const normalizeAlgoMtfRequiredCount = (
   return Math.min(selectedCount, Math.max(1, next));
 };
 
-export const buildAlgoExecutionTimeframePatch = (timeframe, fallback) => ({
-  signalTimeframe: normalizeAlgoExecutionTimeframe(timeframe, fallback),
-});
+export const buildAlgoExecutionTimeframePatch = (
+  timeframe,
+  fallback,
+  selectedTimeframes,
+) => {
+  const signalTimeframe = normalizeAlgoExecutionTimeframe(timeframe, fallback);
+  const patch = { signalTimeframe };
+  if (!Array.isArray(selectedTimeframes)) {
+    return patch;
+  }
+
+  return {
+    ...patch,
+    ...buildMtfSelectionPatch(
+      normalizeAlgoAlignedMtfTimeframes(selectedTimeframes, signalTimeframe),
+    ),
+  };
+};
 
 export const buildAlgoMtfTimeframeTogglePatch = ({
   selectedTimeframes,
   timeframe,
+  executionTimeframe,
 }) => {
   const current = normalizeAlgoMtfTimeframes(selectedTimeframes);
   const normalizedTimeframe = String(timeframe || "").trim();
+  const normalizedExecutionTimeframe =
+    normalizeOptionalExecutionTimeframe(executionTimeframe);
   if (!SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(normalizedTimeframe)) {
-    return {
-      timeframes: current,
-      preset: "custom",
-      // Selected frames must all align: required count tracks the selection.
-      requiredCount: Math.max(1, current.length),
-    };
+    return buildMtfSelectionPatch(
+      normalizeAlgoAlignedMtfTimeframes(current, normalizedExecutionTimeframe),
+    );
   }
 
   const nextSet = new Set(current);
   if (nextSet.has(normalizedTimeframe)) {
-    if (nextSet.size > 1) {
+    if (
+      nextSet.size > 1 &&
+      normalizedTimeframe !== normalizedExecutionTimeframe
+    ) {
       nextSet.delete(normalizedTimeframe);
     }
   } else {
     nextSet.add(normalizedTimeframe);
   }
 
-  const timeframes = orderedMtfTimeframes([...nextSet]);
-  return {
-    timeframes,
-    preset: "custom",
-    // Selected frames must all align: required count tracks the selection.
-    requiredCount: Math.max(1, timeframes.length),
-  };
+  return buildMtfSelectionPatch(
+    normalizeAlgoAlignedMtfTimeframes([...nextSet], normalizedExecutionTimeframe),
+  );
 };

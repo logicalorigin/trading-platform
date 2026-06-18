@@ -907,9 +907,9 @@ export const buildVisibleSignalRows = ({
     });
   }
 
-  // Collapse to one row per (symbol, timeframe), keeping the newest signal for
-  // the selected execution/action timeframe. On ties, keep the existing row so
-  // the live Signal Matrix remains the action source for the same signal.
+  // Collapse to one row per (symbol, timeframe). The live Signal Matrix owns
+  // current/action cells; received history can fill cells without matrix state
+  // but must not replace the matrix row for the same symbol/timeframe.
   const collapsedByCell = new Map();
   rows.forEach((row) => {
     const symbol = normalizeMatchToken(row.symbol);
@@ -917,8 +917,15 @@ export const buildVisibleSignalRows = ({
     const cell = symbol && timeframe ? `${symbol}|${timeframe}` : "";
     if (!cell) return;
     const current = collapsedByCell.get(cell);
+    if (!current) {
+      collapsedByCell.set(cell, row);
+      return;
+    }
+    const rowIsMatrix = row.sourceType === "signal_matrix_state";
+    const currentIsMatrix = current.sourceType === "signal_matrix_state";
+    if (currentIsMatrix && !rowIsMatrix) return;
     if (
-      !current ||
+      (rowIsMatrix && !currentIsMatrix) ||
       signalRowSignalTimestampMs(row) > signalRowSignalTimestampMs(current)
     ) {
       collapsedByCell.set(cell, row);

@@ -1,5 +1,5 @@
 const PYRUS_MARK_SRC = "/brand/pyrus-mark-dark.svg";
-const PYRUS_ANIMATED_MARK_SRC = "/brand/pyrus-loader-mark-dark.svg";
+const PYRUS_ANIMATED_MARK_SRC = PYRUS_MARK_SRC;
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");

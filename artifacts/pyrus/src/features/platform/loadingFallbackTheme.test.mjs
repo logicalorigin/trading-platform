@@ -8,6 +8,8 @@ const read = (relativePath) =>
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
 const brandLoader = read("src/components/BrandLoader.tsx");
+const pyrusLoaderMark = read("src/components/brand/pyrus-loader-mark.tsx");
+const pyrusMark = read("src/components/brand/pyrus-mark.tsx");
 const platformShell = read("src/features/platform/PlatformShell.jsx");
 const screenRegistry = read("src/features/platform/screenRegistry.jsx");
 
@@ -26,6 +28,13 @@ test("static boot loader has a light default and an explicit dark override", () 
     /html\[data-pyrus-theme="dark"\] \.pyrus-boot-loader\s*\{[^}]*background: #050914/s,
   );
   assert.match(indexHtml, /pyrus-wordmark-tight-light\.png/);
+});
+
+test("boot and React loaders use the primary Pyrus mark asset", () => {
+  for (const source of [indexHtml, pyrusLoaderMark, pyrusMark]) {
+    assert.doesNotMatch(source, /pyrus-loader-mark-dark\.svg/);
+    assert.match(source, /pyrus-mark-dark\.svg/);
+  }
 });
 
 test("lazy screen fallbacks use the platform theme variables", () => {

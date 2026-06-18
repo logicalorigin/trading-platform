@@ -1,4 +1,4 @@
-const PYRUS_LOADER_MARK_SRC = "/brand/pyrus-loader-mark-dark.svg";
+const PYRUS_LOADER_MARK_SRC = "/brand/pyrus-mark-dark.svg";
 
 export function PyrusLoaderMark({ className }: { className?: string }) {
   return (

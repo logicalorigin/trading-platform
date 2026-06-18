@@ -54,7 +54,6 @@ import {
   formatPlainPrice,
   mergeSignalOptionsProfile,
   numberFrom,
-  normalizeSignalOptionsMtfTimeframes,
   normalizeStrategySignalTimeframes,
   parseChaseSteps,
   resolveStrategySignalSettings,
@@ -67,6 +66,7 @@ import {
   signalOptionsActionColor,
   signalOptionsActionLabel,
 } from "./algo/algoHelpers";
+import { normalizeAlgoAlignedMtfTimeframes } from "./algo/algoTimeframeControls";
 import {
   AlgoLivePage,
   preloadAlgoLivePageModules,
@@ -1004,16 +1004,20 @@ export const AlgoScreen = ({
   const profileDirty = profileDraftState.isDirty;
   const strategySettingsDraft = strategySettingsDraftState.draft;
   const strategyDirty = strategySettingsDraftState.isDirty;
-  const staSignalTimeframes = useMemo(
-    () =>
-      normalizeSignalOptionsMtfTimeframes(
-        profileDraft?.entryGate?.mtfAlignment?.timeframes,
-      ),
-    [profileDraft?.entryGate?.mtfAlignment?.timeframes],
-  );
   const staActionSignalTimeframes = useMemo(
     () => normalizeStrategySignalTimeframes(strategySettingsDraft?.signalTimeframe),
     [strategySettingsDraft?.signalTimeframe],
+  );
+  const staSignalTimeframes = useMemo(
+    () =>
+      normalizeAlgoAlignedMtfTimeframes(
+        profileDraft?.entryGate?.mtfAlignment?.timeframes,
+        staActionSignalTimeframes[0],
+      ),
+    [
+      profileDraft?.entryGate?.mtfAlignment?.timeframes,
+      staActionSignalTimeframes[0],
+    ],
   );
   useEffect(() => {
     // Publish BOTH the live-draft execution TF and the live-draft MTF companion

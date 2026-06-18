@@ -29,6 +29,52 @@ test("STA source-health banner only fires on a genuinely empty matrix", () => {
   );
 });
 
+test("STA stale scan banner only fires on a genuinely empty matrix", () => {
+  // A stale matrix age is useful in the compact status line, but it must not
+  // become the primary warning while current matrix rows are present.
+  assert.match(
+    source,
+    /const staleScanBanner =\s*freshness\.staleScan && !staFilteredRows\.length/,
+  );
+});
+
+test("STA stale state keeps the compact Signal/Bar age while the primary banner is gated off", () => {
+  // The stale-scan PRIMARY banner is suppressed once matrix rows are present
+  // (it only fires on an empty matrix), but the compact Signal/Bar age line must
+  // stay visible on a populated table. Guard that the compact-age source
+  // (freshnessItems -> freshnessLine -> status summary) is built unconditionally
+  // and is NOT gated by freshness.staleScan.
+  assert.match(
+    source,
+    /const staleScanBanner =\s*freshness\.staleScan && !staFilteredRows\.length/,
+  );
+
+  // freshnessItems holds the compact Signal/Bar age and is declared before the
+  // staleScanBanner, so this slice is exactly the compact-age source block.
+  const freshnessItemsBlock = source.slice(
+    source.indexOf("const freshnessItems = ["),
+    source.indexOf("const staleScanBanner ="),
+  );
+  assert.ok(
+    freshnessItemsBlock.length > 0,
+    "expected a freshnessItems block before staleScanBanner",
+  );
+  assert.match(freshnessItemsBlock, /Signal \$\{formatRelativeTimeShort\(/);
+  assert.match(freshnessItemsBlock, /Bar \$\{formatRelativeTimeShort\(/);
+  assert.doesNotMatch(freshnessItemsBlock, /staleScan/);
+
+  // freshnessLine is composed unconditionally and passed straight into the
+  // status summary, so the compact age renders regardless of the banner gate.
+  assert.match(
+    source,
+    /const freshnessLine = freshnessItems\.filter\(Boolean\)\.join\(/,
+  );
+  assert.match(
+    source,
+    /buildStaSignalStatusSummary\(\{[\s\S]*?freshnessLine,[\s\S]*?\}\)/,
+  );
+});
+
 test("STA candidate action counting tolerates null action payloads", () => {
   assert.equal(hasStaCandidateAction(null), false);
   assert.equal(hasStaCandidateAction({ action: null }), false);

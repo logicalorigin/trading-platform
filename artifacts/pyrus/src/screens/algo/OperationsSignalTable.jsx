@@ -1508,7 +1508,7 @@ export const OperationsSignalTable = ({
     matrixPendingRows.length ? `${matrixPendingRows.length} matrix pending` : null,
   ];
   const staleScanBanner =
-    freshness.staleScan
+    freshness.staleScan && !staFilteredRows.length
       ? [
           "Signal Matrix freshness is outside the expected window.",
           freshness.latestBarAt

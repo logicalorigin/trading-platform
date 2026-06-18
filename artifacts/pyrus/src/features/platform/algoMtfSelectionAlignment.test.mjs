@@ -8,18 +8,31 @@ import test from "node:test";
 // shared store; the sidebar prefers it (falling back to the committed profile).
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const algoScreen = read("../../screens/AlgoScreen.jsx");
+const algoTimeframeControlBand = read("../../screens/algo/AlgoTimeframeControlBand.jsx");
 const sidebar = read("./PlatformAlgoMonitorSidebar.jsx");
 
-test("AlgoScreen publishes the live draft MTF set to the shared store", () => {
+test("AlgoScreen publishes the execution-aligned live draft MTF set", () => {
+  assert.match(algoScreen, /normalizeAlgoAlignedMtfTimeframes\(/);
+  assert.match(algoScreen, /staActionSignalTimeframes\[0\]/);
   assert.match(algoScreen, /publishAlgoStaMtfTimeframes\(staSignalTimeframes\)/);
+});
+
+test("Algo timeframe control renders stale profiles with execution-aligned MTF", () => {
+  assert.match(algoTimeframeControlBand, /normalizeAlgoAlignedMtfTimeframes\(/);
+  assert.match(algoTimeframeControlBand, /const locked = selected && timeframe === executionTimeframe/);
 });
 
 test("Sidebar MTF set prefers the live store selection, with committed fallback", () => {
   assert.match(sidebar, /useAlgoStaMtfTimeframes\(\)/);
   assert.match(
     sidebar,
-    /const live = normalizeSignalOptionsMtfTimeframes\(activeStaMtfTimeframes, \[\]\)/,
+    /const live = Array\.isArray\(activeStaMtfTimeframes\)/,
   );
+  assert.match(
+    sidebar,
+    /SIGNAL_OPTIONS_MTF_TIMEFRAMES\.includes\(timeframe\)/,
+  );
+  assert.match(sidebar, /normalizeAlgoAlignedMtfTimeframes\(/);
   // committed fallback must remain for when AlgoScreen is not mounted
   assert.match(
     sidebar,

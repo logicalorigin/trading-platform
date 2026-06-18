@@ -55,6 +55,7 @@ import {
   candidateBlockerLabel,
   findSignalOptionsCandidateForSignal,
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
+  SIGNAL_OPTIONS_MTF_TIMEFRAMES,
   STRATEGY_SIGNAL_TIMEFRAMES,
   resolveSignalScoreBreakdown,
   resolveStableStaActionSnapshot,
@@ -64,6 +65,7 @@ import {
   signalOptionsActionLabel,
   buildVisibleSignalRows,
 } from "../../screens/algo/algoHelpers";
+import { normalizeAlgoAlignedMtfTimeframes } from "../../screens/algo/algoTimeframeControls";
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
 import {
   hydrateSignalMatrixProfileTimeframe,
@@ -1269,27 +1271,6 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const signalOptionsSignals = Array.isArray(staActionSnapshot.signals)
     ? staActionSnapshot.signals
     : [];
-  const displaySignalTimeframes = useMemo(
-    () => {
-      // Prefer the LIVE STA MTF selection published by AlgoScreen (the same
-      // draft the STA table reads) so the sidebar's MTF set matches the table.
-      // Fall back to the committed automation/deployment profile when no live
-      // selection is published (e.g. AlgoScreen not mounted).
-      const live = normalizeSignalOptionsMtfTimeframes(activeStaMtfTimeframes, []);
-      if (live.length) {
-        return live;
-      }
-      return normalizeSignalOptionsMtfTimeframes(
-        automationState?.profile?.entryGate?.mtfAlignment?.timeframes ??
-          focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
-      );
-    },
-    [
-      activeStaMtfTimeframes,
-      automationState?.profile?.entryGate?.mtfAlignment?.timeframes,
-      focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
-    ],
-  );
   const actionSignalTimeframes = useMemo(
     () =>
       resolveAlgoMonitorActionSignalTimeframes({
@@ -1303,6 +1284,46 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       signalActionTimeframe,
       automationState?.profile?.timeframe,
       focusedDeployment?.config?.parameters?.signalTimeframe,
+    ],
+  );
+  const displaySignalTimeframes = useMemo(
+    () => {
+      // Prefer the LIVE STA MTF selection published by AlgoScreen (the same
+      // draft the STA table reads) so the sidebar's MTF set matches the table.
+      // Fall back to the committed automation/deployment profile when no live
+      // selection is published (e.g. AlgoScreen not mounted). In both cases,
+      // force the active execution frame into MTF so the action and filter
+      // lanes cannot diverge after stale persisted profile state loads.
+      const live = Array.isArray(activeStaMtfTimeframes)
+        ? activeStaMtfTimeframes.reduce((timeframes, item) => {
+            const timeframe = String(item || "").trim();
+            if (
+              SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(timeframe) &&
+              !timeframes.includes(timeframe)
+            ) {
+              timeframes.push(timeframe);
+            }
+            return timeframes;
+          }, [])
+        : [];
+      if (live.length) {
+        return normalizeAlgoAlignedMtfTimeframes(
+          live,
+          actionSignalTimeframes[0],
+          live,
+        );
+      }
+      return normalizeAlgoAlignedMtfTimeframes(
+        automationState?.profile?.entryGate?.mtfAlignment?.timeframes ??
+          focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
+        actionSignalTimeframes[0],
+      );
+    },
+    [
+      actionSignalTimeframes,
+      activeStaMtfTimeframes,
+      automationState?.profile?.entryGate?.mtfAlignment?.timeframes,
+      focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment?.timeframes,
     ],
   );
   const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];

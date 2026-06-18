@@ -13,9 +13,9 @@ import {
   ALGO_TIMEFRAME_OPTIONS,
   buildAlgoExecutionTimeframePatch,
   buildAlgoMtfTimeframeTogglePatch,
+  normalizeAlgoAlignedMtfTimeframes,
   normalizeAlgoExecutionTimeframe,
   normalizeAlgoMtfRequiredCount,
-  normalizeAlgoMtfTimeframes,
 } from "./algoTimeframeControls";
 
 const arraysEqual = (left, right) =>
@@ -131,9 +131,13 @@ export const AlgoTimeframeControlBand = ({
   );
   const mtfAlignment = profileDraft?.entryGate?.mtfAlignment || {};
   const baselineMtfAlignment = profileBaseline?.entryGate?.mtfAlignment || {};
-  const mtfTimeframes = normalizeAlgoMtfTimeframes(mtfAlignment.timeframes);
-  const baselineMtfTimeframes = normalizeAlgoMtfTimeframes(
+  const mtfTimeframes = normalizeAlgoAlignedMtfTimeframes(
+    mtfAlignment.timeframes,
+    executionTimeframe,
+  );
+  const baselineMtfTimeframes = normalizeAlgoAlignedMtfTimeframes(
     baselineMtfAlignment.timeframes,
+    baselineExecutionTimeframe,
     mtfTimeframes,
   );
   const mtfRequiredCount = normalizeAlgoMtfRequiredCount(
@@ -157,8 +161,17 @@ export const AlgoTimeframeControlBand = ({
     const patch = buildAlgoExecutionTimeframePatch(
       timeframe,
       executionTimeframe,
+      mtfTimeframes,
     );
     patchStrategySettingsPath?.("signalTimeframe", patch.signalTimeframe);
+    if (patch.timeframes) {
+      patchProfileDraftPath?.("entryGate.mtfAlignment.timeframes", patch.timeframes);
+      patchProfileDraftPath?.("entryGate.mtfAlignment.preset", patch.preset);
+      patchProfileDraftPath?.(
+        "entryGate.mtfAlignment.requiredCount",
+        patch.requiredCount,
+      );
+    }
   };
 
   const patchMtfTimeframe = (timeframe) => {
@@ -166,6 +179,7 @@ export const AlgoTimeframeControlBand = ({
     const patch = buildAlgoMtfTimeframeTogglePatch({
       selectedTimeframes: mtfTimeframes,
       timeframe,
+      executionTimeframe,
     });
     patchProfileDraftPath?.("entryGate.mtfAlignment.timeframes", patch.timeframes);
     patchProfileDraftPath?.("entryGate.mtfAlignment.preset", patch.preset);
@@ -241,14 +255,19 @@ export const AlgoTimeframeControlBand = ({
       <TimeframeRow label="MTF">
         {ALGO_TIMEFRAME_OPTIONS.map((timeframe) => {
           const selected = mtfTimeframes.includes(timeframe);
+          const locked = selected && timeframe === executionTimeframe;
           return (
             <TimeframeButton
               key={`mtf-${timeframe}`}
               timeframe={timeframe}
               selected={selected}
               dirty={mtfDirty}
-              disabled={disabled}
-              ariaLabel={`${selected ? "Remove" : "Add"} ${timeframe} MTF frame`}
+              disabled={disabled || locked}
+              ariaLabel={
+                locked
+                  ? `${timeframe} is the execution frame and stays selected`
+                  : `${selected ? "Remove" : "Add"} ${timeframe} MTF frame`
+              }
               testId={`algo-timeframe-mtf-${timeframe}`}
               onClick={() => patchMtfTimeframe(timeframe)}
             />

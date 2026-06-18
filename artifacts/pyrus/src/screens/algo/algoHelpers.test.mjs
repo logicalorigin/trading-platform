@@ -477,7 +477,7 @@ test("visible signal rows overlay current matrix action rows on received history
   assert.deepEqual(rows[1].filterState, { adx: 21.1, sessionPass: true });
 });
 
-test("STA selected execution timeframe keeps the newest received signal over stale matrix state", () => {
+test("STA selected execution timeframe keeps the matrix row over newer received history", () => {
   const rows = buildVisibleSignalRows({
     includeSignalHistory: true,
     universeSymbols: ["CEG"],
@@ -519,9 +519,65 @@ test("STA selected execution timeframe keeps the newest received signal over sta
   assert.equal(rows.length, 1);
   assert.equal(rows[0].symbol, "CEG");
   assert.equal(rows[0].timeframe, "5m");
-  assert.equal(rows[0].direction, "buy");
-  assert.equal(rows[0].signalAt, "2026-06-12T16:25:00.000Z");
-  assert.equal(rows[0].sourceType, "signal_monitor_event");
+  assert.equal(rows[0].direction, "sell");
+  assert.equal(rows[0].signalAt, "2026-06-12T15:55:00.000Z");
+  assert.equal(rows[0].sourceType, "signal_matrix_state");
+});
+
+test("matrix and received-history rows collapse to one matrix-owned cell despite symbol case/whitespace", () => {
+  // Hardening for the matrix-owned-only rule: the collapse cell key normalizes
+  // symbol + timeframe via trim+uppercase, so a received-history row whose raw
+  // symbol/timeframe differ only by case/whitespace must still collapse onto the
+  // live Signal Matrix cell for the same canonical (symbol, timeframe) -- never a
+  // second row -- and the Matrix row must own it even when the history is newer.
+  const args = {
+    includeSignalHistory: true,
+    universeSymbols: ["SPY"],
+    signalActionTimeframes: ["5m"],
+    signalEvents: [
+      {
+        id: "spy-newer-history",
+        profileId: "profile-1",
+        symbol: "  spy  ",
+        timeframe: " 5m ",
+        direction: "buy",
+        signalAt: "2026-06-12T16:25:00.000Z",
+        emittedAt: "2026-06-12T16:25:03.000Z",
+      },
+    ],
+  };
+
+  // Control: the case/whitespace history row is a real, buildable row on its own,
+  // so the collapse below is merging two rows rather than silently dropping one.
+  const historyOnly = buildVisibleSignalRows(args);
+  assert.equal(historyOnly.length, 1);
+  assert.equal(historyOnly[0].symbol, "SPY");
+  assert.equal(historyOnly[0].timeframe, "5m");
+  assert.equal(historyOnly[0].sourceType, "signal_monitor_event");
+
+  // With a (stale) Matrix cell for the same canonical key, both collapse to one
+  // Matrix-owned row regardless of the newer history timestamp.
+  const rows = buildVisibleSignalRows({
+    ...args,
+    signalMatrixStates: [
+      {
+        profileId: "profile-1",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-12T15:55:00.000Z",
+        latestBarAt: "2026-06-12T16:35:00.000Z",
+        fresh: false,
+        status: "ok",
+      },
+    ],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].symbol, "SPY");
+  assert.equal(rows[0].timeframe, "5m");
+  assert.equal(rows[0].direction, "sell");
+  assert.equal(rows[0].sourceType, "signal_matrix_state");
 });
 
 test("visible signal rows collapse to one row per cell (no signal multiples)", () => {
