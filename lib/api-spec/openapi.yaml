@@ -10302,6 +10302,10 @@ components:
           type: number
         delta:
           type: number
+        theta:
+          type: number
+        vega:
+          type: number
         openInterest:
           type: number
         impliedVol:
@@ -10309,6 +10313,8 @@ components:
         bid:
           type: number
         ask:
+          type: number
+        mark:
           type: number
         multiplier:
           type: number

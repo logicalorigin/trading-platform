@@ -22,10 +22,13 @@ export interface GexOptionRow {
   providerContractId?: string | null;
   gamma: number;
   delta: number;
+  theta?: number;
+  vega?: number;
   openInterest: number;
   impliedVol: number;
   bid: number;
   ask: number;
+  mark?: number;
   multiplier?: number;
   sharesPerContract?: number;
   volume?: number;
