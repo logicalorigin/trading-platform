@@ -13,6 +13,12 @@ const RETRYABLE_DYNAMIC_IMPORT_PATTERNS = [
 
 const DEFAULT_DYNAMIC_IMPORT_RETRIES = 2;
 const DEFAULT_DYNAMIC_IMPORT_RETRY_DELAY_MS = 250;
+// After a chunk failure triggers a one-time reload, the document is normally
+// replaced long before this elapses. If the reload is blocked or slow (sandboxed
+// view, throttled/backgrounded tab, a reload that re-fails) we reject instead of
+// hanging, so callers' .catch / Suspense error boundaries can surface a
+// recoverable error rather than a spinner that never lifts.
+const RELOAD_NAVIGATION_GRACE_MS = 10_000;
 const DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "pyrus:dynamic-import-reload:";
 const LEGACY_DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "pyrus:dynamic-import-reload:";
 
@@ -105,7 +111,9 @@ export async function retryDynamicImport<T>(
     isRetryableDynamicImportError(lastError) &&
     maybeReloadOnceForDynamicImport(label)
   ) {
-    return new Promise(() => {});
+    return new Promise<T>((_, reject) => {
+      setTimeout(() => reject(lastError), RELOAD_NAVIGATION_GRACE_MS);
+    });
   }
 
   throw lastError;

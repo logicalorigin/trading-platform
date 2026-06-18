@@ -112,8 +112,6 @@ import TradingAnalysisWorkbench from "./account/TradingAnalysisWorkbench.jsx";
 import { OrdersPanel } from "./account/TradesOrdersPanel.jsx";
 import { AccountHeroBlock } from "./account/AccountHeroBlock";
 import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
-import { PortfolioExposurePanel } from "./account/PortfolioExposurePanel";
-import { EquityCurvePanel } from "./account/EquityCurvePanel";
 import PositionsPanel, {
   PositionsAtDateInspector,
 } from "./account/PositionsPanel";
@@ -145,8 +143,48 @@ const loadSetupHealthPanel = () => {
   return setupHealthPanelImport;
 };
 
+// Chart panels carry the heavy chart vendors (recharts via PortfolioExposurePanel,
+// lightweight-charts via EquityCurvePanel/EquityCurveChart). Loading them lazily
+// keeps those vendors out of the AccountScreen entry chunk so the account chrome
+// + positions table paint first while the charts stream into their existing
+// DeferredPanelSuspense fallbacks.
+let portfolioExposurePanelImport = null;
+const loadPortfolioExposurePanel = () => {
+  if (!portfolioExposurePanelImport) {
+    portfolioExposurePanelImport = retryDynamicImport(
+      () => import("./account/PortfolioExposurePanel"),
+      { label: "PortfolioExposurePanel" },
+    ).catch((error) => {
+      portfolioExposurePanelImport = null;
+      throw error;
+    });
+  }
+  return portfolioExposurePanelImport;
+};
+let equityCurvePanelImport = null;
+const loadEquityCurvePanel = () => {
+  if (!equityCurvePanelImport) {
+    equityCurvePanelImport = retryDynamicImport(
+      () => import("./account/EquityCurvePanel"),
+      { label: "EquityCurvePanel" },
+    ).catch((error) => {
+      equityCurvePanelImport = null;
+      throw error;
+    });
+  }
+  return equityCurvePanelImport;
+};
+
 const LazyCashFundingPanel = lazy(loadCashFundingPanel);
 const LazySetupHealthPanel = lazy(loadSetupHealthPanel);
+const LazyPortfolioExposurePanel = lazy(() =>
+  loadPortfolioExposurePanel().then((mod) => ({
+    default: mod.PortfolioExposurePanel,
+  })),
+);
+const LazyEquityCurvePanel = lazy(() =>
+  loadEquityCurvePanel().then((mod) => ({ default: mod.EquityCurvePanel })),
+);
 export const preloadScreenModules = () => Promise.resolve();
 
 const finiteAccountNumber = (value) => {
@@ -529,9 +567,9 @@ const useRuntimeAccountHistoryCache = ({
 const SHADOW_ACCOUNT_ID = "shadow";
 const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
   if (shadowMode) {
-    return "paper";
+    return "shadow";
   }
-  return environment === "paper" ? "paper" : "live";
+  return environment === "shadow" ? "shadow" : "live";
 };
 
 const ACCOUNT_SECTION_OPTIONS = [
@@ -595,7 +633,7 @@ const AccountSectionStrip = ({
         overflow: "hidden",
       }}
     >
-      <AppTooltip content="Switch between live broker account and shadow paper account">
+      <AppTooltip content="Switch between live broker account and shadow account">
         <div
           data-testid="account-section-tabs"
           style={{
@@ -2280,7 +2318,7 @@ const AccountScreenInner = ({
     }
     try {
       const orderMode =
-        order.mode === "live" || order.mode === "paper"
+        order.mode === "live" || order.mode === "shadow"
           ? order.mode
           : modeParams.mode;
       await cancelOrderMutation.mutateAsync({
@@ -2423,7 +2461,7 @@ const AccountScreenInner = ({
                 },
               ]}
             >
-              <PortfolioExposurePanel
+              <LazyPortfolioExposurePanel
                 allocationQuery={allocationQuery}
                 riskQuery={riskQuery}
                 positionsResponse={positionsQuery.data}
@@ -2457,7 +2495,7 @@ const AccountScreenInner = ({
                 },
               ]}
             >
-              <EquityCurvePanel
+              <LazyEquityCurvePanel
                 query={equityQueryForDisplay}
                 benchmarkQueries={{
                   SPY: spyBenchmarkQuery,
@@ -2677,7 +2715,7 @@ const AccountScreenInner = ({
               />
             ) : null}
             {shadowMode ? (
-              <Panel title="Shadow Account" rightRail="Internal paper" minHeight={130}>
+              <Panel title="Shadow Account" rightRail="Internal shadow" minHeight={130}>
               <div style={{ display: "grid", gap: sp(5) }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
                   <Pill tone="pink">Shadow</Pill>

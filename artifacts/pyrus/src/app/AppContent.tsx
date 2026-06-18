@@ -25,7 +25,10 @@ import {
 type LazyComponentModule = { default: ComponentType };
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
-const PRIORITY_PLATFORM_SCREEN_IDS = ["account"] as const;
+// Leader-independent, idle-time warm of the highest-traffic screens so a cold
+// cache (e.g. right after a rebuild) doesn't hit a bare chunk fetch on first
+// navigation. The initial screen is filtered out by the caller.
+const PRIORITY_PLATFORM_SCREEN_IDS = ["account", "signals", "trade"] as const;
 const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
   "session",
   "watchlists",

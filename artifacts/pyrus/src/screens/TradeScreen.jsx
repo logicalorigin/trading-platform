@@ -1329,9 +1329,11 @@ const TradeContractDetailPanel = ({
   const chartEmptyReason = optionBarsQuery.data?.emptyReason || null;
   const chartDataSource = optionBarsQuery.data?.dataSource || "none";
   const chartFeedIssue = Boolean(optionBarsQuery.data?.feedIssue);
-  const chartRequestLoading =
-    optionIdentityReady &&
-    (optionBarsQuery.isPending || optionBarsQuery.fetchStatus === "fetching");
+  const chartRequestLoading = Boolean(
+    historicalDataEnabled &&
+      optionIdentityReady &&
+      (optionBarsQuery.isPending || optionBarsQuery.fetchStatus === "fetching"),
+  );
   const chartRequestFailed = Boolean(optionBarsQuery.isError);
   const quoteUpdatedAt = liveQuote?.updatedAt || rowQuoteUpdatedAt || null;
   const barUpdatedAt = optionBarsQuery.data?.dataUpdatedAt || null;

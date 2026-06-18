@@ -70,9 +70,17 @@ export const loadScreenModule = (
       // the background and load through the screen's own lazy boundaries — gating
       // the screen behind nested preloads just made every page slower to appear.
       void preloadNestedScreenModules(mod);
-      if (mod?.default) {
-        SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
+      if (!mod?.default) {
+        // A chunk that fulfills without a default export would otherwise strand
+        // the registry spinner forever: its .then sets no component and its
+        // .catch never fires. Throw so the shared failure path below deletes the
+        // cache entry, settles the boot task, and surfaces the screen error +
+        // Retry UI (mirrors lazyWithRetry's missing-default guard).
+        throw new Error(
+          `Screen module "${screenId}" resolved without a default export.`,
+        );
       }
+      SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
       SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
         status: "ready",
         startedAt: SCREEN_MODULE_PRELOAD_STATE.get(screenId)?.startedAt || null,

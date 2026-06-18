@@ -1477,7 +1477,14 @@ export default function PlatformApp() {
       backgroundDataWarmupEnabled,
   );
   const operationalCodePreloadReady = Boolean(
-    platformRealtimeWorkActive &&
+    // Code preload is intentionally NOT gated on platformRealtimeWorkActive
+    // (= workspaceLeader). Downloading a screen's JS chunk is cheap and does not
+    // need the single-tab realtime lease that data streams do, so follower tabs
+    // should warm their screen code too — otherwise non-leader tabs hit cold
+    // chunks on first navigation. We keep the safe-QA exclusion, the
+    // first-screen + startup-protection window (so preloads never compete with
+    // first paint), the phone guard, and the test override.
+    !safeQaMode &&
       firstScreenReady &&
       !startupProtectionActive &&
       !isPhone &&
@@ -1716,7 +1723,7 @@ export default function PlatformApp() {
       !safeQaMode,
   );
   const accountsQuery = useListAccounts(
-    { mode: sessionQuery.data?.environment || "paper" },
+    { mode: sessionQuery.data?.environment || "shadow" },
     {
       query: {
         enabled: accountsQueryEnabled,
@@ -2187,10 +2194,10 @@ export default function PlatformApp() {
   }, [screen, watchlistSymbols, sym]);
 
   const session = sessionQuery.data || null;
-  const environment = sessionQuery.data?.environment || "paper";
+  const environment = sessionQuery.data?.environment || "shadow";
   // The platform signal lane drives the shadow algo scanner, so keep it pinned
-  // to the paper signal-monitor profile instead of the broker session mode.
-  const signalMonitorEnvironment = "paper";
+  // to the shadow signal-monitor profile instead of the broker session mode.
+  const signalMonitorEnvironment = "shadow";
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(
     session?.ibkrBridge?.authenticated &&

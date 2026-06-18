@@ -298,6 +298,34 @@ export default defineConfig({
               return "vendor-hls";
             }
 
+            // Heavy deps that are only reachable from lazy routes but were being
+            // dragged onto the eager boot path: the catch-all "vendor" chunk
+            // below merges every unmatched dep into one file, and because the
+            // entry statically needs *something* in it, rollup eager-preloads the
+            // whole chunk. Give these their own chunks so they load with their
+            // real (lazy) consumers instead of on every cold boot.
+            if (packageName.startsWith("@dnd-kit/")) {
+              // Drag-and-drop: only the Algo operations table + interactive
+              // column headers use it.
+              return "vendor-dnd-kit";
+            }
+            if (packageName === "lodash" || packageName === "lodash-es") {
+              // No direct src importer — transitive of recharts; keep it lazy.
+              return "vendor-recharts";
+            }
+            if (packageName === "decimal.js-light") {
+              // recharts-scale dependency.
+              return "vendor-recharts";
+            }
+            if (packageName === "fancy-canvas") {
+              // lightweight-charts dependency.
+              return "vendor-lightweight-charts";
+            }
+            if (packageName === "dexie") {
+              // IndexedDB runtime cache; not needed for first paint.
+              return "vendor-dexie";
+            }
+
             if (packageName === "lightweight-charts") {
               return "vendor-lightweight-charts";
             }

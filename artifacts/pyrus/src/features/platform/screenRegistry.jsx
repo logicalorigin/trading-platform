@@ -6,7 +6,7 @@ import {
   preloadScreenModule,
 } from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
-import { LoadingSpinner } from "../../components/platform/primitives";
+import ScreenLoadingSkeleton from "../../components/platform/ScreenLoadingSkeleton.jsx";
 export { SCREEN_BOOT_DATA_DEPS } from "./bootPolicy.js";
 
 const createPreloadableScreen = (screenId, label) => {
@@ -98,9 +98,10 @@ const createPreloadableScreen = (screenId, label) => {
     ) : props?.isVisible === false ? (
       null
     ) : (
-      // Module is still loading. Render a centered spinner instead of null so a
-      // navigation to a not-yet-loaded screen shows a loader, not a blank panel
-      // on the themed app canvas while the chunk resolves.
+      // Module is still loading. Render a data-free LAYOUT skeleton (toolbar +
+      // panel grid) instead of a lone centered spinner so a navigation to a
+      // not-yet-loaded screen shows the page's shape immediately on the themed
+      // app canvas while the chunk resolves. The skeleton pulls no screen code.
       <div
         data-testid={`screen-loading-${screenId}`}
         role="status"
@@ -110,12 +111,10 @@ const createPreloadableScreen = (screenId, label) => {
           width: "100%",
           height: "100%",
           flex: 1,
-          display: "grid",
-          placeItems: "center",
           background: "var(--ra-surface-0, #F7FAFF)",
         }}
       >
-        <LoadingSpinner size={22} />
+        <ScreenLoadingSkeleton label={label} />
       </div>
     );
   };
@@ -151,6 +150,7 @@ export const SCREEN_MODULE_PRELOAD_ORDER = [
   "market",
   "account",
   "signals",
+  "algo",
   "flow",
   "gex",
   "trade",
