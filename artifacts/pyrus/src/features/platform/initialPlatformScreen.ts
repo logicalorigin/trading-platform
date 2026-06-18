@@ -1,3 +1,5 @@
+import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage";
+
 export const PLATFORM_SCREEN_IDS = Object.freeze([
   "market",
   "signals",
@@ -13,7 +15,6 @@ export const PLATFORM_SCREEN_IDS = Object.freeze([
 ]);
 
 const PLATFORM_SCREEN_ID_SET = new Set<string>(PLATFORM_SCREEN_IDS);
-const PYRUS_WORKSPACE_STATE_STORAGE_KEY = "pyrus:state:v1";
 
 export const normalizeInitialPlatformScreen = (screenId: unknown) => {
   const normalizedScreen = screenId === "unusual" ? "flow" : screenId || "market";
@@ -27,7 +28,7 @@ export const readInitialPlatformScreen = () => {
     if (typeof window === "undefined" || !window.localStorage) {
       return "market";
     }
-    const raw = window.localStorage.getItem(PYRUS_WORKSPACE_STATE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
     const state: unknown = raw ? JSON.parse(raw) : {};
     const screen = state && typeof state === "object" && "screen" in state ? state.screen : null;
     return normalizeInitialPlatformScreen(screen);
