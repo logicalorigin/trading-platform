@@ -2,20 +2,28 @@ import { useCallback, useEffect, useState } from "react";
 import {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   PYRUS_STORAGE_KEY,
-} from "../../lib/uiTokens.jsx";
+} from "../../lib/workspaceStorage";
 
 const STORAGE_KEY_FIELD = "accountSection";
 const DEFAULT_SECTION = "real";
 
-const readAccountSectionFromStorage = () => {
+const normalizeAccountSection = (value) =>
+  value === "shadow" ? "shadow" : DEFAULT_SECTION;
+
+const readCurrentWorkspaceState = () => {
   if (typeof window === "undefined" || !window.localStorage) {
-    return DEFAULT_SECTION;
+    return undefined;
   }
+  const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
+  return raw ? JSON.parse(raw) : {};
+};
+
+const readAccountSectionFromStorage = () => {
   try {
-    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
+    const parsed = readCurrentWorkspaceState();
+    if (parsed === undefined) return DEFAULT_SECTION;
     const value = parsed[STORAGE_KEY_FIELD];
-    return value === "shadow" ? "shadow" : "real";
+    return normalizeAccountSection(value);
   } catch {
     return DEFAULT_SECTION;
   }
@@ -24,11 +32,10 @@ const readAccountSectionFromStorage = () => {
 export const readAccountSection = readAccountSectionFromStorage;
 
 export const writeAccountSection = (value) => {
-  if (typeof window === "undefined" || !window.localStorage) return;
   try {
-    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    const next = { ...parsed, [STORAGE_KEY_FIELD]: value === "shadow" ? "shadow" : "real" };
+    const parsed = readCurrentWorkspaceState();
+    if (parsed === undefined) return;
+    const next = { ...parsed, [STORAGE_KEY_FIELD]: normalizeAccountSection(value) };
     window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(next));
     window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: next }));
   } catch {
@@ -48,7 +55,7 @@ export const useAccountSection = () => {
   }, []);
   const setSectionExternal = useCallback((value) => {
     writeAccountSection(value);
-    setSection(value === "shadow" ? "shadow" : "real");
+    setSection(normalizeAccountSection(value));
   }, []);
   return [section, setSectionExternal];
 };
