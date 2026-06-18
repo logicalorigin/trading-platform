@@ -21,6 +21,7 @@ const assertNoConsecutiveDuplicateLine = (source, line) => {
 
 test("platform diagnostics and root preference effects avoid duplicate no-op writes", () => {
   const platformSource = readLocalSource("./PlatformApp.jsx");
+  const crashDiagnosticsSource = readLocalSource("../../app/crashDiagnostics.tsx");
   const diagnosticsSource = readLocalSource("../../screens/DiagnosticsScreen.jsx");
   const memoryPressurePreferencesSource = readLocalSource(
     "./memoryPressurePreferences.js",
@@ -62,6 +63,21 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
     ),
     false,
     "Expected account trading analysis preferences to read localStorage once per path",
+  );
+  assert.doesNotMatch(
+    crashDiagnosticsSource,
+    /window\.localStorage\?\.getItem\(PYRUS_STORAGE_KEY\)\s*\?\?\s*window\.localStorage\?\.getItem\(PYRUS_STORAGE_KEY\)/,
+    "Expected crash diagnostics to read workspace state once per path",
+  );
+  assert.match(
+    crashDiagnosticsSource,
+    /const raw = window\.localStorage\?\.getItem\(PYRUS_STORAGE_KEY\);/,
+    "Expected crash diagnostics to read the current workspace storage key directly",
+  );
+  assert.doesNotMatch(
+    crashDiagnosticsSource,
+    /"warning"\s*\|\s*"warning"/,
+    "Expected crash diagnostics severity type to avoid duplicate warning union branches",
   );
   assertNoConsecutiveDuplicateLine(
     settingsSource,

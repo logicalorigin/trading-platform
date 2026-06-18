@@ -20,7 +20,7 @@ const MAX_DEPTH = 5;
 type BrowserDiagnosticEvent = {
   at?: string;
   category: string;
-  severity: "info" | "warning" | "warning";
+  severity: "info" | "warning";
   code?: string | null;
   message: string;
   raw?: Record<string, unknown>;
@@ -231,9 +231,7 @@ const loadLatestDiagnostics = async (): Promise<LatestDiagnosticsSummary | null>
 
 export const openDiagnosticsScreen = () => {
   try {
-    const raw =
-      window.localStorage?.getItem(PYRUS_STORAGE_KEY) ??
-      window.localStorage?.getItem(PYRUS_STORAGE_KEY);
+    const raw = window.localStorage?.getItem(PYRUS_STORAGE_KEY);
     const state = raw ? JSON.parse(raw) : {};
     window.localStorage?.setItem(
       PYRUS_STORAGE_KEY,
