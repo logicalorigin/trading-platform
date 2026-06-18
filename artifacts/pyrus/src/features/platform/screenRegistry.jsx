@@ -7,7 +7,6 @@ import {
 } from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
 import ScreenLoadingSkeleton from "../../components/platform/ScreenLoadingSkeleton.jsx";
-export { SCREEN_BOOT_DATA_DEPS } from "./bootPolicy.js";
 
 const createPreloadableScreen = (screenId, label) => {
   return function PreloadableScreen(props) {
