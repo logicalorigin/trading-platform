@@ -10,8 +10,6 @@ type LockupProps = {
   wordmarkWidth?: number;
 };
 
-export { PyrusWordmark };
-
 export function LogoMark({
   animatedMark = false,
   className,

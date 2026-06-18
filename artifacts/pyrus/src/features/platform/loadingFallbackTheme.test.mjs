@@ -10,6 +10,7 @@ const indexCss = read("src/index.css");
 const brandLoader = read("src/components/BrandLoader.tsx");
 const crashDiagnostics = read("src/app/crashDiagnostics.tsx");
 const pyrusLoaderMark = read("src/components/brand/pyrus-loader-mark.tsx");
+const pyrusLogo = read("src/components/brand/PyrusLogo.tsx");
 const pyrusMark = read("src/components/brand/pyrus-mark.tsx");
 const pyrusWordmark = read("src/components/brand/pyrus-wordmark.tsx");
 const platformShell = read("src/features/platform/PlatformShell.jsx");
@@ -47,6 +48,14 @@ test("boot and React loaders do not reference retired Pyrus brand image assets",
     assert.doesNotMatch(source, /pyrus-mark\.png/);
     assert.doesNotMatch(source, /pyrus-wordmark-tight(?:-light)?\.png/);
   }
+});
+
+test("PyrusWordmark stays owned by the wordmark module", () => {
+  assert.doesNotMatch(
+    pyrusLogo,
+    /export\s*\{\s*PyrusWordmark\s*\}/,
+    "Expected PyrusLogo to avoid re-exporting the wordmark component",
+  );
 });
 
 test("lazy screen fallbacks use the platform theme variables", () => {
