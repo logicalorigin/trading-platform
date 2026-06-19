@@ -467,18 +467,39 @@ const PLATFORM_PRESSURE_LEVELS = new Set([
   "watch",
   "high",
 ]);
+const PLATFORM_PRESSURE_LEVEL_RANK = {
+  normal: 0,
+  watch: 1,
+  high: 2,
+};
 
 const normalizePlatformPressureLevel = (level) =>
   PLATFORM_PRESSURE_LEVELS.has(level) ? level : null;
 
+const maxPlatformPressureLevel = (...levels) =>
+  levels.reduce((maxLevel, level) => {
+    const normalized = normalizePlatformPressureLevel(level);
+    if (!normalized) return maxLevel;
+    return PLATFORM_PRESSURE_LEVEL_RANK[normalized] >
+      PLATFORM_PRESSURE_LEVEL_RANK[maxLevel]
+      ? normalized
+      : maxLevel;
+  }, "normal");
+
+const resolveServerResourcePressureLevel = (server) =>
+  normalizePlatformPressureLevel(server?.resourceLevel);
+
 const resolveSignalMatrixPressureLevel = ({ memoryPressureLevel, server }) => {
   const appLevel = normalizePlatformPressureLevel(memoryPressureLevel) || "normal";
-  return (
+  const serverResourceLevel = resolveServerResourcePressureLevel(server);
+  if (serverResourceLevel) {
+    return maxPlatformPressureLevel(appLevel, serverResourceLevel);
+  }
+  const serverFallbackLevel =
     normalizePlatformPressureLevel(server?.effectivePressureLevel) ||
     normalizePlatformPressureLevel(server?.apiPressureLevel) ||
-    normalizePlatformPressureLevel(server?.pressureLevel) ||
-    appLevel
-  );
+    normalizePlatformPressureLevel(server?.pressureLevel);
+  return maxPlatformPressureLevel(appLevel, serverFallbackLevel);
 };
 
 const getSignalMatrixExactCellLimitRejection = (error) => {
@@ -1449,6 +1470,7 @@ export default function PlatformApp() {
       memoryPressureSignal?.server?.apiPressureLevel,
       memoryPressureSignal?.server?.effectivePressureLevel,
       memoryPressureSignal?.server?.pressureLevel,
+      memoryPressureSignal?.server?.resourceLevel,
     ],
   );
   const platformPressureCaps = useMemo(
@@ -1461,7 +1483,8 @@ export default function PlatformApp() {
   );
   const activeSignalMatrixPressureLevel = signalMatrixPressureLevel;
   const signalMatrixServerPressureObserved = Boolean(
-    memoryPressureSignal?.server?.effectivePressureLevel ||
+    memoryPressureSignal?.server?.resourceLevel ||
+      memoryPressureSignal?.server?.effectivePressureLevel ||
       memoryPressureSignal?.server?.apiPressureLevel ||
       memoryPressureSignal?.server?.pressureLevel,
   );

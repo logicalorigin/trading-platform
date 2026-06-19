@@ -39,16 +39,22 @@ const SERVER_PRESSURE_LEVELS = new Set(["normal", "watch", "high"]);
 
 const jitterMs = (baseMs) => {
   const variance = Math.round(baseMs * 0.12);
-  const delta = Math.round((Math.random() * variance * 2) - variance);
+  const delta = Math.round(Math.random() * variance * 2 - variance);
   return Math.max(2_500, baseMs + delta);
 };
 
 const readResourceSnapshot = (payload) =>
-  payload?.snapshots?.find?.((entry) => entry?.subsystem === "resource-pressure") ||
-  null;
+  payload?.snapshots?.find?.(
+    (entry) => entry?.subsystem === "resource-pressure",
+  ) || null;
 
 const normalizeServerPressureLevel = (summary) =>
   summary?.pressureLevel || summary?.level || null;
+
+const normalizeServerResourceLevel = (summary) =>
+  normalizePressureHeaderLevel(
+    summary?.resourceLevel || summary?.apiResourcePressure?.resourceLevel,
+  );
 
 const normalizePressureHeaderLevel = (level) =>
   SERVER_PRESSURE_LEVELS.has(level) ? level : null;
@@ -89,12 +95,14 @@ const maxMemoryPressureDriverLevel = (drivers) =>
 const mergePressureDrivers = (clientDrivers = [], serverDrivers = []) => {
   const next = [];
   const seen = new Set();
-  [...memoryPressureDrivers(serverDrivers), ...clientDrivers].forEach((driver) => {
-    const kind = driver?.kind;
-    if (!kind || seen.has(kind)) return;
-    seen.add(kind);
-    next.push(driver);
-  });
+  [...memoryPressureDrivers(serverDrivers), ...clientDrivers].forEach(
+    (driver) => {
+      const kind = driver?.kind;
+      if (!kind || seen.has(kind)) return;
+      seen.add(kind);
+      next.push(driver);
+    },
+  );
   return next;
 };
 
@@ -105,13 +113,19 @@ export const mergeMemoryPressureServerSummary = ({
   if (!footerMemoryPressure && !resourceMetrics) {
     return null;
   }
-  const footerDrivers = memoryPressureDrivers(serverPressureDrivers(footerMemoryPressure));
-  const resourceDrivers = memoryPressureDrivers(serverPressureDrivers(resourceMetrics));
+  const footerDrivers = memoryPressureDrivers(
+    serverPressureDrivers(footerMemoryPressure),
+  );
+  const resourceDrivers = memoryPressureDrivers(
+    serverPressureDrivers(resourceMetrics),
+  );
   const resourceMemoryLevel = maxMemoryPressureDriverLevel(resourceDrivers);
+  const serverResourceLevel = normalizeServerResourceLevel(resourceMetrics);
   if (!footerMemoryPressure) {
     return {
       ...resourceMetrics,
       level: resourceMemoryLevel || "normal",
+      resourceLevel: serverResourceLevel || resourceMemoryLevel || "normal",
       pressureDrivers: resourceDrivers,
       dominantDrivers: resourceDrivers,
     };
@@ -119,23 +133,35 @@ export const mergeMemoryPressureServerSummary = ({
   if (!resourceMetrics) {
     return {
       ...footerMemoryPressure,
+      resourceLevel:
+        normalizeServerResourceLevel(footerMemoryPressure) ||
+        serverResourceLevel ||
+        null,
       pressureDrivers: footerDrivers,
       dominantDrivers: footerDrivers,
     };
   }
 
-  const footerLevel = normalizeServerPressureLevel(footerMemoryPressure) || "normal";
-  const resourceLevel = resourceMemoryLevel;
+  const footerLevel =
+    normalizeServerPressureLevel(footerMemoryPressure) || "normal";
+  const memoryResourceLevel = resourceMemoryLevel;
   const level =
-    resourceLevel && isPressureLevelAtLeast(resourceLevel, footerLevel)
-      ? resourceLevel
+    memoryResourceLevel &&
+    isPressureLevelAtLeast(memoryResourceLevel, footerLevel)
+      ? memoryResourceLevel
       : footerLevel;
-  const pressureDrivers = resourceDrivers.length ? resourceDrivers : footerDrivers;
+  const pressureDrivers = resourceDrivers.length
+    ? resourceDrivers
+    : footerDrivers;
 
   return {
     ...footerMemoryPressure,
     ...resourceMetrics,
     level,
+    resourceLevel:
+      serverResourceLevel ||
+      normalizeServerResourceLevel(footerMemoryPressure) ||
+      null,
     apiHeapUsedPercent:
       footerMemoryPressure.apiHeapUsedPercent ??
       resourceMetrics.apiHeapUsedPercent ??
@@ -151,13 +177,17 @@ export const mergeMemoryPressureServerSummary = ({
       resourceMetrics.apiRssThresholds ??
       null,
     browserMemoryMb:
-      footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
+      footerMemoryPressure.browserMemoryMb ??
+      resourceMetrics.browserMemoryMb ??
+      null,
     browserMemoryLimitMb:
       footerMemoryPressure.browserMemoryLimitMb ??
       resourceMetrics.browserMemoryLimitMb ??
       null,
     sourceQuality:
-      footerMemoryPressure.sourceQuality ?? resourceMetrics.sourceQuality ?? null,
+      footerMemoryPressure.sourceQuality ??
+      resourceMetrics.sourceQuality ??
+      null,
     pressureDrivers,
     dominantDrivers: pressureDrivers,
   };
@@ -168,7 +198,9 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
     return clientState;
   }
   const clientLevel = clientState?.level || "normal";
-  const serverDrivers = memoryPressureDrivers(serverPressureDrivers(serverSummary));
+  const serverDrivers = memoryPressureDrivers(
+    serverPressureDrivers(serverSummary),
+  );
   const serverLevel = maxMemoryPressureDriverLevel(serverDrivers);
   const drivers = mergePressureDrivers(
     clientState?.pressureDrivers,
@@ -187,15 +219,20 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
     browserMemoryMb:
       clientState?.browserMemoryMb ?? serverSummary.browserMemoryMb ?? null,
     browserMemoryLimitMb:
-      clientState?.browserMemoryLimitMb ?? serverSummary.browserMemoryLimitMb ?? null,
+      clientState?.browserMemoryLimitMb ??
+      serverSummary.browserMemoryLimitMb ??
+      null,
     apiHeapUsedPercent:
-      clientState?.apiHeapUsedPercent ?? serverSummary.apiHeapUsedPercent ?? null,
+      clientState?.apiHeapUsedPercent ??
+      serverSummary.apiHeapUsedPercent ??
+      null,
     apiRssMb:
       serverSummary.apiRssMb ??
       serverSummary.rssMb ??
       serverSummary.apiResourcePressure?.inputs?.rssMb ??
       null,
-    apiRssThresholds: serverSummary.apiRssThresholds ?? clientState?.apiRssThresholds ?? null,
+    apiRssThresholds:
+      serverSummary.apiRssThresholds ?? clientState?.apiRssThresholds ?? null,
     apiP95LatencyMs:
       serverSummary.eventLoopP95Ms ??
       serverSummary.apiResourcePressure?.inputs?.apiP95LatencyMs ??
@@ -207,18 +244,26 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
     pressureDrivers: drivers,
     dominantDrivers: dominantDrivers.length
       ? dominantDrivers
-      : clientState?.dominantDrivers ?? [],
+      : (clientState?.dominantDrivers ?? []),
   };
 };
 
-export const buildResponseHeaderPressureSummary = (detail = {}, current = null) => {
+export const buildResponseHeaderPressureSummary = (
+  detail = {},
+  current = null,
+) => {
   const pressureLevel = normalizePressureHeaderLevel(detail.pressureLevel);
-  if (!pressureLevel) {
+  const resourceLevel =
+    normalizePressureHeaderLevel(detail.resourceLevel) || pressureLevel;
+  if (!pressureLevel && !resourceLevel) {
     return current;
   }
+  const observedPressureLevel = pressureLevel || resourceLevel;
   const currentLevel = normalizePressureHeaderLevel(current?.level);
   const currentEffectiveLevel = normalizePressureHeaderLevel(
-    current?.effectivePressureLevel || current?.apiPressureLevel || current?.pressureLevel,
+    current?.effectivePressureLevel ||
+      current?.apiPressureLevel ||
+      current?.pressureLevel,
   );
   const observedAt = detail.observedAt || new Date().toISOString();
   const observedAtMs = Date.parse(observedAt);
@@ -228,28 +273,30 @@ export const buildResponseHeaderPressureSummary = (detail = {}, current = null) 
     Number.isFinite(observedAtMs) &&
     Number.isFinite(currentObservedAtMs) &&
     observedAtMs - currentObservedAtMs <= API_PRESSURE_HEADER_HOLD_MS &&
-    isPressureLevelAtLeast(currentEffectiveLevel, pressureLevel);
+    isPressureLevelAtLeast(currentEffectiveLevel, observedPressureLevel);
   const effectivePressureLevel = holdCurrentEffectiveLevel
     ? currentEffectiveLevel
-    : pressureLevel;
+    : observedPressureLevel;
 
   return {
     ...(current || {}),
     level:
-      currentLevel && isPressureLevelAtLeast(currentLevel, effectivePressureLevel)
+      currentLevel &&
+      isPressureLevelAtLeast(currentLevel, effectivePressureLevel)
         ? currentLevel
         : effectivePressureLevel,
     pressureLevel: effectivePressureLevel,
+    resourceLevel,
     apiPressureLevel: effectivePressureLevel,
     effectivePressureLevel,
-    lastHeaderPressureLevel: pressureLevel,
+    lastHeaderPressureLevel: observedPressureLevel,
     sourceQuality: "response-header",
+    routeClass: detail.routeClass || current?.routeClass || null,
     admissionAction: detail.admissionAction || current?.admissionAction || null,
     admissionReason: detail.admissionReason || current?.admissionReason || null,
-    lastHeaderStatus:
-      Number.isFinite(Number(detail.status))
-        ? Number(detail.status)
-        : current?.lastHeaderStatus ?? null,
+    lastHeaderStatus: Number.isFinite(Number(detail.status))
+      ? Number(detail.status)
+      : (current?.lastHeaderStatus ?? null),
     lastHeaderMethod: detail.method || current?.lastHeaderMethod || null,
     lastHeaderUrl: detail.url || current?.lastHeaderUrl || null,
     observedAt,
@@ -269,10 +316,7 @@ export const buildMemoryPressureServerSummaryFromDiagnostics = (payload) => {
 
 const readQueryDiagnostics = () => {
   try {
-    return (
-      window.__PYRUS_MEMORY_DIAGNOSTICS__?.() ||
-      null
-    );
+    return window.__PYRUS_MEMORY_DIAGNOSTICS__?.() || null;
   } catch {
     return null;
   }
@@ -330,7 +374,8 @@ export const useMemoryPressureMonitor = () => {
     };
 
     window.addEventListener(API_PRESSURE_EVENT, handleApiPressure);
-    return () => window.removeEventListener(API_PRESSURE_EVENT, handleApiPressure);
+    return () =>
+      window.removeEventListener(API_PRESSURE_EVENT, handleApiPressure);
   }, []);
 
   useEffect(() => {
@@ -397,7 +442,8 @@ export const useMemoryPressureMonitor = () => {
     let closed = false;
     const applyDiagnosticsPayload = (payload) => {
       if (closed) return;
-      const serverSummary = buildMemoryPressureServerSummaryFromDiagnostics(payload);
+      const serverSummary =
+        buildMemoryPressureServerSummaryFromDiagnostics(payload);
       if (!serverSummary) return;
 
       const current = getMemoryPressureSnapshot();
@@ -407,7 +453,10 @@ export const useMemoryPressureMonitor = () => {
         reducedMotionEnabled: prefersReducedMotion(),
         measurement: current.measurement,
         server: serverSummary,
-        observedAt: current.observedAt || serverSummary.observedAt || new Date().toISOString(),
+        observedAt:
+          current.observedAt ||
+          serverSummary.observedAt ||
+          new Date().toISOString(),
       };
       latestRef.current = snapshot;
       setMemoryPressureSnapshot(snapshot);
@@ -457,14 +506,23 @@ export const useMemoryPressureMonitor = () => {
       let serverSummary = latestRef.current.server || null;
       const now = Date.now();
       const currentLevel = latestRef.current.level || "normal";
-      if (!streamDiagnosticsAvailable && !safeQaMode && now >= nextServerRefreshAtRef.current) {
+      if (
+        !streamDiagnosticsAvailable &&
+        !safeQaMode &&
+        now >= nextServerRefreshAtRef.current
+      ) {
         nextServerRefreshAtRef.current =
-          now + jitterMs(SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal);
+          now +
+          jitterMs(
+            SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal,
+          );
         try {
           const diagnosticsPayload = await readLatestDiagnosticsSnapshot();
           if (!cancelled) {
             serverSummary =
-              buildMemoryPressureServerSummaryFromDiagnostics(diagnosticsPayload);
+              buildMemoryPressureServerSummaryFromDiagnostics(
+                diagnosticsPayload,
+              );
           }
         } catch {}
       }
@@ -473,16 +531,16 @@ export const useMemoryPressureMonitor = () => {
       const currentWorkloadStats = workloadStatsRef.current;
       const kindCounts = currentWorkloadStats.kindCounts || {};
       const chartStats = getChartHydrationStatsSnapshot();
-      const browserMemoryMb =
-        Number.isFinite(Number(measurement.memory?.bytes))
-          ? Number(measurement.memory.bytes) / 1024 / 1024
-          : Number.isFinite(Number(measurement.memory?.usedJsHeapSize))
-            ? Number(measurement.memory.usedJsHeapSize) / 1024 / 1024
-            : null;
-      const browserMemoryLimitMb =
-        Number.isFinite(Number(measurement.memory?.jsHeapSizeLimit))
-          ? Number(measurement.memory.jsHeapSizeLimit) / 1024 / 1024
+      const browserMemoryMb = Number.isFinite(Number(measurement.memory?.bytes))
+        ? Number(measurement.memory.bytes) / 1024 / 1024
+        : Number.isFinite(Number(measurement.memory?.usedJsHeapSize))
+          ? Number(measurement.memory.usedJsHeapSize) / 1024 / 1024
           : null;
+      const browserMemoryLimitMb = Number.isFinite(
+        Number(measurement.memory?.jsHeapSizeLimit),
+      )
+        ? Number(measurement.memory.jsHeapSizeLimit) / 1024 / 1024
+        : null;
       const storeEntryCount =
         getActiveChartBarStoreEntryCount() +
         getMarketFlowStoreEntryCount() +
@@ -498,7 +556,8 @@ export const useMemoryPressureMonitor = () => {
           browserMemoryLimitMb,
           browserSource: measurement.memory?.source,
           sourceQuality: measurement.memory?.confidence,
-          apiHeapUsedPercent: serverSummary?.apiHeapUsedPercent ?? serverSummary?.heapUsedPercent,
+          apiHeapUsedPercent:
+            serverSummary?.apiHeapUsedPercent ?? serverSummary?.heapUsedPercent,
           activeWorkloadCount: currentWorkloadStats.activeCount,
           pollCount: kindCounts.poll || 0,
           streamCount: kindCounts.stream || 0,
