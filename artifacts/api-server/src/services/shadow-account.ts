@@ -2847,6 +2847,11 @@ export function computeShadowOrderFees(input: {
 }
 
 async function ensureShadowAccount(): Promise<ShadowAccountRow> {
+  const existing = await readShadowAccount();
+  if (existing) {
+    return existing;
+  }
+
   const [inserted] = await db
     .insert(shadowAccountsTable)
     .values({
