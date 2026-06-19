@@ -21,10 +21,10 @@ function functionSource(name: string): string {
   return source.slice(offset, next ?? source.length);
 }
 
-test("async sidecar generation apply uses a short fallback deadline", () => {
+test("async sidecar generation apply uses the normal bridge-generation deadline", () => {
   assert.match(
     source,
-    /DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS\s*=\s*2_500/,
+    /DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS\s*=\s*30_000/,
   );
 
   const body = functionSource("applyAsyncSidecarMarketDataGeneration");
@@ -34,6 +34,16 @@ test("async sidecar generation apply uses a short fallback deadline", () => {
     body,
     /resolveMarketDataGenerationApplyWithin\([\s\S]*marketDataGenerationApplyTimeoutMs\(\),[\s\S]*"ib-async-sidecar"/,
   );
+});
+
+test("async sidecar timeout preserves last executor status for line usage", () => {
+  const body = functionSource("applyAsyncSidecarMarketDataGeneration");
+
+  assert.match(
+    body,
+    /status:\s*latestMarketDataGenerationStatusForTarget\(\s*"ib-async-sidecar"\s*\)/,
+  );
+  assert.match(body, /error:\s*getErrorMessage\(error\)/);
 });
 
 test("async sidecar generation apply does not fall back to bridge generation", () => {
