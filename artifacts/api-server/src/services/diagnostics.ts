@@ -45,7 +45,10 @@ import {
   markStorageHealthDegraded,
   refreshStorageHealthSnapshot,
 } from "./storage-health";
-import { getRuntimeFlightRecorderDiagnostics } from "./runtime-flight-recorder";
+import {
+  appendRuntimeFlightRecorderEvent,
+  getRuntimeFlightRecorderDiagnostics,
+} from "./runtime-flight-recorder";
 import { classifyApiRoute } from "./route-admission";
 
 const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
@@ -3173,6 +3176,31 @@ async function upsertEvent(
   memoryEvents.set(key, payload);
   trimMemoryEvents();
 
+  // Under server saturation the diagnostics DB persist would otherwise pile
+  // onto an already-exhausted Postgres pool (a write-storm feedback loop:
+  // diagnostics writing to the DB because the DB is overloaded). The event is
+  // already in the in-memory store (used by the SSE stream and latestPayload)
+  // and is mirrored to the flight-recorder file here, so we never lose the
+  // important diagnostic; we only defer the DB row while resourceLevel is high.
+  if (getApiResourcePressureSnapshot().resourceLevel === "high") {
+    appendRuntimeFlightRecorderEvent("diagnostic-event-db-persist-skipped", {
+      incidentKey: key,
+      subsystem: input.subsystem,
+      category: input.category,
+      code: input.code ?? null,
+      severity: input.severity,
+      status: payload.status,
+      message: input.message,
+      lastSeenAt: payload.lastSeenAt,
+      eventCount: payload.eventCount,
+      reason: "resource-pressure-high",
+    });
+    if (shouldBroadcast) {
+      broadcast({ type: "event", payload });
+    }
+    return payload;
+  }
+
   await safeDb(
     "upsert diagnostic event",
     async () => {
@@ -3368,7 +3396,7 @@ function resolveDiagnosticLimit(input: {
     input.fallback,
     input.max,
   );
-  const pressureLevel = getApiResourcePressureSnapshot().level;
+  const pressureLevel = getApiResourcePressureSnapshot().resourceLevel;
   const pressureCap = DIAGNOSTIC_LIMIT_CAPS[pressureLevel][input.cap];
   const appliedLimit = Math.min(requestedLimit, pressureCap);
   return {

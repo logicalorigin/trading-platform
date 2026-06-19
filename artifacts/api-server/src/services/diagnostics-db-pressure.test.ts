@@ -47,3 +47,37 @@ test("diagnostics collector avoids DB bursts while recording snapshots and event
   assert.doesNotMatch(collectorBlock, /Promise\.all\(\s*snapshots\.map/);
   assert.doesNotMatch(collectorBlock, /Promise\.all\(\s*activeEvents\.map/);
 });
+
+test("diagnostics event persistence yields to high resource pressure", () => {
+  const upsertEventBlock = sourceBlock(
+    "async function upsertEvent",
+    "async function resolveEvent",
+  );
+
+  assert.match(
+    upsertEventBlock,
+    /getApiResourcePressureSnapshot\(\)\.resourceLevel === "high"/,
+  );
+  assert.match(
+    upsertEventBlock,
+    /appendRuntimeFlightRecorderEvent\("diagnostic-event-db-persist-skipped"/,
+  );
+
+  const skipIndex = upsertEventBlock.indexOf(
+    'appendRuntimeFlightRecorderEvent("diagnostic-event-db-persist-skipped"',
+  );
+  const dbWriteIndex = upsertEventBlock.indexOf('"upsert diagnostic event"');
+  assert.notEqual(skipIndex, -1);
+  assert.notEqual(dbWriteIndex, -1);
+  assert.ok(skipIndex < dbWriteIndex);
+});
+
+test("diagnostic history limits gate on resource pressure only", () => {
+  const limitBlock = sourceBlock(
+    "function resolveDiagnosticLimit",
+    "function resolveResolutionMs",
+  );
+
+  assert.match(limitBlock, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
+  assert.doesNotMatch(limitBlock, /getApiResourcePressureSnapshot\(\)\.level/);
+});

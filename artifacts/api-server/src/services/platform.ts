@@ -17125,7 +17125,8 @@ function shouldHydrateFlowScannerHistoricalBars(input: {
   const pressureSnapshot =
     input.pressureSnapshot ?? getApiResourcePressureSnapshot();
   return (
-    PRESSURE_LEVEL_RANK[pressureSnapshot.level] < PRESSURE_LEVEL_RANK.watch
+    PRESSURE_LEVEL_RANK[pressureSnapshot.resourceLevel] <
+    PRESSURE_LEVEL_RANK.watch
   );
 }
 
