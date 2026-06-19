@@ -1,6 +1,5 @@
 import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
-import { isPyrusSafeQaMode } from "./qa-mode";
 import { AppProviders } from "./AppProviders";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
@@ -25,10 +24,6 @@ import {
 type LazyComponentModule = { default: ComponentType };
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
-// Leader-independent, idle-time warm of the highest-traffic screens so a cold
-// cache (e.g. right after a rebuild) doesn't hit a bare chunk fetch on first
-// navigation. The initial screen is filtered out by the caller.
-const PRIORITY_PLATFORM_SCREEN_IDS = ["account", "signals", "trade"] as const;
 const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
   "session",
   "watchlists",
@@ -141,30 +136,6 @@ const preloadInitialPlatformScreenModule = (initialScreen = readInitialPlatformS
   preloadPlatformScreenModule(initialScreen);
 };
 
-const scheduleIdlePreload = (callback: () => void) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(callback, { timeout: 2_000 });
-    return;
-  }
-  window.setTimeout(callback, 200);
-};
-
-const preloadPriorityPlatformScreenModules = (
-  initialScreen = readInitialPlatformScreen(),
-) => {
-  if (isPyrusSafeQaMode()) {
-    return;
-  }
-  PRIORITY_PLATFORM_SCREEN_IDS.forEach((screenId) => {
-    if (screenId !== initialScreen) {
-      preloadPlatformScreenModule(screenId);
-    }
-  });
-};
-
 export const preloadInitialAppContentRoute = () => {
   const labMode = resolveLabMode();
   if (labMode === "chart-parity") {
@@ -190,10 +161,13 @@ export const preloadInitialAppContentRoute = () => {
     retries: ROOT_ROUTE_CHUNK_RETRIES,
     retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
   });
-  // Non-initial priority screens (e.g. account) pull heavy chart libs; defer
-  // them until the browser is idle so they don't compete with the initial
-  // screen + workspace chunk during the hot boot window.
-  scheduleIdlePreload(() => preloadPriorityPlatformScreenModules(initialScreen));
+  // Non-initial priority screens (account/signals/trade) are warmed by
+  // PlatformApp's own gated sweep (PRIORITY_SCREEN_MODULE_PRELOAD_ORDER) once the
+  // first screen is interactive, so they never compete with the initial screen +
+  // workspace chunk during the hot boot window. Warming them here at
+  // module-load time raced first paint (requestIdleCallback's 2s timeout
+  // force-fired mid-boot, saturating the connection pool), so it is intentionally
+  // not done on this path.
 };
 
 const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
