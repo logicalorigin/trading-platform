@@ -95,7 +95,10 @@ function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
 
-function resolveMethod(input: RequestInfo | URL, explicitMethod?: string): string {
+function resolveMethod(
+  input: RequestInfo | URL,
+  explicitMethod?: string,
+): string {
   if (explicitMethod) return explicitMethod.toUpperCase();
   if (isRequest(input)) return input.method.toUpperCase();
   return "GET";
@@ -126,7 +129,8 @@ function resolveUrl(input: RequestInfo | URL): string {
 }
 
 function nowMs(): number {
-  return typeof performance !== "undefined" && typeof performance.now === "function"
+  return typeof performance !== "undefined" &&
+    typeof performance.now === "function"
     ? performance.now()
     : Date.now();
 }
@@ -139,7 +143,10 @@ function dispatchApiTiming(input: {
   status?: number | null;
   errorName?: string | null;
 }): void {
-  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+  if (
+    typeof window === "undefined" ||
+    typeof window.dispatchEvent !== "function"
+  ) {
     return;
   }
 
@@ -268,7 +275,10 @@ function buildHeavyGetKey(input: {
     method: input.method,
     url: normalizedUrl.normalized,
     responseType: input.responseType ?? "auto",
-    headers: headersFingerprint(input.headers, new Set([HEAVY_GET_PRIORITY_HEADER])),
+    headers: headersFingerprint(
+      input.headers,
+      new Set([HEAVY_GET_PRIORITY_HEADER]),
+    ),
     request: requestInitFingerprint(input.requestInput, input.init),
   });
 }
@@ -286,7 +296,10 @@ function getHeavyGetPriority(input: RequestInfo | URL, method: string): number {
   return HEAVY_GET_PRIORITY[normalizedUrl.pathname] ?? 0;
 }
 
-function shouldDetachCallerAbort(input: RequestInfo | URL, method: string): boolean {
+function shouldDetachCallerAbort(
+  input: RequestInfo | URL,
+  method: string,
+): boolean {
   if (method !== "GET") {
     return false;
   }
@@ -481,7 +494,10 @@ function withRequestTimeout(
   };
 }
 
-function waitForCaller<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+function waitForCaller<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal | null,
+): Promise<T> {
   if (!signal) {
     return promise;
   }
@@ -578,11 +594,13 @@ function runQueuedHeavyRequest<T>(
       }
       cleanup();
       _heavyActiveCount += 1;
-      task().then(resolve, reject).finally(() => {
-        _heavyActiveCount = Math.max(0, _heavyActiveCount - 1);
-        const next = takeNextHeavyRequest();
-        next?.();
-      });
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          _heavyActiveCount = Math.max(0, _heavyActiveCount - 1);
+          const next = takeNextHeavyRequest();
+          next?.();
+        });
     };
 
     if (_heavyActiveCount < HEAVY_GET_CONCURRENCY) {
@@ -610,7 +628,9 @@ function getMediaType(headers: Headers): string | null {
 }
 
 function isJsonMediaType(mediaType: string | null): boolean {
-  return mediaType === "application/json" || Boolean(mediaType?.endsWith("+json"));
+  return (
+    mediaType === "application/json" || Boolean(mediaType?.endsWith("+json"))
+  );
 }
 
 function isTextMediaType(mediaType: string | null): boolean {
@@ -764,7 +784,10 @@ async function parseJsonBody(
   }
 }
 
-async function parseErrorBody(response: Response, method: string): Promise<unknown> {
+async function parseErrorBody(
+  response: Response,
+  method: string,
+): Promise<unknown> {
   if (hasNoBody(response, method)) {
     return null;
   }
@@ -773,7 +796,9 @@ async function parseErrorBody(response: Response, method: string): Promise<unkno
 
   // Fall back to text when blob() is unavailable (e.g. some React Native builds).
   if (mediaType && !isJsonMediaType(mediaType) && !isTextMediaType(mediaType)) {
-    return typeof response.blob === "function" ? response.blob() : response.text();
+    return typeof response.blob === "function"
+      ? response.blob()
+      : response.text();
   }
 
   const raw = await response.text();
@@ -828,7 +853,7 @@ async function parseSuccessBody(
       if (typeof response.blob !== "function") {
         throw new TypeError(
           "Blob responses are not supported in this runtime. " +
-            "Use responseType \"json\" or \"text\" instead.",
+            'Use responseType "json" or "text" instead.',
         );
       }
       return response.blob();
@@ -904,9 +929,16 @@ function dispatchApiPressureHeaderEvent(
   }
 
   const pressureLevel = response.headers.get("x-pyrus-pressure-level");
+  const resourceLevel = response.headers.get("x-pyrus-resource-level");
+  const routeClass = response.headers.get("x-pyrus-route-class");
   const admissionAction = response.headers.get("x-pyrus-admission-action");
   const admissionReason = response.headers.get("x-pyrus-admission-reason");
-  if (!pressureLevel && !admissionAction && !admissionReason) {
+  if (
+    !pressureLevel &&
+    !resourceLevel &&
+    !admissionAction &&
+    !admissionReason
+  ) {
     return;
   }
 
@@ -914,6 +946,8 @@ function dispatchApiPressureHeaderEvent(
     new CustomEvent("pyrus:api-pressure", {
       detail: {
         pressureLevel,
+        resourceLevel,
+        routeClass,
         admissionAction,
         admissionReason,
         status: response.status,
@@ -952,7 +986,10 @@ export async function customFetch<T = unknown>(
     throw new TypeError(`customFetch: ${method} requests cannot have a body.`);
   }
 
-  const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  const headers = mergeHeaders(
+    isRequest(input) ? input.headers : undefined,
+    headersInit,
+  );
 
   if (
     typeof init.body === "string" &&
@@ -999,7 +1036,10 @@ export async function customFetch<T = unknown>(
       const callerSignal = init.signal;
       const existing = _heavyInFlight.get(heavyKey);
       if (existing) {
-        const result = await waitForCaller(existing as Promise<T>, callerSignal);
+        const result = await waitForCaller(
+          existing as Promise<T>,
+          callerSignal,
+        );
         dispatchApiTiming({
           method,
           url: requestInfo.url,
@@ -1014,16 +1054,17 @@ export async function customFetch<T = unknown>(
       const { signal: _callerSignal, ...initWithoutSignal } = init;
       const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
       const priority = heavyRequestPriority;
-      const sharedRequest = runQueuedHeavyRequest(() =>
-        executeFetch<T>({
-          requestInput: input,
-          init: upstreamInit,
-          method,
-          headers,
-          responseType,
-          requestInfo,
-          timeoutMs,
-        }),
+      const sharedRequest = runQueuedHeavyRequest(
+        () =>
+          executeFetch<T>({
+            requestInput: input,
+            init: upstreamInit,
+            method,
+            headers,
+            responseType,
+            requestInfo,
+            timeoutMs,
+          }),
         priority,
         detachCallerAbort ? undefined : callerSignal,
       ).finally(() => {
