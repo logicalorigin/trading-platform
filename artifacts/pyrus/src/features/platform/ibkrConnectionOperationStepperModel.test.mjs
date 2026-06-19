@@ -90,3 +90,61 @@ test("launch stepper keeps credential-key handoff progress in credentials phase"
     "Encrypting",
   );
 });
+
+test("launch stepper settles the active step into warning when the activation is stale", () => {
+  // The desktop Gateway is off and the bridge tunnel origin is down (HTTP 530 /
+  // Cloudflare 1033). The backend flags the activation insight as stale but keeps
+  // it active (non-terminal). The active step must NOT keep animating as
+  // "current"; it should settle into a non-animating "warning" so the spinner
+  // stops and the UI reads as stalled/needs-attention.
+  const activationStatus = {
+    active: true,
+    canceled: false,
+    insight: { stale: true, severity: "attention" },
+    latestProgress: {
+      message: "Connecting bridge to the Gateway API.",
+      status: "waiting_gateway",
+      step: "waiting_bridge_gateway_api",
+    },
+  };
+
+  const model = buildIbkrLaunchOperationStepper({
+    activationStatus,
+    inFlight: true,
+  });
+
+  assert.equal(model.steps.find((step) => step.id === "bridge")?.status, "warning");
+  assert.equal(
+    model.steps.some((step) => step.status === "current"),
+    false,
+  );
+});
+
+test("launch stepper surfaces a stalled message when no progress message is present", () => {
+  const model = buildIbkrLaunchOperationStepper({
+    activationStatus: {
+      active: true,
+      canceled: false,
+      insight: { stale: true, severity: "attention" },
+      latestProgress: { status: "waiting_gateway", step: "waiting_bridge_gateway_api" },
+    },
+    inFlight: true,
+  });
+
+  assert.match(model.latestMessage, /stalled/i);
+});
+
+test("launch stepper does not downgrade a stale activation once it is connected", () => {
+  // Connected always wins: a late stale flag must not regress a confirmed attach.
+  const model = buildIbkrLaunchOperationStepper({
+    activationStatus: {
+      active: true,
+      canceled: false,
+      insight: { stale: true, severity: "attention" },
+      latestProgress: { status: "connected", step: "connected" },
+    },
+    gatewayConnected: true,
+  });
+
+  assert.equal(model.steps.every((step) => step.status === "complete"), true);
+});

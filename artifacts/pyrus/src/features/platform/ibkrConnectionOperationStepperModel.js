@@ -313,13 +313,27 @@ export const buildIbkrLaunchOperationStepper = ({
     gatewayConnected ||
     latestStatus === "connected" ||
     latestStep === "connected";
+  // A launch that the backend has flagged stale (no forward progress past the
+  // expected phase duration, e.g. the desktop Gateway is off and the bridge
+  // tunnel origin is down / HTTP 530) is NOT terminal, but it must not keep the
+  // current step animating forever ("hung spinner"). Settle the active step into
+  // a non-animating "warning" so the UI reads as stalled/needs-attention while
+  // the user retries or cancels. Connected/error/canceled still take precedence.
+  const staleState = Boolean(
+    !connectedState &&
+      !errorState &&
+      !canceledState &&
+      activationStatus?.insight?.stale === true,
+  );
   const latestMessage =
     message ||
     (error instanceof Error ? error.message : error ? String(error) : null) ||
     latestProgress?.message ||
-    (inFlight
-      ? "IB Gateway activation is running from the Windows helper."
-      : null);
+    (staleState
+      ? "IB Gateway activation has stalled; the bridge is not responding. Retry or cancel the launch."
+      : inFlight
+        ? "IB Gateway activation is running from the Windows helper."
+        : null);
 
   if (connectedState) {
     const connectedProgressMessage =
@@ -341,7 +355,13 @@ export const buildIbkrLaunchOperationStepper = ({
     };
   }
 
-  const terminalStatus = errorState ? "error" : canceledState ? "canceled" : null;
+  const terminalStatus = errorState
+    ? "error"
+    : canceledState
+      ? "canceled"
+      : staleState
+        ? "warning"
+        : null;
   return {
     operation: "launch",
     title: "Connect IBKR",
