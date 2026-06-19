@@ -2516,7 +2516,9 @@ export const OperationsSignalRow = ({
   );
   const liveUnderlyingPrice = finiteNumberOrNull(tickerSnapshot?.price);
   const priceFlashClassName = useValueFlash(liveUnderlyingPrice);
-  const underlyingPrice = formatMoney(underlyingPriceValue, 2);
+  const underlyingPrice = Number.isFinite(underlyingPriceValue)
+    ? formatMoney(underlyingPriceValue, 2)
+    : MISSING_VALUE;
   const signalAge = resolveSignalAge(signalRecord);
   const since = signalSinceDisplay(signalRecord, signalAge);
   const signalMove = resolveSignalMove(signalRecord, tickerSnapshot, candidate);
