@@ -866,6 +866,65 @@ test("signal monitor event pagination reports source status", () => {
   assert.equal(response.hasMore, false);
 });
 
+test("signal monitor events fallback backoff latches transient read failures", () => {
+  __signalMonitorInternalsForTests.resetSignalMonitorEventsReadFallbackBackoffForTests();
+
+  __signalMonitorInternalsForTests.markSignalMonitorEventsReadFallbackForTests({
+    error: new Error("pool timed out while waiting for an open connection"),
+    environment: "paper",
+    nowMs: 1_000,
+  });
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
+      1_000,
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
+      15_999,
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorEventsRuntimeFallback(
+      16_001,
+    ),
+    false,
+  );
+
+  const response =
+    __signalMonitorInternalsForTests.buildSignalMonitorEventsRuntimeFallbackResponse({
+      environment: "paper",
+      limit: 10,
+    });
+  assert.equal(response.sourceStatus, "runtime-fallback");
+});
+
+test("signal monitor events read checks fallback latch before retrying the database", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const listStart = source.indexOf("export async function listSignalMonitorEvents");
+  const listEnd = source.indexOf(
+    "function buildSignalMonitorEventsRuntimeFallbackResponse",
+    listStart,
+  );
+  assert.notEqual(listStart, -1);
+  assert.notEqual(listEnd, -1);
+  const listBlock = source.slice(listStart, listEnd);
+  const latchCheck = listBlock.indexOf("shouldServeSignalMonitorEventsRuntimeFallback");
+  const dbRead = listBlock.indexOf(".select()");
+  const markFailure = listBlock.indexOf("markSignalMonitorEventsReadFallback");
+
+  assert.notEqual(latchCheck, -1);
+  assert.notEqual(dbRead, -1);
+  assert.notEqual(markFailure, -1);
+  assert.ok(
+    latchCheck < dbRead,
+    "listSignalMonitorEvents must serve the latched runtime fallback before opening a DB read",
+  );
+});
+
 test("signal monitor state fallback carries its source through the API contract", () => {
   const fallback =
     __signalMonitorInternalsForTests.buildSignalMonitorStateUnavailableResult(

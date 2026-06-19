@@ -40,7 +40,10 @@ import {
   isMassiveStocksRealtimeConfigured,
   type RuntimeMode,
 } from "../lib/runtime";
-import { isTransientPostgresError } from "../lib/transient-db-error";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import {
   normalizeLegacyAlgoBranding,
@@ -1208,6 +1211,8 @@ type SignalMonitorEventResponse = ReturnType<typeof eventToResponse>;
 const SIGNAL_MONITOR_EVENTS_DEFAULT_PAGE_SIZE = 100;
 const SIGNAL_MONITOR_EVENTS_MAX_PAGE_SIZE = 1_000;
 const SIGNAL_MONITOR_RUNTIME_EVENT_RETENTION = 20_000;
+const SIGNAL_MONITOR_EVENTS_DB_FALLBACK_BACKOFF_MS = 15_000;
+const SIGNAL_MONITOR_EVENTS_DB_FALLBACK_WARNING_COOLDOWN_MS = 60_000;
 const SIGNAL_MONITOR_BREADTH_HISTORY_RANGES: readonly SignalMonitorBreadthHistoryRange[] =
   ["hour", "day", "week", "month"];
 const SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES: Record<
@@ -1830,6 +1835,10 @@ const runtimeSignalMonitorEvents = new Map<
   RuntimeMode,
   SignalMonitorEventResponse[]
 >();
+const signalMonitorEventsReadDbBackoff = createTransientPostgresBackoff({
+  backoffMs: SIGNAL_MONITOR_EVENTS_DB_FALLBACK_BACKOFF_MS,
+  warningCooldownMs: SIGNAL_MONITOR_EVENTS_DB_FALLBACK_WARNING_COOLDOWN_MS,
+});
 const runtimeSignalMonitorEvaluationCache = new Map<
   string,
   { expiresAt: number; value: unknown }
@@ -9618,6 +9627,18 @@ export const __signalMonitorInternalsForTests = {
   filterSignalMonitorEventResponses,
   filterRuntimeSignalMonitorEvents,
   paginateSignalMonitorEventResponses,
+  buildSignalMonitorEventsRuntimeFallbackResponse,
+  shouldServeSignalMonitorEventsRuntimeFallback,
+  markSignalMonitorEventsReadFallbackForTests(input: {
+    error: unknown;
+    environment: RuntimeMode;
+    nowMs?: number;
+  }) {
+    return markSignalMonitorEventsReadFallback({ ...input, suppressLog: true });
+  },
+  resetSignalMonitorEventsReadFallbackBackoffForTests() {
+    signalMonitorEventsReadDbBackoff.resetForTest();
+  },
   getRuntimeSignalMonitorEvaluationCacheValue,
   disabledSignalMonitorMatrixResponse,
   getSignalMonitorCompletedBarsCacheDiagnostics() {
@@ -10223,6 +10244,19 @@ export async function listSignalMonitorEvents(input: {
     }
   }
   const limit = resolveSignalMonitorEventsPageSize(input.limit);
+  const fallbackInput = {
+    environment,
+    symbol: input.symbol,
+    from: input.from,
+    to: input.to,
+    cursor: input.cursor,
+    limit: input.limit,
+  };
+  const nowMs = Date.now();
+
+  if (shouldServeSignalMonitorEventsRuntimeFallback(nowMs)) {
+    return buildSignalMonitorEventsRuntimeFallbackResponse(fallbackInput);
+  }
 
   try {
     const events = await db
@@ -10238,7 +10272,7 @@ export async function listSignalMonitorEvents(input: {
     const responseEvents = page.map(eventToResponse);
     const hasMore = events.length > limit;
 
-    return {
+    const response = {
       events: responseEvents,
       nextCursor:
         hasMore && responseEvents.length
@@ -10249,22 +10283,73 @@ export async function listSignalMonitorEvents(input: {
       hasMore,
       sourceStatus: "database" as const,
     };
+    signalMonitorEventsReadDbBackoff.clear();
+    return response;
   } catch (error) {
     if (!isTransientPostgresError(error)) {
       throw error;
     }
-    warnSignalMonitorDbUnavailable(error, {
-      operation: "list_signal_monitor_events",
+    markSignalMonitorEventsReadFallback({
+      error,
       environment,
-      sourceStatus: "runtime-fallback",
+      nowMs,
     });
-    return filterRuntimeSignalMonitorEvents({
-      environment,
-      symbol: input.symbol,
-      from: input.from,
-      to: input.to,
-      cursor: input.cursor,
-      limit: input.limit,
-    });
+    return buildSignalMonitorEventsRuntimeFallbackResponse(fallbackInput);
   }
+}
+
+function shouldServeSignalMonitorEventsRuntimeFallback(
+  nowMs = Date.now(),
+): boolean {
+  return signalMonitorEventsReadDbBackoff.isActive(nowMs);
+}
+
+function markSignalMonitorEventsReadFallback(input: {
+  error: unknown;
+  environment: RuntimeMode;
+  nowMs?: number;
+  suppressLog?: boolean;
+}) {
+  const sourceStatus = "runtime-fallback" as const;
+  const diagnostic = recordSignalMonitorDbFallback(input.error, {
+    operation: "list_signal_monitor_events",
+    environment: input.environment,
+    sourceStatus,
+  });
+  signalMonitorEventsReadDbBackoff.markFailure({
+    error: input.error,
+    logger:
+      input.suppressLog === true
+        ? { warn() {} }
+        : {
+            warn(payload, message) {
+              logger.warn(
+                {
+                  ...asRecord(payload),
+                  operation: diagnostic.operation,
+                  environment: diagnostic.environment,
+                  sourceStatus: diagnostic.sourceStatus,
+                  transient: diagnostic.transient,
+                  poolContention: diagnostic.poolContention,
+                },
+                message,
+              );
+            },
+          },
+    message:
+      "Signal monitor events database unavailable; latching runtime fallback",
+    nowMs: input.nowMs ?? Date.now(),
+  });
+  return diagnostic;
+}
+
+function buildSignalMonitorEventsRuntimeFallbackResponse(input: {
+  environment: RuntimeMode;
+  symbol?: string;
+  from?: Date | string;
+  to?: Date | string;
+  cursor?: string;
+  limit?: number;
+}) {
+  return filterRuntimeSignalMonitorEvents(input);
 }
