@@ -104,6 +104,68 @@ type BridgeRequestInit = RequestInit & {
   timeoutMs?: number;
 };
 
+export type IbkrBridgeRuntimeAvailability = {
+  runtimeConfigured: boolean;
+  runtimeOverrideActive: boolean;
+  desktopAgentOnline: boolean;
+  desktopAgentCompatible: boolean | null;
+};
+
+export type IbkrBridgeRuntimeUnavailableState = {
+  code: "ibkr_bridge_not_configured" | "ibkr_bridge_runtime_unattached";
+  message: string;
+  detail: string;
+  desktopAgentOnline: boolean;
+  runtimeOverrideActive: boolean;
+};
+
+let bridgeRuntimeAvailabilityProvider:
+  | (() => Partial<Omit<IbkrBridgeRuntimeAvailability, "runtimeConfigured">>)
+  | null = null;
+
+export function setIbkrBridgeRuntimeAvailabilityProvider(
+  provider:
+    | (() => Partial<Omit<IbkrBridgeRuntimeAvailability, "runtimeConfigured">>)
+    | null,
+): void {
+  bridgeRuntimeAvailabilityProvider = provider;
+}
+
+export function getIbkrBridgeRuntimeAvailability(): IbkrBridgeRuntimeAvailability {
+  const config = getIbkrBridgeRuntimeConfig();
+  const provided = bridgeRuntimeAvailabilityProvider?.() ?? {};
+  return {
+    runtimeConfigured: Boolean(config),
+    runtimeOverrideActive: provided.runtimeOverrideActive ?? Boolean(config),
+    desktopAgentOnline: provided.desktopAgentOnline ?? false,
+    desktopAgentCompatible: provided.desktopAgentCompatible ?? null,
+  };
+}
+
+export function describeIbkrBridgeRuntimeUnavailable(
+  availability: IbkrBridgeRuntimeAvailability = getIbkrBridgeRuntimeAvailability(),
+): IbkrBridgeRuntimeUnavailableState {
+  if (availability.desktopAgentOnline) {
+    return {
+      code: "ibkr_bridge_runtime_unattached",
+      message:
+        "Interactive Brokers desktop agent is online, but no bridge runtime URL is attached yet.",
+      detail:
+        "The Windows helper is heartbeating; bridge calls are waiting for a tunnel/runtime handoff instead of treating IBKR as detached.",
+      desktopAgentOnline: true,
+      runtimeOverrideActive: availability.runtimeOverrideActive,
+    };
+  }
+
+  return {
+    code: "ibkr_bridge_not_configured",
+    message: "Interactive Brokers bridge is not configured.",
+    detail: "No bridge runtime URL is attached.",
+    desktopAgentOnline: false,
+    runtimeOverrideActive: availability.runtimeOverrideActive,
+  };
+}
+
 type BridgeConnectionHealthSnapshot = {
   transport: "tws";
   role: "market_data";
@@ -609,11 +671,17 @@ export class IbkrBridgeClient {
     const config = getIbkrBridgeRuntimeConfig();
 
     if (!config) {
+      const unavailable = describeIbkrBridgeRuntimeUnavailable();
       throw new HttpError(
         503,
-        "Interactive Brokers bridge is not configured.",
+        unavailable.message,
         {
-          code: "ibkr_bridge_not_configured",
+          code: unavailable.code,
+          detail: unavailable.detail,
+          data: {
+            desktopAgentOnline: unavailable.desktopAgentOnline,
+            runtimeOverrideActive: unavailable.runtimeOverrideActive,
+          },
         },
       );
     }

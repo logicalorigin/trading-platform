@@ -12,6 +12,7 @@ import {
   getIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
+import { setIbkrBridgeRuntimeAvailabilityProvider } from "../providers/ibkr/bridge-client";
 import {
   __resetBridgeGovernorForTests,
   getBridgeGovernorSnapshot,
@@ -22,10 +23,13 @@ import {
   __platformBridgeHealthInternalsForTests,
   __setIbkrBridgeClientFactoryForTests,
   getBridgeHealthForSession,
+  getRuntimeBridgeHealthState,
   getSessionBridgeHealthFailureState,
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
+  resolveBridgeConnectivity,
   setDesktopAgentOnlineProvider,
+  type BridgeConnectivityInput,
 } from "./platform-bridge-health";
 import { getIbkrBridgeActivationDiagnostics } from "./ibkr-bridge-runtime";
 
@@ -40,6 +44,8 @@ process.env["PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
 after(() => {
   clearIbkrBridgeRuntimeOverride();
   __setIbkrBridgeClientFactoryForTests(null);
+  setDesktopAgentOnlineProvider(() => false);
+  setIbkrBridgeRuntimeAvailabilityProvider(null);
   if (previousOverrideFile) {
     process.env["PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] =
       previousOverrideFile;
@@ -76,6 +82,274 @@ function bridgeHealth(updatedAt: string) {
     diagnostics: {},
   };
 }
+
+const CONN_NOW = 1_700_000_000_000;
+
+function connInput(
+  overrides: Partial<BridgeConnectivityInput> = {},
+): BridgeConnectivityInput {
+  return {
+    connected: true,
+    authenticated: true,
+    serverConnectivity: "connected",
+    lastTickleAtMs: CONN_NOW - 5_000,
+    healthAgeMs: 0,
+    forceStale: false,
+    streamFresh: false,
+    desktopAgentOnline: false,
+    continuousOutageMs: null,
+    now: CONN_NOW,
+    livenessFreshMs: 90_000,
+    connectivityFloorMs: 20_000,
+    healthFreshMs: 30_000,
+    ...overrides,
+  };
+}
+
+// Case 1 (acceptance): socket up + data clocks stale, cache within the floor -> connected.
+test("connectivity stays up when data is stale but the cache is within the floor", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 15_000,
+      lastTickleAtMs: CONN_NOW - 10_000,
+    }),
+  );
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+// Case 2 (acceptance): genuine disconnect flips down WITHIN the floor, not at 120s.
+test("connectivity flips down past the connectivity floor on a stale cache", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 30_000, // > 20s floor
+      lastTickleAtMs: CONN_NOW - 30_000,
+    }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "connectivity_floor_exceeded");
+});
+
+// Case 3 (acceptance + safety): half-open socket (no successful tickle past liveness) -> down.
+test("connectivity reads down on a half-open socket with a stale tickle", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: false,
+      healthAgeMs: 0, // fresh probe, socket "connected" still true
+      lastTickleAtMs: CONN_NOW - 120_000, // > 90s liveness window
+    }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "liveness_stale");
+});
+
+// Case 4 (acceptance): quiet market (socket up, recent tickle, no quotes) -> connected.
+test("connectivity stays up in a quiet market with a live socket", () => {
+  const verdict = resolveBridgeConnectivity(connInput());
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+test("server connectivity 'disconnected' is immediately not connected", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ serverConnectivity: "disconnected" }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "server_disconnected");
+});
+
+test("an unauthenticated session is not connected", () => {
+  const verdict = resolveBridgeConnectivity(connInput({ authenticated: false }));
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "not_authenticated");
+});
+
+test("desktop-agent-online proof overrides the connectivity floor", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 60_000, // well past the floor
+      desktopAgentOnline: true,
+      lastTickleAtMs: CONN_NOW - 5_000,
+    }),
+  );
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+test("a fresh probe with no tickle yet counts as live", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: null, forceStale: false, healthAgeMs: 1_000 }),
+  );
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+test("a continuous health outage past the floor forces connectivity down", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 5_000, // cache itself is recent
+      continuousOutageMs: 25_000, // but the circuit has been open > floor
+      lastTickleAtMs: CONN_NOW - 5_000,
+    }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "connectivity_floor_exceeded");
+});
+
+// SAFETY INVARIANT: desktopAgentOnline overrides the floor but must NEVER satisfy
+// liveness. A live helper does not prove the TWS socket is completing round-trips, so
+// a half-open gateway with a stale tickle must still read down even with desktop online.
+// (Mutation guard: moving desktopAgentOnline into the liveness clause must fail here.)
+test("desktop-agent-online does NOT satisfy liveness on a half-open socket", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      desktopAgentOnline: true,
+      forceStale: true,
+      lastTickleAtMs: CONN_NOW - 120_000, // > 90s liveness window
+    }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "liveness_stale");
+});
+
+test("a disconnected socket is immediately not connected", () => {
+  const verdict = resolveBridgeConnectivity(connInput({ connected: false }));
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "socket_disconnected");
+});
+
+test("liveness boundary: fresh at exactly the window, stale one ms past it", () => {
+  const atBoundary = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: CONN_NOW - 90_000 }),
+  );
+  assert.equal(atBoundary.connectivityUp, true);
+  const pastBoundary = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: CONN_NOW - 90_001 }),
+  );
+  assert.equal(pastBoundary.connectivityUp, false);
+  assert.equal(pastBoundary.connectivityReason, "liveness_stale");
+});
+
+test("floor boundary: trusted at exactly the floor, dropped one ms past it", () => {
+  const atBoundary = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 20_000,
+      lastTickleAtMs: CONN_NOW - 1_000,
+    }),
+  );
+  assert.equal(atBoundary.connectivityUp, true);
+  const pastBoundary = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 20_001,
+      lastTickleAtMs: CONN_NOW - 1_000,
+    }),
+  );
+  assert.equal(pastBoundary.connectivityUp, false);
+  assert.equal(pastBoundary.connectivityReason, "connectivity_floor_exceeded");
+});
+
+test("a stale cache with no tickle yet is not considered live", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: null, forceStale: true, healthAgeMs: 5_000 }),
+  );
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "liveness_stale");
+});
+
+test("fresh stream evidence satisfies liveness and the stale-cache floor", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({
+      forceStale: true,
+      healthAgeMs: 60_000,
+      lastTickleAtMs: null,
+      streamFresh: true,
+    }),
+  );
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+test("annotateBridgeHealth surfaces connectivityUp decoupled from data freshness", () => {
+  __resetBridgeGovernorForTests();
+  setDesktopAgentOnlineProvider(() => false);
+  const annotated = __platformBridgeHealthInternalsForTests.annotateBridgeHealth({
+    ...bridgeHealth(new Date().toISOString()),
+    connected: true,
+    authenticated: true,
+    serverConnectivity: "connected",
+    lastTickleAt: new Date(),
+  } as never);
+  assert.equal(annotated.connectivityUp, true);
+  assert.equal(annotated.connectivityReason, null);
+});
+
+// Proves the decoupling is real end-to-end: under a stale-cache annotation the existing
+// socketConnected (which folds in the freshness clocks) goes false, while connectivityUp
+// stays true within the floor. Also proves options.forceStale is threaded, not hardcoded.
+test("annotateBridgeHealth keeps connectivityUp true under a stale cache where socketConnected goes false", () => {
+  __resetBridgeGovernorForTests();
+  setDesktopAgentOnlineProvider(() => false);
+  const annotated = __platformBridgeHealthInternalsForTests.annotateBridgeHealth(
+    {
+      ...bridgeHealth(new Date(Date.now() - 15_000).toISOString()), // within the 20s floor
+      connected: true,
+      authenticated: true,
+      serverConnectivity: "connected",
+      lastTickleAt: new Date(),
+    } as never,
+    { forceStale: true },
+  );
+  assert.equal(annotated.socketConnected, false, "stale cache zeroes socketConnected");
+  assert.equal(annotated.connectivityUp, true, "connectivity survives within the floor");
+  assert.equal(annotated.connectivityReason, null);
+});
+
+test("online desktop agent without runtime override reports unattached bridge health", async () => {
+  __resetBridgeGovernorForTests();
+  clearIbkrBridgeRuntimeOverride();
+  invalidateBridgeHealthCache();
+  __setIbkrBridgeClientFactoryForTests(() => {
+    throw new Error("health client should not be constructed without runtime URL");
+  });
+  setIbkrBridgeRuntimeAvailabilityProvider(() => ({
+    runtimeOverrideActive: false,
+    desktopAgentOnline: true,
+    desktopAgentCompatible: true,
+  }));
+
+  try {
+    const health = await getBridgeHealthForSession({
+      waitForInitialRefresh: false,
+      waitForStaleRefresh: false,
+    });
+
+    assert(health, "expected synthetic bridge health");
+    assert.equal(health.configured, true);
+    assert.equal(health.connected, false);
+    assert.equal(health.authenticated, false);
+    assert.equal(health.strictReason, "ibkr_bridge_runtime_unattached");
+    assert.equal(health.connectivityReason, "ibkr_bridge_runtime_unattached");
+    assert.equal(health.streamState, "checking");
+    assert.equal(health.streamStateReason, "ibkr_bridge_runtime_unattached");
+
+    const runtimeHealth = await getRuntimeBridgeHealthState();
+    assert.equal(
+      runtimeHealth.annotatedHealth?.strictReason,
+      "ibkr_bridge_runtime_unattached",
+    );
+    assert.equal(runtimeHealth.healthErrorCode, null);
+  } finally {
+    setIbkrBridgeRuntimeAvailabilityProvider(null);
+    __setIbkrBridgeClientFactoryForTests(null);
+    invalidateBridgeHealthCache();
+  }
+});
 
 test("session bridge health can return stale cached data without awaiting refresh", async () => {
   setIbkrBridgeRuntimeOverride({
@@ -196,6 +470,7 @@ test("stale connected bridge health is not reported as usable", async () => {
     authenticated: true,
     brokerServerConnected: true,
     connected: true,
+    lastTickleAt: new Date(),
     liveMarketDataAvailable: true,
     marketDataMode: "live",
   };
@@ -222,11 +497,61 @@ test("stale connected bridge health is not reported as usable", async () => {
   assert.equal(health.connected, false);
   assert.equal(health.authenticated, false);
   assert.equal(health.socketConnected, false);
+  assert.equal(health.connectivityUp, false);
+  assert.equal(health.connectivityReason, "connectivity_floor_exceeded");
   assert.equal(health.strictReady, false);
   assert.equal(health.strictReason, "health_stale");
 });
 
-test("stale health with a fresh data stream stays connected (health-probe false negative)", async () => {
+test("runtime bridge health applies the stale-cache connectivity floor", async () => {
+  setIbkrBridgeRuntimeOverride({
+    apiToken: "test-token",
+    baseUrl: "https://bridge.test",
+  });
+
+  const staleConnectedHealth = {
+    ...bridgeHealth(new Date(Date.now() - 60_000).toISOString()),
+    accounts: ["U123"],
+    authenticated: true,
+    brokerServerConnected: true,
+    connected: true,
+    lastTickleAt: new Date(),
+    liveMarketDataAvailable: true,
+    marketDataMode: "live",
+    serverConnectivity: "connected",
+  };
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          await delay(75);
+          return {
+            ...staleConnectedHealth,
+            updatedAt: new Date().toISOString(),
+          };
+        },
+      }) as never,
+  );
+  primeBridgeHealthForSession(staleConnectedHealth);
+
+  try {
+    const runtimeHealth = await getRuntimeBridgeHealthState();
+    const health = runtimeHealth.annotatedHealth;
+
+    assert(health, "expected runtime diagnostics to use cached bridge health");
+    assert.equal(health.updatedAt, staleConnectedHealth.updatedAt);
+    assert.equal(health.healthFresh, false);
+    assert.equal(health.connected, false);
+    assert.equal(health.connectivityUp, false);
+    assert.equal(health.connectivityReason, "connectivity_floor_exceeded");
+  } finally {
+    await delay(100);
+    __setIbkrBridgeClientFactoryForTests(null);
+    invalidateBridgeHealthCache();
+  }
+});
+
+test("stale embedded stream ages do not bypass the connectivity floor", async () => {
   setIbkrBridgeRuntimeOverride({
     apiToken: "test-token",
     baseUrl: "https://bridge.test",
@@ -240,8 +565,7 @@ test("stale health with a fresh data stream stays connected (health-probe false 
     connected: true,
     liveMarketDataAvailable: true,
     marketDataMode: "live",
-    // Fresh stream evidence: a recent quote age proves the gateway is live even
-    // though the cached health snapshot is 60s stale and /healthz is erroring.
+    // This age is relative to the 60s-old health snapshot, not to now.
     diagnostics: { subscriptions: { lastQuoteAgeMs: 5_000, quoteListenerCount: 3 } },
   };
   __setIbkrBridgeClientFactoryForTests(
@@ -262,11 +586,13 @@ test("stale health with a fresh data stream stays connected (health-probe false 
 
   assert(health, "expected cached bridge health");
   assert.equal(health.healthFresh, false, "health probe is still stale");
-  assert.equal(health.streamFresh, true, "stream is fresh");
-  assert.equal(health.connected, true, "a fresh stream keeps the connection live");
-  assert.equal(health.socketConnected, true);
-  assert.equal(health.bridgeReachable, true);
-  assert.equal(health.authenticated, true);
+  assert.equal(health.streamFresh, false, "cached stream age is aged with health");
+  assert.equal(health.connected, false);
+  assert.equal(health.connectivityUp, false);
+  assert.equal(health.connectivityReason, "liveness_stale");
+  assert.equal(health.socketConnected, false);
+  assert.equal(health.bridgeReachable, false);
+  assert.equal(health.authenticated, false);
 });
 
 test("fresh quote stream transport prevents false stale state when quote data is quiet", () => {
@@ -302,6 +628,7 @@ test("fresh quote stream transport prevents false stale state when quote data is
   assert.equal(health.streamState, "live");
   assert.equal(health.strictReady, true);
   assert.equal(health.connected, true);
+  assert.equal(health.connectivityUp, true);
 });
 
 test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconnected immediately", async () => {
@@ -521,4 +848,96 @@ test("dead bridge override is abandoned via firstOpenedAt, which survives backof
     setDesktopAgentOnlineProvider(() => false);
     __resetBridgeGovernorForTests();
   }
+});
+
+// END-TO-END SEAM: a connected bridge -> annotateBridgeHealth -> the /session payload
+// shape -> GetSessionResponse.parse must preserve connectivityUp inside
+// ibkrBridge.connections.tws (the exact path the header reads via getIbkrConnection).
+// The /session route passes data.ibkrBridge straight through from the parse (it only
+// re-merges runtime.ibkr), so survival depends entirely on the IbkrBridgeConnectionHealth
+// schema declaring connectivityUp.
+test("GetSessionResponse preserves connectivityUp through ibkrBridge.connections.tws (bridge up)", () => {
+  __resetBridgeGovernorForTests();
+  setDesktopAgentOnlineProvider(() => false);
+
+  const connectedHealth = {
+    ...bridgeHealth(new Date().toISOString()),
+    connected: true,
+    authenticated: true,
+    brokerServerConnected: true,
+    serverConnectivity: "connected",
+    lastTickleAt: new Date(),
+    accounts: ["U123"],
+    marketDataMode: "live",
+    liveMarketDataAvailable: true,
+    connections: {
+      tws: {
+        transport: "tws",
+        role: "market_data",
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        competing: false,
+        target: "host:4002",
+        mode: "live",
+        clientId: 1,
+        selectedAccountId: "U123",
+        accounts: ["U123"],
+        lastPingMs: 5,
+        lastPingAt: new Date().toISOString(),
+        lastTickleAt: new Date().toISOString(),
+        lastError: null,
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      },
+    },
+  };
+
+  const annotated =
+    __platformBridgeHealthInternalsForTests.annotateBridgeHealth(
+      connectedHealth as never,
+    );
+  assert.equal(annotated.connectivityUp, true, "annotate computes connectivityUp");
+  const annotatedTws = annotated.connections?.tws as
+    | { connectivityUp?: boolean }
+    | undefined;
+  assert.equal(
+    annotatedTws?.connectivityUp,
+    true,
+    "annotate enriches connections.tws with connectivityUp",
+  );
+
+  const session = {
+    brokerProvider: "ibkr",
+    configured: { ibkr: true, massive: false, research: true },
+    environment: "live",
+    ibkrBridge: annotated,
+    marketDataProvider: "ibkr",
+    marketDataProviders: { historical: "ibkr", live: "ibkr", research: "fmp" },
+    runtime: {
+      ibkr: {
+        runtimeOverrideActive: false,
+        runtimeOverrideUpdatedAt: null,
+        desktopAgentOnline: true,
+        desktopAgentRegistered: true,
+        desktopAgentRegisteredCount: 1,
+        desktopAgentCompatibility: "compatible",
+        desktopAgentCompatible: true,
+        desktopAgentHelperVersion: "2026-06-13.ib-async-sidecar-v23",
+        desktopAgentKnownBad: false,
+        desktopAgentExpectedHelperVersion: "2026-06-13.ib-async-sidecar-v23",
+        desktopAgentUpgradeRequired: false,
+        reconnectAvailable: false,
+        activation: getIbkrBridgeActivationDiagnostics(),
+      },
+    },
+    timestamp: new Date().toISOString(),
+  };
+
+  const parsed = GetSessionResponse.parse(session);
+  assert.equal(
+    parsed.ibkrBridge?.connections?.tws?.connectivityUp,
+    true,
+    "connectivityUp survives GetSessionResponse.parse in connections.tws",
+  );
 });

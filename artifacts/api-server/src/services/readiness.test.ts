@@ -256,3 +256,38 @@ test("live bridge readiness overrides stale not-configured diagnostics", () => {
     strictReady: true,
   });
 });
+
+test("broker readiness uses connectivityUp over stale connected fields", () => {
+  const diagnostics: DiagnosticsLatestPayload = {
+    timestamp: "2026-06-09T04:25:00.000Z",
+    status: "ok",
+    severity: "info",
+    summary: "runtime ok",
+    thresholds: [],
+    events: [],
+    snapshots: [],
+  };
+
+  const readiness = buildApiReadinessPayload({
+    brokerRuntime: {
+      configured: true,
+      reachable: false,
+      connected: false,
+      connectivityUp: true,
+      authenticated: true,
+      competing: false,
+      healthFresh: false,
+      streamFresh: true,
+      strictReady: false,
+      strictReason: "health_stale",
+    },
+    diagnostics,
+    pressure: NORMAL_PRESSURE,
+    now: new Date("2026-06-09T04:25:00.000Z"),
+  });
+
+  assert.equal(readiness.brokerTradingReadiness.status, "blocked");
+  assert.equal(readiness.brokerTradingReadiness.reason, "health_stale");
+  assert.equal(readiness.brokerTradingReadiness.checks.reachable, true);
+  assert.equal(readiness.brokerTradingReadiness.checks.connected, true);
+});

@@ -7,8 +7,13 @@ import {
   getProviderConfiguration,
 } from "../lib/runtime";
 import { recordConnectionLiveState } from "./ibkr-connection-audit";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
+import {
+  IbkrBridgeClient,
+  describeIbkrBridgeRuntimeUnavailable,
+  getIbkrBridgeRuntimeAvailability,
+  type IbkrBridgeRuntimeUnavailableState,
+} from "../providers/ibkr/bridge-client";
 import {
   clearBridgeOrderReadSuppression,
   markBridgeOrderReadsSuppressed,
@@ -131,6 +136,24 @@ function bridgeStreamFreshMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 45_000;
 }
 
+function bridgeConnectivityFloorMs(): number {
+  // Bounded trust window for the stale last-known-good cache. MUST stay shorter
+  // than runtimeDiagnosticsStaleHealthCacheMs (120s) so connectivity cannot ride
+  // the full operational cache after a real disconnect, yet long enough to absorb
+  // a transient event-loop freeze (~8-11s) without flipping a live bridge to
+  // "not connected".
+  return positiveEnvInt("IBKR_BRIDGE_CONNECTIVITY_FLOOR_MS", 20_000);
+}
+
+function bridgeLivenessFreshMs(): number {
+  // Half-open guard: a hung-but-socket-open gateway keeps connected=true until the
+  // ~30s watchdog flips it, and a failed tickle never flips it, so require a recent
+  // successful round-trip (lastTickleAt). MUST exceed the bridge tickle interval
+  // (>=10s) with margin so normal cadence never false-flaps; small enough to catch
+  // a persistent half-open within a bounded window.
+  return positiveEnvInt("IBKR_BRIDGE_LIVENESS_FRESH_MS", 90_000);
+}
+
 function runtimeDiagnosticsTimeoutMs(): number {
   return positiveEnvInt("RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_TIMEOUT_MS", 6_500);
 }
@@ -223,6 +246,16 @@ function minFinite(...values: Array<number | null | undefined>): number | null {
   return finiteValues.length ? Math.min(...finiteValues) : null;
 }
 
+function ageFromSnapshotAge(
+  value: number | null,
+  snapshotAgeMs: number | null,
+): number | null {
+  if (value === null || snapshotAgeMs === null) {
+    return null;
+  }
+  return Math.max(0, value) + Math.max(0, snapshotAgeMs);
+}
+
 function hasCurrentBridgeDiagnostics(health: BridgeHealthSnapshot): boolean {
   return Boolean(health.diagnostics && typeof health.diagnostics === "object");
 }
@@ -270,6 +303,159 @@ function shouldScheduleCachedBridgeHealthRefresh(
   return ageMs === null || ageMs > Math.floor(bridgeHealthCacheMs(health) / 2);
 }
 
+function bridgeHealthContinuousOutageMs(now: number): number | null {
+  // How long the health circuit has been CONTINUOUSLY open (firstOpenedAt is not
+  // reset by each backoff window, unlike openedAt). Null when not currently failing.
+  const firstOpenedAt = getBridgeGovernorSnapshot().health.firstOpenedAt;
+  return typeof firstOpenedAt === "number"
+    ? Math.max(0, now - firstOpenedAt)
+    : null;
+}
+
+export type BridgeConnectivityReason =
+  | "socket_disconnected"
+  | "server_disconnected"
+  | "not_authenticated"
+  | "liveness_stale"
+  | "connectivity_floor_exceeded"
+  | "health_error"
+  | "ibkr_bridge_not_configured"
+  | "ibkr_bridge_runtime_unattached";
+
+export type BridgeConnectivityInput = {
+  connected: boolean;
+  authenticated: boolean;
+  serverConnectivity: "unknown" | "connected" | "disconnected" | null | undefined;
+  /** ms timestamp of the last successful liveness round-trip (getCurrentTime tickle). */
+  lastTickleAtMs: number | null;
+  /** Age of the health snapshot (now - updatedAt); the real cache age even when forceStale. */
+  healthAgeMs: number | null;
+  /** True when we are serving the stale last-known-good cache (probe unavailable). */
+  forceStale: boolean;
+  /** Current stream/transport activity is positive liveness proof for the bridge. */
+  streamFresh: boolean;
+  /** Independent positive proof the Windows helper/Gateway host is alive. */
+  desktopAgentOnline: boolean;
+  /** How long the health circuit has been continuously open (null when not failing). */
+  continuousOutageMs: number | null;
+  now: number;
+  livenessFreshMs: number;
+  connectivityFloorMs: number;
+  healthFreshMs: number;
+};
+
+export type BridgeConnectivityVerdict = {
+  connectivityUp: boolean;
+  connectivityReason: BridgeConnectivityReason | null;
+  lastTickleAgeMs: number | null;
+  livenessFresh: boolean;
+  floorOk: boolean;
+};
+
+/**
+ * The connection verdict, DECOUPLED from the data-freshness clocks (healthFresh /
+ * streamFresh). It answers "is the bridge connection genuinely usable right now",
+ * not "did the api-server recently process a quote/health event". Three layers:
+ *
+ *  1. Wire/server truth: socket connected, server not flagged disconnected, session
+ *     authenticated. Pure transport facts straight from the bridge snapshot.
+ *  2. Liveness round-trip (half-open guard): require a recent successful tickle
+ *     or fresh quote stream/transport activity, since a hung-but-socket-open
+ *     gateway keeps connected=true for ~30s and a failed tickle never flips it.
+ *     A fresh successful health probe (not stale, healthAge<=healthFreshMs) is
+ *     itself a round-trip, so a not-yet-tickled-but-just-probed bridge counts as live.
+ *  3. Connectivity floor (stale-cache guard): when serving the stale cache, trust the
+ *     connection only within a short floor (never the full 120s operational cache) and
+ *     never past a continuous health outage longer than the floor. desktopAgentOnline is
+ *     independent positive proof and overrides the floor (but NOT liveness — a live helper
+ *     does not prove the TWS socket is completing round-trips).
+ */
+export function resolveBridgeConnectivity(
+  input: BridgeConnectivityInput,
+): BridgeConnectivityVerdict {
+  // NOTE: lastTickleAt is stamped with the bridge host's clock while `now` is the
+  // api-server clock. Math.max(0, ...) clamps a forward (bridge-ahead) skew to age 0,
+  // so a >= livenessFreshMs forward skew would keep liveness perpetually fresh. This
+  // inherits the pre-existing healthFresh skew assumption; a future task that gates
+  // TRADING on connectivityUp must normalize the bridge clock (carry a serverTime
+  // offset) rather than trust this field as skew-proof.
+  const lastTickleAgeMs =
+    input.lastTickleAtMs === null
+      ? null
+      : Math.max(0, input.now - input.lastTickleAtMs);
+
+  if (input.serverConnectivity === "disconnected") {
+    return {
+      connectivityUp: false,
+      connectivityReason: "server_disconnected",
+      lastTickleAgeMs,
+      livenessFresh: false,
+      floorOk: false,
+    };
+  }
+  if (input.connected !== true) {
+    return {
+      connectivityUp: false,
+      connectivityReason: "socket_disconnected",
+      lastTickleAgeMs,
+      livenessFresh: false,
+      floorOk: false,
+    };
+  }
+  if (input.authenticated !== true) {
+    return {
+      connectivityUp: false,
+      connectivityReason: "not_authenticated",
+      lastTickleAgeMs,
+      livenessFresh: false,
+      floorOk: false,
+    };
+  }
+
+  const livenessFresh =
+    input.streamFresh === true ||
+    (lastTickleAgeMs !== null && lastTickleAgeMs <= input.livenessFreshMs) ||
+    (input.lastTickleAtMs === null &&
+      input.forceStale !== true &&
+      input.healthAgeMs !== null &&
+      input.healthAgeMs <= input.healthFreshMs);
+  if (!livenessFresh) {
+    return {
+      connectivityUp: false,
+      connectivityReason: "liveness_stale",
+      lastTickleAgeMs,
+      livenessFresh: false,
+      floorOk: false,
+    };
+  }
+
+  const floorOk =
+    input.forceStale !== true ||
+    input.streamFresh === true ||
+    input.desktopAgentOnline === true ||
+    ((input.healthAgeMs === null ||
+      input.healthAgeMs <= input.connectivityFloorMs) &&
+      (input.continuousOutageMs === null ||
+        input.continuousOutageMs <= input.connectivityFloorMs));
+  if (!floorOk) {
+    return {
+      connectivityUp: false,
+      connectivityReason: "connectivity_floor_exceeded",
+      lastTickleAgeMs,
+      livenessFresh: true,
+      floorOk: false,
+    };
+  }
+
+  return {
+    connectivityUp: true,
+    connectivityReason: null,
+    lastTickleAgeMs,
+    livenessFresh: true,
+    floorOk: true,
+  };
+}
+
 function annotateBridgeHealth(
   health: BridgeHealthSnapshot,
   options: {
@@ -304,8 +490,14 @@ function annotateBridgeHealth(
     numericRecordValue(subscriptions, "quoteListenerCount") ?? 0,
   );
   const lastStreamEventAgeMs = minFinite(
-    numericRecordValue(subscriptions, "lastQuoteAgeMs"),
-    numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
+    ageFromSnapshotAge(
+      numericRecordValue(subscriptions, "lastQuoteAgeMs"),
+      healthAgeMs,
+    ),
+    ageFromSnapshotAge(
+      numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
+      healthAgeMs,
+    ),
     bridgeQuoteDataAgeMs,
     bridgeQuoteTransportAgeMs,
   );
@@ -376,6 +568,25 @@ function annotateBridgeHealth(
     desiredSymbolCount,
     now: new Date(now),
   });
+  // Connection verdict, decoupled from the data-freshness clocks above. This is the
+  // authoritative "is the bridge connection usable" signal that gates/display should
+  // consume instead of `connected`/`socketConnected` (which fold in healthFresh/streamFresh
+  // and therefore flip to "not connected" when the api-server merely falls behind under load).
+  const connectivity = resolveBridgeConnectivity({
+    connected: Boolean(health.connected),
+    authenticated: Boolean(health.authenticated),
+    serverConnectivity: health.serverConnectivity,
+    lastTickleAtMs: timestampMs(health.lastTickleAt),
+    healthAgeMs,
+    forceStale: options.forceStale === true,
+    streamFresh,
+    desktopAgentOnline: desktopAgentOnlineProvider(),
+    continuousOutageMs: bridgeHealthContinuousOutageMs(now),
+    now,
+    livenessFreshMs: bridgeLivenessFreshMs(),
+    connectivityFloorMs: bridgeConnectivityFloorMs(),
+    healthFreshMs: bridgeHealthFreshMs(),
+  });
   const strictFields = {
     healthFresh,
     healthAgeMs,
@@ -383,6 +594,9 @@ function annotateBridgeHealth(
     bridgeReachable,
     socketConnected,
     brokerServerConnected,
+    connectivityUp: connectivity.connectivityUp,
+    connectivityReason: connectivity.connectivityReason,
+    lastTickleAgeMs: connectivity.lastTickleAgeMs,
     serverConnectivity: health.serverConnectivity,
     lastServerConnectivityAt: health.lastServerConnectivityAt,
     lastServerConnectivityError: health.lastServerConnectivityError,
@@ -426,10 +640,102 @@ function annotateBridgeHealth(
 
 export type AnnotatedBridgeHealth = ReturnType<typeof annotateBridgeHealth>;
 
+function buildUnattachedDesktopAgentBridgeHealth(
+  unavailable: IbkrBridgeRuntimeUnavailableState = describeIbkrBridgeRuntimeUnavailable(),
+): AnnotatedBridgeHealth {
+  const now = new Date();
+  const streamState = {
+    streamState: "checking" as const,
+    streamStateReason: unavailable.code,
+  };
+  const connection = {
+    transport: "tws" as const,
+    role: "market_data" as const,
+    configured: true,
+    reachable: false,
+    authenticated: false,
+    competing: false,
+    target: null,
+    mode: null,
+    clientId: null,
+    selectedAccountId: null,
+    accounts: [],
+    lastPingMs: null,
+    lastPingAt: null,
+    lastTickleAt: null,
+    lastError: unavailable.message,
+    marketDataMode: null,
+    liveMarketDataAvailable: null,
+    healthFresh: false,
+    healthAgeMs: null,
+    stale: true,
+    bridgeReachable: false,
+    socketConnected: false,
+    brokerServerConnected: false,
+    serverConnectivity: "unknown" as const,
+    lastServerConnectivityAt: null,
+    lastServerConnectivityError: null,
+    accountsLoaded: false,
+    configuredLiveMarketDataMode: false,
+    streamFresh: false,
+    lastStreamEventAgeMs: null,
+    strictReady: false,
+    strictReason: unavailable.code,
+    connectivityUp: false,
+    connectivityReason: unavailable.code,
+    lastTickleAgeMs: null,
+  };
+  return {
+    configured: true,
+    authenticated: false,
+    connected: false,
+    competing: false,
+    selectedAccountId: null,
+    accounts: [],
+    lastTickleAt: null,
+    lastError: unavailable.message,
+    lastRecoveryAttemptAt: null,
+    lastRecoveryError: null,
+    updatedAt: now,
+    transport: "tws" as const,
+    connectionTarget: null,
+    sessionMode: null,
+    clientId: null,
+    marketDataMode: null,
+    liveMarketDataAvailable: null,
+    healthFresh: false,
+    healthAgeMs: null,
+    stale: true,
+    bridgeReachable: false,
+    socketConnected: false,
+    brokerServerConnected: false,
+    serverConnectivity: "unknown" as const,
+    lastServerConnectivityAt: null,
+    lastServerConnectivityError: null,
+    accountsLoaded: false,
+    configuredLiveMarketDataMode: false,
+    streamFresh: false,
+    lastStreamEventAgeMs: null,
+    strictReady: false,
+    strictReason: unavailable.code,
+    connectivityUp: false,
+    connectivityReason: unavailable.code,
+    lastTickleAgeMs: null,
+    ...streamState,
+    diagnostics: {
+      lastReconnectReason: unavailable.code,
+    },
+    connections: {
+      tws: connection,
+    },
+  };
+}
+
 export const __platformBridgeHealthInternalsForTests = {
   annotateBridgeHealth,
   maybeAbandonDeadBridgeOverride,
   DEAD_BRIDGE_OVERRIDE_ABANDON_MS,
+  buildUnattachedDesktopAgentBridgeHealth,
 };
 
 async function refreshBridgeHealthForSession(
@@ -533,7 +839,13 @@ function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
 export async function getBridgeHealthForSession(
   options: BridgeHealthForSessionOptions = {},
 ): Promise<AnnotatedBridgeHealth | null> {
-  if (!getProviderConfiguration().ibkr) {
+  const runtimeAvailability = getIbkrBridgeRuntimeAvailability();
+  if (!runtimeAvailability.runtimeConfigured) {
+    if (runtimeAvailability.desktopAgentOnline) {
+      return buildUnattachedDesktopAgentBridgeHealth(
+        describeIbkrBridgeRuntimeUnavailable(runtimeAvailability),
+      );
+    }
     return null;
   }
   // Drop a dead override before evaluating health so the session reports a clean
@@ -557,11 +869,19 @@ export async function getBridgeHealthForSession(
     return null;
   }
 
+  const bridgeQuoteDiagnostics = getBridgeQuoteStreamDiagnostics();
+  let cacheNeedsRefresh = shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth);
   let annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
-    bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+    bridgeQuoteDiagnostics,
   });
+  if (cacheNeedsRefresh && annotated.streamFresh !== true) {
+    annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
+      forceStale: true,
+      bridgeQuoteDiagnostics,
+    });
+  }
   if (
-    shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth) &&
+    cacheNeedsRefresh &&
     !lastBridgeHealthRefreshPromise &&
     !isBridgeWorkBackedOff("health")
   ) {
@@ -573,9 +893,16 @@ export async function getBridgeHealthForSession(
         "session_stale",
       );
       if (lastKnownBridgeHealth) {
+        cacheNeedsRefresh = shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth);
         annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
-          bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+          bridgeQuoteDiagnostics,
         });
+        if (cacheNeedsRefresh && annotated.streamFresh !== true) {
+          annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
+            forceStale: true,
+            bridgeQuoteDiagnostics,
+          });
+        }
       }
     }
   }
@@ -584,7 +911,7 @@ export async function getBridgeHealthForSession(
   }
 
   recordConnectionLiveState({
-    connected: Boolean(annotated.connected),
+    connected: Boolean(annotated.connectivityUp),
     streamState: annotated.streamState,
   });
   return annotated;
@@ -607,7 +934,8 @@ function getBridgeBackoffRemainingMs(category: "orders" | "options" | "health"):
 }
 
 export function getSessionBridgeHealthFailureState() {
-  if (!getProviderConfiguration().ibkr) {
+  const runtimeAvailability = getIbkrBridgeRuntimeAvailability();
+  if (!runtimeAvailability.runtimeConfigured) {
     return null;
   }
 
@@ -649,6 +977,9 @@ export function getSessionBridgeHealthFailureState() {
     bridgeReachable: false,
     socketConnected: false,
     brokerServerConnected: false,
+    connectivityUp: false,
+    connectivityReason: "health_error" as BridgeConnectivityReason,
+    lastTickleAgeMs: null,
     connected: false,
     authenticated: false,
     accountsLoaded: false,
@@ -672,8 +1003,31 @@ export function getSessionBridgeHealthFailureState() {
 
 export async function getRuntimeBridgeHealthState() {
   const configured = getProviderConfiguration();
+  const runtimeAvailability = getIbkrBridgeRuntimeAvailability();
   const bridgeHealthTimeoutMs = runtimeDiagnosticsTimeoutMs();
   const bridgeQuoteDiagnostics = getBridgeQuoteStreamDiagnostics();
+  if (
+    !runtimeAvailability.runtimeConfigured &&
+    runtimeAvailability.desktopAgentOnline
+  ) {
+    const annotatedHealth = buildUnattachedDesktopAgentBridgeHealth(
+      describeIbkrBridgeRuntimeUnavailable(runtimeAvailability),
+    );
+    return {
+      bridgeQuoteDiagnostics,
+      annotatedHealth,
+      fallbackStreamState: resolveIbkrRuntimeStreamState({
+        configured: true,
+        healthFresh: false,
+        connected: false,
+        authenticated: false,
+      }),
+      healthError: null,
+      healthErrorCode: null,
+      healthErrorStatusCode: null,
+      healthErrorDetail: null,
+    };
+  }
   const cachedBridgeHealthAgeMs =
     lastKnownBridgeHealth == null
       ? null
@@ -727,14 +1081,25 @@ export async function getRuntimeBridgeHealthState() {
   if (bridgeHealth) {
     lastKnownBridgeHealth = bridgeHealth;
   }
-  const annotatedHealth = bridgeHealth
-    ? annotateBridgeHealth(bridgeHealth, { bridgeQuoteDiagnostics })
-    : lastKnownBridgeHealth
-      ? annotateBridgeHealth(lastKnownBridgeHealth, {
-          forceStale: true,
-          bridgeQuoteDiagnostics,
-        })
-      : null;
+  const annotationSource = bridgeHealth ?? lastKnownBridgeHealth;
+  const annotationSourceRequiresStaleFloor =
+    annotationSource !== null &&
+    (useCachedBridgeHealth || bridgeHealth === null) &&
+    shouldRefreshCachedBridgeHealth(annotationSource);
+  let annotatedHealth = annotationSource
+    ? annotateBridgeHealth(annotationSource, { bridgeQuoteDiagnostics })
+    : null;
+  if (
+    annotationSource &&
+    annotatedHealth &&
+    annotationSourceRequiresStaleFloor &&
+    annotatedHealth.streamFresh !== true
+  ) {
+    annotatedHealth = annotateBridgeHealth(annotationSource, {
+      forceStale: true,
+      bridgeQuoteDiagnostics,
+    });
+  }
   const fallbackStreamState = resolveIbkrRuntimeStreamState({
     configured: configured.ibkr,
     healthFresh: false,

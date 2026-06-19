@@ -1767,8 +1767,11 @@ function buildIbkrDiagnosticEvents(
   const configured = booleanValue(metrics["configured"]);
   const bridgeUrlConfigured = booleanValue(ibkrRaw["bridgeUrlConfigured"]);
   const bridgeTokenConfigured = booleanValue(ibkrRaw["bridgeTokenConfigured"]);
+  const desktopAgentOnline = booleanValue(ibkrRaw["desktopAgentOnline"]);
+  const bridgeRuntimeReason = textValue(ibkrRaw["bridgeRuntimeReason"]);
   const reachable = booleanValue(metrics["reachable"]);
   const connected = booleanValue(metrics["connected"]);
+  const connectivityUp = booleanValue(metrics["connectivityUp"]);
   const authenticated = booleanValue(metrics["authenticated"]);
   const competing = booleanValue(metrics["competing"]);
   const healthError = textValue(ibkrRaw["healthError"]);
@@ -1786,7 +1789,17 @@ function buildIbkrDiagnosticEvents(
   const strictReady = booleanValue(ibkrRaw["strictReady"]);
   const strictReason = textValue(ibkrRaw["strictReason"]);
 
-  if (!bridgeUrlConfigured || !configured) {
+  if (!bridgeUrlConfigured && desktopAgentOnline) {
+    events.push({
+      subsystem: "ibkr",
+      category: "bridge-runtime",
+      code: bridgeRuntimeReason ?? "ibkr_bridge_runtime_unattached",
+      severity: "warning",
+      message:
+        "IBKR desktop agent is online, but the bridge runtime URL is not attached yet.",
+      raw: ibkrRaw,
+    });
+  } else if (!bridgeUrlConfigured || !configured) {
     events.push({
       subsystem: "ibkr",
       category: "configuration",
@@ -1844,7 +1857,7 @@ function buildIbkrDiagnosticEvents(
     });
   }
 
-  if (configured && reachable && !connected) {
+  if (configured && reachable && !connected && !connectivityUp) {
     events.push({
       subsystem: "ibkr",
       category: "gateway-socket",
@@ -1932,14 +1945,29 @@ function buildIbkrDiagnosticEvents(
 
 function buildIbkrMetrics(runtime: JsonRecord): JsonRecord {
   const ibkr = asJsonRecord(runtime["ibkr"]);
-  const configured = Boolean(ibkr["configured"]);
+  const configured =
+    Boolean(ibkr["configured"]) || Boolean(ibkr["desktopAgentOnline"]);
   const lastTickleAt = configured ? timestampMs(ibkr["lastTickleAt"]) : null;
+  const strictReason =
+    textValue(ibkr["strictReason"]) ??
+    textValue(ibkr["bridgeRuntimeReason"]) ??
+    null;
+  const rawConnectivityUp =
+    typeof ibkr["connectivityUp"] === "boolean"
+      ? Boolean(ibkr["connectivityUp"])
+      : null;
+  const connected = configured
+    ? rawConnectivityUp ?? Boolean(ibkr["connected"])
+    : false;
   const heartbeatAgeMs =
     lastTickleAt === null ? null : Math.max(0, Date.now() - lastTickleAt);
   return {
     configured,
     reachable: configured ? Boolean(ibkr["reachable"]) : false,
-    connected: configured ? Boolean(ibkr["connected"]) : false,
+    connected,
+    connectivityUp: connected,
+    connectivityReason: configured ? textValue(ibkr["connectivityReason"]) : null,
+    lastTickleAgeMs: configured ? numeric(ibkr["lastTickleAgeMs"]) : null,
     authenticated: configured ? Boolean(ibkr["authenticated"]) : false,
     competing: configured ? Boolean(ibkr["competing"]) : false,
     heartbeatAgeMs,
@@ -1959,9 +1987,7 @@ function buildIbkrMetrics(runtime: JsonRecord): JsonRecord {
       ? numeric(ibkr["lastStreamEventAgeMs"])
       : null,
     strictReady: configured ? ibkr["strictReady"] ?? null : false,
-    strictReason: configured
-      ? ibkr["strictReason"] ?? null
-      : "ibkr_bridge_not_configured",
+    strictReason: configured ? strictReason : "ibkr_bridge_not_configured",
     lastRecoveryAttemptAt: configured
       ? ibkr["lastRecoveryAttemptAt"] ?? null
       : null,
@@ -1973,7 +1999,10 @@ function classifyIbkrSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (!metrics["configured"]) {
     return "warning";
   }
-  if (!metrics["reachable"] || !metrics["connected"]) {
+  if (
+    metrics["connectivityUp"] !== true &&
+    (!metrics["reachable"] || !metrics["connected"])
+  ) {
     return "warning";
   }
   if (!metrics["authenticated"] || metrics["competing"]) {
@@ -4625,6 +4654,7 @@ export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
 }
 
 export const __diagnosticsInternalsForTests = {
+  buildIbkrDiagnosticEvents,
   buildIbkrMetrics,
 };
 

@@ -7,6 +7,7 @@ import {
   getIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
+import { setIbkrBridgeRuntimeAvailabilityProvider } from "../providers/ibkr/bridge-client";
 import {
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
@@ -26,6 +27,14 @@ import {
 setDesktopAgentOnlineProvider(
   () => getIbkrBridgeRuntimeSessionState().desktopAgentOnline,
 );
+setIbkrBridgeRuntimeAvailabilityProvider(() => {
+  const runtime = getIbkrBridgeRuntimeSessionState();
+  return {
+    runtimeOverrideActive: runtime.runtimeOverrideActive,
+    desktopAgentOnline: runtime.desktopAgentOnline,
+    desktopAgentCompatible: runtime.desktopAgentCompatible,
+  };
+});
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
@@ -202,6 +211,15 @@ type RemoteDesktopLaunchJobClaimResult =
 export type IbkrBridgeRuntimeSessionState = {
   runtimeOverrideActive: boolean;
   runtimeOverrideUpdatedAt: Date | null;
+  bridgeRuntimeAttached: boolean;
+  bridgeRuntimeStatus:
+    | "attached"
+    | "desktop_agent_online_not_attached"
+    | "detached";
+  bridgeRuntimeReason:
+    | "ibkr_bridge_runtime_unattached"
+    | "ibkr_bridge_not_configured"
+    | null;
   desktopAgentRegistered: boolean;
   desktopAgentRegisteredCount: number;
   desktopAgentOnline: boolean;
@@ -1828,10 +1846,23 @@ export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionStat
   const desktopAgentUpgradeRequired = Boolean(
     statusDesktop && !desktopAgentCompatible,
   );
+  const bridgeRuntimeAttached = Boolean(runtimeOverride);
+  const bridgeRuntimeStatus = bridgeRuntimeAttached
+    ? "attached"
+    : onlineDesktop
+      ? "desktop_agent_online_not_attached"
+      : "detached";
 
   return {
-    runtimeOverrideActive: Boolean(runtimeOverride),
+    runtimeOverrideActive: bridgeRuntimeAttached,
     runtimeOverrideUpdatedAt: runtimeOverride?.updatedAt ?? null,
+    bridgeRuntimeAttached,
+    bridgeRuntimeStatus,
+    bridgeRuntimeReason: bridgeRuntimeAttached
+      ? null
+      : onlineDesktop
+        ? "ibkr_bridge_runtime_unattached"
+        : "ibkr_bridge_not_configured",
     desktopAgentRegistered: desktopAgentRegisteredCount > 0,
     desktopAgentRegisteredCount,
     desktopAgentOnline: Boolean(onlineDesktop),

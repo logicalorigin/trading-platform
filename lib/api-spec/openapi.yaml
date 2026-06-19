@@ -5462,6 +5462,12 @@ components:
           type: boolean
         strictReason:
           type: [string, "null"]
+        connectivityUp:
+          type: boolean
+        connectivityReason:
+          type: [string, "null"]
+        lastTickleAgeMs:
+          type: [integer, "null"]
       required:
         - transport
         - role

@@ -1245,6 +1245,7 @@ function normalizeOptionsFlowSessionBlockReason(
   if (
     reason === "not_configured" ||
     reason === "ibkr_bridge_not_configured" ||
+    reason === "ibkr_bridge_runtime_unattached" ||
     reason === "bridge_unreachable" ||
     reason === "health_error" ||
     reason === "health_stale" ||
@@ -3409,6 +3410,8 @@ export async function getRuntimeDiagnostics() {
     ingest: marketDataIngest,
     stockAggregates: marketDataStreams.stockAggregates,
   });
+  const ibkrConfiguredForDiagnostics =
+    configured.ibkr || ibkrRuntime.desktopAgentOnline;
 
   return {
     timestamp: new Date(),
@@ -3440,11 +3443,14 @@ export async function getRuntimeDiagnostics() {
     storage: getCachedStorageHealthSnapshot(),
     ibkr: {
       transport: "tws" as const,
-      configured: configured.ibkr,
+      configured: ibkrConfiguredForDiagnostics,
       bridgeUrlConfigured: Boolean(bridgeConfig?.baseUrl),
       bridgeTokenConfigured: Boolean(bridgeConfig?.apiToken),
       runtimeOverrideActive: Boolean(bridgeOverride),
       runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
+      bridgeRuntimeAttached: ibkrRuntime.bridgeRuntimeAttached,
+      bridgeRuntimeStatus: ibkrRuntime.bridgeRuntimeStatus,
+      bridgeRuntimeReason: ibkrRuntime.bridgeRuntimeReason,
       desktopAgentOnline: ibkrRuntime.desktopAgentOnline,
       desktopAgentRegistered: ibkrRuntime.desktopAgentRegistered,
       desktopAgentRegisteredCount: ibkrRuntime.desktopAgentRegisteredCount,
@@ -3459,7 +3465,9 @@ export async function getRuntimeDiagnostics() {
       activation: getIbkrBridgeActivationDiagnostics(),
       ignoredBridgeEnvNames,
       ignoredBridgeEnvConfigured: ignoredBridgeEnvNames.length > 0,
-      reachable: Boolean(annotatedHealth?.bridgeReachable),
+      reachable: Boolean(
+        annotatedHealth?.bridgeReachable || annotatedHealth?.connectivityUp,
+      ),
       healthError,
       healthErrorCode,
       healthErrorStatusCode,
@@ -3470,6 +3478,9 @@ export async function getRuntimeDiagnostics() {
       bridgeReachable: annotatedHealth?.bridgeReachable ?? false,
       socketConnected: annotatedHealth?.socketConnected ?? false,
       brokerServerConnected: annotatedHealth?.brokerServerConnected ?? false,
+      connectivityUp: annotatedHealth?.connectivityUp ?? false,
+      connectivityReason: annotatedHealth?.connectivityReason ?? null,
+      lastTickleAgeMs: annotatedHealth?.lastTickleAgeMs ?? null,
       serverConnectivity: annotatedHealth?.serverConnectivity ?? null,
       lastServerConnectivityAt:
         annotatedHealth?.lastServerConnectivityAt ?? null,
@@ -3491,7 +3502,8 @@ export async function getRuntimeDiagnostics() {
       streamStateReason:
         annotatedHealth?.streamStateReason ??
         fallbackStreamState.streamStateReason,
-      connected: annotatedHealth?.connected ?? false,
+      connected:
+        annotatedHealth?.connectivityUp ?? annotatedHealth?.connected ?? false,
       authenticated: annotatedHealth?.authenticated ?? false,
       competing: annotatedHealth?.competing ?? false,
       selectedAccountId: maskAccountId(annotatedHealth?.selectedAccountId),

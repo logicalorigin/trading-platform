@@ -133,7 +133,10 @@ export const GetSessionResponse = zod.object({
   "streamStateReason": zod.string().nullish(),
   "lastStreamEventAgeMs": zod.number().nullish(),
   "strictReady": zod.boolean().optional(),
-  "strictReason": zod.string().nullish()
+  "strictReason": zod.string().nullish(),
+  "connectivityUp": zod.boolean().optional(),
+  "connectivityReason": zod.string().nullish(),
+  "lastTickleAgeMs": zod.number().nullish()
 })
 })
 }),zod.null()]),

@@ -55,4 +55,9 @@ export interface IbkrBridgeConnectionHealth {
   strictReady?: boolean;
   /** @nullable */
   strictReason?: string | null;
+  connectivityUp?: boolean;
+  /** @nullable */
+  connectivityReason?: string | null;
+  /** @nullable */
+  lastTickleAgeMs?: number | null;
 }

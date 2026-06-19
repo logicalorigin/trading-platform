@@ -97,14 +97,20 @@ function buildBrokerReadiness(
             strictReady: false,
           }
         : asRecord(brokerRuntime);
+  const connectivityUp =
+    boolOrNull(runtimeMetrics?.["connectivityUp"]) ??
+    boolOrNull(metrics["connectivityUp"]);
   const rawChecks = {
     configured:
       boolOrNull(runtimeMetrics?.["configured"]) ??
       boolOrNull(metrics["configured"]),
     reachable:
-      boolOrNull(runtimeMetrics?.["reachable"]) ??
-      boolOrNull(metrics["reachable"]),
+      connectivityUp === true
+        ? true
+        : (boolOrNull(runtimeMetrics?.["reachable"]) ??
+          boolOrNull(metrics["reachable"])),
     connected:
+      connectivityUp ??
       boolOrNull(runtimeMetrics?.["connected"]) ??
       boolOrNull(metrics["connected"]),
     authenticated:
