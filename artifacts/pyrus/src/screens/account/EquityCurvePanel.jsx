@@ -39,7 +39,6 @@ import EquityCurveEventRibbon, {
 const EQUITY_CHART_MODES = [
   { value: "nav", label: "NAV" },
   { value: "pnl", label: "P&L" },
-  { value: "return", label: "Return %" },
 ];
 
 const DEFAULT_VISIBLE_BENCHMARKS = {
@@ -56,24 +55,6 @@ const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
-};
-
-// Rebase the transfer-adjusted account return % to 0% at the window start so it
-// shares the benchmark baseline behavior (joinBenchmarkPercentSeries rebases to
-// the first non-null matched value) and the same percent axis.
-export const rebaseAccountReturnPercentSeries = (points) => {
-  const series = points.map((point) => finiteNumber(point?.returnPercent));
-  const baseline = series.find((value) => value != null);
-  if (baseline == null) {
-    return series;
-  }
-  return series.map((value) => {
-    if (value == null) {
-      return null;
-    }
-    const rebased = value - baseline;
-    return Math.abs(rebased) < 1e-9 ? 0 : rebased;
-  });
 };
 
 const toneColor = (value) =>
@@ -317,7 +298,6 @@ export const EquityCurvePanel = ({
     () => {
       const equityPoints = normalizeEquityPointSeries(chartData?.points || []);
       const pnlValues = buildTransferAdjustedPnlSeries(equityPoints);
-      const accountReturnPercentValues = rebaseAccountReturnPercentSeries(equityPoints);
       const benchmarkValues = benchmarks
         .filter((benchmark) => visibleBenchmarks[benchmark.key])
         .reduce((accumulator, benchmark) => {
@@ -333,7 +313,6 @@ export const EquityCurvePanel = ({
       return equityPoints.map((point, index) => ({
         ...point,
         cumulativePnl: pnlValues[index] ?? null,
-        accountReturnPercent: accountReturnPercentValues[index] ?? null,
         benchmarkSpyPercent: benchmarkValues.SPY?.[index] ?? null,
         benchmarkQqqPercent: benchmarkValues.QQQ?.[index] ?? null,
         benchmarkDjiaPercent: benchmarkValues.DJIA?.[index] ?? null,

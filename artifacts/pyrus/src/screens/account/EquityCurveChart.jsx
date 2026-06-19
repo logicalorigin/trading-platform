@@ -172,27 +172,6 @@ const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
   bottomFillColor2: chartColorAlpha(CSS_COLOR.red, "3b", THEMES.dark.red),
 });
 
-// Return % mode plots the account line on the same percent scale + formatter as
-// the benchmarks (BENCHMARK_PRICE_SCALE_ID), so account and benchmarks share one
-// 0%-rebased axis. Solid + thicker than the dashed benchmarks to read as the
-// primary account series; keeps the account accent color.
-const buildReturnSeriesOptions = (accentColor) => ({
-  priceScaleId: BENCHMARK_PRICE_SCALE_ID,
-  color: chartColor(accentColor, THEMES.dark.accent),
-  lineWidth: 2,
-  priceLineVisible: false,
-  lastValueVisible: true,
-  crosshairMarkerVisible: true,
-  crosshairMarkerRadius: 4,
-  crosshairMarkerBorderColor: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1),
-  crosshairMarkerBackgroundColor: chartColor(accentColor, THEMES.dark.accent),
-  priceFormat: {
-    type: "custom",
-    formatter: buildPercentFormatter(),
-    minMove: 0.01,
-  },
-});
-
 const buildBenchmarkSeriesOptions = (benchmark) => ({
   priceScaleId: BENCHMARK_PRICE_SCALE_ID,
   color: chartColor(benchmark.color, THEMES.dark.accent),
@@ -273,8 +252,6 @@ const EquityCurveChartInner = ({
       if (mainSeriesRef.current) {
         if (mainSeriesModeRef.current === "nav") {
           mainSeriesRef.current.applyOptions(buildNavSeriesOptions(accentColor, currency, maskValues, chartMode));
-        } else if (mainSeriesModeRef.current === "return") {
-          mainSeriesRef.current.applyOptions(buildReturnSeriesOptions(accentColor));
         } else {
           mainSeriesRef.current.applyOptions(buildPnlSeriesOptions(currency, maskValues, chartMode));
         }
@@ -283,15 +260,6 @@ const EquityCurveChartInner = ({
         const benchmark = benchmarks.find((entry) => entry.key === key);
         if (benchmark) series.applyOptions(buildBenchmarkSeriesOptions(benchmark));
       });
-      // buildChartOptions resets scale visibility to the NAV default; restore the
-      // return-mode percent (right) / hidden NAV (left) scales.
-      if (mainSeriesModeRef.current === "return") {
-        chart.applyOptions({
-          leftPriceScale: { visible: false },
-          rightPriceScale: { visible: true },
-        });
-        chart.priceScale(BENCHMARK_PRICE_SCALE_ID).applyOptions({ visible: true });
-      }
     };
     window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, applyTheme);
     return () => {
@@ -302,32 +270,8 @@ const EquityCurveChartInner = ({
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    const valueKey =
-      chartMode === "pnl"
-        ? "cumulativePnl"
-        : chartMode === "return"
-          ? "accountReturnPercent"
-          : "netLiquidation";
+    const valueKey = chartMode === "pnl" ? "cumulativePnl" : "netLiquidation";
     const seriesData = sliceFiniteSeries(data, valueKey);
-
-    const addMainSeries = () => {
-      if (chartMode === "pnl") {
-        return chart.addSeries(BaselineSeries, buildPnlSeriesOptions(currency, maskValues, chartMode));
-      }
-      if (chartMode === "return") {
-        return chart.addSeries(LineSeries, buildReturnSeriesOptions(accentColor));
-      }
-      return chart.addSeries(AreaSeries, buildNavSeriesOptions(accentColor, currency, maskValues, chartMode));
-    };
-    const mainSeriesOptions = () => {
-      if (chartMode === "pnl") {
-        return buildPnlSeriesOptions(currency, maskValues, chartMode);
-      }
-      if (chartMode === "return") {
-        return buildReturnSeriesOptions(accentColor);
-      }
-      return buildNavSeriesOptions(accentColor, currency, maskValues, chartMode);
-    };
 
     if (mainSeriesModeRef.current !== chartMode) {
       if (mainSeriesRef.current) {
@@ -338,10 +282,18 @@ const EquityCurveChartInner = ({
         }
         mainSeriesRef.current = null;
       }
-      mainSeriesRef.current = addMainSeries();
+      const seriesApi =
+        chartMode === "pnl"
+          ? chart.addSeries(BaselineSeries, buildPnlSeriesOptions(currency, maskValues, chartMode))
+          : chart.addSeries(AreaSeries, buildNavSeriesOptions(accentColor, currency, maskValues, chartMode));
+      mainSeriesRef.current = seriesApi;
       mainSeriesModeRef.current = chartMode;
     } else if (mainSeriesRef.current) {
-      mainSeriesRef.current.applyOptions(mainSeriesOptions());
+      mainSeriesRef.current.applyOptions(
+        chartMode === "pnl"
+          ? buildPnlSeriesOptions(currency, maskValues, chartMode)
+          : buildNavSeriesOptions(accentColor, currency, maskValues, chartMode),
+      );
     }
 
     if (mainSeriesRef.current) {
@@ -384,20 +336,14 @@ const EquityCurveChartInner = ({
     });
 
     const hasBenchmark = desired.size > 0;
-    // In return mode the account line lives on the percent (right) scale, so it
-    // must stay visible even without benchmarks, and the NAV/$ (left) scale has
-    // no series and is hidden.
-    const isReturnMode = chartMode === "return";
-    const showPercentScale = hasBenchmark || isReturnMode;
     chart.priceScale(BENCHMARK_PRICE_SCALE_ID).applyOptions({
-      visible: showPercentScale,
+      visible: hasBenchmark,
       autoScale: true,
     });
     chart.applyOptions({
-      leftPriceScale: { visible: !isReturnMode },
-      rightPriceScale: { visible: showPercentScale },
+      rightPriceScale: { visible: hasBenchmark },
     });
-  }, [availableBenchmarkKeys, benchmarks, chartMode, data, visibleBenchmarks]);
+  }, [availableBenchmarkKeys, benchmarks, data, visibleBenchmarks]);
 
   useEffect(() => {
     const chart = chartRef.current;
