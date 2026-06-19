@@ -87,8 +87,13 @@ const API_EVENT_LOOP_DELAY_WATCH_MS = 60;
 const API_EVENT_LOOP_DELAY_HIGH_MS = 250;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
+const RESOURCE_HIGH_ENTER_SAMPLE_COUNT = 2;
+const RESOURCE_HIGH_EXIT_SAMPLE_COUNT = 2;
 
 let currentInputs: ApiResourcePressureSnapshot["inputs"] = { ...NORMAL_INPUTS };
+let stableResourceLevel: ApiResourcePressureLevel = "normal";
+let consecutiveResourceHighSamples = 0;
+let consecutiveResourceClearSamples = 0;
 
 const normalizeNumber = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -133,6 +138,44 @@ function levelFromThresholds(
   if (value >= thresholds.high) return "high";
   if (value >= thresholds.watch) return "watch";
   return "normal";
+}
+
+function applyResourceLevelHysteresis(input: {
+  rawLevel: ApiResourcePressureLevel;
+  immediateHigh: boolean;
+}): ApiResourcePressureLevel {
+  if (input.immediateHigh) {
+    stableResourceLevel = "high";
+    consecutiveResourceHighSamples = RESOURCE_HIGH_ENTER_SAMPLE_COUNT;
+    consecutiveResourceClearSamples = 0;
+    return stableResourceLevel;
+  }
+
+  if (input.rawLevel === "high") {
+    consecutiveResourceHighSamples += 1;
+    consecutiveResourceClearSamples = 0;
+    if (
+      stableResourceLevel === "high" ||
+      consecutiveResourceHighSamples >= RESOURCE_HIGH_ENTER_SAMPLE_COUNT
+    ) {
+      stableResourceLevel = "high";
+      return stableResourceLevel;
+    }
+    stableResourceLevel = maxLevel(stableResourceLevel, "watch");
+    return stableResourceLevel;
+  }
+
+  consecutiveResourceHighSamples = 0;
+  if (stableResourceLevel === "high") {
+    consecutiveResourceClearSamples += 1;
+    if (consecutiveResourceClearSamples < RESOURCE_HIGH_EXIT_SAMPLE_COUNT) {
+      return stableResourceLevel;
+    }
+  }
+
+  consecutiveResourceClearSamples = 0;
+  stableResourceLevel = input.rawLevel;
+  return stableResourceLevel;
 }
 
 function readPositiveNumberEnv(name: string): number | null {
@@ -203,11 +246,17 @@ function dbPoolLevel(input: {
   max: number | null;
 }): ApiResourcePressureLevel {
   const waiting = input.waiting ?? 0;
-  if (waiting > 0) return "high";
-  if (input.active === null || input.max === null || input.max <= 0) {
+  const max = input.max !== null && input.max > 0 ? input.max : null;
+  const activeSaturated =
+    input.active !== null && max !== null && input.active >= max;
+  if (waiting > 0 && activeSaturated) {
+    return "high";
+  }
+  if (waiting > 0) return "watch";
+  if (input.active === null || max === null) {
     return "normal";
   }
-  return input.active >= input.max ? "watch" : "normal";
+  return activeSaturated ? "watch" : "normal";
 }
 
 function dbPoolDetail(input: {
@@ -332,7 +381,12 @@ function buildSnapshot(
   // Actual server saturation: memory + event-loop + local DB pool exhaustion.
   // Request latency is excluded so a slow external (broker) route can't freeze
   // signal/action work.
-  const resourceLevel = maxLevel(rssLevel, heapLevel, eventLoopLevel, poolLevel);
+  const immediateResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel);
+  const rawResourceLevel = maxLevel(immediateResourceLevel, eventLoopLevel);
+  const resourceLevel = applyResourceLevelHysteresis({
+    rawLevel: rawResourceLevel,
+    immediateHigh: immediateResourceLevel === "high",
+  });
 
   const drivers = [
     driver({
@@ -489,5 +543,8 @@ export function isApiResourcePressureHardBlock(
 
 export function __resetApiResourcePressureForTests(): void {
   currentInputs = { ...NORMAL_INPUTS };
+  stableResourceLevel = "normal";
+  consecutiveResourceHighSamples = 0;
+  consecutiveResourceClearSamples = 0;
   currentSnapshot = buildSnapshot(currentInputs);
 }

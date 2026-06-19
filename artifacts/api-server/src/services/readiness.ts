@@ -187,7 +187,7 @@ function buildAppReadiness(input: {
     };
   }
 
-  if (input.pressure.level === "high") {
+  if (input.pressure.resourceLevel === "high") {
     return {
       status: "degraded",
       reason: "api_resource_pressure_high",

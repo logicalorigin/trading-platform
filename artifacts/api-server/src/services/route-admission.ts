@@ -74,10 +74,16 @@ const normalizePath = (path: string) => {
 };
 
 const normalizeQaMode = (value: unknown): ApiRouteQaMode =>
-  String(value || "").trim().toLowerCase() === "safe" ? "safe" : null;
+  String(value || "")
+    .trim()
+    .toLowerCase() === "safe"
+    ? "safe"
+    : null;
 
 const normalizeRouteContextValue = (value: unknown): string => {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   return normalized ? normalized.slice(0, 64) : "";
 };
 
@@ -111,9 +117,7 @@ const chartRequestFamilies = new Set([
   "chart-warmup",
   "option-chart-bars",
 ]);
-const passiveSparklineRequestFamilies = new Set([
-  "sparkline",
-]);
+const passiveSparklineRequestFamilies = new Set(["sparkline"]);
 const deferredRequestFamilies = new Set([
   "chart-backfill",
   "chart-flow",
@@ -226,12 +230,12 @@ export function classifyApiRoute(input: {
   const rawPath = String(input.path || "/");
   const path = normalizePath(rawPath);
   const query = queryParamsForPath(rawPath);
-  const mode = String(query.get("mode") || query.get("environment") || "").toLowerCase();
+  const mode = String(
+    query.get("mode") || query.get("environment") || "",
+  ).toLowerCase();
   const routeContext = normalizeRouteRequestContext({
     requestFamily:
-      input.requestFamily ??
-      query.get("requestFamily") ??
-      query.get("family"),
+      input.requestFamily ?? query.get("requestFamily") ?? query.get("family"),
     fetchPriority:
       input.fetchPriority ?? normalizeFetchPriority(query.get("fetchPriority")),
     requestOrigin: input.requestOrigin ?? query.get("requestOrigin"),
@@ -242,7 +246,7 @@ export function classifyApiRoute(input: {
     path === "/orders/submit" ||
     path === "/orders/preview" ||
     /^\/orders\/[^/]+\/(replace|cancel)$/.test(path) ||
-    path === "/orders" && method === "POST" ||
+    (path === "/orders" && method === "POST") ||
     path === "/shadow/orders/preview" ||
     path === "/shadow/orders" ||
     /^\/accounts\/[^/]+\/orders\/[^/]+\/cancel$/.test(path)
@@ -263,7 +267,9 @@ export function classifyApiRoute(input: {
     mode === "live" &&
     (path === "/positions" ||
       path === "/orders" ||
-      /^\/accounts\/[^/]+\/(summary|positions|positions-at-date|orders|risk|allocation|equity-history|closed-trades|cash-activity)$/.test(path))
+      /^\/accounts\/[^/]+\/(summary|positions|positions-at-date|orders|risk|allocation|equity-history|closed-trades|cash-activity)$/.test(
+        path,
+      ))
   ) {
     return "live-data";
   }
@@ -299,7 +305,9 @@ export function classifyApiRoute(input: {
   }
 
   if (
-    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-backfill$/.test(path) ||
+    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-backfill$/.test(
+      path,
+    ) ||
     path.includes("/watchlist-backtest/")
   ) {
     return "background-maintenance";
@@ -398,7 +406,9 @@ function readRequestQaMode(req: Request): ApiRouteQaMode {
   );
 }
 
-export function readApiRouteRequestContext(req: Request): ApiRouteRequestContext {
+export function readApiRouteRequestContext(
+  req: Request,
+): ApiRouteRequestContext {
   return {
     requestFamily:
       req.get("x-pyrus-request-family") ??
@@ -422,7 +432,7 @@ export function readApiRouteRequestContext(req: Request): ApiRouteRequestContext
       req.get("x-pyrus-client-role") ??
       (typeof req.query["clientRole"] === "string"
         ? req.query["clientRole"]
-      : null),
+        : null),
   };
 }
 
@@ -453,6 +463,7 @@ export function apiRouteAdmissionMiddleware(
   res.locals["apiRouteAdmission"] = admission;
   res.setHeader("X-Pyrus-Route-Class", admission.routeClass);
   res.setHeader("X-Pyrus-Pressure-Level", admission.pressureLevel);
+  res.setHeader("X-Pyrus-Resource-Level", admission.pressureLevel);
   res.setHeader("X-Pyrus-Admission-Action", admission.action);
   if (admission.qaMode) {
     res.setHeader("X-Pyrus-QA-Mode", admission.qaMode);
@@ -462,7 +473,10 @@ export function apiRouteAdmissionMiddleware(
     res.setHeader("X-Pyrus-Admission-Reason", admission.reason ?? "degraded");
   }
   if (admission.retryAfterMs !== null) {
-    res.setHeader("Retry-After", String(Math.ceil(admission.retryAfterMs / 1000)));
+    res.setHeader(
+      "Retry-After",
+      String(Math.ceil(admission.retryAfterMs / 1000)),
+    );
   }
   if (admission.action === "shed") {
     const statusCode = admission.statusCode ?? 503;
@@ -470,20 +484,23 @@ export function apiRouteAdmissionMiddleware(
       res.status(204).end();
       return;
     }
-    res.status(statusCode).type("application/problem+json").json({
-      type: "https://pyrus.local/problems/route-admission-shed",
-      title: "Request shed by PYRUS route admission",
-      status: statusCode,
-      detail:
-        admission.reason === "qa-safe-mode-shed"
-          ? "Safe browser QA mode suppresses live streams, decorative requests, and deferred analytics."
-          : "The API is under resource pressure and shed lower-priority work.",
-      code: admission.reason,
-      routeClass: admission.routeClass,
-      pressureLevel: admission.pressureLevel,
-      qaMode: admission.qaMode,
-      generatedAt: admission.generatedAt,
-    });
+    res
+      .status(statusCode)
+      .type("application/problem+json")
+      .json({
+        type: "https://pyrus.local/problems/route-admission-shed",
+        title: "Request shed by PYRUS route admission",
+        status: statusCode,
+        detail:
+          admission.reason === "qa-safe-mode-shed"
+            ? "Safe browser QA mode suppresses live streams, decorative requests, and deferred analytics."
+            : "The API is under resource pressure and shed lower-priority work.",
+        code: admission.reason,
+        routeClass: admission.routeClass,
+        pressureLevel: admission.pressureLevel,
+        qaMode: admission.qaMode,
+        generatedAt: admission.generatedAt,
+      });
     return;
   }
   next();
@@ -525,7 +542,6 @@ export function withRouteAdmissionMetadata<T>(
       typeof record["generatedAt"] === "string"
         ? record["generatedAt"]
         : admission.generatedAt,
-    partial:
-      typeof record["partial"] === "boolean" ? record["partial"] : false,
+    partial: typeof record["partial"] === "boolean" ? record["partial"] : false,
   } as T;
 }

@@ -18,6 +18,9 @@ const noopLogger = {
 
 function highResourcePressureSnapshot() {
   __resetApiResourcePressureForTests();
+  updateApiResourcePressure({
+    eventLoopDelayP95Ms: 300,
+  });
   return updateApiResourcePressure({
     eventLoopDelayP95Ms: 300,
   });

@@ -100,6 +100,45 @@ test("broker readiness suppresses stale connection proof when IBKR is not config
   });
 });
 
+test("app readiness ignores broad route latency pressure when resources are normal", () => {
+  const diagnostics: DiagnosticsLatestPayload = {
+    timestamp: "2026-06-09T03:32:46.000Z",
+    status: "ok",
+    severity: "info",
+    summary: "runtime ok",
+    thresholds: [],
+    events: [],
+    snapshots: [],
+  };
+  const latencyPressure: ApiResourcePressureSnapshot = {
+    ...NORMAL_PRESSURE,
+    level: "high",
+    resourceLevel: "normal",
+    drivers: [
+      {
+        kind: "api-latency",
+        label: "API latency",
+        level: "high",
+        detail: "12000 ms",
+        score: 12_000,
+      },
+    ],
+  };
+
+  const readiness = buildApiReadinessPayload({
+    diagnostics,
+    pressure: latencyPressure,
+    now: new Date("2026-06-09T03:32:46.000Z"),
+  });
+
+  assert.equal(readiness.appReadiness.status, "ready");
+  assert.equal(readiness.appReadiness.reason, null);
+  assert.equal(
+    readiness.degradedReasons.includes("api_resource_pressure_high"),
+    false,
+  );
+});
+
 test("live bridge detach overrides stale ready diagnostics immediately", () => {
   const diagnostics: DiagnosticsLatestPayload = {
     timestamp: "2026-06-09T04:22:20.000Z",
