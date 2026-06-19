@@ -1,7 +1,4 @@
-import {
-  attachPostgresClientErrorHandler,
-  pool,
-} from "@workspace/db";
+import { sharedAdvisoryLockHolder } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { runShadowOptionMaintenance } from "./shadow-account";
 import {
@@ -68,68 +65,11 @@ function positiveInteger(value: unknown, fallback: number, min: number, max: num
     : fallback;
 }
 
+// Session-level advisory lock held on a dedicated connection OUTSIDE the shared
+// 12-connection pool. The lock no longer pins a pooled connection idle for the
+// duration of the maintenance run; maintenance uses the shared pool normally.
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
-  const client = await pool.connect();
-  let clientError: Error | null = null;
-  let transactionOpen = false;
-  const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
-    context: "signal-options-worker-advisory-lock",
-    onError: (error) => {
-      clientError = error;
-    },
-  });
-  const releaseClient = (releaseError?: unknown) => {
-    detachClientErrorHandler();
-    const error =
-      clientError ?? (releaseError instanceof Error ? releaseError : undefined);
-    if (error) {
-      client.release(error);
-      return;
-    }
-    client.release();
-  };
-  let locked = false;
-
-  try {
-    await client.query("begin");
-    transactionOpen = true;
-    const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_xact_lock($1) as locked",
-      [ADVISORY_LOCK_KEY],
-    );
-    locked = result.rows[0]?.locked === true;
-
-    if (!locked) {
-      await client.query("rollback");
-      transactionOpen = false;
-      releaseClient();
-      return null;
-    }
-
-    return async () => {
-      let releaseError: unknown;
-      try {
-        if (!clientError && transactionOpen) {
-          await client.query("commit");
-          transactionOpen = false;
-        }
-      } catch (error) {
-        releaseError = error;
-      } finally {
-        if (transactionOpen) {
-          await client.query("rollback").catch(() => {});
-          transactionOpen = false;
-        }
-        releaseClient(releaseError);
-      }
-    };
-  } catch (error) {
-    if (transactionOpen) {
-      await client.query("rollback").catch(() => {});
-    }
-    releaseClient(error);
-    throw error;
-  }
+  return sharedAdvisoryLockHolder.acquire(ADVISORY_LOCK_KEY);
 }
 
 function defaultDependencies(

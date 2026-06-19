@@ -56,11 +56,13 @@ export function createAdvisoryLockHolder(
   let client: ClientLike | null = null;
   let connecting: Promise<ClientLike> | null = null;
   let detachErrorHandler: (() => void) | null = null;
+  const heldKeys = new Map<number, ClientLike>();
 
   const dropClient = () => {
     const current = client;
     client = null;
     connecting = null;
+    heldKeys.clear();
     detachErrorHandler?.();
     detachErrorHandler = null;
     if (current) {
@@ -109,6 +111,10 @@ export function createAdvisoryLockHolder(
    * closure when acquired, or `null` when another holder already owns it.
    */
   const acquire = async (key: number): Promise<AdvisoryLockRelease | null> => {
+    if (heldKeys.has(key)) {
+      return null;
+    }
+
     let active: ClientLike;
     try {
       active = await getClient();
@@ -137,12 +143,16 @@ export function createAdvisoryLockHolder(
       return null;
     }
 
+    heldKeys.set(key, active);
     let released = false;
     return async () => {
       if (released) {
         return;
       }
       released = true;
+      if (heldKeys.get(key) !== active) {
+        return;
+      }
       // If the connection dropped between acquire and release, Postgres already
       // released the session lock; there is nothing left to unlock.
       if (client !== active) {
@@ -150,6 +160,7 @@ export function createAdvisoryLockHolder(
       }
       try {
         await active.query("select pg_advisory_unlock($1)", [key]);
+        heldKeys.delete(key);
       } catch {
         // A failed unlock means the connection is unhealthy; drop it so the lock
         // is released by Postgres on disconnect and the next acquire reconnects.

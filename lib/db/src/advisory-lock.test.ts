@@ -53,7 +53,7 @@ function createFakeBackend() {
         const key = Number(values?.[0]);
         if (sql.includes("pg_try_advisory_lock")) {
           const owner = heldByConnection.get(key);
-          const locked = owner === undefined;
+          const locked = owner === undefined || owner === connectionId;
           if (locked) {
             heldByConnection.set(key, connectionId);
           }
@@ -152,6 +152,27 @@ test("second concurrent acquire of the same key fails, release frees it", async 
   await third!();
   await holder.close();
   await secondHolder.close();
+});
+
+test("same holder does not re-acquire a key already held on its session", async () => {
+  const backend = createFakeBackend();
+  const holder = createAdvisoryLockHolder({ createClient: backend.createClient });
+
+  const first = await holder.acquire(9);
+  assert.notEqual(first, null);
+
+  // Postgres session advisory locks are re-entrant on the same connection. The
+  // holder must enforce local singleton semantics before querying Postgres.
+  const second = await holder.acquire(9);
+  assert.equal(second, null, "same holder must not re-acquire a held key");
+
+  await first!();
+
+  const third = await holder.acquire(9);
+  assert.notEqual(third, null, "key is acquirable again after local release");
+
+  await third!();
+  await holder.close();
 });
 
 test("distinct keys are independent on the shared dedicated connection", async () => {
