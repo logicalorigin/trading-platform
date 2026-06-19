@@ -3930,17 +3930,26 @@ export const PositionsPanel = ({
   const positionsInitialFetchPending = Boolean(
     positionsQueryActivelyFetching && !query.data,
   );
+  // When IBKR is configured but the bridge is detached, the positions query is
+  // disabled (fetchStatus idle), so it would otherwise fall through to the
+  // generic "No open positions" copy and mislabel a detached bridge as an empty
+  // portfolio. Surface the real reason instead.
+  const positionsBridgeDetached = Boolean(brokerConfigured && !brokerAuthenticated);
   const positionsEmptyTitle = positionsInitialFetchPending
     ? "Fetching broker positions"
     : openPositionRows.length && !rows.length
       ? "No positions match filters"
-      : "No open positions";
+      : positionsBridgeDetached
+        ? "Broker not connected"
+        : "No open positions";
   const positionsEmptyBody =
     positionsInitialFetchPending
       ? "Waiting on the broker positions snapshot. The table shell is ready; rows will appear as soon as the broker returns them."
       : openPositionRows.length && !rows.length
         ? "Clear the active position filters to show the fetched broker positions."
-      : emptyBody;
+      : positionsBridgeDetached
+        ? "The IBKR bridge is detached, so live positions can't be loaded. Reconnect the bridge to see your open positions."
+        : emptyBody;
 
   const positionsTablePanel = (
     <Panel

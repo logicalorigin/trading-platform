@@ -1640,9 +1640,6 @@ const AccountScreenInner = ({
     primaryAccountRestQueriesEnabled,
   );
   const positionsRestQueriesEnabled = Boolean(accountQueriesEnabled);
-  const supportPanelQueriesEnabled = Boolean(
-    secondaryAccountQueriesEnabled && activatedAccountPanels.support,
-  );
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",
@@ -1664,11 +1661,18 @@ const AccountScreenInner = ({
     priority: 6,
   });
 
+  // Flex health is the diagnostic that explains WHY the bridge is detached, and
+  // GET /accounts/flex/health is a plain server route that responds regardless of
+  // bridge state. Gate it only on the Account screen being visible (not on the
+  // bridge being attached via accountQueriesEnabled, nor on the Setup & Health
+  // accordion being expanded) so a detached bridge can still be diagnosed and
+  // reconnected instead of the diagnostic being gated behind the very state it
+  // would explain.
   const healthQuery = useGetFlexHealth({
     query: {
       staleTime: 15_000,
       refetchInterval: healthRefreshInterval,
-      enabled: Boolean(!shadowMode && supportPanelQueriesEnabled),
+      enabled: Boolean(isVisible && !shadowMode && !safeQaMode),
       retry: false,
     },
   });
