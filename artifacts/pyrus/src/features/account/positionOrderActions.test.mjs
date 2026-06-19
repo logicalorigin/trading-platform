@@ -16,7 +16,7 @@ test("positionExitSide exits long positions by selling and short positions by bu
 test("buildCloseOrderRequest creates a market day exit order for an option position", () => {
   const request = buildCloseOrderRequest({
     accountId: "acct-123",
-    environment: "paper",
+    environment: "shadow",
     position: {
       symbol: "AAPL",
       assetClass: "option",
@@ -36,7 +36,7 @@ test("buildCloseOrderRequest creates a market day exit order for an option posit
 
   assert.deepEqual(request, {
     accountId: "acct-123",
-    mode: "paper",
+    mode: "shadow",
     symbol: "AAPL",
     assetClass: "option",
     side: "sell",
