@@ -7,6 +7,7 @@ import {
   buildVisibleSignalRows,
   findSignalOptionsCandidateForSignal,
   resolveAlgoDeploymentKind,
+  resolveDisplayCurrentPrice,
   resolveStableStaActionSnapshot,
   resolveSignalAge,
   resolveSignalMove,
@@ -897,4 +898,111 @@ test("STA source selection rejects genuinely transient action rows", () => {
   assert.deepEqual(snapshot.sourceHealth.failedSources, ["cockpit", "state"]);
   assert.equal(snapshot.signals.length, 0);
   assert.equal(snapshot.candidates.length, 0);
+});
+
+// --- STA Move: shared current-price source + stale-data marker ---------------
+// Regression for the impossible-move-on-stale-row bug: the Move column measured
+// "current" against a phantom price the row never displayed (BFST/FIBK +209%),
+// and stale rows presented a confident live move during trading hours.
+
+test("Move measures against the SAME current price the row displays (no phantom)", () => {
+  // Live quote present: price column and Move share the quote, by construction.
+  const signal = { symbol: "AAA", signalPrice: 100 };
+  const snapshot = { price: 110 };
+  const displayed = resolveDisplayCurrentPrice(signal, snapshot);
+  const move = resolveSignalMove(signal, snapshot, null);
+  assert.equal(displayed.price, 110);
+  // Move's implied current (signalPrice + value) equals the displayed price.
+  assert.equal(signal.signalPrice + move.value, displayed.price);
+  assert.equal(move.label, "+10.0%");
+  assert.equal(move.stale, false);
+});
+
+test("Move on a stale bar reconciles with the displayed price and is flagged stale", () => {
+  // BFST/FIBK shape: no live quote, only a stale bar close; the Signal Monitor
+  // marks the row stale (actionBlocker `data_stale`). Old behavior: price column
+  // showed the fire price while Move used the bar -> a phantom +209%. Now both
+  // use the bar AND the move is flagged stale via the canonical monitor state.
+  const signal = {
+    symbol: "BFST",
+    signalPrice: 9.31,
+    currentPrice: 28.77, // stale last-evaluated bar close
+    actionBlocker: "data_stale",
+  };
+  const displayed = resolveDisplayCurrentPrice(signal, null);
+  const move = resolveSignalMove(signal, null, null);
+  assert.equal(displayed.source, "bar");
+  assert.equal(displayed.price, 28.77);
+  // Price column and Move now agree on the current (no divergence).
+  assert.ok(
+    Math.abs(signal.signalPrice + move.value - displayed.price) < 1e-9,
+    "move implied current reconciles with displayed price",
+  );
+  assert.equal(move.stale, true);
+});
+
+test("Move stays blank (not 0%) when only a fire price exists", () => {
+  // No live quote, no bar close: the row can only show the fire price, so the
+  // Move is unknown rather than a misleading 0%.
+  const signal = { symbol: "CCC", signalPrice: 50 };
+  const displayed = resolveDisplayCurrentPrice(signal, null);
+  const move = resolveSignalMove(signal, null, null);
+  assert.equal(displayed.source, "fire");
+  assert.equal(displayed.price, 50);
+  assert.equal(move.label, "—");
+  assert.equal(move.stale, false);
+});
+
+test("Move from a FRESH matrix bar renders and is not flagged stale", () => {
+  // SPY-style fresh matrix row (status ok): legitimate move since fire against a
+  // fresh bar -- must render and NOT be flagged stale.
+  const signal = {
+    symbol: "SPY",
+    signalPrice: 500,
+    currentPrice: 525,
+    status: "ok",
+  };
+  const move = resolveSignalMove(signal, null, null);
+  assert.equal(move.label, "+5.0%");
+  assert.equal(move.stale, false);
+});
+
+test("Move on a present-but-stale row is flagged stale via monitor state (FFIV shape)", () => {
+  // FFIV: the quote value is present (price renders, move computes) but the
+  // Signal Monitor marks the row stale -> the giant since-fire move must be
+  // flagged, not shown as live. Staleness is the row's monitor state (codex's
+  // canonical signal: status !== "ok" / actionBlocker data_stale), NOT a quote
+  // freshness/cacheAgeMs heuristic.
+  const okMove = resolveSignalMove(
+    { symbol: "FFIV", signalPrice: 154.56, status: "ok" },
+    { price: 381.75 },
+    null,
+  );
+  assert.equal(okMove.label, "+147.0%");
+  assert.equal(okMove.stale, false);
+  const staleMove = resolveSignalMove(
+    { symbol: "FFIV", signalPrice: 154.56, status: "stale" },
+    { price: 381.75 },
+    null,
+  );
+  assert.equal(staleMove.label, "+147.0%");
+  assert.equal(staleMove.stale, true);
+  const blockedMove = resolveSignalMove(
+    { symbol: "FFIV", signalPrice: 154.56, actionBlocker: "data_stale" },
+    { price: 381.75 },
+    null,
+  );
+  assert.equal(blockedMove.stale, true);
+});
+
+test("a row with no monitor status is not spuriously flagged stale", () => {
+  // Live quote, no status field -> must not be treated as stale (guards against
+  // `undefined !== "ok"` over-flagging).
+  const move = resolveSignalMove(
+    { symbol: "DDD", signalPrice: 100 },
+    { price: 110 },
+    null,
+  );
+  assert.equal(move.label, "+10.0%");
+  assert.equal(move.stale, false);
 });

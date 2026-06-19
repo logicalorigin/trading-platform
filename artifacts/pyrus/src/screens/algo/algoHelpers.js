@@ -1198,6 +1198,61 @@ const latestSparklineClose = (snapshot, record) => {
   return null;
 };
 
+// Single source of truth for the "current" underlying price the STA row both
+// DISPLAYS (price column) and MEASURES THE MOVE AGAINST. Resolving these from
+// one chain means the price the user sees and the price the Move is computed
+// from can never diverge -- a divergence is what let stale rows show a confident
+// Move against a phantom price the UI never displayed (BFST/FIBK +209%).
+// Precedence: live snapshot quote -> last-evaluated bar close (matrix
+// latestBarClose / sparkline) -> signal fire price as the last resort.
+// `source` reports which tier supplied the value ("quote" live; "bar" the most
+// recent bar; "fire" only the fire price; null nothing), and `live` is true only
+// for a live snapshot quote.
+export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
+  const record = asRecord(signal);
+  const snapshot = asRecord(tickerSnapshot);
+  const liveQuote = firstPresentFiniteMetric(
+    snapshot.price,
+    snapshot.last,
+    snapshot.mark,
+  );
+  if (liveQuote != null) {
+    return { price: liveQuote, source: "quote", live: true };
+  }
+  const barClose = firstPresentFiniteMetric(
+    record.currentPrice,
+    record.last,
+    record.mark,
+    latestSparklineClose(snapshot, record),
+  );
+  if (barClose != null) {
+    return { price: barClose, source: "bar", live: false };
+  }
+  const firePrice = finitePresentNumberOrNull(record.signalPrice);
+  return {
+    price: firePrice,
+    source: firePrice == null ? null : "fire",
+    live: false,
+  };
+};
+
+// SINGLE source of truth for "is this STA row's data stale?". The display marker
+// and the backend root-cause must agree on what "stale" means, so the canonical
+// signal lives here and nowhere else. Per the Signal Monitor model
+// (signal-monitor-actionability.ts:45-58 authors actionBlocker `data_stale`
+// from status !== "ok"), staleness is the row's own monitor state -- NOT a quote
+// freshness/cacheAgeMs heuristic (those cannot represent a 15h-stale row).
+const resolveMoveStaleness = (record) => {
+  if (record.stale === true) return true;
+  if (String(record.actionBlocker || "").toLowerCase() === "data_stale") {
+    return true;
+  }
+  const status = String(record.status || "")
+    .trim()
+    .toLowerCase();
+  return status !== "" && status !== "ok";
+};
+
 export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = null) => {
   const record = asRecord(signal);
   const snapshot = asRecord(tickerSnapshot);
@@ -1212,17 +1267,22 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
     candidateRecord.entryPrice,
     candidateRecord.basisPrice,
   );
-  const currentPrice = firstPresentFiniteMetric(
-    snapshot.price,
-    snapshot.last,
-    snapshot.mark,
-    record.currentPrice,
-    record.last,
-    record.mark,
-    latestSparklineClose(snapshot, record),
-  );
+  // Measure the Move against the SAME price the row displays. Only a real
+  // current (live quote or a bar close) yields a Move; a fire-only/absent
+  // current leaves it blank rather than fabricating a 0% or a phantom move.
+  const current = resolveDisplayCurrentPrice(record, snapshot);
+  const currentPrice =
+    current.source === "quote" || current.source === "bar"
+      ? current.price
+      : null;
   if (signalPrice == null || currentPrice == null || signalPrice <= 0) {
-    return { value: null, pct: null, label: MISSING_VALUE, detail: MISSING_VALUE };
+    return {
+      value: null,
+      pct: null,
+      label: MISSING_VALUE,
+      detail: MISSING_VALUE,
+      stale: false,
+    };
   }
   const value = currentPrice - signalPrice;
   const pct = (value / signalPrice) * 100;
@@ -1231,6 +1291,7 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
     pct,
     label: `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`,
     detail: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
+    stale: resolveMoveStaleness(record),
   };
 };
 

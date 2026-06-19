@@ -9,6 +9,7 @@ import {
   ScanLine,
   Send,
 } from "lucide-react";
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
@@ -71,6 +72,7 @@ import {
   formatQuoteSummary,
   resolveCandidateGateDisplay,
   resolveCandidateSyncDisplay,
+  resolveDisplayCurrentPrice,
   resolveSignalAge,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
@@ -1071,11 +1073,11 @@ const positiveNumberOrNull = (value) => {
   return numeric != null && numeric > 0 ? numeric : null;
 };
 
+// Delegate to the shared resolver so the displayed price and the Move column's
+// "current" can never diverge (the divergence that produced phantom moves on
+// stale rows). Same precedence: live quote -> last bar close -> fire price.
 const resolveUnderlyingPrice = (signal, tickerSnapshot) =>
-  finiteNumberOrNull(tickerSnapshot?.price) ??
-  finiteNumberOrNull(tickerSnapshot?.last) ??
-  finiteNumberOrNull(tickerSnapshot?.mark) ??
-  finiteNumberOrNull(signal?.signalPrice);
+  resolveDisplayCurrentPrice(signal, tickerSnapshot).price;
 
 const hasDrawableSparklineData = (value) =>
   Array.isArray(value) && extractSparklinePoints(value).length >= 2;
@@ -2386,6 +2388,13 @@ export const OperationsSignalRow = ({
   const signalAge = resolveSignalAge(signalRecord);
   const since = signalSinceDisplay(signalRecord, signalAge);
   const signalMove = resolveSignalMove(signalRecord, tickerSnapshot, candidate);
+  // A stale Move during regular trading hours is a DATA DEFECT (a fresh quote is
+  // expected), so flag it loudly; outside RTH (overnight/pre/after/closed/
+  // weekend/holiday) no fresh quote is expected, so mute it calmly. Resolve the
+  // market session lazily -- only when the Move is actually stale.
+  const moveStale = signalMove.stale === true;
+  const moveIsRthDefect =
+    moveStale && resolveUsEquityMarketStatus().session?.key === "rth";
   const signalAgeBlocked =
     signalRecord.actionEligible === false || Boolean(signalRecord.actionBlocker);
   const signalAgeTone =
@@ -2656,16 +2665,30 @@ export const OperationsSignalRow = ({
     move: (
       <DataCell
         value={signalMove.label}
-        detail={signalMove.detail}
+        detail={moveStale ? "stale data" : signalMove.detail}
         tone={
-          Number(signalMove.pct) > 0
-            ? CSS_COLOR.green
-            : Number(signalMove.pct) < 0
-              ? CSS_COLOR.red
-              : CSS_COLOR.textDim
+          moveIsRthDefect
+            ? CSS_COLOR.amber
+            : moveStale
+              ? CSS_COLOR.textDim
+              : Number(signalMove.pct) > 0
+                ? CSS_COLOR.green
+                : Number(signalMove.pct) < 0
+                  ? CSS_COLOR.red
+                  : CSS_COLOR.textDim
+        }
+        detailTone={moveIsRthDefect ? CSS_COLOR.amber : undefined}
+        icon={
+          moveIsRthDefect ? (
+            <AlertTriangle size={12} color={CSS_COLOR.amber} aria-hidden />
+          ) : null
         }
         titleValue={compactJoin([
-          signalMove.detail,
+          moveIsRthDefect
+            ? `Data defect: quote stale during market hours (move ${signalMove.label})`
+            : moveStale
+              ? `Stale data — move ${signalMove.label} not from a live quote`
+              : signalMove.detail,
           underlyingPrice !== MISSING_VALUE ? `underlying ${underlyingPrice}` : null,
         ])}
         className={signalMoveFlashClassName}

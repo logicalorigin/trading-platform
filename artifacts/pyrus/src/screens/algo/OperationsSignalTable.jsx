@@ -454,8 +454,11 @@ const firstFiniteSortNumber = (...values) => {
 };
 
 const signalMoveSortValue = (row) => {
-  const pct = resolveSignalMove(row.signal, null, row.candidate).pct;
-  return pct == null ? Number.NaN : Number(pct);
+  const move = resolveSignalMove(row.signal, null, row.candidate);
+  // Sink stale/uncertain moves like a missing value so a data-stale row can't
+  // top the Move sort with a number we don't trust.
+  if (move.pct == null || move.stale) return Number.NaN;
+  return Number(move.pct);
 };
 
 const signalContractPreview = (signal) => asRecord(asRecord(signal).contractPreview);
