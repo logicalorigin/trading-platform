@@ -160,6 +160,38 @@ async function cancelSupersededForwardRefreshJobs(
   );
 }
 
+// Bulk equivalent of cancelSupersededForwardRefreshJobs for a set of symbols
+// that share one dedupe bucket. Used by enqueueMarketDataJobs so a universe
+// refresh runs one supersession query instead of one per symbol.
+async function cancelSupersededForwardRefreshJobsForSymbols(
+  pool: DbModule["pool"],
+  symbols: string[],
+  dedupeBucket: number,
+): Promise<void> {
+  if (symbols.length === 0) {
+    return;
+  }
+  // A running option-chain/GEX prerequisite may be the only path to unblock the
+  // next GEX job; let the worker finish it instead of discarding useful work.
+  await pool.query(
+    `
+    update market_data_ingest_jobs
+       set status = 'cancelled',
+           lease_owner = null,
+           lease_expires_at = null,
+           last_heartbeat_at = null,
+           last_error = concat('superseded by newer market-data refresh bucket ', $2::text),
+           updated_at = now()
+     where symbol = any($1::text[])
+       and kind = any($3::text[])
+       and status in ('queued', 'failed')
+       and coalesce(payload->>'dedupeBucket', '') ~ '^[0-9]+$'
+       and (payload->>'dedupeBucket')::bigint < $2::bigint
+    `,
+    [symbols, dedupeBucket, [...FORWARD_REFRESH_JOB_KINDS]],
+  );
+}
+
 export function isMarketDataIngestDatabaseConfigured(): boolean {
   return Boolean(
     process.env["DATABASE_URL"] ||
@@ -279,6 +311,183 @@ export async function enqueueMarketDataJob(
     );
     return { queued: false, dedupeKey, reason: "database_error" };
   }
+}
+
+const INGEST_JOB_DEFAULT_PRIORITY = 5;
+
+function resolveIngestPriority(priority: number | undefined): number {
+  return Number.isFinite(priority) && (priority ?? 0) > 0
+    ? Math.floor(priority as number)
+    : INGEST_JOB_DEFAULT_PRIORITY;
+}
+
+function resolveIngestMaxAttempts(maxAttempts: number | undefined): number {
+  return Number.isFinite(maxAttempts) && (maxAttempts ?? 0) > 0
+    ? Math.floor(maxAttempts as number)
+    : INGEST_JOB_DEFAULT_MAX_ATTEMPTS;
+}
+
+// Bulk variant of enqueueMarketDataJob: collapses many jobs into a single
+// insert (one pool connection) plus at most one supersession query per shared
+// dedupe bucket, instead of one connection per job. Returns one result per
+// input in order, with the same dedupe/conflict semantics as the single-job
+// path. Invalid/unsupported/unconfigured inputs short-circuit identically.
+export async function enqueueMarketDataJobs(
+  inputs: EnqueueMarketDataJobInput[],
+): Promise<EnqueueMarketDataJobResult[]> {
+  if (inputs.length === 0) {
+    return [];
+  }
+
+  const results: (EnqueueMarketDataJobResult | null)[] = inputs.map(() => null);
+  const insertable: {
+    index: number;
+    symbol: string;
+    dedupeKey: string;
+    payload: Record<string, unknown> | null;
+  }[] = [];
+
+  for (let index = 0; index < inputs.length; index += 1) {
+    const input = inputs[index]!;
+    const symbol = normalizeSymbol(input.symbol);
+    if (!symbol) {
+      results[index] = {
+        queued: false,
+        dedupeKey: input.dedupeKey ?? "",
+        reason: "invalid_symbol",
+      };
+      continue;
+    }
+    const dedupeKey =
+      input.dedupeKey ?? buildIngestDedupeKey({ ...input, symbol });
+    if (!isSupportedMarketDataIngestJobKind(input.kind)) {
+      results[index] = { queued: false, dedupeKey, reason: "unsupported_kind" };
+      continue;
+    }
+    if (!isMarketDataIngestProviderConfigured()) {
+      results[index] = {
+        queued: false,
+        dedupeKey,
+        reason: "provider_unconfigured",
+      };
+      continue;
+    }
+    insertable.push({
+      index,
+      symbol,
+      dedupeKey,
+      payload: input.payload ?? null,
+    });
+  }
+
+  if (insertable.length > 0) {
+    const dbModule = await loadDbModule();
+    if (!dbModule) {
+      for (const job of insertable) {
+        results[job.index] = {
+          queued: false,
+          dedupeKey: job.dedupeKey,
+          reason: "database_unconfigured",
+        };
+      }
+    } else {
+      const { db, pool, marketDataIngestJobsTable } = dbModule;
+      const now = new Date();
+      // De-duplicate by dedupeKey within this batch: a multi-row insert cannot
+      // upsert the same conflict target twice in one statement. The single-job
+      // path coalesces these via repeated onConflict; we mirror that by
+      // inserting the first occurrence and treating later duplicates as queued
+      // (same dedupeKey -> same row).
+      const seenDedupeKeys = new Set<string>();
+      const rows: Record<string, unknown>[] = [];
+      for (const job of insertable) {
+        const input = inputs[job.index]!;
+        if (!seenDedupeKeys.has(job.dedupeKey)) {
+          seenDedupeKeys.add(job.dedupeKey);
+          rows.push({
+            kind: input.kind,
+            symbol: job.symbol,
+            timeframe: input.timeframe?.trim() || null,
+            windowStart: input.windowStart ?? null,
+            windowEnd: input.windowEnd ?? null,
+            priority: resolveIngestPriority(input.priority),
+            status: "queued",
+            attemptCount: 0,
+            maxAttempts: resolveIngestMaxAttempts(input.maxAttempts),
+            nextRunAt: input.nextRunAt ?? now,
+            dedupeKey: job.dedupeKey,
+            payload: job.payload,
+            updatedAt: now,
+          });
+        }
+      }
+
+      try {
+        await db
+          .insert(marketDataIngestJobsTable)
+          .values(rows)
+          .onConflictDoUpdate({
+            target: marketDataIngestJobsTable.dedupeKey,
+            set: {
+              priority: sql`least(${marketDataIngestJobsTable.priority}, excluded.priority)`,
+              status: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then 'queued' else ${marketDataIngestJobsTable.status} end`,
+              attemptCount: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then 0 else ${marketDataIngestJobsTable.attemptCount} end`,
+              maxAttempts: sql`greatest(${marketDataIngestJobsTable.maxAttempts}, excluded.max_attempts)`,
+              leaseOwner: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then null else ${marketDataIngestJobsTable.leaseOwner} end`,
+              leaseExpiresAt: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then null else ${marketDataIngestJobsTable.leaseExpiresAt} end`,
+              lastHeartbeatAt: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then null else ${marketDataIngestJobsTable.lastHeartbeatAt} end`,
+              nextRunAt: sql`least(coalesce(${marketDataIngestJobsTable.nextRunAt}, excluded.next_run_at), excluded.next_run_at)`,
+              payload: sql`coalesce(excluded.payload, ${marketDataIngestJobsTable.payload})`,
+              lastError: sql`case when ${marketDataIngestJobsTable.status} in ('completed', 'failed', 'cancelled') then null else ${marketDataIngestJobsTable.lastError} end`,
+              updatedAt: now,
+            },
+          });
+
+        // Run supersession once per distinct dedupe bucket across all symbols
+        // that share it (a single refresh shares one bucket -> one query).
+        const symbolsByBucket = new Map<number, Set<string>>();
+        for (const job of insertable) {
+          const bucket = numericDedupeBucket(job.payload);
+          if (bucket == null) {
+            continue;
+          }
+          let symbols = symbolsByBucket.get(bucket);
+          if (!symbols) {
+            symbols = new Set<string>();
+            symbolsByBucket.set(bucket, symbols);
+          }
+          symbols.add(job.symbol);
+        }
+        for (const [bucket, symbols] of symbolsByBucket) {
+          await cancelSupersededForwardRefreshJobsForSymbols(
+            pool,
+            [...symbols],
+            bucket,
+          );
+        }
+
+        for (const job of insertable) {
+          results[job.index] = { queued: true, dedupeKey: job.dedupeKey };
+        }
+      } catch (error) {
+        logger.debug(
+          { err: error, jobCount: insertable.length },
+          "Failed to bulk-enqueue market data ingest jobs",
+        );
+        for (const job of insertable) {
+          results[job.index] = {
+            queued: false,
+            dedupeKey: job.dedupeKey,
+            reason: "database_error",
+          };
+        }
+      }
+    }
+  }
+
+  return results.map(
+    (result) => result ?? { queued: false, dedupeKey: "", reason: "database_error" },
+  );
 }
 
 function isGexResponsePayload(payload: unknown): payload is GexResponse {
