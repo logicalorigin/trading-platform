@@ -9,6 +9,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { timestamps } from "./common";
 import { algoRunStatusEnum, environmentModeEnum } from "./enums";
 
@@ -90,6 +91,20 @@ export const executionEventsTable = pgTable(
     index("execution_events_account_idx").on(table.providerAccountId),
     index("execution_events_symbol_idx").on(table.symbol),
     index("execution_events_occurred_at_idx").on(table.occurredAt),
+    // Partial index for the hot listDeploymentEvents query
+    // (WHERE deployment_id = ? AND event_type LIKE 'signal_options_%'
+    // ORDER BY occurred_at DESC LIMIT n). A deployment's events are mostly
+    // overnight_spot_signal_blocked (continuously growing) vs a minority of
+    // (older) signal_options_* rows, so a plain occurred_at scan skips ~750k
+    // newer non-matching rows (~15-23s, pinning a pool connection -> the
+    // "Signal-Options Deployment Unavailable" fallback). Indexing ONLY the
+    // signal_options rows, ordered by occurred_at, makes the LIMIT a sub-ms
+    // index scan regardless of planner stats. (A plain composite
+    // (deployment_id, event_type, occurred_at) is NOT used; the LIKE-prefix
+    // predicate can't drive it without text_pattern_ops; verified via EXPLAIN.)
+    index("execution_events_sigopt_deploy_occurred_idx")
+      .on(table.deploymentId, table.occurredAt.desc())
+      .where(sql`${table.eventType} LIKE 'signal_options_%'`),
   ],
 );
 
