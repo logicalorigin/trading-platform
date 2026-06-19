@@ -1,6 +1,6 @@
 export type AlgoCockpitChange = {
   deploymentId?: string | null;
-  mode?: "paper" | "live" | null;
+  mode?: "shadow" | "live" | null;
   reason: string;
   at: Date;
 };
@@ -11,7 +11,7 @@ const listeners = new Set<AlgoCockpitChangeListener>();
 
 export function notifyAlgoCockpitChanged(input: {
   deploymentId?: string | null;
-  mode?: "paper" | "live" | null;
+  mode?: "shadow" | "live" | null;
   reason: string;
 }): void {
   const change: AlgoCockpitChange = {

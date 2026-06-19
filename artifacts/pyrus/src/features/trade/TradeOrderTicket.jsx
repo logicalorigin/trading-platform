@@ -273,7 +273,7 @@ export const TradeOrderTicket = ({
     ],
     queryFn: () =>
       platformJsonRequest(
-        "/api/accounts/shadow/positions?mode=paper&assetClass=option&liveQuotes=false",
+        "/api/accounts/shadow/positions?mode=shadow&assetClass=option&liveQuotes=false",
       ),
     enabled: Boolean(ticketIsOptions && selectedContractMeta && expInfo.actualDate),
     staleTime: 15_000,
@@ -470,7 +470,7 @@ export const TradeOrderTicket = ({
   );
   const executionIsShadow = executionMode === "shadow";
   const selectedExecutionLabel = executionIsShadow
-    ? "SHADOW PAPER"
+    ? "SHADOW"
     : brokerConfigured
       ? gatewayTradingReady
         ? `IBKR ${environment.toUpperCase()}`
@@ -1217,7 +1217,7 @@ export const TradeOrderTicket = ({
   const shadowOrderRequest = shadowExecutionReady
     ? {
         accountId: "shadow",
-        mode: "paper",
+        mode: "shadow",
         symbol: slot.ticker,
         assetClass: ticketAssetClass,
         side: side.toLowerCase(),

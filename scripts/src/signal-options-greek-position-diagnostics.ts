@@ -486,12 +486,12 @@ async function readDeployment(deploymentId: string | null) {
         where enabled = true
           and provider_account_id = 'shadow'
           and (
-            name = 'Pyrus Signals Options Shadow Paper'
+            name = 'Pyrus Signals Options Shadow'
             or config->'parameters'->>'executionMode' = 'signal_options'
             or jsonb_typeof(config->'signalOptions') = 'object'
           )
         order by
-          case when name = 'Pyrus Signals Options Shadow Paper' then 0 else 1 end,
+          case when name = 'Pyrus Signals Options Shadow' then 0 else 1 end,
           updated_at desc
         limit 1
       `;

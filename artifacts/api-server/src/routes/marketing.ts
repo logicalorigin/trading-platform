@@ -187,7 +187,7 @@ export function createMarketingRouter(
         writeSseEvent(res, "snapshot", initialPayload);
         writeSseEvent(res, "ready", {
           stream: "marketing-shadow-dashboard",
-          mode: "paper",
+          mode: "shadow",
           source: "shadow-ledger",
           at: new Date().toISOString(),
         });

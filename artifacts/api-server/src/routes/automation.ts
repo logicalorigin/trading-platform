@@ -115,14 +115,14 @@ function readRequiredString(value: unknown, field: string): string {
   return value.trim();
 }
 
-function readRequiredMode(value: unknown): "paper" | "live" {
-  if (value === "paper" || value === "live") {
+function readRequiredMode(value: unknown): "shadow" | "live" {
+  if (value === "shadow" || value === "live") {
     return value;
   }
 
   throw new HttpError(400, "Missing mode.", {
     code: "invalid_request",
-    detail: "mode must be either 'paper' or 'live'.",
+    detail: "mode must be either 'shadow' or 'live'.",
   });
 }
 
@@ -141,7 +141,7 @@ function readOptionalBoolean(value: unknown): boolean | undefined {
 }
 
 router.get("/algo/deployments", async (req, res): Promise<void> => {
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
 
   res.json(await listAlgoDeployments({ mode }));
 });
@@ -414,7 +414,7 @@ router.get("/algo/events", async (req, res): Promise<void> => {
 });
 
 router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
-  const mode: "paper" | "live" = req.query.mode === "live" ? "live" : "paper";
+  const mode: "shadow" | "live" = req.query.mode === "live" ? "live" : "shadow";
   const deploymentId =
     typeof req.query.deploymentId === "string" && req.query.deploymentId.trim()
       ? req.query.deploymentId.trim()

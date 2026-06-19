@@ -6,7 +6,7 @@ import { buildIbkrConnectionSnapshot } from "./ibkrConnectionSnapshot.js";
 test("builds a ready broker runtime view from warm session state", () => {
   const session = {
     configured: { ibkr: true },
-    environment: "paper",
+    environment: "shadow",
     ibkrBridge: {
       connected: true,
       authenticated: true,
@@ -55,7 +55,7 @@ test("builds a ready broker runtime view from warm session state", () => {
       authenticated: true,
       accounts: [{ id: "DU1234567" }],
       target: "127.0.0.1:4001",
-      mode: "paper",
+      mode: "shadow",
       clientId: 42,
     },
   });
@@ -77,7 +77,7 @@ test("keeps launch activity visible before the bridge is connected", () => {
   const snapshot = buildIbkrConnectionSnapshot({
     session: {
       configured: { ibkr: true },
-      environment: "paper",
+      environment: "shadow",
       ibkrBridge: null,
       runtime: {
         ibkr: {
@@ -125,7 +125,7 @@ test("suppresses stale broker proof after deactivation clears configuration", ()
   const snapshot = buildIbkrConnectionSnapshot({
     session: {
       configured: { ibkr: false },
-      environment: "paper",
+      environment: "shadow",
       ibkrBridge: null,
       runtime: {
         ibkr: {
@@ -190,7 +190,7 @@ test("carries session bridge health failures through the header runtime snapshot
   const snapshot = buildIbkrConnectionSnapshot({
     session: {
       configured: { ibkr: true },
-      environment: "paper",
+      environment: "shadow",
       ibkrBridge: null,
       runtime: {
         ibkr: {

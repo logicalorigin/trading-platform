@@ -1,7 +1,7 @@
 import { pgEnum } from "drizzle-orm/pg-core";
 
 export const environmentModeEnum = pgEnum("environment_mode", [
-  "paper",
+  "shadow",
   "live",
 ]);
 export const brokerProviderEnum = pgEnum("broker_provider", ["ibkr"]);

@@ -112,7 +112,7 @@ export type EnvironmentMode = typeof EnvironmentMode[keyof typeof EnvironmentMod
 
 
 export const EnvironmentMode = {
-  paper: 'paper',
+  shadow: 'shadow',
   live: 'live',
 } as const;
 
@@ -6374,7 +6374,7 @@ export type RecordIbkrBridgeActivationProgress200 = {
 
 export type ListAccountsParams = {
 /**
- * Filter by paper or live environment.
+ * Filter by shadow or live environment.
  */
 mode?: EnvironmentMode;
 };

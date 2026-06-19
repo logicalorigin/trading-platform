@@ -1109,14 +1109,14 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   isVisible = true,
   dataEnabled = isVisible,
   externalStreamFreshness = null,
-  environment = "paper",
+  environment = "shadow",
   signalMatrixStates = [],
   signalActionTimeframe = "",
   headerAccessory = null,
   onOpenAlgo,
   onOpenTradeSymbol,
 }) {
-  const mode = environment || "paper";
+  const mode = environment || "shadow";
   const queryEnabled = Boolean(isVisible && dataEnabled);
   const deploymentsQuery = useListAlgoDeployments(
     undefined,

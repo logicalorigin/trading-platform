@@ -9,7 +9,7 @@ import type { EnvironmentMode } from './environmentMode';
 
 export type ListAccountsParams = {
 /**
- * Filter by paper or live environment.
+ * Filter by shadow or live environment.
  */
 mode?: EnvironmentMode;
 };

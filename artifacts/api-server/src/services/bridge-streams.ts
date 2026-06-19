@@ -83,7 +83,7 @@ const accountMonitorPrewarmSignatures = new Map<
 const accountMonitorSnapshots = new Map<
   string,
   {
-    mode: "paper" | "live";
+    mode: "shadow" | "live";
     accountId?: string;
     positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
     orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
@@ -153,7 +153,7 @@ function nextReconnectDelay(attempt: number): number {
 }
 
 function accountMonitorOwner(input: {
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   accountId?: string;
 }): string {
   return `account-monitor:${input.mode}:${input.accountId?.trim() || "all"}`;
@@ -267,7 +267,7 @@ function syncAccountMonitorQuotePrewarm(
 }
 
 function refreshAccountMonitorLeases(input: {
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   accountId?: string;
 }): void {
   const key = accountMonitorOwner(input);
@@ -328,7 +328,7 @@ function refreshAccountMonitorLeases(input: {
 }
 
 function updateAccountMonitorPositions(input: {
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   accountId?: string;
   positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
 }): void {
@@ -344,7 +344,7 @@ function updateAccountMonitorPositions(input: {
 }
 
 function updateAccountMonitorOrders(input: {
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   accountId?: string;
   orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
 }): void {
@@ -651,7 +651,7 @@ export async function fetchHistoricalBarSnapshotPayload(input: {
 
 export async function fetchOrderSnapshotPayload(input: {
   accountId?: string;
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -747,7 +747,7 @@ export async function fetchOrderSnapshotPayload(input: {
 
 export async function fetchAccountSnapshotPayload(input: {
   accountId?: string;
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
 }): Promise<{
   accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
   positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
@@ -771,7 +771,7 @@ export async function fetchAccountSnapshotPayload(input: {
 
 export async function fetchExecutionSnapshotPayload(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   days?: number;
   limit?: number;
   symbol?: string;
@@ -1047,7 +1047,7 @@ export function subscribeHistoricalBarSnapshots(
 export function subscribeOrderSnapshots(
   input: {
     accountId?: string;
-    mode: "paper" | "live";
+    mode: "shadow" | "live";
     status?: "pending_submit" | "submitted" | "accepted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";
   },
   onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
@@ -1070,7 +1070,7 @@ export function subscribeOrderSnapshots(
 export function subscribeAccountSnapshots(
   input: {
     accountId?: string;
-    mode: "paper" | "live";
+    mode: "shadow" | "live";
   },
   onSnapshot: (payload: {
     accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
@@ -1098,7 +1098,7 @@ export function subscribeAccountSnapshots(
 export function subscribeExecutionSnapshots(
   input: {
     accountId?: string;
-    mode?: "paper" | "live";
+    mode?: "shadow" | "live";
     days?: number;
     limit?: number;
     symbol?: string;

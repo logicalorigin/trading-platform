@@ -7,7 +7,7 @@ import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
 export const MobileActivitySheet = ({
   open,
   onClose,
-  environment = "paper",
+  environment = "shadow",
   dataEnabled = open,
   signalMatrixStates = [],
   signalMonitorEvents = [],

@@ -5863,7 +5863,7 @@ const normalizeAccountAnnotationMode = (input: {
   if (isShadowAccountId(input.accountId)) {
     return "shadow";
   }
-  return input.mode === "live" ? "live" : "paper";
+  return input.mode === "live" ? "live" : "shadow";
 };
 
 const normalizeTradeOutcomeBucketCount = (value: unknown) => {
@@ -7033,13 +7033,13 @@ export async function cancelAccountOrder(input: {
   }
 
   const mode = input.mode;
-  if (mode !== "paper" && mode !== "live") {
+  if (mode !== "shadow" && mode !== "live") {
     throw new HttpError(
       400,
-      "Order cancellation requires an explicit paper or live mode.",
+      "Order cancellation requires an explicit shadow or live mode.",
       {
         code: "ibkr_order_mode_required",
-        detail: "mode must be either 'paper' or 'live'.",
+        detail: "mode must be either 'shadow' or 'live'.",
         expose: true,
       },
     );

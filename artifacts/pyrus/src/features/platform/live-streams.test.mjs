@@ -21,8 +21,8 @@ test("algo cockpit stream keeps known deployments when fallback is unavailable",
     deployments: [
       {
         id: "dep-1",
-        name: "Pyrus Signals Options Shadow Paper",
-        mode: "paper",
+        name: "Pyrus Signals Options Shadow",
+        mode: "shadow",
       },
     ],
   };
@@ -57,7 +57,7 @@ test("primary algo cockpit stream payload does not hydrate canonical STA caches"
   const primaryPayload = {
     stream: "algo-cockpit-live",
     phase: "primary",
-    mode: "paper",
+    mode: "shadow",
     deploymentId: "dep-1",
     updatedAt: "2026-06-08T16:20:00.000Z",
     deployments: { deployments: [] },
@@ -104,7 +104,7 @@ test("full algo cockpit stream payload hydrates canonical STA caches", () => {
   const fullPayload = {
     stream: "algo-cockpit-bootstrap",
     phase: "full",
-    mode: "paper",
+    mode: "shadow",
     deploymentId: "dep-1",
     updatedAt: "2026-06-08T16:20:00.000Z",
     deployments: { deployments: [] },
@@ -333,7 +333,7 @@ test("account snapshot stream patch updates cached same-day position day PnL", (
         ],
       },
       "U123",
-      ["/api/accounts/U123/positions", { mode: "paper", assetClass: "all" }],
+      ["/api/accounts/U123/positions", { mode: "shadow", assetClass: "all" }],
     );
 
   assert.equal(patched.positions.length, 1);
@@ -474,11 +474,11 @@ test("account page positions query keys request fast real-account positions firs
   );
   assert.deepEqual(
     __liveStreamsInternalsForTests.accountPositionsParams({
-      mode: "paper",
+      mode: "shadow",
       assetClass: "Options",
     }),
     {
-      mode: "paper",
+      mode: "shadow",
       assetClass: "option",
       liveQuotes: true,
     },
@@ -534,7 +534,7 @@ test("shared option quote sockets are limited to visible chain demand", () => {
 
 test("signal matrix stream url omits requestOrigin (backend rejects unknown origins with 400)", () => {
   const url = getSignalMonitorMatrixStreamUrl({
-    environment: "paper",
+    environment: "shadow",
     symbols: ["AAPL", "MSFT"],
     timeframes: ["1d"],
   });

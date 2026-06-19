@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-export type RuntimeMode = "paper" | "live";
+export type RuntimeMode = "shadow" | "live";
 export type MassiveRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
@@ -396,8 +396,10 @@ function normalizeRuntimeMode(value: string | null): RuntimeMode | null {
     return "live";
   }
 
-  if (normalized === "paper") {
-    return "paper";
+  // "paper" is accepted as a legacy alias for the renamed "shadow" environment
+  // so existing IBKR_TWS_MODE/TRADING_MODE env configs keep resolving.
+  if (normalized === "shadow" || normalized === "paper") {
+    return "shadow";
   }
 
   return null;
@@ -443,7 +445,7 @@ function parseIntegerEnv(value: string | null): number | null {
 }
 
 export function getRuntimeMode(): RuntimeMode {
-  return process.env["TRADING_MODE"] === "live" ? "live" : "paper";
+  return process.env["TRADING_MODE"] === "live" ? "live" : "shadow";
 }
 
 // Provider configs derive only from immutable provider env (API key + base

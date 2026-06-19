@@ -44,7 +44,7 @@ export type SweepResult = {
 type DeploymentRow = {
   id: string;
   name: string;
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   symbolUniverse: unknown[];
 };
 
@@ -460,11 +460,11 @@ async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
       where enabled = true
         and provider_account_id = 'shadow'
         and (
-          name = 'Pyrus Signals Options Shadow Paper'
+          name = 'Pyrus Signals Options Shadow'
           or config->'parameters'->>'executionMode' = 'signal_options'
         )
       order by
-        case when name = 'Pyrus Signals Options Shadow Paper' then 0 else 1 end,
+        case when name = 'Pyrus Signals Options Shadow' then 0 else 1 end,
         updated_at desc
       limit 1
     `,

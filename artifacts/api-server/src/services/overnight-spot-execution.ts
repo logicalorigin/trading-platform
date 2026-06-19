@@ -118,7 +118,7 @@ export type OvernightSpotExecutionDependencies = {
   ) => Promise<BrokerOrderSnapshot | Record<string, unknown>>;
   notifyChanged: (input: {
     deploymentId: string;
-    mode: "paper" | "live";
+    mode: "shadow" | "live";
     reason: string;
   }) => void;
 };

@@ -10,6 +10,6 @@ export type EnvironmentMode = typeof EnvironmentMode[keyof typeof EnvironmentMod
 
 
 export const EnvironmentMode = {
-  paper: 'paper',
+  shadow: 'shadow',
   live: 'live',
 } as const;

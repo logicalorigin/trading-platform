@@ -5,7 +5,7 @@ type JsonRecord = Record<string, unknown>;
 type CliOptions = {
   apiBaseUrl: string;
   accountId: string | null;
-  mode: "live" | "paper";
+  mode: "live" | "shadow";
   requestTimeoutMs: number;
   json: boolean;
 };
@@ -22,7 +22,7 @@ function parseArgs(argv: string[]): CliOptions {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     accountId: process.env["PYRUS_GREEK_SCENARIO_ACCOUNT_ID"] ?? null,
     mode:
-      process.env["PYRUS_GREEK_SCENARIO_MODE"] === "paper" ? "paper" : "live",
+      process.env["PYRUS_GREEK_SCENARIO_MODE"] === "shadow" ? "shadow" : "live",
     requestTimeoutMs: parsePositiveInteger(
       process.env["PYRUS_GREEK_SCENARIO_TIMEOUT_MS"] ?? "",
       10_000,
@@ -55,8 +55,8 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
     if (flag === "--mode") {
-      if (value !== "live" && value !== "paper") {
-        throw new Error("--mode must be live or paper.");
+      if (value !== "live" && value !== "shadow") {
+        throw new Error("--mode must be live or shadow.");
       }
       options.mode = value;
       if (inlineValue === undefined) index += 1;
@@ -331,7 +331,7 @@ function printUsage(): void {
 Options:
   --api-base-url URL        API base URL, default ${DEFAULT_API_BASE_URL}
   --account-id ID           Account id; if omitted, the first /accounts row is used
-  --mode live|paper         Account mode, default live
+  --mode live|shadow        Account mode, default live
   --request-timeout-ms N    Request timeout, default 10000
   --json                    Print raw summary JSON
 

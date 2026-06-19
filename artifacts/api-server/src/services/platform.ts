@@ -2798,7 +2798,7 @@ function getBridgeBackoffRemainingMs(
 
 async function recordOrderReadDegraded(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   reason: string;
   message: string;
   timeoutMs?: number;
@@ -2913,7 +2913,7 @@ function orderVisibilityFallback(input: {
 
 function orderVisibilityCacheKey(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -2933,7 +2933,7 @@ function orderVisibilityCacheKey(input: {
 
 export async function listOrdersWithResilience(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -3104,7 +3104,7 @@ export async function listOrdersWithResilience(input: {
 
 async function listOrdersForVisibility(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -3212,7 +3212,7 @@ async function listOrdersForVisibility(input: {
 
 export function getOrderVisibilityProbe(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -3701,7 +3701,7 @@ export async function listBrokerConnections() {
         id: "massive-paper",
         provider: "massive" as const,
         name: marketDataName,
-        mode: "paper" as const,
+        mode: "shadow" as const,
         status: configured.massive
           ? ("configured" as const)
           : ("disconnected" as const),
@@ -3723,7 +3723,7 @@ export async function listBrokerConnections() {
         id: "ibkr-paper",
         provider: "ibkr" as const,
         name: ibkrConnectionName,
-        mode: "paper" as const,
+        mode: "shadow" as const,
         status: ibkrStatus,
         capabilities: [
           "accounts",
@@ -4246,7 +4246,7 @@ async function enrichBrokerPositionsForDisplay(
 
 export async function listPositions(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
 }) {
   const client = getIbkrClient();
   const positions = (
@@ -4263,7 +4263,7 @@ export async function listPositions(input: {
 
 export async function listOrders(input: {
   accountId?: string;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   status?:
     | "pending_submit"
     | "submitted"
@@ -4291,7 +4291,7 @@ export async function listExecutions(input: {
 }
 
 function assertLiveOrderConfirmed(
-  mode: "paper" | "live" | null | undefined,
+  mode: "shadow" | "live" | null | undefined,
   confirm: boolean | null | undefined,
 ) {
   if (mode !== "live" || confirm === true) {
@@ -4308,19 +4308,19 @@ function assertLiveOrderConfirmed(
 }
 
 function requireExplicitOrderActionMode(
-  mode: "paper" | "live" | null | undefined,
+  mode: "shadow" | "live" | null | undefined,
   action: string,
-): "paper" | "live" {
-  if (mode === "paper" || mode === "live") {
+): "shadow" | "live" {
+  if (mode === "shadow" || mode === "live") {
     return mode;
   }
 
   throw new HttpError(
     400,
-    `${action} requires an explicit paper or live mode.`,
+    `${action} requires an explicit shadow or live mode.`,
     {
       code: "ibkr_order_mode_required",
-      detail: "mode must be either 'paper' or 'live'.",
+      detail: "mode must be either 'shadow' or 'live'.",
       expose: true,
     },
   );
@@ -4527,7 +4527,7 @@ export async function previewOrder(input: PlaceOrderInput) {
 
 export async function submitRawOrders(input: {
   accountId?: string | null;
-  mode?: "paper" | "live" | null;
+  mode?: "shadow" | "live" | null;
   confirm?: boolean | null;
   parentOrderRequest?: PlaceOrderInput | null;
   ibkrOrders: Record<string, unknown>[];
@@ -4552,7 +4552,7 @@ export async function replaceOrder(input: {
   accountId: string;
   orderId: string;
   order: Record<string, unknown>;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   confirm?: boolean | null;
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
@@ -4570,7 +4570,7 @@ export async function replaceOrder(input: {
 export async function cancelOrder(input: {
   accountId: string;
   orderId: string;
-  mode?: "paper" | "live" | null;
+  mode?: "shadow" | "live" | null;
   confirm?: boolean | null;
   manualIndicator?: boolean | null;
   extOperator?: string | null;

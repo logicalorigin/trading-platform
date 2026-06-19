@@ -34,14 +34,14 @@ test("algo deployment list identifies default signal-options deployments", () =>
   );
   assert.equal(
     __algoAutomationInternalsForTests.deploymentHasSignalOptionsProfile({
-      name: "Pyrus Signals Options Shadow Paper",
+      name: "Pyrus Signals Options Shadow",
       config: {},
     }),
     true,
   );
   assert.equal(
     __algoAutomationInternalsForTests.deploymentHasSignalOptionsProfile({
-      name: "Equity Shadow Paper",
+      name: "Equity Shadow",
       config: {
         parameters: {
           executionMode: "signal_equity_shadow",
@@ -59,7 +59,7 @@ test("algo deployment list filters retired shadow equity-forward deployments", (
       id: "deployment-retired",
       strategyId: "strategy-retired",
       name: "Retired",
-      mode: "paper",
+      mode: "shadow",
       enabled: false,
       providerAccountId: "shadow",
       symbolUniverse: ["SPY"],
@@ -77,8 +77,8 @@ test("algo deployment list filters retired shadow equity-forward deployments", (
     {
       id: "deployment-signal-options",
       strategyId: "strategy-signal-options",
-      name: "Pyrus Signals Options Shadow Paper",
-      mode: "paper",
+      name: "Pyrus Signals Options Shadow",
+      mode: "shadow",
       enabled: true,
       providerAccountId: "shadow",
       symbolUniverse: ["SPY", "QQQ"],
@@ -110,8 +110,8 @@ test("algo deployment list cache serves mode fallback from all-deployments cache
     {
       id: "deployment-paper",
       strategyId: "strategy-signal-options",
-      name: "Pyrus Signals Options Shadow Paper",
-      mode: "paper",
+      name: "Pyrus Signals Options Shadow",
+      mode: "shadow",
       enabled: true,
       providerAccountId: "shadow",
       symbolUniverse: ["SPY"],
@@ -155,7 +155,7 @@ test("algo deployment list cache serves mode fallback from all-deployments cache
 
     const cachedPaper =
       __algoAutomationInternalsForTests.readDeploymentListCache({
-        mode: "paper",
+        mode: "shadow",
       });
 
     assert.ok(cachedPaper);
@@ -182,8 +182,8 @@ test("applyDeploymentToListCache keeps the fallback cache fresh after a mutation
   const base = {
     id: "deployment-paper",
     strategyId: "strategy-signal-options",
-    name: "Pyrus Signals Options Shadow Paper",
-    mode: "paper",
+    name: "Pyrus Signals Options Shadow",
+    mode: "shadow",
     enabled: false,
     providerAccountId: "U24762790",
     symbolUniverse: ["SPY"],

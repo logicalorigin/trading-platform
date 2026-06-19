@@ -41,7 +41,7 @@ test("boot warm-start cache expires snapshots past the fresh window", () => {
   const storage = createStorage();
   const nowMs = Date.parse("2026-06-11T18:00:00.000Z");
 
-  writeBootWarmStart({ environment: "paper" }, { storage, nowMs });
+  writeBootWarmStart({ environment: "shadow" }, { storage, nowMs });
 
   const cached = readBootWarmStart({
     storage,
@@ -64,7 +64,7 @@ test("boot warm-start cache ignores unknown versions", () => {
   const storage = createStorage();
   storage.setItem(
     BOOT_WARM_START_CACHE_KEY,
-    JSON.stringify({ version: 2, savedAt: Date.now(), environment: "paper" }),
+    JSON.stringify({ version: 2, savedAt: Date.now(), environment: "shadow" }),
   );
 
   assert.equal(readBootWarmStart({ storage }), null);
@@ -89,7 +89,7 @@ test("startup refresh fanout is skipped for a usable warm-start snapshot", () =>
   assert.equal(
     shouldRunStartupRefresh({
       warmStart: {
-        environment: "paper",
+        environment: "shadow",
         savedAt: Date.parse("2026-06-11T18:00:00.000Z"),
       },
     }),

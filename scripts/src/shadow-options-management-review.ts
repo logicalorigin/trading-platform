@@ -473,10 +473,10 @@ export function buildRecommendations(input: {
     recommendations.push({
       lane: "exit_management",
       priority: "medium",
-      title: "Evaluate Greek tighten-only enforcement on paper",
+      title: "Evaluate Greek tighten-only enforcement on shadow",
       evidence: `Greek tighten diagnostics covered ${greekTighten.exits} exits with ${greekTighten.pnl.toFixed(2)} realized P&L, ${greekTighten.winPct ?? "n/a"}% wins, and ${greekTighten.missedToPostExitHigh.toFixed(2)} to post-exit highs.`,
       nextTest:
-        "Run a paper-only counterfactual that tightens premium trailing behavior on delta decay or theta burden, while leaving Greek loosening disabled.",
+        "Run a shadow-only counterfactual that tightens premium trailing behavior on delta decay or theta burden, while leaving Greek loosening disabled.",
     });
   }
 

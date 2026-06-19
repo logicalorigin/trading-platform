@@ -50,7 +50,7 @@ test("account list does not wait on stale bridge health before fallback", async 
   });
 
   const startedAt = performance.now();
-  const accounts = await listIbkrAccounts("paper");
+  const accounts = await listIbkrAccounts("shadow");
   const elapsedMs = performance.now() - startedAt;
 
   assert.deepEqual(accounts, []);
@@ -121,7 +121,7 @@ test("positions return cached rows within the initial-wait budget when the bridg
   });
 
   try {
-    const first = await listIbkrPositions({ accountId: "DU123", mode: "paper" });
+    const first = await listIbkrPositions({ accountId: "DU123", mode: "shadow" });
     assert.equal(first.length, 1);
 
     await delay(10);
@@ -129,7 +129,7 @@ test("positions return cached rows within the initial-wait budget when the bridg
     const startedAt = performance.now();
     const refreshed = await listIbkrPositions({
       accountId: "DU123",
-      mode: "paper",
+      mode: "shadow",
     });
     const elapsedMs = performance.now() - startedAt;
 
@@ -205,14 +205,14 @@ test("positions refresh to empty rows instead of preserving stale bridge rows", 
   });
 
   try {
-    const first = await listIbkrPositions({ accountId: "DU123", mode: "paper" });
+    const first = await listIbkrPositions({ accountId: "DU123", mode: "shadow" });
     assert.equal(first.length, 1);
 
     await delay(10);
 
     const refreshed = await listIbkrPositions({
       accountId: "DU123",
-      mode: "paper",
+      mode: "shadow",
     });
     assert.deepEqual(refreshed, []);
     assert.equal(bridgePositionCalls, 2);

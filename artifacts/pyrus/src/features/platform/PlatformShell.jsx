@@ -862,7 +862,7 @@ export const PlatformShell = ({
   );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
-    mode: environment || "paper",
+    mode: environment || "shadow",
     eventLimit: 20,
     enabled: algoFrameRuntimeEnabled,
     onLiveEvents: handleAlgoLiveEvents,

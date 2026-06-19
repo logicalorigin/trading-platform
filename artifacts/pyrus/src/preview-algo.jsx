@@ -23,7 +23,7 @@ const setPath = (obj, path, value) => {
 };
 
 const COCKPIT = { candidates: [] };
-const DEPLOYMENT = { id: "preview", mode: "paper", label: "Preview" };
+const DEPLOYMENT = { id: "preview", mode: "shadow", label: "Preview" };
 const MUT = { isPending: false };
 const RAIL_WIDTHS = [360];
 

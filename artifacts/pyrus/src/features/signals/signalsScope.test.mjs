@@ -9,14 +9,14 @@ import {
 
 test("buildSignalsSourceScopeKey changes on environment or universe change (order-insensitive)", () => {
   const base = buildSignalsSourceScopeKey({
-    environment: "paper",
+    environment: "shadow",
     universeSymbols: ["SPY", "QQQ"],
   });
   // Same env + same symbols in any order -> same key.
   assert.equal(
     base,
     buildSignalsSourceScopeKey({
-      environment: "paper",
+      environment: "shadow",
       universeSymbols: ["QQQ", "SPY"],
     }),
   );
@@ -32,7 +32,7 @@ test("buildSignalsSourceScopeKey changes on environment or universe change (orde
   assert.notEqual(
     base,
     buildSignalsSourceScopeKey({
-      environment: "paper",
+      environment: "shadow",
       universeSymbols: ["SPY"],
     }),
   );
@@ -42,15 +42,15 @@ test("buildSignalsSourceScopeKey changes on environment or universe change (orde
 
 test("buildSignalsSourceScopeKey normalizes duplicate lower-case universe symbols into a stable key", () => {
   const key = buildSignalsSourceScopeKey({
-    environment: "paper",
+    environment: "shadow",
     universeSymbols: ["spy", "qqq", "spy", " qqq "],
   });
 
-  assert.equal(key, "paper::QQQ,SPY");
+  assert.equal(key, "shadow::QQQ,SPY");
   assert.equal(
     key,
     buildSignalsSourceScopeKey({
-      environment: "paper",
+      environment: "shadow",
       universeSymbols: ["QQQ", "SPY"],
     }),
   );

@@ -959,7 +959,7 @@ paths:
       parameters:
         - name: mode
           in: query
-          description: Filter by paper or live environment.
+          description: Filter by shadow or live environment.
           required: false
           schema:
             $ref: "#/components/schemas/EnvironmentMode"
@@ -4442,7 +4442,7 @@ components:
 
     EnvironmentMode:
       type: string
-      enum: [paper, live]
+      enum: [shadow, live]
 
     BrokerProvider:
       type: string

@@ -14,7 +14,7 @@ import { updateSignalOptionsExecutionProfile } from "../../artifacts/api-server/
 
 type DeploymentRow = typeof algoDeploymentsTable.$inferSelect;
 
-const TARGET_DEPLOYMENT_NAME = "Pyrus Signals Options Shadow Paper";
+const TARGET_DEPLOYMENT_NAME = "Pyrus Signals Options Shadow";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -43,7 +43,7 @@ function isSignalOptionsDeployment(deployment: DeploymentRow): boolean {
   const config = asRecord(deployment.config);
   return (
     deployment.providerAccountId === "shadow" &&
-    deployment.mode === "paper" &&
+    deployment.mode === "shadow" &&
     (deployment.name === TARGET_DEPLOYMENT_NAME ||
       asRecord(config.parameters).executionMode === "signal_options" ||
       Object.keys(asRecord(config.signalOptions)).length > 0)
@@ -58,7 +58,7 @@ async function findTargetDeployment(): Promise<DeploymentRow> {
   const deployments = await db
     .select()
     .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.mode, "paper"))
+    .where(eq(algoDeploymentsTable.mode, "shadow"))
     .orderBy(desc(algoDeploymentsTable.updatedAt));
 
   const deployment = requestedId
@@ -69,13 +69,13 @@ async function findTargetDeployment(): Promise<DeploymentRow> {
   if (!deployment) {
     throw new Error(
       requestedId
-        ? `No paper deployment found for ${requestedId}.`
-        : "No paper signal-options deployment found.",
+        ? `No shadow deployment found for ${requestedId}.`
+        : "No shadow signal-options deployment found.",
     );
   }
   if (!isSignalOptionsDeployment(deployment)) {
     throw new Error(
-      `Deployment ${deployment.id} is not a paper shadow signal-options deployment.`,
+      `Deployment ${deployment.id} is not a shadow signal-options deployment.`,
     );
   }
   return deployment;

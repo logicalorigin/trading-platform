@@ -1,7 +1,7 @@
 const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
   "RayReplica Signal Options Shadow Paper";
 const CANONICAL_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
-  "Pyrus Signals Options Shadow Paper";
+  "Pyrus Signals Options Shadow";
 
 const LEGACY_TEXT_REPLACEMENTS = [
   [new RegExp(LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME, "g"), CANONICAL_SIGNAL_OPTIONS_DEPLOYMENT_NAME],

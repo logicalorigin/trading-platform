@@ -47,7 +47,7 @@ export type AlgoCockpitStreamPayload = {
 const stableStringify = (value: unknown): string => JSON.stringify(value);
 
 const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
-  mode === "live" ? "live" : "paper";
+  mode === "live" ? "live" : "shadow";
 
 const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);

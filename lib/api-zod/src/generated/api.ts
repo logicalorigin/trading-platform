@@ -58,7 +58,7 @@ export const GetReadinessResponse = zod.object({
  * @summary Get runtime session metadata
  */
 export const GetSessionResponse = zod.object({
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "brokerProvider": zod.enum(['ibkr']),
   "marketDataProvider": zod.enum(['massive', 'ibkr']),
   "marketDataProviders": zod.object({
@@ -85,7 +85,7 @@ export const GetSessionResponse = zod.object({
   "updatedAt": zod.coerce.date(),
   "transport": zod.enum(['tws']),
   "connectionTarget": zod.string().nullable(),
-  "sessionMode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "sessionMode": zod.union([zod.enum(['shadow', 'live']),zod.null()]),
   "clientId": zod.number().nullable(),
   "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
   "liveMarketDataAvailable": zod.boolean().nullable(),
@@ -111,7 +111,7 @@ export const GetSessionResponse = zod.object({
   "authenticated": zod.boolean(),
   "competing": zod.boolean(),
   "target": zod.string().nullable(),
-  "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "mode": zod.union([zod.enum(['shadow', 'live']),zod.null()]),
   "clientId": zod.number().nullable(),
   "selectedAccountId": zod.string().nullable(),
   "accounts": zod.array(zod.string()),
@@ -373,7 +373,7 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "selectedAccountId": zod.string().nullable(),
   "accountCount": zod.number(),
   "connectionTarget": zod.string().nullable(),
-  "sessionMode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "sessionMode": zod.union([zod.enum(['shadow', 'live']),zod.null()]),
   "clientId": zod.number().nullable(),
   "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
   "liveMarketDataAvailable": zod.boolean().nullable(),
@@ -1279,7 +1279,7 @@ export const ListBrokerConnectionsResponse = zod.object({
   "id": zod.string(),
   "provider": zod.union([zod.enum(['ibkr']),zod.enum(['massive', 'ibkr'])]),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "status": zod.enum(['configured', 'connected', 'disconnected', 'error']),
   "capabilities": zod.array(zod.string()),
   "updatedAt": zod.coerce.date()
@@ -1291,7 +1291,7 @@ export const ListBrokerConnectionsResponse = zod.object({
  * @summary List broker accounts
  */
 export const ListAccountsQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional().describe('Filter by paper or live environment.')
+  "mode": zod.enum(['shadow', 'live']).optional().describe('Filter by shadow or live environment.')
 })
 
 export const ListAccountsResponse = zod.object({
@@ -1299,7 +1299,7 @@ export const ListAccountsResponse = zod.object({
   "id": zod.string(),
   "providerAccountId": zod.string(),
   "provider": zod.enum(['ibkr']),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "displayName": zod.string(),
   "currency": zod.string(),
   "buyingPower": zod.number(),
@@ -1383,13 +1383,13 @@ export const GetAccountSummaryParams = zod.object({
 })
 
 export const GetAccountSummaryQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountSummaryResponse = zod.object({
   "accountId": zod.string(),
   "isCombined": zod.boolean(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "currency": zod.string(),
   "accounts": zod.array(zod.object({
   "id": zod.string(),
@@ -1541,7 +1541,7 @@ export const GetAccountEquityHistoryParams = zod.object({
 export const GetAccountEquityHistoryQueryParams = zod.object({
   "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
   "benchmark": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountEquityHistoryResponse = zod.object({
@@ -1589,7 +1589,7 @@ export const GetAccountAllocationParams = zod.object({
 })
 
 export const GetAccountAllocationQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountAllocationResponse = zod.object({
@@ -1627,7 +1627,7 @@ export const GetAccountPositionsQueryParams = zod.object({
   "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "source": zod.coerce.string().optional().describe('Optional source scope for shadow ledger positions, such as `automation`.'),
   "liveQuotes": zod.coerce.boolean().optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountPositionsResponse = zod.object({
@@ -1679,7 +1679,7 @@ export const GetAccountPositionsResponse = zod.object({
   "openOrders": zod.array(zod.object({
   "id": zod.string(),
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -1839,7 +1839,7 @@ export const GetAccountPositionsAtDateParams = zod.object({
 export const GetAccountPositionsAtDateQueryParams = zod.object({
   "date": zod.date(),
   "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountPositionsAtDateResponse = zod.object({
@@ -1895,7 +1895,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "openOrders": zod.array(zod.object({
   "id": zod.string(),
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2073,7 +2073,7 @@ export const GetAccountClosedTradesQueryParams = zod.object({
   "assetClass": zod.enum(['all', 'equity', 'stock', 'etf', 'option']).optional().describe('Position-type filter. Canonical values are `all`, `stock`, `etf`, `option`; legacy `equity` matches stock and ETF.'),
   "pnlSign": zod.enum(['all', 'winners', 'losers']).optional(),
   "holdDuration": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountClosedTradesResponse = zod.object({
@@ -2137,7 +2137,7 @@ export const GetAccountOrdersParams = zod.object({
 
 export const GetAccountOrdersQueryParams = zod.object({
   "tab": zod.enum(['working', 'history']).optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountOrdersResponse = zod.object({
@@ -2191,7 +2191,7 @@ export const CancelAccountOrderParams = zod.object({
 })
 
 export const CancelAccountOrderBody = zod.object({
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional()
 })
 
@@ -2211,7 +2211,7 @@ export const GetAccountRiskParams = zod.object({
 })
 
 export const GetAccountRiskQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "detail": zod.enum(['fast', 'full']).optional()
 })
 
@@ -2239,7 +2239,7 @@ export const GetAccountCashActivityParams = zod.object({
 export const GetAccountCashActivityQueryParams = zod.object({
   "from": zod.date().optional(),
   "to": zod.date().optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetAccountCashActivityResponse = zod.object({
@@ -2479,7 +2479,7 @@ export const ReorderWatchlistItemsResponse = zod.object({
  */
 export const ListPositionsQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const ListPositionsResponse = zod.object({
@@ -2558,7 +2558,7 @@ export const ListPositionsResponse = zod.object({
  */
 export const ListOrdersQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
 })
 
@@ -2566,7 +2566,7 @@ export const ListOrdersResponse = zod.object({
   "orders": zod.array(zod.object({
   "id": zod.string(),
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2612,7 +2612,7 @@ export const ListOrdersResponse = zod.object({
  */
 export const PlaceOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2648,7 +2648,7 @@ export const PlaceOrderBody = zod.object({
  */
 export const PreviewOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2680,7 +2680,7 @@ export const PreviewOrderBody = zod.object({
 
 export const PreviewOrderResponse = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "resolvedContractId": zod.number(),
@@ -2708,7 +2708,7 @@ export const PreviewOrderResponse = zod.object({
  */
 export const PreviewShadowOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2740,7 +2740,7 @@ export const PreviewShadowOrderBody = zod.object({
 
 export const PreviewShadowOrderResponse = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "resolvedContractId": zod.number(),
@@ -2768,7 +2768,7 @@ export const PreviewShadowOrderResponse = zod.object({
  */
 export const PlaceShadowOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2804,7 +2804,7 @@ export const PlaceShadowOrderBody = zod.object({
  */
 export const SubmitOrdersBody = zod.union([zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2834,11 +2834,11 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "payload": zod.record(zod.string(), zod.unknown()).optional()
 }),zod.object({
   "accountId": zod.string().nullish(),
-  "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]).optional(),
+  "mode": zod.union([zod.enum(['shadow', 'live']),zod.null()]).optional(),
   "confirm": zod.boolean().optional(),
   "parentOrderRequest": zod.union([zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2880,7 +2880,7 @@ export const ReplaceOrderParams = zod.object({
 
 export const ReplaceOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "confirm": zod.boolean().optional(),
   "order": zod.record(zod.string(), zod.unknown())
 })
@@ -2888,7 +2888,7 @@ export const ReplaceOrderBody = zod.object({
 export const ReplaceOrderResponse = zod.object({
   "id": zod.string(),
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
@@ -2929,7 +2929,7 @@ export const CancelOrderParams = zod.object({
 
 export const CancelOrderBody = zod.object({
   "accountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "confirm": zod.boolean().optional(),
   "manualIndicator": zod.boolean().nullish(),
   "extOperator": zod.string().nullish()
@@ -3794,7 +3794,7 @@ export const StreamBarsQueryParams = zod.object({
  */
 export const StreamOrdersQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
 })
 
@@ -3808,7 +3808,7 @@ export const StreamOrdersQueryParams = zod.object({
 
 export const ListExecutionsQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "days": zod.coerce.number().min(1).optional(),
   "limit": zod.coerce.number().min(1).optional(),
   "symbol": zod.coerce.string().optional(),
@@ -3954,7 +3954,7 @@ export const StreamMarketDepthQueryParams = zod.object({
  */
 export const StreamAccountsQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 
@@ -3991,7 +3991,7 @@ export const StreamFootprintsQueryParams = zod.object({
  */
 export const StreamAccountPageQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
-  "mode": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['shadow', 'live']).optional(),
   "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
   "orderTab": zod.enum(['working', 'history']).optional(),
   "assetClass": zod.coerce.string().optional().describe('Asset-class filter for live positions.'),
@@ -4790,12 +4790,12 @@ export const BenchmarkFlowScannerResponse = zod.record(zod.string(), zod.unknown
  * @summary Get the Pyrus Signals monitor profile for an environment
  */
 export const GetSignalMonitorProfileQueryParams = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional()
+  "environment": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetSignalMonitorProfileResponse = zod.object({
   "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
@@ -4826,7 +4826,7 @@ export const updateSignalMonitorProfileBodyEvaluationConcurrencyMax = 10;
 
 
 export const UpdateSignalMonitorProfileBody = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
+  "environment": zod.enum(['shadow', 'live']).optional(),
   "enabled": zod.boolean().optional(),
   "watchlistId": zod.string().nullish(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']).optional(),
@@ -4839,7 +4839,7 @@ export const UpdateSignalMonitorProfileBody = zod.object({
 
 export const UpdateSignalMonitorProfileResponse = zod.object({
   "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
@@ -4861,7 +4861,7 @@ export const UpdateSignalMonitorProfileResponse = zod.object({
 export const evaluateSignalMonitorBodyModeDefault = `incremental`;
 
 export const EvaluateSignalMonitorBody = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
+  "environment": zod.enum(['shadow', 'live']).optional(),
   "mode": zod.enum(['hydrate', 'incremental']).default(evaluateSignalMonitorBodyModeDefault),
   "watchlistId": zod.string().nullish()
 })
@@ -4869,7 +4869,7 @@ export const EvaluateSignalMonitorBody = zod.object({
 export const EvaluateSignalMonitorResponse = zod.object({
   "profile": zod.object({
   "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
@@ -4929,7 +4929,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
  * @summary Stream Pyrus Signals signal matrix state deltas
  */
 export const StreamSignalMonitorMatrixQueryParams = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
+  "environment": zod.enum(['shadow', 'live']).optional(),
   "symbols": zod.coerce.string().optional().describe('Comma-separated ticker symbols to stream when exact cells are not supplied.'),
   "timeframes": zod.coerce.string().optional().describe('Comma-separated Signal Matrix timeframes to stream.'),
   "cells": zod.coerce.string().optional().describe('Comma-separated exact cells in SYMBOL:timeframe form. When non-empty, cells are authoritative over symbols\/timeframes.'),
@@ -4942,13 +4942,13 @@ export const StreamSignalMonitorMatrixQueryParams = zod.object({
  * @summary List current Pyrus Signals signal states
  */
 export const GetSignalMonitorStateQueryParams = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional()
+  "environment": zod.enum(['shadow', 'live']).optional()
 })
 
 export const GetSignalMonitorStateResponse = zod.object({
   "profile": zod.object({
   "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
@@ -5008,7 +5008,7 @@ export const GetSignalMonitorStateResponse = zod.object({
  * @summary List aggregate Pyrus Signals buy/sell breadth history
  */
 export const ListSignalMonitorBreadthHistoryQueryParams = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
+  "environment": zod.enum(['shadow', 'live']).optional(),
   "range": zod.enum(['hour', 'day', 'week', 'month']).optional()
 })
 
@@ -5046,7 +5046,7 @@ export const listSignalMonitorEventsQueryLimitMax = 1000;
 
 
 export const ListSignalMonitorEventsQueryParams = zod.object({
-  "environment": zod.enum(['paper', 'live']).optional(),
+  "environment": zod.enum(['shadow', 'live']).optional(),
   "symbol": zod.coerce.string().optional(),
   "limit": zod.coerce.number().min(1).max(listSignalMonitorEventsQueryLimitMax).optional().describe('Page size for this response. Follow nextCursor while hasMore is true to retrieve the full matching history; this is not a total history cap.'),
   "from": zod.coerce.string().optional().describe('Include events with signalAt at or after this ISO timestamp.'),
@@ -5058,7 +5058,7 @@ export const ListSignalMonitorEventsResponse = zod.object({
   "events": zod.array(zod.object({
   "id": zod.string(),
   "profileId": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "symbol": zod.string(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
   "direction": zod.enum(['buy', 'sell']),
@@ -5445,7 +5445,7 @@ export const EnsureDefaultSignalOptionsPaperDeploymentBody = zod.object({
  * @summary List saved algo deployments
  */
 export const ListAlgoDeploymentsQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['shadow', 'live']).optional()
 })
 
 export const ListAlgoDeploymentsResponse = zod.object({
@@ -5453,7 +5453,7 @@ export const ListAlgoDeploymentsResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5474,7 +5474,7 @@ export const CreateAlgoDeploymentBody = zod.object({
   "strategyId": zod.string(),
   "name": zod.string(),
   "providerAccountId": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "symbolUniverse": zod.array(zod.string()).optional(),
   "config": zod.record(zod.string(), zod.unknown()).optional()
 })
@@ -5495,7 +5495,7 @@ export const EnableAlgoDeploymentResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5523,7 +5523,7 @@ export const PauseAlgoDeploymentResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5571,7 +5571,7 @@ export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5584,7 +5584,7 @@ export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({
 }),
   "signalMonitorProfile": zod.object({
   "id": zod.string(),
-  "environment": zod.enum(['paper', 'live']),
+  "environment": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
@@ -5613,7 +5613,7 @@ export const GetSignalOptionsAutomationStateResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5669,7 +5669,7 @@ export const GetAlgoDeploymentCockpitParams = zod.object({
 
 export const GetAlgoDeploymentCockpitResponse = zod.object({
   "fleet": zod.object({
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "totalDeployments": zod.number(),
   "enabledDeployments": zod.number(),
   "pausedDeployments": zod.number(),
@@ -5681,7 +5681,7 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5806,7 +5806,7 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -5960,7 +5960,7 @@ export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "enabled": zod.boolean(),
   "providerAccountId": zod.string(),
   "symbolUniverse": zod.array(zod.string()),
@@ -6858,7 +6858,7 @@ export const ListBacktestDraftStrategiesResponse = zod.object({
   "studyId": zod.string(),
   "name": zod.string(),
   "enabled": zod.boolean(),
-  "mode": zod.enum(['paper', 'live']),
+  "mode": zod.enum(['shadow', 'live']),
   "symbolUniverse": zod.array(zod.string()),
   "config": zod.record(zod.string(), zod.unknown()),
   "promotedAt": zod.coerce.date()

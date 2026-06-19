@@ -283,7 +283,7 @@ export async function getBackendSettingsSnapshot() {
         description: "Effective backend trading environment.",
         type: "status",
         value: getRuntimeMode(),
-        defaultValue: "paper",
+        defaultValue: "shadow",
         source: process.env["TRADING_MODE"] ? "env" : "default",
         editable: false,
         requiresRestart: true,

@@ -52,7 +52,7 @@ test("Signal Options active positions recover from open shadow ledger rows", () 
         payload: {
           metadata: {
             deploymentId,
-            deploymentName: "Pyrus Signals Options Shadow Paper",
+            deploymentName: "Pyrus Signals Options Shadow",
           },
           candidate: {
             id: candidateId,

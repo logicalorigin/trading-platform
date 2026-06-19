@@ -32,13 +32,13 @@ type CreateAlgoDeploymentInput = {
   strategyId: string;
   name: string;
   providerAccountId: string;
-  mode: "paper" | "live";
+  mode: "shadow" | "live";
   symbolUniverse?: string[];
   config?: Record<string, unknown>;
 };
 
 type ListAlgoDeploymentsInput = {
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
 };
 
 type ListExecutionEventsInput = {
@@ -51,7 +51,7 @@ const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as cons
 const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
 const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
-  "Pyrus Signals Options Shadow Paper";
+  "Pyrus Signals Options Shadow";
 const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
 const deploymentListDbBackoff = createTransientPostgresBackoff({
   backoffMs: 15_000,
@@ -66,7 +66,7 @@ type AlgoDeploymentListResponse = {
 
 type DeploymentListCacheEntry = {
   response: AlgoDeploymentListResponse;
-  mode?: "paper" | "live";
+  mode?: "shadow" | "live";
   updatedAtMs: number;
 };
 

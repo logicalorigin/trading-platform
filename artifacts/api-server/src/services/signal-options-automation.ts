@@ -1972,7 +1972,7 @@ async function getDeploymentByAlias(
   const deployments = await db
     .select()
     .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.mode, "paper"))
+    .where(eq(algoDeploymentsTable.mode, "shadow"))
     .orderBy(desc(algoDeploymentsTable.updatedAt));
 
   return (
@@ -9078,7 +9078,7 @@ function buildRuleAdherence(input: {
         ? `${brokerLiveSubmissions} entries requested broker submission.`
         : brokerSubmissionMissing
           ? `${brokerSubmissionMissing} entries lacked an explicit brokerSubmission flag.`
-          : "All recorded entries stayed paper/shadow only.",
+          : "All recorded entries stayed shadow only.",
     }),
     rule({
       id: "premium_cap",
@@ -13102,7 +13102,7 @@ export type SignalOptionsGreekSelectorSmokeResult = {
 const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
 const DEFAULT_SIGNAL_OPTIONS_STRATEGY_NAME = "Pyrus Signals Options Shadow";
 const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
-  "Pyrus Signals Options Shadow Paper";
+  "Pyrus Signals Options Shadow";
 const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
 const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
 const SIGNAL_OPTIONS_BACKFILL_VERSION = 1;
@@ -15633,7 +15633,7 @@ async function resolveDefaultSignalOptionsWatchlistSymbols() {
 
 async function resolveDefaultSignalOptionsSymbols() {
   const profile = await getSignalMonitorProfileRow({
-    environment: "paper",
+    environment: "shadow",
     ensureWatchlist: true,
   });
   const universe = await resolveSignalMonitorProfileUniverse(profile, {
@@ -15731,7 +15731,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
   const existingStrategies = await db
     .select()
     .from(algoStrategiesTable)
-    .where(eq(algoStrategiesTable.mode, "paper"))
+    .where(eq(algoStrategiesTable.mode, "shadow"))
     .orderBy(desc(algoStrategiesTable.updatedAt));
   let strategy =
     existingStrategies.find((row) =>
@@ -15743,7 +15743,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
       .insert(algoStrategiesTable)
       .values({
         name: DEFAULT_SIGNAL_OPTIONS_STRATEGY_NAME,
-        mode: "paper",
+        mode: "shadow",
         enabled: false,
         symbolUniverse: symbols,
         config: {
@@ -15764,7 +15764,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
   const existingDeployments = await db
     .select()
     .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.mode, "paper"))
+    .where(eq(algoDeploymentsTable.mode, "shadow"))
     .orderBy(desc(algoDeploymentsTable.updatedAt));
   let deployment =
     existingDeployments.find((row) => {
@@ -15782,7 +15782,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
       .values({
         strategyId: strategy.id,
         name: DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
-        mode: "paper",
+        mode: "shadow",
         enabled,
         providerAccountId: "shadow",
         symbolUniverse: symbols,
@@ -15867,16 +15867,16 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
 
 async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
   const profile = await getSignalMonitorProfileRow({
-    environment: "paper",
+    environment: "shadow",
     ensureWatchlist: true,
   });
   const patch: {
-    environment: "paper";
+    environment: "shadow";
     maxSymbols?: number;
     evaluationConcurrency?: number;
     pollIntervalSeconds?: number;
     pyrusSignalsSettings?: Record<string, unknown>;
-  } = { environment: "paper" };
+  } = { environment: "shadow" };
   const pyrusSignalsSettings = asRecord(profile.pyrusSignalsSettings);
   const universeScope = String(
     pyrusSignalsSettings["__signalMonitorUniverseScope"] ??

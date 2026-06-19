@@ -86,8 +86,8 @@ const EmptyOperationsState = ({
     : deploymentListUnavailable
       ? "The deployment list is temporarily unavailable. Existing signal-options deployments may still be present; refresh to retry the request."
       : candidateDrafts.length
-      ? "Create a paper deployment from an available strategy draft."
-      : "No signal-options deployments are available yet. The default paper deployment should be seeded at startup.";
+      ? "Create a shadow deployment from an available strategy draft."
+      : "No signal-options deployments are available yet. The default shadow deployment should be seeded at startup.";
 
   return (
     <div
@@ -265,8 +265,8 @@ const compactDeploymentName = (deployment) => {
     .replace(/^Pyrus Signals\s*/i, "")
     .trim();
   const mode = String(deployment?.mode || "").toUpperCase();
-  if (mode === "PAPER" && !/^paper$/i.test(compact)) {
-    compact = compact.replace(/\s+Paper$/i, "").trim();
+  if (mode === "SHADOW" && !/^shadow$/i.test(compact)) {
+    compact = compact.replace(/\s+Shadow$/i, "").trim();
   }
   if (mode === "LIVE" && !/^live$/i.test(compact)) {
     compact = compact.replace(/\s+Live$/i, "").trim();

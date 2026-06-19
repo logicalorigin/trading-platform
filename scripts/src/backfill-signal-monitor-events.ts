@@ -16,7 +16,7 @@ import {
   type SignalMonitorMatrixTimeframe,
 } from "../../artifacts/api-server/src/services/signal-monitor";
 
-type RuntimeMode = "paper" | "live";
+type RuntimeMode = "shadow" | "live";
 
 type Config = {
   environment: RuntimeMode;
@@ -68,7 +68,7 @@ function hasArg(name: string): boolean {
 function usage(): string {
   return [
     "Usage:",
-    "  pnpm --filter @workspace/scripts run signal-monitor:events-backfill -- --from=<ISO> --to=<ISO> [--environment=paper] [--timeframes=5m] [--symbols=SPY,QQQ] [--max-symbols=100] [--write --confirm-write]",
+    "  pnpm --filter @workspace/scripts run signal-monitor:events-backfill -- --from=<ISO> --to=<ISO> [--environment=shadow] [--timeframes=5m] [--symbols=SPY,QQQ] [--max-symbols=100] [--write --confirm-write]",
     "",
     "Dry-run is the default. Write mode requires both --write and --confirm-write.",
   ].join("\n");
@@ -122,9 +122,9 @@ function readConfig(): Config {
     console.log(usage());
     process.exit(0);
   }
-  const environment = (argValue("--environment") || "paper").trim() as RuntimeMode;
-  if (environment !== "paper" && environment !== "live") {
-    throw new Error("Use --environment=paper or --environment=live.");
+  const environment = (argValue("--environment") || "shadow").trim() as RuntimeMode;
+  if (environment !== "shadow" && environment !== "live") {
+    throw new Error("Use --environment=shadow or --environment=live.");
   }
   const to = parseDateArg("--to", new Date());
   const from = parseDateArg("--from");

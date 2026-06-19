@@ -5,7 +5,7 @@ import { createSignalOptionsPositionTickManager } from "./signal-options-positio
 
 const CONTRACT_ID = "OPT-C1";
 
-const deployment = { id: "deployment-1", mode: "paper" } as never;
+const deployment = { id: "deployment-1", mode: "shadow" } as never;
 
 const position = {
   id: "position-1",

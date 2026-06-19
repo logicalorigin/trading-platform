@@ -19,7 +19,7 @@ const browserStorage = () => {
 
 const normalizeEnvironment = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "paper" || normalized === "live" ? normalized : null;
+  return normalized === "shadow" || normalized === "live" ? normalized : null;
 };
 
 export const readBootWarmStart = ({

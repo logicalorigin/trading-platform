@@ -37,7 +37,7 @@ export const MARKETING_SHADOW_DASHBOARD_MAX_EVENT_LIMIT = 100;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS = 1_000;
 export const MARKETING_SHADOW_DASHBOARD_STALE_MS = 24 * 60 * 60_000;
-export const MARKETING_SHADOW_DASHBOARD_LABEL = "Shadow / paper trading";
+export const MARKETING_SHADOW_DASHBOARD_LABEL = "Shadow trading";
 
 export type MarketingShadowDashboardInput = {
   equityRange?: unknown;
@@ -63,7 +63,7 @@ export type MarketingAlgoEvent = {
 
 export type MarketingShadowDashboardPayload = {
   status: {
-    mode: "paper";
+    mode: "shadow";
     source: "shadow-ledger";
     label: typeof MARKETING_SHADOW_DASHBOARD_LABEL;
     asOf: string | null;
@@ -112,7 +112,7 @@ export type MarketingShadowDashboardPayload = {
       id: string;
       name: string;
       enabled: boolean;
-      mode: "paper" | "live";
+      mode: "shadow" | "live";
       lastEvaluatedAt: string | null;
       lastSignalAt: string | null;
     };
@@ -410,9 +410,9 @@ function marketingOrders(orders: ShadowOrders): unknown[] {
 function selectMarketingDeployment(deployments: AlgoDeployment[]) {
   return (
     deployments.find(
-      (deployment) => deployment.mode === "paper" && deployment.enabled,
+      (deployment) => deployment.mode === "shadow" && deployment.enabled,
     ) ??
-    deployments.find((deployment) => deployment.mode === "paper") ??
+    deployments.find((deployment) => deployment.mode === "shadow") ??
     null
   );
 }
@@ -545,7 +545,7 @@ export async function fetchMarketingShadowDashboardSnapshot(
     deps.getOrders({ tab: "working" }),
     deps.getOrders({ tab: "history" }),
     deps.getAllocation(),
-    deps.listDeployments({ mode: "paper" }),
+    deps.listDeployments({ mode: "shadow" }),
   ]);
   const risk = await deps.getRisk({
     positionsResponse: positions,
@@ -616,7 +616,7 @@ export async function fetchMarketingShadowDashboardSnapshot(
 
   return {
     status: {
-      mode: "paper",
+      mode: "shadow",
       source: "shadow-ledger",
       label: MARKETING_SHADOW_DASHBOARD_LABEL,
       asOf,
@@ -778,7 +778,7 @@ export function subscribeMarketingShadowDashboardSnapshots(
     void tick();
   });
   const unsubscribeAlgo = subscribeAlgoChanges((change) => {
-    if (change.mode && change.mode !== "paper") {
+    if (change.mode && change.mode !== "shadow") {
       return;
     }
     void tick();

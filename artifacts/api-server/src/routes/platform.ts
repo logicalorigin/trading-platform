@@ -1756,7 +1756,7 @@ router.post("/accounts/flex/test", async (_req, res) => {
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountSummary({
       accountId: req.params.accountId,
@@ -1768,7 +1768,7 @@ router.get("/accounts/:accountId/summary", async (req, res) => {
 
 router.get("/accounts/:accountId/equity-history", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountEquityHistory({
       accountId: req.params.accountId,
@@ -1786,7 +1786,7 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
 
 router.get("/accounts/:accountId/allocation", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountAllocation({
       accountId: req.params.accountId,
@@ -1798,7 +1798,7 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const liveQuotes =
     req.query.liveQuotes === "true"
       ? true
@@ -1821,7 +1821,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
 
 router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountPositionsAtDate({
       accountId: req.params.accountId,
@@ -1839,7 +1839,7 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
 
 router.get("/accounts/:accountId/closed-trades", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountClosedTrades({
       accountId: req.params.accountId,
@@ -1867,7 +1867,7 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
 
 router.get("/accounts/:accountId/orders", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountOrders({
       accountId: req.params.accountId,
@@ -1896,7 +1896,7 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
   res.json(
@@ -1911,7 +1911,7 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {
   if (!admitAccountRoute(res, req.params.accountId)) return;
-  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountCashActivity({
       accountId: req.params.accountId,
@@ -2042,7 +2042,7 @@ router.post("/shadow/orders/preview", async (req, res) => {
   const body = PlaceOrderBody.parse({
     ...req.body,
     accountId: SHADOW_ACCOUNT_ID,
-    mode: "paper",
+    mode: "shadow",
   });
 
   res.json(await previewShadowOrder(body));
@@ -2052,7 +2052,7 @@ router.post("/shadow/orders", async (req, res) => {
   const body = PlaceOrderBody.parse({
     ...req.body,
     accountId: SHADOW_ACCOUNT_ID,
-    mode: "paper",
+    mode: "shadow",
   });
 
   res.status(201).json(await placeShadowOrder(body));
@@ -2077,7 +2077,7 @@ router.post("/orders/submit", async (req, res) => {
           ? req.body.accountId
           : null,
       mode:
-        req.body.mode === "live" || req.body.mode === "paper"
+        req.body.mode === "live" || req.body.mode === "shadow"
           ? req.body.mode
           : null,
       confirm: req.body.confirm === true,
@@ -2100,7 +2100,7 @@ router.post("/orders/:orderId/replace", async (req, res) => {
     accountId: body.accountId,
     orderId: req.params.orderId,
     order: body.order,
-    mode: body.mode === "live" ? "live" : "paper",
+    mode: body.mode === "live" ? "live" : "shadow",
     confirm: body.confirm ?? false,
   }));
 });
@@ -2126,7 +2126,7 @@ router.post("/orders/:orderId/cancel", async (req, res) => {
 router.get("/executions", async (req, res) => {
   const query = req.query as Record<string, unknown>;
   const mode =
-    query.mode === "live" ? "live" : query.mode === "paper" ? "paper" : undefined;
+    query.mode === "live" ? "live" : query.mode === "shadow" ? "shadow" : undefined;
 
   res.json(await listExecutions({
     accountId:
@@ -3227,7 +3227,7 @@ router.get("/streams/bars", async (req, res) => {
 });
 
 router.get("/streams/orders", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const status = typeof req.query.status === "string" ? req.query.status as Parameters<typeof subscribeOrderSnapshots>[0]["status"] : undefined;
 
@@ -3265,8 +3265,8 @@ router.get("/streams/executions", async (req, res) => {
   const mode =
     req.query.mode === "live"
       ? "live"
-      : req.query.mode === "paper"
-        ? "paper"
+      : req.query.mode === "shadow"
+        ? "shadow"
         : undefined;
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
@@ -3448,7 +3448,7 @@ router.get("/streams/footprints", async (req, res) => {
 });
 
 router.get("/streams/accounts/page", async (req, res) => {
-  const mode: RuntimeMode = req.query.mode === "live" ? "live" : "paper";
+  const mode: RuntimeMode = req.query.mode === "live" ? "live" : "shadow";
   const accountId =
     typeof req.query.accountId === "string" && req.query.accountId.trim()
       ? req.query.accountId.trim()
@@ -3539,7 +3539,7 @@ router.get("/streams/accounts/page", async (req, res) => {
 });
 
 router.get("/streams/accounts", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   if (!admitAccountRoute(res, accountId)) return;
 
@@ -3578,7 +3578,7 @@ router.get("/streams/accounts/shadow", async (req, res) => {
     await writeEvent("accounts", await fetchShadowAccountSnapshotPayload());
     await writeEvent("ready", {
       accountId: SHADOW_ACCOUNT_ID,
-      mode: "paper",
+      mode: "shadow",
       source: "shadow-ledger",
     });
 
@@ -3591,7 +3591,7 @@ router.get("/streams/accounts/shadow", async (req, res) => {
           writeEvent("freshness", {
             stream: "shadow-accounts",
             accountId: SHADOW_ACCOUNT_ID,
-            mode: "paper",
+            mode: "shadow",
             changed,
             at: new Date().toISOString(),
           }),

@@ -82,10 +82,10 @@ function diagnosticsProbeTimeoutMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 10_000;
 }
 
-function runtimeModeFromDiagnostics(value: unknown): "paper" | "live" {
+function runtimeModeFromDiagnostics(value: unknown): "shadow" | "live" {
   const runtime = asRecord(value);
   const ibkr = asRecord(runtime.ibkr);
-  return ibkr.sessionMode === "paper" ? "paper" : "live";
+  return ibkr.sessionMode === "shadow" ? "shadow" : "live";
 }
 
 async function readOnlyProbe<T>(
@@ -253,7 +253,7 @@ server.listen(port, () => {
   // page's controls gate on a present deployment list; without a warm cache, a
   // cold-load read that loses the startup pool race has nothing to fall back on
   // and the page shows "deployment unavailable" until a later refetch lands.
-  // Caches the "all" key, which moded (paper/live) reads fall back to.
+  // Caches the "all" key, which moded (shadow/live) reads fall back to.
   void listAlgoDeployments({}).catch((err) => {
     logger.warn({ err }, "Algo deployment-list cache prime failed");
   });

@@ -107,7 +107,7 @@ test("python signal matrix state recomputes elapsed bar age before freshness", (
     __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
       profile: {
         id: "paper-profile",
-        environment: "paper",
+        environment: "shadow",
         enabled: true,
         watchlistId: null,
         timeframe: "5m",
@@ -158,7 +158,7 @@ test("python signal matrix state keeps signal identity when the cell is stale", 
     __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
       profile: {
         id: "paper-profile",
-        environment: "paper",
+        environment: "shadow",
         enabled: true,
         watchlistId: null,
         timeframe: "5m",
@@ -846,7 +846,7 @@ test("signal monitor event pagination reports source status", () => {
         {
           id: "event-1",
           profileId: "profile-1",
-          environment: "paper",
+          environment: "shadow",
           symbol: "SPY",
           timeframe: "5m",
           direction: "buy",
@@ -871,7 +871,7 @@ test("signal monitor events fallback backoff latches transient read failures", (
 
   __signalMonitorInternalsForTests.markSignalMonitorEventsReadFallbackForTests({
     error: new Error("pool timed out while waiting for an open connection"),
-    environment: "paper",
+    environment: "shadow",
     nowMs: 1_000,
   });
 
@@ -896,7 +896,7 @@ test("signal monitor events fallback backoff latches transient read failures", (
 
   const response =
     __signalMonitorInternalsForTests.buildSignalMonitorEventsRuntimeFallbackResponse({
-      environment: "paper",
+      environment: "shadow",
       limit: 10,
     });
   assert.equal(response.sourceStatus, "runtime-fallback");
@@ -928,7 +928,7 @@ test("signal monitor events read checks fallback latch before retrying the datab
 test("signal monitor state fallback carries its source through the API contract", () => {
   const fallback =
     __signalMonitorInternalsForTests.buildSignalMonitorStateUnavailableResult(
-      "paper",
+      "shadow",
       new Date("2026-06-12T16:30:00.000Z"),
     );
 
@@ -975,7 +975,7 @@ test("disabled signal monitor profile symbols do not evaluate bars", async () =>
   const result = await evaluateSignalMonitorProfileSymbols({
     profile: {
       id: "disabled-profile",
-      environment: "paper",
+      environment: "shadow",
       enabled: false,
       watchlistId: null,
       timeframe: "5m",
@@ -1012,7 +1012,7 @@ test("enabled signal monitor profile symbols stay passive by default", async () 
     const result = await evaluateSignalMonitorProfileSymbols({
       profile: {
         id: "enabled-profile",
-        environment: "paper",
+        environment: "shadow",
         enabled: true,
         watchlistId: null,
         timeframe: "5m",

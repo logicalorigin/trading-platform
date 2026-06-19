@@ -152,7 +152,7 @@ type ResolveProfileInput = {
 type PlanInput = {
   profile?: Partial<OvernightSpotProfile> | null;
   deploymentId?: string | null;
-  deploymentMode?: "paper" | "live" | null;
+  deploymentMode?: "shadow" | "live" | null;
   providerAccountId?: string | null;
   signal: OvernightSpotSignal;
   quote?: OvernightSpotQuote | null;
@@ -848,7 +848,7 @@ export function planOvernightSpotOrder(input: PlanInput): OvernightSpotPlanResul
     signalAt,
   });
   const eventType = `${OVERNIGHT_SPOT_EVENT_PREFIX}_${profile.executionMode}_${stage}`;
-  const orderMode = profile.executionMode === "live" ? "live" : "paper";
+  const orderMode = profile.executionMode === "live" ? "live" : "shadow";
   const summary = `${normalizedSymbol} overnight spot ${profile.executionMode} ${stage} ${input.signal.side} ${quantity} @ ${limitPrice}`;
   const payload = {
     automation: "overnight_spot",

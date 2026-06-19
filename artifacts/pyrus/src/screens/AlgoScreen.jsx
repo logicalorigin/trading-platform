@@ -387,7 +387,7 @@ export const AlgoScreen = ({
   const algoLiveDataQueriesEnabled = Boolean(isVisible);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
-    mode: environment || "paper",
+    mode: environment || "shadow",
     enabled: algoLiveDataQueriesEnabled,
   });
   const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
@@ -564,7 +564,7 @@ export const AlgoScreen = ({
   const signalOptionsLedgerPositionsQuery = useGetAccountPositions(
     "shadow",
     {
-      mode: "paper",
+      mode: "shadow",
       assetClass: "all",
       source: "automation",
       liveQuotes: false,
@@ -1278,7 +1278,7 @@ export const AlgoScreen = ({
       toast.push({
         kind: "warn",
         title: "IBKR data not configured",
-        body: "Market-data connectivity must be configured before creating a signal-options paper deployment.",
+        body: "Market-data connectivity must be configured before creating a signal-options shadow deployment.",
       });
       return;
     }

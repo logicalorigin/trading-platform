@@ -147,7 +147,7 @@ test("overnight spot worker pauses deployment scans under high resource pressure
   const deployment = {
     id: "overnight-spot-test",
     enabled: true,
-    mode: "paper",
+    mode: "shadow",
     providerAccountId: null,
     symbolUniverse: ["SPY"],
     config: {

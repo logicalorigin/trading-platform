@@ -53,7 +53,7 @@ import type {
 import { accountPositionTypeParam } from "../account/accountPositionTypes";
 import { freshnessUnchanged, isStreamFresh } from "./streamFreshness";
 
-type StreamMode = "paper" | "live";
+type StreamMode = "shadow" | "live";
 
 type AccountTradeFilters = {
   from: string | null;
@@ -4605,7 +4605,7 @@ export const applyShadowAccountPayloadToCache = (
     })
     .forEach((query) => {
       const params = readQueryParams(query.queryKey);
-      if (!matchesMode(params, "paper") || typeof params?.source === "string") {
+      if (!matchesMode(params, "shadow") || typeof params?.source === "string") {
         return;
       }
 

@@ -111,7 +111,7 @@ test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
 function profile(id = "profile-test") {
   return {
     id,
-    environment: "paper",
+    environment: "shadow",
     enabled: true,
     watchlistId: null,
     timeframe: "15m",
@@ -171,7 +171,7 @@ function withSignalMonitorBarEvaluationEnabled<T>(run: () => T): T {
 test("signal matrix stream scope treats exact cells as authoritative", () => {
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
+      environment: "shadow",
       symbols: ["MSFT"],
       timeframes: ["1d"],
       cells: [
@@ -197,7 +197,7 @@ test("signal matrix stream aggregate evaluation only touches the aggregate symbo
   withSignalMonitorBarEvaluationEnabled(() => {
     const scope =
       __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-        environment: "paper",
+        environment: "shadow",
         symbols: ["AAPL", "MSFT"],
         timeframes: ["1m", "5m"],
       });
@@ -230,7 +230,7 @@ test("signal matrix stream aggregate evaluation runs regardless of bar-evaluatio
   try {
     const scope =
       __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-        environment: "paper",
+        environment: "shadow",
         symbols: ["AAPL"],
         timeframes: ["1m"],
       });
@@ -273,7 +273,7 @@ test("signal matrix stream subscription emits changed deltas and cleans up", () 
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
     const scope =
       __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-        environment: "paper",
+        environment: "shadow",
         symbols: ["AAPL"],
         timeframes: ["1m"],
       });
@@ -353,7 +353,7 @@ test("stream deltas latch direction across directionless re-evaluations", () => 
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
     const scope =
       __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-        environment: "paper",
+        environment: "shadow",
         symbols: ["AAPL"],
         timeframes: ["5m"],
       });
@@ -422,7 +422,7 @@ test("stale evaluations keep signal identity and report data_stale", () => {
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
     const scope =
       __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-        environment: "paper",
+        environment: "shadow",
         symbols: ["AAPL"],
         timeframes: ["5m"],
       });
@@ -464,7 +464,7 @@ test("stale evaluations keep signal identity and report data_stale", () => {
 test("server-owned producer scope normalizes and dedupes universe symbols", () => {
   const scope =
     __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope({
-      environment: "paper",
+      environment: "shadow",
       symbols: ["aapl", "AAPL", " msft ", ""],
       timeframes: ["1m", "5m"],
     });
@@ -481,14 +481,14 @@ test("server-owned producer evaluates bar-close ticks with no UI subscriber", ()
     const scope =
       __signalMonitorInternalsForTests.buildSignalMonitorServerOwnedProducerScope(
         {
-          environment: "paper",
+          environment: "shadow",
           symbols: ["AAPL", "MSFT"],
           timeframes: ["1m"],
         },
       );
     // Register the server-owned producer (no UI client connected).
     __signalMonitorInternalsForTests.registerSignalMonitorServerOwnedProducer({
-      environment: "paper",
+      environment: "shadow",
       profile: profile(),
       scope,
     });
@@ -533,7 +533,7 @@ test("signal matrix stream bootstrap event includes coverage metadata", () => {
   __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
+      environment: "shadow",
       cells: [{ symbol: "AAPL", timeframe: "1m" }] as never,
     });
   const state = streamState("AAPL", "1m", "bootstrap");
@@ -558,7 +558,7 @@ test("signal matrix stream bootstrap hydrates from stored canonical state", () =
   __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
+      environment: "shadow",
       symbols: ["DIA"],
       timeframes: ["5m", "15m"],
       clientRole: "leader",
@@ -622,7 +622,7 @@ test("signal matrix stream bootstrap does not publish runtime fallback state as 
   __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
   const scope =
     __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
-      environment: "paper",
+      environment: "shadow",
       symbols: ["DIA"],
       timeframes: ["5m"],
       clientRole: "leader",

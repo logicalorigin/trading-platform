@@ -179,7 +179,7 @@ export type ChartPositionOverlayAccountSection = "real" | "shadow";
 export type ChartPositionOverlayAccountRequest = {
   accountId: string | null;
   params?: {
-    mode: "paper";
+    mode: "shadow";
     assetClass: "option" | "stock";
     liveQuotes: false;
   };
@@ -206,7 +206,7 @@ export const resolveChartPositionOverlayAccountRequest = ({
   return {
     accountId,
     params: {
-      mode: "paper",
+      mode: "shadow",
       assetClass:
         chartContext?.surfaceKind === "option" || chartContext?.optionContract
           ? "option"

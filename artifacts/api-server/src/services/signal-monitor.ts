@@ -1646,7 +1646,7 @@ export async function recordSignalMonitorBreadthSnapshot(now: Date = new Date())
   const counts = new Map<string, { environment: string; timeframe: string; buy: number; sell: number }>();
   const bump = (environment: string, timeframe: string, direction: unknown, value: unknown) => {
     const normalized = normalizeBreadthDirection(direction);
-    if (!normalized || (environment !== "paper" && environment !== "live") || !timeframe) {
+    if (!normalized || (environment !== "shadow" && environment !== "live") || !timeframe) {
       return;
     }
     const key = `${environment} ${timeframe}`;
@@ -1662,7 +1662,7 @@ export async function recordSignalMonitorBreadthSnapshot(now: Date = new Date())
   }
 
   const inserts = Array.from(counts.values()).map((entry) => ({
-    environment: entry.environment as "paper" | "live",
+    environment: entry.environment as "shadow" | "live",
     timeframe: entry.timeframe,
     capturedAt: now,
     buy: entry.buy,

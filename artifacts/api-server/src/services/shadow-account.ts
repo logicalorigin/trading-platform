@@ -3307,7 +3307,7 @@ async function readShadowLedgerBundleForSource(
     {
       // Serve the last bundle immediately and rebuild in the background instead
       // of blocking the request on a fresh rebuild every TTL (observed ~950ms
-      // cache-miss stalls that drive API pressure "high"). Shadow/paper ledger
+      // cache-miss stalls that drive API pressure "high"). Shadow ledger
       // analytics tolerate one stale cycle — same tradeoff already adopted for
       // shadow positions.
       staleStrategy: "immediate",
@@ -4325,7 +4325,7 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
   const plan = await buildShadowFillPlan(normalized);
   return {
     accountId: SHADOW_ACCOUNT_ID,
-    mode: normalized.mode ?? "paper",
+    mode: normalized.mode ?? "shadow",
     symbol: normalized.symbol,
     assetClass: normalized.assetClass,
     resolvedContractId: Number(
@@ -5048,7 +5048,7 @@ export async function runShadowOptionMaintenance(input: {
       const dateKey = marketDateParts(now).key;
       await placeShadowOrder({
         accountId: SHADOW_ACCOUNT_ID,
-        mode: "paper",
+        mode: "shadow",
         symbol: position.symbol,
         assetClass: "option",
         side: "sell",
@@ -5232,7 +5232,7 @@ function normalizeShadowOrderInput(input: ShadowOrderInput): ShadowOrderInput & 
   return {
     ...input,
     accountId: SHADOW_ACCOUNT_ID,
-    mode: input.mode ?? "paper",
+    mode: input.mode ?? "shadow",
     symbol,
     assetClass: input.assetClass,
     side: input.side,
@@ -6610,7 +6610,7 @@ function buildShadowAccountSummaryResponse(input: {
   return {
     accountId: SHADOW_ACCOUNT_ID,
     isCombined: false,
-    mode: "paper",
+    mode: "shadow",
     currency: SHADOW_CURRENCY,
     degraded: Boolean(input.degraded),
     reason: input.degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
@@ -14896,7 +14896,7 @@ async function recordShadowAutomationEntry(
   }
   return placeShadowOrder({
     accountId: SHADOW_ACCOUNT_ID,
-    mode: "paper",
+    mode: "shadow",
     symbol,
     assetClass: "option",
     side: "buy",
@@ -14937,7 +14937,7 @@ async function recordShadowAutomationExit(
   }
   return placeShadowOrder({
     accountId: SHADOW_ACCOUNT_ID,
-    mode: "paper",
+    mode: "shadow",
     symbol,
     assetClass: "option",
     side: "sell",

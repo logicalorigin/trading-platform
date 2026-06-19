@@ -3337,7 +3337,7 @@ function SectionLabel({ children }) {
 }
 
 export default function SignalsScreen({
-  environment = "paper",
+  environment = "shadow",
   watchlists = [],
   signalMonitorSymbols = [],
   signalMonitorProfile = null,

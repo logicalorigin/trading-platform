@@ -2802,7 +2802,7 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
       .insert(algoStrategiesTable)
       .values({
         name: normalizeLegacyAlgoBrandText(input.name),
-        mode: "paper",
+        mode: "shadow",
         enabled: false,
         symbolUniverse: study.symbols,
         config: {
