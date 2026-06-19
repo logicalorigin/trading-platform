@@ -30,6 +30,8 @@ description: Coordinate multiple Codex, Claude, or sub-agent workers on a shared
    - If a worker stalls, request ETA once, then reassign only the smallest unowned remainder.
    - Prevent overlapping edits by naming exact files or modules.
    - When workers report results, verify source, tests, and runtime evidence before accepting.
+   - Do not become the bottleneck. Batch-process every pending thread each turn instead of polling one message, replying, and re-arming serially. When more than one worker is blocked on you, answer them all in a single pass, then re-arm one watcher.
+   - Spin up your own subagents (Agent tool; `isolation: worktree` for edits) to run independent work in parallel — verification, an audit, an isolated implementation, or to relieve an overloaded worker — rather than queuing everything on one worker. A worker stacked with 3+ tasks is a signal to fork one to a subagent. A clean subagent patch lands via `git apply --cached` without disturbing an entangled tree.
 
 4. Maintain the board.
    - Update `AGENT_TASK_BOARD.md` only from evidence.
@@ -83,6 +85,42 @@ Before posting the assignment, run a pre-delegation check:
 - Context is pass-through only; do not pre-gather data the worker is expected to discover.
 
 Use Codex subagents for independent audits or forked implementation. Use Claude or chat workers when coordination must happen through `AGENT_CHAT`. In all cases, preserve worker autonomy on implementation while keeping write ownership, validation, and safety constraints explicit.
+
+## Worker Autonomy Directives
+
+Every worker brief MUST carry these standing directives, and the leader should re-broadcast them whenever a fleet spins up. The point is to keep workers self-sufficient so they do not stall on the leader:
+
+- **Spawn your own subagents.** For independent audits, adversarial reviews, or forked checks, a worker should launch its own subagents and get an independent review of its own work in parallel — not run everything single-threaded before reporting.
+- **Adversarially audit your own work before submitting it for review.** Before reporting a fix as done, run a fresh-context self-review whose explicit job is to REFUTE the change — spawn a review subagent or run `doubt-driven-development` to hunt the missed edge case, the broken or missing test, the wrong assumption. Report only after the change survives, and state the self-review verdict plus residual risks in the report. This self-challenge is a precondition for leader review, not an optional parallel nicety. The leader's acceptance gate assumes it already happened.
+- **Send blocking questions back to the leader.** When a decision is needed (a UX call, a product-semantics fork, a trading-risk threshold, an ambiguous scope), post the question to `AGENT_CHAT` immediately instead of stalling or guessing. The leader resolves it or escalates to the user. A question in chat beats a blocked worker.
+- **Use design and planning skills autonomously.** When the task warrants it, invoke the relevant skills without being told — `plan-eng-review` / `plan-design-review` / `design-review` for design and architecture, `planning-and-task-breakdown` / `spec` for scoping, `code-simplification` / `doubt-driven-development` / `investigate` for quality and root-cause. Report which skill was used and what it found.
+- **Stay in your lane.** Honor file/module ownership, read-only-vs-editable mode, and the no-stage/commit rule. Route work outside your scope back to the leader for re-assignment rather than crossing into another worker's files.
+
+## Worker Bootstrap Prompt
+
+When a human spins up a fresh worker terminal (Codex or Claude), give them a paste-ready prompt that enrolls the terminal into the fleet under the leader and bakes in the autonomy directives above. The leader fills the `<…>` placeholders from the worker's recovery note and assigned lane. This is the onboarding prompt for the terminal; the per-task `ASSIGNMENT` in the Delegation Pattern is then delivered through chat.
+
+```
+You are a WORKER in a multi-agent fleet on this shared repo. Adopt the chat handle `<HANDLE>`.
+
+LEADERSHIP: `<LEADER_HANDLE>` is the coordinator and the only one who stages/commits. Coordinate ONLY through the chat bus at <CHAT_BASE_URL> (GET /messages?since=<seq>, POST /messages {from,text}, GET /stream). On start: GET /messages, read the latest leader messages addressed to you plus your recovery note <RECOVERY_NOTE>, then POST an ACK that names the lane you are taking. Resume by WORKSTREAM IDENTITY, not session id.
+
+YOUR WORKSTREAM: <SCOPE — lanes, goal, key files>.
+
+HOW YOU WORK:
+- Spawn your OWN subagents for independent/adversarial review and forked checks — do not run everything single-threaded.
+- ADVERSARIALLY AUDIT YOUR OWN WORK BEFORE SUBMITTING: before you report any fix as done, spin a fresh-context review subagent (or run /doubt-driven-development) whose job is to REFUTE your change — find the bug, the missed edge case, the broken/missing test, the wrong assumption. Report only after it survives, and include the verdict.
+- Use plan / design / code-simplification / doubt / investigate skills autonomously when the task warrants; say which you used and what it found.
+- Post blocking questions (UX, product semantics, trading-risk threshold, ambiguous scope) to chat IMMEDIATELY instead of guessing or stalling. A question in chat beats a blocked worker.
+
+CONSTRAINTS:
+- Stay in your lane: touch only your assigned files/area; never revert another agent's edits.
+- NO git add / stage / commit — the leader stages & commits after your verified report.
+- <RUNTIME CONSTRAINTS — e.g. no app restart, no broker connect/disconnect, no live POST/PUT/DELETE, read-only vs editable>.
+- Do NOT hand-write SESSION_HANDOFF_CURRENT.md / SESSION_HANDOFF_MASTER.md / the supervisor handoff (the autosave hook will clobber the leader's recovery pointer) — report only via chat; disable that hook for your session if you can.
+
+REPORT to `<LEADER_HANDLE>` via chat: PASS/FAIL, files changed, `git diff --stat`, validation output, your self-review verdict + residual risks, and any blockers.
+```
 
 ## Skill Discovery And Retrieval
 
