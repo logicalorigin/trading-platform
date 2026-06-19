@@ -19,3 +19,14 @@ test("account day PnL prefers live position row day changes over summary fallbac
   );
   assert.doesNotMatch(block, /const totalDayPnl = fallbackValue \?\? openPositionsDayPnl;/);
 });
+
+test("shadow account equity curve uses the shadow account tone", () => {
+  const source = readLocalSource("./AccountScreen.jsx");
+  const panel = source.match(/<LazyEquityCurvePanel[\s\S]*?\/>/)?.[0];
+
+  assert.ok(panel, "Missing LazyEquityCurvePanel render");
+  assert.match(
+    panel,
+    /accentColor=\{shadowMode \? CSS_COLOR\.pink : CSS_COLOR\.green\}/,
+  );
+});
