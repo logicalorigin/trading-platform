@@ -4070,6 +4070,78 @@ paths:
               schema:
                 $ref: "#/components/schemas/BacktestStudyPreviewChart"
 
+  /backtests/pattern-discovery:
+    post:
+      operationId: createPatternDiscoveryStudy
+      tags: [backtests]
+      summary: Create a pattern discovery study
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatternDiscoveryStudyInput"
+      responses:
+        "201":
+          description: Created pattern discovery study
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatternDiscoveryStudyCreated"
+
+  /backtests/pattern-discovery/{studyId}:
+    get:
+      operationId: getPatternDiscoveryResults
+      tags: [backtests]
+      summary: Get pattern discovery results
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: horizonBars
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pattern discovery results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatternDiscoveryResults"
+
+  /backtests/pattern-discovery/{studyId}/occurrences:
+    get:
+      operationId: getPatternOccurrences
+      tags: [backtests]
+      summary: Get pattern occurrences
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: patternKey
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: horizonBars
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pattern occurrences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatternOccurrences"
+
   /backtests/runs:
     get:
       operationId: listBacktestRuns
@@ -14574,3 +14646,200 @@ components:
             $ref: "#/components/schemas/BacktestDraftStrategy"
       required:
         - drafts
+
+    PatternDiscoveryStudyInput:
+      type: object
+      properties:
+        name:
+          type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        timeframeSet:
+          type: array
+          items:
+            type: string
+        baseTimeframe:
+          type: string
+        forwardHorizonsBars:
+          type: array
+          items:
+            type: integer
+        minSampleThreshold:
+          type: integer
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        signalSettingsByTimeframe:
+          type: object
+          additionalProperties: true
+        persistOccurrences:
+          type: boolean
+      required:
+        - name
+        - symbols
+        - timeframeSet
+        - startsAt
+        - endsAt
+
+    PatternDiscoveryStudyCreated:
+      type: object
+      properties:
+        studyId:
+          type: string
+        jobId:
+          type: string
+        status:
+          type: string
+      required:
+        - studyId
+        - jobId
+        - status
+
+    PatternDiscoveryResult:
+      type: object
+      properties:
+        id:
+          type: string
+        patternKey:
+          type: string
+        timeframeSet:
+          type: array
+          items:
+            type: string
+        baseTimeframe:
+          type: string
+        horizonBars:
+          type: integer
+        sampleCount:
+          type: integer
+        bias:
+          type: string
+        winRatePct:
+          type: [number, "null"]
+        meanReturnPct:
+          type: [number, "null"]
+        medianReturnPct:
+          type: [number, "null"]
+        stdReturnPct:
+          type: [number, "null"]
+        avgMaePct:
+          type: [number, "null"]
+        avgMfePct:
+          type: [number, "null"]
+        score:
+          type: [number, "null"]
+        tStat:
+          type: [number, "null"]
+        rank:
+          type: [integer, "null"]
+        dataQuality:
+          type: [object, "null"]
+          additionalProperties: true
+      required:
+        - id
+        - patternKey
+        - timeframeSet
+        - baseTimeframe
+        - horizonBars
+        - sampleCount
+        - bias
+        - winRatePct
+        - meanReturnPct
+        - medianReturnPct
+        - stdReturnPct
+        - avgMaePct
+        - avgMfePct
+        - score
+        - tStat
+        - rank
+        - dataQuality
+
+    PatternDiscoveryResults:
+      type: object
+      properties:
+        studyId:
+          type: string
+        status:
+          type: string
+        progressPercent:
+          type: number
+        parameters:
+          type: object
+          additionalProperties: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatternDiscoveryResult"
+      required:
+        - studyId
+        - status
+        - progressPercent
+        - parameters
+        - results
+
+    PatternOccurrence:
+      type: object
+      properties:
+        symbol:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        realizedReturnPct:
+          type: [number, "null"]
+        maePct:
+          type: [number, "null"]
+        mfePct:
+          type: [number, "null"]
+      required:
+        - symbol
+        - occurredAt
+        - realizedReturnPct
+        - maePct
+        - mfePct
+
+    PatternOccurrenceSymbolAgg:
+      type: object
+      properties:
+        symbol:
+          type: string
+        count:
+          type: integer
+        winRatePct:
+          type: [number, "null"]
+        meanReturnPct:
+          type: [number, "null"]
+      required:
+        - symbol
+        - count
+        - winRatePct
+        - meanReturnPct
+
+    PatternOccurrences:
+      type: object
+      properties:
+        studyId:
+          type: string
+        patternKey:
+          type: string
+        horizonBars:
+          type: integer
+        occurrences:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatternOccurrence"
+        perSymbol:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatternOccurrenceSymbolAgg"
+      required:
+        - studyId
+        - patternKey
+        - horizonBars
+        - occurrences
+        - perSymbol

@@ -97,6 +97,8 @@ import type {
   GetOptionChainParams,
   GetOptionChartBarsParams,
   GetOptionExpirationsParams,
+  GetPatternDiscoveryResultsParams,
+  GetPatternOccurrencesParams,
   GetQuoteSnapshotsParams,
   GetResearchEarningsCalendarParams,
   GetResearchFinancialsParams,
@@ -157,6 +159,10 @@ import type {
   OrdersResponse,
   OvernightSpotSignalScanRequest,
   OvernightSpotSignalScanResult,
+  PatternDiscoveryResults,
+  PatternDiscoveryStudyCreated,
+  PatternDiscoveryStudyInput,
+  PatternOccurrences,
   PauseAlgoDeploymentParams,
   PineScriptRecord,
   PineScriptsResponse,
@@ -11871,6 +11877,251 @@ export function useGetBacktestStudyPreviewChart<TData = Awaited<ReturnType<typeo
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetBacktestStudyPreviewChartQueryOptions(studyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Create a pattern discovery study
+ */
+export const getCreatePatternDiscoveryStudyUrl = () => {
+
+
+
+
+  return `/api/backtests/pattern-discovery`
+}
+
+export const createPatternDiscoveryStudy = async (patternDiscoveryStudyInput: PatternDiscoveryStudyInput, options?: RequestInit): Promise<PatternDiscoveryStudyCreated> => {
+
+  return customFetch<PatternDiscoveryStudyCreated>(getCreatePatternDiscoveryStudyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      patternDiscoveryStudyInput,)
+  }
+);}
+
+
+
+
+export const getCreatePatternDiscoveryStudyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPatternDiscoveryStudy>>, TError,{data: BodyType<PatternDiscoveryStudyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPatternDiscoveryStudy>>, TError,{data: BodyType<PatternDiscoveryStudyInput>}, TContext> => {
+
+const mutationKey = ['createPatternDiscoveryStudy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPatternDiscoveryStudy>>, {data: BodyType<PatternDiscoveryStudyInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createPatternDiscoveryStudy(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePatternDiscoveryStudyMutationResult = NonNullable<Awaited<ReturnType<typeof createPatternDiscoveryStudy>>>
+    export type CreatePatternDiscoveryStudyMutationBody = BodyType<PatternDiscoveryStudyInput>
+    export type CreatePatternDiscoveryStudyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a pattern discovery study
+ */
+export const useCreatePatternDiscoveryStudy = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPatternDiscoveryStudy>>, TError,{data: BodyType<PatternDiscoveryStudyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPatternDiscoveryStudy>>,
+        TError,
+        {data: BodyType<PatternDiscoveryStudyInput>},
+        TContext
+      > => {
+      return useMutation(getCreatePatternDiscoveryStudyMutationOptions(options));
+    }
+
+/**
+ * @summary Get pattern discovery results
+ */
+export const getGetPatternDiscoveryResultsUrl = (studyId: string,
+    params?: GetPatternDiscoveryResultsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/backtests/pattern-discovery/${studyId}?${stringifiedParams}` : `/api/backtests/pattern-discovery/${studyId}`
+}
+
+export const getPatternDiscoveryResults = async (studyId: string,
+    params?: GetPatternDiscoveryResultsParams, options?: RequestInit): Promise<PatternDiscoveryResults> => {
+
+  return customFetch<PatternDiscoveryResults>(getGetPatternDiscoveryResultsUrl(studyId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPatternDiscoveryResultsQueryKey = (studyId: string,
+    params?: GetPatternDiscoveryResultsParams,) => {
+    return [
+    `/api/backtests/pattern-discovery/${studyId}`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPatternDiscoveryResultsQueryOptions = <TData = Awaited<ReturnType<typeof getPatternDiscoveryResults>>, TError = ErrorType<unknown>>(studyId: string,
+    params?: GetPatternDiscoveryResultsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPatternDiscoveryResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPatternDiscoveryResultsQueryKey(studyId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPatternDiscoveryResults>>> = ({ signal }) => getPatternDiscoveryResults(studyId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(studyId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPatternDiscoveryResults>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPatternDiscoveryResultsQueryResult = NonNullable<Awaited<ReturnType<typeof getPatternDiscoveryResults>>>
+export type GetPatternDiscoveryResultsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get pattern discovery results
+ */
+
+export function useGetPatternDiscoveryResults<TData = Awaited<ReturnType<typeof getPatternDiscoveryResults>>, TError = ErrorType<unknown>>(
+ studyId: string,
+    params?: GetPatternDiscoveryResultsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPatternDiscoveryResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPatternDiscoveryResultsQueryOptions(studyId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get pattern occurrences
+ */
+export const getGetPatternOccurrencesUrl = (studyId: string,
+    params: GetPatternOccurrencesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/backtests/pattern-discovery/${studyId}/occurrences?${stringifiedParams}` : `/api/backtests/pattern-discovery/${studyId}/occurrences`
+}
+
+export const getPatternOccurrences = async (studyId: string,
+    params: GetPatternOccurrencesParams, options?: RequestInit): Promise<PatternOccurrences> => {
+
+  return customFetch<PatternOccurrences>(getGetPatternOccurrencesUrl(studyId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPatternOccurrencesQueryKey = (studyId: string,
+    params?: GetPatternOccurrencesParams,) => {
+    return [
+    `/api/backtests/pattern-discovery/${studyId}/occurrences`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPatternOccurrencesQueryOptions = <TData = Awaited<ReturnType<typeof getPatternOccurrences>>, TError = ErrorType<unknown>>(studyId: string,
+    params: GetPatternOccurrencesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPatternOccurrences>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPatternOccurrencesQueryKey(studyId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPatternOccurrences>>> = ({ signal }) => getPatternOccurrences(studyId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(studyId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPatternOccurrences>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPatternOccurrencesQueryResult = NonNullable<Awaited<ReturnType<typeof getPatternOccurrences>>>
+export type GetPatternOccurrencesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get pattern occurrences
+ */
+
+export function useGetPatternOccurrences<TData = Awaited<ReturnType<typeof getPatternOccurrences>>, TError = ErrorType<unknown>>(
+ studyId: string,
+    params: GetPatternOccurrencesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPatternOccurrences>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPatternOccurrencesQueryOptions(studyId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

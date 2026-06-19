@@ -6349,6 +6349,100 @@ export interface BacktestDraftStrategiesResponse {
   drafts: BacktestDraftStrategy[];
 }
 
+export type PatternDiscoveryStudyInputSignalSettingsByTimeframe = { [key: string]: unknown };
+
+export interface PatternDiscoveryStudyInput {
+  name: string;
+  symbols: string[];
+  timeframeSet: string[];
+  baseTimeframe?: string;
+  forwardHorizonsBars?: number[];
+  minSampleThreshold?: number;
+  startsAt: string;
+  endsAt: string;
+  signalSettingsByTimeframe?: PatternDiscoveryStudyInputSignalSettingsByTimeframe;
+  persistOccurrences?: boolean;
+}
+
+export interface PatternDiscoveryStudyCreated {
+  studyId: string;
+  jobId: string;
+  status: string;
+}
+
+/**
+ * @nullable
+ */
+export type PatternDiscoveryResultDataQuality = { [key: string]: unknown } | null;
+
+export interface PatternDiscoveryResult {
+  id: string;
+  patternKey: string;
+  timeframeSet: string[];
+  baseTimeframe: string;
+  horizonBars: number;
+  sampleCount: number;
+  bias: string;
+  /** @nullable */
+  winRatePct: number | null;
+  /** @nullable */
+  meanReturnPct: number | null;
+  /** @nullable */
+  medianReturnPct: number | null;
+  /** @nullable */
+  stdReturnPct: number | null;
+  /** @nullable */
+  avgMaePct: number | null;
+  /** @nullable */
+  avgMfePct: number | null;
+  /** @nullable */
+  score: number | null;
+  /** @nullable */
+  tStat: number | null;
+  /** @nullable */
+  rank: number | null;
+  /** @nullable */
+  dataQuality: PatternDiscoveryResultDataQuality;
+}
+
+export type PatternDiscoveryResultsParameters = { [key: string]: unknown };
+
+export interface PatternDiscoveryResults {
+  studyId: string;
+  status: string;
+  progressPercent: number;
+  parameters: PatternDiscoveryResultsParameters;
+  results: PatternDiscoveryResult[];
+}
+
+export interface PatternOccurrence {
+  symbol: string;
+  occurredAt: string;
+  /** @nullable */
+  realizedReturnPct: number | null;
+  /** @nullable */
+  maePct: number | null;
+  /** @nullable */
+  mfePct: number | null;
+}
+
+export interface PatternOccurrenceSymbolAgg {
+  symbol: string;
+  count: number;
+  /** @nullable */
+  winRatePct: number | null;
+  /** @nullable */
+  meanReturnPct: number | null;
+}
+
+export interface PatternOccurrences {
+  studyId: string;
+  patternKey: string;
+  horizonBars: number;
+  occurrences: PatternOccurrence[];
+  perSymbol: PatternOccurrenceSymbolAgg[];
+}
+
 export type ListDiagnosticHistoryParams = {
 from?: string;
 to?: string;
@@ -7235,6 +7329,15 @@ deploymentId?: string;
  */
 limit?: number;
 includePayload?: boolean;
+};
+
+export type GetPatternDiscoveryResultsParams = {
+horizonBars?: number;
+};
+
+export type GetPatternOccurrencesParams = {
+patternKey: string;
+horizonBars: number;
 };
 
 export type ListBacktestRunsParams = {

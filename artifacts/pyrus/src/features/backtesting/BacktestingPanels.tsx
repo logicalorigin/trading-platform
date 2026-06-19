@@ -101,6 +101,7 @@ import {
   type BacktestValidationWarningSeverity,
 } from "./backtestValidationWarnings";
 import { deriveSweepDimensions } from "./sweepDimensions";
+import { PatternDiscoveryPanel } from "./PatternDiscoveryPanel";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useToast } from "../platform/platformContexts.jsx";
 import { describeUserFacingRuntimeError } from "../platform/userFacingRuntimeError.js";
@@ -1535,6 +1536,9 @@ export function BacktestWorkspace({
   const [studyName, setStudyName] = useState("SMA Crossover Study");
   const [universeMode, setUniverseMode] = useState<"watchlist" | "symbols">(
     "watchlist",
+  );
+  const [workbenchView, setWorkbenchView] = useState<"strategy" | "discovery">(
+    "strategy",
   );
   const [watchlistId, setWatchlistId] = useState(defaultWatchlistId ?? "");
   const [symbolsText, setSymbolsText] = useState("");
@@ -3009,6 +3013,38 @@ export function BacktestWorkspace({
                 charts side by side, then work downward through summary,
                 trades, diagnostics, and history.
               </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: scale.sp(4),
+                  marginTop: scale.sp(8),
+                }}
+              >
+                <button
+                  type="button"
+                  aria-pressed={workbenchView === "strategy"}
+                  onClick={() => setWorkbenchView("strategy")}
+                  style={buttonStyle(
+                    theme,
+                    scale,
+                    workbenchView === "strategy" ? "primary" : "ghost",
+                  )}
+                >
+                  Strategy
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={workbenchView === "discovery"}
+                  onClick={() => setWorkbenchView("discovery")}
+                  style={buttonStyle(
+                    theme,
+                    scale,
+                    workbenchView === "discovery" ? "primary" : "ghost",
+                  )}
+                >
+                  Pattern Discovery
+                </button>
+              </div>
             </div>
             <div
               style={{
@@ -3150,6 +3186,10 @@ export function BacktestWorkspace({
         </div>
       </div>
 
+      {workbenchView === "discovery" ? (
+        <PatternDiscoveryPanel />
+      ) : (
+        <>
       <SectionCard
         title="Backtest Inputs"
         theme={theme}
@@ -7272,6 +7312,8 @@ export function BacktestWorkspace({
           </div>
         </div>
       </SectionCard>
+        </>
+      )}
 
     </div>
   );

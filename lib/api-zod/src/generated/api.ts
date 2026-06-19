@@ -6310,6 +6310,93 @@ export const GetBacktestStudyPreviewChartResponse = zod.object({
 
 
 /**
+ * @summary Create a pattern discovery study
+ */
+export const CreatePatternDiscoveryStudyBody = zod.object({
+  "name": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "timeframeSet": zod.array(zod.string()),
+  "baseTimeframe": zod.string().optional(),
+  "forwardHorizonsBars": zod.array(zod.number()).optional(),
+  "minSampleThreshold": zod.number().optional(),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "signalSettingsByTimeframe": zod.record(zod.string(), zod.unknown()).optional(),
+  "persistOccurrences": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get pattern discovery results
+ */
+export const GetPatternDiscoveryResultsParams = zod.object({
+  "studyId": zod.coerce.string()
+})
+
+export const GetPatternDiscoveryResultsQueryParams = zod.object({
+  "horizonBars": zod.coerce.number().optional()
+})
+
+export const GetPatternDiscoveryResultsResponse = zod.object({
+  "studyId": zod.string(),
+  "status": zod.string(),
+  "progressPercent": zod.number(),
+  "parameters": zod.record(zod.string(), zod.unknown()),
+  "results": zod.array(zod.object({
+  "id": zod.string(),
+  "patternKey": zod.string(),
+  "timeframeSet": zod.array(zod.string()),
+  "baseTimeframe": zod.string(),
+  "horizonBars": zod.number(),
+  "sampleCount": zod.number(),
+  "bias": zod.string(),
+  "winRatePct": zod.number().nullable(),
+  "meanReturnPct": zod.number().nullable(),
+  "medianReturnPct": zod.number().nullable(),
+  "stdReturnPct": zod.number().nullable(),
+  "avgMaePct": zod.number().nullable(),
+  "avgMfePct": zod.number().nullable(),
+  "score": zod.number().nullable(),
+  "tStat": zod.number().nullable(),
+  "rank": zod.number().nullable(),
+  "dataQuality": zod.record(zod.string(), zod.unknown()).nullable()
+}))
+})
+
+
+/**
+ * @summary Get pattern occurrences
+ */
+export const GetPatternOccurrencesParams = zod.object({
+  "studyId": zod.coerce.string()
+})
+
+export const GetPatternOccurrencesQueryParams = zod.object({
+  "patternKey": zod.coerce.string(),
+  "horizonBars": zod.coerce.number()
+})
+
+export const GetPatternOccurrencesResponse = zod.object({
+  "studyId": zod.string(),
+  "patternKey": zod.string(),
+  "horizonBars": zod.number(),
+  "occurrences": zod.array(zod.object({
+  "symbol": zod.string(),
+  "occurredAt": zod.coerce.date(),
+  "realizedReturnPct": zod.number().nullable(),
+  "maePct": zod.number().nullable(),
+  "mfePct": zod.number().nullable()
+})),
+  "perSymbol": zod.array(zod.object({
+  "symbol": zod.string(),
+  "count": zod.number(),
+  "winRatePct": zod.number().nullable(),
+  "meanReturnPct": zod.number().nullable()
+}))
+})
+
+
+/**
  * @summary List backtest runs
  */
 export const ListBacktestRunsQueryParams = zod.object({
