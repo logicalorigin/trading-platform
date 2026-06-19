@@ -401,5 +401,10 @@ export {
   attachPostgresClientErrorHandler,
   attachPostgresPoolErrorHandler,
 } from "./pool-error-handler";
+export {
+  createAdvisoryLockHolder,
+  sharedAdvisoryLockHolder,
+  type AdvisoryLockRelease,
+} from "./advisory-lock";
 export * from "./runtime";
 export * from "./schema";
