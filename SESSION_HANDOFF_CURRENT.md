@@ -2,25 +2,24 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-06-19 17:28:50 MDT`
-- Last Updated (UTC): `2026-06-19T23:28:50.824Z`
+- Last Updated (MT): `2026-06-19 17:33:29 MDT`
+- Last Updated (UTC): `2026-06-19T23:33:29.994Z`
 - Session ID: `0d3c26f5-e062-4cec-a5e8-e0452308fcc9`
-- Summary: 2026-06-19 17:28:50 MDT | 0d3c26f5-e062-4cec-a5e8-e0452308fcc9 | please find the code simplification work session that was dropped and remains unfinished
+- Summary: 2026-06-19 17:33:29 MDT | 0d3c26f5-e062-4cec-a5e8-e0452308fcc9 | finish cleaning and committing residual worktree files
 - Handoff: `SESSION_HANDOFF_2026-06-19_0d3c26f5-e062-4cec-a5e8-e0452308fcc9.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-**Post-push residue audit — 2026-06-19 17:19:17 MDT**
+**Final cleanup commit pass — 2026-06-19 17:33:29 MDT**
 
-- Observed: user push landed; `main` and `origin/main` both point at `d10df04 chore: add local agent coordination tooling`.
-- Observed: no staged changes and no remaining tracked product/source diffs.
-- Observed remaining residue:
-  - `.replit` has extra port mappings (`3992 -> 80`, `8123 -> 3001`); AGENTS requires explicit startup-maintenance approval before committing or manipulating this class of config.
-  - Tracked/untracked `SESSION_HANDOFF*` files are coordination/session state; committing/pruning/ignoring them needs an explicit repo policy decision.
-  - `lib/db/migrations/20260617_covering_indexes_drop_redundant.sql` and `docs/plans/db-pool-saturation-index-fix.md` are a held DB cleanup workstream; the migration header says DO NOT APPLY until separately authorized.
-  - `samples/INSTALL.md` and `samples/autowidth cahrt issue.png` look like incomplete sample/brand-kit or diagnostic artifacts, not a complete product chunk.
-- Previously pushed post-cleanup commits now on `origin/main`:
+- Observed: user requested finishing cleanup and committing remaining residue.
+- Removed rejected generated `.replit` port mappings (`3992 -> 80`, `8123 -> 3001`) during a bounded startup-config maintenance window, ran `pnpm run audit:replit-startup`, then re-locked startup config.
+- New cleanup commits:
+  - `6af6e06 docs: archive session handoffs`
+  - `aff088c docs: capture held db index cleanup`
+  - `2508903 docs: add sample brand kit notes`
+- Previously pushed post-cleanup commits on `origin/main`:
   - `a418bed chore: add staged execution skills`
   - `fdf310a fix: guard missing STA underlying prices`
   - `af34b17 test(signal-monitor): guard canonical env stays a valid environment_mode enum member`
@@ -36,8 +35,12 @@ This is a pointer to the active durable handoff. Do not use this file as the ful
   - PASS: `pnpm run audit:retired-alert-tier`
   - PASS: `pnpm run audit:api-codegen`
   - PASS: `git diff --check`
-  - BLOCKED/EXPECTED: `pnpm run audit:guards` stops at `audit:replit-startup` because dirty `.replit` exposes extra ports (`3992 -> 80`, `8123 -> 3001`) outside the allowed active PYRUS runtime ports.
-- No additional commit was made after the push because every remaining file is guarded, policy-sensitive, or incomplete.
+  - PASS: `pnpm run audit:replit-startup`
+  - PASS: `pnpm run replit:config:status` (startup config files mode `444`)
+  - PASS: `pnpm db:market-data:audit`
+  - PASS: staged `git diff --cached --check` and refined secret-pattern scans for committed docs chunks
+  - PASS: final `git diff --check`
+- Remaining action after this handoff update commit: push the new local commits.
 
 - Committed first reviewed chunk: `e02a4a3 chore: restore guard and typecheck hygiene`.
 - Committed second reviewed chunk: `8d275cf fix: recover degraded python compute runtime`.
@@ -183,10 +186,9 @@ This is a pointer to the active durable handoff. Do not use this file as the ful
 
 ## Next Recommended Steps
 
-1. Get explicit startup-maintenance approval before staging or changing `.replit`; run `pnpm run audit:replit-startup` before handoff if it changes.
-2. Decide the repo policy for `SESSION_HANDOFF*` files: commit the pending handoff archive, prune it, or add a local/committed ignore rule.
-3. Keep the redundant-index drop migration held unless the DB cleanup workstream is explicitly reopened.
-4. Decide whether the `samples/` brand-kit install note and screenshot are intended assets; do not commit them as-is by default.
+1. Push the cleanup commits on `main`.
+2. Do not apply `lib/db/migrations/20260617_covering_indexes_drop_redundant.sql` until the held DB cleanup workstream is explicitly reopened.
+3. Keep Replit startup config locked during routine work.
 
 ## Validation Snapshot
 
