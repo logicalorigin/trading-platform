@@ -26,6 +26,7 @@ import {
   BARS_REQUEST_PRIORITY,
   HEAVY_PAYLOAD_GC_MS,
   buildBarsRequestOptions,
+  retryUnlessTimeout,
 } from "./queryDefaults";
 import { useHydrationGate } from "./hydrationCoordinator";
 import {
@@ -75,6 +76,7 @@ const SPARKLINE_HISTORY_SEED_LIMIT = 240;
 const SPARKLINE_SEED_CHUNK_SIZE = 96;
 const SIGNAL_SPARKLINE_SEED_LIMIT = 120;
 const SIGNAL_SPARKLINE_SEED_POINT_LIMIT = 48;
+const SPARKLINE_MIN_VISUAL_POINT_COUNT = 8;
 const SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT = SPARKLINE_SEED_CHUNK_SIZE;
 const SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE = SPARKLINE_SEED_CHUNK_SIZE;
 const SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS = buildBarsRequestOptions(
@@ -85,7 +87,9 @@ const QUOTE_STREAM_DIAGNOSTICS_GLOBAL =
   "__PYRUS_MARKET_DATA_SUBSCRIPTION_DIAGNOSTICS__";
 
 const normalizeRuntimeSymbol = (symbol) =>
-  String(symbol || "").trim().toUpperCase();
+  String(symbol || "")
+    .trim()
+    .toUpperCase();
 
 const summarizeSparklineBars = (barsBySymbol = {}) =>
   Object.fromEntries(
@@ -99,7 +103,10 @@ const summarizeSparklineBars = (barsBySymbol = {}) =>
             : null,
         last:
           Array.isArray(bars) && bars.length
-            ? (bars.at(-1)?.timestamp ?? bars.at(-1)?.time ?? bars.at(-1)?.t ?? null)
+            ? (bars.at(-1)?.timestamp ??
+              bars.at(-1)?.time ??
+              bars.at(-1)?.t ??
+              null)
             : null,
       },
     ]),
@@ -142,13 +149,12 @@ const sparklineBarCloseValue = (bar) => {
 const hasUsableSparklineBars = (bars) =>
   (Array.isArray(bars) ? bars : []).filter(
     (bar) => sparklineBarCloseValue(bar) != null,
-  ).length >= 2;
+  ).length >= SPARKLINE_MIN_VISUAL_POINT_COUNT;
 
 const aggregateToSparklineBar = (aggregate) => ({
-  timestamp:
-    Number.isFinite(aggregate?.startMs)
-      ? new Date(aggregate.startMs).toISOString()
-      : null,
+  timestamp: Number.isFinite(aggregate?.startMs)
+    ? new Date(aggregate.startMs).toISOString()
+    : null,
   time: aggregate?.startMs ?? null,
   open: aggregate?.open ?? null,
   high: aggregate?.high ?? null,
@@ -353,10 +359,7 @@ export const MarketDataSubscriptionProvider = ({
   const aggregateSparklineSymbols = useMemo(
     () => [
       ...new Set(
-        [
-          ...requestedSparklineSymbols,
-          ...aggregateOnlySparklineSymbols,
-        ]
+        [...requestedSparklineSymbols, ...aggregateOnlySparklineSymbols]
           .map(normalizeRuntimeSymbol)
           .filter(Boolean),
       ),
@@ -385,7 +388,9 @@ export const MarketDataSubscriptionProvider = ({
         bars = cached.bars;
       } else {
         bars = thinBarsForSparkline(
-          getStoredBrokerMinuteAggregates(normalized).map(aggregateToSparklineBar),
+          getStoredBrokerMinuteAggregates(normalized).map(
+            aggregateToSparklineBar,
+          ),
         );
         cache.set(normalized, { version, bars });
       }
@@ -405,7 +410,9 @@ export const MarketDataSubscriptionProvider = ({
     () =>
       requestedSparklineSymbols.filter(
         (symbol) =>
-          !aggregateOnlySparklineSymbolSet.has(normalizeRuntimeSymbol(symbol)) &&
+          !aggregateOnlySparklineSymbolSet.has(
+            normalizeRuntimeSymbol(symbol),
+          ) &&
           !hasUsableSparklineBars(
             aggregateSparklineBarsBySymbol[normalizeRuntimeSymbol(symbol)],
           ),
@@ -438,9 +445,7 @@ export const MarketDataSubscriptionProvider = ({
       ),
     [signalSparklineSeedSymbols],
   );
-  const signalSparklineSeedEnabled = Boolean(
-    marketStockAggregateStreamingEnabled && signalSparklineSeedSymbols.length > 0,
-  );
+  const signalSparklineSeedEnabled = signalSparklineSeedSymbols.length > 0;
   const sparklineHydrationGate = useHydrationGate({
     enabled: sparklineHistoryEnabled,
     priority: BARS_REQUEST_PRIORITY.background,
@@ -468,9 +473,7 @@ export const MarketDataSubscriptionProvider = ({
     eventSourceAvailable,
     upstreamDisabledReason: upstreamPositionQuoteStreamDisabledReason,
   });
-  const quoteStreamRuntimeActive = Boolean(
-    !quoteStreamDisabledReason,
-  );
+  const quoteStreamRuntimeActive = Boolean(!quoteStreamDisabledReason);
   const positionQuoteStreamRuntimeActive = Boolean(
     !positionQuoteStreamDisabledReason,
   );
@@ -662,7 +665,8 @@ export const MarketDataSubscriptionProvider = ({
     enabled: sparklineHistoryEnabled,
     queryFn: () =>
       fetchSparklineSeedInChunks(historySparklineSymbols, {
-        chunkSize: Math.max(1, Math.floor(Number(sparklineConcurrency) || 1)) *
+        chunkSize:
+          Math.max(1, Math.floor(Number(sparklineConcurrency) || 1)) *
           SPARKLINE_SEED_CHUNK_SIZE,
         limit: SPARKLINE_HISTORY_SEED_LIMIT,
         pointLimit: SPARKLINE_RENDER_POINT_LIMIT,
@@ -687,7 +691,7 @@ export const MarketDataSubscriptionProvider = ({
     ),
     queryFn: () => fetchSignalSparklineSeed(signalSparklinePrioritySeedSymbols),
     ...BARS_QUERY_DEFAULTS,
-    retry: false,
+    retry: retryUnlessTimeout(2),
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const signalSparklineBackgroundSeedQuery = useQuery({
@@ -707,7 +711,7 @@ export const MarketDataSubscriptionProvider = ({
     queryFn: () =>
       fetchSignalSparklineSeedInChunks(signalSparklineBackgroundSeedSymbols),
     ...BARS_QUERY_DEFAULTS,
-    retry: false,
+    retry: retryUnlessTimeout(2),
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const signalSparklineSeedData = useMemo(
@@ -739,45 +743,109 @@ export const MarketDataSubscriptionProvider = ({
     signalSparklinePrioritySeedQuery.dataUpdatedAt || 0,
     signalSparklineBackgroundSeedQuery.dataUpdatedAt || 0,
   );
-  const sparklineBarsBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        aggregateSparklineSymbols
-          .map((symbol) => {
-            const normalized = normalizeRuntimeSymbol(symbol);
-            const seedBars = signalSparklineSeedData?.[normalized];
-            const hasSeedBars = hasUsableSparklineBars(seedBars);
-            const signalSparklineBars = hasSeedBars
-              ? mergeSparklineBars(
-                  seedBars,
-                  aggregateSparklineBarsBySymbol[normalized],
-                )
-              : [];
-            if (aggregateOnlySparklineSymbolSet.has(normalized)) {
-              return hasUsableSparklineBars(signalSparklineBars)
-                ? [normalized, signalSparklineBars]
-                : null;
-            }
-            const fallbackBars =
-              aggregateSparklineBarsBySymbol[normalized] ||
-              sparklineQuery.data?.[symbol] ||
-              sparklineQuery.data?.[normalized] ||
-              [];
-            const bars = hasUsableSparklineBars(signalSparklineBars)
-              ? signalSparklineBars
-              : fallbackBars;
-            return hasUsableSparklineBars(bars) ? [normalized, bars] : null;
-          })
-          .filter(Boolean),
-      ),
-    [
-      aggregateSparklineSymbols,
-      aggregateOnlySparklineSymbolSet,
-      aggregateSparklineBarsBySymbol,
-      signalSparklineSeedData,
-      sparklineQuery.data,
-    ],
+  const visualSparklineBarsCacheRef = useRef(new Map());
+  const sparklineBarsBySymbol = useMemo(() => {
+    const cache = visualSparklineBarsCacheRef.current;
+    const requestedSymbols = new Set();
+    const entries = [];
+
+    aggregateSparklineSymbols.forEach((symbol) => {
+      const normalized = normalizeRuntimeSymbol(symbol);
+      if (!normalized) {
+        return;
+      }
+      requestedSymbols.add(normalized);
+
+      const aggregateBars = aggregateSparklineBarsBySymbol[normalized];
+      const seedBars = signalSparklineSeedData?.[normalized];
+      const cachedBars = cache.get(normalized)?.bars;
+      const marketSeedBars =
+        sparklineQuery.data?.[symbol] ||
+        sparklineQuery.data?.[normalized] ||
+        [];
+      const hasSeedBars = hasUsableSparklineBars(seedBars);
+      const hasCachedBars = hasUsableSparklineBars(cachedBars);
+      const hasAggregateBars = hasUsableSparklineBars(aggregateBars);
+      const hasMarketSeedBars = hasUsableSparklineBars(marketSeedBars);
+      const isAggregateOnly = aggregateOnlySparklineSymbolSet.has(normalized);
+
+      let bars = [];
+      if (hasSeedBars) {
+        bars = mergeSparklineBars(seedBars, aggregateBars);
+      } else if (isAggregateOnly && hasCachedBars) {
+        bars = mergeSparklineBars(cachedBars, aggregateBars);
+      } else if (isAggregateOnly) {
+        bars = [];
+      } else {
+        const fallbackBars = hasMarketSeedBars
+          ? marketSeedBars
+          : hasAggregateBars
+            ? aggregateBars
+            : [];
+        bars = fallbackBars;
+      }
+
+      if (hasUsableSparklineBars(bars)) {
+        const visualBars = thinBarsForSparkline(
+          bars,
+          isAggregateOnly
+            ? SIGNAL_SPARKLINE_SEED_POINT_LIMIT
+            : SPARKLINE_RENDER_POINT_LIMIT,
+        );
+        cache.set(normalized, { bars: visualBars });
+        entries.push([normalized, visualBars]);
+      }
+    });
+
+    cache.forEach((_value, symbol) => {
+      if (!requestedSymbols.has(symbol)) {
+        cache.delete(symbol);
+      }
+    });
+
+    return Object.fromEntries(entries);
+  }, [
+    aggregateSparklineSymbols,
+    aggregateOnlySparklineSymbolSet,
+    aggregateSparklineBarsBySymbol,
+    signalSparklineSeedData,
+    sparklineQuery.data,
+  ]);
+  const signalSparklinePrioritySeedSettled = Boolean(
+    !signalSparklinePrioritySeedSymbols.length ||
+      signalSparklinePrioritySeedQuery.isFetched ||
+      signalSparklinePrioritySeedQuery.isError,
   );
+  const signalSparklineBackgroundSeedExpected = Boolean(
+    signalSparklineBackgroundSeedSymbols.length &&
+      signalSparklinePrioritySeedQuery.status === "success",
+  );
+  const signalSparklineBackgroundSeedSettled = Boolean(
+    !signalSparklineBackgroundSeedExpected ||
+      signalSparklineBackgroundSeedQuery.isFetched ||
+      signalSparklineBackgroundSeedQuery.isError,
+  );
+  const signalSparklineSeedSettled = Boolean(
+    signalSparklinePrioritySeedSettled && signalSparklineBackgroundSeedSettled,
+  );
+  const clearAggregateOnlySparklineSymbols = useMemo(() => {
+    if (!signalSparklineSeedSettled) {
+      return [];
+    }
+    return aggregateSparklineSymbols
+      .map(normalizeRuntimeSymbol)
+      .filter(
+        (symbol) =>
+          symbol &&
+          aggregateOnlySparklineSymbolSet.has(symbol) &&
+          !hasUsableSparklineBars(sparklineBarsBySymbol[symbol]),
+      );
+  }, [
+    aggregateOnlySparklineSymbolSet,
+    aggregateSparklineSymbols,
+    signalSparklineSeedSettled,
+    sparklineBarsBySymbol,
+  ]);
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
     enabled: marketBaselineHydrationGate.enabled,
@@ -855,6 +923,7 @@ export const MarketDataSubscriptionProvider = ({
     sparklineQuery.dataUpdatedAt || 0,
     signalSparklineSeedDataUpdatedAt,
     Object.keys(sparklineBarsBySymbol).join(","),
+    clearAggregateOnlySparklineSymbols.join(","),
     marketPerformanceQuery.dataUpdatedAt || 0,
     marketAggregateStoreVersion,
   ].join("::");
@@ -867,7 +936,7 @@ export const MarketDataSubscriptionProvider = ({
       {
         sparklineBarsBySymbol,
         performanceBaselineBySymbol: marketPerformanceQuery.data,
-        clearSparklineSymbols: Array.from(aggregateOnlySparklineSymbolSet),
+        clearSparklineSymbols: clearAggregateOnlySparklineSymbols,
       },
     );
     if (typeof window !== "undefined") {
@@ -883,10 +952,12 @@ export const MarketDataSubscriptionProvider = ({
           queryStatus: sparklineQuery.status,
           fetchStatus: sparklineQuery.fetchStatus,
           dataUpdatedAt: sparklineQuery.dataUpdatedAt || null,
+          signalSeedEnabled: signalSparklineSeedEnabled,
           signalSeedStatus: signalSparklineSeedStatus,
           signalSeedFetchStatus: signalSparklineSeedFetchStatus,
           signalSeedUpdatedAt: signalSparklineSeedDataUpdatedAt || null,
-          signalSeedPrioritySymbolCount: signalSparklinePrioritySeedSymbols.length,
+          signalSeedPrioritySymbolCount:
+            signalSparklinePrioritySeedSymbols.length,
           signalSeedPriorityStatus: signalSparklinePrioritySeedQuery.status,
           signalSeedPriorityFetchStatus:
             signalSparklinePrioritySeedQuery.fetchStatus,
@@ -901,6 +972,11 @@ export const MarketDataSubscriptionProvider = ({
             signalSparklineBackgroundSeedQuery.fetchStatus,
           signalSeedBackgroundUpdatedAt:
             signalSparklineBackgroundSeedQuery.dataUpdatedAt || null,
+          visualCacheSymbolCount: visualSparklineBarsCacheRef.current.size,
+          visualCacheSymbols: Array.from(
+            visualSparklineBarsCacheRef.current.keys(),
+          ),
+          clearSparklineSymbolCount: clearAggregateOnlySparklineSymbols.length,
           dataSymbols: Object.keys(sparklineBarsBySymbol || {}),
           dataSummary: summarizeSparklineBars(sparklineBarsBySymbol),
           changedSymbolCount,

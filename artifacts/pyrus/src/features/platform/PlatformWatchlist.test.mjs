@@ -126,7 +126,9 @@ test("watchlist signal display does not read the one-state monitor store or sign
 
 test("watchlist sparklines stay on sparkline data paths, not chart hydration", () => {
   const watchlistSource = readLocalSource("./PlatformWatchlist.jsx");
-  const marketDataSource = readLocalSource("./MarketDataSubscriptionProvider.jsx");
+  const marketDataSource = readLocalSource(
+    "./MarketDataSubscriptionProvider.jsx",
+  );
 
   assert.equal(watchlistSource.includes("ResearchChartSurface"), false);
   assert.match(marketDataSource, /"market-sparklines"/);
@@ -142,18 +144,9 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketSparklineQueryBlock,
     /queryFn:\s*\(\) =>\s*fetchSparklineSeedInChunks\(historySparklineSymbols/s,
   );
-  assert.match(
-    marketSparklineQueryBlock,
-    /enabled:\s*sparklineHistoryEnabled/,
-  );
-  assert.doesNotMatch(
-    marketSparklineQueryBlock,
-    /getBarsRequest\(/,
-  );
-  assert.doesNotMatch(
-    marketDataSource,
-    /const SPARKLINE_HISTORY_LIMIT = 720/,
-  );
+  assert.match(marketSparklineQueryBlock, /enabled:\s*sparklineHistoryEnabled/);
+  assert.doesNotMatch(marketSparklineQueryBlock, /getBarsRequest\(/);
+  assert.doesNotMatch(marketDataSource, /const SPARKLINE_HISTORY_LIMIT = 720/);
   assert.match(
     marketDataSource,
     /"signal-sparkline-seed"[\s\S]*"priority"[\s\S]*signalSparklinePrioritySeedSymbols/s,
@@ -166,21 +159,29 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketDataSource,
     /signalSparkline(?:Priority|Background)?SeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
   );
-  assert.match(
-    marketDataSource,
-    /SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT/,
-  );
-  assert.match(
-    marketDataSource,
-    /SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE/,
-  );
+  assert.match(marketDataSource, /SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT/);
+  assert.match(marketDataSource, /SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE/);
+  assert.match(marketDataSource, /SPARKLINE_MIN_VISUAL_POINT_COUNT\s*=\s*8/);
   assert.match(
     marketDataSource,
     /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineBackgroundSeedSymbols\)/s,
   );
+  assert.match(marketDataSource, /retry:\s*retryUnlessTimeout\(2\)/s);
   assert.match(
     marketDataSource,
-    /const hasSeedBars = hasUsableSparklineBars\(seedBars\);[\s\S]*if \(aggregateOnlySparklineSymbolSet\.has\(normalized\)\) \{[\s\S]*return hasUsableSparklineBars\(signalSparklineBars\)[\s\S]*: null;/s,
+    /const hasSeedBars = hasUsableSparklineBars\(seedBars\);[\s\S]*else if \(isAggregateOnly && hasCachedBars\) \{[\s\S]*bars = mergeSparklineBars\(cachedBars, aggregateBars\);[\s\S]*\} else if \(isAggregateOnly\) \{\s*bars = \[\];\s*\}/s,
+  );
+  assert.match(
+    marketDataSource,
+    /const hasMarketSeedBars = hasUsableSparklineBars\(marketSeedBars\);[\s\S]*const fallbackBars = hasMarketSeedBars[\s\S]*\? marketSeedBars[\s\S]*: hasAggregateBars[\s\S]*\? aggregateBars[\s\S]*: \[\];/s,
+  );
+  assert.match(
+    marketDataSource,
+    /const clearAggregateOnlySparklineSymbols = useMemo\(\(\) => \{[\s\S]*!signalSparklineSeedSettled[\s\S]*aggregateOnlySparklineSymbolSet\.has\(symbol\)[\s\S]*!hasUsableSparklineBars\(sparklineBarsBySymbol\[symbol\]\)/s,
+  );
+  assert.match(
+    marketDataSource,
+    /clearSparklineSymbols:\s*clearAggregateOnlySparklineSymbols/,
   );
 });
 
