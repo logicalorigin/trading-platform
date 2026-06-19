@@ -115,6 +115,7 @@ type SignalMonitorMatrixCellRequest = {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
 };
+const SIGNAL_MONITOR_CELL_KEY_SEPARATOR = "\u0000";
 export type SignalMonitorCanonicalEventCandidate = {
   signal: PyrusSignalsSignalEvent;
   signalAt: Date;
@@ -1395,7 +1396,10 @@ function buildSignalMonitorBreadthHistoryResponse(
     if (!direction || !symbol || !timeframe) {
       continue;
     }
-    cellState.set(`${symbol} ${timeframe}`, direction);
+    cellState.set(
+      `${symbol}${SIGNAL_MONITOR_CELL_KEY_SEPARATOR}${timeframe}`,
+      direction,
+    );
     timeframeKeys.add(timeframe);
     if (!symbolState.has(symbol)) {
       symbolState.set(symbol, { direction, at: Number.NEGATIVE_INFINITY });
@@ -1443,7 +1447,10 @@ function buildSignalMonitorBreadthHistoryResponse(
     const bucketEnd = bucket + bucketMs;
     while (eventIndex < sortedEvents.length && sortedEvents[eventIndex].at < bucketEnd) {
       const event = sortedEvents[eventIndex];
-      cellState.set(`${event.symbol} ${event.timeframe}`, event.direction);
+      cellState.set(
+        `${event.symbol}${SIGNAL_MONITOR_CELL_KEY_SEPARATOR}${event.timeframe}`,
+        event.direction,
+      );
       const existing = symbolState.get(event.symbol);
       if (!existing || event.at >= existing.at) {
         symbolState.set(event.symbol, { direction: event.direction, at: event.at });
@@ -1454,7 +1461,9 @@ function buildSignalMonitorBreadthHistoryResponse(
     const at = new Date(bucket);
     const timeframeCounts = new Map<string, { buy: number; sell: number }>();
     for (const [key, direction] of cellState) {
-      const timeframe = key.slice(key.indexOf(" ") + 1);
+      const timeframe = key.slice(
+        key.indexOf(SIGNAL_MONITOR_CELL_KEY_SEPARATOR) + 1,
+      );
       const counts = timeframeCounts.get(timeframe) ?? { buy: 0, sell: 0 };
       counts[direction] += 1;
       timeframeCounts.set(timeframe, counts);
@@ -4621,7 +4630,7 @@ function applyStoredSignalDirectionLatch<
   };
 }
 
-async function upsertSymbolState(input: {
+type SignalMonitorSymbolStateUpsertInput = {
   profileId: string;
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
@@ -4637,7 +4646,20 @@ async function upsertSymbolState(input: {
   evaluatedAt: Date;
   lastError?: string | null;
   trendDirection?: string | null;
-}) {
+};
+
+// Resolves the read-modify portion of a symbol-state persist (event-anchored
+// signalAt lookup, the stored-direction latch, and the identity/recency preserve
+// rule). Returns the row to upsert, or `{ preserved }` when the stored row
+// outranks the candidate and the write must be skipped. The write is left to the
+// caller so the per-cycle matrix persist can collapse many rows into one bulk
+// statement; per-symbol callers still write individually via `upsertSymbolState`.
+async function resolveSignalMonitorSymbolStateUpsert(
+  input: SignalMonitorSymbolStateUpsertInput,
+): Promise<
+  | { effectiveValues: typeof signalMonitorSymbolStatesTable.$inferInsert }
+  | { preserved: DbSignalMonitorSymbolState }
+> {
   const currentSignalAt = await resolveStoredSignalMonitorSignalAt(input);
   const values = {
     profileId: input.profileId,
@@ -4667,19 +4689,49 @@ async function upsertSymbolState(input: {
     existing &&
     shouldPreserveExistingSignalMonitorSymbolState(existing, effectiveValues)
   ) {
-    return existing;
+    return { preserved: existing };
+  }
+  return { effectiveValues };
+}
+
+// Updatable columns for the symbol-state upsert. In a multi-row bulk insert the
+// `set` clause must reference each conflicting row's own incoming value via
+// `excluded.<column>` (a single literal object would write the same values to
+// every conflicting row); the conflict keys (profile_id, symbol, timeframe) are
+// excluded from the set. This mirrors the prior per-symbol `set: effectiveValues`
+// exactly: every updatable column resolves to that row's incoming value.
+const signalMonitorSymbolStateUpsertSet = {
+  currentSignalDirection: sql`excluded.current_signal_direction`,
+  currentSignalAt: sql`excluded.current_signal_at`,
+  currentSignalPrice: sql`excluded.current_signal_price`,
+  latestBarAt: sql`excluded.latest_bar_at`,
+  latestBarClose: sql`excluded.latest_bar_close`,
+  barsSinceSignal: sql`excluded.bars_since_signal`,
+  fresh: sql`excluded.fresh`,
+  status: sql`excluded.status`,
+  active: sql`excluded.active`,
+  lastEvaluatedAt: sql`excluded.last_evaluated_at`,
+  lastError: sql`excluded.last_error`,
+  trendDirection: sql`excluded.trend_direction`,
+  updatedAt: sql`excluded.updated_at`,
+};
+
+async function upsertSymbolState(input: SignalMonitorSymbolStateUpsertInput) {
+  const resolved = await resolveSignalMonitorSymbolStateUpsert(input);
+  if ("preserved" in resolved) {
+    return resolved.preserved;
   }
 
   const [state] = await db
     .insert(signalMonitorSymbolStatesTable)
-    .values(effectiveValues)
+    .values(resolved.effectiveValues)
     .onConflictDoUpdate({
       target: [
         signalMonitorSymbolStatesTable.profileId,
         signalMonitorSymbolStatesTable.symbol,
         signalMonitorSymbolStatesTable.timeframe,
       ],
-      set: effectiveValues,
+      set: resolved.effectiveValues,
     })
     .returning();
 
@@ -6295,6 +6347,14 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       Math.max(1, input.profile.evaluationConcurrency || 1),
     );
     const seenEventKeys = new Set<string>();
+    // Latest effective row per (symbol, timeframe). The reads and per-row latch/
+    // preserve decisions still run per symbol (bounded by `concurrency`), but the
+    // INSERTs are collapsed into a single bulk upsert below instead of one
+    // pool round-trip per symbol - the write storm this path used to emit.
+    const upsertRows = new Map<
+      string,
+      typeof signalMonitorSymbolStatesTable.$inferInsert
+    >();
     for (let index = 0; index < states.length; index += concurrency) {
       const batch = states.slice(index, index + concurrency);
       await Promise.all(
@@ -6312,7 +6372,7 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
               ? state.currentSignalDirection
               : null;
           const signalAt = direction ? dateOrNull(state.currentSignalAt) : null;
-          await upsertSymbolState({
+          const resolved = await resolveSignalMonitorSymbolStateUpsert({
             profileId: input.profile.id,
             symbol: normalizeSymbol(state.symbol).toUpperCase(),
             timeframe: state.timeframe,
@@ -6332,6 +6392,15 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             // a buy/sell direction on load; rides with the crossover, not actionable.
             trendDirection: state.indicatorSnapshot?.trendDirection ?? null,
           });
+          if ("effectiveValues" in resolved) {
+            // Last write wins on a duplicate (symbol, timeframe), matching the
+            // prior per-symbol serialization and avoiding a duplicate conflict
+            // target within one bulk INSERT ... ON CONFLICT statement.
+            upsertRows.set(
+              `${resolved.effectiveValues.symbol}:${resolved.effectiveValues.timeframe}`,
+              resolved.effectiveValues,
+            );
+          }
           await persistSignalMonitorMatrixStateEventBestEffort({
             profile: input.profile,
             state,
@@ -6340,6 +6409,21 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
           });
         }),
       );
+    }
+
+    const rows = Array.from(upsertRows.values());
+    if (rows.length) {
+      await db
+        .insert(signalMonitorSymbolStatesTable)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: [
+            signalMonitorSymbolStatesTable.profileId,
+            signalMonitorSymbolStatesTable.symbol,
+            signalMonitorSymbolStatesTable.timeframe,
+          ],
+          set: signalMonitorSymbolStateUpsertSet,
+        });
     }
   } catch (error) {
     const diagnostic = recordSignalMonitorDbFallback(error, {
@@ -6395,7 +6479,10 @@ function schedulePersistSignalMonitorMatrixStatesBestEffort(input: {
     evaluatedAt: input.evaluatedAt,
   };
   for (const state of input.states) {
-    merged.states.set(`${state.symbol} ${state.timeframe}`, state);
+    merged.states.set(
+      `${state.symbol}${SIGNAL_MONITOR_CELL_KEY_SEPARATOR}${state.timeframe}`,
+      state,
+    );
   }
   merged.profile = input.profile;
   merged.evaluatedAt = input.evaluatedAt;
