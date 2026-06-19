@@ -106,3 +106,23 @@ test("right-labeled Pyrus line overlays share chart viewport width", () => {
     /extendBars:\s*labelOffsetBars/,
   );
 });
+
+test("right price scale updates use the default pane", () => {
+  assert.doesNotMatch(
+    surfaceSource,
+    /priceScale\("right",\s*0\)/,
+  );
+  assert.match(surfaceSource, /priceScale\("right"\)\.setAutoScale/);
+  assert.match(surfaceSource, /priceScale\("right"\)\.applyOptions/);
+});
+
+test("GEX projection center dots use the same x clamp as cone paths", () => {
+  assert.match(
+    surfaceSource,
+    /centerDots:\s*projected\.map\(\(point\)\s*=>\s*\(\{\s*x:\s*clampProjectionCoordinate\(point\.x,\s*svgXBounds\.minX,\s*svgXBounds\.maxX\)/s,
+  );
+  assert.doesNotMatch(
+    surfaceSource,
+    /centerDots:\s*projected\.map\(\(point\)\s*=>\s*\(\{\s*x:\s*point\.x,/s,
+  );
+});
