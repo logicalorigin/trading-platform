@@ -8,6 +8,7 @@ export * from "./enums";
 export * from "./flow";
 export * from "./instruments";
 export * from "./market-data";
+export * from "./pattern-discovery";
 export * from "./preferences";
 export * from "./signal-monitor";
 export * from "./trading";

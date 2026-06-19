@@ -13,6 +13,7 @@
   "dependencies": {
     "@workspace/backtest-core": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/pyrus-signals-core": "workspace:*",
     "drizzle-orm": "catalog:",
     "pino": "catalog:"
   },

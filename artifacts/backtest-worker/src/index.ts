@@ -29,9 +29,27 @@ import {
   db,
   historicalBarDatasetsTable,
   historicalBarsTable,
+  mtfPatternOccurrencesTable,
+  mtfPatternResultsTable,
 } from "@workspace/db";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+  type PyrusSignalsSignalSettings,
+} from "@workspace/pyrus-signals-core";
 import { logger } from "./logger";
+import {
+  computeDirectionEvents,
+  DEFAULT_SIGNAL_SETTINGS_BY_TIMEFRAME,
+  sampleTransitions,
+  scorePatterns,
+  warmupDaysForTimeframe,
+  type DirectionEvent,
+  type PatternDiscoveryConfig,
+  type PatternOccurrence,
+  type PatternOccurrenceRow,
+  type PatternResultRow,
+} from "./pattern-discovery";
 import {
   OPTIONS_AGGREGATE_BARS_WARNING,
   SIGNAL_OPTIONS_AGGREGATE_BARS_WARNING,
@@ -2227,12 +2245,250 @@ async function claimNextJob(): Promise<JobRow | null> {
   return claimed ?? null;
 }
 
+function parsePatternDiscoveryConfig(
+  study: typeof backtestStudiesTable.$inferSelect,
+): PatternDiscoveryConfig {
+  const params = (study.parameters ?? {}) as Record<string, unknown>;
+  const studySymbols = Array.isArray(study.symbols) ? study.symbols : [];
+  const symbols =
+    studySymbols.length > 0
+      ? studySymbols
+      : Array.isArray(params.symbols)
+        ? (params.symbols as string[])
+        : [];
+  const timeframeSet =
+    Array.isArray(params.timeframeSet) && params.timeframeSet.length > 0
+      ? (params.timeframeSet as string[])
+      : ["1m", "2m", "5m", "15m"];
+  const baseTimeframe =
+    typeof params.baseTimeframe === "string" &&
+    timeframeSet.includes(params.baseTimeframe)
+      ? params.baseTimeframe
+      : timeframeSet[0];
+  const forwardHorizonsBars =
+    Array.isArray(params.forwardHorizonsBars) &&
+    params.forwardHorizonsBars.length > 0
+      ? (params.forwardHorizonsBars as number[]).filter(
+          (horizon) => Number.isInteger(horizon) && horizon > 0,
+        )
+      : [3, 6, 12];
+  const minSampleThreshold =
+    typeof params.minSampleThreshold === "number" &&
+    params.minSampleThreshold >= 0
+      ? params.minSampleThreshold
+      : 30;
+  return {
+    symbols,
+    timeframeSet,
+    baseTimeframe,
+    forwardHorizonsBars,
+    minSampleThreshold,
+    signalSettingsByTimeframe:
+      (params.signalSettingsByTimeframe as Record<
+        string,
+        Partial<PyrusSignalsSignalSettings>
+      >) ?? {},
+    persistOccurrences: params.persistOccurrences === true,
+  };
+}
+
+function resolveSignalSettings(
+  config: PatternDiscoveryConfig,
+  timeframe: string,
+): PyrusSignalsSignalSettings {
+  // Layered: global default -> per-TF calibrated default -> study override.
+  return {
+    ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+    ...(DEFAULT_SIGNAL_SETTINGS_BY_TIMEFRAME[timeframe] ?? {}),
+    ...(config.signalSettingsByTimeframe?.[timeframe] ?? {}),
+  };
+}
+
+const patternNumericString = (value: number | null): string | null =>
+  value == null ? null : String(value);
+
+async function persistPatternResults(
+  studyId: string,
+  jobId: string,
+  config: PatternDiscoveryConfig,
+  results: PatternResultRow[],
+  occurrenceRows: PatternOccurrenceRow[],
+  coverageWarnings: string[],
+): Promise<void> {
+  // Re-runnable: replace any prior results for this study.
+  await db
+    .delete(mtfPatternResultsTable)
+    .where(eq(mtfPatternResultsTable.studyId, studyId));
+  await db
+    .delete(mtfPatternOccurrencesTable)
+    .where(eq(mtfPatternOccurrencesTable.studyId, studyId));
+
+  const dataQuality = {
+    signalSource: "pyrus-signals-core",
+    timeframeSet: config.timeframeSet,
+    baseTimeframe: config.baseTimeframe,
+    coverageWarnings: coverageWarnings.slice(0, 50),
+  };
+
+  for (let index = 0; index < results.length; index += 500) {
+    const chunk = results.slice(index, index + 500).map((row) => ({
+      studyId,
+      jobId,
+      patternKey: row.patternKey,
+      timeframeSet: config.timeframeSet,
+      baseTimeframe: config.baseTimeframe,
+      horizonBars: row.horizonBars,
+      sampleCount: row.sampleCount,
+      bias: row.bias,
+      winRatePct: patternNumericString(row.winRatePct),
+      meanReturnPct: patternNumericString(row.meanReturnPct),
+      medianReturnPct: patternNumericString(row.medianReturnPct),
+      stdReturnPct: patternNumericString(row.stdReturnPct),
+      avgMaePct: patternNumericString(row.avgMaePct),
+      avgMfePct: patternNumericString(row.avgMfePct),
+      score: patternNumericString(row.score),
+      tStat: patternNumericString(row.tStat),
+      rank: row.rank,
+      dataQuality,
+    }));
+    await db.insert(mtfPatternResultsTable).values(chunk);
+  }
+
+  for (let index = 0; index < occurrenceRows.length; index += 1000) {
+    const chunk = occurrenceRows.slice(index, index + 1000).map((row) => ({
+      studyId,
+      symbol: row.symbol,
+      occurredAt: row.occurredAt,
+      patternKey: row.patternKey,
+      horizonBars: row.horizonBars,
+      realizedReturnPct: patternNumericString(row.realizedReturnPct),
+      maePct: patternNumericString(row.maePct),
+      mfePct: patternNumericString(row.mfePct),
+    }));
+    await db.insert(mtfPatternOccurrencesTable).values(chunk);
+  }
+}
+
+async function processPatternDiscovery(job: JobRow): Promise<void> {
+  const study = await db
+    .select()
+    .from(backtestStudiesTable)
+    .where(eq(backtestStudiesTable.id, job.studyId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!study) {
+    throw new Error(`Job ${job.id} references missing study.`);
+  }
+  const config = parsePatternDiscoveryConfig(study);
+  if (config.symbols.length === 0) {
+    throw new Error("Pattern discovery study has no symbols.");
+  }
+
+  await heartbeat(job.id, 5);
+  const { startsAt: from, endsAt: to } = study;
+  const loadTimeframes = [
+    ...new Set([...config.timeframeSet, config.baseTimeframe]),
+  ];
+
+  const occurrences: PatternOccurrence[] = [];
+  const baseBarsBySymbol: Record<string, BacktestBar[]> = {};
+  const coverageWarnings: string[] = [];
+
+  for (let symbolIndex = 0; symbolIndex < config.symbols.length; symbolIndex += 1) {
+    if (await shouldCancel(job.id)) return;
+    const symbol = config.symbols[symbolIndex];
+    // Load each TF from a warmup buffer BEFORE the window so signals are stable at
+    // the window start; sampling later restricts occurrences to the study window.
+    const barsByTimeframe: Record<string, BacktestBar[]> = {};
+    for (const timeframe of loadTimeframes) {
+      const warmupFrom = new Date(
+        from.getTime() - warmupDaysForTimeframe(timeframe) * 86_400_000,
+      );
+      const dataset = await loadDataset({
+        symbol,
+        timeframe,
+        from: warmupFrom,
+        to,
+        preferSeededMinuteDataset: false,
+      });
+      barsByTimeframe[timeframe] = filterRegularSessionBars(
+        timeframe,
+        dataset.bars,
+      );
+    }
+    const baseBars = barsByTimeframe[config.baseTimeframe] ?? [];
+    baseBarsBySymbol[symbol] = baseBars;
+
+    const eventsByTimeframe: Record<string, DirectionEvent[]> = {};
+    for (const timeframe of config.timeframeSet) {
+      const events = computeDirectionEvents(
+        barsByTimeframe[timeframe] ?? [],
+        resolveSignalSettings(config, timeframe),
+      );
+      eventsByTimeframe[timeframe] = events;
+      if (events.length === 0) {
+        coverageWarnings.push(
+          `${symbol} ${timeframe}: no signal events (insufficient history?)`,
+        );
+      }
+    }
+    // Occurrences only within the study window; warmup bars prime the readers but
+    // are not themselves occurrences.
+    const baseBarsInWindow = baseBars.filter(
+      (bar) => bar.startsAt.getTime() >= from.getTime(),
+    );
+    occurrences.push(
+      ...sampleTransitions({
+        symbol,
+        timeframeSet: config.timeframeSet,
+        baseBars: baseBarsInWindow,
+        eventsByTimeframe,
+      }),
+    );
+    await heartbeat(
+      job.id,
+      5 + Math.floor(((symbolIndex + 1) / config.symbols.length) * 75),
+    );
+  }
+
+  if (await shouldCancel(job.id)) return;
+  await heartbeat(job.id, 85);
+  const { results, occurrenceRows } = scorePatterns({
+    occurrences,
+    barsBySymbol: baseBarsBySymbol,
+    baseTimeframe: config.baseTimeframe,
+    horizonsBars: config.forwardHorizonsBars,
+    minSampleThreshold: config.minSampleThreshold,
+  });
+
+  await persistPatternResults(
+    study.id,
+    job.id,
+    config,
+    results,
+    config.persistOccurrences ? occurrenceRows : [],
+    coverageWarnings,
+  );
+  await heartbeat(job.id, 100);
+  logger.info(
+    {
+      jobId: job.id,
+      studyId: study.id,
+      patternCount: results.length,
+      occurrences: occurrences.length,
+    },
+    "Pattern discovery completed",
+  );
+}
+
 async function processJob(job: JobRow): Promise<void> {
   try {
     if (job.kind === "single_run") {
       await processSingleRun(job);
     } else if (job.kind === "sweep") {
       await processSweep(job);
+    } else if (job.kind === "pattern_discovery") {
+      await processPatternDiscovery(job);
     } else {
       throw new Error(`Unsupported job kind: ${job.kind}`);
     }
