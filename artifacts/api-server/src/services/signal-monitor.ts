@@ -398,11 +398,11 @@ function resolveEnvironment(environment?: RuntimeMode): RuntimeMode {
 // Signals are ONE universal upstream source — NOT scoped to a deployment/runtime
 // environment (shadow/paper/live is a downstream execution concern). Every
 // signal reader (the page + all deployments) resolves to this single canonical
-// signal profile so they all see the same feed. We reuse the enabled "paper"
-// profile as the canonical key to avoid a data migration; the producer already
+// signal profile so they all see the same feed. The canonical key is the
+// "shadow" environment (renamed from the former "paper"); the producer already
 // generates it. (resolveEnvironment above remains for legacy per-env read paths
 // until they are migrated in later stages.)
-const CANONICAL_SIGNAL_ENVIRONMENT: RuntimeMode = "paper";
+const CANONICAL_SIGNAL_ENVIRONMENT: RuntimeMode = "shadow";
 
 export function resolveSignalSourceEnvironment(): RuntimeMode {
   return CANONICAL_SIGNAL_ENVIRONMENT;
