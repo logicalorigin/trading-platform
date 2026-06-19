@@ -826,9 +826,11 @@ export const buildHeaderIbkrPopoverModel = ({
     Number.isFinite(streamSymbolCount) &&
     (streamConsumerCount > 0 || streamSymbolCount > 0);
   const streamLiveValue = streamCountAvailable
-    ? `${formatHeaderCount(streamConsumerCount)} / ${formatHeaderCount(
-        streamSymbolCount,
-      )}`
+    ? `${formatHeaderCount(streamConsumerCount)} consumer${
+        Math.round(streamConsumerCount) === 1 ? "" : "s"
+      } · ${formatHeaderCount(streamSymbolCount)} symbol${
+        Math.round(streamSymbolCount) === 1 ? "" : "s"
+      }`
     : "Live";
   if (canonicalizeStreamState(health.status, "offline") === "no-subscribers" && streamLiveActive) {
     health = {

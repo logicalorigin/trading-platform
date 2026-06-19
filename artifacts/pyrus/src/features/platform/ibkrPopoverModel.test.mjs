@@ -290,7 +290,7 @@ test("open IBKR popover labels active bridge health checks as pending, not serve
   assert.notEqual(gatewayTile?.value, "Server offline");
 });
 
-test("closed IBKR trigger surfaces dead tunnel failures instead of pending bridge wording", () => {
+test("closed IBKR trigger treats active bridge health backoff as pending", () => {
   const model = buildHeaderIbkrTriggerModel({
     connection: {
       configured: true,
@@ -322,7 +322,7 @@ test("closed IBKR trigger surfaces dead tunnel failures instead of pending bridg
         strictReason: "health_error",
         governor: {
           health: {
-            lastFailure: "HTTP 530 <none>: error code: 1033",
+            lastFailure: "HTTP 502 Bad Gateway: error code: 502",
           },
         },
       },
@@ -330,11 +330,71 @@ test("closed IBKR trigger surfaces dead tunnel failures instead of pending bridg
     runtimeError: null,
   });
 
-  assert.equal(model.health.status, "offline");
-  assert.equal(model.health.label, "Offline");
-  assert.equal(model.issue.key, "offline");
-  assert.equal(model.issue.severity, "error");
-  assert.match(model.issue.label, /HTTP 530/);
+  assert.equal(model.health.status, "stale");
+  assert.equal(model.health.label, "Health Pending");
+  assert.equal(model.issue.key, "stale");
+  assert.equal(model.issue.severity, "warning");
+  assert.match(model.issue.label, /HTTP 502/);
+});
+
+test("open IBKR popover does not call active bridge health backoff server offline", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      accounts: [],
+    },
+    latencyStats: {
+      stream: {
+        activeConsumerCount: 1,
+        unionSymbolCount: 500,
+        eventCount: 42,
+        streamGapCount: 0,
+        lastEventAgeMs: 100,
+      },
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        runtimeOverrideActive: true,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: false,
+        healthFresh: false,
+        healthError: "IBKR bridge health is temporarily backed off.",
+        healthErrorCode: "ibkr_bridge_health_backoff",
+        healthErrorDetail: "Bridge health checks are backed off for 1974ms.",
+        bridgeReachable: false,
+        socketConnected: false,
+        brokerServerConnected: false,
+        connected: false,
+        authenticated: false,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "bridge_unreachable",
+        strictReady: false,
+        strictReason: "health_error",
+        governor: {
+          health: {
+            lastFailure: "HTTP 502 Bad Gateway: error code: 502",
+          },
+        },
+      },
+    },
+    runtimeError: null,
+    lineUsageSnapshot: null,
+  });
+
+  const gatewayTile = model.tiles.find((tile) => tile.label === "Gateway");
+  const streamTile = model.tiles.find((tile) => tile.label === "Stream");
+  assert.equal(model.health.status, "stale");
+  assert.equal(model.health.label, "Health Pending");
+  assert.equal(gatewayTile?.value, "Health pending");
+  assert.notEqual(gatewayTile?.value, "Server offline");
+  assert.equal(streamTile?.value, "1 consumer · 500 symbols");
+  assert.match(model.issue.label, /HTTP 502/);
 });
 
 test("closed IBKR trigger still marks an unreachable inactive bridge offline", () => {
@@ -645,6 +705,16 @@ test("open IBKR popover model keeps detailed stream diagnostics", () => {
     lineUsageSnapshot: null,
   });
 
-  assert.ok(model.tiles.some((tile) => tile.label === "Stream"));
-  assert.ok(model.detailGroups.some((group) => group.title === "Stream"));
+  const streamTile = model.tiles.find((tile) => tile.label === "Stream");
+  assert.equal(streamTile?.value, "1 consumer · 3 symbols");
+  assert.ok(!streamTile.value.includes("/"));
+
+  const streamGroup = model.detailGroups.find((group) => group.title === "Stream");
+  assert.ok(streamGroup);
+  assert.ok(
+    streamGroup.rows.some((row) => row.label === "Consumers" && row.value === "1"),
+  );
+  assert.ok(
+    streamGroup.rows.some((row) => row.label === "Symbols" && row.value === "3"),
+  );
 });

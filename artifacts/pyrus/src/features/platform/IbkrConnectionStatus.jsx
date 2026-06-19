@@ -119,6 +119,11 @@ const hasGatewayConnectionProof = (proof) =>
 const isGatewayDisconnectReason = (value) =>
   GATEWAY_DISCONNECT_REASONS.has(String(value || ""));
 
+const isBridgeHealthProbeFailure = (runtime) => {
+  const code = String(runtime?.healthErrorCode || "");
+  return code.startsWith("ibkr_bridge_health");
+};
+
 const isStreamLifecycleOnlyState = (proof, streamMeta) =>
   Boolean(
     streamMeta &&
@@ -208,6 +213,18 @@ const resolveConnectionProof = (connection, runtime) => {
       configuredLiveMarketDataMode === true &&
       streamFresh === true,
   );
+  // Backend connectivity verdict, decoupled from the freshness clocks. When present
+  // and true, the bridge socket/auth/server are confirmed up (with a recent liveness
+  // round-trip), so the connection is genuinely reachable even if the quote/health
+  // freshness windows lapsed under load. Absent => fall back to the legacy logic.
+  const connectivityUp = firstBoolean(
+    connection?.connectivityUp,
+    runtime?.connectivityUp,
+  );
+  const connectivityReason = firstValue(
+    connection?.connectivityReason,
+    runtime?.connectivityReason,
+  );
 
   return {
     accountCount,
@@ -230,6 +247,8 @@ const resolveConnectionProof = (connection, runtime) => {
     ),
     strictReady: strictReady ?? computedStrictReady,
     strictReason: firstValue(connection?.strictReason, runtime?.strictReason),
+    connectivityUp,
+    connectivityReason,
   };
 };
 
@@ -320,6 +339,14 @@ export const isIbkrGatewayBridgeAttached = ({
   const bridgeUrlConfigured = runtime?.bridgeUrlConfigured;
   const competing = firstBoolean(connection?.competing, runtime?.competing);
   const proof = resolveConnectionProof(connection, runtime);
+  if (
+    proof.connectivityUp === true &&
+    configured &&
+    bridgeUrlConfigured !== false &&
+    !competing
+  ) {
+    return true;
+  }
   const reachableOrSocket = Boolean(
     proof.bridgeReachable === true ||
       proof.socketConnected === true ||
@@ -328,8 +355,9 @@ export const isIbkrGatewayBridgeAttached = ({
       runtime?.connected === true,
   );
   const hasDisconnectReason = Boolean(
-    isGatewayDisconnectReason(proof.strictReason) ||
-      isGatewayDisconnectReason(proof.streamStateReason),
+    !isBridgeHealthProbeFailure(runtime) &&
+      (isGatewayDisconnectReason(proof.strictReason) ||
+        isGatewayDisconnectReason(proof.streamStateReason)),
   );
 
   return Boolean(
@@ -581,6 +609,19 @@ export const getIbkrConnectionTone = (connection) => {
     };
   }
 
+  // Backend confirms the bridge connection is up (socket/auth/server + liveness),
+  // decoupled from the freshness clocks. Recognize it BEFORE the freshness-based
+  // downgrades below ("health pending"/"quote stale"), which under a stale cache would
+  // otherwise show a false "not connected". Only the delayed-market-data state is kept.
+  if (proof.connectivityUp === true) {
+    const connectivityDelayed =
+      proof.configuredLiveMarketDataMode === false ||
+      proof.liveMarketDataAvailable === false;
+    return connectivityDelayed
+      ? { label: "delayed", color: CSS_COLOR.amber, Icon: Activity, wave: "flat" }
+      : { label: "online", color: CSS_COLOR.green, Icon: CircleCheck, wave: "fast" };
+  }
+
   const streamMeta = getIbkrStreamStateMeta(
     proof.streamState,
     proof.streamStateReason,
@@ -816,8 +857,9 @@ export const resolveIbkrGatewayHealth = ({
       runtime?.runtimeOverrideActive === true,
   );
   const hasDisconnectReason = Boolean(
-    isGatewayDisconnectReason(proof.strictReason) ||
-      isGatewayDisconnectReason(proof.streamStateReason),
+    !isBridgeHealthProbeFailure(runtime) &&
+      (isGatewayDisconnectReason(proof.strictReason) ||
+        isGatewayDisconnectReason(proof.streamStateReason)),
   );
 
   if (!configured || bridgeUrlConfigured === false) {
@@ -835,6 +877,32 @@ export const resolveIbkrGatewayHealth = ({
       label: "Competing",
       color: CSS_COLOR.red,
       detail: "Another client is competing for the configured session",
+    };
+  }
+
+  // Backend confirms the bridge connection is up (socket/auth/server + liveness),
+  // decoupled from the freshness clocks. Recognize it here BEFORE the freshness/
+  // reachability downgrades below — under a stale cache socketConnected/bridgeReachable
+  // can read false while the connection is genuinely up, which would otherwise leak an
+  // "Offline"/"Health Pending"/"Quote Stream Stale" false-negative. Preserve only the
+  // delayed-market-data distinction.
+  if (proof.connectivityUp === true) {
+    if (
+      proof.configuredLiveMarketDataMode === false ||
+      liveMarketDataAvailable === false
+    ) {
+      return {
+        status: "delayed",
+        label: "Delayed",
+        color: streamStateTokenVar("delayed"),
+        detail: "Gateway is connected but live market data is not available",
+      };
+    }
+    return {
+      status: "healthy",
+      label: "Connected",
+      color: streamStateTokenVar("healthy"),
+      detail: "Gateway socket, login, and server connection are confirmed up",
     };
   }
 
