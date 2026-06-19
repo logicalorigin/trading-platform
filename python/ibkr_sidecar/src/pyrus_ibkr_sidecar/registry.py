@@ -64,6 +64,9 @@ class IbkrMarketDataAdapter(Protocol):
         """Cancel a previously subscribed ib_async live market-data line."""
 
 
+DEFAULT_MAX_CONCURRENT_ADAPTER_CALLS = 24
+
+
 @dataclass
 class LineStatus:
     line_key: str
@@ -80,10 +83,18 @@ class LineStatus:
 
 
 class MarketDataRegistry:
-    def __init__(self, adapter: IbkrMarketDataAdapter) -> None:
+    def __init__(
+        self,
+        adapter: IbkrMarketDataAdapter,
+        *,
+        max_concurrent_adapter_calls: int = DEFAULT_MAX_CONCURRENT_ADAPTER_CALLS,
+    ) -> None:
         self._adapter = adapter
         self._lines: dict[str, LineStatus] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._adapter_semaphore = asyncio.Semaphore(
+            max(1, int(max_concurrent_adapter_calls))
+        )
         self.applied_generation_id: str | None = None
 
     @property
@@ -140,7 +151,8 @@ class MarketDataRegistry:
 
     async def _subscribe_line(self, status: LineStatus, desired: DesiredLine) -> None:
         try:
-            handle = await self._adapter.subscribe_live(desired)
+            async with self._adapter_semaphore:
+                handle = await self._adapter.subscribe_live(desired)
         except Exception as error:  # noqa: BLE001 - diagnostics must preserve adapter failures.
             if self._lines.get(status.line_key) is status:
                 status.state = "failed"
@@ -150,7 +162,8 @@ class MarketDataRegistry:
         current = self._lines.get(status.line_key)
         if current is not status:
             try:
-                await self._adapter.cancel_live(handle)
+                async with self._adapter_semaphore:
+                    await self._adapter.cancel_live(handle)
             except Exception:  # noqa: BLE001 - best-effort cleanup for superseded work.
                 pass
             return
@@ -166,7 +179,8 @@ class MarketDataRegistry:
     async def _release_line(self, status: LineStatus) -> None:
         try:
             if status.handle:
-                await self._adapter.cancel_live(status.handle)
+                async with self._adapter_semaphore:
+                    await self._adapter.cancel_live(status.handle)
             if self._lines.get(status.line_key) is status:
                 status.state = "released"
                 del self._lines[status.line_key]

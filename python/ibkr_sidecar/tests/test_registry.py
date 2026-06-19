@@ -28,6 +28,31 @@ class FakeAdapter(IbkrMarketDataAdapter):
         self.cancelled.append(handle.line_key)
 
 
+class CountingAdapter(IbkrMarketDataAdapter):
+    def __init__(self) -> None:
+        self.started = 0
+        self.active = 0
+        self.max_active = 0
+        self.release_subscription = asyncio.Event()
+
+    async def subscribe_live(self, line: DesiredLine) -> SubscriptionHandle:
+        self.started += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await self.release_subscription.wait()
+            return SubscriptionHandle(
+                line_key=line.line_key,
+                contract=object(),
+                ticker=object(),
+            )
+        finally:
+            self.active -= 1
+
+    async def cancel_live(self, handle: SubscriptionHandle) -> None:
+        return None
+
+
 def desired_generation(*lines: DesiredLine) -> DesiredGeneration:
     return DesiredGeneration(
         generation_id="test-generation",
@@ -87,6 +112,24 @@ class MarketDataRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lines[0].state, "releasing")
         await asyncio.wait_for(self._wait_for_line_count(registry, 0), 1)
         self.assertEqual(adapter.cancelled, ["equity:SPY"])
+
+    async def test_generation_subscribe_work_is_bounded(self) -> None:
+        adapter = CountingAdapter()
+        registry = MarketDataRegistry(adapter, max_concurrent_adapter_calls=2)
+
+        await registry.apply_generation(
+            desired_generation(
+                *(desired_line(f"equity:TEST{i}") for i in range(5)),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(adapter.started, 2)
+        self.assertEqual(adapter.max_active, 2)
+
+        adapter.release_subscription.set()
+        await asyncio.wait_for(self._wait_for_line_count(registry, 5), 1)
+        self.assertTrue(all(line.state == "live" for line in registry.lines))
 
     async def _wait_for_state(
         self,
