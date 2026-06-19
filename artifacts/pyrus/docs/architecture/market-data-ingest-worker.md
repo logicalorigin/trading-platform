@@ -4,7 +4,7 @@
 
 Market-data ingestion and internal market-data calculations are Rust-first in v1.
 
-- The Rust worker owns queue draining, provider snapshot hydration, option-chain snapshot persistence, retention dry-runs/execution, and persisted GEX snapshot calculation.
+- The Rust worker owns queue draining, provider snapshot hydration, option-chain latest-row persistence, retention dry-runs/execution, and persisted GEX snapshot calculation.
 - The TypeScript API owns HTTP request handling, persisted GEX snapshot reads, and enqueueing refresh jobs.
 - Python is not part of the app-owned v1 ingestion or GEX table hydration runtime. The workspace Python compute service is reserved for optional batch/scenario analytics; no Python service currently powers market-data ingestion or persisted GEX calculation.
 
@@ -20,9 +20,9 @@ Historical bars, option-flow events, flow summaries, and backfills are reserved 
 
 ## GEX Calculation
 
-The persisted GEX path reads the latest stock quote from `quote_cache` and the latest full-chain provider option snapshot per contract from `option_chain_snapshots`.
-GEX compute intentionally limits option rows to worker-owned full-chain providers (`massive`/`massive`) so partial API-side IBKR metadata probes cannot collapse the expiration universe.
-The API durable option metadata cache may also write to `option_chain_snapshots`, but its 24-hour pruning is scoped to API metadata sources and must not delete worker full-chain snapshots; worker retention remains controlled by `MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS`.
+The persisted GEX path reads the latest stock quote from `quote_cache` and the latest full-chain provider option row per contract from `option_chain_latest`.
+GEX compute intentionally limits option rows to worker-owned full-chain provider rows (`source='massive'`) so partial API-side IBKR metadata probes cannot collapse the expiration universe.
+The API durable option metadata cache also writes latest rows to `option_chain_latest`; its pruning is source-scoped to obsolete signal-options decision sources and must not delete worker full-chain provider rows. Historical `option_chain_snapshots` retention remains worker-owned until the old table is decommissioned.
 
 ```text
 GEX page
