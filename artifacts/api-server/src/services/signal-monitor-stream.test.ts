@@ -24,6 +24,24 @@ test("signal monitor routes do not expose on-demand matrix evaluation", () => {
   assert.doesNotMatch(routeSource, /await evaluateSignalMonitorMatrix/);
 });
 
+test("signal monitor state route does not serve cached matrix state responses", () => {
+  const stateRouteStart = routeSource.indexOf('router.get("/signal-monitor/state"');
+  const stateRouteEnd = routeSource.indexOf(
+    'router.get("/signal-monitor/breadth-history"',
+    stateRouteStart,
+  );
+  assert.notEqual(stateRouteStart, -1);
+  assert.notEqual(stateRouteEnd, -1);
+  const stateRoute = routeSource.slice(stateRouteStart, stateRouteEnd);
+
+  assert.doesNotMatch(routeSource, /signalMonitorStateReadCache/);
+  assert.doesNotMatch(routeSource, /getCachedSerializedSignalMonitorState/);
+  assert.doesNotMatch(routeSource, /SIGNAL_MONITOR_STATE_CACHE_TTL_MS/);
+  assert.match(
+    stateRoute,
+    /GetSignalMonitorStateResponse\.parse\(\s*await getSignalMonitorState\(/s,
+  );
+});
 
 test("signal matrix stream status uses a source bootstrap state, not fallback", () => {
   const statusTypeStart = serviceSource.indexOf(

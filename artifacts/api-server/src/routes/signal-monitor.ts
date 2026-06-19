@@ -30,45 +30,6 @@ import {
 
 const router: IRouter = Router();
 
-// Short-TTL single-flight cache for the heavy GET /signal-monitor/state read
-// (~1.5 MB / ~3000-state payload). The UI polls it continuously; against the
-// hard-capped 12-connection DB pool every poll was a fresh read competing with
-// state writes. This collapses concurrent/repeat polls within a short window
-// into ONE read. TTL is deliberately short so the UI stays live and a real
-// degraded/lastError transition surfaces within ~1.5s; a failed read is evicted
-// immediately so a transient error is never served for the full window.
-const SIGNAL_MONITOR_STATE_CACHE_TTL_MS = 1_500;
-const signalMonitorStateReadCache = new Map<
-  string,
-  { at: number; promise: Promise<Awaited<ReturnType<typeof getSignalMonitorState>>> }
->();
-
-function getCachedSignalMonitorState(
-  input: Parameters<typeof getSignalMonitorState>[0],
-): Promise<Awaited<ReturnType<typeof getSignalMonitorState>>> {
-  const key = JSON.stringify(input);
-  const now = Date.now();
-  const cached = signalMonitorStateReadCache.get(key);
-  if (cached && now - cached.at < SIGNAL_MONITOR_STATE_CACHE_TTL_MS) {
-    return cached.promise;
-  }
-  // Prune expired entries so a varying query-param key space can't grow unbounded.
-  for (const [existingKey, entry] of signalMonitorStateReadCache) {
-    if (now - entry.at >= SIGNAL_MONITOR_STATE_CACHE_TTL_MS) {
-      signalMonitorStateReadCache.delete(existingKey);
-    }
-  }
-  const promise = getSignalMonitorState(input);
-  signalMonitorStateReadCache.set(key, { at: now, promise });
-  promise.catch(() => {
-    const current = signalMonitorStateReadCache.get(key);
-    if (current && current.promise === promise) {
-      signalMonitorStateReadCache.delete(key);
-    }
-  });
-  return promise;
-}
-
 function splitSignalMonitorMatrixStreamList(value: string | undefined): string[] {
   return String(value ?? "")
     .split(",")
@@ -240,7 +201,7 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
 router.get("/signal-monitor/state", async (req, res) => {
   const query = GetSignalMonitorStateQueryParams.parse(req.query);
   const data = GetSignalMonitorStateResponse.parse(
-    await getCachedSignalMonitorState({
+    await getSignalMonitorState({
       ...query,
       environment: resolveSignalSourceEnvironment(),
     }),
