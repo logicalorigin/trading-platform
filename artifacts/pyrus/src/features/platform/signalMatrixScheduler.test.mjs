@@ -15,13 +15,31 @@ import {
 const sixTimeframes = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const symbols = Array.from({ length: 30 }, (_value, index) => `T${index + 1}`);
 
-test("active signal matrix requests are bounded by pressure", () => {
+test("active signal matrix requests keep full capacity under watch pressure", () => {
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 240);
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 96);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 240);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 48);
   assert.equal(resolveSignalMatrixExactCellLimit("normal"), 240);
-  assert.equal(resolveSignalMatrixExactCellLimit("watch"), 96);
+  assert.equal(resolveSignalMatrixExactCellLimit("watch"), 240);
   assert.equal(resolveSignalMatrixExactCellLimit("high"), 48);
+});
+
+test("watch pressure does not shrink active matrix coverage to a 15-symbol surface", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    currentStates: [],
+    timeframes: sixTimeframes,
+    pressureLevel: "watch",
+    backgroundReady: true,
+    requestTaskLimit: resolveSignalMatrixActiveScreenRequestTaskLimit("watch"),
+    requestExactCellLimit: resolveSignalMatrixExactCellLimit("watch"),
+  });
+
+  assert.equal(plan.requestCells.length, 180);
+  assert.equal(plan.requestSymbols.length, 30);
+  assert.equal(plan.coverage.requestTaskLimit, 240);
+  assert.equal(plan.coverage.queuedTaskCount, 0);
 });
 
 test("matrix request planning chunks the supplied scope", () => {

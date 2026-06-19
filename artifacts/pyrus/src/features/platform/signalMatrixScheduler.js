@@ -20,17 +20,17 @@ const SIGNAL_MATRIX_PRESSURE_LEVELS = Object.freeze({
 });
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
-  watch: 96,
+  watch: 240,
   high: 48,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
-  watch: 96,
+  watch: 240,
   high: 48,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
-  watch: 96,
+  watch: 240,
   high: 48,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
