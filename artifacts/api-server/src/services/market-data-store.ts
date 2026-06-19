@@ -242,6 +242,17 @@ export const resolveDurableHistoryWindow = (
   };
 };
 
+// instruments.id is a stable UUID keyed on a unique symbol and rows are never
+// deleted/reassigned here, so a resolved symbol->id mapping is safe to keep
+// in-process. Under the write storm the same handful of symbols repeat on every
+// persist call; caching the id removes a SELECT round-trip (and a held pool
+// connection) per call for already-known symbols.
+const storeInstrumentIdCache = new Map<string, string>();
+
+export function __resetStoreInstrumentCacheForTests(): void {
+  storeInstrumentIdCache.clear();
+}
+
 async function ensureStoreInstrument(input: {
   symbol: string;
   assetClass?: "equity" | "option";
@@ -251,12 +262,18 @@ async function ensureStoreInstrument(input: {
     return null;
   }
 
+  const cached = storeInstrumentIdCache.get(symbol);
+  if (cached) {
+    return cached;
+  }
+
   const [existing] = await db
     .select({ id: instrumentsTable.id })
     .from(instrumentsTable)
     .where(eq(instrumentsTable.symbol, symbol))
     .limit(1);
   if (existing?.id) {
+    storeInstrumentIdCache.set(symbol, existing.id);
     return existing.id;
   }
 
@@ -277,6 +294,9 @@ async function ensureStoreInstrument(input: {
     .where(eq(instrumentsTable.symbol, symbol))
     .limit(1);
 
+  if (created?.id) {
+    storeInstrumentIdCache.set(symbol, created.id);
+  }
   return created?.id ?? null;
 }
 
