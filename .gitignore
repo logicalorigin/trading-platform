@@ -62,6 +62,13 @@ Thumbs.db
 /.agents/skills/make-interfaces-feel-better/
 /skills-lock.json
 
+# local agent coordination runtime state
+/.agents/agent-chat/
+/AGENT_CHAT.md
+/AGENT_CHAT_archive_*.md
+/AGENT_CHAT_MESSAGES*.jsonl
+/AGENT_TASK_BOARD.md
+
 # local vendored/runtime experiments
 .vendor/
 
