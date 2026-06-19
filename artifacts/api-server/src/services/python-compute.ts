@@ -296,6 +296,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
   private diagnostics: PythonComputeDiagnostics;
   private stopping = false;
+  private reprobing = false;
   private readonly config: RuntimeConfig;
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
@@ -335,6 +336,15 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   }
 
   getDiagnostics(): PythonComputeDiagnostics {
+    // Self-heal a child that is alive but was pinned "degraded" by a transient
+    // boot-time probe failure: start()/ensureHealthy() short-circuit on an
+    // existing child and never re-probe, and scheduleRestart() only fires on a
+    // child exit, so an idle lane would otherwise report "degraded" forever.
+    // The diagnostics collector polls this regularly, so a fire-and-forget
+    // re-probe here recovers the status within one poll once Python is reachable.
+    if (this.child && !this.stopping && this.diagnostics.status === "degraded") {
+      void this.reprobeIfDegraded();
+    }
     return { ...this.diagnostics };
   }
 
@@ -539,28 +549,83 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     }
   }
 
+  private async probeHealthOnce(
+    timeoutMs = 2_000,
+  ): Promise<{ ok: boolean; error: string | null }> {
+    const url = `http://${this.config.host}:${this.config.port}/health`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+    timeout.unref();
+    try {
+      const response = await this.fetchFn(url, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return { ok: false, error: `health returned ${response.status}` };
+      }
+      const body = (await response.json()) as { ok?: unknown };
+      return body.ok === true
+        ? { ok: true, error: null }
+        : { ok: false, error: "health response was not ok" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async waitForHealth(): Promise<void> {
     const deadline = Date.now() + this.config.startupTimeoutMs;
-    const url = `http://${this.config.host}:${this.config.port}/health`;
     let lastError = "health probe did not run";
     while (Date.now() < deadline) {
-      try {
-        const response = await this.fetchFn(url, { method: "GET" });
-        if (response.ok) {
-          const body = (await response.json()) as { ok?: unknown };
-          if (body.ok === true) {
-            return;
-          }
-          lastError = "health response was not ok";
-        } else {
-          lastError = `health returned ${response.status}`;
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
+      const probe = await this.probeHealthOnce();
+      if (probe.ok) {
+        return;
       }
+      lastError = probe.error ?? lastError;
       await this.delayFn(250);
     }
     throw new Error(`Python compute health check timed out: ${lastError}`);
+  }
+
+  // Re-probe /health for a child that is alive but marked "degraded" (a
+  // transient boot-time probe failure that never recovered because start() and
+  // ensureHealthy() short-circuit on an existing child). Guarded against
+  // concurrent runs; flips the lane back to healthy once Python responds.
+  private async reprobeIfDegraded(): Promise<void> {
+    if (
+      this.reprobing ||
+      !this.child ||
+      this.stopping ||
+      this.diagnostics.status !== "degraded"
+    ) {
+      return;
+    }
+    this.reprobing = true;
+    try {
+      const probe = await this.probeHealthOnce();
+      if (
+        probe.ok &&
+        this.child &&
+        !this.stopping &&
+        this.diagnostics.status === "degraded"
+      ) {
+        this.diagnostics.status = "healthy";
+        this.diagnostics.lastError = null;
+        logger.info(
+          { pid: this.diagnostics.pid, port: this.config.port },
+          "Python compute service recovered",
+        );
+      }
+    } finally {
+      this.reprobing = false;
+    }
   }
 
   private markDegraded(error: string): void {
