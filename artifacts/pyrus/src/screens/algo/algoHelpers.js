@@ -1250,7 +1250,11 @@ const resolveMoveStaleness = (record) => {
   const status = String(record.status || "")
     .trim()
     .toLowerCase();
-  return status !== "" && status !== "ok";
+  // "history" is a deliberately-historical row, not a data defect, so it must
+  // not read as stale (the loud "quote stale during market hours" marker would
+  // be wrong for it). Defends future callers that render history rows with a
+  // live quote; today such rows resolve to the fire tier and the Move is blank.
+  return status !== "" && status !== "ok" && status !== "history";
 };
 
 export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = null) => {

@@ -1006,3 +1006,39 @@ test("a row with no monitor status is not spuriously flagged stale", () => {
   assert.equal(move.label, "+10.0%");
   assert.equal(move.stale, false);
 });
+
+test("Move prefers a live quote over a bar close when both exist", () => {
+  // A live snapshot quote must win over the matrix bar so price==move tracks the
+  // freshest displayed value, not a stale bar.
+  const signal = { symbol: "EEE", signalPrice: 100, currentPrice: 80, status: "ok" };
+  const displayed = resolveDisplayCurrentPrice(signal, { price: 110 });
+  const move = resolveSignalMove(signal, { price: 110 }, null);
+  assert.equal(displayed.source, "quote");
+  assert.equal(displayed.price, 110);
+  assert.equal(move.label, "+10.0%");
+});
+
+test("unavailable / error monitor statuses flag the Move stale", () => {
+  // Canonical Signal Monitor statuses other than `ok` (stale already covered)
+  // must all flag the Move so no non-fresh row shows a confident live move.
+  for (const status of ["unavailable", "error"]) {
+    const move = resolveSignalMove(
+      { symbol: "FFF", signalPrice: 100, status },
+      { price: 110 },
+      null,
+    );
+    assert.equal(move.stale, true, `${status} should flag stale`);
+  }
+});
+
+test("a history-status row is not flagged a data defect", () => {
+  // "history" is a deliberately-historical row, not a stale/defect row. Even if a
+  // live quote is present (future caller), the Move must not read as a defect.
+  const move = resolveSignalMove(
+    { symbol: "GGG", signalPrice: 100, status: "history" },
+    { price: 110 },
+    null,
+  );
+  assert.equal(move.label, "+10.0%");
+  assert.equal(move.stale, false);
+});
