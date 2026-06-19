@@ -40,6 +40,29 @@ test("PREPEND_OLDER still fires when the window IS at target (unchanged)", () =>
   assert.equal(action.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
 });
 
+test("PREPEND_OLDER keeps full page size under pressure for foreground pan/zoom", () => {
+  const normalAction = resolveVisibleRangeHydrationAction({
+    ...base,
+    requestedLimit: 360,
+    pressure: "normal",
+  });
+  const backoffAction = resolveVisibleRangeHydrationAction({
+    ...base,
+    requestedLimit: 360,
+    pressure: "backoff",
+  });
+  const stalledAction = resolveVisibleRangeHydrationAction({
+    ...base,
+    requestedLimit: 360,
+    pressure: "stalled",
+  });
+
+  assert.equal(backoffAction.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+  assert.equal(stalledAction.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+  assert.equal(backoffAction.pageSize, normalAction.pageSize);
+  assert.equal(stalledAction.pageSize, normalAction.pageSize);
+});
+
 test("without a prepend source the left edge falls back to EXPAND_LIMIT (the gate-shed path)", () => {
   const action = resolveVisibleRangeHydrationAction({
     ...base,

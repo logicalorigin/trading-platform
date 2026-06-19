@@ -133,16 +133,6 @@ const resolveMinimumPrependPageSize = (timeframe, role) => {
   return getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
 };
 
-const resolvePrependPressureMultiplier = (pressure) => {
-  if (pressure === "backoff" || pressure === "stalled") {
-    return 0.5;
-  }
-  if (pressure === "degraded") {
-    return 0.75;
-  }
-  return 1;
-};
-
 export const resolveVisibleRangeHydrationAction = ({
   enabled = true,
   range,
@@ -204,12 +194,12 @@ export const resolveVisibleRangeHydrationAction = ({
   );
 
   // Cursor-based older-history prepend is allowed at the left edge even before
-  // the initial window has reached targetLimit. PREPEND_OLDER is NOT shed by the
-  // hydration pressure gate (only its page size shrinks), whereas the
-  // EXPAND_LIMIT fallback below IS gate-shed — so under DB pressure a left-edge
-  // pan could otherwise never reach the older fetch (initial window stuck below
-  // target). Older history is contiguous from oldestLoadedAtMs backward, so
-  // prepending while the window is still filling does not create a gap.
+  // the initial window has reached targetLimit. PREPEND_OLDER is user-visible
+  // foreground work, so it bypasses the hydration pressure shed path and keeps
+  // the full page size even under backoff/stalled. Background warmup still uses
+  // the EXPAND_LIMIT fallback below, which remains gate-shed under pressure.
+  // Older history is contiguous from oldestLoadedAtMs backward, so prepending
+  // while the window is still filling does not create a gap.
   if (
     canPrependOlderHistory &&
     !hasExhaustedOlderHistory &&
@@ -221,17 +211,13 @@ export const resolveVisibleRangeHydrationAction = ({
       Math.ceil(visibleBars * 2),
       role === "option" ? 240 : 360,
     );
-    const pressureAdjustedPageSize = Math.max(
-      minimumPageSize,
-      Math.ceil(prependPageSize * resolvePrependPressureMultiplier(pressure)),
-    );
 
     return {
       action: CHART_HYDRATION_ACTION.PREPEND_OLDER,
       reason: "near-left-edge",
       visibleBars,
       leftEdgeBufferBars,
-      pageSize: pressureAdjustedPageSize,
+      pageSize: prependPageSize,
       pressure,
     };
   }
