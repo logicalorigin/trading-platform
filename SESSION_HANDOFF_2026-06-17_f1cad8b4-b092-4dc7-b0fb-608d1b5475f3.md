@@ -2,33 +2,37 @@
 
 ## Session Metadata
 
-- Session ID: `f75a3d2e-c93c-472b-9aad-8faa3e573939`
-- Saved At (MT): `2026-06-17 01:02:49 MDT`
-- Saved At (UTC): `2026-06-17T07:02:49.237Z`
-- Summary: 2026-06-17 01:02:49 MDT | f75a3d2e-c93c-472b-9aad-8faa3e573939 | find the 4 claude terminal sessions we just dropped
+- Session ID: `f1cad8b4-b092-4dc7-b0fb-608d1b5475f3`
+- Saved At (MT): `2026-06-17 07:26:28 MDT`
+- Saved At (UTC): `2026-06-17T13:26:28.857Z`
+- Summary: 2026-06-17 07:26:28 MDT | f1cad8b4-b092-4dc7-b0fb-608d1b5475f3 | Claude Code session
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/f75a3d2e-c93c-472b-9aad-8faa3e573939.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/f1cad8b4-b092-4dc7-b0fb-608d1b5475f3.jsonl`
 - Branch: `main`
 - HEAD: `3a7fe7da5e8968a6b2dcc95d19a71b25ab4b19f6`
 - Latest Commit: `test(algo): fix STA cache-stale test; bundle audited IBKR executions-lane work`
 - Latest Commit Session ID: `unknown`
-- Title: find the 4 claude terminal sessions we just dropped
-- Model: `claude-opus-4-8`
+- Title: Claude Code session
+- Model: `unknown`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-find the 4 claude terminal sessions we just dropped
+(no user message captured yet)
 
 ## Prior Handoffs
 
+- `SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md`
 - `SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md`
+- `SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md`
 - `SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md`
+- `SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md`
 - `SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md`
 - `SESSION_HANDOFF_2026-06-17_07e94cd6-007f-4489-933d-f5b7644812d5.md`
+- `SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md`
 - `SESSION_HANDOFF_2026-06-16_dc790051-58ca-411d-b656-51487f9860da.md`
 - `SESSION_HANDOFF_2026-06-16_d6046da4-048f-4c5f-b7f4-ca9b10614176.md`
 - `SESSION_HANDOFF_2026-06-16_ca3b3d1f-8c38-4868-948c-3b33a40cb361.md`
@@ -252,30 +256,11 @@ find the 4 claude terminal sessions we just dropped
 
 ## Recent User Messages
 
-- `2026-06-17 00:04:51 MDT` find the 4 claude terminal sessions we just dropped
-- `2026-06-17 00:16:35 MDT` please resume 4 here
-- `2026-06-17 00:38:43 MDT` you can go ahead and do the bridge launch with dummy credentials to test it after you rebuild the app
-- `2026-06-17 00:51:42 MDT` is the ui / bridge connnection returned to proper function? did you test it yourself in the runtime/api/ui?
+- None found.
 
 ## Session Activity Summary
 
-- `2026-06-17 00:04:51 MDT` User: find the 4 claude terminal sessions we just dropped
-- `2026-06-17 00:04:54 MDT` Agent: I'll invoke the session-handoff skill, which is built for recovering dropped sessions by checking runtime/session storage.
-- `2026-06-17 00:04:55 MDT` Tool: Skill {"skill":"session-handoff","args":"recover 4 dropped Claude terminal sessions"}
-- `2026-06-17 00:05:01 MDT` Agent: Per the Dropped Session Recovery Rule, I'll start with the runtime/session-layer evidence rather than repo handoff files. Since these are Claude terminal sessions, I'll sweep both…
-- `2026-06-17 00:05:03 MDT` Tool: Bash echo "=== Claude project session dir ==="; ls -dt ~/.claude/projects/*/ 2>/dev/null | head; echo; echo "=== Claude session JSONL files (newest 15) ==="; ls -lt…
-- `2026-06-17 00:05:04 MDT` Tool: Bash echo "=== live claude processes ==="; ps -eo pid,ppid,tty,etime,cmd 2>/dev/null | grep -iE 'claude|node .*claude' | grep -v grep | head -30
-- … 134 lower-signal transcript events omitted …
-- `2026-06-17 00:58:51 MDT` Tool: Read /tmp/pyrus_header.png
-- `2026-06-17 00:59:18 MDT` Agent: Screenshot came out blank (headless paint timing — the `text` dump already has the real content, which is unambiguous). Let me pull the precise connection reason from the `/ibkr/c…
-- `2026-06-17 00:59:21 MDT` Tool: Bash cd /home/runner/workspace echo "=== where is the platform router mounted? ===" rg -n "platform" artifacts/api-server/src/app.ts 2>/dev/null | grep -iE "use\(|r…
-- `2026-06-17 00:59:32 MDT` Tool: Bash cd /home/runner/workspace echo "=== routes/index.ts (how routers compose + prefixes) ==="; sed -n '1,80p' artifacts/api-server/src/routes/index.ts echo "=== ho…
-- `2026-06-17 00:59:43 MDT` Agent: Routers compose flat (no `/platform` prefix) under `/api`. So the real paths are `/api/ibkr/connection-audit` and `/api/broker-connections`. Probing them for the precise connectio…
-- `2026-06-17 00:59:44 MDT` Tool: Bash cd /home/runner/workspace for path in "/api/ibkr/connection-audit" "/api/broker-connections"; do echo "=== $path ===" curl -s -m 6 "http://localhost:8080$path"…
-- `2026-06-17 01:00:55 MDT` Agent: Now I have hard data. Let me confirm the live bridge (PID 76572, running my rebuilt code) is the IBKR bridge and grab its own health view to corroborate:
-- `2026-06-17 01:01:01 MDT` Tool: Bash cd /home/runner/workspace echo "=== PID 76572 identity ==="; readlink /proc/76572/cwd 2>/dev/null; tr '\0' '\n' < /proc/76572/environ 2>/dev/null | grep -iE '^…
-- `2026-06-17 01:01:55 MDT` Agent: Critical correction to something I said earlier: **PID 76572's cwd is `artifacts/api-server` — it's the API-SERVER, not the bridge.** And `IBKR_ASYNC_SIDECAR_ROUTING_ENABLED=true`…
-- `2026-06-17 01:01:59 MDT` Tool: Bash cd /home/runner/workspace echo "=== any process whose cwd is ibkr-bridge? ===" found=0 for pid in $(pgrep -f 'dist/index.mjs|ibkr-bridge' 2>/dev/null); do cwd=…
+- No rollout activity summary available.
 
 ## High-Signal Changed Files
 
@@ -294,25 +279,28 @@ find the 4 claude terminal sessions we just dropped
  M SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
+?? SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md
 ?? SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md
+?? SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md
 ?? SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md
+?? SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md
 ?? SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md
 ```
 
 ## Diff Summary
 
 ```text
- .replit                    |  4 +
- ...09-9cab-253fecf90c55.md | 48 ++++
- ...2b-9aad-8faa3e573939.md | 78 +++++--
- SESSION_HANDOFF_CURRENT.md | 10 +-
- SESSION_HANDOFF_MASTER.md  |  7 +-
- 5 files changed, 123 insertions(+), 24 deletions(-)
+ .replit              |  4 +
+ ...b-253fecf90c55.md | 48 ++++
+ ...d-8faa3e573939.md | 67 ++++--
+ ...ANDOFF_CURRENT.md | 10 +-
+ ...HANDOFF_MASTER.md | 10 +-
+ 5 files changed, 115 insertions(+), 24 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-06-17 00:35:50 MDT` cd /home/runner/workspace; echo "=== root tsx binary? ==="; ls -la node_modules/.bin/tsx 2>/dev/null && echo "tsx present at root"; echo; echo "=== how are bri… (ok)
+- None detected in this session transcript.
 
 ## What Changed This Session
 

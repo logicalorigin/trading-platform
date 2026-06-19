@@ -1,0 +1,677 @@
+# Session Handoff — 2026-06-17
+
+## Session Metadata
+
+- Session ID: `019ed722-d363-7ed0-ae0c-cc9fdfef2095`
+- Saved At (MT): `2026-06-17 14:40:20 MDT`
+- Saved At (UTC): `2026-06-17T20:40:20.375Z`
+- Summary: 2026-06-17 14:40:20 MDT | 019ed722-d363-7ed0-ae0c-cc9fdfef2095 | can you please review and validate or correct these findings, and offer a comprehensive fix that utilizes the best…
+- Repo Root: `/home/runner/workspace`
+- Thread CWD: `/home/runner/workspace`
+- Rollout Path: `/home/runner/.codex/sessions/2026/06/17/rollout-2026-06-17T13-50-44-019ed722-d363-7ed0-ae0c-cc9fdfef2095.jsonl`
+- Branch: `main`
+- HEAD: `5f8674dad68f8e189c1fc829a398d5656664034e`
+- Latest Commit: `fix(validation): disable false-firing hot-runtime guard by default`
+- Latest Commit Session ID: `unknown`
+- Title: can you please review and validate or correct these findings, and offer a comprehensive fix that utilizes the best poss…
+- Model: `gpt-5.5`
+- Reasoning Effort: `xhigh`
+- Tokens Used: `26050505`
+
+## 2026-06-17 15:43 MDT — agent2-codex DB/GEX Diagnostic Snapshot
+
+- Current role: `agent2-codex`, runtime `CODEX_THREAD_ID=019ed722-d363-7ed0-ae0c-cc9fdfef2095`.
+- Leader assignment in `AGENT_CHAT_MESSAGES.jsonl` seq 85/86: read-only diagnosis of intermittent DB pool line contention plus GEX data-flow stalls; return facts/inferences/unknowns and scoped fix plan before edits. Do not touch signal sparkline/MTF/autowidth/startup/.replit files.
+- Observed after fresh API start at `2026-06-17T21:38:10.657Z`: recorder slow DB events continued, not just restart settling. Since start: `bar_cache` 36 slow events, max 8173ms; `execution_events` 16 slow events, max 15179ms; `signal_monitor_symbol_states` 8 slow events, max 6983ms; acquire waits max active=12/waiting=2. Minute summary later showed `21:39Z` max waiting=30, `21:41Z` max waiting=21, `21:42Z` max waiting=15.
+- Observed current diagnostics at `2026-06-17T21:42:29.551Z`: status degraded from API latency/event-loop; point-in-time DB pool was active=7/waiting=0, so diagnostics can still miss recent pool spikes even though flight recorder emitted `api-db-pool-pressure` and many slow acquire events seconds earlier.
+- Observed full-day top slow DB families from flight recorder: acquire waits 6259 events max 23342ms/waiting 37; `bar_cache` 2727 events max 32066ms/waiting 38; `execution_events` 1403 events max 31516ms/waiting 32; `signal_monitor_symbol_states`, `shadow_orders`, `shadow_accounts`, diagnostics writes/stats, and flow-universe also recur.
+- Observed planner/index state: `bar_cache` has `bar_cache_symbol_timeframe_source_starts_at_idx` and nominal `loadStoredMarketBars` query uses it; `execution_events` has only deployment/account/symbol/occurred_at indexes, with `deployment_id` `n_distinct=1`, so current `event_type LIKE 'signal_options_%' ORDER BY occurred_at DESC` reads are still expensive.
+- Observed GEX state: SPY fresh GEX snapshot at `2026-06-17T21:39:40Z` from fresh `option_chain_latest` source rows; QQQ/AAPL/IWM/VIXY remained stale by ~5h. Diagnostics reported blocked GEX jobs waiting on stock/option-chain prerequisites.
+- Source-backed GEX starvation hypothesis: `gex.ts` creates a new minute `dedupeBucket`; `market-data-ingest.ts` cancels older `queued`, `failed`, and `running` jobs for that symbol; the Rust worker is serial. Repeated stale GEX API calls can supersede queued or running refresh prerequisites before non-SPY symbols reach option-chain/GEX completion.
+- Proposed fix plan before edits: (1) stabilize GEX refresh dedupe for stale snapshots and stop cancelling running jobs; (2) add/validate targeted `execution_events` partial recent index or equivalent query relief; (3) gate/defer noninteractive periodic DB work under recent pool pressure; (4) improve diagnostics with a rolling recent DB-pool max, not just point-in-time counters.
+
+## 2026-06-17 16:29 MDT — agent2-codex GEX Indicator All-Tickers Fix
+
+- Leader assignment seq120/seq123: single active task to diagnose and fix GEX indicator coverage for all tickers, while avoiding DB pool diagnostics, MTF, sparkline, chart-autowidth, startup config, and unrelated chart work. Idle tail watcher was closed after seq123.
+- Observed DB/API coverage for sampled symbols `SPY`, `QQQ`, `AAPL`, `IWM`, `TSLA`, `NVDA`, `VIXY`: all have `option_chain_latest` rows and latest `gex_snapshots`; live `/api/gex/:symbol/projection?view=chart` returned `overlayPoints` for all seven. Latest snapshots are partial/stale and refresh jobs remain queued/running for several, but projection data exists for sampled non-SPY tickers.
+- Observed frontend root cause: `MarketChartCell.jsx` only enabled the GEX projection cone when `isActive || fullFrame`, so passive hydrated market-grid cells never fetched `/projection?view=chart` even when backend data existed. Zero-gamma lines are a separate weaker surface: several sampled symbols returned `zeroGamma:null` or off-spot values, so relying on the line alone makes GEX look absent.
+- Implemented smallest frontend fix:
+  - `artifacts/pyrus/src/features/gex/gexProjectionCoverage.js` adds `resolveMarketChartGexProjectionEnabled`.
+  - `artifacts/pyrus/src/features/market/MarketChartCell.jsx` now enables projection for every hydrated ticker cell.
+  - `artifacts/pyrus/src/features/gex/gexProjectionCoverage.test.mjs` covers hydrated ticker cells and disabled states.
+- Validation passed:
+  - `artifacts/pyrus/node_modules/.bin/tsx --test artifacts/pyrus/src/features/gex/gexProjectionCoverage.test.mjs`
+  - `pnpm --filter @workspace/pyrus run typecheck`
+  - `pnpm --filter @workspace/pyrus run build`
+- Runtime evidence after fix source change: live API still returned projection point counts `SPY=7`, `QQQ=7`, `AAPL=7`, `IWM=7`, `TSLA=7`, `NVDA=7`, `VIXY=6`. Browser visual QA was not run because the safe full-app navigation approval requirement was not explicitly granted in this slice.
+
+## Current User Request
+
+can you please review and validate or correct these findings, and offer a comprehensive fix that utilizes the best possible solution? [● Crucial catch on the most recent readings — I
+  have to correct my "calm right now." The pool
+  is not calm:
+
+  19:37:51Z  active=12/12  waiting=9  idle=0
+  19:40:06Z  active=12/12  waiting=7  idle=0
+  19:40:51Z  active=12/12  waiting=4  idle=0
+  19:42:30Z  active=12/12  waiting=4  idle=0   ←
+  last sample before api restarted (SIGTERM
+  19:42:25)
+
+  All 12 windows occupied, zero idle, a steady
+  line of 4–9 — right up until the api process
+  restarted at 13:42 MT. The /diagnostics/latest
+  "normal" reading I quoted was the brand-new api
+  process (born 13:42), too young to have
+  re-filled yet.
+
+  The watch — full findings
+
+  1. The pool is chronically jammed (this is the
+  real problem)
+
+  - All 12 connections pinned, basically whenever
+  there's load: active=12/12 in 99.4% of 1,651
+  pressure samples today; idle=0.
+  - A real queue behind them: waiting averaged
+  ~24 and spiked to 2,111 overnight (00:00–00:24Z
+  = ~18:00 MT yesterday). Market hours today:
+  peaks of 14–154. Now: 4–9.
+  - This is chronic, not a transient burst —
+  exactly the "12 teller windows, permanent line
+  out the door" situation.
+
+  2. Two different problems — and only one is
+  fixed
+
+  - Event-loop / CPU ("thinking too hard") →
+  fixed by Track B. eventLoopP95 ~50ms.
+  - DB pool saturation ("not enough windows") →
+  NOT fixed, separate subsystem. Track B never
+  touched it. This is what the watch exposes.
+
+  3. It's been invisible — a real observability
+  gap
+
+  The app's pressure gauge read normal with
+  drivers: [] while the pool was pinned 12/12
+  with a queue. Why: the pressure classifier's
+  inputs are API latency, event-loop delay, and
+  RSS — pool waiting/active is not one of them.
+  So the bank line has been forming with no alarm
+  watching it. That's arguably the first thing
+  to fix.
+
+  4. It's the Node side, not the Massive firehose
+  directly
+
+  The pinned 12 is the Node pool. Massive runs on
+  its own separate 2-connection pool. So Massive
+  isn't sitting in these 12 windows — Node's own
+  signal/algo queries are. Massive still hurts
+  indirectly by keeping the shared helium server
+  busy (slowing every query), which is what the
+  batch-size cap targets — but shrinking
+  Massive's batches will not free up the 12 Node
+  windows. That needs reducing how much the
+  signal/algo system asks of the DB at once.
+
+  5. What I genuinely can't see from here
+
+  Local logs record the jam but not the culprit
+  by name — there's no per-query log (incidents =
+  restarts, events = lifecycle, ibkr-perf = IBKR
+  rates only). Pinning which SQL holds each of
+  the 12 windows needs one of:
+  - (a) your OK to watch the live database during
+  a jam (read-only pg_stat_activity — the
+  classifier blocked it as an unauthorized prod
+  read, and it's only useful while saturated), or
+  - (b) a tiny instrument: stamp slow DB
+  acquisitions into the flight recorder (small
+  code change, no prod access, attributes the
+  next jam by query).
+
+  My recommendation
+
+  1. Make it visible first (cheap, high-value):
+  add pool waiting/active as a pressure driver so
+  this stops hiding behind "normal." Pure win,
+  low risk.
+  2. Then attribute via (b) the lightweight
+  query-timing instrument — it fits your "audit
+  before building" style and needs no prod-DB
+  grant.
+  3. Keep the Massive batch=64 cap as the
+  server-I/O relief, but treat it as one of two
+  fixes, not the cure.
+
+  Which do you want — (a) authorize me to watch
+  the live DB next time it jams, (b) add the
+  query-timing instrument, or
+  make-it-visible-first? And want me to write
+  this watch up into the scope doc so it's
+  durable?]
+
+## Prior Handoffs
+
+- `SESSION_HANDOFF_2026-06-17_ff8a6f9d-4207-4263-a9a2-de865f5f7ca0.md`
+- `SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md`
+- `SESSION_HANDOFF_2026-06-17_f1cad8b4-b092-4dc7-b0fb-608d1b5475f3.md`
+- `SESSION_HANDOFF_2026-06-17_d3be8676-affe-42f4-8351-992d88fb2199.md`
+- `SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md`
+- `SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md`
+- `SESSION_HANDOFF_2026-06-17_bca66aa5-d3f4-4bdf-a82b-0daafde50592.md`
+- `SESSION_HANDOFF_2026-06-17_b813ef30-05c0-40ee-b347-cd5b2218920e.md`
+- `SESSION_HANDOFF_2026-06-17_b2a29e96-6d0f-409d-8f40-a54d873a1325.md`
+- `SESSION_HANDOFF_2026-06-17_a9733916-4b87-4cd5-81bc-806d9688ab32.md`
+- `SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md`
+- `SESSION_HANDOFF_2026-06-17_8a2a0c96-efd0-4128-8fc6-b872d407ea12.md`
+- `SESSION_HANDOFF_2026-06-17_68198fd8-e6b1-464d-bb36-994693ba89e1.md`
+- `SESSION_HANDOFF_2026-06-17_597ef7e5-ca7e-4909-a190-5ab85027cde8.md`
+- `SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md`
+- `SESSION_HANDOFF_2026-06-17_44004638-9aef-48a0-a34b-4b34acf36bc3.md`
+- `SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md`
+- `SESSION_HANDOFF_2026-06-17_07e94cd6-007f-4489-933d-f5b7644812d5.md`
+- `SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md`
+- `SESSION_HANDOFF_2026-06-17_019ed72d-01cd-7c50-be55-13b49af4f5f1.md`
+- `SESSION_HANDOFF_2026-06-17_019ed6f5-e82f-7343-8ef0-858fbf4f02ac.md`
+- `SESSION_HANDOFF_2026-06-16_dc790051-58ca-411d-b656-51487f9860da.md`
+- `SESSION_HANDOFF_2026-06-16_d6046da4-048f-4c5f-b7f4-ca9b10614176.md`
+- `SESSION_HANDOFF_2026-06-16_ca3b3d1f-8c38-4868-948c-3b33a40cb361.md`
+- `SESSION_HANDOFF_2026-06-16_a84e5c1d-d658-4bb5-9f42-9e8568f49bbf.md`
+- `SESSION_HANDOFF_2026-06-16_a110ef2f-bff5-445b-aabe-ae62b2b2351d.md`
+- `SESSION_HANDOFF_2026-06-16_7ce8ad71-98bf-40ef-ae04-348c7793e03e.md`
+- `SESSION_HANDOFF_2026-06-16_68174ada-00d2-4cc9-9df3-541a6eb472fe.md`
+- `SESSION_HANDOFF_2026-06-16_394cdc7a-fc80-4f09-9cab-253fecf90c55.md`
+- `SESSION_HANDOFF_2026-06-16_32b4c343-3c61-4a5a-871a-77edb3577003.md`
+- `SESSION_HANDOFF_2026-06-16_2ed1ee06-6a10-47c9-bb60-b7684084002a.md`
+- `SESSION_HANDOFF_2026-06-16_2b331249-f38b-40d0-b8bc-5379c6f1e5ec.md`
+- `SESSION_HANDOFF_2026-06-13_019ec132-92d0-78c1-a21c-4f5d378afa46.md`
+- `SESSION_HANDOFF_2026-06-12_019ebe12-b4b7-7281-95b2-698b1d4bfc05.md`
+- `SESSION_HANDOFF_2026-06-12_019ebd74-8d06-7071-a225-67ce7a538918.md`
+- `SESSION_HANDOFF_2026-06-12_019ebd74-85d5-71a1-8b64-7624988e5a5b.md`
+- `SESSION_HANDOFF_2026-06-12_019ebd73-c854-73d0-99dd-2c4a8b381f19.md`
+- `SESSION_HANDOFF_2026-06-12_019ebcc7-8221-7bd1-bae0-aeef66f2a47c.md`
+- `SESSION_HANDOFF_2026-06-12_019ebc2a-0433-7f33-90eb-21fe32f49ab5.md`
+- `SESSION_HANDOFF_2026-06-12_019ebbdd-48b3-7190-9048-c79405308314.md`
+- `SESSION_HANDOFF_2026-06-12_019ebbd7-a838-7d13-a8d9-5d7897e14d0f.md`
+- `SESSION_HANDOFF_2026-06-12_019ebbd5-43cd-7c81-87a4-de8ee2a46199.md`
+- `SESSION_HANDOFF_2026-06-11_pending-sta-action-source-trace.md`
+- `SESSION_HANDOFF_2026-06-11_019eb95b-6597-74d2-929d-76355493dfbd.md`
+- `SESSION_HANDOFF_2026-06-11_019eb80c-7659-7300-92ce-22b8bd89275c.md`
+- `SESSION_HANDOFF_2026-06-11_019eb80c-5d1b-7d03-a551-1ec17ef91788.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7fd-6cfb-7432-a96b-b65a23fee54d.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7fb-f024-78a2-9fc3-058529429d01.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7f1-23f6-7853-a3be-c4f5a00fce37.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7f0-feb4-75c0-a144-af7a7eda05f8.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7f0-db13-7a12-bd98-22efb8b7408a.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7f0-ba1a-72f2-9be4-b9b0c91c873c.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7ee-d363-7d01-bec6-79361d86915a.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7e8-b0e1-7a63-aa86-8fde89eac69c.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7d7-c610-76c1-9b43-25a82e66e5e2.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7d0-5bce-75a3-8f85-74b2c38225fa.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7c2-9c54-7870-8152-e6f9a6f9be6b.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7b4-d4bd-7573-adf9-ae184361696f.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7b2-4b1e-7160-9796-b203f9392d27.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7a8-d0bc-7910-a8b5-aafaf1750bc1.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7a8-9ba6-7ad1-9555-e8b647c6c363.md`
+- `SESSION_HANDOFF_2026-06-11_019eb7a3-d912-7ec3-8667-3c8c83630d72.md`
+- `SESSION_HANDOFF_2026-06-11_019eb788-9135-7151-a47f-38a32fe28fa5.md`
+- `SESSION_HANDOFF_2026-06-11_019eb77c-c335-7290-8f57-822c79025541.md`
+- `SESSION_HANDOFF_2026-06-10_019eb3df-e2f3-73f1-bb4c-18d95c4a5075.md`
+- `SESSION_HANDOFF_2026-06-09_019eaea5-da22-7eb0-b361-dd2339bb136a.md`
+- `SESSION_HANDOFF_2026-06-09_019eae66-0e88-7431-82ce-e7909cea1b55.md`
+- `SESSION_HANDOFF_2026-06-09_019eae19-7225-7e60-8c45-e32bd10b2c21.md`
+- `SESSION_HANDOFF_2026-06-09_019eae05-eacb-7d50-a8dd-8323ada25d22.md`
+- `SESSION_HANDOFF_2026-06-09_019eae02-420b-7fa1-953a-b1abcc2622bd.md`
+- `SESSION_HANDOFF_2026-06-09_019eadfc-2cd0-78f2-b041-bbb600dbade3.md`
+- `SESSION_HANDOFF_2026-06-09_019eade0-4046-70c3-975d-0cc3b0aee56a.md`
+- `SESSION_HANDOFF_2026-06-09_019eade0-0422-7320-bbc6-22643066d321.md`
+- `SESSION_HANDOFF_2026-06-09_019eadd8-e8e2-70c2-a7ff-fb5eefa135a4.md`
+- `SESSION_HANDOFF_2026-06-09_019eadd4-25b3-7b52-949e-eda0aa2eafa7.md`
+- `SESSION_HANDOFF_2026-06-09_019eadc4-e336-7472-87f1-7f6600f9b4b7.md`
+- `SESSION_HANDOFF_2026-06-09_019ead78-0a4d-79c0-8333-f9e67135e8ca.md`
+- `SESSION_HANDOFF_2026-06-09_019ead4a-2fc8-7b61-a989-2a78762f17c2.md`
+- `SESSION_HANDOFF_2026-06-09_019ead39-ed30-7151-916c-188f0a0c305d.md`
+- `SESSION_HANDOFF_2026-06-09_019eac9c-ec03-7de1-98f0-6421d5d8312a.md`
+- `SESSION_HANDOFF_2026-06-08_019eaac8-99ba-7072-9412-bf2eb1070bed.md`
+- `SESSION_HANDOFF_2026-06-08_019eaab5-1b86-7c60-875f-67b54a909239.md`
+- `SESSION_HANDOFF_2026-06-08_019eaa48-a445-7482-8aa5-21d669524581.md`
+- `SESSION_HANDOFF_2026-06-08_019eaa48-3cb6-7290-a56f-99c4a4af2d32.md`
+- `SESSION_HANDOFF_2026-06-08_019ea975-0cde-7cd2-a5bc-4892aee272c4.md`
+- `SESSION_HANDOFF_2026-06-08_019ea847-b017-7b53-a789-ccec852acccc.md`
+- `SESSION_HANDOFF_2026-06-08_019ea81a-ebe7-7642-a873-09562ba0de35.md`
+- `SESSION_HANDOFF_2026-06-08_019ea81a-819e-7841-9d0f-1e9a601a4691.md`
+- `SESSION_HANDOFF_2026-06-08_019ea814-21e3-7672-9b64-7eeae3ff07d2.md`
+- `SESSION_HANDOFF_2026-06-08_019ea813-0e32-7543-ab00-303e24d7008a.md`
+- `SESSION_HANDOFF_2026-06-08_019ea812-8281-75d2-b082-8e5b5be596db.md`
+- `SESSION_HANDOFF_2026-06-08_019ea765-6876-7d92-80df-62338c1ffa87.md`
+- `SESSION_HANDOFF_2026-06-08_019ea72c-b88f-7f52-9b85-87faa59c57e5.md`
+- `SESSION_HANDOFF_2026-06-08_019ea4a9-b0c1-70e0-aa79-7f3fc45be403.md`
+- `SESSION_HANDOFF_2026-06-07_019ea43b-d49a-7f52-b5c9-d587e6c6040c.md`
+- `SESSION_HANDOFF_2026-06-07_019ea437-deef-7981-9fe7-82c12513ffde.md`
+- `SESSION_HANDOFF_2026-06-06_019e9de4-91e7-72b0-8853-3f70fd908c3e.md`
+- `SESSION_HANDOFF_2026-06-06_019e9ddc-1936-7d52-a57b-de5e92b1a11e.md`
+- `SESSION_HANDOFF_2026-06-06_019e9d7d-0f96-7750-9f11-dd41d293e473.md`
+- `SESSION_HANDOFF_2026-06-06_019e9d7b-30c5-7502-b87c-0ac35e2d4f6f.md`
+- `SESSION_HANDOFF_2026-06-05_signal-bubble-pending-hydration.md`
+- `SESSION_HANDOFF_2026-06-05_semantic-tone-rollout.md`
+- `SESSION_HANDOFF_2026-06-05_019e9a07-2756-7dc0-87c1-f22ac5fc79db.md`
+- `SESSION_HANDOFF_2026-06-05_019e9a00-0ec7-7531-ba91-041f6bd63385.md`
+- `SESSION_HANDOFF_2026-06-05_019e99c5-dd2d-7000-a813-5d649c3f3428.md`
+- `SESSION_HANDOFF_2026-06-05_019e9923-d8b9-7fc1-91d6-02a81091fe1e.md`
+- `SESSION_HANDOFF_2026-06-05_019e9923-c551-74c0-8f7a-4f4419b923ee.md`
+- `SESSION_HANDOFF_2026-06-05_019e9923-1b8d-7cb0-9f8e-8cd49d80292a.md`
+- `SESSION_HANDOFF_2026-06-04_019e953f-041b-71c3-a43e-542a8ef6e00d.md`
+- `SESSION_HANDOFF_2026-06-04_019e9539-fcdb-7352-ba37-146876d76a81.md`
+- `SESSION_HANDOFF_2026-06-04_019e9539-e3ff-7141-9ec2-b2bdd077e69e.md`
+- `SESSION_HANDOFF_2026-06-04_019e9538-ef1f-70c0-9659-e0ad9176a023.md`
+- `SESSION_HANDOFF_2026-06-04_019e94a9-bc59-7e40-93d2-8f113348cca2.md`
+- `SESSION_HANDOFF_2026-06-04_019e940a-cceb-7790-889f-d5534cc0814c.md`
+- `SESSION_HANDOFF_2026-06-04_019e934b-5d2a-7ab2-8676-71145b8a4c03.md`
+- `SESSION_HANDOFF_2026-06-04_019e92c2-ff99-78e0-a36f-3ddb9c03a700.md`
+- `SESSION_HANDOFF_2026-06-04_019e92c1-77d0-7fd0-b7e3-01bb797e2227.md`
+- `SESSION_HANDOFF_2026-06-03_mtf-entry-sweep-ui.md`
+- `SESSION_HANDOFF_2026-06-03_019e909f-4ab7-7f32-9321-237e31de2032.md`
+- `SESSION_HANDOFF_2026-06-03_019e9091-8f8f-75c0-be2c-f9ccbaa788b4.md`
+- `SESSION_HANDOFF_2026-06-03_019e9071-13a9-7603-a5fd-ed951f5273d5.md`
+- `SESSION_HANDOFF_2026-06-03_019e906b-b44d-76d2-a8d5-020be84bba6e.md`
+- `SESSION_HANDOFF_2026-06-03_019e9066-b78f-7160-b516-c85c2e7fe345.md`
+- `SESSION_HANDOFF_2026-06-03_019e8ed9-7dcd-7812-982f-a2d96ed0676f.md`
+- `SESSION_HANDOFF_2026-06-03_019e8ed7-2665-7a70-8107-953700380a4b.md`
+- `SESSION_HANDOFF_2026-06-03_019e8e1a-67c0-7de1-a96e-f28098f0d355.md`
+- `SESSION_HANDOFF_2026-06-03_019e8e19-f0f6-7a02-b8da-97fb302cf399.md`
+- `SESSION_HANDOFF_2026-06-02_signals-timeframe-hydration.md`
+- `SESSION_HANDOFF_2026-06-02_signal-bubbles-matrix-diagnosis.md`
+- `SESSION_HANDOFF_2026-06-02_019e8afa-5620-70f1-a4b6-bf40e41e7aa5.md`
+- `SESSION_HANDOFF_2026-06-02_019e8afa-4637-70b2-971a-b6a37b9539b7.md`
+- `SESSION_HANDOFF_2026-06-02_019e8afa-10bc-76e0-96b3-1facd819d790.md`
+- `SESSION_HANDOFF_2026-06-02_019e8ac2-edd3-7d53-b81e-2ee862972acc.md`
+- `SESSION_HANDOFF_2026-06-02_019e8ac1-f364-7743-bee6-66c240b2b44d.md`
+- `SESSION_HANDOFF_2026-06-02_019e8aaa-6793-77b1-90fc-1e053f373563.md`
+- `SESSION_HANDOFF_2026-06-02_019e89ba-27c7-7560-804d-9a02b2a94b74.md`
+- `SESSION_HANDOFF_2026-06-02_019e89b9-c29e-7541-baf7-7d9d4d5803fd.md`
+- `SESSION_HANDOFF_2026-06-02_019e89a7-e15d-77f1-9820-862e90a38123.md`
+- `SESSION_HANDOFF_2026-06-02_019e898a-b316-7df3-8842-2f179ad5d122.md`
+- `SESSION_HANDOFF_2026-06-02_019e8972-55bb-7641-ab8b-02a041961ad6.md`
+- `SESSION_HANDOFF_2026-06-02_019e8971-d31f-7720-9983-d413f637e126.md`
+- `SESSION_HANDOFF_2026-06-02_019e8971-1dc4-75b2-9c36-4d78d5f75203.md`
+- `SESSION_HANDOFF_2026-06-02_019e889a-133d-75f3-922f-fc54c144ea94.md`
+- `SESSION_HANDOFF_2026-06-02_019e8897-3487-71b3-b357-5dcbc6b7ac6d.md`
+- `SESSION_HANDOFF_2026-06-02_019e8870-4fd3-7130-aa12-b6324b163918.md`
+- `SESSION_HANDOFF_2026-06-02_019e886f-b02b-70e1-8c40-018f3b7100e3.md`
+- `SESSION_HANDOFF_2026-06-01_75218067-d9b9-4264-8b7a-3243c1a06ca1.md`
+- `SESSION_HANDOFF_2026-06-01_019e862d-a38a-7a50-ab58-9801840e30fc.md`
+- `SESSION_HANDOFF_2026-06-01_019e862c-7a64-7982-b62e-6ed0423a8457.md`
+- `SESSION_HANDOFF_2026-06-01_019e8620-30a2-7792-8500-16c95843972c.md`
+- `SESSION_HANDOFF_2026-06-01_019e8583-e862-7bb1-8560-5db3658c7345.md`
+- `SESSION_HANDOFF_2026-06-01_019e856f-e49f-7fb0-941e-fd5c610c8e35.md`
+- `SESSION_HANDOFF_2026-06-01_019e856e-bffa-7833-b2b7-da4c35f1f4ed.md`
+- `SESSION_HANDOFF_2026-06-01_019e856e-09fe-7de1-b9bc-28878b14c985.md`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
+- `SESSION_HANDOFF_2026-06-01_019e84ed-e068-7de2-ad5e-d900df7d26c1.md`
+- `SESSION_HANDOFF_2026-06-01_019e84aa-d2bd-7103-91a9-a73c9fcfb9c1.md`
+- `SESSION_HANDOFF_2026-06-01_019e84aa-c1d5-79e1-adba-5a743d03c8cc.md`
+- `SESSION_HANDOFF_2026-06-01_019e84aa-83ed-7462-8cd5-1c29cc47fbd7.md`
+- `SESSION_HANDOFF_2026-06-01_019e84aa-1f90-7b41-b68e-5b0b7120b56c.md`
+- `SESSION_HANDOFF_2026-06-01_019e8411-18fc-7911-9c4d-4aeecba402ac.md`
+- `SESSION_HANDOFF_2026-06-01_019e83a8-59ca-7843-b17d-1eb1b26d5363.md`
+- `SESSION_HANDOFF_2026-06-01_019e838b-6af5-7b72-b4aa-ee78a7bd3449.md`
+- `SESSION_HANDOFF_2026-06-01_019e8368-7762-7122-81b8-8a37bfbb0e60.md`
+- `SESSION_HANDOFF_2026-06-01_019e8366-b25f-7921-bbd5-2bfc17403296.md`
+- `SESSION_HANDOFF_2026-06-01_019e8361-9248-72a3-9743-ffd530b4d55e.md`
+- `SESSION_HANDOFF_2026-05-31_019e80a2-9969-70a2-a92d-39cf6a379925.md`
+- `SESSION_HANDOFF_2026-05-31_019e8076-ad60-7ee3-9c89-87f101b7545a.md`
+- `SESSION_HANDOFF_2026-05-31_019e802e-8fc0-77a0-8857-7f3208f84734.md`
+- `SESSION_HANDOFF_2026-05-31_019e802d-7aa8-7832-9d3b-d9a1f55357d2.md`
+- `SESSION_HANDOFF_2026-05-31_019e802d-21e9-7bf1-961a-4c205f226e9e.md`
+- `SESSION_HANDOFF_2026-05-31_019e7ff7-d9da-7333-9c5f-43f9156a8d45.md`
+- `SESSION_HANDOFF_2026-05-31_019e7fc7-29fb-7991-9d61-98d6224fb6da.md`
+- `SESSION_HANDOFF_2026-05-31_019e7fa4-ed2e-70e1-ac7f-a54fee386518.md`
+- `SESSION_HANDOFF_2026-05-31_019e7fa0-bbf9-7033-ad99-00fd18019559.md`
+- `SESSION_HANDOFF_2026-05-31_019e7f62-78ff-7773-a075-7f29d6a5269f.md`
+- `SESSION_HANDOFF_2026-05-31_019e7f59-b4e2-7303-9a13-63ee370879ca.md`
+- `SESSION_HANDOFF_2026-05-31_019e7f57-871a-71d2-8eb5-2662044d89b6.md`
+- `SESSION_HANDOFF_2026-05-31_019e7f57-3814-7572-a4ab-f649059f9b14.md`
+- `SESSION_HANDOFF_2026-05-31_019e7e9b-e240-7c30-98d2-a1ad94723f11.md`
+- `SESSION_HANDOFF_2026-05-30_019e7acd-c715-7200-b4a6-1bb0adf72b13.md`
+- `SESSION_HANDOFF_2026-05-30_019e7acd-1f10-7e00-9474-efbb5051b670.md`
+- `SESSION_HANDOFF_2026-05-30_019e7a9a-5ec9-7eb3-95f1-d0c5503ed8a0.md`
+- `SESSION_HANDOFF_2026-05-30_019e7a20-0e2f-73f1-ae20-ddf1fb495be5.md`
+- `SESSION_HANDOFF_2026-05-30_019e7995-e4a1-7bf2-b6a0-339a98d29317.md`
+- `SESSION_HANDOFF_2026-05-30_019e7994-2d67-7883-840f-7d3c3d92d721.md`
+- `SESSION_HANDOFF_2026-05-29_019e752f-259e-7553-9866-4b0c4544dd05.md`
+- `SESSION_HANDOFF_2026-05-29_019e752d-9895-7653-936f-31f010b764d5.md`
+- `SESSION_HANDOFF_2026-05-29_019e752a-b590-79a3-a82b-ee464537fd82.md`
+- `SESSION_HANDOFF_2026-05-29_019e7529-c353-7b83-a39a-5f8a0fe69745.md`
+- `SESSION_HANDOFF_2026-05-29_019e7499-013e-7c80-ad40-9c917f319149.md`
+- `SESSION_HANDOFF_2026-05-29_019e7442-882b-7a13-b625-d886421780aa.md`
+- `SESSION_HANDOFF_2026-05-29_019e742a-a3f1-71b3-8374-b51029016cbf.md`
+- `SESSION_HANDOFF_2026-05-29_019e7426-9371-7430-9a71-6686f1347001.md`
+- `SESSION_HANDOFF_2026-05-29_019e7421-ba22-78a1-a721-7446ea362dd7.md`
+- `SESSION_HANDOFF_2026-05-28_019e6f40-5f2f-78f1-afca-4032e91e55db.md`
+- `SESSION_HANDOFF_2026-05-28_019e6f32-5565-76d0-8ae0-06b4e2e30a0e.md`
+- `SESSION_HANDOFF_2026-05-28_019e6ea4-f32b-7261-8ca3-9d57cc9d40b5.md`
+- `SESSION_HANDOFF_2026-05-27_019e6bbb-f865-7563-96f6-ede09cfc4167.md`
+- `SESSION_HANDOFF_2026-05-26_019e654e-1409-7621-bde7-f8c231fda8d0.md`
+- `SESSION_HANDOFF_2026-05-26_019e6477-7493-7191-acfb-8aa632788e6c.md`
+- `SESSION_HANDOFF_2026-05-25_019e6049-463f-7ab0-a520-95e909a2eff6.md`
+- `SESSION_HANDOFF_2026-05-22_019e509e-5038-7b20-a757-cf053441bc8d.md`
+- `SESSION_HANDOFF_2026-05-22_019e5096-b2ce-7881-83b4-84fd5ae9aea9.md`
+- `SESSION_HANDOFF_2026-05-22_019e4fde-9151-7940-a16a-b90a6bf12517.md`
+- `SESSION_HANDOFF_2026-05-22_019e4fdd-cf2f-77a2-84e7-35d48584074b.md`
+- `SESSION_HANDOFF_2026-05-22_019e4fd1-20ef-7931-9b08-e4cc646ccb00.md`
+- `SESSION_HANDOFF_2026-05-21_019e4e27-3e58-7c51-a2ee-431ce0637c44.md`
+- `SESSION_HANDOFF_2026-05-21_019e4d5e-ddaa-7d22-90ff-4b3b56c16ab1.md`
+- `SESSION_HANDOFF_2026-05-21_019e4d5d-d653-7702-86a8-c20a83ee23ff.md`
+- `SESSION_HANDOFF_2026-05-21_019e4d5c-a277-71d0-afd5-4a740991a8c6.md`
+- `SESSION_HANDOFF_2026-05-21_019e4c7a-19cf-7740-84f6-5eb3a1f36fae.md`
+- `SESSION_HANDOFF_2026-05-21_019e4c26-0d56-7120-b85e-bf5e18f14721.md`
+- `SESSION_HANDOFF_2026-05-21_019e4c16-3a66-7302-8ada-1206e23e11df.md`
+- `SESSION_HANDOFF_2026-05-21_019e4c15-88e9-7a42-aad0-86eed917c98a.md`
+- `SESSION_HANDOFF_2026-05-21_019e4c14-fe5e-7802-970c-bae01f8b7212.md`
+- `SESSION_HANDOFF_2026-05-21_019e4acb-958e-76f2-89fc-f534179f2902.md`
+- `SESSION_HANDOFF_2026-05-20_019e46ed-0bc3-78f3-bad7-f7ca24065531.md`
+- `SESSION_HANDOFF_2026-05-20_019e45cf-44f8-7fe2-87f5-7d055c00513f.md`
+- `SESSION_HANDOFF_2026-05-20_019e45ab-830c-76d1-8f63-448f25c8f681.md`
+- `SESSION_HANDOFF_2026-05-20_019e45a3-68ab-7160-ab80-038d09482d6a.md`
+- `SESSION_HANDOFF_2026-05-19_019e4057-cc09-7610-9cd5-2b159d78b023.md`
+- `SESSION_HANDOFF_2026-05-14_019e26f3-cc37-7351-94a3-c52aae3be0c7.md`
+- `SESSION_HANDOFF_2026-05-13_019e21ab-042e-7d62-82c5-621bb214aaf4.md`
+- `SESSION_HANDOFF_2026-05-13_019e219a-97c1-7c81-a23d-86233b1a8ccc.md`
+- `SESSION_HANDOFF_2026-05-13_019e2194-a0c5-7fd1-8c6e-f3fd3869af34.md`
+- `SESSION_HANDOFF_2026-05-13_019e2191-5255-7b50-9d9d-d66432f7cc23.md`
+- `SESSION_HANDOFF_2026-05-13_019e2168-cce7-7f22-8a53-a394d6279949.md`
+- `SESSION_HANDOFF_2026-05-11_019e1777-ea5d-7a03-aa38-a7da139985d7.md`
+- `SESSION_HANDOFF_2026-05-08_019e0920-564f-78d0-8463-410e50e52b5d.md`
+- `SESSION_HANDOFF_2026-05-08_019e0826-0850-7bf2-8100-0b3eada42e32.md`
+- `SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md`
+- `SESSION_HANDOFF_2026-05-06_019dff88-574a-74f3-8ead-27ea141dfd2f.md`
+- `SESSION_HANDOFF_2026-05-06_019dff6f-d657-70a2-bed9-7c3a2469bed7.md`
+- `SESSION_HANDOFF_2026-05-06_019dff68-fd69-7fd1-84aa-f97b89d2efe8.md`
+- `SESSION_HANDOFF_2026-05-06_019dff67-f5a1-7332-8624-585ac4cd1435.md`
+- `SESSION_HANDOFF_2026-05-06_019dff66-df3f-7bc1-abe4-39b68ed2dcff.md`
+- `SESSION_HANDOFF_2026-05-06_019dfe4d-4d96-7552-80ac-346c0646adb1.md`
+- `SESSION_HANDOFF_2026-05-06_019dfe49-d18c-7bd1-97d1-7e004ff154f0.md`
+- `SESSION_HANDOFF_2026-05-06_019dfe45-759c-77c0-b66f-9cc21addb43b.md`
+- `SESSION_HANDOFF_2026-05-06_019dfe1c-e228-72b2-932c-6d9faa06df81.md`
+
+## Recent User Messages
+
+- `2026-06-17T20:02:54.129Z` can you set up a live chat endpoint to talk back and forth with it?
+- `2026-06-17T20:03:43.902Z` you are doing the first (coordination) to achieve the second (api change)
+- `2026-06-17T20:13:02.485Z` ive rebuilt, can you please check?
+- `2026-06-17T20:15:07.913Z` can you please confer with that same agent?
+  you found different things
+- `2026-06-17T20:17:48.912Z` you are saying differnt things
+- `2026-06-17T20:19:41.933Z` can you point me to the common discussion handoff file you re talking in? why did they say this? [ You’re right. I was using “signal system”
+  too broadly.
+
+  Corrected statement:
+
+  - Fixed/confirmed: the Signal Matrix data
+    path is live and DB-backed:
+    ticker/Massive stream -> Signal Matrix
+    SSE -> signal_monitor_symbol_states /
+    signal_monitor_events -> STA/Algo
+    reads.
+    It is not using runtime fallback there.
+
+  - Not fixed/confirmed: signal automation
+    scanning is still off:
+    profile enabled=false, diagnostics
+    workerScanEnabled=false, signalCount=0.
+    So anything that depends on automation
+    scans can still look idle.
+
+  - Remaining DB issue: no longer option-
+    chain firehose. Remaining slow DB
+    pressure is from execution_events,
+    bar_cache, and shadow_orders.
+
+  So the precise answer is: the signal
+  matrix DB/SSE path is fixed; the full
+  signal automation system is not fully
+  active because it is disabled by config/
+  profile state.]
+- `2026-06-17T20:20:29.090Z` please put that chat session in the filetree so i can look at it
+- `2026-06-17T20:21:11.386Z` and please make that where you continue the conversation
+- `2026-06-17T20:22:30.352Z` can you please apply some formatting to that agent_chat md
+- `2026-06-17T20:22:37.369Z` can you please apply some formatting to that agent_chat doc
+- `2026-06-17T20:25:09.797Z` okay you are not agent 2, coordinate with the leader to get this done (and other agnet)
+- `2026-06-17T20:32:20.076Z` stay waiting for responses in there please
+
+## Session Activity Summary
+
+- `2026-06-17T19:52:00.364Z` User: can you please review and validate or correct these findings, and offer a comprehensive fix that utilizes the best possible solution? [● Crucial catch on the most recent readings…
+- `2026-06-17T19:52:11.771Z` Agent: I’ll validate this from the repo rather than assuming the prior watch is correct. I’m using the `investigate` and `performance-optimization` skills because this is a performance b…
+- `2026-06-17T19:52:11.772Z` Tool: exec_command sed -n '1,220p' /home/runner/.codex/skills/.system/../nonexistent
+- `2026-06-17T19:52:11.797Z` Tool: exec_command sed -n '1,240p' /home/runner/workspace/.agents/skills/gstack/investigate/SKILL.md
+- `2026-06-17T19:52:11.802Z` Tool: exec_command sed -n '1,260p' /home/runner/workspace/.agents/skills/performance-optimization/SKILL.md
+- `2026-06-17T19:52:17.871Z` Agent: I’ve started with the prescribed investigation workflow. Next I’m locating the actual pool, diagnostics, and pressure-classifier code so the validation is tied to source behavior,…
+- … 471 lower-signal transcript events omitted …
+- `2026-06-17T20:38:04.383Z` Agent: New lead message is directed to `agent3-claude` for a design proposal on a separate non-options/equity/overnight Algo control panel. It is not asking me for DB/runtime work, so I’…
+- `2026-06-17T20:38:05.091Z` Tool: write_stdin session 9689
+- `2026-06-17T20:38:39.325Z` Agent: `agent4-claude` acknowledged the correction and documented the exact live DB DDL/timing. They confirmed they are read-only and that the index only helps the /bars stored-read path…
+- `2026-06-17T20:38:42.037Z` Tool: exec_command curl -sS -X POST http://127.0.0.1:8765/messages -H 'content-type: application/json' -d @- <<'JSON' { "from": "codex-db-pool-option-chain", "text": "codex-db-pool-option-chain: ack…
+- `2026-06-17T20:38:44.376Z` Agent: Acknowledged as `#36`. Continuing to wait for the lead or agent3 response.
+- `2026-06-17T20:38:44.976Z` Tool: write_stdin session 9689
+- `2026-06-17T20:39:17.206Z` Agent: The watcher echoed my own `#36`; no additional response yet. Still watching.
+- `2026-06-17T20:39:17.811Z` Tool: write_stdin session 9689
+- `2026-06-17T20:39:49.937Z` Agent: No new shared-chat response in the last interval. I’m continuing to wait.
+- `2026-06-17T20:39:50.466Z` Tool: write_stdin session 9689
+
+## High-Signal Changed Files
+
+- `.replit`
+- `SESSION_HANDOFF_2026-06-16_394cdc7a-fc80-4f09-9cab-253fecf90c55.md`
+- `SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md`
+- `SESSION_HANDOFF_CURRENT.md`
+- `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/package.json`
+- `artifacts/api-server/src/index.ts`
+- `artifacts/api-server/src/routes/signal-monitor.ts`
+- `artifacts/api-server/src/services/automation.test.ts`
+- `artifacts/api-server/src/services/automation.ts`
+- `artifacts/api-server/src/services/diagnostics.ts`
+- `artifacts/api-server/src/services/option-metadata-store.ts`
+- `artifacts/api-server/src/services/options-flow-scanner.ts`
+- `artifacts/api-server/src/services/platform.ts`
+- `artifacts/api-server/src/services/python-compute.ts`
+- `artifacts/api-server/src/services/readiness.test.ts`
+- `artifacts/api-server/src/services/resource-pressure.test.ts`
+- `artifacts/api-server/src/services/resource-pressure.ts`
+- `artifacts/api-server/src/services/runtime-flight-recorder.ts`
+- `artifacts/api-server/src/services/signal-monitor-stream.test.ts`
+- `artifacts/api-server/src/services/signal-monitor.ts`
+- `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- `artifacts/api-server/src/services/signal-options-automation.ts`
+- `artifacts/pyrus/docs/architecture/market-data-ingest-worker.md`
+- `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+- `artifacts/pyrus/src/features/platform/PlatformShell.jsx`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.test.mjs`
+- `artifacts/pyrus/src/features/platform/appWorkScheduler.js`
+- `artifacts/pyrus/src/features/platform/appWorkScheduler.test.mjs`
+- `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js`
+
+## Repo State Snapshot
+
+```text
+## main...origin/main
+ M .replit
+ M SESSION_HANDOFF_2026-06-16_394cdc7a-fc80-4f09-9cab-253fecf90c55.md
+ M SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md
+ M SESSION_HANDOFF_CURRENT.md
+ M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/package.json
+ M artifacts/api-server/src/index.ts
+ M artifacts/api-server/src/routes/signal-monitor.ts
+ M artifacts/api-server/src/services/automation.test.ts
+ M artifacts/api-server/src/services/automation.ts
+ M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/api-server/src/services/option-metadata-store.ts
+ M artifacts/api-server/src/services/options-flow-scanner.ts
+ M artifacts/api-server/src/services/platform.ts
+ M artifacts/api-server/src/services/python-compute.ts
+ M artifacts/api-server/src/services/readiness.test.ts
+ M artifacts/api-server/src/services/resource-pressure.test.ts
+ M artifacts/api-server/src/services/resource-pressure.ts
+ M artifacts/api-server/src/services/runtime-flight-recorder.ts
+ M artifacts/api-server/src/services/signal-monitor-stream.test.ts
+ M artifacts/api-server/src/services/signal-monitor.ts
+ M artifacts/api-server/src/services/signal-options-automation.test.ts
+ M artifacts/api-server/src/services/signal-options-automation.ts
+ M artifacts/pyrus/docs/architecture/market-data-ingest-worker.md
+ M artifacts/pyrus/src/features/platform/PlatformApp.jsx
+ M artifacts/pyrus/src/features/platform/PlatformShell.jsx
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.test.mjs
+ M artifacts/pyrus/src/features/platform/appWorkScheduler.js
+ M artifacts/pyrus/src/features/platform/appWorkScheduler.test.mjs
+ M artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js
+ M artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.test.mjs
+ M artifacts/pyrus/src/screens/AlgoScreen.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
+ M artifacts/pyrus/src/screens/diagnostics/MACHINE_STATE_WIRING.md
+ M artifacts/pyrus/src/screens/diagnostics/MachineStateDiagram.jsx
+ M artifacts/pyrus/src/screens/diagnostics/machineStateDiagram.contract.test.mjs
+ M artifacts/pyrus/src/screens/diagnostics/machineStateDiagramModel.js
+ M artifacts/pyrus/src/screens/diagnostics/machineStateDiagramModel.test.mjs
+ M crates/market-data-worker/src/compute/gex.rs
+ M crates/market-data-worker/src/ingest.rs
+ M lib/db/src/index.ts
+ M lib/db/src/schema/market-data.ts
+ M scripts/src/market-data-schema-audit.ts
+?? .agents/agent-chat-server.mjs
+?? .agents/agent-chat/
+?? AGENT_CHAT.md
+?? AGENT_CHAT_MESSAGES.jsonl
+?? SESSION_HANDOFF_2026-06-17_019ed6f5-e82f-7343-8ef0-858fbf4f02ac.md
+?? SESSION_HANDOFF_2026-06-17_019ed722-d363-7ed0-ae0c-cc9fdfef2095.md
+?? SESSION_HANDOFF_2026-06-17_019ed72d-01cd-7c50-be55-13b49af4f5f1.md
+?? SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md
+?? SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md
+?? SESSION_HANDOFF_2026-06-17_44004638-9aef-48a0-a34b-4b34acf36bc3.md
+?? SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md
+?? SESSION_HANDOFF_2026-06-17_597ef7e5-ca7e-4909-a190-5ab85027cde8.md
+?? SESSION_HANDOFF_2026-06-17_68198fd8-e6b1-464d-bb36-994693ba89e1.md
+?? SESSION_HANDOFF_2026-06-17_8a2a0c96-efd0-4128-8fc6-b872d407ea12.md
+?? SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md
+?? SESSION_HANDOFF_2026-06-17_a9733916-4b87-4cd5-81bc-806d9688ab32.md
+?? SESSION_HANDOFF_2026-06-17_b2a29e96-6d0f-409d-8f40-a54d873a1325.md
+?? SESSION_HANDOFF_2026-06-17_b813ef30-05c0-40ee-b347-cd5b2218920e.md
+?? SESSION_HANDOFF_2026-06-17_bca66aa5-d3f4-4bdf-a82b-0daafde50592.md
+?? SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md
+?? SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md
+?? SESSION_HANDOFF_2026-06-17_d3be8676-affe-42f4-8351-992d88fb2199.md
+?? SESSION_HANDOFF_2026-06-17_f1cad8b4-b092-4dc7-b0fb-608d1b5475f3.md
+?? SESSION_HANDOFF_2026-06-17_ff8a6f9d-4207-4263-a9a2-de865f5f7ca0.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_44004638-algo-sta-resilience-and-fleet-state.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_option-chain-dual-write-blocking-fixes.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_option-chain-upsert-latest-phase1.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_signal-matrix-event-loop-starvation.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_signals-algo-sse-pressure.md
+?? artifacts/api-server/src/services/diagnostics-db-pressure.test.ts
+?? artifacts/api-server/src/services/option-chain-latest-cutover.test.ts
+?? artifacts/pyrus/src/screens/AlgoScreen.test.mjs
+?? docs/plans/db-pool-saturation-index-fix.md
+?? docs/plans/option-chain-snapshot-write-contention-fix.md
+?? docs/plans/option-chain-upsert-latest-redesign-REVIEW-FIXES.md
+?? docs/plans/option-chain-upsert-latest-redesign.md
+?? lib/db/migrations/20260617_covering_indexes_add.sql
+?? lib/db/migrations/20260617_covering_indexes_drop_redundant.sql
+?? lib/db/migrations/20260617_option_chain_latest.sql
+```
+
+## Diff Summary
+
+```text
+ .replit                                            |   4 +
+ ...6-06-16_394cdc7a-fc80-4f09-9cab-253fecf90c55.md |  48 ++
+ ...6-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md |  67 ++-
+ SESSION_HANDOFF_CURRENT.md                         |  10 +-
+ SESSION_HANDOFF_MASTER.md                          |  48 +-
+ artifacts/api-server/package.json                  |   2 +-
+ artifacts/api-server/src/index.ts                  |   2 +
+ artifacts/api-server/src/routes/signal-monitor.ts  |  41 +-
+ .../api-server/src/services/automation.test.ts     |  57 ++-
+ artifacts/api-server/src/services/automation.ts    |  40 +-
+ artifacts/api-server/src/services/diagnostics.ts   | 242 +++++-----
+ .../src/services/option-metadata-store.ts          | 148 ++++--
+ .../src/services/options-flow-scanner.ts           |   4 +-
+ artifacts/api-server/src/services/platform.ts      |  24 +-
+ .../api-server/src/services/python-compute.ts      |  93 +++-
+ .../api-server/src/services/readiness.test.ts      |   3 +
+ .../src/services/resource-pressure.test.ts         |  39 ++
+ .../api-server/src/services/resource-pressure.ts   |  74 ++-
+ .../src/services/runtime-flight-recorder.ts        |  27 +-
+ .../src/services/signal-monitor-stream.test.ts     |  95 +++-
+ .../api-server/src/services/signal-monitor.ts      |  53 ++-
+ .../src/services/signal-options-automation.test.ts |  38 ++
+ .../src/services/signal-options-automation.ts      | 494 ++++-----------------
+ .../docs/architecture/market-data-ingest-worker.md |   8 +-
+ .../pyrus/src/features/platform/PlatformApp.jsx    |  84 ++--
+ .../pyrus/src/features/platform/PlatformShell.jsx  |   6 +-
+ .../features/platform/PlatformWatchlist.test.mjs   |   6 +
+ .../src/features/platform/appWorkScheduler.js      |  14 +
+ .../features/platform/appWorkScheduler.test.mjs    |  29 ++
+ .../ibkrConnectionOperationStepperModel.js         |  28 +-
+ .../ibkrConnectionOperationStepperModel.test.mjs   |  58 +++
+ artifacts/pyrus/src/screens/AlgoScreen.jsx         | 118 +----
+ .../src/screens/algo/OperationsSignalTable.jsx     |   7 +-
+ .../screens/algo/OperationsSignalTable.test.mjs    |  20 +
+ .../screens/diagnostics/MACHINE_STATE_WIRING.md    |  44 +-
+ .../screens/diagnostics/MachineStateDiagram.jsx    |  76 ++++
+ .../machineStateDiagram.contract.test.mjs          |  25 +-
+ .../diagnostics/machineStateDiagramModel.js        | 138 ++++++
+ .../diagnostics/machineStateDiagramModel.test.mjs  | 106 +++++
+ crates/market-data-worker/src/compute/gex.rs       |  14 +-
+ crates/market-data-worker/src/ingest.rs            |  25 +-
+ lib/db/src/index.ts                                | 274 ++++++++++++
+ lib/db/src/schema/market-data.ts                   |  48 ++
+ scripts/src/market-data-schema-audit.ts            |  28 +-
+ 44 files changed, 1955 insertions(+), 854 deletions(-)
+```
+
+## Validations Detected In Transcript
+
+- None detected in this session transcript.
+
+## What Changed This Session
+
+- Replace this section with the concrete product and code changes completed in the session.
+
+## Current Status
+
+- Replace this section with current validation status, blockers, and any known runtime gaps.
+
+## Next Recommended Steps
+
+1. Replace this item with the highest-priority next step.
+2. Replace this item with the next validation or bring-up step.
+
+## 2026-06-17 Agent2 GEX Starvation Fix Slice
+
+Leader scope: implement one slice only for GEX starvation/data-flow. Do not work diagnostics DB-pool rolling pressure, Replit startup/config, chart/autowidth, MTF, or lead coordination.
+
+Implemented:
+- `artifacts/api-server/src/services/gex.ts`
+  - Stale persisted GEX refreshes now derive their `dedupeBucket` from the stale snapshot `computedAt`, not the current minute.
+  - Missing snapshot refreshes still use the current minute fallback.
+- `artifacts/api-server/src/services/market-data-ingest.ts`
+  - Supersession no longer cancels `running` forward-refresh jobs; it only cancels older `queued`/`failed` jobs.
+  - Added a short comment documenting why running option-chain/GEX prerequisites must be allowed to finish.
+- `artifacts/api-server/src/services/gex-refresh-queue.test.ts`
+  - Verifies repeated stale persisted GEX refreshes across minute boundaries reuse the same stale snapshot bucket.
+- `artifacts/api-server/src/services/market-data-ingest-supersession.test.ts`
+  - Verifies supersession does not include `running` in the cancelled status list.
+
+Validation:
+- `artifacts/api-server/node_modules/.bin/tsx --test artifacts/api-server/src/services/gex-refresh-queue.test.ts artifacts/api-server/src/services/market-data-ingest-supersession.test.ts` passed.
+- `pnpm --filter @workspace/api-server run typecheck` passed.
+- `pnpm --filter @workspace/api-server run build` passed.
+
+Notes:
+- I briefly implemented the proposed diagnostics rolling DB-pool pressure slice before leader clarified scope. I removed those rolling-pressure changes and kept only the GEX slice.
+- `git status` still shows unrelated dirty files from the parallel multi-agent work, including diagnostics/resource-pressure files modified before this slice. I did not revert or claim those.

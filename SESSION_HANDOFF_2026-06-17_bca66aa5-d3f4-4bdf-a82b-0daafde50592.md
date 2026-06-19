@@ -2,33 +2,42 @@
 
 ## Session Metadata
 
-- Session ID: `f75a3d2e-c93c-472b-9aad-8faa3e573939`
-- Saved At (MT): `2026-06-17 01:02:49 MDT`
-- Saved At (UTC): `2026-06-17T07:02:49.237Z`
-- Summary: 2026-06-17 01:02:49 MDT | f75a3d2e-c93c-472b-9aad-8faa3e573939 | find the 4 claude terminal sessions we just dropped
+- Session ID: `bca66aa5-d3f4-4bdf-a82b-0daafde50592`
+- Saved At (MT): `2026-06-17 11:59:56 MDT`
+- Saved At (UTC): `2026-06-17T17:59:56.628Z`
+- Summary: 2026-06-17 11:59:56 MDT | bca66aa5-d3f4-4bdf-a82b-0daafde50592 | Claude Code session
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/f75a3d2e-c93c-472b-9aad-8faa3e573939.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/bca66aa5-d3f4-4bdf-a82b-0daafde50592.jsonl`
 - Branch: `main`
-- HEAD: `3a7fe7da5e8968a6b2dcc95d19a71b25ab4b19f6`
-- Latest Commit: `test(algo): fix STA cache-stale test; bundle audited IBKR executions-lane work`
+- HEAD: `5f8674dad68f8e189c1fc829a398d5656664034e`
+- Latest Commit: `fix(validation): disable false-firing hot-runtime guard by default`
 - Latest Commit Session ID: `unknown`
-- Title: find the 4 claude terminal sessions we just dropped
+- Title: Claude Code session
 - Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-find the 4 claude terminal sessions we just dropped
+(no user message captured yet)
 
 ## Prior Handoffs
 
+- `SESSION_HANDOFF_2026-06-17_ff8a6f9d-4207-4263-a9a2-de865f5f7ca0.md`
+- `SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md`
+- `SESSION_HANDOFF_2026-06-17_f1cad8b4-b092-4dc7-b0fb-608d1b5475f3.md`
+- `SESSION_HANDOFF_2026-06-17_d3be8676-affe-42f4-8351-992d88fb2199.md`
 - `SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md`
+- `SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md`
 - `SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md`
+- `SESSION_HANDOFF_2026-06-17_597ef7e5-ca7e-4909-a190-5ab85027cde8.md`
+- `SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md`
+- `SESSION_HANDOFF_2026-06-17_44004638-9aef-48a0-a34b-4b34acf36bc3.md`
 - `SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md`
 - `SESSION_HANDOFF_2026-06-17_07e94cd6-007f-4489-933d-f5b7644812d5.md`
+- `SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md`
 - `SESSION_HANDOFF_2026-06-16_dc790051-58ca-411d-b656-51487f9860da.md`
 - `SESSION_HANDOFF_2026-06-16_d6046da4-048f-4c5f-b7f4-ca9b10614176.md`
 - `SESSION_HANDOFF_2026-06-16_ca3b3d1f-8c38-4868-948c-3b33a40cb361.md`
@@ -252,30 +261,27 @@ find the 4 claude terminal sessions we just dropped
 
 ## Recent User Messages
 
-- `2026-06-17 00:04:51 MDT` find the 4 claude terminal sessions we just dropped
-- `2026-06-17 00:16:35 MDT` please resume 4 here
-- `2026-06-17 00:38:43 MDT` you can go ahead and do the bridge launch with dummy credentials to test it after you rebuild the app
-- `2026-06-17 00:51:42 MDT` is the ui / bridge connnection returned to proper function? did you test it yourself in the runtime/api/ui?
+- None found.
 
 ## Session Activity Summary
 
-- `2026-06-17 00:04:51 MDT` User: find the 4 claude terminal sessions we just dropped
-- `2026-06-17 00:04:54 MDT` Agent: I'll invoke the session-handoff skill, which is built for recovering dropped sessions by checking runtime/session storage.
-- `2026-06-17 00:04:55 MDT` Tool: Skill {"skill":"session-handoff","args":"recover 4 dropped Claude terminal sessions"}
-- `2026-06-17 00:05:01 MDT` Agent: Per the Dropped Session Recovery Rule, I'll start with the runtime/session-layer evidence rather than repo handoff files. Since these are Claude terminal sessions, I'll sweep both…
-- `2026-06-17 00:05:03 MDT` Tool: Bash echo "=== Claude project session dir ==="; ls -dt ~/.claude/projects/*/ 2>/dev/null | head; echo; echo "=== Claude session JSONL files (newest 15) ==="; ls -lt…
-- `2026-06-17 00:05:04 MDT` Tool: Bash echo "=== live claude processes ==="; ps -eo pid,ppid,tty,etime,cmd 2>/dev/null | grep -iE 'claude|node .*claude' | grep -v grep | head -30
-- … 134 lower-signal transcript events omitted …
-- `2026-06-17 00:58:51 MDT` Tool: Read /tmp/pyrus_header.png
-- `2026-06-17 00:59:18 MDT` Agent: Screenshot came out blank (headless paint timing — the `text` dump already has the real content, which is unambiguous). Let me pull the precise connection reason from the `/ibkr/c…
-- `2026-06-17 00:59:21 MDT` Tool: Bash cd /home/runner/workspace echo "=== where is the platform router mounted? ===" rg -n "platform" artifacts/api-server/src/app.ts 2>/dev/null | grep -iE "use\(|r…
-- `2026-06-17 00:59:32 MDT` Tool: Bash cd /home/runner/workspace echo "=== routes/index.ts (how routers compose + prefixes) ==="; sed -n '1,80p' artifacts/api-server/src/routes/index.ts echo "=== ho…
-- `2026-06-17 00:59:43 MDT` Agent: Routers compose flat (no `/platform` prefix) under `/api`. So the real paths are `/api/ibkr/connection-audit` and `/api/broker-connections`. Probing them for the precise connectio…
-- `2026-06-17 00:59:44 MDT` Tool: Bash cd /home/runner/workspace for path in "/api/ibkr/connection-audit" "/api/broker-connections"; do echo "=== $path ===" curl -s -m 6 "http://localhost:8080$path"…
-- `2026-06-17 01:00:55 MDT` Agent: Now I have hard data. Let me confirm the live bridge (PID 76572, running my rebuilt code) is the IBKR bridge and grab its own health view to corroborate:
-- `2026-06-17 01:01:01 MDT` Tool: Bash cd /home/runner/workspace echo "=== PID 76572 identity ==="; readlink /proc/76572/cwd 2>/dev/null; tr '\0' '\n' < /proc/76572/environ 2>/dev/null | grep -iE '^…
-- `2026-06-17 01:01:55 MDT` Agent: Critical correction to something I said earlier: **PID 76572's cwd is `artifacts/api-server` — it's the API-SERVER, not the bridge.** And `IBKR_ASYNC_SIDECAR_ROUTING_ENABLED=true`…
-- `2026-06-17 01:01:59 MDT` Tool: Bash cd /home/runner/workspace echo "=== any process whose cwd is ibkr-bridge? ===" found=0 for pid in $(pgrep -f 'dist/index.mjs|ibkr-bridge' 2>/dev/null); do cwd=…
+- `2026-06-17 10:31:25 MDT` Agent: I'll investigate why the signal matrix isn't staying up to date. Let me start by orienting myself in the codebase and reading the relevant handoff notes in parallel.
+- `2026-06-17 10:31:26 MDT` Tool: Bash echo "=== Repo top-level ===" && ls -la && echo "" && echo "=== artifacts ===" && ls artifacts/ 2>/dev/null && echo "" && echo "=== pyrus features ===" && ls a…
+- `2026-06-17 10:31:28 MDT` Tool: Bash echo "=== signal-matrix-state-regression note ===" && cat SESSION_HANDOFF_LIVE_2026-06-12_signal-matrix-state-regression.md 2>/dev/null | head -120
+- `2026-06-17 10:31:29 MDT` Tool: Bash echo "=== signals-scan-deprecation-audit note ===" && cat SESSION_HANDOFF_LIVE_2026-06-16_signals-scan-deprecation-audit.md 2>/dev/null | head -80 && echo "" &…
+- `2026-06-17 10:32:15 MDT` Agent: I have rich context from the handoff notes already. Two recent workstreams are directly relevant: 1. **Signal Matrix State Regression** (06-12) — stale/impossible cells, table jum…
+- `2026-06-17 10:32:29 MDT` Tool: Agent {"description":"Trace frontend signal matrix update path","prompt":"I'm investigating why the \"Signal Matrix\" / \"Sig…
+- … 106 lower-signal transcript events omitted …
+- `2026-06-17 11:54:41 MDT` Agent: Useful signal: there's a `dominantSlowRouteP95Ms = 10832` (10.8s) and the shadow-account routes dominate (28–51s). Let me pull the exact `eventLoopDelayMs` dict, the dominant-slow…
+- `2026-06-17 11:54:48 MDT` Tool: Bash cd /home/runner/workspace API=http://127.0.0.1:8080/api echo "=== eventLoopDelayMs + shadowAccountReads route names + dominant slow route name ===" python3 -c…
+- `2026-06-17 11:55:35 MDT` Agent: The `/diagnostics/ibkr-perf` GET was **shed with a 429: "Request shed by PYRUS route admission… api-resource-pressure-high, pressureLevel: high"** — that's the load-shedding-under…
+- `2026-06-17 11:55:42 MDT` Tool: Bash cd /home/runner/workspace echo "=== eventLoopDelayMs dict + shadow route paths (from saved runtime payload) ===" python3 << 'PY' import json d=json.load(open("…
+- `2026-06-17 11:57:34 MDT` Agent: Track C has produced decisive attribution. Let me verify one metric's semantics (so I describe it accurately) and stop the sampler I started (container caution).
+- `2026-06-17 11:57:37 MDT` Tool: Bash cd /home/runner/workspace echo "=== how is sseEmit.stringifyMs / sseStringifyMsPerSec computed? (accuracy check) ===" grep -n "stringifyMs\|sseStringify\|strin…
+- `2026-06-17 11:59:10 MDT` Agent: Accuracy check done: `sseEmit.stringifyMs` is a **cumulative** counter, so the meaningful figure is the **rate** — `sseStringifyMsPerSec` averaging ~13 with **peaks of 139ms/sec**…
+- `2026-06-17 11:59:21 MDT` Tool: Write /home/runner/.claude/projects/-home-runner-workspace/memory/signal-matrix-staleness-failure-modes.md
+- `2026-06-17 11:59:24 MDT` Tool: Edit /home/runner/.claude/projects/-home-runner-workspace/memory/MEMORY.md
+- `2026-06-17 11:59:51 MDT` Agent: Done with the two approved tracks. Here's the plain-English summary. ## What I changed (Track A — the mismatch fix) ✅ **File:** `OperationsSignalTable.jsx` (one line) + one test.…
 
 ## High-Signal Changed Files
 
@@ -284,35 +290,82 @@ find the 4 claude terminal sessions we just dropped
 - `SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/package.json`
+- `artifacts/api-server/src/services/automation.test.ts`
+- `artifacts/api-server/src/services/automation.ts`
+- `artifacts/api-server/src/services/option-metadata-store.ts`
+- `artifacts/api-server/src/services/platform.ts`
+- `artifacts/api-server/src/services/python-compute.ts`
+- `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs`
+- `crates/market-data-worker/src/ingest.rs`
+- `lib/db/src/schema/market-data.ts`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 1]
+## main...origin/main
  M .replit
  M SESSION_HANDOFF_2026-06-16_394cdc7a-fc80-4f09-9cab-253fecf90c55.md
  M SESSION_HANDOFF_2026-06-17_f75a3d2e-c93c-472b-9aad-8faa3e573939.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/package.json
+ M artifacts/api-server/src/services/automation.test.ts
+ M artifacts/api-server/src/services/automation.ts
+ M artifacts/api-server/src/services/option-metadata-store.ts
+ M artifacts/api-server/src/services/platform.ts
+ M artifacts/api-server/src/services/python-compute.ts
+ M artifacts/pyrus/src/features/platform/PlatformApp.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
+ M crates/market-data-worker/src/ingest.rs
+ M lib/db/src/schema/market-data.ts
+?? SESSION_HANDOFF_2026-06-17_03c14e8a-b4cc-47a8-8c9e-6dd7f7ccfa40.md
 ?? SESSION_HANDOFF_2026-06-17_2669c167-4fe7-4a2e-a4bc-a48fbcd10a7e.md
+?? SESSION_HANDOFF_2026-06-17_44004638-9aef-48a0-a34b-4b34acf36bc3.md
+?? SESSION_HANDOFF_2026-06-17_53a63210-b225-4826-861e-c89903e843f4.md
+?? SESSION_HANDOFF_2026-06-17_597ef7e5-ca7e-4909-a190-5ab85027cde8.md
 ?? SESSION_HANDOFF_2026-06-17_a6774ebd-5e60-4b55-8ba4-2066b7f68527.md
+?? SESSION_HANDOFF_2026-06-17_bca66aa5-d3f4-4bdf-a82b-0daafde50592.md
+?? SESSION_HANDOFF_2026-06-17_c26f5b4e-e826-4607-a578-98a0977f1c32.md
 ?? SESSION_HANDOFF_2026-06-17_cb025ae0-6840-4292-ad90-cd623532fc02.md
+?? SESSION_HANDOFF_2026-06-17_d3be8676-affe-42f4-8351-992d88fb2199.md
+?? SESSION_HANDOFF_2026-06-17_f1cad8b4-b092-4dc7-b0fb-608d1b5475f3.md
+?? SESSION_HANDOFF_2026-06-17_ff8a6f9d-4207-4263-a9a2-de865f5f7ca0.md
+?? SESSION_HANDOFF_LIVE_2026-06-17_option-chain-dual-write-blocking-fixes.md
+?? docs/plans/option-chain-snapshot-write-contention-fix.md
+?? docs/plans/option-chain-upsert-latest-redesign-REVIEW-FIXES.md
+?? docs/plans/option-chain-upsert-latest-redesign.md
+?? lib/db/migrations/20260617_option_chain_latest.sql
 ```
 
 ## Diff Summary
 
 ```text
- .replit                    |  4 +
- ...09-9cab-253fecf90c55.md | 48 ++++
- ...2b-9aad-8faa3e573939.md | 78 +++++--
- SESSION_HANDOFF_CURRENT.md | 10 +-
- SESSION_HANDOFF_MASTER.md  |  7 +-
- 5 files changed, 123 insertions(+), 24 deletions(-)
+ .replit                            |   4 +
+ ...-fc80-4f09-9cab-253fecf90c55.md |  48 ++++
+ ...-c93c-472b-9aad-8faa3e573939.md |  67 ++++--
+ SESSION_HANDOFF_CURRENT.md         |  14 +-
+ SESSION_HANDOFF_MASTER.md          |  16 +-
+ artifacts/api-server/package.json  |   2 +-
+ .../services/automation.test.ts    |  57 ++++-
+ .../src/services/automation.ts     |  40 +++-
+ .../option-metadata-store.ts       |  31 +++
+ .../src/services/platform.ts       |  24 +-
+ .../src/services/python-compute.ts |  93 +++++--
+ .../platform/PlatformApp.jsx       |  32 ++-
+ .../algo/OperationsSignalTable.jsx |   2 +-
+ .../OperationsSignalTable.test.mjs |  11 +
+ .../src/ingest.rs                  | 120 ++++++++++
+ lib/db/src/schema/market-data.ts   |  35 +++
+ 16 files changed, 539 insertions(+), 57 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-06-17 00:35:50 MDT` cd /home/runner/workspace; echo "=== root tsx binary? ==="; ls -la node_modules/.bin/tsx 2>/dev/null && echo "tsx present at root"; echo; echo "=== how are bri… (ok)
+- None detected in this session transcript.
 
 ## What Changed This Session
 

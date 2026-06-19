@@ -443,6 +443,12 @@ commit just your work here
 
 ## What Changed This Session
 
+> **Correction (amended 2026-06-17, session resume):** This session had TWO
+> distinct workstreams. The "Part 1 / Part 2" notes below describe only the
+> pyrus UI commit (`e1be0b5` — grab-handle removal + table widths). The session's
+> *later* work — the STA "degraded/stale" banner fix — was missing from this
+> record and is now documented under "Workstream B" at the end of this section.
+
 Two-part pyrus UI change, committed as `e1be0b5` and pushed to `origin/main`.
 Approved plan: `/home/runner/.claude/plans/elegant-weaving-deer.md`.
 
@@ -477,6 +483,36 @@ header component → covers Signals / Flow / GEX / Positions / Algo / TradingAna
 Memory saved: `pyrus-table-styling-preference.md` (no header grip, static content-fit widths,
 compact with right gutter).
 
+### Workstream B — STA "degraded/stale" banner fix (later phase, ~22:58-23:53 MDT)
+
+Coordinated backend + frontend fix so cache-staleness ("served from stored monitor
+state") no longer trips the STA degraded/stale banner, while genuine failures still
+do. Independently audited -> PASS-WITH-NOTES (43-line scope).
+
+- Backend `artifacts/api-server/src/services/signal-options-automation.ts` (~line 268):
+  removed `degraded/stale = cacheStatus === "stale" ? true : record[...]`; now preserves
+  only genuine `record.degraded` / `record.stale`.
+- Frontend `artifacts/pyrus/src/screens/algo/algoHelpers.js` (~line 415): dropped
+  `cacheStatus === "stale"` and `reason.includes("cache")` from the per-source
+  `transient` trigger; kept `stale || degraded || refreshing || timeout`.
+
+**How it actually shipped (NOT as intended):** the session ended at 23:53 right after
+the audit, before committing. ~7 min later a Replit Agent full-checkpoint, `fdce894`
+("Improve IBKR bridge stability...", session `d56ae97d`), swept these working-tree edits
+into a ~60-file bundle (IBKR bridge, market-data-worker, a `tradingAllowance` feature,
+handoff files, ...). This contradicts the explicit "commit only the related work"
+instruction — the audit happened, the isolated commit did not. `fdce894` is committed
+locally but **not pushed** (one of 4 commits ahead of `origin/main`, whose tip is still
+`e1be0b5`).
+
+**Leftover, fixed in the 2026-06-17 resume:** the behavior change orphaned a test —
+`algoHelpers.test.mjs` "STA source selection rejects stale cached action rows" asserted
+the old semantics and failed 5/5 against the shipped code. Replaced with two tests:
+"serves cache-stale action rows as the live default" (new behavior) + "rejects genuinely
+transient action rows" (preserved rejection coverage). Both verified against post-fix
+logic. Note: this test isn't wired into any CI and isn't runnable by plain `node --test`
+(transitive JSX deps; no vitest/esbuild installed).
+
 ## Current Status
 
 - `e1be0b5` committed (only my 6 files) and pushed; `main` in sync with `origin/main`.
@@ -492,6 +528,14 @@ compact with right gutter).
 - Note: this repo had a concurrent Claude session `7ce8ad71` (signal-bubbles / SignalDots
   workstream) that owns `SESSION_HANDOFF_CURRENT.md`; do not conflate it with this one.
 
+**Banner fix (Workstream B) — amended 2026-06-17:**
+- Code is correct and shipped, but **bundled** in `fdce894` (Replit Agent full-checkpoint),
+  not the isolated audited commit that was requested.
+- `fdce894` is committed locally, **not pushed** (4 ahead of `origin/main`).
+- Orphaned test fixed this resume: `algoHelpers.test.mjs` cache-stale test split into
+  "serves cache-stale action rows..." + "rejects genuinely transient action rows" (both
+  pass vs post-fix logic). No other banner work outstanding.
+
 ## Next Recommended Steps
 
 1. Visually verify on Signals / Flow / GEX strike profile / Positions / Algo Operations: no grip
@@ -505,3 +549,7 @@ compact with right gutter).
 4. Unrelated: the working tree still holds large pre-existing changes (signal-monitor, ibkr-bridge,
    market-data-worker, lib/db, etc.) that are NOT part of this commit — handle under their own
    workstreams/sessions.
+5. **Banner fix (Workstream B), as of 2026-06-17:** the fix + the working-tree changes step 4
+   refers to were all committed in `fdce894` (bundled, unpushed). Decide whether to (a) push
+   `fdce894` as-is, or (b) isolate the banner fix into its own commit before pushing. The
+   orphaned test is already fixed (see above); no other banner work is outstanding.
