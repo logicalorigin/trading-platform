@@ -631,6 +631,7 @@ export const AlgoLivePage = ({
   signalMatrixStates = [],
   selectedCandidate,
   signalOptionsProfile,
+  mtfAlignmentDraft,
   staSignalTimeframes,
   onOpenCandidateInTrade,
   safeQaMode = false,
@@ -1384,7 +1385,7 @@ export const AlgoLivePage = ({
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
-            mtfAlignmentConfig={signalOptionsProfile?.entryGate?.mtfAlignment}
+            mtfAlignmentConfig={mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment}
             executionTimeframe={normalizeStrategySignalTimeframe(
               strategySettingsDraft?.signalTimeframe,
             )}

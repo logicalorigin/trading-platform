@@ -52,6 +52,7 @@ import {
   formatMoney,
   formatPct,
   formatPlainPrice,
+  mergeStaSignalPipelineStages,
   mergeSignalOptionsProfile,
   numberFrom,
   normalizeStrategySignalTimeframes,
@@ -1612,29 +1613,47 @@ export const AlgoScreen = ({
     : signalMatrixFeedSettled
       ? "waiting for live signal matrix data"
       : "connecting to Signal Matrix";
-  const cockpitStageItems = cockpitPipelineStages.length
-    ? cockpitPipelineStages
-    : [
-        {
-          id: "scan_universe",
-          label: "Signal Symbols",
-          status: signalTableScanFallback.lastSignalScanAt ? "healthy" : "waiting",
-          count:
-            visibleSignalRows.length ||
-            focusedDeployment?.symbolUniverse?.length ||
-            0,
-          latestAt:
-            signalTableScanFallback.lastSignalScanAt ||
-            focusedDeployment?.lastEvaluatedAt ||
-            null,
-          lastSignalScanAt: signalTableScanFallback.lastSignalScanAt,
-          latestSignalBarAt: signalTableScanFallback.latestSignalBarAt,
-          latestSignalAt: signalTableScanFallback.latestSignalAt,
-          pollIntervalMs: signalTableScanFallback.pollIntervalMs,
-          signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
-          detail: signalMatrixFreshnessDetail,
-        },
-      ];
+  const cockpitStageItems = useMemo(() => {
+    const fallbackStages = [
+      {
+        id: "scan_universe",
+        label: "Signal Symbols",
+        status: signalTableScanFallback.lastSignalScanAt ? "healthy" : "waiting",
+        count:
+          visibleSignalRows.length ||
+          focusedDeployment?.symbolUniverse?.length ||
+          0,
+        latestAt:
+          signalTableScanFallback.lastSignalScanAt ||
+          focusedDeployment?.lastEvaluatedAt ||
+          null,
+        lastSignalScanAt: signalTableScanFallback.lastSignalScanAt,
+        latestSignalBarAt: signalTableScanFallback.latestSignalBarAt,
+        latestSignalAt: signalTableScanFallback.latestSignalAt,
+        pollIntervalMs: signalTableScanFallback.pollIntervalMs,
+        signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
+        detail: signalMatrixFreshnessDetail,
+      },
+    ];
+    return mergeStaSignalPipelineStages({
+      stages: cockpitPipelineStages.length ? cockpitPipelineStages : fallbackStages,
+      signalRows: visibleSignalRows,
+      deploymentSymbolUniverse: focusedDeployment?.symbolUniverse || [],
+      candidates: signalOptionsCandidates,
+      scanFallback: signalTableScanFallback,
+      signalMatrixFreshnessDetail,
+      signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
+    });
+  }, [
+    cockpitPipelineStages,
+    focusedDeployment?.lastEvaluatedAt,
+    focusedDeployment?.symbolUniverse,
+    signalMatrixFreshnessDetail,
+    signalOptionsCandidates,
+    signalOptionsState?.signalSourcePolicy,
+    signalTableScanFallback,
+    visibleSignalRows,
+  ]);
   const algoExecutionScanRunning = cockpitStageItems.some((stage) => {
     const record = asRecord(stage);
     return (
@@ -1716,6 +1735,7 @@ export const AlgoScreen = ({
             signalMatrixStates={signalMatrixStates}
             selectedCandidate={selectedCandidate}
             signalOptionsProfile={signalOptionsProfile}
+            mtfAlignmentDraft={profileDraft?.entryGate?.mtfAlignment}
             staSignalTimeframes={staSignalTimeframes}
             onOpenCandidateInTrade={handleOpenCandidateInTrade}
             safeQaMode={safeQaMode}

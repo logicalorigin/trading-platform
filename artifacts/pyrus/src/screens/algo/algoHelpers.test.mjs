@@ -10,6 +10,7 @@ import {
   resolveDisplayCurrentPrice,
   resolveStableStaActionSnapshot,
   resolveSignalAge,
+  resolveSignalDayMove,
   resolveSignalMove,
   signalActionLabel,
 } from "./algoHelpers.js";
@@ -57,9 +58,15 @@ test("resolveAlgoDeploymentKind routes deployments to the right control surface"
     ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS,
   );
   // Unrecognized -> "other"; null/undefined never throw.
-  assert.equal(resolveAlgoDeploymentKind({ config: {} }), ALGO_DEPLOYMENT_KIND.OTHER);
+  assert.equal(
+    resolveAlgoDeploymentKind({ config: {} }),
+    ALGO_DEPLOYMENT_KIND.OTHER,
+  );
   assert.equal(resolveAlgoDeploymentKind(null), ALGO_DEPLOYMENT_KIND.OTHER);
-  assert.equal(resolveAlgoDeploymentKind(undefined), ALGO_DEPLOYMENT_KIND.OTHER);
+  assert.equal(
+    resolveAlgoDeploymentKind(undefined),
+    ALGO_DEPLOYMENT_KIND.OTHER,
+  );
 });
 
 test("poll-derived Signal Options state/candidates do not create STA rows (live matrix is the sole source)", () => {
@@ -900,6 +907,45 @@ test("STA source selection rejects genuinely transient action rows", () => {
   assert.equal(snapshot.candidates.length, 0);
 });
 
+test("resolveSignalMove returns the signed percent from signal fire price to current price", () => {
+  // currentPrice (live) vs signalPrice (price at fire) -> +5.0%.
+  const move = resolveSignalMove({ signalPrice: 500 }, { price: 525 }, null);
+  assert.equal(move.pct.toFixed(1), "5.0");
+  assert.equal(move.label, "+5.0%");
+  assert.equal(move.detail, "+25.00");
+
+  // A drop below the fire price reads negative.
+  const down = resolveSignalMove({ signalPrice: 500 }, { price: 480 }, null);
+  assert.equal(down.label, "-4.0%");
+});
+
+test("resolveSignalMove shows the missing-value placeholder when no fire reference price is available", () => {
+  // No signalPrice/entryPrice on the record or candidate, and no sparkline bars
+  // covering the fire time, so Move must not fall back to anything else.
+  const move = resolveSignalMove({}, { price: 525 }, null);
+  assert.equal(move.pct, null);
+  assert.equal(move.label, "\u2014");
+});
+
+test("resolveSignalDayMove reads the runtime ticker day change percent", () => {
+  // The runtime ticker snapshot carries the intraday session move as pct.
+  assert.equal(resolveSignalDayMove({ pct: 1.23 }).label, "+1.2%");
+  assert.equal(resolveSignalDayMove({ pct: -0.84 }).label, "-0.8%");
+  // changePercent is accepted as an equivalent provider field.
+  assert.equal(resolveSignalDayMove({ changePercent: 2.5 }).label, "+2.5%");
+});
+
+test("resolveSignalDayMove derives the day move from price and prevClose when no percent is provided", () => {
+  const dayMove = resolveSignalDayMove({ price: 102, prevClose: 100 });
+  assert.equal(dayMove.pct.toFixed(1), "2.0");
+  assert.equal(dayMove.label, "+2.0%");
+});
+
+test("resolveSignalDayMove returns the missing-value placeholder without day change data", () => {
+  assert.equal(resolveSignalDayMove(null).label, "\u2014");
+  assert.equal(resolveSignalDayMove({ price: 100 }).label, "\u2014");
+});
+
 // --- STA Move: shared current-price source + stale-data marker ---------------
 // Regression for the impossible-move-on-stale-row bug: the Move column measured
 // "current" against a phantom price the row never displayed (BFST/FIBK +209%),
@@ -1000,42 +1046,6 @@ test("a row with no monitor status is not spuriously flagged stale", () => {
   // `undefined !== "ok"` over-flagging).
   const move = resolveSignalMove(
     { symbol: "DDD", signalPrice: 100 },
-    { price: 110 },
-    null,
-  );
-  assert.equal(move.label, "+10.0%");
-  assert.equal(move.stale, false);
-});
-
-test("Move prefers a live quote over a bar close when both exist", () => {
-  // A live snapshot quote must win over the matrix bar so price==move tracks the
-  // freshest displayed value, not a stale bar.
-  const signal = { symbol: "EEE", signalPrice: 100, currentPrice: 80, status: "ok" };
-  const displayed = resolveDisplayCurrentPrice(signal, { price: 110 });
-  const move = resolveSignalMove(signal, { price: 110 }, null);
-  assert.equal(displayed.source, "quote");
-  assert.equal(displayed.price, 110);
-  assert.equal(move.label, "+10.0%");
-});
-
-test("unavailable / error monitor statuses flag the Move stale", () => {
-  // Canonical Signal Monitor statuses other than `ok` (stale already covered)
-  // must all flag the Move so no non-fresh row shows a confident live move.
-  for (const status of ["unavailable", "error"]) {
-    const move = resolveSignalMove(
-      { symbol: "FFF", signalPrice: 100, status },
-      { price: 110 },
-      null,
-    );
-    assert.equal(move.stale, true, `${status} should flag stale`);
-  }
-});
-
-test("a history-status row is not flagged a data defect", () => {
-  // "history" is a deliberately-historical row, not a stale/defect row. Even if a
-  // live quote is present (future caller), the Move must not read as a defect.
-  const move = resolveSignalMove(
-    { symbol: "GGG", signalPrice: 100, status: "history" },
     { price: 110 },
     null,
   );

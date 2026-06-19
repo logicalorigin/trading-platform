@@ -1,6 +1,7 @@
 import {
   formatEnumLabel,
   formatOptionContractLabel,
+  formatSignedPercent,
 } from "../../lib/formatters";
 import {
   CSS_COLOR,
@@ -65,9 +66,22 @@ export const SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS = [
   { activationPct: 200, rung: "trendLine" },
 ];
 
-export const SIGNAL_OPTIONS_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
+export const SIGNAL_OPTIONS_MTF_TIMEFRAMES = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+];
 
-export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h"];
+export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+];
 
 export const SIGNAL_OPTIONS_MTF_PRESETS = [
   {
@@ -264,11 +278,13 @@ export const normalizeSignalOptionsProfileStrikeSlots = (profile) => {
   const optionSelection = asRecord(profile?.optionSelection);
   const callStrikeSlots = normalizeSignalOptionsStrikeSlots(
     optionSelection.callStrikeSlots,
-    optionSelection.callStrikeSlot ?? SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.callStrikeSlots,
+    optionSelection.callStrikeSlot ??
+      SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.callStrikeSlots,
   );
   const putStrikeSlots = normalizeSignalOptionsStrikeSlots(
     optionSelection.putStrikeSlots,
-    optionSelection.putStrikeSlot ?? SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.putStrikeSlots,
+    optionSelection.putStrikeSlot ??
+      SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.putStrikeSlots,
   );
   optionSelection.callStrikeSlots = callStrikeSlots;
   optionSelection.putStrikeSlots = putStrikeSlots;
@@ -293,7 +309,11 @@ export const normalizeSignalOptionsMtfTimeframes = (
   }
   return timeframes.length
     ? timeframes
-    : [...(Array.isArray(fallback) && fallback.length ? fallback : SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES)];
+    : [
+        ...(Array.isArray(fallback) && fallback.length
+          ? fallback
+          : SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES),
+      ];
 };
 
 export const normalizeSignalOptionsMtfPreset = (value) => {
@@ -506,7 +526,10 @@ export const resolveStableStaActionSnapshot = ({
   signalOptionsStateFailed = false,
 } = {}) => {
   const cockpitSnapshot = buildStaActionSourceSnapshot("cockpit", cockpit);
-  const stateSnapshot = buildStaActionSourceSnapshot("state", signalOptionsState);
+  const stateSnapshot = buildStaActionSourceSnapshot(
+    "state",
+    signalOptionsState,
+  );
   const failedSources = [
     cockpitFailed ? "cockpit" : null,
     signalOptionsStateFailed ? "state" : null,
@@ -717,7 +740,9 @@ export const buildStaSignalMatrixRows = ({
         staIsoStringOrNull(stateRecord.signalAt);
       if (!direction || !signalAt) return null;
 
-      const status = normalizeMatchKey(stateRecord.status || "ok").toLowerCase();
+      const status = normalizeMatchKey(
+        stateRecord.status || "ok",
+      ).toLowerCase();
       if (status === "pending" || status === "unknown") return null;
       const signalPrice =
         staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
@@ -728,19 +753,23 @@ export const buildStaSignalMatrixRows = ({
       // populated across execution-timeframe changes. Live quote/sparkline
       // snapshots still override this in resolveSignalMove when present.
       const currentPrice = staFiniteNumberOrNull(stateRecord.latestBarClose);
-      const barsSinceSignal = staFiniteNumberOrNull(stateRecord.barsSinceSignal);
+      const barsSinceSignal = staFiniteNumberOrNull(
+        stateRecord.barsSinceSignal,
+      );
       const fresh = stateRecord.fresh === true;
       // Actionability is backend-authored (SSE matrix stream + REST both
       // carry it). A state without the fields is ineligible by default —
       // the safe direction; no client-side age inference remains.
-      const actionBlocker = normalizeMatchKey(stateRecord.actionBlocker) || null;
+      const actionBlocker =
+        normalizeMatchKey(stateRecord.actionBlocker) || null;
       const actionEligible = stateRecord.actionEligible === true;
 
       return {
         profileId: normalizeMatchKey(stateRecord.profileId) || null,
         signalKey: signalMatrixStateSignalKey(stateRecord, signalAt, direction),
         source: normalizeMatchKey(stateRecord.source) || "signal-matrix",
-        sourceType: normalizeMatchKey(stateRecord.sourceType) || "signal_matrix_state",
+        sourceType:
+          normalizeMatchKey(stateRecord.sourceType) || "signal_matrix_state",
         eventId: normalizeMatchKey(stateRecord.eventId) || null,
         symbol,
         timeframe,
@@ -918,6 +947,132 @@ export const buildVisibleSignalRows = ({
   );
 };
 
+const hasStaActionPayload = (candidate) =>
+  Object.keys(asRecord(asRecord(candidate).action)).length > 0;
+
+const hasStaSelectedContract = (candidate) =>
+  Object.keys(asRecord(asRecord(candidate).selectedContract)).length > 0;
+
+const keepPipelineAlertStatus = (status) =>
+  ["blocked", "attention", "running", "stale"].includes(status);
+
+const livePipelineStatus = (count, fallbackStatus) =>
+  Number(count) > 0 && !keepPipelineAlertStatus(fallbackStatus)
+    ? "healthy"
+    : fallbackStatus;
+
+const STA_PIPELINE_STAGE_FALLBACKS = Object.freeze({
+  scan_universe: {
+    id: "scan_universe",
+    label: "Signal Symbols",
+    status: "waiting",
+    count: 0,
+  },
+  signal_detected: {
+    id: "signal_detected",
+    label: "Signal Received",
+    status: "waiting",
+    count: 0,
+    detail: "awaiting live STA rows",
+  },
+  action_mapped: {
+    id: "action_mapped",
+    label: "Action Mapped",
+    status: "waiting",
+    count: 0,
+    detail: "waiting for buy-call or buy-put mapping",
+  },
+  contract_selected: {
+    id: "contract_selected",
+    label: "Contract Selected",
+    status: "waiting",
+    count: 0,
+    detail: "waiting for contract selection",
+  },
+});
+
+export const mergeStaSignalPipelineStages = ({
+  stages = [],
+  signalRows = [],
+  deploymentSymbolUniverse = [],
+  candidates = [],
+  scanFallback = {},
+  signalMatrixFreshnessDetail = null,
+  signalSourcePolicy = null,
+} = {}) => {
+  const liveSignalRows = Array.isArray(signalRows) ? signalRows : [];
+  const candidateRows = Array.isArray(candidates) ? candidates : [];
+  const universeCount = Array.isArray(deploymentSymbolUniverse)
+    ? deploymentSymbolUniverse.length
+    : 0;
+  const liveSignalCount = liveSignalRows.length;
+  const actionMappedCount = candidateRows.filter(hasStaActionPayload).length;
+  const selectedContractCount = candidateRows.filter(
+    hasStaSelectedContract,
+  ).length;
+
+  const hydrateStage = (stage) => {
+    const record = asRecord(stage);
+    if (record.id === "scan_universe") {
+      return {
+        ...record,
+        count: universeCount || record.count || 0,
+        lastSignalScanAt:
+          scanFallback.lastSignalScanAt || record.lastSignalScanAt || null,
+        latestSignalBarAt:
+          scanFallback.latestSignalBarAt || record.latestSignalBarAt || null,
+        latestSignalAt:
+          scanFallback.latestSignalAt || record.latestSignalAt || null,
+        pollIntervalMs:
+          scanFallback.pollIntervalMs ?? record.pollIntervalMs ?? null,
+        signalSourcePolicy:
+          signalSourcePolicy || record.signalSourcePolicy || null,
+        detail: signalMatrixFreshnessDetail || record.detail,
+      };
+    }
+    if (record.id === "signal_detected") {
+      return {
+        ...record,
+        status: livePipelineStatus(liveSignalCount, record.status),
+        count: liveSignalCount,
+        latestAt: scanFallback.latestSignalAt || record.latestAt || null,
+        detail: liveSignalCount
+          ? `${liveSignalCount} live STA rows from Signal Matrix`
+          : record.detail,
+      };
+    }
+    if (record.id === "action_mapped") {
+      return {
+        ...record,
+        status: livePipelineStatus(actionMappedCount, record.status),
+        count: actionMappedCount,
+      };
+    }
+    if (record.id === "contract_selected") {
+      return {
+        ...record,
+        status: livePipelineStatus(selectedContractCount, record.status),
+        count: selectedContractCount,
+      };
+    }
+    return record;
+  };
+  const mergedStages = (Array.isArray(stages) ? stages : []).map(hydrateStage);
+  const mergedIds = new Set(mergedStages.map((stage) => asRecord(stage).id));
+  [
+    "scan_universe",
+    "signal_detected",
+    "action_mapped",
+    "contract_selected",
+  ].forEach((stageId) => {
+    if (mergedIds.has(stageId)) {
+      return;
+    }
+    mergedStages.push(hydrateStage(STA_PIPELINE_STAGE_FALLBACKS[stageId]));
+  });
+  return mergedStages;
+};
+
 export const findSignalOptionsCandidateForSignal = (candidates, signal) => {
   const signalRecord = asRecord(signal);
   const candidateList = Array.isArray(candidates) ? candidates : [];
@@ -987,7 +1142,9 @@ export const shadowLinkSummary = (shadowLink) => {
     link.orderId ? "order linked" : null,
     link.fillId ? "fill linked" : null,
     link.positionId ? "position linked" : null,
-    link.attributionStatus ? String(link.attributionStatus).replace(/_/g, " ") : null,
+    link.attributionStatus
+      ? String(link.attributionStatus).replace(/_/g, " ")
+      : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" / ") : "Shadow ledger link pending";
 };
@@ -1020,7 +1177,9 @@ export const signalBarsSinceLabel = (signal) => {
 export const signalFilterStateLabel = (signal) => {
   const filterState = asRecord(asRecord(signal).filterState);
   const entries = Object.entries(filterState)
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .filter(
+      ([, value]) => value !== null && value !== undefined && value !== "",
+    )
     .slice(0, 3)
     .map(([key, value]) => `${formatEnumLabel(key)} ${String(value)}`);
   return entries.length ? entries.join(" / ") : MISSING_VALUE;
@@ -1030,7 +1189,8 @@ export const cloneProfile = (profile) =>
   JSON.parse(JSON.stringify(profile || SIGNAL_OPTIONS_DEFAULT_PROFILE));
 
 export const signalOptionsActionLabel = (status) =>
-  SIGNAL_OPTIONS_ACTION_LABELS[status] || formatEnumLabel(status || "candidate");
+  SIGNAL_OPTIONS_ACTION_LABELS[status] ||
+  formatEnumLabel(status || "candidate");
 
 export const formatLiquidityReason = (reason) =>
   SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS[reason] ||
@@ -1135,14 +1295,18 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
   const record = asRecord(signal);
   const barsSinceSignal = finiteNumberOrNull(record.barsSinceSignal);
   const windowBars = clampMetric(
-    Math.round(finiteNumberOrNull(freshWindowBars ?? record.freshWindowBars) ?? 3),
+    Math.round(
+      finiteNumberOrNull(freshWindowBars ?? record.freshWindowBars) ?? 3,
+    ),
     1,
     20,
   );
   const signalAt = record.signalAt ?? record.currentSignalAt;
   const elapsed = formatElapsedShort(signalAt, now);
   const barsLabel =
-    barsSinceSignal != null ? `${Math.round(barsSinceSignal)}/${windowBars} bars` : MISSING_VALUE;
+    barsSinceSignal != null
+      ? `${Math.round(barsSinceSignal)}/${windowBars} bars`
+      : MISSING_VALUE;
   const freshnessPct =
     barsSinceSignal != null
       ? clampMetric(1 - barsSinceSignal / windowBars, 0, 1) * 100
@@ -1201,7 +1365,7 @@ const latestSparklineClose = (snapshot, record) => {
 // Single source of truth for the "current" underlying price the STA row both
 // DISPLAYS (price column) and MEASURES THE MOVE AGAINST. Resolving these from
 // one chain means the price the user sees and the price the Move is computed
-// from can never diverge -- a divergence is what let stale rows show a confident
+// from can never diverge - a divergence is what let stale rows show a confident
 // Move against a phantom price the UI never displayed (BFST/FIBK +209%).
 // Precedence: live snapshot quote -> last-evaluated bar close (matrix
 // latestBarClose / sparkline) -> signal fire price as the last resort.
@@ -1240,7 +1404,7 @@ export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
 // and the backend root-cause must agree on what "stale" means, so the canonical
 // signal lives here and nowhere else. Per the Signal Monitor model
 // (signal-monitor-actionability.ts:45-58 authors actionBlocker `data_stale`
-// from status !== "ok"), staleness is the row's own monitor state -- NOT a quote
+// from status !== "ok"), staleness is the row's own monitor state - NOT a quote
 // freshness/cacheAgeMs heuristic (those cannot represent a 15h-stale row).
 const resolveMoveStaleness = (record) => {
   if (record.stale === true) return true;
@@ -1250,14 +1414,14 @@ const resolveMoveStaleness = (record) => {
   const status = String(record.status || "")
     .trim()
     .toLowerCase();
-  // "history" is a deliberately-historical row, not a data defect, so it must
-  // not read as stale (the loud "quote stale during market hours" marker would
-  // be wrong for it). Defends future callers that render history rows with a
-  // live quote; today such rows resolve to the fire tier and the Move is blank.
-  return status !== "" && status !== "ok" && status !== "history";
+  return status !== "" && status !== "ok";
 };
 
-export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = null) => {
+export const resolveSignalMove = (
+  signal,
+  tickerSnapshot = null,
+  candidate = null,
+) => {
   const record = asRecord(signal);
   const snapshot = asRecord(tickerSnapshot);
   const candidateRecord = asRecord(candidate);
@@ -1297,6 +1461,32 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
     detail: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
     stale: resolveMoveStaleness(record),
   };
+};
+
+// Day's move percent for the underlying, sourced from the runtime ticker
+// snapshot (runtimeTickerStore/runtimeMarketDataModel already derives `pct`
+// from price vs prevClose, falling back to the provider's changePercent). This
+// is the intraday session change shown beside the price - distinct from
+// resolveSignalMove, which measures price relative to the signal fire price.
+// Compact 1-digit label to match the Move column's percent style.
+export const resolveSignalDayMove = (tickerSnapshot = null) => {
+  const snapshot = asRecord(tickerSnapshot);
+  let pct = firstPresentFiniteMetric(snapshot.pct, snapshot.changePercent);
+  if (pct == null) {
+    const price = firstPresentFiniteMetric(
+      snapshot.price,
+      snapshot.last,
+      snapshot.mark,
+    );
+    const prevClose = firstPresentFiniteMetric(snapshot.prevClose);
+    if (price != null && prevClose != null && prevClose !== 0) {
+      pct = ((price - prevClose) / prevClose) * 100;
+    }
+  }
+  if (pct == null) {
+    return { pct: null, label: MISSING_VALUE };
+  }
+  return { pct, label: formatSignedPercent(pct, 1) };
 };
 
 const scoreReasonLabel = (reason) =>
@@ -1345,12 +1535,16 @@ export const resolveSignalScoreBreakdown = ({
   }
 
   const filterState = asRecord(signalRecord.filterState);
-  const direction = String(candidateRecord.direction || signalRecord.direction || "buy").toLowerCase();
+  const direction = String(
+    candidateRecord.direction || signalRecord.direction || "buy",
+  ).toLowerCase();
   const directionSign = direction === "sell" ? -1 : 1;
   const mtfDirections = Array.isArray(filterState.mtfDirections)
     ? filterState.mtfDirections.map(Number).filter(Number.isFinite)
     : [];
-  const mtfMatches = mtfDirections.filter((item) => item === directionSign).length;
+  const mtfMatches = mtfDirections.filter(
+    (item) => item === directionSign,
+  ).length;
   const adx = finiteNumberOrNull(filterState.adx);
   const signalAge = resolveSignalAge(signalRecord, { freshWindowBars });
   const quoteRecord = asRecord(quote ?? candidateRecord.quote);
@@ -1395,12 +1589,25 @@ export const resolveSignalScoreBreakdown = ({
           ? 3
           : 8;
   const score =
-    mtfAlignment + freshness + trendStrength + liquidityScore + riskFit + dataQuality;
+    mtfAlignment +
+    freshness +
+    trendStrength +
+    liquidityScore +
+    riskFit +
+    dataQuality;
   const reasons = [
     mtfAlignmentReason(mtfDirections, mtfMatches),
-    signalAge.freshnessPct >= 67 ? "fresh_signal" : signalAge.freshnessPct <= 20 ? "aging_signal" : null,
+    signalAge.freshnessPct >= 67
+      ? "fresh_signal"
+      : signalAge.freshnessPct <= 20
+        ? "aging_signal"
+        : null,
     adx != null && adx >= 25 ? "adx_confirmed" : null,
-    liquidityTier === "strong" ? "strong_liquidity" : liquidityTier === "weak" ? "weak_liquidity" : null,
+    liquidityTier === "strong"
+      ? "strong_liquidity"
+      : liquidityTier === "weak"
+        ? "weak_liquidity"
+        : null,
     premiumAtRisk != null && premiumAtRisk > 0 ? "risk_sized" : null,
   ].filter(Boolean);
   const roundedScore = Number(score.toFixed(1));
@@ -1444,7 +1651,12 @@ export const resolveCandidateGateDisplay = (candidate) => {
   const record = asRecord(candidate);
   const reason = String(record.reason || "").trim();
   if (!reason) {
-    return { category: "clear", label: "Gate clear", detail: "no blocker", tone: CSS_COLOR.green };
+    return {
+      category: "clear",
+      label: "Gate clear",
+      detail: "no blocker",
+      tone: CSS_COLOR.green,
+    };
   }
   const category = candidateReasonCategory(record);
   return {
@@ -1454,7 +1666,9 @@ export const resolveCandidateGateDisplay = (candidate) => {
     tone:
       category === "risk" || category === "gateway"
         ? CSS_COLOR.red
-        : category === "liquidity" || category === "contract_resolution" || category === "marking"
+        : category === "liquidity" ||
+            category === "contract_resolution" ||
+            category === "marking"
           ? CSS_COLOR.amber
           : CSS_COLOR.textDim,
   };
@@ -1464,19 +1678,35 @@ export const resolveCandidateSyncDisplay = (candidate) => {
   const record = asRecord(candidate);
   const shadowLink = asRecord(record.shadowLink);
   const syncStatus = String(record.syncStatus || "").trim();
-  const actionStatus = String(record.actionStatus || record.status || "").trim();
+  const actionStatus = String(
+    record.actionStatus || record.status || "",
+  ).trim();
   if (syncStatus === "mismatch" || actionStatus === "mismatch") {
-    return { label: "Mismatch", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.red };
+    return {
+      label: "Mismatch",
+      detail: shadowLinkSummary(shadowLink),
+      tone: CSS_COLOR.red,
+    };
   }
   if (syncStatus === "event_only") {
-    return { label: "Event only", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.amber };
+    return {
+      label: "Event only",
+      detail: shadowLinkSummary(shadowLink),
+      tone: CSS_COLOR.amber,
+    };
   }
   if (shadowLink.fillId || shadowLink.orderId || shadowLink.positionId) {
-    return { label: "Synced", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.green };
+    return {
+      label: "Synced",
+      detail: shadowLinkSummary(shadowLink),
+      tone: CSS_COLOR.green,
+    };
   }
   return {
     label: syncStatus ? formatEnumLabel(syncStatus) : "Pending",
-    detail: actionStatus ? signalOptionsActionLabel(actionStatus) : "shadow link pending",
+    detail: actionStatus
+      ? signalOptionsActionLabel(actionStatus)
+      : "shadow link pending",
     tone: syncStatus ? CSS_COLOR.textSec : CSS_COLOR.textDim,
   };
 };
@@ -1496,9 +1726,14 @@ export const numberFrom = (value, fallback) => {
 export const boundedNumberFrom = (value, fallback, min, max) =>
   Math.min(max, Math.max(min, numberFrom(value, fallback)));
 
-export const resolveStrategySignalSettings = (deployment, signalMonitorProfile) => {
+export const resolveStrategySignalSettings = (
+  deployment,
+  signalMonitorProfile,
+) => {
   const parameters = asRecord(asRecord(deployment?.config).parameters);
-  const pyrusSignalsSettings = asRecord(signalMonitorProfile?.pyrusSignalsSettings);
+  const pyrusSignalsSettings = asRecord(
+    signalMonitorProfile?.pyrusSignalsSettings,
+  );
   const marketStructure = asRecord(
     pyrusSignalsSettings.marketStructure ?? parameters.marketStructure,
   );
@@ -1506,9 +1741,9 @@ export const resolveStrategySignalSettings = (deployment, signalMonitorProfile) 
   const configTimeframe = String(parameters.signalTimeframe || "");
   const signalTimeframe = STRATEGY_SIGNAL_TIMEFRAMES.includes(profileTimeframe)
     ? profileTimeframe
-      : STRATEGY_SIGNAL_TIMEFRAMES.includes(configTimeframe)
-        ? configTimeframe
-        : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+    : STRATEGY_SIGNAL_TIMEFRAMES.includes(configTimeframe)
+      ? configTimeframe
+      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
   const rawBosConfirmation = String(
     marketStructure.bosConfirmation ??
       pyrusSignalsSettings.bosConfirmation ??
@@ -1522,7 +1757,9 @@ export const resolveStrategySignalSettings = (deployment, signalMonitorProfile) 
     : DEFAULT_STRATEGY_SIGNAL_SETTINGS.bosConfirmation;
   const timeHorizon = Math.round(
     boundedNumberFrom(
-      marketStructure.timeHorizon ?? pyrusSignalsSettings.timeHorizon ?? parameters.timeHorizon,
+      marketStructure.timeHorizon ??
+        pyrusSignalsSettings.timeHorizon ??
+        parameters.timeHorizon,
       DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
       2,
       50,
@@ -1661,7 +1898,10 @@ export const mergeSignalOptionsProfile = (source) => {
     );
     profile.optionSelection.maxDte = Math.max(
       profile.optionSelection.minDte,
-      numberFrom(parameters.signalOptionsMaxDte, profile.optionSelection.maxDte),
+      numberFrom(
+        parameters.signalOptionsMaxDte,
+        profile.optionSelection.maxDte,
+      ),
     );
     profile.optionSelection.targetDte = Math.min(
       profile.optionSelection.maxDte,
@@ -1736,7 +1976,8 @@ export const signalOptionsApi = async (url, options = {}) => {
     let message = `Request failed (${response.status})`;
     try {
       const payload = await response.json();
-      message = payload?.detail || payload?.message || payload?.error || message;
+      message =
+        payload?.detail || payload?.message || payload?.error || message;
     } catch {
       // best effort error body
     }
@@ -1754,10 +1995,14 @@ export const formatMoney = (value, digits = 0) =>
     : MISSING_VALUE;
 
 export const formatPlainPrice = (value, digits = 2) =>
-  Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : MISSING_VALUE;
+  Number.isFinite(Number(value))
+    ? Number(value).toFixed(digits)
+    : MISSING_VALUE;
 
 export const formatPct = (value, digits = 1) =>
-  Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : MISSING_VALUE;
+  Number.isFinite(Number(value))
+    ? `${Number(value).toFixed(digits)}%`
+    : MISSING_VALUE;
 
 export const formatChaseSteps = (steps) =>
   Array.isArray(steps)
@@ -1770,7 +2015,9 @@ export const parseChaseSteps = (value, fallback = []) => {
     .map((item) => Number(item.trim().replace(/%$/, "")))
     .filter((item) => Number.isFinite(item))
     .map((item) => Math.min(1, Math.max(0, item > 1 ? item / 100 : item)));
-  return parsed.length ? Array.from(new Set(parsed)).sort((a, b) => a - b) : fallback;
+  return parsed.length
+    ? Array.from(new Set(parsed)).sort((a, b) => a - b)
+    : fallback;
 };
 
 export const formatProgressiveTrailSteps = (steps) =>
@@ -1799,7 +2046,12 @@ export const formatWireTrailRungs = (steps) =>
         .join(", ")
     : "";
 
-const WIRE_TRAIL_RUNG_VALUES = new Set(["trendLine", "wire1", "wire2", "wire3"]);
+const WIRE_TRAIL_RUNG_VALUES = new Set([
+  "trendLine",
+  "wire1",
+  "wire2",
+  "wire3",
+]);
 const WIRE_TRAIL_DISPLAY_ORDER = ["wire3", "wire2", "wire1", "trendLine"];
 const WIRE_TRAIL_RUNG_LABELS = {
   wire3: "W3",
@@ -1815,7 +2067,9 @@ export const parseWireTrailRungs = (value, fallback = []) => {
     .filter(Boolean)
     .map((item) => {
       const [activationRaw, rungRaw] = item.split(/[/:|\s]+/);
-      const activationPct = Number(String(activationRaw || "").replace(/%$/, ""));
+      const activationPct = Number(
+        String(activationRaw || "").replace(/%$/, ""),
+      );
       const rung = String(rungRaw || "").trim();
       return {
         activationPct,
@@ -1868,10 +2122,7 @@ export const resolvePositionWireTrailState = (position) => {
   };
 };
 
-export const deriveWireTrailControlSummary = ({
-  profile,
-  positions,
-} = {}) => {
+export const deriveWireTrailControlSummary = ({ profile, positions } = {}) => {
   const exitPolicy = asRecord(asRecord(profile).exitPolicy);
   const wireGreekTrail = asRecord(exitPolicy.wireGreekTrail);
   const enabled = wireGreekTrail.enabled === true;
@@ -1890,8 +2141,8 @@ export const deriveWireTrailControlSummary = ({
           state.latestUnderlyingClose == null,
       ).length
     : 0;
-  const greekFallbackPositions = states.filter(
-    (state) => Boolean(state.greekFallbackReason),
+  const greekFallbackPositions = states.filter((state) =>
+    Boolean(state.greekFallbackReason),
   ).length;
   const staleGreekPositions = states.filter((state) =>
     /stale/i.test(state.greekFallbackReason || ""),
@@ -2012,7 +2263,9 @@ export const formatContractLabel = (contract) => {
 };
 
 export const optionProviderContractId = (contract) =>
-  String(asRecord(contract).providerContractId || asRecord(contract).conid || "").trim();
+  String(
+    asRecord(contract).providerContractId || asRecord(contract).conid || "",
+  ).trim();
 
 const positiveNumberOrNull = (value) => {
   const numeric = Number(value);
@@ -2038,9 +2291,11 @@ export const mergeOptionQuoteSnapshot = (quote, liveQuote) => {
     vega: live.vega ?? base.vega,
     openInterest: live.openInterest ?? base.openInterest,
     volume: live.volume ?? base.volume,
-    quoteFreshness: live.quoteFreshness ?? live.freshness ?? base.quoteFreshness,
+    quoteFreshness:
+      live.quoteFreshness ?? live.freshness ?? base.quoteFreshness,
     marketDataMode: live.marketDataMode ?? base.marketDataMode,
-    quoteUpdatedAt: live.quoteUpdatedAt ?? live.updatedAt ?? base.quoteUpdatedAt,
+    quoteUpdatedAt:
+      live.quoteUpdatedAt ?? live.updatedAt ?? base.quoteUpdatedAt,
     dataUpdatedAt: live.dataUpdatedAt ?? base.dataUpdatedAt,
     updatedAt: live.updatedAt ?? base.updatedAt,
     ageMs: live.ageMs ?? live.cacheAgeMs ?? base.ageMs,
@@ -2078,7 +2333,11 @@ const quoteStateDisplay = (record) => {
     record.status,
     record.marketDataMode,
   );
-  const reason = firstText(record.reason, record.blockedReason, record.errorMessage);
+  const reason = firstText(
+    record.reason,
+    record.blockedReason,
+    record.errorMessage,
+  );
   if (!state && !reason) return null;
   return {
     main: state ? formatEnumLabel(state) : "Unavailable",
@@ -2095,8 +2354,10 @@ export const formatCompactMetric = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return MISSING_VALUE;
   const abs = Math.abs(numeric);
-  if (abs >= 1_000_000) return `${(numeric / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `${(numeric / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
+  if (abs >= 1_000_000)
+    return `${(numeric / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000)
+    return `${(numeric / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
   return numeric.toFixed(0);
 };
 
@@ -2104,7 +2365,9 @@ const parseExpirationDate = (value) => {
   const text = String(value || "").trim();
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
-  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  const date = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -2113,9 +2376,15 @@ export const formatDteLabel = (expirationDate, now = new Date()) => {
   const current = now instanceof Date ? now : new Date(now);
   if (!expiration || Number.isNaN(current.getTime())) return MISSING_VALUE;
   const currentDate = new Date(
-    Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate()),
+    Date.UTC(
+      current.getUTCFullYear(),
+      current.getUTCMonth(),
+      current.getUTCDate(),
+    ),
   );
-  const days = Math.round((expiration.getTime() - currentDate.getTime()) / 86_400_000);
+  const days = Math.round(
+    (expiration.getTime() - currentDate.getTime()) / 86_400_000,
+  );
   return days >= 0 ? `${days}DTE` : `${Math.abs(days)}d exp`;
 };
 
@@ -2129,7 +2398,11 @@ export const formatContractProviderLabel = (contract) => {
         : providerContractId;
     return `conid ${compactId}`;
   }
-  const ticker = firstText(record.ticker, record.optionTicker, record.localSymbol);
+  const ticker = firstText(
+    record.ticker,
+    record.optionTicker,
+    record.localSymbol,
+  );
   return ticker || MISSING_VALUE;
 };
 
@@ -2139,7 +2412,10 @@ export const formatContractDetail = (contract, { now } = {}) => {
   if (main === MISSING_VALUE) {
     return { main, detail: MISSING_VALUE };
   }
-  const multiplier = firstFiniteNumber(record.multiplier, record.sharesPerContract);
+  const multiplier = firstFiniteNumber(
+    record.multiplier,
+    record.sharesPerContract,
+  );
   const provider = formatContractProviderLabel(record);
   const detail = [
     formatDteLabel(record.expirationDate ?? record.exp ?? record.expiry, now),
@@ -2176,7 +2452,10 @@ export const formatQuoteSummary = (quote, liquidity) => {
     quoteRecord.freshness,
     liquidityRecord.freshness,
   );
-  const mode = firstText(quoteRecord.marketDataMode, liquidityRecord.marketDataMode);
+  const mode = firstText(
+    quoteRecord.marketDataMode,
+    liquidityRecord.marketDataMode,
+  );
   const main =
     bid != null || ask != null
       ? `${formatOptionalMoney(bid, 2)} / ${formatOptionalMoney(ask, 2)}`
@@ -2192,7 +2471,9 @@ export const formatQuoteSummary = (quote, liquidity) => {
   const priceDetail = [
     mid != null ? `mid ${formatOptionalMoney(mid, 2)}` : null,
     mark != null ? `mark ${formatOptionalMoney(mark, 2)}` : null,
-    last != null && mark == null ? `last ${formatOptionalMoney(last, 2)}` : null,
+    last != null && mark == null
+      ? `last ${formatOptionalMoney(last, 2)}`
+      : null,
   ].filter(Boolean);
   const marketDetail = [
     spreadPct != null
@@ -2270,12 +2551,22 @@ export const formatContractSelectionSummary = (selection) => {
   const selectedSlot = firstText(record.selectedSlot);
   const main = [
     selectedSlot ? `selected slot ${selectedSlot}` : null,
-    preferredSlot && preferredSlot !== selectedSlot ? `preferred ${preferredSlot}` : null,
+    preferredSlot && preferredSlot !== selectedSlot
+      ? `preferred ${preferredSlot}`
+      : null,
   ].filter(Boolean);
-  const failedAttempt = attempts.find((attempt) => firstText(asRecord(attempt).reason));
+  const failedAttempt = attempts.find((attempt) =>
+    firstText(asRecord(attempt).reason),
+  );
   const detail = [
-    record.fallbackUsed === true ? "fallback used" : attempts.length ? "preferred path" : null,
-    attempts.length ? `${attempts.length} attempt${attempts.length === 1 ? "" : "s"}` : null,
+    record.fallbackUsed === true
+      ? "fallback used"
+      : attempts.length
+        ? "preferred path"
+        : null,
+    attempts.length
+      ? `${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`
+      : null,
     failedAttempt ? formatEnumLabel(asRecord(failedAttempt).reason) : null,
   ].filter(Boolean);
   return {
@@ -2286,7 +2577,8 @@ export const formatContractSelectionSummary = (selection) => {
 
 export const signalOptionsActionColor = (status) => {
   if (status === "shadow_filled") return CSS_COLOR.green;
-  if (status === "manual_override" || status === "partial_shadow") return CSS_COLOR.amber;
+  if (status === "manual_override" || status === "partial_shadow")
+    return CSS_COLOR.amber;
   if (status === "blocked" || status === "mismatch") return CSS_COLOR.red;
   if (status === "closed") return CSS_COLOR.textDim;
   return CSS_COLOR.cyan;
@@ -2331,9 +2623,24 @@ export const PROFILE_NUMBER_FIELDS = [
   ["exitPolicy", "lowQualityEarlyExitLossPct", "Low-quality loss %", 1],
   ["exitPolicy", "highQualityEarlyExitBars", "High-quality exit bars", 1],
   ["exitPolicy", "highQualityEarlyExitLossPct", "High-quality loss %", 1],
-  ["exitPolicy", "weakLiquidityTrailGivebackPct", "Weak liquidity giveback %", 1],
-  ["exitPolicy", "strongLiquidityTrailGivebackPct", "Strong liquidity giveback %", 1],
-  ["exitPolicy", "highQualityOvernightMinGainPct", "High-quality overnight min %", 1],
+  [
+    "exitPolicy",
+    "weakLiquidityTrailGivebackPct",
+    "Weak liquidity giveback %",
+    1,
+  ],
+  [
+    "exitPolicy",
+    "strongLiquidityTrailGivebackPct",
+    "Strong liquidity giveback %",
+    1,
+  ],
+  [
+    "exitPolicy",
+    "highQualityOvernightMinGainPct",
+    "High-quality overnight min %",
+    1,
+  ],
 ];
 
 export const PROFILE_BOOLEAN_FIELDS = [
@@ -2356,7 +2663,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "riskHaltControls",
         key: "dailyLossHaltEnabled",
         label: "Daily loss",
-        title: "Blocks new entries once daily P&L breaches the configured loss halt.",
+        title:
+          "Blocks new entries once daily P&L breaches the configured loss halt.",
         reasons: ["daily_loss_halt_active"],
       },
       {
@@ -2364,7 +2672,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "riskHaltControls",
         key: "openSymbolCapEnabled",
         label: "Open symbols",
-        title: "Blocks new symbols once open exposure reaches the configured cap.",
+        title:
+          "Blocks new symbols once open exposure reaches the configured cap.",
         reasons: ["max_open_symbols_reached"],
       },
       {
@@ -2372,7 +2681,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "riskHaltControls",
         key: "premiumBudgetEnabled",
         label: "Premium budget",
-        title: "Caps entry quantity by the configured premium-per-entry budget.",
+        title:
+          "Caps entry quantity by the configured premium-per-entry budget.",
         reasons: ["premium_budget_too_small", "premium_budget_exceeded"],
       },
       {
@@ -2382,7 +2692,10 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         label: "Allowance",
         title:
           "Caps total open premium per deployment to a virtual sub-account budget (net of fees). Entries size down to fit; positions are never force-closed. Simulation only.",
-        reasons: ["trading_allowance_exhausted", "trading_allowance_sized_down"],
+        reasons: [
+          "trading_allowance_exhausted",
+          "trading_allowance_sized_down",
+        ],
       },
     ],
   },
@@ -2395,7 +2708,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "entryHaltControls",
         key: "mtfAlignmentEnabled",
         label: "MTF alignment",
-        title: "Blocks entries when multi-timeframe alignment is below the configured count.",
+        title:
+          "Blocks entries when multi-timeframe alignment is below the configured count.",
         reasons: ["mtf_not_aligned"],
       },
       {
@@ -2403,7 +2717,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "entryHaltControls",
         key: "inversePutBlocklistEnabled",
         label: "Inverse puts",
-        title: "Blocks put entries on inverse ETF symbols in the configured blocklist.",
+        title:
+          "Blocks put entries on inverse ETF symbols in the configured blocklist.",
         reasons: ["inverse_put_blocked"],
       },
       {
@@ -2411,8 +2726,13 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "entryHaltControls",
         key: "bearishRegimeEnabled",
         label: "Bear regime",
-        title: "Blocks put entries that fail the configured bearish-regime filter.",
-        reasons: ["bear_regime_gate_failed", "adx_below_minimum", "mtf_fully_bullish"],
+        title:
+          "Blocks put entries that fail the configured bearish-regime filter.",
+        reasons: [
+          "bear_regime_gate_failed",
+          "adx_below_minimum",
+          "mtf_fully_bullish",
+        ],
       },
     ],
   },
@@ -2425,7 +2745,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "liquidityHaltControls",
         key: "bidAskRequiredEnabled",
         label: "Bid/ask",
-        title: "Blocks entries without a usable bid/ask quote when bid/ask is required.",
+        title:
+          "Blocks entries without a usable bid/ask quote when bid/ask is required.",
         reasons: ["missing_bid_ask"],
       },
       {
@@ -2433,7 +2754,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "liquidityHaltControls",
         key: "freshQuoteRequiredEnabled",
         label: "Fresh quote",
-        title: "Blocks entries when the option quote is stale, pending, or unavailable.",
+        title:
+          "Blocks entries when the option quote is stale, pending, or unavailable.",
         reasons: ["quote_not_fresh"],
       },
       {
@@ -2441,7 +2763,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "liquidityHaltControls",
         key: "spreadGateEnabled",
         label: "Spread",
-        title: "Blocks entries when bid/ask spread exceeds the configured percent of mid.",
+        title:
+          "Blocks entries when bid/ask spread exceeds the configured percent of mid.",
         reasons: ["spread_too_wide"],
       },
       {
@@ -2463,7 +2786,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "positionHaltControls",
         key: "sameDirectionPositionBlockEnabled",
         label: "Same direction",
-        title: "Blocks duplicate same-direction entries for a symbol that already has an active position.",
+        title:
+          "Blocks duplicate same-direction entries for a symbol that already has an active position.",
         reasons: ["same_direction_position_open"],
       },
       {
@@ -2471,7 +2795,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "positionHaltControls",
         key: "oppositeSignalFlipBlockEnabled",
         label: "Opposite flip",
-        title: "Blocks opposite-signal flips when the exit policy has flipping disabled.",
+        title:
+          "Blocks opposite-signal flips when the exit policy has flipping disabled.",
         reasons: ["opposite_signal_flip_disabled"],
       },
       {
@@ -2479,7 +2804,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "positionHaltControls",
         key: "positionMarkFeedHaltEnabled",
         label: "Mark feed",
-        title: "Blocks new entries while open positions cannot be marked reliably.",
+        title:
+          "Blocks new entries while open positions cannot be marked reliably.",
         reasons: ["position_mark_feed_degraded"],
       },
     ],
@@ -2493,7 +2819,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "infrastructureHaltControls",
         key: "gatewayReadinessBlockEnabled",
         label: "Gateway",
-        title: "Blocks entries when broker/data gateway readiness is not green.",
+        title:
+          "Blocks entries when broker/data gateway readiness is not green.",
         reasons: [
           "algo_gateway_not_ready",
           "accounts_unavailable",
@@ -2512,7 +2839,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "infrastructureHaltControls",
         key: "resourcePressureScanBlockEnabled",
         label: "Resource load",
-        title: "Lets API resource-pressure automation skip deployment scans under load.",
+        title:
+          "Lets API resource-pressure automation skip deployment scans under load.",
         reasons: [],
       },
       {
@@ -2520,7 +2848,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         section: "infrastructureHaltControls",
         key: "contractResolutionBackoffEnabled",
         label: "Contract backoff",
-        title: "Lets option-chain and expiration backoff skips suppress repeat contract resolution attempts.",
+        title:
+          "Lets option-chain and expiration backoff skips suppress repeat contract resolution attempts.",
         reasons: ["option_chain_backoff", "option_expiration_backoff"],
       },
     ],
@@ -2559,16 +2888,18 @@ const signalOptionsHaltReasonCounts = (cockpit) => {
     const payload = asRecord(asRecord(event).payload);
     incrementHaltReasonCounter(counts, payload.reason || payload.skipReason);
   });
-  (Array.isArray(record.candidates) ? record.candidates : []).forEach((candidate) => {
-    const candidateRecord = asRecord(candidate);
-    incrementHaltReasonCounter(counts, candidateRecord.reason);
-    const entryGate = asRecord(candidateRecord.entryGate);
-    if (Array.isArray(entryGate.reasons)) {
-      entryGate.reasons.forEach((reason) =>
-        incrementHaltReasonCounter(counts, reason),
-      );
-    }
-  });
+  (Array.isArray(record.candidates) ? record.candidates : []).forEach(
+    (candidate) => {
+      const candidateRecord = asRecord(candidate);
+      incrementHaltReasonCounter(counts, candidateRecord.reason);
+      const entryGate = asRecord(candidateRecord.entryGate);
+      if (Array.isArray(entryGate.reasons)) {
+        entryGate.reasons.forEach((reason) =>
+          incrementHaltReasonCounter(counts, reason),
+        );
+      }
+    },
+  );
   return counts;
 };
 

@@ -8,7 +8,9 @@ import {
   hasStaCandidateAction,
   hasUsableSparklineData,
   resolveRowTickerSnapshot,
+  sortRows,
   splitStaRowsBySignalMatrixHydration,
+  staRowPassesMtfAlignment,
 } from "./OperationsSignalTable.jsx";
 
 const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.url), "utf8");
@@ -16,6 +18,48 @@ const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.u
 test("STA table does not request Signal Matrix hydration", () => {
   assert.doesNotMatch(source, /onRequestSignalMatrixHydration/);
   assert.doesNotMatch(source, /buildAlgoSignalMatrixHydrationRequest/);
+});
+
+test("STA Move sort uses the live ticker snapshot shown by each row", () => {
+  const rows = [
+    {
+      signal: {
+        symbol: "ESS",
+        signalPrice: 100,
+        currentPrice: 150,
+        signalAt: "2026-06-18T13:00:00.000Z",
+      },
+    },
+    {
+      signal: {
+        symbol: "FHI",
+        signalPrice: 100,
+        currentPrice: 101,
+        signalAt: "2026-06-18T12:00:00.000Z",
+      },
+    },
+    {
+      signal: {
+        symbol: "FCEL",
+        signalPrice: 100,
+        currentPrice: 102,
+        signalAt: "2026-06-18T11:00:00.000Z",
+      },
+    },
+  ];
+
+  const sorted = sortRows(rows, "move", null, "desc", {
+    tickerSnapshotsBySymbol: {
+      ESS: { price: 99 },
+      FHI: { price: 122.8 },
+      FCEL: { price: 115.6 },
+    },
+  });
+
+  assert.deepEqual(
+    sorted.map((row) => row.signal.symbol),
+    ["FHI", "FCEL", "ESS"],
+  );
 });
 
 test("STA source-health banner only fires on a genuinely empty matrix", () => {
@@ -318,4 +362,60 @@ test("STA row sparklines do not use DB-backed bars batch hydration", () => {
   assert.doesNotMatch(source, /\/api\/bars\/batch/);
   assert.doesNotMatch(source, /algo-signal-row-sparklines/);
   assert.doesNotMatch(source, /fetchStaSignalSparklineBarsBatch/);
+});
+
+// A per-timeframe matrix cell as it lives in signalMatrixBySymbol[symbol].
+// getCurrentSignalDirection requires currentSignalDirection, active, and a
+// display-eligible status, matching how the row reads its bubbles.
+const matrixCell = (timeframe, direction) => ({
+  symbol: "MU",
+  timeframe,
+  status: "ok",
+  active: true,
+  fresh: true,
+  currentSignalDirection: direction,
+  currentSignalAt: "2026-06-08T19:00:00.000Z",
+  latestBarAt: "2026-06-08T19:10:00.000Z",
+});
+
+const buyRow = (symbol) => ({ signal: { symbol, direction: "buy" } });
+
+test("STA MTF alignment filter hides divergent and unconfirmed rows when enabled", () => {
+  const mtfAlignmentConfig = {
+    enabled: true,
+    timeframes: ["2m", "5m"],
+    requiredCount: 2,
+  };
+  // 2m buy / 5m sell -> divergent -> excluded.
+  const divergent = {
+    MU: { "2m": matrixCell("2m", "buy"), "5m": matrixCell("5m", "sell") },
+  };
+  assert.equal(
+    staRowPassesMtfAlignment(buyRow("MU"), divergent, mtfAlignmentConfig),
+    false,
+  );
+  // 2m buy / 5m missing -> unconfirmed (neutral) -> matches 1 < 2 -> excluded.
+  const missing = { MU: { "2m": matrixCell("2m", "buy") } };
+  assert.equal(
+    staRowPassesMtfAlignment(buyRow("MU"), missing, mtfAlignmentConfig),
+    false,
+  );
+  // 2m buy / 5m buy -> fully aligned -> included.
+  const aligned = {
+    MU: { "2m": matrixCell("2m", "buy"), "5m": matrixCell("5m", "buy") },
+  };
+  assert.equal(
+    staRowPassesMtfAlignment(buyRow("MU"), aligned, mtfAlignmentConfig),
+    true,
+  );
+});
+
+test("STA MTF alignment filter includes all rows when the gate is disabled", () => {
+  const disabled = { enabled: false, timeframes: ["2m", "5m"], requiredCount: 2 };
+  const divergent = {
+    MU: { "2m": matrixCell("2m", "buy"), "5m": matrixCell("5m", "sell") },
+  };
+  const missing = { MU: { "2m": matrixCell("2m", "buy") } };
+  assert.equal(staRowPassesMtfAlignment(buyRow("MU"), divergent, disabled), true);
+  assert.equal(staRowPassesMtfAlignment(buyRow("MU"), missing, disabled), true);
 });

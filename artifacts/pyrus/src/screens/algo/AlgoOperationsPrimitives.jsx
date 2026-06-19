@@ -182,6 +182,13 @@ const PIPELINE_PHASES = [
   },
 ];
 
+const PIPELINE_PHASE_COUNT_STAGE_ID = {
+  "signal-cycle": "signal_detected",
+  "entry-path": "contract_selected",
+  orders: "order_shadow",
+  management: "position_managed",
+};
+
 const STAGE_PRIORITY = {
   blocked: 5,
   attention: 4,
@@ -220,9 +227,11 @@ export const buildAlgoPipelinePhases = (stages = []) => {
     const stageCounts = Object.fromEntries(
       phaseStages.map((stage) => [stage.id, countLabel(stage)]),
     );
+    const countStage =
+      stageById.get(PIPELINE_PHASE_COUNT_STAGE_ID[phase.id]) || selectedStage;
     const detail =
       phase.id === "signal-cycle"
-        ? `${stageCounts.scan_universe || "0"} symbols -> ${stageCounts.signal_detected || "0"} received`
+        ? `${stageCounts.scan_universe || "0"} symbols -> ${stageCounts.signal_detected || "0"} STA rows`
         : phase.id === "entry-path"
           ? `${stageCounts.action_mapped || "0"} actions -> ${stageCounts.contract_selected || "0"} contracts`
           : phase.id === "orders"
@@ -231,7 +240,7 @@ export const buildAlgoPipelinePhases = (stages = []) => {
     return {
       id: phase.id,
       label: phase.label,
-      count: countLabel(selectedStage),
+      count: countLabel(countStage),
       detail,
       status: pickPhaseStatus(phaseStages),
       stageIds: phase.stageIds,

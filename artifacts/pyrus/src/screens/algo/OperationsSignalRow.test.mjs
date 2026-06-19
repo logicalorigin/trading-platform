@@ -13,7 +13,14 @@ import {
   directionMeta,
   resolveStaSparklineSignalTreatment,
   resolveSparklineData,
+  resolveSparklineDataSource,
 } from "./OperationsSignalRow.jsx";
+
+const makeSparkBars = (count, start = 100) =>
+  Array.from({ length: count }, (_, index) => ({
+    close: start + index,
+    timestamp: `2026-06-08T20:${String(index).padStart(2, "0")}:00.000Z`,
+  }));
 
 test("STA signal direction labels remain executable BUY/SELL labels", () => {
   assert.equal(directionMeta("buy").label, "BUY");
@@ -33,9 +40,9 @@ test("STA signal direction trend wording remains available separately", () => {
 });
 
 test("STA sparkline resolver keeps hydrated quote sparklines ahead of signal data", () => {
-  const snapshotSparkBars = [{ close: 100 }, { close: 101 }];
-  const snapshotSpark = [100, 101, 102];
-  const signalSparkBars = [{ close: 90 }, { close: 91 }];
+  const snapshotSparkBars = makeSparkBars(48, 100);
+  const snapshotSpark = makeSparkBars(48, 200);
+  const signalSparkBars = makeSparkBars(48, 90);
 
   assert.equal(
     resolveSparklineData(
@@ -49,17 +56,34 @@ test("STA sparkline resolver keeps hydrated quote sparklines ahead of signal dat
     ),
     snapshotSparkBars,
   );
+  assert.equal(
+    resolveSparklineDataSource({ sparkBars: snapshotSparkBars }),
+    "runtime-spark-bars",
+  );
 });
 
-test("STA sparkline resolver accepts legacy signal sparkline shapes", () => {
-  const signalSparkBars = [{ close: 90 }, { close: 91 }];
-  const signalSpark = [90, 91, 92];
-  const signalBars = [{ c: 88 }, { c: 89 }];
+test("STA sparkline resolver rejects legacy signal-row sparkline payloads", () => {
+  const signalSparkBars = makeSparkBars(48, 90);
+  const signalSpark = makeSparkBars(48, 80);
+  const signalBars = makeSparkBars(48, 70).map((bar) => ({
+    c: bar.close,
+    timestamp: bar.timestamp,
+  }));
 
-  assert.equal(resolveSparklineData({}, { sparkBars: signalSparkBars }), signalSparkBars);
-  assert.equal(resolveSparklineData({}, { spark: signalSpark }), signalSpark);
-  assert.equal(resolveSparklineData({}, { bars: signalBars }), signalBars);
-  assert.deepEqual(resolveSparklineData({}, { sparkBars: [{ close: 90 }] }), []);
+  assert.deepEqual(
+    resolveSparklineData({}, { sparkBars: signalSparkBars }),
+    [],
+  );
+  assert.deepEqual(resolveSparklineData({}, { spark: signalSpark }), []);
+  assert.deepEqual(resolveSparklineData({}, { bars: signalBars }), []);
+  assert.deepEqual(
+    resolveSparklineData({ sparkBars: makeSparkBars(4, 90) }, {}),
+    [],
+  );
+  assert.equal(
+    resolveSparklineDataSource({ sparkBars: makeSparkBars(4, 90) }),
+    "empty",
+  );
 });
 
 test("STA sparkline treatment follows signal direction instead of price slope", () => {
@@ -73,11 +97,14 @@ test("STA sparkline treatment follows signal direction instead of price slope", 
     mode: "current",
     direction: "sell",
   });
-  assert.deepEqual(resolveStaSparklineSignalTreatment("buy", { hasTimeline: true }), {
-    color: null,
-    mode: "timeline",
-    direction: "buy",
-  });
+  assert.deepEqual(
+    resolveStaSparklineSignalTreatment("buy", { hasTimeline: true }),
+    {
+      color: null,
+      mode: "timeline",
+      direction: "buy",
+    },
+  );
   assert.deepEqual(resolveStaSparklineSignalTreatment(null), {
     color: null,
     mode: "price",

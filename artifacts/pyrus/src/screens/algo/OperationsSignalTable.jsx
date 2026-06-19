@@ -59,10 +59,16 @@ import {
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
 import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
-import { useRuntimeTickerSnapshot } from "../../features/platform/runtimeTickerStore";
+import {
+  useRuntimeTickerSnapshot,
+  useRuntimeTickerSnapshots,
+} from "../../features/platform/runtimeTickerStore";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
-import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
+import {
+  SIGNALS_TABLE_TIMEFRAMES,
+  resolveConfiguredMtfAlignment,
+} from "../../features/signals/signalsRowModel.js";
 import { readSignalMatrixStateActivityMs } from "../../features/signals/signalMatrixStateMerge.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
@@ -80,6 +86,7 @@ import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_COLUMN_ORDER,
   DEFAULT_SIGNAL_VISIBLE_COLUMNS,
+  directionMeta,
   OperationsSignalRow,
   OperationsSignalTableHeader,
   SIGNAL_COLUMN_BY_KEY,
@@ -340,11 +347,12 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   compact,
   scanActive,
   onRowAction,
+  tickerSnapshotOverride,
 }) {
   const symbolKey = String(asRecord(signal).symbol || "").toUpperCase();
   const runtimeTickerSnapshot = useRuntimeTickerSnapshot(symbolKey);
   const tickerSnapshot = resolveRowTickerSnapshot(
-    runtimeTickerSnapshot,
+    tickerSnapshotOverride ?? runtimeTickerSnapshot,
     null,
   );
 
@@ -453,8 +461,10 @@ const firstFiniteSortNumber = (...values) => {
   return Number.NaN;
 };
 
-const signalMoveSortValue = (row) => {
-  const move = resolveSignalMove(row.signal, null, row.candidate);
+const signalMoveSortValue = (row, tickerSnapshotsBySymbol = null) => {
+  const symbolKey = String(asRecord(row.signal).symbol || "").toUpperCase();
+  const tickerSnapshot = asRecord(tickerSnapshotsBySymbol)[symbolKey] || null;
+  const move = resolveSignalMove(row.signal, tickerSnapshot, row.candidate);
   // Sink stale/uncertain moves like a missing value so a data-stale row can't
   // top the Move sort with a number we don't trust.
   if (move.pct == null || move.stale) return Number.NaN;
@@ -831,11 +841,30 @@ export const splitStaRowsBySignalMatrixHydration = ({
   };
 };
 
+// When the deployment's MTF alignment gate is enabled, the STA table hides rows
+// that do not pass it (divergent frames, or required frames unconfirmed). This
+// mirrors how each row evaluates its own readout (OperationsSignalRow:2263): the
+// raw matrix for the row symbol and the displayed signal direction feed
+// resolveConfiguredMtfAlignment. A row is hidden when the gate applies and the
+// row is not aligned (matches < requiredCount).
+export const staRowPassesMtfAlignment = (row, signalMatrixBySymbol, mtfAlignmentConfig) => {
+  const symbolUpper = String(asRecord(row?.signal).symbol || "").toUpperCase();
+  const result = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
+    signalDirection: directionMeta(asRecord(row?.signal).direction).primitive,
+    timeframes: mtfAlignmentConfig?.timeframes,
+    requiredCount: mtfAlignmentConfig?.requiredCount,
+    enabled: mtfAlignmentConfig?.enabled !== false,
+  });
+  return !(result.applicable && !result.aligned);
+};
+
 export const sortRows = (
   rows,
   sortKey,
   focusedSymbol = null,
   sortDirection = defaultSortDirection(sortKey),
+  { tickerSnapshotsBySymbol = null } = {},
 ) => {
   const focused = String(focusedSymbol || "").toUpperCase();
   const copy = [...rows];
@@ -866,8 +895,8 @@ export const sortRows = (
     if (sortKey === "move") {
       return (
         compareFiniteValues(
-          signalMoveSortValue(a),
-          signalMoveSortValue(b),
+          signalMoveSortValue(a, tickerSnapshotsBySymbol),
+          signalMoveSortValue(b, tickerSnapshotsBySymbol),
           sortDirection,
         ) || fallbackCompare(a, b)
       );
@@ -1308,6 +1337,17 @@ export const OperationsSignalTable = ({
     events,
     signals,
   ]);
+  const moveSortSymbols = useMemo(() => {
+    if (sortKey !== "move") return [];
+    return Array.from(
+      new Set(
+        sourceRows
+          .map((row) => String(asRecord(row.signal).symbol || "").toUpperCase())
+          .filter(Boolean),
+      ),
+    );
+  }, [sortKey, sourceRows]);
+  const moveSortTickerSnapshots = useRuntimeTickerSnapshots(moveSortSymbols);
   const staFilteredRows = useMemo(() => {
     const filteredByStatus = sourceRows.filter((row) =>
       signalTableFilterMatches(row, filter),
@@ -1316,10 +1356,21 @@ export const OperationsSignalTable = ({
     const filtered = normalizedQuery
       ? filteredByStatus.filter((row) => rowSearchText(row).includes(normalizedQuery))
       : filteredByStatus;
-    return sortRows(filtered, sortKey, null, sortDirection);
+    // When the deployment's MTF alignment gate is enabled, hide rows that do not
+    // pass it (divergent frames or required frames unconfirmed/unavailable),
+    // mirroring how each row evaluates its own readout (OperationsSignalRow:2263).
+    const mtfFiltered = filtered.filter((row) =>
+      staRowPassesMtfAlignment(row, signalMatrixBySymbol, mtfAlignmentConfig),
+    );
+    return sortRows(mtfFiltered, sortKey, null, sortDirection, {
+      tickerSnapshotsBySymbol: moveSortTickerSnapshots,
+    });
   }, [
     filter,
+    mtfAlignmentConfig,
+    moveSortTickerSnapshots,
     searchQuery,
+    signalMatrixBySymbol,
     sourceRows,
     sortDirection,
     sortKey,
@@ -2003,6 +2054,11 @@ export const OperationsSignalTable = ({
                     compact={signalTableCompact}
                     scanActive={freshness.scanRunning}
                     onRowAction={handleRowAction}
+                    tickerSnapshotOverride={
+                      sortKey === "move"
+                        ? moveSortTickerSnapshots[String(symbol || "").toUpperCase()]
+                        : undefined
+                    }
                   />
                 );
               })

@@ -74,6 +74,7 @@ import {
   resolveCandidateSyncDisplay,
   resolveDisplayCurrentPrice,
   resolveSignalAge,
+  resolveSignalDayMove,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
   signalActionBlockerLabel,
@@ -241,7 +242,9 @@ export const SIGNAL_COLUMN_BY_KEY = new Map(
 );
 
 const SIGNAL_COLUMN_KEYS = new Set(DEFAULT_SIGNAL_COLUMN_ORDER);
-const ALWAYS_VISIBLE_SIGNAL_COLUMN_KEYS = new Set(ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS);
+const ALWAYS_VISIBLE_SIGNAL_COLUMN_KEYS = new Set(
+  ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
+);
 
 const classNames = (...values) => values.filter(Boolean).join(" ") || undefined;
 
@@ -270,25 +273,33 @@ export const normalizeSignalColumnOrder = (value) => {
 };
 
 export const normalizeSignalVisibleColumns = (value) => {
-  const requested = Array.isArray(value) ? value : DEFAULT_SIGNAL_VISIBLE_COLUMNS;
+  const requested = Array.isArray(value)
+    ? value
+    : DEFAULT_SIGNAL_VISIBLE_COLUMNS;
   const visible = new Set(
     requested.filter((columnId) => SIGNAL_COLUMN_KEYS.has(columnId)),
   );
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS.forEach((columnId) => visible.add(columnId));
-  return normalizeSignalColumnOrder(DEFAULT_SIGNAL_COLUMN_ORDER).filter((columnId) =>
-    visible.has(columnId),
+  return normalizeSignalColumnOrder(DEFAULT_SIGNAL_COLUMN_ORDER).filter(
+    (columnId) => visible.has(columnId),
   );
 };
 
 export const resolveSignalVisibleColumnObjects = (columns) => {
-  const source = Array.isArray(columns) ? columns : DEFAULT_SIGNAL_VISIBLE_COLUMNS;
+  const source = Array.isArray(columns)
+    ? columns
+    : DEFAULT_SIGNAL_VISIBLE_COLUMNS;
   const seen = new Set();
   return source
     .map((column) =>
       typeof column === "string" ? SIGNAL_COLUMN_BY_KEY.get(column) : column,
     )
     .filter((column) => {
-      if (!column || !SIGNAL_COLUMN_KEYS.has(column.key) || seen.has(column.key)) {
+      if (
+        !column ||
+        !SIGNAL_COLUMN_KEYS.has(column.key) ||
+        seen.has(column.key)
+      ) {
         return false;
       }
       seen.add(column.key);
@@ -449,12 +460,18 @@ const diagnosticContractCount = (candidate) => {
 const diagnosticLiveDemandSummary = (liveQuoteDemand) => {
   const demand = asRecord(liveQuoteDemand);
   if (!Object.keys(demand).length) return null;
-  const states = Array.isArray(demand.states) ? demand.states.map(asRecord) : [];
+  const states = Array.isArray(demand.states)
+    ? demand.states.map(asRecord)
+    : [];
   const firstPending =
-    states.find((state) => String(state.status || "").toLowerCase() === "pending") ||
+    states.find(
+      (state) => String(state.status || "").toLowerCase() === "pending",
+    ) ||
     states[0] ||
     {};
-  const status = String(demand.status || firstPending.status || "").toLowerCase();
+  const status = String(
+    demand.status || firstPending.status || "",
+  ).toLowerCase();
   const reason = String(demand.reason || firstPending.reason || "").trim();
   const hydrationAttempts = Number(demand.hydrationAttempts);
   const hydrationWaitMs = Number(demand.hydrationWaitMs);
@@ -467,7 +484,9 @@ const diagnosticLiveDemandSummary = (liveQuoteDemand) => {
   const detail = compactJoin([
     firstDisplayLabel(reason),
     Number.isFinite(hydrationAttempts) ? `${hydrationAttempts} attempts` : null,
-    Number.isFinite(hydrationWaitMs) ? `${formatQuoteAge(hydrationWaitMs)} wait` : null,
+    Number.isFinite(hydrationWaitMs)
+      ? `${formatQuoteAge(hydrationWaitMs)} wait`
+      : null,
     Number.isFinite(cacheAgeMs) ? `${formatQuoteAge(cacheAgeMs)} cache` : null,
     requestedCount > 1 ? `${requestedCount} contracts` : null,
   ]);
@@ -497,7 +516,9 @@ const resolveSelectionStageDisplay = ({
     candidateRecord.actionStatus || candidateRecord.status || "",
   ).toLowerCase();
   const contractSelectionStatus = contractSelectionStatusValue(candidateRecord);
-  const liveDemand = diagnosticLiveDemandSummary(candidateRecord.liveQuoteDemand);
+  const liveDemand = diagnosticLiveDemandSummary(
+    candidateRecord.liveQuoteDemand,
+  );
   const reason = String(candidateRecord.reason || "").trim();
   const contractSelectionReason = String(
     candidateRecord.contractSelectionReason || reason || "",
@@ -580,7 +601,10 @@ const resolveSelectionStageDisplay = ({
     };
   }
 
-  if (liveDemand && ["rejected", "unavailable", "stale"].includes(liveDemand.status)) {
+  if (
+    liveDemand &&
+    ["rejected", "unavailable", "stale"].includes(liveDemand.status)
+  ) {
     return {
       main: firstDisplayLabel(liveDemand.status),
       detail: liveDemand.detail,
@@ -630,7 +654,9 @@ const resolveSelectionStageDisplay = ({
   if (candidateRecord.optionMarketDataBackoff) {
     return {
       main: "Backoff",
-      detail: firstDisplayLabel(asRecord(candidateRecord.optionMarketDataBackoff).reason),
+      detail: firstDisplayLabel(
+        asRecord(candidateRecord.optionMarketDataBackoff).reason,
+      ),
       tone: CSS_COLOR.amber,
       Icon: Clock,
       motionState: "wait",
@@ -758,9 +784,7 @@ const shouldShowContractSelectionStage = (candidate) => {
       contractSelectionStatus === "deferred"
     );
   }
-  return (
-    candidateActionStatusValue(candidate) === "candidate"
-  );
+  return candidateActionStatusValue(candidate) === "candidate";
 };
 
 const selectionStageDetail = (selectionStage) =>
@@ -773,7 +797,8 @@ const missingContractDisplay = (candidate, blocker, selectionStage) => {
   if (!candidate) {
     return missingDisplay(MISSING_VALUE, MISSING_VALUE);
   }
-  if (hasBlockerDisplay(blocker)) return missingDisplay("Not selected", blocker);
+  if (hasBlockerDisplay(blocker))
+    return missingDisplay("Not selected", blocker);
   if (shouldShowContractSelectionStage(candidate)) {
     return missingDisplay(
       selectionStage?.contractMain || selectionStage?.main || "Resolving",
@@ -783,8 +808,13 @@ const missingContractDisplay = (candidate, blocker, selectionStage) => {
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
-const missingQuoteDisplay = ({ blocker, selectedContractId, selectionStage }) => {
-  if (hasBlockerDisplay(blocker)) return missingDisplay("Not requested", blocker);
+const missingQuoteDisplay = ({
+  blocker,
+  selectedContractId,
+  selectionStage,
+}) => {
+  if (hasBlockerDisplay(blocker))
+    return missingDisplay("Not requested", blocker);
   if (hasDisplayValue(selectionStage?.quoteMain)) {
     return missingDisplay(
       selectionStage.quoteMain,
@@ -795,7 +825,10 @@ const missingQuoteDisplay = ({ blocker, selectedContractId, selectionStage }) =>
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
   if (hasDisplayValue(selectionStage?.contractMain)) {
-    return missingDisplay("Not requested", selectionStageDetail(selectionStage));
+    return missingDisplay(
+      "Not requested",
+      selectionStageDetail(selectionStage),
+    );
   }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
@@ -827,7 +860,8 @@ const missingSpreadDisplay = ({
   if (selectedContractId && !hasQuote) {
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
-  if (selectedContractId) return missingDisplay("Spread pending", MISSING_VALUE);
+  if (selectedContractId)
+    return missingDisplay("Spread pending", MISSING_VALUE);
   if (candidate && shouldShowContractSelectionStage(candidate)) {
     return missingDisplay("Not priced", selectionStageDetail(selectionStage));
   }
@@ -882,7 +916,11 @@ const statusPillMeta = (signal, candidate, blocker) => {
     };
   }
   if (signal?.actionEligible === true) {
-    return { label: "Candidate missing", tone: CSS_COLOR.red, Icon: AlertTriangle };
+    return {
+      label: "Candidate missing",
+      tone: CSS_COLOR.red,
+      Icon: AlertTriangle,
+    };
   }
   if (signal?.status === "unavailable") {
     return { label: "Unavailable", tone: CSS_COLOR.textDim, Icon: MinusCircle };
@@ -894,11 +932,14 @@ const statusPillMeta = (signal, candidate, blocker) => {
 };
 
 const compactPillLabel = (label) => {
-  const normalized = String(label || "").trim().toLowerCase();
+  const normalized = String(label || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return "--";
   if (normalized.includes("ready") || normalized.includes("try")) return "GO";
   if (normalized.includes("block") || normalized.includes("pass")) return "NO";
-  if (normalized.includes("wait") || normalized.includes("pending")) return "WAIT";
+  if (normalized.includes("wait") || normalized.includes("pending"))
+    return "WAIT";
   if (normalized.includes("stale")) return "OLD";
   if (normalized.includes("unavailable")) return "--";
   return String(label).trim().slice(0, 4).toUpperCase();
@@ -958,40 +999,40 @@ const StatusPill = ({
           className,
         )}
         style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        maxWidth: "100%",
-        minWidth: 0,
-        padding: sp("1px 6px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${cssColorAlpha(tone, "33")}`,
-        background: cssColorAlpha(tone, "1A"),
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        lineHeight: 1.2,
-        verticalAlign: "middle",
-      }}
-      >
-      {Icon ? (
-        <Icon
-          size={SIGNAL_ICON_SIZE}
-          strokeWidth={1.8}
-          aria-hidden="true"
-          style={{ flex: "0 0 auto" }}
-        />
-      ) : null}
-      <span
-        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          maxWidth: "100%",
           minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          padding: sp("1px 6px"),
+          borderRadius: dim(RADII.pill),
+          border: `1px solid ${cssColorAlpha(tone, "33")}`,
+          background: cssColorAlpha(tone, "1A"),
+          color: tone,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          lineHeight: 1.2,
+          verticalAlign: "middle",
         }}
       >
-        {meta.label}
-      </span>
+        {Icon ? (
+          <Icon
+            size={SIGNAL_ICON_SIZE}
+            strokeWidth={1.8}
+            aria-hidden="true"
+            style={{ flex: "0 0 auto" }}
+          />
+        ) : null}
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {meta.label}
+        </span>
       </span>
     </AppTooltip>
   );
@@ -1016,7 +1057,8 @@ const resolveDecisionDetailMeta = ({
   statusMeta,
 }) => {
   if (blocker !== MISSING_VALUE) {
-    const base = DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.other;
+    const base =
+      DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.other;
     return {
       tone: gate.tone || base.tone,
       shortLabel: gate.detail || blocker,
@@ -1038,7 +1080,9 @@ const resolveDecisionDetailMeta = ({
     };
   }
 
-  const actionStatus = String(candidate?.actionStatus || candidate?.status || "").trim();
+  const actionStatus = String(
+    candidate?.actionStatus || candidate?.status || "",
+  ).trim();
   if (actionStatus && actionStatus !== "candidate") {
     return {
       tone: statusMeta.tone || CSS_COLOR.textDim,
@@ -1055,7 +1099,8 @@ const resolveDecisionDetailMeta = ({
     };
   }
 
-  const base = DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.clear;
+  const base =
+    DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.clear;
   return {
     tone: gate.tone || base.tone,
     shortLabel: gate.category === "clear" ? "Gate clear" : gate.label,
@@ -1079,16 +1124,28 @@ const positiveNumberOrNull = (value) => {
 const resolveUnderlyingPrice = (signal, tickerSnapshot) =>
   resolveDisplayCurrentPrice(signal, tickerSnapshot).price;
 
+const STA_SPARKLINE_MIN_VISUAL_POINTS = 8;
+
 const hasDrawableSparklineData = (value) =>
-  Array.isArray(value) && extractSparklinePoints(value).length >= 2;
+  Array.isArray(value) &&
+  extractSparklinePoints(value).length >= STA_SPARKLINE_MIN_VISUAL_POINTS;
 
 export const resolveSparklineData = (tickerSnapshot, signal) => {
-  if (hasDrawableSparklineData(tickerSnapshot?.sparkBars)) return tickerSnapshot.sparkBars;
-  if (hasDrawableSparklineData(tickerSnapshot?.spark)) return tickerSnapshot.spark;
-  if (hasDrawableSparklineData(signal?.sparkBars)) return signal.sparkBars;
-  if (hasDrawableSparklineData(signal?.spark)) return signal.spark;
-  if (hasDrawableSparklineData(signal?.bars)) return signal.bars;
+  if (hasDrawableSparklineData(tickerSnapshot?.sparkBars))
+    return tickerSnapshot.sparkBars;
+  if (hasDrawableSparklineData(tickerSnapshot?.spark))
+    return tickerSnapshot.spark;
   return [];
+};
+
+export const resolveSparklineDataSource = (tickerSnapshot) => {
+  if (hasDrawableSparklineData(tickerSnapshot?.sparkBars)) {
+    return "runtime-spark-bars";
+  }
+  if (hasDrawableSparklineData(tickerSnapshot?.spark)) {
+    return "runtime-spark";
+  }
+  return "empty";
 };
 
 export const resolveStaSparklineSignalTreatment = (
@@ -1128,9 +1185,15 @@ const resolveFreshnessRatio = (signal) => {
 const quoteGaugeInput = (quote, liquidity) => {
   const quoteRecord = asRecord(quote);
   const liquidityRecord = asRecord(liquidity);
-  const bid = positiveNumberOrNull(quoteRecord.bid) ?? positiveNumberOrNull(liquidityRecord.bid);
-  const ask = positiveNumberOrNull(quoteRecord.ask) ?? positiveNumberOrNull(liquidityRecord.ask);
-  const mid = positiveNumberOrNull(quoteRecord.mid) ?? positiveNumberOrNull(liquidityRecord.mid);
+  const bid =
+    positiveNumberOrNull(quoteRecord.bid) ??
+    positiveNumberOrNull(liquidityRecord.bid);
+  const ask =
+    positiveNumberOrNull(quoteRecord.ask) ??
+    positiveNumberOrNull(liquidityRecord.ask);
+  const mid =
+    positiveNumberOrNull(quoteRecord.mid) ??
+    positiveNumberOrNull(liquidityRecord.mid);
   const widthPct = resolveSpreadWidthFraction({ bid, ask, mid });
   return { bid, ask, mid, widthPct };
 };
@@ -1141,17 +1204,22 @@ const signalDisplay = (signal) => {
   const direction = directionMeta(signal?.direction);
   return {
     main: direction.trend,
-    detail: [
-      score !== MISSING_VALUE ? `score ${score}` : null,
-      freshness !== MISSING_VALUE ? freshness : null,
-    ].filter(Boolean).join(" · ") || MISSING_VALUE,
+    detail:
+      [
+        score !== MISSING_VALUE ? `score ${score}` : null,
+        freshness !== MISSING_VALUE ? freshness : null,
+      ]
+        .filter(Boolean)
+        .join(" \u00b7 ") || MISSING_VALUE,
     direction,
     freshness,
   };
 };
 
 const matrixVerdictDisplay = (verdict) => {
-  const reasons = Array.isArray(verdict?.reasonCodes) ? verdict.reasonCodes : [];
+  const reasons = Array.isArray(verdict?.reasonCodes)
+    ? verdict.reasonCodes
+    : [];
   const main = scoreTierLabel(verdict?.tradeReadiness);
   const detail = compactJoin([
     scoreTierLabel(verdict?.regime),
@@ -1196,8 +1264,10 @@ const actionIntentTokens = (label) =>
 
 const actionIntentTokenTone = (token) => {
   const normalized = String(token || "").toUpperCase();
-  if (normalized === "BUY" || normalized === "CALL") return toneForDirectionalIntent("bullish");
-  if (normalized === "SELL" || normalized === "PUT") return toneForDirectionalIntent("bearish");
+  if (normalized === "BUY" || normalized === "CALL")
+    return toneForDirectionalIntent("bullish");
+  if (normalized === "SELL" || normalized === "PUT")
+    return toneForDirectionalIntent("bearish");
   return CSS_COLOR.textDim;
 };
 
@@ -1212,7 +1282,9 @@ const actionPlanDisplay = (signal, candidate) => {
   const sizeAndLimit = [
     Number.isFinite(quantity) && quantity > 0 ? `${quantity}ct` : null,
     limit !== MISSING_VALUE ? `@ ${limit}` : null,
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   const detail = [
     sizeAndLimit || null,
     premium !== MISSING_VALUE ? `${premium} risk` : null,
@@ -1247,7 +1319,9 @@ const DataCell = ({
       content={[
         titleValue ?? (typeof value === "string" ? value : null),
         hasDisplayValue(detail) ? detail : null,
-      ].filter(Boolean).join(" · ")}
+      ]
+        .filter(Boolean)
+        .join(" \u00b7 ")}
     >
       <span
         className={signalCellClassName(motionState, className)}
@@ -1371,55 +1445,59 @@ const GreeksGridCell = ({
           lineHeight: 1,
         }}
       >
-      {items.map((item, index) => {
-        const leftColumn = index % 2 === 0;
-        const topRow = index < 2;
-        return (
-          <AppTooltip key={item.key} content={`${item.title} ${item.value}`}>
-            <span
-              data-testid={`algo-signal-greek-${item.key}`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "max-content minmax(0, 1fr)",
-              alignItems: "center",
-              gap: sp(2),
-              minWidth: 0,
-              padding: sp("1px 3px"),
-              borderRight: leftColumn ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
-              borderBottom: topRow ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
-              boxSizing: "border-box",
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                color: CSS_COLOR.textMuted,
-                fontSize: fs(8),
-                fontWeight: FONT_WEIGHTS.medium,
-                lineHeight: 1,
-              }}
-            >
-              {item.label}
-            </span>
-            <span
-              aria-label={`${item.title} ${item.value}`}
-              style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                fontSize: fs(9),
-                fontVariantNumeric: "tabular-nums",
-                lineHeight: 1,
-              }}
-            >
-              {item.value}
-            </span>
-            </span>
-          </AppTooltip>
-        );
-      })}
+        {items.map((item, index) => {
+          const leftColumn = index % 2 === 0;
+          const topRow = index < 2;
+          return (
+            <AppTooltip key={item.key} content={`${item.title} ${item.value}`}>
+              <span
+                data-testid={`algo-signal-greek-${item.key}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "max-content minmax(0, 1fr)",
+                  alignItems: "center",
+                  gap: sp(2),
+                  minWidth: 0,
+                  padding: sp("1px 3px"),
+                  borderRight: leftColumn
+                    ? `1px solid ${CSS_COLOR.borderLight}`
+                    : undefined,
+                  borderBottom: topRow
+                    ? `1px solid ${CSS_COLOR.borderLight}`
+                    : undefined,
+                  boxSizing: "border-box",
+                  overflow: "hidden",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    color: CSS_COLOR.textMuted,
+                    fontSize: fs(8),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    lineHeight: 1,
+                  }}
+                >
+                  {item.label}
+                </span>
+                <span
+                  aria-label={`${item.title} ${item.value}`}
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    fontSize: fs(9),
+                    fontVariantNumeric: "tabular-nums",
+                    lineHeight: 1,
+                  }}
+                >
+                  {item.value}
+                </span>
+              </span>
+            </AppTooltip>
+          );
+        })}
       </span>
     </AppTooltip>
   );
@@ -1429,7 +1507,11 @@ const PlanCell = ({ plan, titleValue, motionState = null }) => {
   const detail = hasDisplayValue(plan?.detail) ? plan.detail : MISSING_VALUE;
   const intentTokens = actionIntentTokens(plan?.main);
   return (
-    <AppTooltip content={[titleValue, plan?.main, detail].filter(hasDisplayValue).join(" · ")}>
+    <AppTooltip
+      content={[titleValue, plan?.main, detail]
+        .filter(hasDisplayValue)
+        .join(" \u00b7 ")}
+    >
       <span
         className={signalCellClassName(motionState)}
         data-testid="algo-signal-plan-cell"
@@ -1441,64 +1523,67 @@ const PlanCell = ({ plan, titleValue, motionState = null }) => {
           lineHeight: 1.08,
         }}
       >
-      <span
-        data-testid="algo-signal-plan-intent"
-        style={{
-          display: "inline-flex",
-          alignItems: "baseline",
-          gap: sp(3),
-          minWidth: 0,
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1.05,
-        }}
-      >
-        {intentTokens.length
-          ? intentTokens.map((token, index) => (
-              <span
-                key={`${token}-${index}`}
-                data-plan-token={token.toUpperCase()}
-                data-testid={`algo-signal-plan-token-${token.toUpperCase()}`}
-                style={{
-                  color: actionIntentTokenTone(token),
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {token}
-              </span>
-            ))
-          : MISSING_VALUE}
-      </span>
-      {hasDisplayValue(detail) ? (
         <span
-          data-testid="algo-signal-plan-detail"
+          data-testid="algo-signal-plan-intent"
           style={{
+            display: "inline-flex",
+            alignItems: "baseline",
+            gap: sp(3),
             minWidth: 0,
             overflow: "hidden",
-            textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: CSS_COLOR.textMuted,
-            fontSize: textSize("caption"),
-            lineHeight: 1.08,
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.05,
           }}
         >
-          {detail}
+          {intentTokens.length
+            ? intentTokens.map((token, index) => (
+                <span
+                  key={`${token}-${index}`}
+                  data-plan-token={token.toUpperCase()}
+                  data-testid={`algo-signal-plan-token-${token.toUpperCase()}`}
+                  style={{
+                    color: actionIntentTokenTone(token),
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {token}
+                </span>
+              ))
+            : MISSING_VALUE}
         </span>
-      ) : null}
+        {hasDisplayValue(detail) ? (
+          <span
+            data-testid="algo-signal-plan-detail"
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: CSS_COLOR.textMuted,
+              fontSize: textSize("caption"),
+              lineHeight: 1.08,
+            }}
+          >
+            {detail}
+          </span>
+        ) : null}
       </span>
     </AppTooltip>
   );
 };
 
 const signalChartTitle = (signalRecord) => {
-  const signalTimestamp = signalRecord?.signalAt || signalRecord?.currentSignalAt;
+  const signalTimestamp =
+    signalRecord?.signalAt || signalRecord?.currentSignalAt;
   return [
     signalTimestamp ? `Signal ${formatAppTime(signalTimestamp)}` : null,
-    signalTimestamp ? `${formatRelativeTimeShort(signalTimestamp)} since` : null,
+    signalTimestamp
+      ? `${formatRelativeTimeShort(signalTimestamp)} since`
+      : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1517,8 +1602,10 @@ const SignalHeroCell = ({
   sparklineSignalEventCount = 0,
   sparklineSignalTreatment,
   signalMove,
+  dayMove = null,
   tradeButton = null,
   showSignalMove = true,
+  sparklineSource = "empty",
 }) => {
   const hasSparkline = hasDrawableSparklineData(sparklineData);
   return (
@@ -1600,6 +1687,8 @@ const SignalHeroCell = ({
               data-testid="algo-signal-hero-sparkline"
               data-sparkline-signal-mode={sparklineSignalTreatment.mode}
               data-sparkline-signal-events={sparklineSignalEventCount}
+              data-sparkline-source={sparklineSource}
+              data-sparkline-points={sparklinePoints.length}
               data-sparkline-signal-direction={
                 sparklineSignalTreatment.direction || undefined
               }
@@ -1645,6 +1734,25 @@ const SignalHeroCell = ({
         >
           {price}
         </span>
+        {dayMove?.label && dayMove.label !== MISSING_VALUE ? (
+          <span
+            data-testid="algo-signal-day-move"
+            style={{
+              color:
+                Number(dayMove.pct) > 0
+                  ? CSS_COLOR.green
+                  : Number(dayMove.pct) < 0
+                    ? CSS_COLOR.red
+                    : CSS_COLOR.textDim,
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: FONT_WEIGHTS.medium,
+              flex: "0 0 auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {dayMove.label}
+          </span>
+        ) : null}
         {showSignalMove ? (
           <span
             style={{
@@ -1671,7 +1779,8 @@ const SignalHeroCell = ({
 const pushDistinctLabel = (parts, value) => {
   if (!hasDisplayValue(value)) return;
   const normalized = String(value).trim().toLowerCase();
-  if (parts.some((part) => String(part).trim().toLowerCase() === normalized)) return;
+  if (parts.some((part) => String(part).trim().toLowerCase() === normalized))
+    return;
   parts.push(value);
 };
 
@@ -1733,11 +1842,15 @@ const DecisionCell = ({
         lineHeight: 1.12,
       }}
     >
-      <AppTooltip content={compactJoin([decisionLabel, statusMeta.label, detailTitle])}>
+      <AppTooltip
+        content={compactJoin([decisionLabel, statusMeta.label, detailTitle])}
+      >
         <span
           className={classNames(
             "ra-signal-decision-pill",
-            verdict?.bucket ? `ra-signal-decision-pill-${verdict.bucket}` : null,
+            verdict?.bucket
+              ? `ra-signal-decision-pill-${verdict.bucket}`
+              : null,
           )}
           style={{
             display: "inline-flex",
@@ -1808,11 +1921,13 @@ const PROCESS_STAGE_META = {
 
 const processStageMeta = (stage) => {
   const id = String(stage?.id || "event");
-  return PROCESS_STAGE_META[id] || {
-    label: stage?.label || "Event",
-    tone: CSS_COLOR.textMuted,
-    Icon: Clock,
-  };
+  return (
+    PROCESS_STAGE_META[id] || {
+      label: stage?.label || "Event",
+      tone: CSS_COLOR.textMuted,
+      Icon: Clock,
+    }
+  );
 };
 
 const ProcessTrailCell = ({
@@ -1824,7 +1939,9 @@ const ProcessTrailCell = ({
   if (!eventCount) {
     return (
       <DataCell
-        value={selectionStage?.main || (scanActive ? "Listening" : MISSING_VALUE)}
+        value={
+          selectionStage?.main || (scanActive ? "Listening" : MISSING_VALUE)
+        }
         detail={
           selectionStage?.detail ||
           (scanActive ? "audit trail pending" : MISSING_VALUE)
@@ -1876,15 +1993,15 @@ const ProcessTrailCell = ({
         className={signalCellClassName(
           selectionStage?.motionState ||
             (latestStage?.id === "blocked"
-            ? "blocked"
-            : latestStage?.id === "submitted" ||
-                latestStage?.id === "filled" ||
-                latestStage?.id === "managed" ||
-                latestStage?.id === "closed"
-              ? "ready"
-              : scanActive
-                ? "evaluating"
-                : null),
+              ? "blocked"
+              : latestStage?.id === "submitted" ||
+                  latestStage?.id === "filled" ||
+                  latestStage?.id === "managed" ||
+                  latestStage?.id === "closed"
+                ? "ready"
+                : scanActive
+                  ? "evaluating"
+                  : null),
         )}
         style={{
           display: "grid",
@@ -1894,70 +2011,74 @@ const ProcessTrailCell = ({
           lineHeight: 1.12,
         }}
       >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(4),
-          minWidth: 0,
-          overflow: "hidden",
-          color: selectionStage?.tone || latestMeta.tone,
-          whiteSpace: "nowrap",
-        }}
-      >
-        <LatestIcon size={SIGNAL_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(4),
+            minWidth: 0,
+            overflow: "hidden",
+            color: selectionStage?.tone || latestMeta.tone,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <LatestIcon
+            size={SIGNAL_ICON_SIZE}
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              fontWeight: FONT_WEIGHTS.medium,
+            }}
+          >
+            {selectionStage?.main || latestMeta.label}
+          </span>
+          {stageIds.length ? (
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(2),
+                flex: "0 0 auto",
+              }}
+            >
+              {stageIds.map((stageId) => {
+                const markerMeta = processStageMeta({ id: stageId });
+                return (
+                  <AppTooltip key={stageId} content={markerMeta.label}>
+                    <span
+                      style={{
+                        width: dim(5),
+                        height: dim(5),
+                        borderRadius: dim(RADII.pill),
+                        background: markerMeta.tone,
+                        opacity: stageId === latestStage?.id ? 1 : 0.5,
+                      }}
+                    />
+                  </AppTooltip>
+                );
+              })}
+            </span>
+          ) : null}
+        </span>
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontSize: textSize("caption"),
+            lineHeight: 1.12,
             minWidth: 0,
             overflow: "hidden",
             textOverflow: "ellipsis",
-            fontWeight: FONT_WEIGHTS.medium,
+            whiteSpace: "nowrap",
           }}
         >
-          {selectionStage?.main || latestMeta.label}
+          {detail}
         </span>
-        {stageIds.length ? (
-          <span
-            aria-hidden="true"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(2),
-              flex: "0 0 auto",
-            }}
-          >
-            {stageIds.map((stageId) => {
-              const markerMeta = processStageMeta({ id: stageId });
-              return (
-                <AppTooltip key={stageId} content={markerMeta.label}>
-                  <span
-                    style={{
-                      width: dim(5),
-                      height: dim(5),
-                      borderRadius: dim(RADII.pill),
-                      background: markerMeta.tone,
-                      opacity: stageId === latestStage?.id ? 1 : 0.5,
-                    }}
-                  />
-                </AppTooltip>
-              );
-            })}
-          </span>
-        ) : null}
-      </span>
-      <span
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontSize: textSize("caption"),
-          lineHeight: 1.12,
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {detail}
-      </span>
       </span>
     </AppTooltip>
   );
@@ -2222,17 +2343,23 @@ export const OperationsSignalRow = ({
       ? previewContract
       : candidate?.selectedContract;
   const contractIsPreview = !hasCandidateContract && hasPreviewContract;
-  const tradeCandidate = hasCandidateContract || hasPreviewContract
-    ? {
-        ...(contractIsPreview ? contractPreview : asRecord(candidate)),
-        ...(candidate && typeof candidate === "object" ? candidate : {}),
-        symbol: candidate?.symbol || contractPreview.symbol || signalRecord.symbol,
-        selectedContract: effectiveSelectedContract,
-      }
-    : null;
-  const selectedContractId = optionProviderContractId(effectiveSelectedContract);
+  const tradeCandidate =
+    hasCandidateContract || hasPreviewContract
+      ? {
+          ...(contractIsPreview ? contractPreview : asRecord(candidate)),
+          ...(candidate && typeof candidate === "object" ? candidate : {}),
+          symbol:
+            candidate?.symbol || contractPreview.symbol || signalRecord.symbol,
+          selectedContract: effectiveSelectedContract,
+        }
+      : null;
+  const selectedContractId = optionProviderContractId(
+    effectiveSelectedContract,
+  );
   const liveQuote = getStoredOptionQuoteSnapshot(selectedContractId);
-  const previewQuote = contractIsPreview ? asRecord(contractPreview.quote) : null;
+  const previewQuote = contractIsPreview
+    ? asRecord(contractPreview.quote)
+    : null;
   const previewLiquidity = contractIsPreview
     ? asRecord(contractPreview.liquidity)
     : null;
@@ -2296,7 +2423,8 @@ export const OperationsSignalRow = ({
   const selectionStage = resolveSelectionStageDisplay({
     candidate,
     blocker,
-    hasSelectedContract: hasDisplayValue(rawContract.main) && !contractIsPreview,
+    hasSelectedContract:
+      hasDisplayValue(rawContract.main) && !contractIsPreview,
     selectedContractId,
     hasQuote: false,
     contractIsPreview,
@@ -2315,7 +2443,8 @@ export const OperationsSignalRow = ({
   const liveSelectionStage = resolveSelectionStageDisplay({
     candidate,
     blocker,
-    hasSelectedContract: hasDisplayValue(rawContract.main) && !contractIsPreview,
+    hasSelectedContract:
+      hasDisplayValue(rawContract.main) && !contractIsPreview,
     selectedContractId,
     hasQuote,
     contractIsPreview,
@@ -2381,7 +2510,10 @@ export const OperationsSignalRow = ({
     : signalRecord.signalAt
       ? formatRelativeTimeShort(signalRecord.signalAt)
       : MISSING_VALUE;
-  const underlyingPriceValue = resolveUnderlyingPrice(signalRecord, tickerSnapshot);
+  const underlyingPriceValue = resolveUnderlyingPrice(
+    signalRecord,
+    tickerSnapshot,
+  );
   const liveUnderlyingPrice = finiteNumberOrNull(tickerSnapshot?.price);
   const priceFlashClassName = useValueFlash(liveUnderlyingPrice);
   const underlyingPrice = formatMoney(underlyingPriceValue, 2);
@@ -2391,12 +2523,14 @@ export const OperationsSignalRow = ({
   // A stale Move during regular trading hours is a DATA DEFECT (a fresh quote is
   // expected), so flag it loudly; outside RTH (overnight/pre/after/closed/
   // weekend/holiday) no fresh quote is expected, so mute it calmly. Resolve the
-  // market session lazily -- only when the Move is actually stale.
+  // market session lazily - only when the Move is actually stale.
   const moveStale = signalMove.stale === true;
   const moveIsRthDefect =
     moveStale && resolveUsEquityMarketStatus().session?.key === "rth";
+  const dayMove = resolveSignalDayMove(tickerSnapshot);
   const signalAgeBlocked =
-    signalRecord.actionEligible === false || Boolean(signalRecord.actionBlocker);
+    signalRecord.actionEligible === false ||
+    Boolean(signalRecord.actionBlocker);
   const signalAgeTone =
     signalRecord.fresh && !signalAgeBlocked ? CSS_COLOR.green : CSS_COLOR.amber;
   const freshAndHot = Boolean(
@@ -2406,6 +2540,7 @@ export const OperationsSignalRow = ({
       actionabilityScore >= SCORE_FRESH_ROW_GLOW,
   );
   const sparklineData = resolveSparklineData(tickerSnapshot, signalRecord);
+  const sparklineSource = resolveSparklineDataSource(tickerSnapshot);
   const sparklinePoints = useMemo(
     () => extractSparklinePoints(sparklineData),
     [sparklineData],
@@ -2417,7 +2552,8 @@ export const OperationsSignalRow = ({
         row: {
           timeframe: signalRecord.timeframe,
           direction: direction.primitive,
-          currentSignalAt: signalRecord.currentSignalAt || signalRecord.signalAt,
+          currentSignalAt:
+            signalRecord.currentSignalAt || signalRecord.signalAt,
           status:
             signalRecord.fresh === true
               ? "active-fresh"
@@ -2454,8 +2590,15 @@ export const OperationsSignalRow = ({
     blocker,
     statusMeta,
   });
-  const rowAction = resolveRowAction({ candidate, blocker, signalRecord, verdict });
-  const quoteAge = formatQuoteAge(effectiveQuote?.ageMs ?? effectiveQuote?.cacheAgeMs);
+  const rowAction = resolveRowAction({
+    candidate,
+    blocker,
+    signalRecord,
+    verdict,
+  });
+  const quoteAge = formatQuoteAge(
+    effectiveQuote?.ageMs ?? effectiveQuote?.cacheAgeMs,
+  );
   const executionTitle = compactJoin([
     quote.main,
     quote.detail,
@@ -2519,7 +2662,8 @@ export const OperationsSignalRow = ({
     hasDisplayValue(rawGreeks.main) && !contractIsPreview
       ? CSS_COLOR.textSec
       : CSS_COLOR.textDim;
-  const quoteDetail = quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : quote.detail;
+  const quoteDetail =
+    quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : quote.detail;
   const spreadDetail =
     quoteAge !== MISSING_VALUE
       ? `age ${quoteAge}`
@@ -2546,31 +2690,46 @@ export const OperationsSignalRow = ({
     finiteNumberOrNull(effectiveQuote?.bid) ??
     finiteNumberOrNull(effectiveQuote?.ask);
   const signalAgeFlashValue = (() => {
-    const parsed = Date.parse(signalRecord.signalAt ?? signalRecord.currentSignalAt ?? "");
+    const parsed = Date.parse(
+      signalRecord.signalAt ?? signalRecord.currentSignalAt ?? "",
+    );
     return Number.isFinite(parsed) ? parsed : null;
   })();
   const ageFlashClassName = useValueFlash(signalAgeFlashValue, {
     classify: (next, previous) => {
       const nextNumber = finiteNumberOrNull(next);
       const previousNumber = finiteNumberOrNull(previous);
-      if (nextNumber == null || previousNumber == null || nextNumber === previousNumber) {
+      if (
+        nextNumber == null ||
+        previousNumber == null ||
+        nextNumber === previousNumber
+      ) {
         return null;
       }
       return nextNumber > previousNumber ? "down" : "up";
     },
   });
-  const signalMoveFlashClassName = useValueFlash(finiteNumberOrNull(signalMove.value));
+  const signalMoveFlashClassName = useValueFlash(
+    finiteNumberOrNull(signalMove.value),
+  );
   const quoteFlashClassName = useValueFlash(quoteFlashValue);
-  const spreadFlashClassName = useValueFlash(finiteNumberOrNull(spreadGauge.widthPct), {
-    classify: (next, previous) => {
-      const nextNumber = finiteNumberOrNull(next);
-      const previousNumber = finiteNumberOrNull(previous);
-      if (nextNumber == null || previousNumber == null || nextNumber === previousNumber) {
-        return null;
-      }
-      return nextNumber < previousNumber ? "up" : "down";
+  const spreadFlashClassName = useValueFlash(
+    finiteNumberOrNull(spreadGauge.widthPct),
+    {
+      classify: (next, previous) => {
+        const nextNumber = finiteNumberOrNull(next);
+        const previousNumber = finiteNumberOrNull(previous);
+        if (
+          nextNumber == null ||
+          previousNumber == null ||
+          nextNumber === previousNumber
+        ) {
+          return null;
+        }
+        return nextNumber < previousNumber ? "up" : "down";
+      },
     },
-  });
+  );
   const scoreFlashClassName = useValueFlash(actionabilityScore);
   const awaitingScan = /awaiting scan/i.test(statusMeta.label);
   const candidateContractSelectionPending =
@@ -2640,7 +2799,9 @@ export const OperationsSignalRow = ({
         sparklinePointColors={sparklinePointColors}
         sparklineSignalEventCount={sparklineSignalEventCount}
         sparklineSignalTreatment={sparklineSignalTreatment}
+        sparklineSource={sparklineSource}
         signalMove={signalMove}
+        dayMove={dayMove}
         tradeButton={
           <SignalTradeButton
             symbol={signalRecord.symbol}
@@ -2655,10 +2816,7 @@ export const OperationsSignalRow = ({
         value={since.main}
         detail={since.detail}
         tone={signalAgeTone}
-        titleValue={compactJoin([
-          since.title,
-          signalRecord.signalAt,
-        ])}
+        titleValue={compactJoin([since.title, signalRecord.signalAt])}
         className={ageFlashClassName}
       />
     ),
@@ -2687,9 +2845,11 @@ export const OperationsSignalRow = ({
           moveIsRthDefect
             ? `Data defect: quote stale during market hours (move ${signalMove.label})`
             : moveStale
-              ? `Stale data — move ${signalMove.label} not from a live quote`
+              ? `Stale data - move ${signalMove.label} not from a live quote`
               : signalMove.detail,
-          underlyingPrice !== MISSING_VALUE ? `underlying ${underlyingPrice}` : null,
+          underlyingPrice !== MISSING_VALUE
+            ? `underlying ${underlyingPrice}`
+            : null,
         ])}
         className={signalMoveFlashClassName}
       />
@@ -2728,7 +2888,11 @@ export const OperationsSignalRow = ({
         tone={quoteTone}
         titleValue={executionTitle}
         motionState={
-          quoteEvaluating ? "evaluating" : hasQuote && !contractIsPreview ? "ready" : null
+          quoteEvaluating
+            ? "evaluating"
+            : hasQuote && !contractIsPreview
+              ? "ready"
+              : null
         }
         className={quoteFlashClassName}
         icon={
@@ -2749,7 +2913,11 @@ export const OperationsSignalRow = ({
         detail={spreadDetail}
         tone={spreadTone}
         motionState={
-          spreadEvaluating ? "evaluating" : hasQuote && !contractIsPreview ? "ready" : null
+          spreadEvaluating
+            ? "evaluating"
+            : hasQuote && !contractIsPreview
+              ? "ready"
+              : null
         }
         className={spreadFlashClassName}
         detailExtra={
@@ -2939,7 +3107,11 @@ export const OperationsSignalRow = ({
               {desktopCells.signal}
             </span>
             {compactLeadMetricItems.map((item) => (
-              <CompactSignalMetric key={item.key} label={item.label} topBorder={false}>
+              <CompactSignalMetric
+                key={item.key}
+                label={item.label}
+                topBorder={false}
+              >
                 {item.cell}
               </CompactSignalMetric>
             ))}
