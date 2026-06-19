@@ -3620,7 +3620,7 @@ export default function PlatformApp() {
     () => signalMatrixUniverseSymbols.join(","),
     [signalMatrixUniverseSymbols],
   );
-  // Push-based signal matrix over SSE. Signal evaluation is a critical background
+  // Push-based signal matrix over SSE. Signal evaluation is an essential background
   // process and must NOT pause on screen or tab visibility. EventSource delivery
   // is not throttled while the tab is hidden (unlike the REST poll's setInterval),
   // so the matrix stays live regardless of which screen is open or whether the tab

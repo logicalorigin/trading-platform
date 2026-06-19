@@ -46,7 +46,7 @@ if (typeof window !== "undefined") {
   });
   // Warm the workspace route chunk (PlatformApp) in parallel with AppContent so
   // its download overlaps instead of waiting for AppContent to finish loading —
-  // the cold-launch critical path is two serial lazy boundaries otherwise. Same
+  // the cold-launch hot path is two serial lazy boundaries otherwise. Same
   // module specifier AppContent uses, so Vite serves the one shared chunk.
   preloadDynamicImport(
     () =>

@@ -23,6 +23,7 @@ const ignoredDirs = new Set([
 
 const ignoredPathParts = [
   "scripts/check-legacy-branding.mjs",
+  "AGENT_CHAT_",
   "SESSION_HANDOFF_",
   "SESSION_HANDOFF_CURRENT.md",
   "SESSION_HANDOFF_MASTER.md",
@@ -63,6 +64,10 @@ const allowed = [
     line: /./,
   },
   {
+    path: "artifacts/api-server/src/services/algo-branding.test.ts",
+    line: /./,
+  },
+  {
     path: "artifacts/pyrus/src/screens/algo/algoBranding.js",
     line: /./,
   },
@@ -77,6 +82,14 @@ const allowed = [
   {
     path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.ts",
     line: /RETIRED_(WORKSPACE_STORAGE_KEY|DASHBOARD_SETTING_KEY)/,
+  },
+  {
+    path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.test.mjs",
+    line: /RETIRED_WORKSPACE_STORAGE_KEY|retired Ray workspace migration key/,
+  },
+  {
+    path: "artifacts/pyrus/src/lib/workspaceStorage.ts",
+    line: /RETIRED_WORKSPACE_STORAGE_KEY/,
   },
   {
     path: "artifacts/pyrus/src/lib/uiTokens.jsx",

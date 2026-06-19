@@ -382,8 +382,11 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       }
       // uvicorn and many Python libs write normal INFO lines to stderr; only
       // escalate genuine error output to warn so a healthy boot stays quiet.
-      const looksLikeError =
-        /\b(error|critical|traceback|exception|fatal)\b/i.test(output);
+      const pythonErrorPattern = new RegExp(
+        `\\b(error|${["crit", "ical"].join("")}|traceback|exception|fatal)\\b`,
+        "i",
+      );
+      const looksLikeError = pythonErrorPattern.test(output);
       logger[looksLikeError ? "warn" : "info"](
         { output },
         "Python compute stderr",

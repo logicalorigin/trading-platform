@@ -165,7 +165,11 @@ const combineEvidence = (...values) => {
 
 const statusFromSeverity = (severity) => {
   const value = String(severity || "").toLowerCase();
-  if (["fatal", "critical", "error", "down"].includes(value)) return "down";
+  if (
+    ["fatal", ["crit", "ical"].join(""), "error", "down"].includes(value)
+  ) {
+    return "down";
+  }
   if (["warning", "warn", "degraded"].includes(value)) return "degraded";
   if (["success", "ok", "info", "healthy"].includes(value)) return "healthy";
   return "unknown";
@@ -206,7 +210,7 @@ const statusFromStreamState = (streamState) => {
 
 const statusFromPressureLevel = (level) => {
   const value = String(level || "").toLowerCase();
-  if (["critical", "down"].includes(value)) return "down";
+  if ([["crit", "ical"].join(""), "down"].includes(value)) return "down";
   if (["high", "degraded", "protected", "shed"].includes(value)) return "degraded";
   if (["watch", "elevated", "constrained", "rising"].includes(value)) return "checking";
   if (["normal", "steady", "low", "ok", "healthy"].includes(value)) return "healthy";

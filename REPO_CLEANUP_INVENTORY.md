@@ -55,9 +55,9 @@ This inventory records the evidence used for the May 6 cleanup pass.
 
 The following dirty or untracked work is protected WIP, not cleanup debt. Do not delete, stage, or refactor these files as part of repo cleanup unless that specific feature workstream is being completed:
 
-- Polygon premium-distribution API/spec/client work: `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/**`, `lib/api-zod/src/generated/**`, `artifacts/api-server/src/providers/polygon/market-data.ts`, `artifacts/api-server/src/providers/polygon/market-data.validation.ts`, `artifacts/api-server/src/routes/platform.ts`, and `artifacts/api-server/src/services/platform.ts`.
+- Polygon premium-distribution API/spec/client work: `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/**`, `lib/api-zod/src/generated/**`, `artifacts/api-server/src/routes/platform.ts`, and `artifacts/api-server/src/services/platform.ts`.
 - Premium/order-intent work: `artifacts/api-server/src/services/option-order-intent.ts` and `lib/ibkr-contracts/src/client.ts`.
-- Chart/flow recovered WIP: `artifacts/pyrus/src/features/flow/flowTapeColumns.js` and `artifacts/pyrus/src/features/flow/flowTapeColumns.validation.js`.
+- Chart/flow recovered WIP: `artifacts/pyrus/src/features/flow/flowTapeColumns.js`.
 - Flow scanner/platform recovery work currently in the tree, including `artifacts/pyrus/src/screens/FlowScreen.jsx`, should remain isolated from chart cleanup commits.
 
 Mini-chart premium flow currently comes from broad scanner flow events. The Polygon premium-distribution endpoint/client work above is a separate in-flight backend surface and should not be wired into mini charts without an explicit product decision.
@@ -94,7 +94,7 @@ Do not claim full repo health until that WIP is completed, removed, or intention
 - Passed: `pnpm run deadcode`, `pnpm run deadcode:prod`, `pnpm run typecheck`.
 - Passed: `pnpm --filter @workspace/api-server run unit validation` (305 tests) and `pnpm --filter @workspace/pyrus run unit validation` (404 tests).
 - Passed: API server build, Pyrus production build with `PORT=18747 BASE_PATH=/`, and browser QA test discovery.
-- Known browser gate failure: `pnpm --filter @workspace/pyrus run browser validation:replit` launched Chromium but failed existing Flow/Market/Trade UI specs. A focused rerun of `artifacts/pyrus/e2e/flow-layout.browser-validation.ts:478` and `artifacts/pyrus/e2e/market-premium-flow.browser-validation.ts:228` still failed after rejecting the unrelated queue-refresh work, so those failures were not kept in this cleanup diff.
+- Known browser gate failure: `pnpm --filter @workspace/pyrus run browser validation:replit` launched Chromium but failed existing Flow/Market/Trade UI specs. Focused Flow and Market reruns still failed after rejecting the unrelated queue-refresh work, so those failures were not kept in this cleanup diff.
 
 ## Follow-Up Candidates
 

@@ -36,7 +36,7 @@
     "python-compute:lint": "node scripts/run-python-compute.mjs lint",
     "python-compute:typecheck": "node scripts/run-python-compute.mjs typecheck",
     "typecheck:libs": "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
-    "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --workspace-concurrency=1 --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
   "devDependencies": {

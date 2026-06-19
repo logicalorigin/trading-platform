@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
-import { isHttpError } from "@workspace/ibkr-contracts";
+import { isHttpError, type RuntimeMode } from "@workspace/ibkr-contracts";
 import { logger } from "./logger";
 import { ibkrBridgeService } from "./service";
 import { createSseWriter, type SseWriter } from "./sse-writer";
@@ -29,6 +29,31 @@ type ZodErrorLike = {
   name: string;
   issues?: unknown;
 };
+
+function routeRuntimeMode(
+  value: unknown,
+  fallback: RuntimeMode = "shadow",
+): RuntimeMode {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "live") {
+    return "live";
+  }
+  if (normalized === "shadow" || normalized === "paper") {
+    return "shadow";
+  }
+  return fallback;
+}
+
+function optionalRouteRuntimeMode(value: unknown): RuntimeMode | null {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "live") {
+    return "live";
+  }
+  if (normalized === "shadow" || normalized === "paper") {
+    return "shadow";
+  }
+  return null;
+}
 
 function createQuoteSseBatchWriter(
   writer: SseWriter,
@@ -472,14 +497,14 @@ app.put("/diagnostics/lanes", async (req, res) => {
 });
 
 app.get("/accounts", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = routeRuntimeMode(req.query.mode);
   res.json({
     accounts: await ibkrBridgeService.listAccounts(mode),
   });
 });
 
 app.get("/positions", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = routeRuntimeMode(req.query.mode);
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   res.json({
@@ -488,7 +513,7 @@ app.get("/positions", async (req, res) => {
 });
 
 app.get("/orders", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = routeRuntimeMode(req.query.mode);
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const status =
@@ -501,7 +526,7 @@ app.get("/orders", async (req, res) => {
 });
 
 app.get("/executions", async (req, res) => {
-  const mode = req.query.mode === "live" ? "live" : "paper";
+  const mode = routeRuntimeMode(req.query.mode);
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const symbol =
@@ -1402,10 +1427,7 @@ app.post("/orders/submit", async (req, res) => {
       await ibkrBridgeService.submitRawOrders({
         accountId:
           typeof req.body.accountId === "string" ? req.body.accountId : null,
-        mode:
-          req.body.mode === "live" || req.body.mode === "paper"
-            ? req.body.mode
-            : null,
+        mode: optionalRouteRuntimeMode(req.body.mode),
         confirm: req.body.confirm === true,
         orders: req.body.ibkrOrders,
       }),
@@ -1422,10 +1444,7 @@ app.post("/orders", async (req, res) => {
       await ibkrBridgeService.submitRawOrders({
         accountId:
           typeof req.body.accountId === "string" ? req.body.accountId : null,
-        mode:
-          req.body.mode === "live" || req.body.mode === "paper"
-            ? req.body.mode
-            : null,
+        mode: optionalRouteRuntimeMode(req.body.mode),
         confirm: req.body.confirm === true,
         orders: req.body.ibkrOrders,
       }),
@@ -1442,7 +1461,7 @@ app.post("/orders/:orderId/replace", async (req, res) => {
       accountId: req.body.accountId,
       orderId: req.params.orderId,
       order: req.body.order,
-      mode: req.body.mode === "live" ? "live" : "paper",
+      mode: routeRuntimeMode(req.body.mode),
     }),
   );
 });

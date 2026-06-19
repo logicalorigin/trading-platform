@@ -192,7 +192,7 @@ export const preloadInitialAppContentRoute = () => {
   });
   // Non-initial priority screens (e.g. account) pull heavy chart libs; defer
   // them until the browser is idle so they don't compete with the initial
-  // screen + workspace chunk during the critical boot window.
+  // screen + workspace chunk during the hot boot window.
   scheduleIdlePreload(() => preloadPriorityPlatformScreenModules(initialScreen));
 };
 

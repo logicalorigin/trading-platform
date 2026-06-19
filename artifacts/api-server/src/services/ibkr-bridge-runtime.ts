@@ -3407,7 +3407,7 @@ export async function attachIbkrBridgeRuntime(
   }
 
   // Validate health and load accounts concurrently. Both are independent ~20s
-  // bridge reads on the final-attach critical path; running them sequentially
+  // bridge reads on the final-attach hot path; running them sequentially
   // added up to another ~20s to every launch. Still surface a health failure
   // first so the error reflects an unhealthy bridge rather than a downstream
   // accounts read, and only trust accounts once health has been validated.

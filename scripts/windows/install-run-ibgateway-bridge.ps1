@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-  Installs and launches the RayAlgo IB Gateway bridge on Windows.
+  Installs and launches the Pyrus IB Gateway bridge on Windows.
 
 .DESCRIPTION
   This is the lowest-touch bootstrap for a Windows machine running IB Gateway
   or TWS. It installs missing prerequisites with winget when possible, clones
-  the RayAlgo repo, builds the IBKR bridge, and starts the bridge launcher.
+  the Pyrus repo, builds the IBKR bridge, and starts the bridge launcher.
 #>
 
 [CmdletBinding()]
@@ -14,7 +14,7 @@ param(
     [string]$Mode = 'live',
     [string]$RepoUrl = 'https://github.com/logicalorigin/trading-platform.git',
     [string]$Branch = 'ibgateway-bridge-launcher-20260427',
-    [string]$RepoDir = (Join-Path $env:USERPROFILE 'rayalgo-trading-platform')
+    [string]$RepoDir = (Join-Path $env:USERPROFILE 'pyrus-trading-platform')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,12 +77,12 @@ Ensure-Command -Command cloudflared -WingetId Cloudflare.cloudflared -DisplayNam
 Ensure-Pnpm
 
 if (Test-Path (Join-Path $RepoDir '.git')) {
-    Write-Step "Updating RayAlgo repo at $RepoDir"
+    Write-Step "Updating Pyrus repo at $RepoDir"
     git -C $RepoDir fetch origin $Branch
     git -C $RepoDir checkout $Branch
     git -C $RepoDir pull --ff-only origin $Branch
 } else {
-    Write-Step "Cloning RayAlgo repo to $RepoDir"
+    Write-Step "Cloning Pyrus repo to $RepoDir"
     git clone --branch $Branch --depth 1 $RepoUrl $RepoDir
 }
 

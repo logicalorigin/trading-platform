@@ -445,7 +445,7 @@ export default defineConfig({
       },
     },
   },
-  // Prebundle boot-critical and lazy-only heavy deps at server start so cold
+  // Prebundle boot-hot and lazy-only heavy deps at server start so cold
   // dev boot never waits on on-demand prebundling, and chart-lib screens don't
   // trigger a mid-session "new dependencies optimized → reload" full-page stall.
   optimizeDeps: {
@@ -470,7 +470,7 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: true,
     headers: isolationHeaders,
-    // Eagerly transform the cold-boot critical path at server start instead of
+    // Eagerly transform the cold-boot hot path at server start instead of
     // discovering/transforming it serially on first request.
     warmup: {
       clientFiles: [

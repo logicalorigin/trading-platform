@@ -1,4 +1,4 @@
-export type RuntimeMode = "paper" | "live";
+export type RuntimeMode = "shadow" | "live";
 
 export type MassiveRuntimeConfig = {
   apiKey: string;
@@ -115,8 +115,9 @@ function normalizeRuntimeMode(value: string | null): RuntimeMode | null {
     return "live";
   }
 
-  if (normalized === "paper") {
-    return "paper";
+  // "paper" accepted as a legacy alias for the renamed "shadow" environment.
+  if (normalized === "shadow" || normalized === "paper") {
+    return "shadow";
   }
 
   return null;
@@ -164,7 +165,7 @@ function parseIntegerEnv(value: string | null): number | null {
 export function getRuntimeMode(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeMode {
-  return env["TRADING_MODE"] === "live" ? "live" : "paper";
+  return env["TRADING_MODE"] === "live" ? "live" : "shadow";
 }
 
 export function getIbkrTwsRuntimeConfig(

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Starts the RayAlgo IBKR bridge beside IB Gateway/TWS on Windows.
+  Starts the Pyrus IBKR bridge beside IB Gateway/TWS on Windows.
 
 .DESCRIPTION
   Runs artifacts/ibkr-bridge against the local TWS/IB Gateway socket and
@@ -73,7 +73,7 @@ try {
     Write-Host "Skipped socket check: $($_.Exception.Message)" -ForegroundColor DarkYellow
 }
 
-Write-Banner 'Starting RayAlgo IBKR bridge' 'Yellow'
+Write-Banner 'Starting Pyrus IBKR bridge' 'Yellow'
 $bridgeCmd = @"
 Set-Location -LiteralPath $(Quote-Ps $repoRoot)
 `$env:PORT = $(Quote-Ps ([string]$BridgePort))
@@ -93,7 +93,7 @@ Start-Process -FilePath 'powershell.exe' `
     -WindowStyle Normal | Out-Null
 Write-Host "Bridge window launched at $localBridgeUrl." -ForegroundColor Green
 
-$logDir = Join-Path $env:TEMP 'rayalgo-ibkr'
+$logDir = Join-Path $env:TEMP 'pyrus-ibkr'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $cfLog = Join-Path $logDir "cloudflared-tws-bridge-$timestamp.log"
