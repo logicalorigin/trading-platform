@@ -46,14 +46,20 @@ test("watchlist sparkline resolver keeps fallback sparkline data when live data 
   const fallbackSparkBars = [{ close: 90 }, { close: 91 }];
   const fallbackSpark = [90, 91, 92];
 
-  assert.deepEqual(resolveWatchlistSparklineData({}, { sparkBars: fallbackSparkBars }), {
-    data: fallbackSparkBars,
-    source: "fallback-spark-bars",
-  });
-  assert.deepEqual(resolveWatchlistSparklineData({}, { spark: fallbackSpark }), {
-    data: fallbackSpark,
-    source: "fallback-spark",
-  });
+  assert.deepEqual(
+    resolveWatchlistSparklineData({}, { sparkBars: fallbackSparkBars }),
+    {
+      data: fallbackSparkBars,
+      source: "fallback-spark-bars",
+    },
+  );
+  assert.deepEqual(
+    resolveWatchlistSparklineData({}, { spark: fallbackSpark }),
+    {
+      data: fallbackSpark,
+      source: "fallback-spark",
+    },
+  );
 });
 
 test("watchlist sparkline resolver ignores non-drawable live fallback data", () => {
@@ -219,13 +225,13 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   const shellSource = readLocalSource("./PlatformShell.jsx");
   const headerSource = readLocalSource("./AppHeader.jsx");
   const shellCallStart = source.indexOf("<PlatformShell");
-  const shellCallEnd = source.indexOf(
-    "selectedSymbol",
-    shellCallStart,
-  );
+  const shellCallEnd = source.indexOf("selectedSymbol", shellCallStart);
   const shellCallSource = source.slice(shellCallStart, shellCallEnd);
 
-  assert.equal(source.includes("signalMatrixStates={signalMatrixSnapshot.states}"), false);
+  assert.equal(
+    source.includes("signalMatrixStates={signalMatrixSnapshot.states}"),
+    false,
+  );
   assert.equal(source.includes("readSignalMatrixSnapshotCache"), false);
   assert.equal(source.includes("writeSignalMatrixSnapshotCache"), false);
   // Matrix truth is states only: the backend latches identity and reconciles
@@ -270,7 +276,8 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
     /signalMonitorStateLoaded=\{Boolean\([\s\S]*!signalMonitorStateRuntimeFallback[\s\S]*\)\}/,
   );
   assert.equal(
-    source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)?.length,
+    source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)
+      ?.length,
     1,
   );
   assert.match(source, /const headerBroadcastSignalMatrixStates = useMemo\(/);
@@ -279,35 +286,53 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   assert.match(source, /const activitySignalMatrixStates = useMemo\(/);
   assert.match(source, /filterSignalMatrixStatesForSymbols\(\{/);
   assert.match(source, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
-  assert.match(source, /watchlistSignalMatrixStates=\{watchlistSignalMatrixStates\}/);
-  assert.match(source, /activitySignalMatrixStates=\{activitySignalMatrixStates\}/);
+  assert.match(
+    source,
+    /watchlistSignalMatrixStates=\{watchlistSignalMatrixStates\}/,
+  );
+  assert.match(
+    source,
+    /activitySignalMatrixStates=\{activitySignalMatrixStates\}/,
+  );
   assert.equal(
-    source.includes("const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;"),
+    source.includes(
+      "const headerBroadcastSignalMatrixStates = signalMonitorPublishedStates;",
+    ),
     false,
   );
   assert.equal(
-    shellSource.includes("...(Array.isArray(signalMatrixStates) ? signalMatrixStates : [])"),
+    shellSource.includes(
+      "...(Array.isArray(signalMatrixStates) ? signalMatrixStates : [])",
+    ),
     false,
   );
-  assert.match(shellSource, /signalMatrixStates=\{watchlistSignalMatrixStates\}/);
-  assert.match(shellSource, /signalMatrixStates=\{activitySignalMatrixStates\}/);
+  assert.match(
+    shellSource,
+    /signalMatrixStates=\{watchlistSignalMatrixStates\}/,
+  );
+  assert.match(
+    shellSource,
+    /signalMatrixStates=\{activitySignalMatrixStates\}/,
+  );
   assert.match(
     shellSource,
     /const algoMonitorSurfaceDataEnabled = Boolean\(\s*desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled,?\s*\);/s,
   );
-  assert.match(shellCallSource, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
+  assert.match(
+    shellCallSource,
+    /signalMonitorStates=\{watchlistSignalMonitorStates\}/,
+  );
   assert.equal(
     shellCallSource.includes("signalMonitorStates={signalMonitorStates}"),
     false,
   );
   assert.equal(
-    headerSource.includes("headerSignalMatrixStates?.length ? headerSignalMatrixStates"),
+    headerSource.includes(
+      "headerSignalMatrixStates?.length ? headerSignalMatrixStates",
+    ),
     false,
   );
-  assert.match(
-    headerSource,
-    /signalMatrixStates=\{headerSignalMatrixStates\}/,
-  );
+  assert.match(headerSource, /signalMatrixStates=\{headerSignalMatrixStates\}/);
 });
 
 test("platform signal matrix subscription narrowing does not prune published rows", () => {
