@@ -14,17 +14,22 @@ test("algo cockpit stream downgrades full payload builds under high pressure", (
   assert.doesNotMatch(body, /return false/);
 });
 
-test("algo cockpit pressure fallback marks stream full-fresh without heavy sections", () => {
+test("algo cockpit pressure fallback serves the primary payload (not relabeled full-fresh)", () => {
   const start = source.indexOf("export async function fetchAlgoCockpitStreamPayload");
   assert.notEqual(start, -1, "Missing cockpit stream payload builder");
   const end = source.indexOf("\nexport function subscribeAlgoCockpitSnapshots", start + 1);
   assert.notEqual(end, -1, "Missing cockpit subscription builder");
-  const body = source.slice(start, end);
+  const fallbackEnd = source.indexOf("const target = await resolveAlgoCockpitTarget", start);
+  const fallback = source.slice(start, fallbackEnd === -1 ? end : fallbackEnd);
 
-  assert.match(body, /shouldUsePrimaryOnlyAlgoCockpitPayload\(getApiResourcePressureSnapshot\(\)\)/);
-  assert.match(body, /phase: "full"/);
-  assert.match(body, /signalOptionsState: null/);
-  assert.match(body, /cockpit: null/);
-  assert.match(body, /performance: null/);
-  assert.match(body, /signalMonitorProfile: null/);
+  // Gate is still checked against the pressure snapshot.
+  assert.match(
+    fallback,
+    /shouldUsePrimaryOnlyAlgoCockpitPayload\(getApiResourcePressureSnapshot\(\)\)/,
+  );
+  // Under pressure it returns the primary-only payload as-is (phase:"primary"),
+  // and must NOT relabel it phase:"full" (that would set algoFullFresh on the
+  // client and disable the HTTP cockpit refetch, so KPIs would never repopulate).
+  assert.match(fallback, /return fetchAlgoCockpitPrimaryPayload\(input, stream\)/);
+  assert.doesNotMatch(fallback, /phase: "full"/);
 });

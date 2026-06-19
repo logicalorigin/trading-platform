@@ -53,10 +53,16 @@ const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
 
 export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
+  // Gate on resourceLevel (rss/heap/event-loop/db-pool), NOT level: level folds
+  // in request-latency p95, so a slow broker route (esp. with IBKR off) or a
+  // single transient db-pool waiter falsely sheds the cockpit's heavy sections
+  // and flaps the KPIs. resourceLevel reflects genuine server saturation.
   const level =
-    typeof pressure === "object" && pressure !== null && "level" in pressure
-      ? (pressure as { level?: unknown }).level
-      : pressure;
+    typeof pressure === "object" && pressure !== null && "resourceLevel" in pressure
+      ? (pressure as { resourceLevel?: unknown }).resourceLevel
+      : typeof pressure === "object" && pressure !== null && "level" in pressure
+        ? (pressure as { level?: unknown }).level
+        : pressure;
   return level === "high";
 }
 
@@ -134,15 +140,12 @@ export async function fetchAlgoCockpitStreamPayload(
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
   if (shouldUsePrimaryOnlyAlgoCockpitPayload(getApiResourcePressureSnapshot())) {
-    const primary = await fetchAlgoCockpitPrimaryPayload(input, stream);
-    return {
-      ...primary,
-      phase: "full",
-      signalOptionsState: null,
-      cockpit: null,
-      performance: null,
-      signalMonitorProfile: null,
-    };
+    // Under genuine saturation serve the primary-only payload (phase:"primary").
+    // Do NOT relabel it phase:"full": the client treats a "full" payload as
+    // algoFullFresh and disables the HTTP cockpit refetch, so the degraded
+    // payload (cockpit/performance/profile null) would never repopulate and the
+    // KPIs stay blanked. Keeping phase:"primary" lets the HTTP poll catch up.
+    return fetchAlgoCockpitPrimaryPayload(input, stream);
   }
 
   const target = await resolveAlgoCockpitTarget(input);
