@@ -7,6 +7,7 @@ import {
 } from "../lib/runtime";
 import {
   IbkrBridgeClient,
+  describeIbkrBridgeRuntimeUnavailable,
   type MutableQuoteStream,
   type QuoteStreamSignal,
 } from "../providers/ibkr/bridge-client";
@@ -842,6 +843,7 @@ function refreshBridgeQuoteStream() {
   clearRefreshTimer();
 
   if (!isBridgeRuntimeConfigured()) {
+    const unavailable = describeIbkrBridgeRuntimeUnavailable();
     const requestedSymbols = getRequestedSymbols();
     stopStream();
     releaseBridgeQuoteSubscriberLeases("runtime_unconfigured");
@@ -856,8 +858,8 @@ function refreshBridgeQuoteStream() {
     lastErrorAt = null;
     lastStreamStatus = {
       state: "closed",
-      reason: "ibkr_bridge_not_configured",
-      message: "Interactive Brokers bridge is not configured.",
+      reason: unavailable.code,
+      message: unavailable.message,
       requestedCount: requestedSymbols.length,
       admittedCount: 0,
       rejectedCount: requestedSymbols.length,

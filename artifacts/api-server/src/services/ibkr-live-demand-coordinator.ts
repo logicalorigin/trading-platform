@@ -204,7 +204,10 @@ function resolveMissingQuoteState(input: {
           demandDebug.blockedReason.trim()
         ? demandDebug.blockedReason.trim()
         : null;
-  if (demandUnavailableReason === "ibkr_bridge_not_configured") {
+  if (
+    demandUnavailableReason === "ibkr_bridge_not_configured" ||
+    demandUnavailableReason === "ibkr_bridge_runtime_unattached"
+  ) {
     return { status: "unavailable", reason: demandUnavailableReason };
   }
 

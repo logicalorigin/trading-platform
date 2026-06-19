@@ -37,6 +37,19 @@ test("quote stream capacity pressure feeds IBKR admission shedding", () => {
   assert.match(handlerBlock, /source: "quote-stream"/);
 });
 
+test("quote stream unconfigured status uses runtime availability reason", () => {
+  const source = readFileSync(new URL("./bridge-quote-stream.ts", import.meta.url), "utf8");
+  const start = source.indexOf("function refreshBridgeQuoteStream");
+  const end = source.indexOf("admitBridgeQuoteSubscriberLeasesForRuntime", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(block, /const unavailable = describeIbkrBridgeRuntimeUnavailable\(\);/);
+  assert.match(block, /reason: unavailable\.code/);
+  assert.match(block, /message: unavailable\.message/);
+});
+
 test("rejected snapshot admissions release leases only for implicit owners", () => {
   const source = readFileSync(new URL("./bridge-quote-stream.ts", import.meta.url), "utf8");
   const start = source.indexOf("if (!admittedSymbols.length) {");

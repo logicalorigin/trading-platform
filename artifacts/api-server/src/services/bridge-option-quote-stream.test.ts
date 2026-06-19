@@ -15,17 +15,20 @@ import {
   __getBridgeOptionQuoteLastErrorForTests,
   __resetBridgeOptionQuoteStreamForTests,
   __setBridgeOptionQuoteClientForTests,
+  __setBridgeOptionQuoteRuntimeConfiguredForTests,
   __setBridgeOptionQuoteStreamNowForTests,
   fetchBridgeOptionQuoteSnapshots,
   subscribeBridgeOptionQuoteSnapshots,
 } from "./bridge-option-quote-stream";
 import { HttpError } from "../lib/errors";
+import { setIbkrBridgeRuntimeAvailabilityProvider } from "../providers/ibkr/bridge-client";
 
 afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
   __setBridgeOptionQuoteClientForTests(null);
+  setIbkrBridgeRuntimeAvailabilityProvider(null);
   __setBridgeOptionQuoteStreamNowForTests(null);
 });
 
@@ -75,6 +78,29 @@ test("algo operations automation live quote snapshots use the quote bridge lane"
   const snapshot = getBridgeGovernorSnapshot();
   assert.ok(snapshot.quotes.lastSuccessAt);
   assert.equal(snapshot.options.lastSuccessAt, null);
+});
+
+test("unattached desktop agent option snapshots report bridge runtime unattached", async () => {
+  __resetBridgeOptionQuoteStreamForTests();
+  __resetBridgeGovernorForTests();
+  __resetMarketDataAdmissionForTests();
+  __setBridgeOptionQuoteRuntimeConfiguredForTests(false);
+  setIbkrBridgeRuntimeAvailabilityProvider(() => ({
+    runtimeOverrideActive: false,
+    desktopAgentOnline: true,
+    desktopAgentCompatible: true,
+  }));
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["contract-1"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requiresGreeks: false,
+  });
+
+  assert.equal(payload.debug?.errorCode, "ibkr_bridge_runtime_unattached");
+  assert.match(payload.debug?.errorMessage ?? "", /desktop agent is online/i);
 });
 
 function makeThrowingOptionQuoteClient(error: unknown) {

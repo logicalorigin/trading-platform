@@ -6,6 +6,7 @@ import {
 } from "../lib/runtime";
 import {
   IbkrBridgeClient,
+  describeIbkrBridgeRuntimeUnavailable,
   type QuoteStreamSignal,
 } from "../providers/ibkr/bridge-client";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
@@ -1056,6 +1057,7 @@ function refreshBridgeOptionQuoteStream() {
   clearRefreshTimer();
 
   if (!isBridgeRuntimeConfigured()) {
+    const unavailable = describeIbkrBridgeRuntimeUnavailable();
     const requestedProviderContractIds = getRequestedProviderContractIds();
     stopStream();
     releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
@@ -1073,8 +1075,8 @@ function refreshBridgeOptionQuoteStream() {
     lastErrorAt = null;
     lastStreamStatus = {
       state: "closed",
-      reason: "ibkr_bridge_not_configured",
-      message: "Interactive Brokers bridge is not configured.",
+      reason: unavailable.code,
+      message: unavailable.message,
       requestedCount: requestedProviderContractIds.length,
       admittedCount: 0,
       rejectedCount: requestedProviderContractIds.length,
@@ -1198,6 +1200,7 @@ function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
   requestedProviderContractIds: string[];
   normalizedProviderContractIds: string[];
 }): OptionQuoteSnapshotPayload {
+  const unavailable = describeIbkrBridgeRuntimeUnavailable();
   return {
     underlying: input.underlying,
     quotes: [],
@@ -1214,8 +1217,8 @@ function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
       bridgeChunks: 0,
       providerMode: null,
       liveMarketDataAvailable: null,
-      errorCode: "ibkr_bridge_not_configured",
-      errorMessage: "Interactive Brokers bridge is not configured.",
+      errorCode: unavailable.code,
+      errorMessage: unavailable.message,
       acceptedProviderContractIds: [],
       missingProviderContractIds: input.normalizedProviderContractIds,
     },
