@@ -28,6 +28,8 @@ import {
   historicalBarDatasetsTable,
   historicalBarsTable,
   instrumentsTable,
+  mtfPatternOccurrencesTable,
+  mtfPatternResultsTable,
   watchlistItemsTable,
 } from "@workspace/db";
 import type {
@@ -2128,6 +2130,209 @@ export async function createBacktestRun(input: CreateRunInput) {
   });
 
   return buildRunDetail(result);
+}
+
+export type CreatePatternDiscoveryInput = {
+  name: string;
+  symbols: string[];
+  timeframeSet: string[];
+  baseTimeframe?: string;
+  forwardHorizonsBars?: number[];
+  minSampleThreshold?: number;
+  startsAt: Date;
+  endsAt: Date;
+  signalSettingsByTimeframe?: Record<string, Record<string, unknown>>;
+  persistOccurrences?: boolean;
+};
+
+// Create an MTF pattern-discovery study and enqueue its worker job. Reuses the
+// backtest_studies + backtest_study_jobs orchestration tables (kind =
+// "pattern_discovery"); the config lives in study.parameters.
+export async function createPatternDiscoveryStudy(
+  input: CreatePatternDiscoveryInput,
+) {
+  const timeframeSet =
+    input.timeframeSet.length > 0 ? input.timeframeSet : ["1m", "2m", "5m", "15m"];
+  const baseTimeframe =
+    input.baseTimeframe && timeframeSet.includes(input.baseTimeframe)
+      ? input.baseTimeframe
+      : timeframeSet[0];
+  const parameters = {
+    symbols: input.symbols,
+    timeframeSet,
+    baseTimeframe,
+    forwardHorizonsBars: input.forwardHorizonsBars ?? [3, 6, 12],
+    minSampleThreshold: input.minSampleThreshold ?? 30,
+    signalSettingsByTimeframe: input.signalSettingsByTimeframe ?? {},
+    // Default on: the UI drill-in (per-symbol breakdown + occurrence timeline)
+    // reads these rows. Volume is modest (occurrences x horizons per study).
+    persistOccurrences: input.persistOccurrences ?? true,
+  };
+
+  return db.transaction(async (tx) => {
+    const [study] = await tx
+      .insert(backtestStudiesTable)
+      .values({
+        name: input.name,
+        strategyId: "mtf_pattern_discovery",
+        strategyVersion: "v1",
+        symbols: input.symbols,
+        timeframe: baseTimeframe,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        parameters,
+        portfolioRules: {},
+        executionProfile: {},
+        optimizerConfig: {},
+      })
+      .returning();
+
+    const [job] = await tx
+      .insert(backtestStudyJobsTable)
+      .values({
+        studyId: study.id,
+        kind: "pattern_discovery",
+        status: "queued",
+        progressPercent: 0,
+        payload: { parameters },
+      })
+      .returning();
+
+    return { studyId: study.id, jobId: job.id, status: "queued" as const };
+  });
+}
+
+// Fetch a study's ranked pattern results (+ job progress), optionally one horizon.
+export async function getPatternDiscoveryResults(
+  studyId: string,
+  horizonBars?: number,
+) {
+  const study = await db
+    .select()
+    .from(backtestStudiesTable)
+    .where(eq(backtestStudiesTable.id, studyId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!study) return null;
+
+  const job = await db
+    .select()
+    .from(backtestStudyJobsTable)
+    .where(eq(backtestStudyJobsTable.studyId, studyId))
+    .orderBy(desc(backtestStudyJobsTable.createdAt))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+
+  const where =
+    horizonBars != null
+      ? and(
+          eq(mtfPatternResultsTable.studyId, studyId),
+          eq(mtfPatternResultsTable.horizonBars, horizonBars),
+        )
+      : eq(mtfPatternResultsTable.studyId, studyId);
+  const results = await db
+    .select()
+    .from(mtfPatternResultsTable)
+    .where(where)
+    .orderBy(
+      asc(mtfPatternResultsTable.horizonBars),
+      asc(mtfPatternResultsTable.rank),
+    );
+
+  const toNum = (value: string | null): number | null =>
+    value == null ? null : Number(value);
+  return {
+    studyId,
+    status: job?.status ?? "unknown",
+    progressPercent: job?.progressPercent ?? 0,
+    parameters: study.parameters,
+    results: results.map((row) => ({
+      id: row.id,
+      patternKey: row.patternKey,
+      timeframeSet: row.timeframeSet,
+      baseTimeframe: row.baseTimeframe,
+      horizonBars: row.horizonBars,
+      sampleCount: row.sampleCount,
+      bias: row.bias,
+      winRatePct: toNum(row.winRatePct),
+      meanReturnPct: toNum(row.meanReturnPct),
+      medianReturnPct: toNum(row.medianReturnPct),
+      stdReturnPct: toNum(row.stdReturnPct),
+      avgMaePct: toNum(row.avgMaePct),
+      avgMfePct: toNum(row.avgMfePct),
+      score: toNum(row.score),
+      tStat: toNum(row.tStat),
+      rank: row.rank,
+      dataQuality: row.dataQuality,
+    })),
+  };
+}
+
+// Drill-in: per-occurrence rows for one pattern + horizon (timeline) plus a
+// per-symbol aggregate (breakdown). Requires the study to have persisted
+// occurrences (createPatternDiscoveryStudy defaults persistOccurrences on).
+export async function getPatternOccurrences(
+  studyId: string,
+  patternKey: string,
+  horizonBars: number,
+) {
+  const rows = await db
+    .select()
+    .from(mtfPatternOccurrencesTable)
+    .where(
+      and(
+        eq(mtfPatternOccurrencesTable.studyId, studyId),
+        eq(mtfPatternOccurrencesTable.patternKey, patternKey),
+        eq(mtfPatternOccurrencesTable.horizonBars, horizonBars),
+      ),
+    )
+    .orderBy(asc(mtfPatternOccurrencesTable.occurredAt));
+
+  const bySymbol = new Map<
+    string,
+    { symbol: string; count: number; wins: number; sumReturn: number }
+  >();
+  for (const row of rows) {
+    const ret =
+      row.realizedReturnPct == null ? null : Number(row.realizedReturnPct);
+    const agg = bySymbol.get(row.symbol) ?? {
+      symbol: row.symbol,
+      count: 0,
+      wins: 0,
+      sumReturn: 0,
+    };
+    agg.count += 1;
+    if (ret != null) {
+      agg.sumReturn += ret;
+      if (ret > 0) agg.wins += 1;
+    }
+    bySymbol.set(row.symbol, agg);
+  }
+  const perSymbol = [...bySymbol.values()].map((agg) => ({
+    symbol: agg.symbol,
+    count: agg.count,
+    // % of occurrences where the underlying rose (same convention as the
+    // leaderboard winRatePct; interpret against the pattern's bias).
+    winRatePct:
+      agg.count > 0 ? Number(((agg.wins / agg.count) * 100).toFixed(2)) : null,
+    meanReturnPct:
+      agg.count > 0 ? Number((agg.sumReturn / agg.count).toFixed(6)) : null,
+  }));
+
+  return {
+    studyId,
+    patternKey,
+    horizonBars,
+    occurrences: rows.map((row) => ({
+      symbol: row.symbol,
+      occurredAt: row.occurredAt,
+      realizedReturnPct:
+        row.realizedReturnPct == null ? null : Number(row.realizedReturnPct),
+      maePct: row.maePct == null ? null : Number(row.maePct),
+      mfePct: row.mfePct == null ? null : Number(row.mfePct),
+    })),
+    perSymbol,
+  };
 }
 
 export async function getBacktestRun(runId: string) {

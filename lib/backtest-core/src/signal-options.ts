@@ -83,6 +83,14 @@ export type SignalOptionsExecutionProfile = {
       timeframes: SignalOptionsMtfTimeframe[];
       preset: SignalOptionsMtfPreset;
     };
+    // Divergence-aware gate: requires the LIVE per-timeframe signal matrix to
+    // match every non-"any" entry EXACTLY (unlike mtfAlignment's N-agree
+    // confluence, which cannot express divergence). Populated by promoting a
+    // discovered MTF pattern. Optional so existing profiles need no migration.
+    mtfPattern?: {
+      enabled: boolean;
+      pattern: Record<string, "buy" | "sell" | "any">;
+    };
     blockedPutSymbols: string[];
     bearishRegime: {
       enabled: boolean;
@@ -235,6 +243,10 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
         requiredCount: 2,
         timeframes: [...signalOptionsDefaultMtfTimeframes],
         preset: "custom",
+      },
+      mtfPattern: {
+        enabled: false,
+        pattern: {},
       },
       blockedPutSymbols: [
         "SQQQ",
@@ -711,6 +723,7 @@ export function resolveSignalOptionsExecutionProfile(
   const riskCaps = asRecord(root.riskCaps);
   const entryGate = asRecord(root.entryGate);
   const mtfAlignment = asRecord(entryGate.mtfAlignment ?? root.mtfAlignment);
+  const mtfPattern = asRecord(entryGate.mtfPattern);
   const mtfTimeframes = signalOptionsMtfTimeframes(
     mtfAlignment.timeframes ?? root.mtfTimeframes,
     defaults.entryGate.mtfAlignment.timeframes,
@@ -827,6 +840,20 @@ export function resolveSignalOptionsExecutionProfile(
         preset: signalOptionsMtfPreset(
           mtfAlignment.preset ?? root.mtfAlignmentPreset,
         ),
+      },
+      mtfPattern: {
+        enabled: booleanValue(
+          mtfPattern.enabled,
+          defaults.entryGate.mtfPattern?.enabled ?? false,
+        ),
+        pattern: Object.fromEntries(
+          Object.entries(asRecord(mtfPattern.pattern)).filter(
+            ([, direction]) =>
+              direction === "buy" ||
+              direction === "sell" ||
+              direction === "any",
+          ),
+        ) as Record<string, "buy" | "sell" | "any">,
       },
       blockedPutSymbols: symbolList(
         entryGate.blockedPutSymbols ?? root.blockedPutSymbols,

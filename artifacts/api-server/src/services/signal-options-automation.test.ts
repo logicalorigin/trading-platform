@@ -4,8 +4,66 @@ import test from "node:test";
 
 import {
   __signalOptionsAutomationInternalsForTests,
+  evaluateMtfPatternGate,
   runSignalOptionsShadowBackfill,
 } from "./signal-options-automation";
+
+test("evaluateMtfPatternGate requires an EXACT per-timeframe match (divergence-aware)", () => {
+  type Pat = Record<string, "buy" | "sell" | "any">;
+  type Live = Record<string, "buy" | "sell" | null>;
+  const confluence: Pat = { "1m": "buy", "5m": "buy", "15m": "buy" };
+  const divergence: Pat = { "1m": "sell", "2m": "sell", "5m": "sell", "15m": "buy" };
+
+  // Full match (confluence) -> ok.
+  assert.equal(
+    evaluateMtfPatternGate(confluence, {
+      "1m": "buy",
+      "5m": "buy",
+      "15m": "buy",
+    } as Live),
+    "ok",
+  );
+  // The divergence setup present exactly -> ok (this is the whole point).
+  assert.equal(
+    evaluateMtfPatternGate(divergence, {
+      "1m": "sell",
+      "2m": "sell",
+      "5m": "sell",
+      "15m": "buy",
+    } as Live),
+    "ok",
+  );
+  // One timeframe disagrees -> mismatch (an N-agree confluence gate would have
+  // wrongly allowed this 3-of-4).
+  assert.equal(
+    evaluateMtfPatternGate(divergence, {
+      "1m": "buy",
+      "2m": "sell",
+      "5m": "sell",
+      "15m": "buy",
+    } as Live),
+    "mismatch",
+  );
+  // A required timeframe has no live signal -> unavailable (don't fire blind).
+  assert.equal(
+    evaluateMtfPatternGate(divergence, {
+      "1m": "sell",
+      "2m": "sell",
+      "5m": "sell",
+      "15m": null,
+    } as Live),
+    "unavailable",
+  );
+  // "any" entries are unconstrained; empty pattern imposes no constraint.
+  assert.equal(
+    evaluateMtfPatternGate({ "1m": "any", "5m": "buy" }, {
+      "1m": "sell",
+      "5m": "buy",
+    } as Live),
+    "ok",
+  );
+  assert.equal(evaluateMtfPatternGate({}, { "1m": "sell" } as Live), "ok");
+});
 
 const signalState = (
   symbol: string,

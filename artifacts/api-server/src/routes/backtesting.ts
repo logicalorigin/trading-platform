@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { z } from "zod";
 import {
   CancelBacktestJobParams,
   CancelBacktestJobResponse,
@@ -30,11 +31,14 @@ import {
   createBacktestRun,
   createBacktestStudy,
   createBacktestSweep,
+  createPatternDiscoveryStudy,
   getBacktestRunChart,
   getBacktestRun,
   getBacktestStudy,
   getBacktestStudyPreviewChart,
   getBacktestSweep,
+  getPatternDiscoveryResults,
+  getPatternOccurrences,
   listBacktestDraftStrategies,
   listBacktestJobs,
   listBacktestRuns,
@@ -43,6 +47,7 @@ import {
   promoteBacktestRun,
   resolveBacktestOptionContract,
 } from "../services/backtesting";
+import { promoteMtfPatternToDeployment } from "../services/signal-options-automation";
 
 const router: IRouter = Router();
 
@@ -206,5 +211,66 @@ router.get("/backtests/drafts", async (_req, res): Promise<void> => {
   );
   res.json(data);
 });
+
+const PatternDiscoveryBody = z.object({
+  name: z.string().min(1),
+  symbols: z.array(z.string().min(1)).min(1),
+  timeframeSet: z.array(z.string().min(1)).min(1),
+  baseTimeframe: z.string().optional(),
+  forwardHorizonsBars: z.array(z.number().int().positive()).optional(),
+  minSampleThreshold: z.number().int().nonnegative().optional(),
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date(),
+  signalSettingsByTimeframe: z.record(z.record(z.unknown())).optional(),
+  persistOccurrences: z.boolean().optional(),
+});
+
+router.post("/backtests/pattern-discovery", async (req, res): Promise<void> => {
+  const body = PatternDiscoveryBody.parse(req.body);
+  const data = await createPatternDiscoveryStudy(body);
+  res.status(201).json(data);
+});
+
+router.get(
+  "/backtests/pattern-discovery/:studyId",
+  async (req, res): Promise<void> => {
+    const studyId = z.string().uuid().parse(req.params.studyId);
+    const horizonBars =
+      req.query.horizonBars != null
+        ? z.coerce.number().int().parse(req.query.horizonBars)
+        : undefined;
+    const data = await getPatternDiscoveryResults(studyId, horizonBars);
+    if (!data) {
+      res.status(404).json({ error: "study_not_found" });
+      return;
+    }
+    res.json(data);
+  },
+);
+
+router.get(
+  "/backtests/pattern-discovery/:studyId/occurrences",
+  async (req, res): Promise<void> => {
+    const studyId = z.string().uuid().parse(req.params.studyId);
+    const patternKey = z.string().min(1).parse(req.query.patternKey);
+    const horizonBars = z.coerce.number().int().parse(req.query.horizonBars);
+    const data = await getPatternOccurrences(studyId, patternKey, horizonBars);
+    res.json(data);
+  },
+);
+
+router.post(
+  "/backtests/pattern-discovery/promote",
+  async (req, res): Promise<void> => {
+    const body = z
+      .object({
+        deploymentId: z.string().min(1),
+        patternKey: z.string().min(1),
+      })
+      .parse(req.body);
+    const data = await promoteMtfPatternToDeployment(body);
+    res.status(200).json(data);
+  },
+);
 
 export default router;

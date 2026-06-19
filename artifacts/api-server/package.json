@@ -22,7 +22,8 @@
     "express": "catalog:",
     "pino": "catalog:",
     "pino-http": "catalog:",
-    "ws": "catalog:"
+    "ws": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/cors": "catalog:",

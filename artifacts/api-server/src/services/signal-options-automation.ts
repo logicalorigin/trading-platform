@@ -4289,6 +4289,25 @@ function signalOptionsMtfAlignmentReason(
   return null;
 }
 
+// Exported for testing. The promoted MTF pattern gates entry only when the live
+// per-timeframe matrix matches every non-"any" entry exactly. "unavailable" = a
+// required timeframe has no live signal; "mismatch" = a required timeframe
+// disagrees; "ok" = the divergence/confluence pattern is fully present.
+export function evaluateMtfPatternGate(
+  pattern: Record<string, "buy" | "sell" | "any">,
+  liveDirections: Record<string, SignalMonitorDirection | null>,
+): "ok" | "mismatch" | "unavailable" {
+  const required = Object.entries(pattern).filter(
+    ([, direction]) => direction === "buy" || direction === "sell",
+  );
+  for (const [timeframe, direction] of required) {
+    const live = liveDirections[timeframe];
+    if (live == null) return "unavailable";
+    if (live !== direction) return "mismatch";
+  }
+  return "ok";
+}
+
 function evaluateSignalOptionsEntryGate(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
@@ -4341,6 +4360,27 @@ function evaluateSignalOptionsEntryGate(input: {
     mtfSelection.missingTimeframes.length > 0
   ) {
     reasons.push("mtf_unavailable");
+  }
+
+  // Divergence-aware pattern gate: block entry unless the live per-timeframe
+  // matrix matches every non-"any" entry of the promoted pattern EXACTLY. This
+  // expresses divergence setups (e.g. 1m/2m/5m sell + 15m buy) that the
+  // mtfAlignment confluence gate (N-agree) cannot.
+  const patternGate = input.profile.entryGate.mtfPattern;
+  if (
+    patternGate?.enabled &&
+    input.mtfTimeframeDirections &&
+    Object.keys(patternGate.pattern ?? {}).length > 0
+  ) {
+    const outcome = evaluateMtfPatternGate(
+      patternGate.pattern ?? {},
+      input.mtfTimeframeDirections,
+    );
+    if (outcome === "unavailable") {
+      reasons.push("mtf_pattern_unavailable");
+    } else if (outcome === "mismatch") {
+      reasons.push("mtf_pattern_mismatch");
+    }
   }
 
   const blockedPutSymbols = new Set(
@@ -17201,6 +17241,27 @@ export async function updateSignalOptionsExecutionProfile(input: {
     deployment: deploymentToResponse(nextDeployment),
     profile: nextProfile,
   };
+}
+
+// Promote a discovered MTF pattern onto a deployment's entry gate. Parses the
+// pattern key ("1m:sell|2m:sell|5m:sell|15m:buy") into the per-timeframe gate
+// map ("none" -> "any" = unconstrained on that timeframe) and enables the
+// divergence-aware mtfPattern gate, reusing the standard profile-update path.
+export async function promoteMtfPatternToDeployment(input: {
+  deploymentId: string;
+  patternKey: string;
+}) {
+  const pattern: Record<string, "buy" | "sell" | "any"> = {};
+  for (const part of String(input.patternKey).split("|")) {
+    const [timeframe, direction] = part.split(":");
+    if (!timeframe) continue;
+    pattern[timeframe] =
+      direction === "buy" ? "buy" : direction === "sell" ? "sell" : "any";
+  }
+  return updateSignalOptionsExecutionProfile({
+    deploymentId: input.deploymentId,
+    patch: { entryGate: { mtfPattern: { enabled: true, pattern } } },
+  });
 }
 
 export const __signalOptionsAutomationInternalsForTests = {
