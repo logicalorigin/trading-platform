@@ -811,7 +811,41 @@ try {
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
   const apiExit = exitPromise("API", api);
 
-  await waitForApi(apiExit, api.pid);
+  // Start the web (vite) dev server in parallel with API boot. First paint is
+  // fully client-rendered and API-independent (static boot shell + LogoLoader),
+  // and the /api proxy tolerates the API being briefly unavailable during boot,
+  // so overlapping vite startup (incl. cold optimizeDeps prebundle) with the
+  // API health gate puts the browser preview in front of the user sooner.
+  lifecyclePhase = "web-starting";
+  const web = spawnService(
+    "PYRUS web",
+    ["--filter", "@workspace/pyrus", "run", "dev:web"],
+    {
+      PORT: webPort,
+      BASE_PATH: process.env.BASE_PATH || "/",
+      VITE_PROXY_API_TARGET:
+        process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
+    },
+  );
+  webChild = web;
+  const webExit = exitPromise("PYRUS web", web);
+  writeLifecycleEvent("web-started", { childPid: web.pid || null });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+
+  // Wait for the API to become healthy, but fail fast if the web child dies
+  // during the boot window — exitWatchers below is not assembled until after the
+  // gate, so an early web crash must be covered here explicitly.
+  const apiHealthGate = await Promise.race([
+    waitForApi(apiExit, api.pid).then(() => ({ type: "api-healthy" })),
+    webExit.then((result) => ({ type: "web-early-exit", result })),
+  ]);
+  if (apiHealthGate.type === "web-early-exit") {
+    const { result } = apiHealthGate;
+    console.error(
+      `[pyrus-dev] PYRUS web exited before API became healthy: code=${result.code ?? "null"} signal=${result.signal ?? "null"}`,
+    );
+    await shutdown(result.code ?? (result.signal ? 1 : 0));
+  }
   lifecyclePhase = "api-healthy";
   writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
@@ -840,23 +874,10 @@ try {
     flightRecorder.writeHeartbeat(currentFlightHeartbeat());
   }
 
-  lifecyclePhase = "web-starting";
-  const web = spawnService(
-    "PYRUS web",
-    ["--filter", "@workspace/pyrus", "run", "dev:web"],
-    {
-      PORT: webPort,
-      BASE_PATH: process.env.BASE_PATH || "/",
-      VITE_PROXY_API_TARGET:
-        process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
-    },
-  );
-  webChild = web;
   lifecyclePhase = "running";
-  writeLifecycleEvent("web-started", { childPid: web.pid || null });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
-  const exitWatchers = [apiExit, exitPromise("PYRUS web", web)];
+  const exitWatchers = [apiExit, webExit];
   if (workerExit) {
     exitWatchers.push(workerExit);
   }
