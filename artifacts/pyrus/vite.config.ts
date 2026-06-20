@@ -196,6 +196,7 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     chunkSizeWarningLimit: 350,
+    reportCompressedSize: false,
     modulePreload: {
       resolveDependencies(_filename, deps) {
         return deps.filter(
@@ -461,7 +462,7 @@ export default defineConfig({
       "recharts",
       "lightweight-charts",
       "d3",
-      "hls.js",
+      "hls.js/light",
     ],
   },
   server: {
