@@ -80,43 +80,33 @@ import {
   HEADER_KPI_SYMBOLS,
   HeaderKpiStrip,
 } from "./HeaderKpiStrip.jsx";
-// HeaderStatusCluster + HeaderBroadcastScrollerStack are large, above-the-fold
-// header chunks. Split them out of the eager PlatformApp chunk and lazy-load
-// them, but eagerly warm their chunks at module load so they are typically
-// resolved before the header first paints (the Suspense fallback window stays
-// near-zero). Component names + prop contract are preserved so downstream render
-// sites need no changes.
+// HeaderStatusCluster is a large (~101KB) header chunk. Split it out of the
+// eager PlatformApp chunk and lazy-load it, eagerly warming the chunk at module
+// load so it typically resolves before the header paints. Name + prop contract
+// preserved so downstream render sites need no changes. Its only fallback risk
+// is a brief horizontal reflow of adjacent header items (it sits in a
+// fixed-height header row), which eager preload makes near-zero.
 const loadHeaderStatusCluster = () =>
   import("./HeaderStatusCluster.jsx").then((m) => ({
     default: m.MemoHeaderStatusCluster,
   }));
-const loadHeaderBroadcastScrollerStack = () =>
-  import("./HeaderBroadcastScrollerStack.jsx").then((m) => ({
-    default: m.HeaderBroadcastScrollerStack,
-  }));
 const LazyHeaderStatusCluster = lazyWithRetry(loadHeaderStatusCluster, {
   label: "HeaderStatusCluster",
 });
-const LazyHeaderBroadcastScrollerStack = lazyWithRetry(
-  loadHeaderBroadcastScrollerStack,
-  { label: "HeaderBroadcastScrollerStack" },
-);
 void preloadDynamicImport(loadHeaderStatusCluster, {
   label: "HeaderStatusCluster",
-});
-void preloadDynamicImport(loadHeaderBroadcastScrollerStack, {
-  label: "HeaderBroadcastScrollerStack",
 });
 const MemoHeaderStatusCluster = (props) => (
   <Suspense fallback={null}>
     <LazyHeaderStatusCluster {...props} />
   </Suspense>
 );
-const HeaderBroadcastScrollerStack = (props) => (
-  <Suspense fallback={null}>
-    <LazyHeaderBroadcastScrollerStack {...props} />
-  </Suspense>
-);
+// HeaderBroadcastScrollerStack stays eagerly imported on purpose: it is a
+// full-width, multi-lane above-the-fold row (3-row CSS grid) whose height is
+// dim()-scaled and varies by phone/collapsed state, so a Suspense fallback
+// cannot reserve its height reliably — lazy-loading it would risk a vertical
+// layout shift. Keeping it eager costs ~35KB but guarantees no header pop.
+import { HeaderBroadcastScrollerStack } from "./HeaderBroadcastScrollerStack.jsx";
 import { buildHeaderSignalContextSymbols } from "./headerBroadcastModel.js";
 import { MemoWatchlistContainer } from "./PlatformWatchlist.jsx";
 import { LatencyDebugStrip } from "./LatencyDebugStrip.jsx";
