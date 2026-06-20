@@ -626,12 +626,10 @@ export const TradeOrderTicket = ({
       )}
     </>
   );
-  const ticketTypeOptions = [
-    ["LMT", "LMT"],
-    ["MKT", "MKT"],
-    ["STP", "STP"],
-    ["STP_LMT", "STP LMT"],
-  ];
+  const ticketTypeOptions = TICKET_ORDER_TYPES.map((value) => [
+    value,
+    formatTicketOrderType(value),
+  ]);
   const renderLockedTicketControls = () => (
     <div
       style={{
@@ -1298,12 +1296,11 @@ export const TradeOrderTicket = ({
       body: "The ticket side, quantity, order type, TIF, and limit were reset to the automation plan.",
     });
   };
-  const previewPayload =
+  const previewOrderPayload =
     previewSnapshot?.orderPayload &&
     typeof previewSnapshot.orderPayload === "object"
       ? previewSnapshot.orderPayload
       : null;
-  const previewOrderPayload = previewPayload;
 
   const validateTicket = ({ requireAttachedExits = false } = {}) => {
     if (qtyNum <= 0) {
@@ -1526,7 +1523,7 @@ export const TradeOrderTicket = ({
       return;
     }
 
-    if (brokerConfigured && !accountId) {
+    if (!accountId) {
       toast.push({
         kind: "warn",
         title: "No broker account selected",
@@ -2881,8 +2878,6 @@ export const TradeOrderTicket = ({
             ? "PREVIEWING..."
             : executionIsShadow
               ? "PREVIEW SHADOW"
-            : brokerConfigured
-              ? "PREVIEW IBKR"
               : "PREVIEW IBKR"}
         </button>
         <button

@@ -300,7 +300,6 @@ if (import.meta.hot) {
 const HISTOGRAM_VALUE_DISPLAY_CAP = 9_000_000_000_000;
 
 const isHistogramValueSafe = (value: unknown): value is number =>
-  typeof value === "number" &&
   isFiniteNumber(value) &&
   Math.abs(value) <= HISTOGRAM_VALUE_DISPLAY_CAP;
 
@@ -1646,7 +1645,7 @@ type StudyRegistryEntry = {
 };
 
 const resolveSeriesTimeComparable = (time: unknown): number | string | null => {
-  if (typeof time === "number" && isFiniteNumber(time)) {
+  if (isFiniteNumber(time)) {
     return time;
   }
   if (typeof time === "string" && time.trim()) {
@@ -1868,20 +1867,6 @@ const buildSeriesTailUpdatePlan = (
   }
 
   return buildSeriesResetPlan("shorter-series");
-};
-
-export const resolveSeriesTailUpdateMode = (
-  previous: Array<Record<string, unknown>>,
-  next: Array<Record<string, unknown>>,
-): SeriesTailUpdateMode => {
-  return buildSeriesTailUpdatePlan(previous, next).mode;
-};
-
-export const resolveSeriesTailUpdateResetReason = (
-  previous: Array<Record<string, unknown>>,
-  next: Array<Record<string, unknown>>,
-): SeriesTailResetReason | null => {
-  return buildSeriesTailUpdatePlan(previous, next).resetReason ?? null;
 };
 
 const canUpdateSeriesTail = (
@@ -2136,32 +2121,6 @@ export const resolveVisibleRangePublishState = ({
             visibleRange,
             barCount,
           }),
-  };
-};
-
-export const clampVisibleLogicalRangeToBarCount = (
-  visibleRange: VisibleLogicalRange | null | undefined,
-  barCount: number,
-): VisibleLogicalRange | null => {
-  if (
-    !visibleRange ||
-    !isFiniteNumber(visibleRange.from) ||
-    !isFiniteNumber(visibleRange.to) ||
-    !isFiniteNumber(barCount) ||
-    barCount <= 0
-  ) {
-    return null;
-  }
-
-  const from = Math.min(visibleRange.from, visibleRange.to);
-  const to = Math.max(visibleRange.from, visibleRange.to);
-  if (to < 0 || from > barCount - 1) {
-    return null;
-  }
-
-  return {
-    from: Math.max(0, from),
-    to: Math.min(barCount - 1, to),
   };
 };
 
@@ -3243,7 +3202,7 @@ const resolveGexProjectionVisibleLogicalRange = ({
 };
 
 const chartTimeToDate = (value: unknown): Date | null => {
-  if (typeof value === "number" && isFiniteNumber(value)) {
+  if (isFiniteNumber(value)) {
     return new Date(value * 1000);
   }
   if (typeof value === "string" && value.trim()) {
@@ -3272,7 +3231,7 @@ const resolveDateLikeMs = (value: unknown): number | null => {
   if (value instanceof Date) {
     return value.getTime();
   }
-  if (typeof value === "number" && isFiniteNumber(value)) {
+  if (isFiniteNumber(value)) {
     return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
   }
   if (typeof value === "string" && value.trim()) {
@@ -3529,7 +3488,7 @@ const resolveStudySpecValueAtTime = (
   spec: StudySpec,
   time: number | null | undefined,
 ): number | null => {
-  if (typeof time !== "number" || !isFiniteNumber(time)) {
+  if (!isFiniteNumber(time)) {
     return null;
   }
 
@@ -3624,7 +3583,7 @@ const formatLegendNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  if (typeof value !== "number" || !isFiniteNumber(value)) {
+  if (!isFiniteNumber(value)) {
     return "—";
   }
 
@@ -3635,7 +3594,7 @@ const formatLegendSignedNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  if (typeof value !== "number" || !isFiniteNumber(value)) {
+  if (!isFiniteNumber(value)) {
     return "—";
   }
 
@@ -3648,7 +3607,7 @@ const formatLegendSignedNumber = (
 };
 
 const formatLegendPercent = (value: number | null | undefined): string => {
-  if (typeof value !== "number" || !isFiniteNumber(value)) {
+  if (!isFiniteNumber(value)) {
     return "—";
   }
 
@@ -3702,7 +3661,7 @@ export const formatChartPriceAxisValue = (
   value: number | null | undefined,
   precision = 2,
 ): string => {
-  if (typeof value !== "number" || !isFiniteNumber(value)) {
+  if (!isFiniteNumber(value)) {
     return "—";
   }
 
@@ -4301,7 +4260,7 @@ const resolveOverlayLabelPosition = (
 };
 
 const resolveFiniteMetaNumber = (value: unknown, fallback: number): number =>
-  typeof value === "number" && isFiniteNumber(value) ? value : fallback;
+  isFiniteNumber(value) ? value : fallback;
 
 const clampCoordinate = (value: number, min: number, max: number): number => {
   if (max < min) {
@@ -6117,7 +6076,7 @@ const buildIndicatorEventOverlays = (
 
     const x = chart.timeScale().timeToCoordinate(bar.time);
     const price =
-      typeof meta.price === "number" && isFiniteNumber(meta.price)
+      isFiniteNumber(meta.price)
         ? meta.price
         : overlay === "badge"
           ? event.direction === "short"
@@ -6220,7 +6179,7 @@ const buildIndicatorEventOverlays = (
 
     if (overlay === "dot") {
       const size =
-        typeof meta.size === "number" && isFiniteNumber(meta.size)
+        isFiniteNumber(meta.size)
           ? meta.size
           : 8;
       const visualRadius = size / 2 + 2;
@@ -7131,7 +7090,6 @@ const ResearchChartSurfaceComponent = ({
   const [plotSize, setPlotSize] = useState({ width: 0, height: 0 });
   const [toolbarHeight, setToolbarHeight] = useState(0);
   const [legendHeight, setLegendHeight] = useState(0);
-  const [drawModeHintHeight, setDrawModeHintHeight] = useState(0);
   const syncOverlayState = (
     setter: Dispatch<SetStateAction<OverlayShape[]>>,
     next: OverlayShape[],
@@ -10311,7 +10269,6 @@ const ResearchChartSurfaceComponent = ({
 
     watchHeight(toolbarRef.current, setToolbarHeight);
     watchHeight(legendRef.current, setLegendHeight);
-    watchHeight(drawModeHintRef.current, setDrawModeHintHeight);
 
     const plotElement = containerRef.current;
     if (plotElement) {

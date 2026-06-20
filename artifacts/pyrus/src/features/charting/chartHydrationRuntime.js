@@ -129,10 +129,6 @@ export const resolveChartHydrationRequestPolicy = ({
   };
 };
 
-const resolveMinimumPrependPageSize = (timeframe, role) => {
-  return getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
-};
-
 export const resolveVisibleRangeHydrationAction = ({
   enabled = true,
   range,
@@ -205,7 +201,7 @@ export const resolveVisibleRangeHydrationAction = ({
     !hasExhaustedOlderHistory &&
     Number.isFinite(oldestLoadedAtMs)
   ) {
-    const minimumPageSize = resolveMinimumPrependPageSize(timeframe, role);
+    const minimumPageSize = getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
     const prependPageSize = Math.max(
       minimumPageSize,
       Math.ceil(visibleBars * 2),
@@ -556,9 +552,7 @@ export const useDebouncedVisibleRangeExpansion = (
         return;
       }
 
-      if (timerRef.current != null) {
-        clearScheduledTimer();
-      }
+      clearScheduledTimer();
 
       const setTimer =
         typeof window !== "undefined" ? window.setTimeout : setTimeout;

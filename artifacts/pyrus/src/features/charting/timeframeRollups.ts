@@ -4,6 +4,7 @@ import {
   getChartTimeframeStepMs,
   normalizeChartTimeframe,
 } from "./timeframes";
+import { resolveBarTimestampMs as resolveBarTimestampMsFromValue } from "./chartBarTime";
 
 const TIMEFRAME_STEP_MS: Record<string, number> = {
   "1s": 1_000,
@@ -20,7 +21,6 @@ const TIMEFRAME_STEP_MS: Record<string, number> = {
   "4h": 4 * 60 * 60_000,
   "12h": 12 * 60 * 60_000,
   "1d": 24 * 60 * 60_000,
-  "1D": 24 * 60 * 60_000,
   "1w": 7 * 24 * 60 * 60_000,
   "1month": 30 * 24 * 60 * 60_000,
   "1year": 365 * 24 * 60 * 60_000,
@@ -41,20 +41,8 @@ export const normalizeTimeframeBucketStartMs = (
   return Math.floor(timeMs / stepMs) * stepMs;
 };
 
-const resolveBarTimestampMs = (bar: MarketBar): number | null => {
-  const value = bar.timestamp ?? bar.time ?? bar.ts;
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
-  }
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
-  return null;
-};
+const resolveBarTimestampMs = (bar: MarketBar): number | null =>
+  resolveBarTimestampMsFromValue(bar.timestamp ?? bar.time ?? bar.ts);
 
 const resolveFiniteNumber = (...values: Array<number | null | undefined>): number | null => {
   for (const value of values) {
