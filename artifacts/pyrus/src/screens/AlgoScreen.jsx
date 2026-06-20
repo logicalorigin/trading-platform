@@ -72,6 +72,7 @@ import {
   AlgoLivePage,
   preloadAlgoLivePageModules,
 } from "./algo/AlgoLivePage";
+import { buildCockpitGateSummary as buildCockpitGateSummaryImpl } from "./algoCockpitDiagnosticsModel";
 import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
 import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
 import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
@@ -233,11 +234,10 @@ const loadAlgoRuntimeHelpers = () => {
           import("../features/platform/algoTransitionsModel"),
           import("../features/platform/algoActivitySummary"),
           import("../features/platform/algoKpiHistoryStore"),
-          import("./algoCockpitDiagnosticsModel"),
         ]),
       { label: "AlgoRuntimeHelpers", reloadOnFailure: false },
     )
-      .then(([transitions, activity, kpi, diagnostics]) => ({
+      .then(([transitions, activity, kpi]) => ({
         buildTransitionsBufferStore:
           transitions.buildTransitionsBufferStore ||
           DEFAULT_ALGO_RUNTIME_HELPERS.buildTransitionsBufferStore,
@@ -259,9 +259,7 @@ const loadAlgoRuntimeHelpers = () => {
           DEFAULT_ALGO_RUNTIME_HELPERS.pruneAlgoKpiHistory,
         pushAlgoKpiSample:
           kpi.pushAlgoKpiSample || DEFAULT_ALGO_RUNTIME_HELPERS.pushAlgoKpiSample,
-        buildCockpitGateSummary:
-          diagnostics.buildCockpitGateSummary ||
-          DEFAULT_ALGO_RUNTIME_HELPERS.buildCockpitGateSummary,
+        buildCockpitGateSummary: buildCockpitGateSummaryImpl,
       }))
       .catch((error) => {
         algoRuntimeHelpersImport = null;
