@@ -4,6 +4,7 @@ import {
   useRef,
   useCallback,
   useMemo,
+  Suspense,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
@@ -79,8 +80,43 @@ import {
   HEADER_KPI_SYMBOLS,
   HeaderKpiStrip,
 } from "./HeaderKpiStrip.jsx";
-import { MemoHeaderStatusCluster } from "./HeaderStatusCluster.jsx";
-import { HeaderBroadcastScrollerStack } from "./HeaderBroadcastScrollerStack.jsx";
+// HeaderStatusCluster + HeaderBroadcastScrollerStack are large, above-the-fold
+// header chunks. Split them out of the eager PlatformApp chunk and lazy-load
+// them, but eagerly warm their chunks at module load so they are typically
+// resolved before the header first paints (the Suspense fallback window stays
+// near-zero). Component names + prop contract are preserved so downstream render
+// sites need no changes.
+const loadHeaderStatusCluster = () =>
+  import("./HeaderStatusCluster.jsx").then((m) => ({
+    default: m.MemoHeaderStatusCluster,
+  }));
+const loadHeaderBroadcastScrollerStack = () =>
+  import("./HeaderBroadcastScrollerStack.jsx").then((m) => ({
+    default: m.HeaderBroadcastScrollerStack,
+  }));
+const LazyHeaderStatusCluster = lazyWithRetry(loadHeaderStatusCluster, {
+  label: "HeaderStatusCluster",
+});
+const LazyHeaderBroadcastScrollerStack = lazyWithRetry(
+  loadHeaderBroadcastScrollerStack,
+  { label: "HeaderBroadcastScrollerStack" },
+);
+void preloadDynamicImport(loadHeaderStatusCluster, {
+  label: "HeaderStatusCluster",
+});
+void preloadDynamicImport(loadHeaderBroadcastScrollerStack, {
+  label: "HeaderBroadcastScrollerStack",
+});
+const MemoHeaderStatusCluster = (props) => (
+  <Suspense fallback={null}>
+    <LazyHeaderStatusCluster {...props} />
+  </Suspense>
+);
+const HeaderBroadcastScrollerStack = (props) => (
+  <Suspense fallback={null}>
+    <LazyHeaderBroadcastScrollerStack {...props} />
+  </Suspense>
+);
 import { buildHeaderSignalContextSymbols } from "./headerBroadcastModel.js";
 import { MemoWatchlistContainer } from "./PlatformWatchlist.jsx";
 import { LatencyDebugStrip } from "./LatencyDebugStrip.jsx";
@@ -182,7 +218,7 @@ import {
   _initialState,
   persistState,
 } from "../../lib/workspaceState";
-import { preloadDynamicImport } from "../../lib/dynamicImport";
+import { lazyWithRetry, preloadDynamicImport } from "../../lib/dynamicImport";
 import { normalizeInitialPlatformScreen } from "./initialPlatformScreen";
 import { captureToast } from "./notificationStore.js";
 import { normalizeToastKind } from "./toastModel.js";
