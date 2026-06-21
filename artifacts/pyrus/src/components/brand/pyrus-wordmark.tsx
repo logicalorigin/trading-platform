@@ -1,4 +1,4 @@
-import React, { type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 
 const WORDMARK_WIDTH = 852;
 const WORDMARK_HEIGHT = 104;
