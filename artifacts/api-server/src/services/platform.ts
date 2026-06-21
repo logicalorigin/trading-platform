@@ -144,10 +144,8 @@ import {
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import { getSignalMonitorDbFallbackDiagnostics } from "./signal-monitor-diagnostics";
 import {
-  getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
-  recordBridgeWorkFailure,
   runBridgeWork,
   type BridgeWorkCategory,
 } from "./bridge-governor";
@@ -4599,7 +4597,15 @@ function massiveQuoteToBrokerQuote(
 } {
   const config = getMassiveRuntimeConfig();
   const source = "massive";
-  const delayed = !isMassiveStocksRealtimeConfigured(config);
+  const realtimeDelayed = !isMassiveStocksRealtimeConfigured(config);
+  // When the US equity market is fully closed (overnight / weekend / holiday)
+  // there are no live prints, so a massive REST quote is the previous close
+  // frozen in place. Label it "frozen" instead of "live" so the UI does not
+  // present a multi-day-old close as a live tick (the price itself is already
+  // the prior close, stamped with that session's close time in mapStockSnapshot).
+  const marketClosed =
+    resolveUsEquityMarketStatus(new Date()).session.key === "closed";
+  const delayed = realtimeDelayed || marketClosed;
   return {
     symbol: quote.symbol,
     price: quote.price,
@@ -4627,8 +4633,12 @@ function massiveQuoteToBrokerQuote(
     providerContractId: null,
     transport: "massive_rest",
     delayed,
-    freshness: delayed ? "delayed" : "live",
-    marketDataMode: delayed ? "delayed" : "live",
+    freshness: marketClosed ? "frozen" : realtimeDelayed ? "delayed" : "live",
+    marketDataMode: marketClosed
+      ? "frozen"
+      : realtimeDelayed
+        ? "delayed"
+        : "live",
     dataUpdatedAt: quote.updatedAt,
     ageMs: getAgeMs(quote.updatedAt),
     cacheAgeMs: null,
@@ -10826,16 +10836,6 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function readOptionalPositiveIntegerEnv(name: string): number | null {
-  const raw = process.env[name];
-  if (!raw || !raw.trim()) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw || !raw.trim()) {
@@ -14833,13 +14833,6 @@ async function mapWithConcurrency<T, R>(
   );
 
   return results;
-}
-
-async function getCachedIbkrOptionChain(
-  input: IbkrOptionChainInput,
-): Promise<IbkrOptionChainContracts> {
-  const { contracts } = await getCachedIbkrOptionChainWithDebug(input);
-  return contracts;
 }
 
 function seedOptionChainCache(input: {

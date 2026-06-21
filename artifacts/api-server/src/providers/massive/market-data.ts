@@ -17,7 +17,10 @@ import {
   isMassiveStocksRealtimeConfigured,
   type MassiveRuntimeConfig,
 } from "../../lib/runtime";
-import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
+import {
+  resolvePreviousUsEquitySessionClose,
+  resolveUsEquityMarketSession,
+} from "@workspace/market-calendar";
 
 type BarTimeframe =
   | "1s"
@@ -949,6 +952,20 @@ function midpoint(bid: number, ask: number, fallback: number): number {
   return fallback;
 }
 
+// Massive snapshots use 0 as a "no data" sentinel (closed session leaves
+// lastTrade/min/day zero-filled), so firstDefined() would latch a 0 as if it
+// were a real price. Resolve the first strictly-positive value instead.
+function firstPositiveNumber(
+  ...values: Array<number | null | undefined>
+): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function deriveSnapshotArray(payload: unknown): unknown[] {
   const record = asRecord(payload);
 
@@ -988,14 +1005,27 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
   const dayBar = asRecord(record["day"]);
   const prevDayBar = asRecord(record["prevDay"] ?? record["prev_day"]);
 
-  const price =
-    firstDefined(
-      getNumberPath(lastTrade, ["p"]),
-      getNumberPath(lastTrade, ["price"]),
-      getNumberPath(minuteBar, ["c"]),
-      getNumberPath(dayBar, ["c"]),
-      asNumber(record["currentPrice"]),
-    ) ?? 0;
+  // Resolve the first POSITIVE price: live trade -> current minute/day close ->
+  // previous-session close. Massive zero-fills lastTrade/min/day when the session
+  // is closed (weekend/pre-open), so the prior `firstDefined(...) ?? 0` latched
+  // that 0 and surfaced a phantom "$0.00 last". Falling back to prevDay close
+  // means a closed-market ticker shows its last real price (e.g. Friday's close)
+  // instead of 0. Only when nothing positive exists anywhere (delisted / truly
+  // empty) do we drop the snapshot so the UI shows a "no data" dash, mirroring
+  // the websocket convention (massiveAggregateToBrokerQuote rejects price <= 0).
+  const resolvedPrice = firstPositiveNumber(
+    getNumberPath(lastTrade, ["p"]),
+    getNumberPath(lastTrade, ["price"]),
+    getNumberPath(minuteBar, ["c"]),
+    getNumberPath(dayBar, ["c"]),
+    asNumber(record["currentPrice"]),
+    getNumberPath(prevDayBar, ["c"]),
+    getNumberPath(prevDayBar, ["close"]),
+  );
+  if (resolvedPrice === null) {
+    return null;
+  }
+  const price = resolvedPrice;
 
   const bid =
     firstDefined(
@@ -1074,16 +1104,27 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
       getNumberPath(minuteBar, ["volume"]),
     );
 
+  // Off-session, Massive zero-fills every timestamp (lastTrade.t/min.t = 0;
+  // day/prevDay carry none), and toDate(0) would yield the 1970 epoch - a
+  // nonsensical age that also breaks the market-session classification. Take the
+  // first POSITIVE source timestamp; when none exists the price is the previous
+  // close, so stamp it with that session's close instant for an accurate ageMs.
+  const liveTimestampMs = firstPositiveNumber(
+    getNumberPath(lastQuote, ["t"]),
+    getNumberPath(lastQuote, ["timestamp"]),
+    getNumberPath(lastTrade, ["t"]),
+    getNumberPath(lastTrade, ["timestamp"]),
+    getNumberPath(minuteBar, ["t"]),
+    getNumberPath(dayBar, ["t"]),
+  );
   const updatedAt =
-    firstDefined(
-      toDate(getNumberPath(lastQuote, ["t"])),
-      toDate(getNumberPath(lastQuote, ["timestamp"])),
-      toDate(getNumberPath(lastTrade, ["t"])),
-      toDate(getNumberPath(lastTrade, ["timestamp"])),
-      toDate(getNumberPath(minuteBar, ["t"])),
-      toDate(getNumberPath(dayBar, ["t"])),
-    ) ?? new Date();
-  const marketSession = resolveUsEquityMarketSession(updatedAt).key;
+    (liveTimestampMs !== null ? toDate(liveTimestampMs) : null) ??
+    resolvePreviousUsEquitySessionClose(new Date()) ??
+    new Date();
+  // Classify the extended-hours context from the CURRENT session, not the quote
+  // timestamp (which is the prior close off-session and would mis-derive the
+  // baseline as if an extended session were live).
+  const marketSession = resolveUsEquityMarketSession(new Date()).key;
   const prevCloseAt = firstDefined(
     toDate(getNumberPath(prevDayBar, ["t"])),
     toDate(getNumberPath(prevDayBar, ["timestamp"])),

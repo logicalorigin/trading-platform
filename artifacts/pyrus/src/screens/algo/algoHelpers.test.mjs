@@ -999,6 +999,32 @@ test("Move stays blank (not 0%) when only a fire price exists", () => {
   assert.equal(move.stale, false);
 });
 
+test("a 0 quote is not displayed as $0.00 - it falls through to bar/fire/dash", () => {
+  // A literal 0 is "no quote", not a price (no live equity trades at $0). The
+  // display resolver must ignore it (firstPositivePresentMetric), not surface it
+  // as a confident "$0.00", which is the last-price-shows-0 bug.
+  const fireOnly = resolveDisplayCurrentPrice(
+    { signalPrice: 42 },
+    { price: 0, last: 0, mark: 0 },
+  );
+  assert.equal(fireOnly.source, "fire");
+  assert.equal(fireOnly.price, 42);
+  assert.equal(fireOnly.live, false);
+
+  // A 0 live quote falls through to a real bar close rather than overriding it.
+  const barFallback = resolveDisplayCurrentPrice(
+    { currentPrice: 17.5 },
+    { price: 0 },
+  );
+  assert.equal(barFallback.source, "bar");
+  assert.equal(barFallback.price, 17.5);
+
+  // Nothing real anywhere -> blank, never $0.00.
+  const nothing = resolveDisplayCurrentPrice({}, { price: 0 });
+  assert.equal(nothing.price, null);
+  assert.equal(nothing.source, null);
+});
+
 test("Move from a FRESH matrix bar renders and is not flagged stale", () => {
   // SPY-style fresh matrix row (status ok): legitimate move since fire against a
   // fresh bar -- must render and NOT be flagged stale.

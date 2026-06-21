@@ -1375,7 +1375,12 @@ const latestSparklineClose = (snapshot, record) => {
 export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
   const record = asRecord(signal);
   const snapshot = asRecord(tickerSnapshot);
-  const liveQuote = firstPresentFiniteMetric(
+  // A genuine live equity/bar price is never exactly 0; a 0 means "no quote".
+  // Use the positive-only helper (same one resolveSignalMove uses for the Move
+  // basis) so a 0 falls through to the bar-close / fire-price / dash tiers
+  // instead of being displayed as "$0.00" - this removes the displayed-price vs
+  // Move asymmetry that let a phantom 0 show as a confident price.
+  const liveQuote = firstPositivePresentMetric(
     snapshot.price,
     snapshot.last,
     snapshot.mark,
@@ -1383,7 +1388,7 @@ export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
   if (liveQuote != null) {
     return { price: liveQuote, source: "quote", live: true };
   }
-  const barClose = firstPresentFiniteMetric(
+  const barClose = firstPositivePresentMetric(
     record.currentPrice,
     record.last,
     record.mark,

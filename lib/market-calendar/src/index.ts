@@ -670,6 +670,43 @@ export const resolveUsEquityMarketSession = (
   value: Date | number | string = new Date(),
 ): UsEquityMarketSession => resolveUsEquityMarketStatus(value).session;
 
+// The regular-session close instant at or before `value` (the previous close),
+// skipping weekends, full holidays, and respecting early closes (e.g. 13:00 ET).
+// Used to stamp a real "as of" time on a quote whose price is the prior close
+// because the live feed is dark (Massive zero-fills timestamps off-session, so
+// there is otherwise nothing to age against). Returns null only if no trading
+// day is found in the lookback window (never expected for real dates).
+export const resolvePreviousUsEquitySessionClose = (
+  value: Date | number | string = new Date(),
+): Date | null => {
+  const reference = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(reference.getTime())) {
+    return null;
+  }
+  const referenceMs = reference.getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  // 10 days covers the longest US market gap (a holiday bridging a weekend). We
+  // take the latest qualifying close rather than the first match so a day landed
+  // on twice near a DST shift cannot return an earlier close than the true one.
+  let bestCloseMs: number | null = null;
+  for (let offset = 0; offset <= 10; offset += 1) {
+    const candidate = new Date(referenceMs - offset * dayMs);
+    const day = resolveNyseCalendarDay(candidate);
+    if (!day?.tradingDay || !day.regularCloseAt) {
+      continue;
+    }
+    const closeMs = Date.parse(day.regularCloseAt);
+    if (
+      Number.isFinite(closeMs) &&
+      closeMs <= referenceMs &&
+      (bestCloseMs === null || closeMs > bestCloseMs)
+    ) {
+      bestCloseMs = closeMs;
+    }
+  }
+  return bestCloseMs === null ? null : new Date(bestCloseMs);
+};
+
 // Test-only hook so the per-year/day/minute memoization can be asserted. Declared
 // at end of module so every referenced builder/cache is already initialized (the
 // references are evaluated eagerly when this object literal is constructed).

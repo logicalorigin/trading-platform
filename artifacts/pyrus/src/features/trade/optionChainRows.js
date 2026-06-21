@@ -5,7 +5,10 @@ const getOptionMark = (bid, ask, last) => {
   if (isFiniteNumber(bid) && bid > 0 && isFiniteNumber(ask) && ask > 0) {
     return +((bid + ask) / 2).toFixed(2);
   }
-  return isFiniteNumber(last) ? +last.toFixed(2) : null;
+  // A 0/negative last is "no trade", not a $0.00 premium. Match the >0 contract
+  // used by buildOptionChainRowsFromApi (quotePrice) so a tickless streaming
+  // quote renders a dash instead of "$0.00".
+  return isFiniteNumber(last) && last > 0 ? +last.toFixed(2) : null;
 };
 
 export const patchOptionChainRowSideWithQuote = (row, side, quote) => {
@@ -20,9 +23,10 @@ export const patchOptionChainRowSideWithQuote = (row, side, quote) => {
   const ask = isFiniteNumber(quote.ask)
     ? +quote.ask.toFixed(2)
     : row[`${prefix}Ask`];
-  const last = isFiniteNumber(quote.price)
-    ? +quote.price.toFixed(2)
-    : row[`${prefix}Prem`];
+  const last =
+    isFiniteNumber(quote.price) && quote.price > 0
+      ? +quote.price.toFixed(2)
+      : row[`${prefix}Prem`];
 
   return {
     ...row,

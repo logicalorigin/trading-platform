@@ -99,12 +99,17 @@ function mapAggregate(value: unknown): MassiveDelayedStockAggregate | null {
   const volume = readNumber(record, ["v", "volume"]);
   const startMs = readNumber(record, ["s", "startMs"]);
   const endMs = readNumber(record, ["e", "endMs"]);
+  // A wire AM bar with close <= 0 is non-physical. Number.isFinite(0) is true, so
+  // the null-only guard let a c:0 bar through and it surfaced as a "$0.00" last in
+  // the signal-matrix price column. Drop it so latestBarClose keeps the prior good
+  // bar. (volume may legitimately be 0 on a quiet minute, so it is not gated here.)
   if (
     !symbol ||
     open === null ||
     high === null ||
     low === null ||
     close === null ||
+    close <= 0 ||
     volume === null ||
     startMs === null ||
     endMs === null
