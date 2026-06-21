@@ -32,7 +32,7 @@ import {
   mtfPatternOccurrencesTable,
   mtfPatternResultsTable,
 } from "@workspace/db";
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import {
   DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
   type PyrusSignalsSignalSettings,

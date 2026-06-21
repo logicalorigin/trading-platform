@@ -103,8 +103,6 @@ import {
   persistedAccountRowsToSnapshots,
   trimLeadingInactiveEquityPoints,
   type AccountEquityHistorySeedPoint,
-  type EquitySnapshotRow,
-  type PersistedAccountSnapshotRow,
 } from "./account-equity-history-model";
 import {
   isEtfSymbol,

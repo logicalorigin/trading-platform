@@ -110,8 +110,6 @@ type EventRow = {
   occurred_at: Date | string;
 };
 
-const SIGNAL_OPTIONS_ENTRY_EVENT = "signal_options_shadow_entry";
-const SIGNAL_OPTIONS_EXIT_EVENT = "signal_options_shadow_exit";
 const SIGNAL_OPTIONS_MARK_EVENT = "signal_options_shadow_mark";
 
 function slug(): string {
@@ -205,26 +203,6 @@ function greekManagementFrom(value: unknown): GreekManagementSnapshot | null {
   return Object.keys(record).length ? (record as GreekManagementSnapshot) : null;
 }
 
-function positionFromPayload(event: EventRow) {
-  const payload = asRecord(event.payload);
-  const position = asRecord(payload.position);
-  const candidate = asRecord(payload.candidate);
-  const symbol = normalizeSymbol(position.symbol ?? candidate.symbol ?? event.symbol);
-  if (!symbol) {
-    return null;
-  }
-  const lastStop = asRecord(position.lastStop ?? payload.stop);
-  return {
-    symbol,
-    id: compactString(position.id),
-    candidateId: compactString(position.candidateId ?? candidate.id),
-    lastMarkedAt: toIsoString(position.lastMarkedAt) ?? toIsoString(event.occurred_at),
-    lastMarkPrice: finiteNumber(position.lastMarkPrice),
-    stopPrice: finiteNumber(position.stopPrice),
-    greekManagement: greekManagementFrom(lastStop.greekManagement),
-  };
-}
-
 function isReplayLikePayload(payload: unknown): boolean {
   const record = asRecord(payload);
   const metadata = asRecord(record.metadata);
@@ -237,49 +215,6 @@ function isReplayLikePayload(payload: unknown): boolean {
     replay.source,
     backfill.source,
   ].some((value) => compactString(value) === "signal_options_replay");
-}
-
-function deriveActivePositions(events: EventRow[]): GreekPositionDiagnosticsInput["activePositions"] {
-  const positions = new Map<string, NonNullable<ReturnType<typeof positionFromPayload>>>();
-  for (const event of [...events].sort((left, right) => {
-    const leftTime = new Date(left.occurred_at).getTime();
-    const rightTime = new Date(right.occurred_at).getTime();
-    return leftTime - rightTime;
-  })) {
-    if (isReplayLikePayload(event.payload)) {
-      continue;
-    }
-    const symbol = normalizeSymbol(event.symbol);
-    if (!symbol) {
-      continue;
-    }
-    if (event.event_type === SIGNAL_OPTIONS_EXIT_EVENT) {
-      positions.delete(symbol);
-      continue;
-    }
-    if (
-      event.event_type !== SIGNAL_OPTIONS_ENTRY_EVENT &&
-      event.event_type !== SIGNAL_OPTIONS_MARK_EVENT
-    ) {
-      continue;
-    }
-    const next = positionFromPayload(event);
-    if (!next) {
-      continue;
-    }
-    const current = positions.get(next.symbol);
-    positions.set(next.symbol, {
-      ...current,
-      ...next,
-      greekManagement: next.greekManagement ?? current?.greekManagement ?? null,
-      lastMarkedAt: next.lastMarkedAt ?? current?.lastMarkedAt ?? null,
-      lastMarkPrice: next.lastMarkPrice ?? current?.lastMarkPrice ?? null,
-      stopPrice: next.stopPrice ?? current?.stopPrice ?? null,
-    });
-  }
-  return Array.from(positions.values()).sort((left, right) =>
-    left.symbol.localeCompare(right.symbol),
-  );
 }
 
 function recentEventSummary(events: EventRow[]): GreekPositionDiagnosticsInput["recentEvents"] {

@@ -76,8 +76,8 @@ const weightedAverage = (
 
 export const resolveLocalRollupBaseTimeframe = (
   timeframe: string,
-  targetLimit: number,
-  role: "primary" | "option" = "primary",
+  _targetLimit: number,
+  _role: "primary" | "option" = "primary",
 ): string => {
   const normalizedTimeframe = normalizeChartTimeframe(timeframe);
   const targetStepMs = resolveTimeframeStepMs(normalizedTimeframe);

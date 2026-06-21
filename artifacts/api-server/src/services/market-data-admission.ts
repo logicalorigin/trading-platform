@@ -962,17 +962,6 @@ function chargeableNewLineIdsForPool(
   );
 }
 
-function activeLineIdsForOwnerPrefix(ownerPrefix: string): Set<string> {
-  const result = new Set<string>();
-  activeLeaseValues().forEach((lease) => {
-    if (!lease.owner.startsWith(ownerPrefix)) {
-      return;
-    }
-    lease.lineIds.forEach((id) => result.add(id));
-  });
-  return result;
-}
-
 function sampleDiagnosticLineIds(values: Set<string>): string[] {
   return Array.from(values).sort().slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT);
 }

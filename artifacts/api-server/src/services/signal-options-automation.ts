@@ -8740,10 +8740,6 @@ function payloadCandidate(payload: Record<string, unknown>) {
   );
 }
 
-function eventCandidate(event: ExecutionEvent) {
-  return payloadCandidate(asRecord(event.payload));
-}
-
 function eventOrderPlan(event: ExecutionEvent) {
   const payload = asRecord(event.payload);
   const candidate = payloadCandidate(payload);
@@ -12383,7 +12379,6 @@ async function processEntryCandidate(input: {
     const selectedContract = contractResolution.selectedContract;
     const quote = contractResolution.quote;
     const entryGreeks = contractResolution.entryGreeks;
-    const contractSelection = contractResolution.contractSelection;
     const contractSelectionPayload =
       contractResolution.contractSelectionPayload;
     const selectedExpirationPayload =

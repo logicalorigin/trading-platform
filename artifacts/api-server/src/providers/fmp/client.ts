@@ -321,18 +321,6 @@ function sumPeriodValues(values: Array<number | null>, digits = 1): number | nul
   return round(finite.reduce((sum, value) => sum + value, 0), digits);
 }
 
-function latestPeriodValue(values: Array<number | null>): number | null {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const value = values[index];
-
-    if (value !== null && Number.isFinite(value)) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
 function mapIncomeStatementPeriod(
   record: Record<string, unknown> | null,
 ): ResearchIncomeStatementPeriod {

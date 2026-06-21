@@ -131,9 +131,7 @@ import {
   type CrosshairSyncEvent,
 } from "./chartCrosshairSyncStore";
 import {
-  readStoredChartViewportSnapshot,
   writeStoredChartViewportSnapshot,
-  clearStoredChartViewportSnapshot,
   resolveEffectiveChartViewportSnapshot,
   chartViewportSnapshotMatchesContext,
   normalizeChartViewportLayoutKey,
@@ -10444,39 +10442,6 @@ const ResearchChartSurfaceComponent = ({
     displayBar && displayDeltaBase != null && displayDeltaBase !== 0
       ? ((displayDeltaValue ?? 0) / displayDeltaBase) * 100
       : null;
-  const displayGap =
-    displayBar && displayBar.previousClose != null
-      ? displayBar.open - displayBar.previousClose
-      : null;
-  const displayGapPct =
-    displayBar &&
-    displayBar.previousClose != null &&
-    displayBar.previousClose !== 0
-      ? ((displayGap ?? 0) / displayBar.previousClose) * 100
-      : null;
-  const displayRange = displayBar ? displayBar.high - displayBar.low : null;
-  const displayRangePct =
-    displayBar &&
-    displayDeltaBase != null &&
-    displayDeltaBase !== 0 &&
-    displayRange != null
-      ? (displayRange / displayDeltaBase) * 100
-      : null;
-  const displayBody = displayBar ? displayBar.close - displayBar.open : null;
-  const upperWick = displayBar
-    ? displayBar.high - Math.max(displayBar.open, displayBar.close)
-    : null;
-  const lowerWick = displayBar
-    ? Math.min(displayBar.open, displayBar.close) - displayBar.low
-    : null;
-  const hl2 = displayBar ? (displayBar.high + displayBar.low) / 2 : null;
-  const hlc3 = displayBar
-    ? (displayBar.high + displayBar.low + displayBar.close) / 3
-    : null;
-  const ohlc4 = displayBar
-    ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) /
-      4
-    : null;
   // pricePrecision is hoisted to a memo near the chart-options effect
   // (~line 7441); reuse that here instead of recomputing.
   const formatPrice = (value: number | null | undefined): string =>

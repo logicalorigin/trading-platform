@@ -159,7 +159,6 @@ type GexStrikeRow = {
 
 const MIN_VALID_STRIKES = 5;
 const MIN_DAYS_TO_EXPIRATION = 0.25;
-const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const OPTION_EXPIRATION_UTC_HOUR = 20;
 
 function isFiniteNumber(value: unknown): value is number {

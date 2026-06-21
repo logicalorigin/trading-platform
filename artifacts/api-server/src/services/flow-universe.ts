@@ -107,7 +107,6 @@ type RankingCandidate = {
   cooldownUntil: Date | null;
 };
 
-const DEFAULT_REFRESH_MS = 15 * 60_000;
 const COOLDOWN_FAILURE_THRESHOLD = 2;
 const COOLDOWN_MS = 15 * 60_000;
 const OPTIONABLE_DERIVATIVE_SEC_TYPE_RE = /(^|,)\s*OPT\s*(,|$)/i;

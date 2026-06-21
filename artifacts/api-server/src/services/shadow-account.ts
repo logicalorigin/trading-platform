@@ -716,30 +716,6 @@ function recordShadowReadDiagnostic(input: {
   shadowReadDiagnosticStatsByRoute.set(route, stats);
 }
 
-async function recordShadowReadOperation<T>(
-  key: string,
-  factory: () => Promise<T>,
-): Promise<T> {
-  const startedAt = Date.now();
-  try {
-    const value = await factory();
-    recordShadowReadDiagnostic({
-      key,
-      status: "operation",
-      startedAt,
-      servedStale: shadowReadValueIsMarkedStale(value),
-    });
-    return value;
-  } catch (error) {
-    recordShadowReadDiagnostic({
-      key,
-      status: "error",
-      startedAt,
-    });
-    throw error;
-  }
-}
-
 export function getShadowAccountReadDiagnostics() {
   const routes = Array.from(shadowReadDiagnosticStatsByRoute.values())
     .map((stats) => ({
@@ -2940,23 +2916,6 @@ async function readOpenShadowPositionsForKeys(
   return rows
     .flat()
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
-}
-
-async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
-  const liveOrders = (await readShadowOrdersForAccount()).filter((order) =>
-    isLiveShadowOrder(order),
-  );
-  const livePositionKeys = shadowPositionKeysForOrders(liveOrders);
-  const liveOrdersByPositionKey = shadowOrdersByPositionKey(liveOrders);
-  return (await readOpenShadowPositions()).filter(
-    (position) =>
-      isLiveShadowPosition(position) &&
-      livePositionKeys.has(position.positionKey) &&
-      !isExpiredHistoricalShadowOptionPosition(
-        position,
-        liveOrdersByPositionKey.get(position.positionKey),
-      ),
-  );
 }
 
 async function readOpenDefaultShadowLedgerAnalyticsPositions(): Promise<ShadowPositionRow[]> {
@@ -9325,48 +9284,6 @@ function buildDeferredShadowClosedTradesForFastRisk() {
       commissions: 0,
     },
     updatedAt: new Date(),
-  };
-}
-
-function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
-  const quantity = toNumber(fill.quantity) ?? 0;
-  const price = toNumber(fill.price);
-  const realizedPnl = toNumber(fill.realizedPnl);
-  const contract = asOptionContract(fill.optionContract);
-  const positionType = shadowPositionType({
-    symbol: fill.symbol,
-    assetClass: fill.assetClass,
-    positionType: fill.positionType,
-    optionContract: contract,
-  });
-  const multiplier = marketMultiplier({
-    assetClass: fill.assetClass as ShadowAssetClass,
-    optionContract: contract,
-  });
-  const avgOpen =
-    price != null && realizedPnl != null && quantity > 0
-      ? price - realizedPnl / (quantity * multiplier)
-      : null;
-  const metadata = shadowSourceMetadata(order);
-  return {
-    id: fill.id,
-    source: "SHADOW",
-    accountId: SHADOW_ACCOUNT_ID,
-    symbol: fill.symbol,
-    side: fill.side,
-    assetClass: accountPositionTypeDisplayLabel(positionType),
-    positionType,
-    quantity,
-    openDate: null,
-    closeDate: fill.occurredAt,
-    avgOpen,
-    avgClose: price,
-    realizedPnl,
-    realizedPnlPercent: avgOpen && price ? ((price - avgOpen) / avgOpen) * 100 : null,
-    holdDurationMinutes: null,
-    commissions: toNumber(fill.fees),
-    currency: SHADOW_CURRENCY,
-    ...metadata,
   };
 }
 

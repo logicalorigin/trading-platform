@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import * as v8 from "node:v8";
 import {
   and,
-  asc,
   desc,
   eq,
   gte,
@@ -2434,7 +2433,6 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
   const workerScanEnabled = metrics["workerScanEnabled"] === true;
-  const activeMaxScanAgeMs = numeric(metrics["activeMaxScanAgeMs"]);
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
   const staleScanCount = numeric(metrics["staleScanCount"]) ?? 0;

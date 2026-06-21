@@ -220,48 +220,6 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: string;
-}) {
-  return (
-    <div
-      className="ra-panel-enter"
-      style={{
-        background: CSS_COLOR.bg0,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(5),
-        padding: sp("10px 12px"),
-      }}
-    >
-      <div
-        style={{
-          fontSize: fs(9),
-          color: CSS_COLOR.textMuted,
-          marginBottom: sp(4),
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: fs(16),
-          fontWeight: FONT_WEIGHTS.regular,
-          fontFamily: MONO,
-          color: accent,
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
 // Bias chip modeled on ConfluenceChip.jsx (pill: border alpha 55, bg alpha
 // 1A). Tone follows PatternVector's blue=bullish / red=bearish language.
 function biasTone(bias: string): string {

@@ -444,13 +444,6 @@ function signalOptionsMtfPreset(value: unknown): SignalOptionsMtfPreset {
   return signalOptionsMtfPresets.includes(preset) ? preset : "custom";
 }
 
-function strikeSlot(
-  value: unknown,
-  fallback: SignalOptionsStrikeSlot,
-): SignalOptionsStrikeSlot {
-  return parseStrikeSlot(value) ?? fallback;
-}
-
 const MAX_SIGNAL_OPTIONS_STRIKE_SLOTS = 3;
 
 function parseStrikeSlot(value: unknown): SignalOptionsStrikeSlot | null {

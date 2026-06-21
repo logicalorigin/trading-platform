@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAdvisoryLockHolder } from "./advisory-lock";
 
-type FakeRow = { locked: boolean };
-
 /**
  * In-memory stand-in for a single dedicated `pg.Client`. Models a Postgres
  * backend that owns a set of session advisory locks for one connection, so the

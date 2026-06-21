@@ -10,13 +10,9 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -50,16 +46,11 @@ import {
   useUpdatePineScript,
 } from "@workspace/api-client-react";
 import type {
-  BacktestComparisonBadge,
   BacktestDirectionMode,
   BacktestDraftStrategy,
-  BacktestJobSummary,
   BacktestMetrics,
   BacktestOptimizerMode,
-  BacktestParameterDefinition,
-  BacktestRunSummary,
   BacktestStrategyCatalogItem,
-  BacktestStudyRecord,
   BacktestTrade,
   BacktestTradeOverlay,
   BarTimeframe,
@@ -87,8 +78,6 @@ import {
   buildBacktestChartModel,
   buildHydratedBacktestSpotChartModel,
   buildRunTradeSelectionId,
-  formatComparisonBadgeValue,
-  mergeStudyPreviewSeries,
 } from "./charting";
 import {
   formatDateInputValue,
@@ -170,7 +159,6 @@ type BannerState = {
   detail: string;
 } | null;
 
-type BacktestDisplayMode = "spot" | "options";
 type TradeOutcomeFilter = "all" | "winner" | "loser" | "breakeven";
 type SummaryTradeLens =
   | "all"
@@ -549,7 +537,7 @@ function resolveSpotHistoryOutputBarsPerRequest(
 
 function resolveSpotHistoryChunkDays(
   timeframe: BarTimeframe,
-  outsideRth: boolean,
+  _outsideRth: boolean,
 ): number {
   const timeframeMinutes = timeframeToMinutes(timeframe);
   if (!timeframeMinutes || !Number.isFinite(timeframeMinutes)) {
@@ -850,39 +838,6 @@ function defaultParametersForStrategy(
   });
 
   return defaults;
-}
-
-function coerceParameterInput(
-  definition: BacktestParameterDefinition,
-  rawValue: string,
-): ScalarParameter {
-  if (definition.type === "boolean") {
-    return rawValue === "true";
-  }
-
-  if (definition.type === "integer") {
-    return Math.round(Number(rawValue));
-  }
-
-  if (definition.type === "number") {
-    return Number(rawValue);
-  }
-
-  return rawValue;
-}
-
-function parameterValueToInput(
-  definition: BacktestParameterDefinition,
-  value: ScalarParameter | undefined,
-): string {
-  const fallback = scalarFromUnknown(definition.defaultValue, "");
-  const resolved = value ?? fallback;
-
-  if (typeof resolved === "boolean") {
-    return resolved ? "true" : "false";
-  }
-
-  return String(resolved);
 }
 
 function getStatusColor(status: string, theme: ThemeTokens): string {
@@ -1324,21 +1279,6 @@ function DraftStrategiesList({
   );
 }
 
-function comparisonBadgeAccent(
-  badge: BacktestComparisonBadge,
-  theme: ThemeTokens,
-): string {
-  if (badge.winner === "none" || badge.winner === "tie") {
-    return theme.text;
-  }
-
-  if (badge.id === "drawdown") {
-    return badge.winner === "latest" ? theme.green : theme.red;
-  }
-
-  return badge.winner === "latest" ? theme.green : theme.accent;
-}
-
 function tradeOverlayAccent(
   trade: { profitable?: boolean | null } | null | undefined,
   theme: ThemeTokens,
@@ -1550,23 +1490,23 @@ export function BacktestWorkspace({
   );
   const [startsOn, setStartsOn] = useState(formatDateInputValue(-365));
   const [endsOn, setEndsOn] = useState(formatDateInputValue(0));
-  const [portfolioRules, setPortfolioRules] = useState({
+  const [portfolioRules] = useState({
     initialCapital: 25_000,
     positionSizePercent: 12,
     maxConcurrentPositions: 4,
     maxGrossExposurePercent: 100,
   });
-  const [executionProfile, setExecutionProfile] = useState({
+  const [executionProfile] = useState({
     commissionBps: 1,
     slippageBps: 3,
   });
-  const [optimizerMode, setOptimizerMode] =
+  const [optimizerMode] =
     useState<BacktestOptimizerMode>("grid");
-  const [randomCandidateBudget, setRandomCandidateBudget] = useState(24);
-  const [walkForwardTrainingMonths, setWalkForwardTrainingMonths] =
+  const [randomCandidateBudget] = useState(24);
+  const [walkForwardTrainingMonths] =
     useState(24);
-  const [walkForwardTestMonths, setWalkForwardTestMonths] = useState(6);
-  const [walkForwardStepMonths, setWalkForwardStepMonths] = useState(6);
+  const [walkForwardTestMonths] = useState(6);
+  const [walkForwardStepMonths] = useState(6);
   const [runNameDraft, setRunNameDraft] = useState("");
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>(
     DEFAULT_BACKTEST_INDICATORS,
@@ -1600,7 +1540,7 @@ export function BacktestWorkspace({
   const [tradeDateTo, setTradeDateTo] = useState("");
   const [tradePage, setTradePage] = useState(1);
   const [promotionName, setPromotionName] = useState("");
-  const [promotionNotes, setPromotionNotes] = useState("");
+  const [promotionNotes] = useState("");
   const [editingPineScriptId, setEditingPineScriptId] = useState<string | null>(
     null,
   );
@@ -1752,30 +1692,10 @@ export function BacktestWorkspace({
         : null,
     [indicatorRegistry, pyrusSignalsSettings, runChart, selectedIndicators],
   );
-  const previewChart = studyPreviewQuery.data ?? null;
   const derivedSweepDimensions = selectedStudy
     ? deriveSweepDimensions(selectedStudyStrategy, selectedStudy.parameters)
     : [];
-  const activeJobs = jobs.filter((job) =>
-    [
-      "queued",
-      "preparing_data",
-      "running",
-      "aggregating",
-      "cancel_requested",
-    ].includes(job.status),
-  );
   const completedRuns = runs.filter((run) => run.status === "completed");
-  const mergedPreviewSeries = useMemo(
-    () =>
-      previewChart
-        ? mergeStudyPreviewSeries(
-            previewChart.latestSeries,
-            previewChart.bestSeries,
-          )
-        : [],
-    [previewChart],
-  );
   const activeTradeOverlay = useMemo(() => {
     if (!runChartModel) {
       return null;
@@ -2094,34 +2014,6 @@ export function BacktestWorkspace({
       (left, right) => right.count - left.count || right.netPnl - left.netPnl,
     );
   }, [filteredTradeRows]);
-  const symbolPerformance = useMemo(() => {
-    const rows = new Map<
-      string,
-      { symbol: string; netPnl: number; tradeCount: number; winRate: number }
-    >();
-
-    filteredTradeRows.forEach((trade) => {
-      const current = rows.get(trade.symbol) ?? {
-        symbol: trade.symbol,
-        netPnl: 0,
-        tradeCount: 0,
-        winRate: 0,
-      };
-      current.netPnl += trade.netPnl;
-      current.tradeCount += 1;
-      current.winRate += trade.outcome === "winner" ? 1 : 0;
-      rows.set(trade.symbol, current);
-    });
-
-    return [...rows.values()]
-      .map((entry) => ({
-        ...entry,
-        winRate:
-          entry.tradeCount > 0 ? (entry.winRate / entry.tradeCount) * 100 : 0,
-      }))
-      .sort((left, right) => right.netPnl - left.netPnl)
-      .slice(0, 8);
-  }, [filteredTradeRows]);
   const bestTrade = tradeRows.reduce<TradeExplorerRow | null>(
     (best, trade) => (!best || trade.netPnl > best.netPnl ? trade : best),
     null,
@@ -2268,41 +2160,6 @@ export function BacktestWorkspace({
         })),
     [filteredTradeRows],
   );
-  const runVsBestComparisons = useMemo(() => {
-    const selectedMetrics = runDetail?.run.metrics ?? null;
-    const bestMetrics = previewChart?.bestCompletedRun?.metrics ?? null;
-
-    return [
-      {
-        id: "return",
-        label: "Return",
-        selected: metricFromMetrics(selectedMetrics, "totalReturnPercent"),
-        best: metricFromMetrics(bestMetrics, "totalReturnPercent"),
-        format: "percent" as const,
-      },
-      {
-        id: "sharpe",
-        label: "Sharpe",
-        selected: metricFromMetrics(selectedMetrics, "sharpeRatio"),
-        best: metricFromMetrics(bestMetrics, "sharpeRatio"),
-        format: "number" as const,
-      },
-      {
-        id: "drawdown",
-        label: "Max DD",
-        selected: metricFromMetrics(selectedMetrics, "maxDrawdownPercent"),
-        best: metricFromMetrics(bestMetrics, "maxDrawdownPercent"),
-        format: "percent" as const,
-      },
-      {
-        id: "winrate",
-        label: "Win Rate",
-        selected: metricFromMetrics(selectedMetrics, "winRatePercent"),
-        best: metricFromMetrics(bestMetrics, "winRatePercent"),
-        format: "percent" as const,
-      },
-    ];
-  }, [previewChart?.bestCompletedRun?.metrics, runDetail?.run.metrics]);
   const filteredTradeNetPnl = filteredTradeRows.reduce(
     (sum, trade) => sum + trade.netPnl,
     0,
@@ -2892,24 +2749,6 @@ export function BacktestWorkspace({
       showBanner({
         kind: "error",
         title: "Promotion failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  async function handleCancelJob(jobId: string): Promise<void> {
-    try {
-      await cancelJobMutation.mutateAsync({ jobId });
-      showBanner({
-        kind: "info",
-        title: "Cancellation requested",
-        detail: "The worker will stop the job at the next safe checkpoint.",
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      showBanner({
-        kind: "error",
-        title: "Cancel failed",
         detail: safeErrorMessage(error),
       });
     }

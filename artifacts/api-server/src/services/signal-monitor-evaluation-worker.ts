@@ -354,7 +354,6 @@ async function runProfile(input: {
   activeProfileIds.add(profile.id);
   try {
     const evaluatedAt = dependencies.now();
-    const evaluatedAtMs = evaluatedAt.getTime();
     const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
     const evaluationProfile = evaluationSettings.profile;
     const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);

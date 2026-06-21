@@ -1160,9 +1160,6 @@ export class IbkrBridgeClient {
     let lastUsefulEventAt = Date.now();
     let lastStreamStatus: StreamStatusPayload | null = null;
     let stallTimer: NodeJS.Timeout | null = null;
-    const touchStreamActivity = () => {
-      lastUsefulEventAt = Date.now();
-    };
     const stopStallWatchdog = () => {
       if (stallTimer) {
         clearInterval(stallTimer);

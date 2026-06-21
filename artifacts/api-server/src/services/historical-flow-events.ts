@@ -228,7 +228,7 @@ const dateFromDbExpiration = (value: unknown): Date => {
   return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
 };
 
-const normalizeProviderName = (value: string): HistoricalFlowProviderName =>
+const normalizeProviderName = (_value: string): HistoricalFlowProviderName =>
   "massive";
 
 const readNewYorkSessionParts = (date: Date): NewYorkSessionParts | null => {
@@ -380,23 +380,6 @@ const providerEventKeyFor = (event: ProviderFlowEvent): string =>
         event.exchange,
       ].join(":"),
   );
-
-function mergeHistoricalFlowEvents(
-  ...eventLists: ProviderFlowEvent[][]
-): ProviderFlowEvent[] {
-  const merged = new Map<string, ProviderFlowEvent>();
-  eventLists.flat().forEach((event) => {
-    merged.set(providerEventKeyFor(event), event);
-  });
-  return [...merged.values()].sort((left, right) => {
-    const leftMs = historicalFlowEventTimeMs(left) ?? 0;
-    const rightMs = historicalFlowEventTimeMs(right) ?? 0;
-    if (leftMs !== rightMs) {
-      return leftMs - rightMs;
-    }
-    return Number(right.premium ?? 0) - Number(left.premium ?? 0);
-  });
-}
 
 export function dedupeHistoricalFlowEventsForStore(
   events: ProviderFlowEvent[],
@@ -1204,48 +1187,6 @@ async function loadDirectHistoricalFlowEvents(input: {
     signal: input.signal,
   });
   return Array.isArray(result) ? result : result.events;
-}
-
-async function loadNonblockingDirectHistoricalFlowFallback(input: {
-  underlying: string;
-  client: HistoricalFlowProviderClient;
-  from: Date;
-  to: Date;
-  limit: number;
-  filters: FlowEventsFilters;
-  unusualThreshold?: number;
-}): Promise<StoreReadResult<ProviderFlowEvent[]>> {
-  const controller = new AbortController();
-  const directRead = await settleHistoricalFlowStoreRead(
-    "loadDirectHistoricalFlowEvents",
-    () =>
-      loadDirectHistoricalFlowEvents({
-        underlying: input.underlying,
-        client: input.client,
-        from: input.from,
-        to: input.to,
-        limit: input.limit,
-        unusualThreshold: input.unusualThreshold,
-        maxDte: input.filters.maxDte,
-        fallbackMaxDte: HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE,
-        preferDerived: true,
-        snapshotPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT,
-        contractPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT,
-        contractLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT,
-        tradePageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT,
-        tradeLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT,
-        tradeConcurrency: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY,
-        signal: controller.signal,
-      }),
-    [],
-    {
-      timeoutMs: historicalFlowNonblockingDirectFallbackTimeoutMs,
-      onTimeout: () => {
-        controller.abort();
-      },
-    },
-  );
-  return directRead;
 }
 
 async function loadDirectHistoricalFlowWithin(input: {

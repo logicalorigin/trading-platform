@@ -1574,23 +1574,6 @@ const resolveDisplayBarIndexForSignalClose = (
   return fallbackIndex;
 };
 
-const resolvePlotOverride = (
-  overrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>,
-  key: PyrusSignalsPlotKey,
-): PyrusSignalsPlotOverride => overrides[key] || {};
-
-const applyLineStudyOverride = (
-  baseOptions: Record<string, unknown>,
-  override: PyrusSignalsPlotOverride,
-): Record<string, unknown> => ({
-  ...baseOptions,
-  ...(override.visible === false ? { visible: false } : {}),
-  ...(override.color ? { color: override.color } : {}),
-  ...(Number.isFinite(override.lineWidth)
-    ? { lineWidth: override.lineWidth }
-    : {}),
-});
-
 const resolveMedianPositiveBarInterval = (chartBars: ChartBar[]): number => {
   const intervals: number[] = [];
   for (let index = 1; index < chartBars.length; index += 1) {
@@ -1660,25 +1643,6 @@ const shouldRenderMajorSwingLabel = ({
     resolveMajorSwingLabelMinMove(atrRaw, pivotIndex, pivotPrice)
   );
 };
-
-const buildMarker = (
-  id: string,
-  bar: ChartBar,
-  barIndex: number,
-  position: ChartMarker["position"],
-  shape: ChartMarker["shape"],
-  color: string,
-  text?: string,
-): ChartMarker => ({
-  id,
-  time: bar.time,
-  barIndex,
-  position,
-  shape,
-  color,
-  text,
-  size: 1,
-});
 
 const buildEvent = (
   id: string,
@@ -1931,33 +1895,6 @@ const computeAtr = (chartBars: ChartBar[], period: number): number[] => {
   for (let index = period; index < trueRange.length; index += 1) {
     atr = (atr * (period - 1) + trueRange[index]) / period;
     result[index] = Number(atr.toFixed(6));
-  }
-
-  return result;
-};
-
-const computePercentRank = (values: number[], period: number): number[] => {
-  const result = new Array<number>(values.length).fill(Number.NaN);
-  if (!values.length || period <= 1) {
-    return result;
-  }
-
-  for (let index = period - 1; index < values.length; index += 1) {
-    const window = values.slice(index - period + 1, index + 1);
-    const current = values[index];
-    if (!Number.isFinite(current) || window.some((value) => !Number.isFinite(value))) {
-      continue;
-    }
-
-    let lessOrEqual = 0;
-    window.forEach((value) => {
-      if (value <= current) {
-        lessOrEqual += 1;
-      }
-    });
-    result[index] = Number(
-      ((((lessOrEqual - 1) / (period - 1)) * 100) || 0).toFixed(6),
-    );
   }
 
   return result;
@@ -2888,10 +2825,8 @@ export function createPyrusSignalsPineRuntimeAdapter(
         showTokyoSession,
         showSydneySession,
         visibleTimeframes,
-        showLastBarOnly,
         showSecondarySignals,
         secondarySignalTimeframes,
-        plotOverrides,
       } = resolvePyrusSignalsRuntimeSettings(settings);
       const normalizedTimeframe = normalizePyrusSignalsTimeframe(timeframe);
       if (

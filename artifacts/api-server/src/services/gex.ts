@@ -916,8 +916,6 @@ const positiveOrNull = (value: unknown): number | null => {
 
 const finiteOrZero = (value: unknown): number => finiteOrNull(value) ?? 0;
 
-const toIsoDate = (date: Date): string => date.toISOString().slice(0, 10);
-
 const toDateOrNull = (value: unknown): Date | null => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value === "string" || typeof value === "number") {

@@ -29,12 +29,6 @@ const DRAWDOWN_DURATION_FRACTION = 0.5;
 const RAW_SHARPE_WARNING_THRESHOLD = 1;
 const DEFLATED_SHARPE_PENALTY_THRESHOLD = 0.5;
 
-function safeDivide(numerator: number, denominator: number): number {
-  return denominator === 0 || !Number.isFinite(denominator)
-    ? 0
-    : numerator / denominator;
-}
-
 function mean(values: number[]): number {
   return values.length > 0
     ? values.reduce((sum, value) => sum + value, 0) / values.length
