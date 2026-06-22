@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, type PropsWithChildren } from "react";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/TooltipProvider";
 import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
+import { createPyrusPersistOptions } from "./queryPersistence";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,11 +69,32 @@ export function AppProviders({ children }: PropsWithChildren) {
     auditLocalStorageOnce();
   }, []);
 
+  // Selectively persist reference/structural query data so a reload paints
+  // last-session lists/config instantly instead of starting from an empty
+  // cache. The allowlist (queryPersistence.ts) is default-deny, so live
+  // prices/positions/account financials are never restored stale.
+  const persistOptions = useMemo(() => createPyrusPersistOptions(), []);
+
+  const tooltipWrapped = (
+    <TooltipProvider delayDuration={500} skipDelayDuration={150}>
+      {children}
+    </TooltipProvider>
+  );
+
+  if (persistOptions) {
+    return (
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={persistOptions}
+      >
+        {tooltipWrapped}
+      </PersistQueryClientProvider>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={500} skipDelayDuration={150}>
-        {children}
-      </TooltipProvider>
+      {tooltipWrapped}
     </QueryClientProvider>
   );
 }

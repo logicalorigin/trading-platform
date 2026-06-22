@@ -109,7 +109,14 @@ import {
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
-export const preloadScreenModules = () => preloadAlgoLivePageModules();
+// Warm BOTH the live-page chunk and the lazily-imported algo runtime helpers
+// (transitions / activity / KPI). loadAlgoRuntimeHelpers is memoized, so this
+// shares the same promise the screen awaits on first data, eliminating the
+// gate/transitions/KPI pop-in that otherwise lands after first render.
+export const preloadScreenModules = () =>
+  Promise.all([preloadAlgoLivePageModules(), loadAlgoRuntimeHelpers()]).then(
+    () => undefined,
+  );
 
 const ALGO_PRIMARY_FALLBACK_DELAY_MS = 0;
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);

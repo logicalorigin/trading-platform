@@ -125,6 +125,62 @@ const isolationHeaders =
           "Reporting-Endpoints": 'pyrus="/api/diagnostics/browser-reports"',
         };
 
+// The two route chunks that EVERY cold launch needs (AppContent and the
+// workspace shell PlatformApp) are dynamic imports, so the browser only
+// discovers them after it parses the entry and App.tsx fires its runtime
+// preloadDynamicImport calls. Emit <link rel=modulepreload> for their hashed
+// chunks in the HTML <head> so fetching starts in parallel with entry parsing,
+// shrinking the boot overlay's longest blocking wait. Production build only --
+// the dev server serves unbundled modules. The persisted first-screen chunk
+// varies per user and stays on App.tsx's synchronous runtime preload path.
+const CRITICAL_PRELOAD_SOURCE_MODULES = [
+  "/src/app/AppContent.tsx",
+  "/src/features/platform/PlatformApp.jsx",
+];
+
+function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
+  let resolvedBase = "/";
+  return {
+    name: "pyrus-critical-modulepreload",
+    apply: "build",
+    configResolved(config) {
+      resolvedBase = config.base || "/";
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        const bundle = ctx.bundle;
+        if (!bundle) return html;
+        const basePrefix = resolvedBase.endsWith("/")
+          ? resolvedBase
+          : `${resolvedBase}/`;
+        const hrefs: string[] = [];
+        for (const file of Object.values(bundle)) {
+          if (file.type !== "chunk") continue;
+          const facade = file.facadeModuleId?.replaceAll("\\", "/");
+          if (
+            facade &&
+            CRITICAL_PRELOAD_SOURCE_MODULES.some((module) =>
+              facade.endsWith(module),
+            )
+          ) {
+            hrefs.push(`${basePrefix}${file.fileName}`);
+          }
+        }
+        if (!hrefs.length) return html;
+        return {
+          html,
+          tags: hrefs.map((href) => ({
+            tag: "link",
+            attrs: { rel: "modulepreload", href, crossorigin: true },
+            injectTo: "head" as const,
+          })),
+        };
+      },
+    },
+  };
+}
+
 export default defineConfig({
   base: basePath,
   define: {
@@ -133,6 +189,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    criticalChunkModulePreloadPlugin(),
     ...(enableReplitRuntimeErrorModal
       ? [
           runtimeErrorOverlay({
