@@ -7,26 +7,22 @@ const source = readFileSync(
   "utf8",
 );
 
-test("cold-chunk loading branch renders a layout skeleton, not a lone spinner", () => {
-  // Progressive-rendering fix: while a screen's code chunk is still downloading,
-  // the registry must show a data-free layout skeleton (page shape) instead of a
-  // lone centered <LoadingSpinner>, so navigating to a not-yet-loaded screen
-  // shows UI immediately rather than a bare spinner after a rebuild.
-  assert.match(
-    source,
-    /import ScreenLoadingSkeleton from "\.\.\/\.\.\/components\/platform\/ScreenLoadingSkeleton\.jsx"/,
-  );
-  assert.match(source, /<ScreenLoadingSkeleton label=\{label\} \/>/);
-  // The lone-spinner loading UX (and its now-unused import) must be gone.
+test("cold-chunk loading branch renders a compact status, not fake screen chrome", () => {
+  // A cold screen chunk should not paint a fake page-shaped skeleton. That made
+  // slow imports look like broken empty screens and hid real stuck-loader bugs.
+  assert.doesNotMatch(source, /ScreenLoadingSkeleton/);
   assert.doesNotMatch(source, /<LoadingSpinner size=\{22\} \/>/);
   assert.doesNotMatch(source, /import \{ LoadingSpinner \}/);
+  assert.match(source, /const loadingLabel = label\.replace\(\/Screen\$\/, ""\);/);
+  assert.match(source, /<span>\{`Loading \$\{loadingLabel\}`\}<\/span>/);
   // The loading branch keeps its testid/role contract used by boot + QA.
   assert.match(source, /data-testid=\{`screen-loading-\$\{screenId\}`\}/);
+  assert.match(source, /role="status"/);
 });
 
-test("algo is covered by the background screen preload sweep", () => {
-  // algo was absent from SCREEN_MODULE_PRELOAD_ORDER, so on follower tabs / before
-  // the leader-gated priority pass it was never warmed → permanently cold chunk.
+test("algo stays listed for explicit/manual screen preloading", () => {
+  // Keep the registry order complete for explicit preloads and hover/click paths,
+  // even though automatic background screen sweeps are disabled.
   const start = source.indexOf("export const SCREEN_MODULE_PRELOAD_ORDER");
   const end = source.indexOf("]", start);
   const block = source.slice(start, end);

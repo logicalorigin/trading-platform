@@ -72,6 +72,29 @@ test("massive stock realtime can drive signal-surface aggregate streams", () => 
   assert.equal(schedule.streams.watchlistQuoteStream, true);
 });
 
+test("runtime streams pause while the active screen is still loading code", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    massiveStockRealtimeConfigured: true,
+    activeScreen: "signals",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+    automationEnabled: true,
+    tradingEnabled: true,
+    memoryPressure: { level: "normal", observedAt: "2026-06-22T20:15:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.watchlistQuoteStream, false);
+  assert.equal(schedule.streams.positionQuoteStream, false);
+  assert.equal(schedule.streams.marketStockAggregates, false);
+  assert.equal(schedule.streams.accountRealtime, false);
+  assert.equal(schedule.streams.shadowAccountRealtime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
+});
+
 test("watch pressure degrades hydration without blocking near-priority work", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,

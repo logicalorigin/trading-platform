@@ -161,10 +161,7 @@ export const preloadInitialAppContentRoute = () => {
     retries: ROOT_ROUTE_CHUNK_RETRIES,
     retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
   });
-  // Non-initial priority screens (account/signals/trade) are warmed by
-  // PlatformApp's own gated sweep (PRIORITY_SCREEN_MODULE_PRELOAD_ORDER) once the
-  // first screen is interactive, so they never compete with the initial screen +
-  // workspace chunk during the hot boot window. Warming them here at
+  // Non-initial screens load on the user's navigation path. Warming them here at
   // module-load time raced first paint (requestIdleCallback's 2s timeout
   // force-fired mid-boot, saturating the connection pool), so it is intentionally
   // not done on this path.

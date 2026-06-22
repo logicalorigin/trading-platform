@@ -6,7 +6,6 @@ import {
   preloadScreenModule,
 } from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
-import ScreenLoadingSkeleton from "../../components/platform/ScreenLoadingSkeleton.jsx";
 
 const createPreloadableScreen = (screenId, label) => {
   return function PreloadableScreen(props) {
@@ -68,6 +67,7 @@ const createPreloadableScreen = (screenId, label) => {
       setLoadError(null);
       setScreenComponent(() => null);
     }, []);
+    const loadingLabel = label.replace(/Screen$/, "");
 
     return ScreenComponent ? (
       <ScreenComponent {...props} />
@@ -97,23 +97,43 @@ const createPreloadableScreen = (screenId, label) => {
     ) : props?.isVisible === false ? (
       null
     ) : (
-      // Module is still loading. Render a data-free LAYOUT skeleton (toolbar +
-      // panel grid) instead of a lone centered spinner so a navigation to a
-      // not-yet-loaded screen shows the page's shape immediately on the themed
-      // app canvas while the chunk resolves. The skeleton pulls no screen code.
       <div
         data-testid={`screen-loading-${screenId}`}
         role="status"
         aria-label={`Loading ${label}`}
         style={{
-          minHeight: 240,
+          minHeight: 160,
           width: "100%",
           height: "100%",
           flex: 1,
+          display: "grid",
+          placeItems: "center",
           background: "var(--ra-surface-0, #F7FAFF)",
+          color: "var(--ra-text-secondary, #4B5563)",
         }}
       >
-        <ScreenLoadingSkeleton label={label} />
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 12,
+            fontWeight: 650,
+            letterSpacing: 0,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              background: "currentColor",
+              opacity: 0.72,
+            }}
+          />
+          <span>{`Loading ${loadingLabel}`}</span>
+        </div>
       </div>
     );
   };

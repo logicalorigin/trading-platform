@@ -168,15 +168,16 @@ export const buildPlatformWorkSchedule = ({
   const historyScreen = market || flow || trade || account;
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
+  const dataStreamReady = Boolean(
+    sessionReady && activeBackgroundReady && firstScreenReady && !startupProtected,
+  );
   const broadFlowAllowed = Boolean(
     // Only run the heavy broad-flow scanner where flow is actually shown. It used
     // to run on Account/Signals/Algo too, burning API/CPU for data those screens
     // never render.
     (market || flow || trade) &&
-      sessionReady &&
+      dataStreamReady &&
       runtimeEnabled &&
-      firstScreenReady &&
-      !startupProtected &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
   const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
@@ -187,11 +188,12 @@ export const buildPlatformWorkSchedule = ({
   const backgroundAccountRealtime = Boolean(automationEnabled || foregroundIbkr);
   const accountRealtime = Boolean(
     accountRealtimeIbkr &&
+      activeBackgroundReady &&
       (foregroundAccountRealtime ||
         (!startupBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
-  const watchlistQuoteStream = Boolean(sessionReady && quoteStreamAvailable);
-  const positionQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
+  const watchlistQuoteStream = Boolean(dataStreamReady && quoteStreamAvailable);
+  const positionQuoteStream = Boolean(dataStreamReady && quoteStreamIbkr);
   const idleCodePreloadAllowed = Boolean(
     sessionReady &&
       runtimeEnabled &&
@@ -236,10 +238,12 @@ export const buildPlatformWorkSchedule = ({
       watchlistQuoteStream,
       positionQuoteStream,
       marketStockAggregates: Boolean(
-        foregroundStockAggregates && (market || signalMatrixSurface),
+        dataStreamReady &&
+          foregroundStockAggregates &&
+          (market || signalMatrixSurface),
       ),
       accountRealtime,
-      shadowAccountRealtime: Boolean(backgroundIbkr && account),
+      shadowAccountRealtime: Boolean(backgroundIbkr && activeBackgroundReady && account),
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
       lowPriorityHistory: Boolean(

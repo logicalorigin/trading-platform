@@ -22,8 +22,8 @@ test("AppContent no longer eagerly preloads non-initial priority screens during 
   // the main thread is saturated, so requestIdleCallback never finds idle and the
   // 2s timeout FORCE-fired the preload mid-boot, dumping extra screen chunks into
   // the same connection pool + main thread as the initial screen's first paint and
-  // its data fetches. PlatformApp's operationalCodePreloadReady-gated sweep is now
-  // the single owner of non-initial priority warming.
+  // its data fetches. Non-initial screens should now load on the user's navigation
+  // path instead of through automatic background warming.
   assert.doesNotMatch(
     appContentSource,
     /scheduleIdlePreload/,
@@ -54,41 +54,49 @@ test("AppContent still preloads the two first-paint chunks (initial screen + wor
   );
 });
 
-test("PlatformApp's gated priority sweep preserves the account/signals/trade warm coverage", () => {
-  // The non-initial priority warm that AppContent used to do (gated only by a 2s
-  // idle timeout) now flows entirely through PlatformApp's
-  // operationalCodePreloadReady-gated sweep, so the same screens are still warmed,
-  // just after first paint instead of during the boot window.
-  const match = platformAppSource.match(
-    /PRIORITY_SCREEN_MODULE_PRELOAD_ORDER\s*=\s*\[([^\]]*)\]/,
+test("PlatformApp does not automatically background-preload cold screen modules", () => {
+  // Normal-mode browser evidence showed the post-first-paint priority sweep
+  // competing with the screen the user clicked. The import should happen on the
+  // user's navigation path, not as an automatic account/signals/trade/algo sweep.
+  assert.match(
+    platformAppSource,
+    /const AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED = false;/,
+    "automatic background screen module preloading must stay disabled",
   );
-  assert.ok(match, "PRIORITY_SCREEN_MODULE_PRELOAD_ORDER must be defined");
-  const ids = match[1];
-  // All four screens that either path used to warm (AppContent: account/signals/
-  // trade; PlatformApp: account/signals/algo) must remain in the single gated
-  // sweep so the union coverage is preserved, just sequenced after first paint.
-  for (const screenId of ["account", "signals", "trade", "algo"]) {
-    assert.match(
-      ids,
-      new RegExp(`"${screenId}"`),
-      `gated priority sweep must include "${screenId}" so its warm coverage is preserved`,
-    );
-  }
+  assert.match(
+    platformAppSource,
+    /const screenCodePreloadReady = Boolean\(\s*AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED[\s\S]*?operationalCodePreloadReady[\s\S]*?activeScreenBackgroundAllowed[\s\S]*?memoryAllowsBackgroundWarmup[\s\S]*?\);/,
+    "the background screen-code sweep must be gated by AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED",
+  );
+  assert.match(
+    platformAppSource,
+    /const hiddenScreenWarmMountAllowed = Boolean\(\s*AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED[\s\S]*?hiddenScreenPreloadPolicy\.mountScreens[\s\S]*?disableHiddenScreenWarmMount[\s\S]*?\);/,
+    "hidden warm mounting must be gated by AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED",
+  );
 });
 
-test("the gated priority sweep actually consumes the order behind operationalCodePreloadReady", () => {
-  // Guards against a regression where the constant survives but the sweep that
-  // warms it is deleted/broken (the constant alone would not warm anything).
+test("the priority sweep can only run behind the background screen-code gate", () => {
   assert.match(
     platformAppSource,
     /PRIORITY_SCREEN_MODULE_PRELOAD_ORDER\.filter/,
     "the priority sweep must iterate PRIORITY_SCREEN_MODULE_PRELOAD_ORDER",
   );
-  // operationalCodePreloadReady is the first-paint + leader-independent gate that
-  // keeps the (now sole) priority warm from racing first paint.
   assert.match(
     platformAppSource,
-    /operationalCodePreloadReady/,
-    "the priority sweep must remain gated on operationalCodePreloadReady",
+    /if \(\s*!screenCodePreloadReady[\s\S]*?priorityScreenCodePreloadStartedRef\.current[\s\S]*?priorityScreenCodePreloadCompleteRef\.current[\s\S]*?\) \{/,
+    "the priority sweep must be blocked when screenCodePreloadReady is false",
+  );
+});
+
+test("long-lived signal matrix stream pauses while cold screen code is loading", () => {
+  assert.match(
+    platformAppSource,
+    /const signalMatrixStreamReady = Boolean\(\s*signalMatrixUniverseSymbols\.length > 0[\s\S]*?activeScreenBackgroundDataAllowed[\s\S]*?screenWarmupPhase === "ready"[\s\S]*?!startupProtectionActive[\s\S]*?\);/,
+    "the matrix EventSource must require active-screen background readiness",
+  );
+  assert.match(
+    platformAppSource,
+    /useSignalMonitorMatrixStream\(\{[\s\S]*?enabled: signalMatrixStreamReady,/,
+    "useSignalMonitorMatrixStream must consume signalMatrixStreamReady",
   );
 });

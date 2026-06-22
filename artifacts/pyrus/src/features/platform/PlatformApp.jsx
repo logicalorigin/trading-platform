@@ -356,20 +356,17 @@ const PLATFORM_FRESHNESS_TTL_MS = Object.freeze({
 });
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
+const AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED = false;
 const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "signals", "trade", "algo"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 0;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 0;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 0;
-const LAUNCH_AUXILIARY_SURFACE_DELAY_MS = 500;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
 const ACTIVITY_SIDEBAR_WIDTH_DEFAULT = 220;
 const ACTIVITY_SIDEBAR_WIDTH_MIN = 196;
 const ACTIVITY_SIDEBAR_WIDTH_MAX = 320;
-const STARTUP_PROTECTION_COOLDOWN_MS = 250;
-const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 250;
-const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 750;
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const HEADER_SIGNAL_MATRIX_SYMBOL_LIMIT = 24;
 const ACTIVITY_SIGNAL_MATRIX_SYMBOL_LIMIT = 64;
@@ -635,6 +632,18 @@ const scheduleIdleWork = (callback, timeout = 1_500) => {
     return () => window.cancelIdleCallback?.(idleId);
   }
   const timerId = window.setTimeout(callback, 180);
+  return () => window.clearTimeout(timerId);
+};
+
+const scheduleReadinessWork = (callback) => {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  if (typeof window.requestAnimationFrame === "function") {
+    const frameId = window.requestAnimationFrame(callback);
+    return () => window.cancelAnimationFrame?.(frameId);
+  }
+  const timerId = window.setTimeout(callback, 0);
   return () => window.clearTimeout(timerId);
 };
 
@@ -1046,11 +1055,16 @@ export default function PlatformApp() {
     }
 
     setStartupProtectionActive(true);
-    const timer = window.setTimeout(
-      () => setStartupProtectionActive(false),
-      STARTUP_PROTECTION_COOLDOWN_MS,
-    );
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    const cancelReadiness = scheduleReadinessWork(() => {
+      if (!cancelled) {
+        setStartupProtectionActive(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      cancelReadiness();
+    };
   }, [firstScreenReady, signalMonitorWorkVisible]);
 
   useEffect(() => {
@@ -1384,26 +1398,20 @@ export default function PlatformApp() {
     }
 
     let cancelled = false;
-    let cancelIdle = null;
+    let cancelReadiness = null;
     markWarmupTimeline("auxiliarySurfacesQueuedAtMs");
-    const timerId = window.setTimeout(() => {
+    cancelReadiness = scheduleReadinessWork(() => {
       if (cancelled) {
         return;
       }
-      cancelIdle = scheduleIdleWork(() => {
-        if (cancelled) {
-          return;
-        }
-        auxiliarySurfacesReadyRef.current = true;
-        setAuxiliarySurfacesReady(true);
-        markWarmupTimeline("auxiliarySurfacesReadyAtMs");
-      }, 1_000);
-    }, LAUNCH_AUXILIARY_SURFACE_DELAY_MS);
+      auxiliarySurfacesReadyRef.current = true;
+      setAuxiliarySurfacesReady(true);
+      markWarmupTimeline("auxiliarySurfacesReadyAtMs");
+    });
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timerId);
-      cancelIdle?.();
+      cancelReadiness?.();
     };
   }, [
     firstScreenReady,
@@ -1441,11 +1449,16 @@ export default function PlatformApp() {
       return undefined;
     }
 
-    const timer = window.setTimeout(
-      () => updateBackgroundResumeReady("signalDisplay", true),
-      SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    const cancelReadiness = scheduleReadinessWork(() => {
+      if (!cancelled) {
+        updateBackgroundResumeReady("signalDisplay", true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      cancelReadiness();
+    };
   }, [
     activeScreenPrimaryReady,
     platformRealtimeWorkActive,
@@ -1462,11 +1475,16 @@ export default function PlatformApp() {
       return undefined;
     }
 
-    const timer = window.setTimeout(
-      () => updateBackgroundResumeReady("signalMatrix", true),
-      SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    const cancelReadiness = scheduleReadinessWork(() => {
+      if (!cancelled) {
+        updateBackgroundResumeReady("signalMatrix", true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      cancelReadiness();
+    };
   }, [
     activeScreenBackgroundDataAllowed,
     platformRealtimeWorkActive,
@@ -1540,12 +1558,14 @@ export default function PlatformApp() {
       !warmupTestOverrides.disableOperationalCodePreload,
   );
   const screenCodePreloadReady = Boolean(
-    operationalCodePreloadReady &&
+    AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED &&
+      operationalCodePreloadReady &&
       activeScreenBackgroundAllowed &&
       memoryAllowsBackgroundWarmup,
   );
   const backgroundScreenPreloadReady = Boolean(
-    operationalCodePreloadReady &&
+    AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED &&
+      operationalCodePreloadReady &&
       sessionMetadataSettled &&
       memoryAllowsBackgroundWarmup,
   );
@@ -1573,7 +1593,8 @@ export default function PlatformApp() {
     ],
   );
   const hiddenScreenWarmMountAllowed = Boolean(
-    hiddenScreenPreloadPolicy.mountScreens &&
+    AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED &&
+      hiddenScreenPreloadPolicy.mountScreens &&
       !warmupTestOverrides.disableHiddenScreenWarmMount,
   );
   useEffect(() => {
@@ -1592,10 +1613,7 @@ export default function PlatformApp() {
   ]);
   useEffect(() => {
     if (
-      !operationalCodePreloadReady ||
-      !activeScreenBackgroundAllowed ||
-      !memoryAllowsBackgroundWarmup ||
-      warmupTestOverrides.disableOperationalCodePreload ||
+      !screenCodePreloadReady ||
       priorityScreenCodePreloadStartedRef.current ||
       priorityScreenCodePreloadCompleteRef.current
     ) {
@@ -1645,12 +1663,9 @@ export default function PlatformApp() {
       }
     };
   }, [
-    activeScreenBackgroundAllowed,
     markWarmupTimeline,
-    memoryAllowsBackgroundWarmup,
-    operationalCodePreloadReady,
     screen,
-    warmupTestOverrides.disableOperationalCodePreload,
+    screenCodePreloadReady,
   ]);
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
@@ -2985,7 +3000,7 @@ export default function PlatformApp() {
         sessionMetadataSettled,
         activeScreen: screen,
         screenWarmupPhase,
-        activeScreenBackgroundAllowed,
+        activeScreenBackgroundAllowed: activeScreenBackgroundDataAllowed,
         startupProtectionActive,
         ibkrWorkPressure,
         memoryPressure: memoryPressureSignal,
@@ -3009,7 +3024,7 @@ export default function PlatformApp() {
       screenWarmupPhase,
       massiveStockRealtimeConfigured,
       startupProtectionActive,
-      activeScreenBackgroundAllowed,
+      activeScreenBackgroundDataAllowed,
       sessionMetadataSettled,
       session?.ibkrBridge?.authenticated,
       signalMonitorProfileDegraded,
@@ -3673,13 +3688,21 @@ export default function PlatformApp() {
   // process and must NOT pause on screen or tab visibility. EventSource delivery
   // is not throttled while the tab is hidden (unlike the REST poll's setInterval),
   // so the matrix stays live regardless of which screen is open or whether the tab
-  // is focused. Scoped to the always-on monitored universe (watchlist + monitored +
-  // open positions) — NOT the signals screen. Runs alongside the poll; merge is idempotent.
+  // is focused. It does pause while a cold route transition is still loading code,
+  // because dev module imports share the same origin connection pool as API streams.
+  // Scoped to the always-on monitored universe (watchlist + monitored + open
+  // positions) — NOT the signals screen. Runs alongside the poll; merge is idempotent.
+  const signalMatrixStreamReady = Boolean(
+    signalMatrixUniverseSymbols.length > 0 &&
+      activeScreenBackgroundDataAllowed &&
+      screenWarmupPhase === "ready" &&
+      !startupProtectionActive,
+  );
   useSignalMonitorMatrixStream({
     environment: signalMonitorEnvironment,
     symbols: signalMatrixUniverseSymbols,
     timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-    enabled: signalMatrixUniverseSymbols.length > 0,
+    enabled: signalMatrixStreamReady,
     onStates: handleSignalMatrixStreamStates,
   });
   const signalMatrixPrioritySymbolsKey = useMemo(
@@ -3759,6 +3782,8 @@ export default function PlatformApp() {
       gates: {
         workspaceLeader,
         workspaceLeadershipReason: workspaceLeadership.reason,
+        automaticBackgroundScreenPreloadEnabled:
+          AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED,
         operationalCodePreloadReady,
         hiddenScreenWarmMountEnabled: hiddenScreenWarmMountAllowed,
         backgroundDataWarmupEnabled,
@@ -3774,6 +3799,7 @@ export default function PlatformApp() {
         priorityScreenCodePreloadPending,
         auxiliarySurfacesReady,
         signalMonitorDisplayReady,
+        signalMatrixStreamReady,
         signalMatrixBackgroundReady,
       },
       backgroundResumeReady,
@@ -3810,6 +3836,7 @@ export default function PlatformApp() {
     screen,
     screenReadiness,
     screenWarmupPhase,
+    signalMatrixStreamReady,
     signalMatrixBackgroundReady,
     signalMonitorDisplayReady,
     startupProtectionActive,
