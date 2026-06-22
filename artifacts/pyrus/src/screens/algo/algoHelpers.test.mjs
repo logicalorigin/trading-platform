@@ -1025,6 +1025,17 @@ test("a 0 quote is not displayed as $0.00 - it falls through to bar/fire/dash", 
   assert.equal(nothing.source, null);
 });
 
+test("a 0 fire price is treated as no price (firstPositivePresentMetric), not $0.00", () => {
+  // The fire tier is positive-only too: a literal 0 signalPrice (a phantom, not a
+  // real fire) must resolve to null -> dash, never a confident "$0.00".
+  const zeroFire = resolveDisplayCurrentPrice(
+    { signalPrice: 0 },
+    { price: 0, last: 0, mark: 0 },
+  );
+  assert.equal(zeroFire.price, null);
+  assert.equal(zeroFire.source, null);
+});
+
 test("Move from a FRESH matrix bar renders and is not flagged stale", () => {
   // SPY-style fresh matrix row (status ok): legitimate move since fire against a
   // fresh bar -- must render and NOT be flagged stale.

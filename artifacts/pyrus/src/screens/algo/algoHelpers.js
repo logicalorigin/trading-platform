@@ -1397,7 +1397,10 @@ export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
   if (barClose != null) {
     return { price: barClose, source: "bar", live: false };
   }
-  const firePrice = finitePresentNumberOrNull(record.signalPrice);
+  // Positive-only: a 0 (or absent) fire price is "no price", same contract as the
+  // live-quote and bar tiers above. Without this the resolver could return price:0
+  // and the row rendered "$0.00" instead of a dash for a price it never really had.
+  const firePrice = firstPositivePresentMetric(record.signalPrice);
   return {
     price: firePrice,
     source: firePrice == null ? null : "fire",

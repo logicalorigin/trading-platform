@@ -23,6 +23,12 @@ import {
   recordOptionHydrationMetric,
   setOptionHydrationDiagnostics,
 } from "./optionHydrationDiagnostics";
+import {
+  QUOTE_STREAM_STALL_BASE_MS,
+  QUOTE_STREAM_STALL_CHECK_MS,
+  nextQuoteStreamReconnectDelayMs,
+  nextQuoteStreamStallMs,
+} from "./quoteStreamReconnect";
 import type {
   AccountAllocationResponse,
   AccountCashActivityResponse,
@@ -5893,8 +5899,20 @@ const useQuoteSnapshotStream = ({
       return;
     }
 
-    const source = new EventSource(streamUrl);
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let stallMs = QUOTE_STREAM_STALL_BASE_MS;
+    let lastDataAt = Date.now();
+    let teardown = false;
+
     const handleQuotes = (event: MessageEvent<string>) => {
+      // Any quotes frame proves the connection is alive: reset the stall window
+      // and reconnect backoff before inspecting whether the payload is usable.
+      lastDataAt = Date.now();
+      reconnectAttempt = 0;
+      stallMs = QUOTE_STREAM_STALL_BASE_MS;
+
       const payload = parseJsonPayload<QuoteStreamPayload>(event.data);
       if (!payload?.quotes?.length) {
         return;
@@ -5924,10 +5942,75 @@ const useQuoteSnapshotStream = ({
       scheduleQuoteStreamFlush();
     };
 
-    source.addEventListener("quotes", handleQuotes as EventListener);
+    const closeSource = () => {
+      if (source) {
+        source.removeEventListener("quotes", handleQuotes as EventListener);
+        source.onerror = null;
+        source.close();
+        source = null;
+      }
+    };
+
+    const connect = () => {
+      if (teardown) {
+        return;
+      }
+      if (reconnectTimer != null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      closeSource();
+      lastDataAt = Date.now();
+      const next = new EventSource(streamUrl);
+      next.addEventListener("quotes", handleQuotes as EventListener);
+      next.onerror = () => {
+        // CONNECTING (0) means the browser is already auto-retrying; only a
+        // terminal CLOSED (2) needs us to rebuild the EventSource ourselves.
+        if (teardown || next.readyState !== EventSource.CLOSED) {
+          return;
+        }
+        closeSource();
+        if (reconnectTimer != null) {
+          return;
+        }
+        const delay = nextQuoteStreamReconnectDelayMs(reconnectAttempt);
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, delay);
+      };
+      source = next;
+    };
+
+    connect();
+
+    const stallTimer = setInterval(() => {
+      if (teardown || source == null) {
+        return;
+      }
+      // Hidden/background tabs are throttled (so "no data" is expected) - skip
+      // them so we don't pile reconnects onto an already-strained API.
+      const visible =
+        typeof document === "undefined" ||
+        document.visibilityState === "visible";
+      if (!visible) {
+        return;
+      }
+      if (Date.now() - lastDataAt > stallMs) {
+        stallMs = nextQuoteStreamStallMs(stallMs);
+        connect();
+      }
+    }, QUOTE_STREAM_STALL_CHECK_MS);
+
     return () => {
-      source.removeEventListener("quotes", handleQuotes as EventListener);
-      source.close();
+      teardown = true;
+      if (reconnectTimer != null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      clearInterval(stallTimer);
+      closeSource();
       flushQuoteStreamSnapshots();
     };
   }, [enabled, queryClient, streamUrl]);

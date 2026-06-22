@@ -811,7 +811,16 @@ const BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT = 40;
 const BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT = 240;
 const SPARKLINE_SEED_MAX_SYMBOLS = 600;
 const SPARKLINE_SEED_DB_BATCH_SIZE = 32;
-const SPARKLINE_SEED_DB_CONCURRENCY = 4;
+// Sparkline seeding is background hydration (non-critical). Against the hard
+// 12-connection pool, concurrency 4 let a single seed grab a third of the pool
+// for the duration of its per-chunk bar reads, starving live quote/bar/state
+// reads and feeding pool-acquire contention (seed p95 hit ~12s while waiting).
+// Cap it low (env-overridable) so background hydration can never monopolize the
+// pool; each chunk is an index-backed batched query that stays fast uncontended.
+const SPARKLINE_SEED_DB_CONCURRENCY = Math.max(
+  1,
+  Number(process.env["SPARKLINE_SEED_DB_CONCURRENCY"]) || 2,
+);
 const SPARKLINE_SEED_DEFAULT_LIMIT = 120;
 const SPARKLINE_SEED_MAX_LIMIT = 240;
 const SPARKLINE_SEED_DEFAULT_POINT_LIMIT = 48;
