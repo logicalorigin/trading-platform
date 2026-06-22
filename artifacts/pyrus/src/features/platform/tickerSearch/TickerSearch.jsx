@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -834,8 +833,7 @@ const useTickerSearchController = ({
   rowCache = {},
   limit = TICKER_SEARCH_INITIAL_RESULT_LIMIT,
 }) => {
-  const deferredQuery = useDeferredValue(query.trim());
-  const debouncedQuery = useDebouncedTickerSearchQuery(deferredQuery);
+  const debouncedQuery = useDebouncedTickerSearchQuery(query.trim());
   const normalizedQuery = normalizeTickerSearchQuery(debouncedQuery);
   const selectedFilter = TICKER_SEARCH_MARKET_BY_VALUE[marketFilter] || TICKER_SEARCH_MARKET_BY_VALUE.all;
   const minimumQueryLength = getTickerSearchMinQueryLength(debouncedQuery);

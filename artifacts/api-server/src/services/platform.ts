@@ -4953,20 +4953,13 @@ async function getQuoteSnapshotsUncached(input: {
     input.tradingSession !== "overnight" &&
     isMassiveStocksRealtimeConfigured(massiveConfig);
   if (useMassiveRealtimePrimary) {
-    const contextRefreshSymbols = new Set(
-      getSymbolsNeedingStockQuoteDayChangeContext(symbols),
-    );
-    const contextQuotes = await refreshMassiveQuoteDayChangeContext(symbols);
     const quotesBySymbol = new Map<
       string,
       QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
     >();
-    contextQuotes.forEach((quote) => {
-      const symbol = normalizeSymbol(quote.symbol);
-      if (symbol) {
-        quotesBySymbol.set(symbol, quote);
-      }
-    });
+    // Live socket/aggregate quotes are in-memory and already carry the cached
+    // day-change context (prevClose/change via enrichStockQuoteWithDayChangeContext),
+    // so the streamed majority of symbols need no network at all.
     const socketQuotes = getMassiveRealtimeSocketQuoteSnapshots(symbols);
     socketQuotes.forEach((quote) => {
       const symbol = normalizeSymbol(quote.symbol);
@@ -4977,13 +4970,14 @@ async function getQuoteSnapshotsUncached(input: {
     const liveSymbols = new Set(
       socketQuotes.map((quote) => normalizeSymbol(quote.symbol)),
     );
-    const missingSocketAndContextSymbols = symbols.filter(
-      (symbol) => !quotesBySymbol.has(symbol) && !contextRefreshSymbols.has(symbol),
-    );
-    const fallbackQuotes = missingSocketAndContextSymbols.length
-      ? await refreshMassiveQuoteDayChangeContext(missingSocketAndContextSymbols, {
-          force: true,
-        })
+    // Only symbols with NO live quote depend on a synchronous context fetch (it is
+    // their sole source), so block on just those. The previous code awaited a
+    // refresh for ALL requested symbols - including streamed ones that already had
+    // data - which pinned the request (and a scarce pool slot) for seconds on the
+    // upstream REST call and cascaded into API saturation / frozen prices.
+    const missingSymbols = symbols.filter((symbol) => !quotesBySymbol.has(symbol));
+    const fallbackQuotes = missingSymbols.length
+      ? await refreshMassiveQuoteDayChangeContext(missingSymbols, { force: true })
       : [];
     fallbackQuotes.forEach((quote) => {
       const symbol = normalizeSymbol(quote.symbol);
@@ -4991,6 +4985,15 @@ async function getQuoteSnapshotsUncached(input: {
         quotesBySymbol.set(symbol, quote);
       }
     });
+    // Warm the cached day-change context for live symbols whose context went stale
+    // in the BACKGROUND (prevClose is intraday-stable, so a slightly stale baseline
+    // is fine) instead of blocking this response on the upstream refresh.
+    const staleLiveContextSymbols = getSymbolsNeedingStockQuoteDayChangeContext(
+      symbols.filter((symbol) => liveSymbols.has(symbol)),
+    );
+    if (staleLiveContextSymbols.length) {
+      void refreshMassiveQuoteDayChangeContext(staleLiveContextSymbols);
+    }
     const quotes = symbols.flatMap((symbol) => {
       const quote = quotesBySymbol.get(symbol);
       return quote ? [quote] : [];
@@ -5000,9 +5003,7 @@ async function getQuoteSnapshotsUncached(input: {
       quotes,
       transport: quotes[0]?.transport ?? null,
       delayed: quotes.some((quote) => quote.delayed),
-      fallbackUsed: [...contextQuotes, ...fallbackQuotes].some(
-        (quote) => !liveSymbols.has(normalizeSymbol(quote.symbol)),
-      ),
+      fallbackUsed: fallbackQuotes.length > 0,
     };
   }
   const bridgeClient = getIbkrClient();
@@ -5388,8 +5389,19 @@ const INTERACTIVE_IBKR_MARKET_GROUPS: UniverseMarket[][] = [
 ];
 const UNIVERSE_SEARCH_DEFAULT_LIMIT = 40;
 const UNIVERSE_SEARCH_CACHE_TTL_MS = 30_000;
+// Non-tradable / no-match responses are cached only briefly so a repeated
+// keystroke is warm without masking background IBKR trade-contract hydration.
+const UNIVERSE_SEARCH_NON_TRADABLE_CACHE_TTL_MS = 8_000;
 const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 6_000;
+// Non-strict (chart) search only reaches the IBKR fall-through when Massive and
+// the catalog both came up empty (e.g. a typo or an IBKR-only/futures symbol).
+// Cap that wait so a no-match keystroke settles fast instead of blocking on the
+// broker for the full strict budget; strict trade resolution keeps the 6s.
+const UNIVERSE_SEARCH_NON_STRICT_IBKR_BUDGET_MS = 2_000;
 const UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS = 1_500;
+// Foreground (chart / non-strict) search is pointed at Massive. Keep its budget
+// tight so a cold name query settles fast instead of blocking on the broker.
+const UNIVERSE_SEARCH_MASSIVE_FOREGROUND_BUDGET_MS = 1_500;
 const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 12_000;
 const UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY = 2;
 const UNIVERSE_CATALOG_IBKR_RETRY_COOLDOWN_MS = 30 * 60_000;
@@ -6194,11 +6206,15 @@ function readUniverseSearchCache(key: string) {
   return sanitizeUniverseSearchResponse(cached.data);
 }
 
-function writeUniverseSearchCache(key: string, data: UniverseSearchResponse) {
+function writeUniverseSearchCache(
+  key: string,
+  data: UniverseSearchResponse,
+  ttlMs: number = UNIVERSE_SEARCH_CACHE_TTL_MS,
+) {
   const sanitized = sanitizeUniverseSearchResponse(data);
   const now = Date.now();
   universeSearchCache.set(key, {
-    expiresAt: now + UNIVERSE_SEARCH_CACHE_TTL_MS,
+    expiresAt: now + ttlMs,
     data: sanitized,
   });
   for (const [cacheKey, cached] of universeSearchCache) {
@@ -6206,6 +6222,23 @@ function writeUniverseSearchCache(key: string, data: UniverseSearchResponse) {
       universeSearchCache.delete(cacheKey);
     }
   }
+}
+
+// Cache a response the foreground search is about to return, decoupled from
+// whether it carries an IBKR trade contract. IBKR-tradable responses keep the
+// full TTL; everything else (Massive/catalog-only matches, no-match results)
+// gets the short TTL so repeated keystrokes are warm but background IBKR
+// hydration still upgrades the row shortly after.
+function cacheUniverseSearchResponse(
+  key: string,
+  data: UniverseSearchResponse,
+  { allowEmpty = false }: { allowEmpty?: boolean } = {},
+) {
+  if (!data.results.length && !allowEmpty) return;
+  const ttlMs = hasIbkrTradableResult(data)
+    ? UNIVERSE_SEARCH_CACHE_TTL_MS
+    : UNIVERSE_SEARCH_NON_TRADABLE_CACHE_TTL_MS;
+  writeUniverseSearchCache(key, data, ttlMs);
 }
 
 export async function searchUniverseCatalog(input: {
@@ -7359,6 +7392,9 @@ async function runInteractiveUniverseSearch(input: {
 }): Promise<UniverseSearchResponse> {
   const startedAt = Date.now();
   const searchLimit = getInteractiveUniverseSearchLimit(input.resultLimit);
+  const ibkrBudgetMs = input.strictTradeResolve
+    ? UNIVERSE_SEARCH_IBKR_BUDGET_MS
+    : UNIVERSE_SEARCH_NON_STRICT_IBKR_BUDGET_MS;
   const massiveConfig = getMassiveRuntimeConfig();
   const massiveClient = massiveConfig ? getMassiveClient() : null;
   const interactiveIbkrMarketGroups = resolveInteractiveIbkrMarketGroups(
@@ -7407,7 +7443,7 @@ async function runInteractiveUniverseSearch(input: {
   }) =>
     runUniverseSearchTask(
       `ibkr-${markets.join("+")}`,
-      UNIVERSE_SEARCH_IBKR_BUDGET_MS,
+      ibkrBudgetMs,
       interactiveProviderController.signal,
       (signal) =>
         getIbkrClient().searchTickers({
@@ -7642,6 +7678,94 @@ async function runInteractiveUniverseSearch(input: {
   }
 }
 
+// Foreground symbol search for the chart (non-strict) path. This is the
+// "point ticker search at Massive, not the broker" path: it queries Massive's
+// free-text reference search (plus the exact ticker lookup) under a tight
+// budget and never blocks on the IBKR bridge. IBKR remains the authority for
+// strict trade resolution and continues to hydrate trade contracts in the
+// background.
+async function runMassiveForegroundUniverseSearch(input: {
+  searchInput: SearchUniverseTickersInput;
+  normalizedSearch: string;
+  requestedMarkets: UniverseMarket[];
+  requestedMarketSet: Set<UniverseMarket>;
+  resultLimit: number;
+  signal?: AbortSignal;
+}): Promise<UniverseSearchResponse> {
+  const emptyResponse = () =>
+    finalizeUniverseSearchResponse({
+      providerResults: [],
+      requestedMarketSet: input.requestedMarketSet,
+      normalizedSearch: input.normalizedSearch,
+      resultLimit: input.resultLimit,
+    });
+
+  const massiveConfig = getMassiveRuntimeConfig();
+  const massiveClient = massiveConfig ? getMassiveClient() : null;
+  if (!massiveClient) return emptyResponse();
+
+  const massiveMarkets = MASSIVE_SEARCH_MARKETS.filter((market) =>
+    input.requestedMarketSet.has(market),
+  );
+  if (!massiveMarkets.length) return emptyResponse();
+
+  const searchLimit = getInteractiveUniverseSearchLimit(input.resultLimit);
+  const budgetSignal = createBudgetSignal(
+    input.signal,
+    UNIVERSE_SEARCH_MASSIVE_FOREGROUND_BUDGET_MS,
+  );
+  const tasks: Array<Promise<{ count: number; results: UniverseTicker[] }>> = [];
+
+  if (isTickerLikeSearch(input.normalizedSearch)) {
+    tasks.push(
+      massiveClient
+        .getUniverseTickerByTicker(input.normalizedSearch, budgetSignal.signal)
+        .then((ticker) => ({
+          count: ticker ? 1 : 0,
+          results: ticker ? [ticker] : [],
+        })),
+    );
+  }
+
+  for (const market of massiveMarkets) {
+    tasks.push(
+      massiveClient.searchUniverseTickers({
+        search: input.normalizedSearch,
+        market,
+        markets: [market],
+        type: input.searchInput.type,
+        active: input.searchInput.active,
+        limit: searchLimit,
+        signal: budgetSignal.signal,
+      }),
+    );
+  }
+
+  try {
+    const settled = await Promise.allSettled(tasks);
+    const providerResults: UniverseTicker[] = [];
+    for (const result of settled) {
+      if (result.status === "fulfilled") {
+        providerResults.push(...result.value.results);
+      }
+    }
+    return finalizeUniverseSearchResponse({
+      providerResults,
+      requestedMarketSet: input.requestedMarketSet,
+      normalizedSearch: input.normalizedSearch,
+      resultLimit: input.resultLimit,
+    });
+  } catch (error) {
+    logger.debug(
+      { err: error, search: input.normalizedSearch },
+      "massive foreground ticker search failed",
+    );
+    return emptyResponse();
+  } finally {
+    budgetSignal.dispose();
+  }
+}
+
 function observeAbandonedUniverseSearchFlight(
   promise: Promise<UniverseSearchResponse>,
   cacheKey: string,
@@ -7836,9 +7960,7 @@ export async function searchUniverseTickers(
             requestedMarkets,
           })
         ) {
-          if (hasIbkrTradableResult(catalogResponse)) {
-            writeUniverseSearchCache(cacheKey, catalogResponse);
-          }
+          cacheUniverseSearchResponse(cacheKey, catalogResponse);
           return catalogResponse;
         }
       }
@@ -7852,9 +7974,7 @@ export async function searchUniverseTickers(
           requestedMarkets,
         })
       ) {
-        if (hasIbkrTradableResult(catalogResponse)) {
-          writeUniverseSearchCache(cacheKey, catalogResponse);
-        }
+        cacheUniverseSearchResponse(cacheKey, catalogResponse);
         return catalogResponse;
       }
     }
@@ -7863,6 +7983,42 @@ export async function searchUniverseTickers(
       { err: error, search: normalizedSearch },
       "persisted universe catalog search unavailable; falling back to live providers",
     );
+  }
+
+  // Chart (non-strict) search is pointed at Massive rather than the IBKR
+  // broker. Run a fast Massive foreground search, merge it with whatever the
+  // catalog returned, and return immediately when anything matches. Only a
+  // genuinely empty Massive+catalog result falls through to the live IBKR
+  // interactive search below (which still covers IBKR-only markets such as
+  // futures and seeds trade-contract hydration in the background).
+  if (!strictTradeResolve && !identifierSearch) {
+    const massiveForeground = await runMassiveForegroundUniverseSearch({
+      searchInput,
+      normalizedSearch,
+      requestedMarkets,
+      requestedMarketSet,
+      resultLimit,
+      signal: options.signal,
+    });
+    const mergedResponse = finalizeUniverseSearchResponse({
+      providerResults: [
+        ...(catalogResponse?.results ?? []),
+        ...massiveForeground.results,
+      ],
+      requestedMarketSet,
+      normalizedSearch,
+      resultLimit,
+    });
+    if (mergedResponse.results.length) {
+      cacheUniverseSearchResponse(cacheKey, mergedResponse);
+      void upsertUniverseCatalogRows(mergedResponse.results).catch((err) => {
+        logger.debug(
+          { err, search: normalizedSearch },
+          "persisted universe catalog upsert failed",
+        );
+      });
+      return mergedResponse;
+    }
   }
 
   let flight = universeSearchInFlight.get(cacheKey);
@@ -7918,10 +8074,10 @@ export async function searchUniverseTickers(
         "persisted universe catalog upsert failed",
       );
     });
-    if (hasIbkrTradableResult(finalResponse)) {
-      writeUniverseSearchCache(cacheKey, finalResponse);
-    }
     if (strictTradeResolve) {
+      if (hasIbkrTradableResult(finalResponse)) {
+        writeUniverseSearchCache(cacheKey, finalResponse);
+      }
       if (!finalResponse.results.length) {
         universeSearchCache.delete(cacheKey);
       }
@@ -7937,6 +8093,12 @@ export async function searchUniverseTickers(
         },
         "strict trade ticker resolution completed",
       );
+    } else {
+      // Non-strict (chart) search: cache the response we are about to return —
+      // including a no-match result — so a repeated keystroke is warm instead
+      // of re-running the full live path. Short TTL keeps it from masking
+      // background IBKR hydration.
+      cacheUniverseSearchResponse(cacheKey, finalResponse, { allowEmpty: true });
     }
     return finalResponse;
   } finally {
