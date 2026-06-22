@@ -240,6 +240,15 @@ function eventLoopDelayLevel(value: number | null): ApiResourcePressureLevel {
   return value >= API_EVENT_LOOP_DELAY_WATCH_MS ? "watch" : "normal";
 }
 
+// A full pool (active>=max) with a SINGLE transient waiter is a momentary blip at
+// normal fan-out, not sustained saturation - escalating it to "high" fires every
+// back-pressure gate (admission shed, diagnostics-persist skip, backfill skip,
+// shadow fast-fallback) and made the signal flap. Require a real queue (>=2
+// waiters) on top of the existing 2-sample hysteresis before "high". This only
+// de-flaps the signal; genuine relief is reducing concurrent demand on the hard
+// 12-connection pool, not tuning the threshold.
+const DB_POOL_HIGH_MIN_WAITERS = 2;
+
 function dbPoolLevel(input: {
   active: number | null;
   waiting: number | null;
@@ -249,14 +258,11 @@ function dbPoolLevel(input: {
   const max = input.max !== null && input.max > 0 ? input.max : null;
   const activeSaturated =
     input.active !== null && max !== null && input.active >= max;
-  if (waiting > 0 && activeSaturated) {
+  if (waiting >= DB_POOL_HIGH_MIN_WAITERS && activeSaturated) {
     return "high";
   }
-  if (waiting > 0) return "watch";
-  if (input.active === null || max === null) {
-    return "normal";
-  }
-  return activeSaturated ? "watch" : "normal";
+  if (waiting > 0 || activeSaturated) return "watch";
+  return "normal";
 }
 
 function dbPoolDetail(input: {

@@ -220,3 +220,41 @@ test("fully occupied db pool without waiters is watch pressure", () => {
 
   __resetApiResourcePressureForTests();
 });
+
+test("a single waiter against a full pool is watch, not high (de-flap)", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 1,
+    dbPoolMax: 12,
+  });
+
+  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
+  // One transient waiter at a full pool is a momentary blip, not sustained
+  // saturation - it must not fire the high-pressure back-pressure gates.
+  assert.equal(snapshot.resourceLevel, "watch");
+  assert.equal(driver?.level, "watch");
+  assert.equal(driver?.detail, "12/12 active, 1 waiting");
+  assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("a real queue (>=2 waiters) against a full pool still enters high", () => {
+  __resetApiResourcePressureForTests();
+
+  const snapshot = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 2,
+    dbPoolMax: 12,
+  });
+
+  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
+  // A genuine queue is real saturation - the gates should still engage.
+  assert.equal(snapshot.resourceLevel, "high");
+  assert.equal(driver?.level, "high");
+  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+
+  __resetApiResourcePressureForTests();
+});

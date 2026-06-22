@@ -198,16 +198,66 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
   });
 });
 
-router.get("/signal-monitor/state", async (req, res) => {
-  const query = GetSignalMonitorStateQueryParams.parse(req.query);
-  const data = GetSignalMonitorStateResponse.parse(
-    await getSignalMonitorState({
-      ...query,
-      environment: resolveSignalSourceEnvironment(),
-    }),
-  );
+// Short-TTL, in-flight-deduped cache for the heavy /signal-monitor/state poll.
+// The matrix display polls this ~every 60s per tab; each miss runs a ~3000-row
+// states read plus a zod parse of a ~1.4 MB payload. Multiple tabs / overlapping
+// polls would each pay the DB read. A 15s cache (fresher than the 60s poll) plus
+// in-flight dedup collapses concurrent/near-in-time polls into a single read,
+// relieving the scarce DB pool. Display-only and read-through (server-side
+// trading reads the producer state directly, never this HTTP route), so it
+// cannot affect trading. Still served via res.json so the (gzip) response and
+// every header are byte-for-byte unchanged.
+const SIGNAL_MONITOR_STATE_CACHE_MS = 15_000;
+type SignalMonitorStateData = ReturnType<
+  typeof GetSignalMonitorStateResponse.parse
+>;
+const signalMonitorStateCache = new Map<
+  string,
+  { data: SignalMonitorStateData; at: number }
+>();
+const signalMonitorStateInFlight = new Map<
+  string,
+  Promise<SignalMonitorStateData>
+>();
 
-  res.json(data);
+router.get("/signal-monitor/state", async (req, res) => {
+  // Validate the request shape, but the request's own environment is overridden
+  // by the resolved source environment below, so that resolved value is the only
+  // input that changes the output (and thus the cache key).
+  GetSignalMonitorStateQueryParams.parse(req.query);
+  const environment = resolveSignalSourceEnvironment();
+
+  const cached = signalMonitorStateCache.get(environment);
+  if (cached && Date.now() - cached.at < SIGNAL_MONITOR_STATE_CACHE_MS) {
+    res.json(cached.data);
+    return;
+  }
+
+  let pending = signalMonitorStateInFlight.get(environment);
+  if (!pending) {
+    const compute = (async () => {
+      const data = GetSignalMonitorStateResponse.parse(
+        await getSignalMonitorState({ environment }),
+      );
+      signalMonitorStateCache.set(environment, { data, at: Date.now() });
+      return data;
+    })();
+    pending = compute;
+    signalMonitorStateInFlight.set(environment, compute);
+    // Best-effort cleanup; errors are not cached so the next request retries.
+    // The real error is propagated to the route via `await pending`; this
+    // separate cleanup chain swallows it so it can't surface as an unhandled
+    // rejection.
+    void compute
+      .finally(() => {
+        if (signalMonitorStateInFlight.get(environment) === compute) {
+          signalMonitorStateInFlight.delete(environment);
+        }
+      })
+      .catch(() => {});
+  }
+
+  res.json(await pending);
 });
 
 router.get("/signal-monitor/breadth-history", async (req, res) => {
