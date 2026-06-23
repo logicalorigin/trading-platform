@@ -28,11 +28,17 @@ export const platformJsonRequest = async (
     });
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error(
-        signal?.aborted
-          ? "Request canceled."
-          : `Request timed out after ${timeoutMs}ms`,
+      const canceled = Boolean(signal?.aborted);
+      const abortError = new Error(
+        canceled ? "Request canceled." : `Request timed out after ${timeoutMs}ms`,
       );
+      // Tag the cause so callers can treat a timeout (idempotent retry is safe)
+      // differently from a hard failure, without parsing the message string.
+      abortError.code = canceled ? "request_canceled" : "request_timeout";
+      if (!canceled) {
+        abortError.timedOut = true;
+      }
+      throw abortError;
     }
     throw error;
   } finally {

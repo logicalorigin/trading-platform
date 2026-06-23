@@ -292,6 +292,7 @@ export const buildIbkrLaunchOperationStepper = ({
   gatewayConnected = false,
   inFlight = false,
   message = null,
+  stale = false,
 } = {}) => {
   const recentProgress = normalizeProgressEvents(activationStatus?.recentProgress);
   const latestProgress =
@@ -313,25 +314,32 @@ export const buildIbkrLaunchOperationStepper = ({
     gatewayConnected ||
     latestStatus === "connected" ||
     latestStep === "connected";
-  // A launch that the backend has flagged stale (no forward progress past the
-  // expected phase duration, e.g. the desktop Gateway is off and the bridge
-  // tunnel origin is down / HTTP 530) is NOT terminal, but it must not keep the
-  // current step animating forever ("hung spinner"). Settle the active step into
-  // a non-animating "warning" so the UI reads as stalled/needs-attention while
-  // the user retries or cancels. Connected/error/canceled still take precedence.
+  // A launch that has stopped making forward progress is NOT terminal, but it
+  // must not keep the current step animating forever ("hung spinner"). Two
+  // independent signals can flag this:
+  //   1. the backend `insight.stale` flag (a phase ran past its expected budget), and
+  //   2. the `stale` input — a client-side watchdog backstop for when the backend
+  //      signal never arrives at all (status stopped updating: agent died, polling
+  //      failing, server unreachable). Without this, the spinner can animate for
+  //      the entire launch window.
+  // Settle the active step into a non-animating "warning" so the UI reads as
+  // stalled/needs-attention while the user retries or cancels. Connected/error/
+  // canceled still take precedence.
   const staleState = Boolean(
     !connectedState &&
       !errorState &&
       !canceledState &&
-      activationStatus?.insight?.stale === true,
+      (activationStatus?.insight?.stale === true || stale === true),
   );
-  const latestMessage =
-    message ||
-    (error instanceof Error ? error.message : error ? String(error) : null) ||
-    latestProgress?.message ||
-    (staleState
-      ? "IB Gateway activation has stalled; the bridge is not responding. Retry or cancel the launch."
-      : inFlight
+  // When stalled, the "...has stalled; retry or cancel" message wins over the
+  // generic in-flight notice and the last progress message — otherwise the popover
+  // keeps reading "running from the Windows helper" even though it has given up.
+  const latestMessage = staleState
+    ? "IB Gateway activation has stalled; the bridge is not responding. Retry or cancel the launch."
+    : message ||
+      (error instanceof Error ? error.message : error ? String(error) : null) ||
+      latestProgress?.message ||
+      (inFlight
         ? "IB Gateway activation is running from the Windows helper."
         : null);
 

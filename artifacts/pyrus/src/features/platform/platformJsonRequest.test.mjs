@@ -42,6 +42,50 @@ test("timeoutMs aborts a stalled request instead of hanging forever (the detach 
   );
 });
 
+test("a timeout error is tagged code=request_timeout so callers can treat it as non-fatal", async () => {
+  // The detach handler relies on this tag to treat a slow-but-idempotent clear as
+  // "proceeding" rather than a hard failure — without parsing the message string.
+  globalThis.fetch = (_path, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  await platformJsonRequest("/x", { method: "POST", body: {}, timeoutMs: 40 }).then(
+    () => assert.fail("should have timed out"),
+    (error) => {
+      assert.equal(error.code, "request_timeout");
+      assert.equal(error.timedOut, true);
+    },
+  );
+});
+
+test("an external cancel is tagged code=request_canceled, not request_timeout", async () => {
+  const controller = new AbortController();
+  globalThis.fetch = (_path, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  const request = platformJsonRequest("/x", { signal: controller.signal });
+  controller.abort();
+
+  await request.then(
+    () => assert.fail("should have been canceled"),
+    (error) => {
+      assert.equal(error.code, "request_canceled");
+      assert.notEqual(error.timedOut, true);
+    },
+  );
+});
+
 test("without timeoutMs no abort signal is wired — the old unbounded behavior", async () => {
   let observedSignal = "unset";
   globalThis.fetch = (_path, init) => {

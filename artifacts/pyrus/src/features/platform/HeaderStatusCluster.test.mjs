@@ -23,19 +23,38 @@ test("detach only waits on a Windows desktop shutdown when the gateway is connec
   );
 });
 
-test("every detach/clear request is bounded by a timeout so a stalled connection can't hang the control", () => {
+test("every detach/clear request is bounded by the detach timeout so a stalled connection can't hang the control", () => {
   // Regression: the clear-state "Detach bridge" path awaited platformJsonRequest
   // with no timeout (timeoutMs:0 => no AbortController), so a stalled request
   // (e.g. queued behind live SSE streams, or any transport latency) left the
   // detach control animating forever. The bridge/detach call plus both
-  // bridgeOverride.clear calls must each pass a bounded timeoutMs.
+  // bridgeOverride.clear calls must each pass a bounded timeout.
   const source = readLocalSource("./HeaderStatusCluster.jsx");
 
-  const boundedRequests = source.match(/timeoutMs: 15000/g) ?? [];
+  const boundedRequests =
+    source.match(/timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS/g) ?? [];
   assert.ok(
     boundedRequests.length >= 3,
-    `expected the 3 detach/clear fetches to be bounded; found ${boundedRequests.length}`,
+    `expected the 3 detach/clear fetches to be bounded by the constant; found ${boundedRequests.length}`,
   );
+});
+
+test("detach timeout is generous and a timeout is treated as proceeding, not a hard failure", () => {
+  // The previous 15s budget was too tight: the clear competes with live SSE
+  // streams on the event loop, so a slow-but-successful detach was being cut off
+  // and surfaced as "Detach failed". The clear is idempotent and the teardown is
+  // already underway, so a timeout must fall through to the settle path (the
+  // state refresh confirms reality) instead of throwing into the error branch.
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+
+  assert.match(source, /const IBKR_BRIDGE_DETACH_TIMEOUT_MS = 40_000;/);
+  // A request_timeout is swallowed into detachTimedOut; any other error rethrows.
+  assert.match(
+    source,
+    /if \(error\?\.code !== "request_timeout"\) \{\s*throw error;\s*\}\s*detachTimedOut = true;/,
+  );
+  // The user is told the detach is proceeding/verifying, not that it failed.
+  assert.match(source, /detach requested; verifying connection state/i);
 });
 
 test("update-only broker launch keeps activation visible until helper reports result", () => {

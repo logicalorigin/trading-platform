@@ -112,8 +112,20 @@ const IBKR_LOGIN_HANDOFF_WAIT_MS = 60_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
 const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 500;
+// Client-side stall backstop: if a launch in flight makes no observable progress
+// for this long, settle the stepper into a non-animating "warning" even when the
+// backend never sends its own insight.stale signal (agent died, polling failing,
+// server unreachable). Sits well beyond the backend's longest per-phase budget
+// (~15s) plus poll slack, so a healthy slow phase that is still emitting progress
+// is never falsely flagged; this only fires when status stops updating entirely.
+const IBKR_BRIDGE_LAUNCH_WATCHDOG_MS = 45_000;
 const IBKR_DESKTOP_JOB_POLL_MS = 250;
 const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
+// Detach/clear competes with live market-data SSE streams on the event loop, so a
+// slow-but-successful clear must not be cut off and reported as a failure. Bound it
+// generously; a timeout here is treated as "proceeding" (the clear is idempotent and
+// teardown is already underway), not a hard error, and confirmed by the state refresh.
+const IBKR_BRIDGE_DETACH_TIMEOUT_MS = 40_000;
 const IBKR_CREDENTIAL_AUTOFILL_SYNC_MS = 250;
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -3019,6 +3031,56 @@ export const HeaderStatusCluster = ({
     (bridgeLaunchInFlight
       ? "IB Gateway activation is running from the Windows helper. Wait for the bridge to attach before launching again."
       : null);
+  // Watchdog: a stable key that changes only when the launch makes observable
+  // progress (new step/status, more events, or the backend stale flag flips).
+  const bridgeLaunchProgressKey = useMemo(() => {
+    const latestProgress = bridgeActivationStatus?.latestProgress || null;
+    return [
+      bridgeActivationId || "",
+      bridgeActivationStatus?.recentProgress?.length || 0,
+      String(latestProgress?.step || ""),
+      String(latestProgress?.status || ""),
+      bridgeActivationStatus?.insight?.stale ? "stale" : "",
+    ].join("|");
+  }, [bridgeActivationId, bridgeActivationStatus]);
+  const bridgeLaunchProgressStampRef = useRef({ key: "", at: 0 });
+  const [bridgeLaunchWatchdogTick, setBridgeLaunchWatchdogTick] = useState(0);
+  // Re-stamp the moment observable progress changes, so the silence timer resets.
+  useEffect(() => {
+    bridgeLaunchProgressStampRef.current = {
+      key: bridgeLaunchProgressKey,
+      at: Date.now(),
+    };
+    setBridgeLaunchWatchdogTick((tick) => tick + 1);
+  }, [bridgeLaunchProgressKey]);
+  // Tick once per second while a launch is genuinely in flight so the silence
+  // check below re-evaluates without depending on any backend message arriving.
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !bridgeLaunchInFlight ||
+      gatewayConnectedForBridge
+    ) {
+      return undefined;
+    }
+    const timerId = window.setInterval(() => {
+      setBridgeLaunchWatchdogTick((tick) => tick + 1);
+    }, 1_000);
+    return () => window.clearInterval(timerId);
+  }, [bridgeLaunchInFlight, gatewayConnectedForBridge]);
+  const bridgeLaunchLocallyStale = useMemo(() => {
+    if (!bridgeLaunchInFlight || gatewayConnectedForBridge) {
+      return false;
+    }
+    const stampedAt = bridgeLaunchProgressStampRef.current.at;
+    if (!stampedAt) {
+      return false;
+    }
+    // bridgeLaunchWatchdogTick is the re-evaluation trigger; the comparison is on
+    // wall-clock silence since the last observable progress change.
+    void bridgeLaunchWatchdogTick;
+    return Date.now() - stampedAt >= IBKR_BRIDGE_LAUNCH_WATCHDOG_MS;
+  }, [bridgeLaunchInFlight, gatewayConnectedForBridge, bridgeLaunchWatchdogTick]);
   const bridgeLaunchOperationModel = useMemo(() => {
     const launchRequestPending = Boolean(
       bridgeLauncherBusy && !bridgeLaunchCancelInFlight,
@@ -3048,11 +3110,13 @@ export const HeaderStatusCluster = ({
       message: gatewayConnectedForBridge
         ? "IB Gateway bridge attached."
         : bridgePopoverMessage,
+      stale: bridgeLaunchLocallyStale,
     });
   }, [
     bridgeActivationStatus,
     bridgeLaunchCancelInFlight,
     bridgeLaunchInFlight,
+    bridgeLaunchLocallyStale,
     bridgeLauncherError,
     bridgeLauncherBusy,
     bridgePopoverMessage,
@@ -4412,51 +4476,61 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherNotice(
         queueRemoteShutdown ? "Detaching IBKR bridge." : "Detaching IBKR bridge.",
       );
-      if (bridgeManagementToken && queueRemoteShutdown) {
-        try {
-          await platformJsonRequest("/api/ibkr/bridge/detach", {
-            method: "POST",
-            body: {
-              managementToken: bridgeManagementToken,
-            },
-            timeoutMs: 15000,
-          });
-        } catch (error) {
-          if (error?.code !== "invalid_ibkr_bridge_detach_token") {
-            throw error;
+      // The clear competes with live SSE streams on the event loop and can run
+      // slow. Bound it generously (IBKR_BRIDGE_DETACH_TIMEOUT_MS) so it isn't cut
+      // off mid-flight, and treat a timeout as "proceeding" rather than a hard
+      // failure: the clear is idempotent and the teardown is already underway, so
+      // we fall through to the settle path and let the state refresh confirm.
+      let detachTimedOut = false;
+      try {
+        if (bridgeManagementToken && queueRemoteShutdown) {
+          try {
+            await platformJsonRequest("/api/ibkr/bridge/detach", {
+              method: "POST",
+              body: {
+                managementToken: bridgeManagementToken,
+              },
+              timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
+            });
+          } catch (error) {
+            if (error?.code !== "invalid_ibkr_bridge_detach_token") {
+              throw error;
+            }
+            await platformJsonRequest(
+              "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
+              {
+                method: "POST",
+                body: { force: true },
+                timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
+              },
+            );
           }
+        } else {
           await platformJsonRequest(
             "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
             {
               method: "POST",
               body: { force: true },
-              timeoutMs: 15000,
+              timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
             },
           );
         }
-      } else {
-        await platformJsonRequest(
-          "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
-          {
-            method: "POST",
-            body: { force: true },
-            // Bound the clear so a stalled connection (e.g. browser request
-            // queued behind live SSE streams) can't leave the detach control
-            // animating forever. On timeout this throws → catch surfaces a
-            // retryable error and the finally re-enables the button. The clear
-            // is idempotent, so retrying is safe.
-            timeoutMs: 15000,
-          },
-        );
+      } catch (error) {
+        if (error?.code !== "request_timeout") {
+          throw error;
+        }
+        detachTimedOut = true;
       }
       setBridgeManualOperationModel(
         buildDeactivateModel({
           queue: queueRemoteShutdown ? "current" : "complete",
           detach: "complete",
           refresh: "current",
-          message: queueRemoteShutdown
-            ? "IBKR runtime detached. Refreshing connection state."
-            : "IBKR bridge detached. Refreshing connection state.",
+          message: detachTimedOut
+            ? "Detach is taking longer than usual; verifying connection state."
+            : queueRemoteShutdown
+              ? "IBKR runtime detached. Refreshing connection state."
+              : "IBKR bridge detached. Refreshing connection state.",
         }),
       );
       setBridgeManagementToken(null);
@@ -4472,13 +4546,19 @@ export const HeaderStatusCluster = ({
           detach: "complete",
           refresh: "complete",
           desktop: queueRemoteShutdown ? "pending" : "complete",
-          message: queueRemoteShutdown
-            ? "IBKR detached. Waiting for Windows shutdown queue confirmation."
-            : "IBKR bridge detached.",
+          message: detachTimedOut
+            ? "IBKR detach requested; the clear is taking longer than usual. Verifying connection state."
+            : queueRemoteShutdown
+              ? "IBKR detached. Waiting for Windows shutdown queue confirmation."
+              : "IBKR bridge detached.",
         }),
       );
       setBridgeLauncherNotice(
-        queueRemoteShutdown ? "IBKR detached." : "IBKR bridge detached.",
+        detachTimedOut
+          ? "IBKR detach requested; verifying connection state."
+          : queueRemoteShutdown
+            ? "IBKR detached."
+            : "IBKR bridge detached.",
       );
       if (!queueRemoteShutdown) {
         return;
