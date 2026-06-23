@@ -10228,6 +10228,14 @@ const ResearchChartSurfaceComponent = ({
 	    }
 
     const observers: ResizeObserver[] = [];
+    // Measure in the layout (pre-zoom) coordinate space, not the visual one.
+    // An ancestor (PlatformShell screenFitZoom) can apply CSS `zoom < 1` below
+    // the design width, and `getBoundingClientRect()` returns post-zoom (visual)
+    // sizes while lightweight-charts' chart-space API (timeScale().width()/height(),
+    // timeToCoordinate) and the custom overlay layer — which live inside the
+    // zoomed subtree — work in layout (pre-zoom) px. Feeding a post-zoom size into
+    // those layout-space consumers double-applies the zoom and clips overlays at
+    // the right/bottom. offsetWidth/offsetHeight are zoom-invariant layout dims.
     const watchHeight = (
       element: HTMLElement | null,
       setter: Dispatch<SetStateAction<number>>,
@@ -10238,7 +10246,7 @@ const ResearchChartSurfaceComponent = ({
       }
 
       const update = () => {
-        setter(Math.ceil(element.getBoundingClientRect().height));
+        setter(element.offsetHeight);
       };
       update();
 
@@ -10252,7 +10260,7 @@ const ResearchChartSurfaceComponent = ({
     const rootElement = rootRef.current;
     if (rootElement) {
       const updateRootWidth = () => {
-        setRootWidth(Math.ceil(rootElement.getBoundingClientRect().width));
+        setRootWidth(rootElement.offsetWidth);
       };
       updateRootWidth();
 
@@ -10271,9 +10279,8 @@ const ResearchChartSurfaceComponent = ({
     const plotElement = containerRef.current;
     if (plotElement) {
       const updatePlotSize = () => {
-        const rect = plotElement.getBoundingClientRect();
-        const nextWidth = Math.ceil(rect.width);
-        const nextHeight = Math.ceil(rect.height);
+        const nextWidth = plotElement.offsetWidth;
+        const nextHeight = plotElement.offsetHeight;
 
         setPlotSize((current) => {
           if (current.width === nextWidth && current.height === nextHeight) {
