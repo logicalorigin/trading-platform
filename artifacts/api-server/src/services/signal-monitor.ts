@@ -3810,6 +3810,56 @@ const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = 3;
 const SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE = 64;
 let signalMonitorBackfillRefreshInFlight = false;
 
+// Shared background DB-acquisition budget for the producer's two un-awaited
+// fan-outs (deep-history backfill reads + best-effort state-persistence reads).
+// Each fan-out is locally bounded, but those local limits do NOT compose: a
+// backfill batch (3) running while a persist batch (evaluationConcurrency, 6)
+// drains held up to 9 of the hard-capped 12 pool connections at once, leaving
+// almost no headroom for interactive HTTP / reconciliation reads and producing
+// the observed active:12/waiting:4 saturation. This single process-wide
+// semaphore caps the COMBINED in-flight background DB reads so they can never
+// consume more than this budget, permanently reserving the rest of the pool for
+// foreground work. Background work yields to interactive reads instead of
+// racing them. Override with SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY.
+const SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY = (() => {
+  const parsed = Number(process.env.SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 6;
+})();
+
+function createSignalMonitorBackgroundDbGate(limit: number) {
+  let available = Math.max(1, limit);
+  const waiters: Array<() => void> = [];
+  const acquire = (): Promise<void> => {
+    if (available > 0) {
+      available -= 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => waiters.push(resolve));
+  };
+  const release = (): void => {
+    const next = waiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    available += 1;
+  };
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    await acquire();
+    try {
+      return await task();
+    } finally {
+      release();
+    }
+  };
+}
+
+// Single shared gate instance: both background fan-outs acquire from it, so their
+// combined DB-connection demand is bounded by one budget rather than summing.
+const runSignalMonitorBackgroundDbRead = createSignalMonitorBackgroundDbGate(
+  SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY,
+);
+
 function signalMonitorBackfillCellKey(
   symbol: string,
   timeframe: string,
@@ -3935,19 +3985,21 @@ async function refreshSignalMonitorBackfilledBaseBars(input: {
       await Promise.all(
         batch.map(async ({ symbol, timeframe }) => {
           try {
-            const snapshot = await loadSignalMonitorCompletedBars({
-              symbol,
-              timeframe,
-              evaluatedAt: input.evaluatedAt,
-              limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-              priority: SIGNAL_MONITOR_MATRIX_BARS_PRIORITY,
-              includeProvisionalLiveEdge: false,
-              allowHistoricalFallback: true,
-              // Producer-owned backfill: allowed to load provider history even
-              // while the legacy bar-eval flag is off (this is the producer's
-              // bar supply, not the legacy scan).
-              bypassPassiveSourceGate: true,
-            });
+            const snapshot = await runSignalMonitorBackgroundDbRead(() =>
+              loadSignalMonitorCompletedBars({
+                symbol,
+                timeframe,
+                evaluatedAt: input.evaluatedAt,
+                limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+                priority: SIGNAL_MONITOR_MATRIX_BARS_PRIORITY,
+                includeProvisionalLiveEdge: false,
+                allowHistoricalFallback: true,
+                // Producer-owned backfill: allowed to load provider history even
+                // while the legacy bar-eval flag is off (this is the producer's
+                // bar supply, not the legacy scan).
+                bypassPassiveSourceGate: true,
+              }),
+            );
             if (snapshot.bars.length) {
               signalMonitorBackfilledBaseByCell.set(
                 signalMonitorBackfillCellKey(symbol, timeframe),
@@ -6888,7 +6940,8 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
     for (let index = 0; index < states.length; index += concurrency) {
       const batch = states.slice(index, index + concurrency);
       await Promise.all(
-        batch.map(async (state) => {
+        batch.map((state) =>
+          runSignalMonitorBackgroundDbRead(async () => {
           const status =
             String(state.status || "ok").trim().toLowerCase() === "stale"
               ? "stale"
@@ -6962,7 +7015,8 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             evaluatedAt: dateOrNull(state.lastEvaluatedAt) ?? input.evaluatedAt,
             seenEventKeys,
           });
-        }),
+          }),
+        ),
       );
     }
 
