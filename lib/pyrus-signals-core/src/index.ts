@@ -751,20 +751,28 @@ export const resolvePyrusSignalsTrendDirection = (
   chartBars: PyrusSignalsBar[],
   basisLength: number,
 ): number => {
+  // Returns 0 (neutral / unknown) when the WMA basis cannot be computed — i.e.
+  // empty bars OR fewer than basisLength bars, where the WMA is all-NaN and no
+  // finite basis comparison is ever evaluable. Consumers must treat 0 as
+  // non-confirming, never as a bullish default. When there IS enough history to
+  // evaluate at least one basis comparison, behavior is unchanged: the direction
+  // resolves to +1/-1, and a flat basis keeps the prior +1 default.
   if (!chartBars.length) {
-    return 1;
+    return 0;
   }
   const basis = computePyrusSignalsWma(
     chartBars.map((bar) => bar.c),
     basisLength,
   );
   let trendDirection = 1;
+  let basisComputable = false;
   for (let index = 0; index < chartBars.length; index += 1) {
     if (
       index >= 5 &&
       Number.isFinite(basis[index]) &&
       Number.isFinite(basis[index - 5])
     ) {
+      basisComputable = true;
       if (basis[index] > basis[index - 5]) {
         trendDirection = 1;
       } else if (basis[index] < basis[index - 5]) {
@@ -772,7 +780,7 @@ export const resolvePyrusSignalsTrendDirection = (
       }
     }
   }
-  return trendDirection;
+  return basisComputable ? trendDirection : 0;
 };
 
 export const resolvePyrusSignalsSessionKey = (

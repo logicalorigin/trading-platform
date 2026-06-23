@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   evaluatePyrusSignalsSignals,
   resolvePyrusSignalsSignalSettings,
+  resolvePyrusSignalsTrendDirection,
   type PyrusSignalsBar,
 } from "./index";
 
@@ -91,4 +92,57 @@ test("default includeProvisionalSignals ignores waitForBarClose — call sites m
     settings: resolvePyrusSignalsSignalSettings({ waitForBarClose: true }),
   });
   assert.ok(evaluation.signalEvents.some((s) => s.barIndex === last));
+});
+
+const BASIS_LENGTH = 80;
+
+// A monotonically rising/falling close series of `count` bars. Direction is
+// established only once the WMA basis has enough finite points to compare
+// basis[i] vs basis[i-5] (needs > basisLength bars).
+const buildTrendSeries = (count: number, slope: number): PyrusSignalsBar[] => {
+  const bars: PyrusSignalsBar[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const c = 100 + i * slope;
+    bars.push(mkBar(i, c, c + 0.5, c - 0.5, c));
+  }
+  return bars;
+};
+
+test("resolvePyrusSignalsTrendDirection returns 0 (neutral) for empty bars", () => {
+  // Regression: the old default returned +1 (spurious bullish) on empty bars.
+  assert.equal(resolvePyrusSignalsTrendDirection([], BASIS_LENGTH), 0);
+});
+
+test("resolvePyrusSignalsTrendDirection returns 0 (neutral) when history < basisLength", () => {
+  // Regression: 470/580 daily-frame symbols have < 80 bars, so the WMA is
+  // all-NaN and the function used to return a hardcoded bullish +1. It must now
+  // return neutral so consumers treat the frame as non-confirming, not bullish.
+  const bars = buildTrendSeries(BASIS_LENGTH - 2, 1);
+  assert.equal(resolvePyrusSignalsTrendDirection(bars, BASIS_LENGTH), 0);
+});
+
+test("resolvePyrusSignalsTrendDirection returns +1 for a clear uptrend with sufficient history", () => {
+  const bars = buildTrendSeries(BASIS_LENGTH + 20, 1);
+  assert.equal(resolvePyrusSignalsTrendDirection(bars, BASIS_LENGTH), 1);
+});
+
+test("resolvePyrusSignalsTrendDirection returns -1 for a clear downtrend with sufficient history", () => {
+  const bars = buildTrendSeries(BASIS_LENGTH + 20, -1);
+  assert.equal(resolvePyrusSignalsTrendDirection(bars, BASIS_LENGTH), -1);
+});
+
+test("a neutral (0) MTF frame never satisfies a required ±1 direction gate", () => {
+  // Mirrors how consumers gate alignment: matches = directions.filter(d => d === sign).
+  // A neutral frame (insufficient history) must count against, never toward, a
+  // required bullish OR bearish gate — and must not falsely "align" with itself.
+  const neutral: number = resolvePyrusSignalsTrendDirection(
+    buildTrendSeries(BASIS_LENGTH - 2, 1),
+    BASIS_LENGTH,
+  );
+  assert.equal(neutral, 0);
+  for (const requiredSign of [1, -1]) {
+    // matches = directions.filter(d => d === requiredSign): a neutral frame
+    // never counts toward a required bullish OR bearish gate.
+    assert.equal(neutral === requiredSign, false);
+  }
 });
