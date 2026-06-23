@@ -50,6 +50,13 @@ const TIMEFRAME_MS: Record<SignalMonitorLocalBarCacheTimeframe, number> = {
 };
 const DEFAULT_MEMORY_RETENTION_MS = 72 * 60 * 60_000;
 const DEFAULT_PERSIST_FLUSH_MS = 1_000;
+// Per-aggregate rollups only emit limit:3 buckets of the largest intraday
+// timeframe (1h). The last 3 completed/provisional 1h buckets span at most 3h;
+// floored-bucket alignment can pull a bar up to ~1h older into the oldest kept
+// bucket, so a 4h window (3h coverage + 1h margin) is the smallest slice that
+// reproduces the full-history rollup output. Capping the per-aggregate scan to
+// this window keeps it O(recent window) instead of O(72h retained history).
+const ROLLUP_RECENT_WINDOW_MS = TIMEFRAME_MS["1h"] * 3 + TIMEFRAME_MS["1h"];
 function storeSourceNames(): string[] {
   const streamSourceName = isMassiveStocksRealtimeConfigured()
     ? "massive-websocket"
@@ -72,6 +79,7 @@ let lastAggregateAt: Date | null = null;
 let lastPersistAt: Date | null = null;
 let lastPersistError: string | null = null;
 let lastPersistErrorAt: Date | null = null;
+let lastEnqueueScannedBarCount = 0;
 
 function readPositiveIntegerEnv(
   name: string,
@@ -536,7 +544,22 @@ async function flushPendingPersistBars(): Promise<void> {
 }
 
 function enqueueRollups(symbol: string, evaluatedAt: Date): void {
-  const minuteBars = Array.from(minuteBarsBySymbol.get(symbol)?.values() ?? []);
+  const symbolBars = minuteBarsBySymbol.get(symbol);
+  if (!symbolBars?.size) {
+    lastEnqueueScannedBarCount = 0;
+    return;
+  }
+  // Only the recent window can contribute to the limit:3 rollups we emit here,
+  // so scan that slice instead of the full 72h retained history. The map is
+  // keyed by minute timestamp (ms); keep entries at or after the window start.
+  const windowStartMs = evaluatedAt.getTime() - ROLLUP_RECENT_WINDOW_MS;
+  const minuteBars: CachedBar[] = [];
+  for (const [timestampMs, bar] of symbolBars) {
+    if (timestampMs >= windowStartMs) {
+      minuteBars.push(bar);
+    }
+  }
+  lastEnqueueScannedBarCount = minuteBars.length;
   if (!minuteBars.length) {
     return;
   }
@@ -664,6 +687,7 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
     lastPersistError,
     lastPersistErrorAt: lastPersistErrorAt?.toISOString() ?? null,
     memoryRetentionMs: memoryRetentionMs(),
+    lastEnqueueScannedBarCount,
   };
 }
 
@@ -687,10 +711,14 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     lastPersistAt = null;
     lastPersistError = null;
     lastPersistErrorAt = null;
+    lastEnqueueScannedBarCount = 0;
   },
   ingest(aggregate: MassiveDelayedStockAggregate): void {
     handleMassiveAggregate(aggregate);
   },
   storeSourceNames,
   readMemoryBars,
+  get lastEnqueueScannedBarCount(): number {
+    return lastEnqueueScannedBarCount;
+  },
 };
