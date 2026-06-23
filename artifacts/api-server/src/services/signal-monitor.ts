@@ -5070,6 +5070,60 @@ type SignalMonitorSymbolStateUpsertInput = {
   allowStoredSignalLatch?: boolean;
 };
 
+// When the preserve rule keeps the stored row's (newer) signal identity, the
+// candidate still carries fresher bar metadata (a newer completed bar). Skipping
+// the whole write froze latestBarAt/lastEvaluatedAt for any cell holding a
+// directional signal with no fresher crossover, so the lane stopped advancing
+// even while fresh completed bars arrived every interval. Carry the candidate's
+// bar metadata forward onto the preserved signal columns when, and only when, the
+// candidate's bar edge genuinely advances past the stored one. Returns the merged
+// insert row, or null when there is nothing fresher to write (keep the stored row
+// untouched). Signal-identity columns always come from `existing`; bars-since is
+// recomputed against the PRESERVED signal and the fresh bar so it stays coherent.
+function mergeFreshBarMetadataOntoPreservedSignalRow(
+  existing: DbSignalMonitorSymbolState,
+  candidate: typeof signalMonitorSymbolStatesTable.$inferInsert,
+): typeof signalMonitorSymbolStatesTable.$inferInsert | null {
+  const existingLatestBarMs = dateOrNull(existing.latestBarAt)?.getTime() ?? null;
+  const candidateLatestBarMs =
+    dateOrNull(candidate.latestBarAt)?.getTime() ?? null;
+  // Only advance on a strictly newer bar edge. Equal/older candidates have no
+  // fresher bar metadata, so preserving the stored row as-is avoids no-op writes
+  // and keeps the prior behavior for those cycles.
+  if (
+    candidateLatestBarMs == null ||
+    (existingLatestBarMs != null && candidateLatestBarMs <= existingLatestBarMs)
+  ) {
+    return null;
+  }
+  const preservedSignalAt = dateOrNull(existing.currentSignalAt);
+  const timeframe = resolveSignalMonitorTimeframe(existing.timeframe);
+  const barsSinceSignal = resolveLatchedSignalBarsSinceSignal({
+    timeframe,
+    currentSignalAt: preservedSignalAt,
+    latestBarAt: dateOrNull(candidate.latestBarAt),
+    existingBarsSinceSignal: existing.barsSinceSignal,
+    candidateBarsSinceSignal: candidate.barsSinceSignal,
+  });
+  return {
+    ...candidate,
+    // Preserve the stored row's signal identity (it outranks the candidate).
+    currentSignalDirection: existing.currentSignalDirection,
+    currentSignalAt: existing.currentSignalAt,
+    currentSignalPrice: existing.currentSignalPrice,
+    currentSignalClose: existing.currentSignalClose,
+    currentSignalMfePercent: existing.currentSignalMfePercent,
+    currentSignalMaePercent: existing.currentSignalMaePercent,
+    filterState: existing.filterState,
+    trendDirection: existing.trendDirection,
+    // A preserved (older) signal is by definition not inside the fresh window.
+    fresh: false,
+    // Advance the bar metadata from the candidate (latestBarAt/Close, status,
+    // lastEvaluatedAt, updatedAt all come through the candidate spread above).
+    barsSinceSignal,
+  };
+}
+
 // Resolves the read-modify portion of a symbol-state persist (event-anchored
 // signalAt lookup, the stored-direction latch, and the identity/recency preserve
 // rule). Returns the row to upsert, or `{ preserved }` when the stored row
@@ -5119,7 +5173,20 @@ async function resolveSignalMonitorSymbolStateUpsert(
     existing &&
     shouldPreserveExistingSignalMonitorSymbolState(existing, effectiveValues)
   ) {
-    return { preserved: existing };
+    // The stored row outranks the candidate on signal identity (a newer real
+    // signal must not be displaced by an older one), so its signal columns are
+    // preserved. But bar-metadata recency is independent of signal identity:
+    // discarding the whole write freezes latestBarAt/lastEvaluatedAt whenever a
+    // cell holds a directional signal but no fresher crossover arrives, so the
+    // lane stops advancing even though fresh completed bars exist. Carry the
+    // candidate's fresher bar metadata forward onto the preserved signal row
+    // when it genuinely advances the bar edge; otherwise keep the stored row
+    // untouched (no-op write avoidance).
+    const merged = mergeFreshBarMetadataOntoPreservedSignalRow(
+      existing,
+      effectiveValues,
+    );
+    return merged ? { effectiveValues: merged } : { preserved: existing };
   }
   return { effectiveValues };
 }
@@ -10474,6 +10541,8 @@ export const __signalMonitorInternalsForTests = {
   shouldPersistCanonicalSignalMonitorEvent,
   shouldPersistSignalMonitorStateEvent,
   shouldPreserveExistingSignalMonitorSymbolState,
+  mergeFreshBarMetadataOntoPreservedSignalRow,
+  isSignalMonitorStateLatestBarTrusted,
   loadSignalMonitorStreamCompletedBars,
   mergeCompletedBars,
   filterSignalMonitorLiveEdgeBarsForTrustedMove,
