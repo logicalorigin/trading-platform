@@ -22,6 +22,7 @@ import {
 } from "../charting/chartEvents";
 import {
   normalizeChartTimeframe,
+  selectAdjacentChartTimeframeFavorites,
 } from "../charting/timeframes";
 import { recordChartBarScopeState } from "../charting/chartHydrationStats";
 import {
@@ -567,6 +568,7 @@ export const TradeEquityPanel = ({
 
     const prewarmKey = [
       chartHydrationScopeKey,
+      tf,
       chartFavoriteTimeframes.join(","),
     ].join("::");
     if (prewarmedFavoriteTimeframesRef.current === prewarmKey) {
@@ -574,7 +576,13 @@ export const TradeEquityPanel = ({
     }
 
     prewarmedFavoriteTimeframesRef.current = prewarmKey;
-    chartFavoriteTimeframes.forEach(prewarmFavoriteTimeframe);
+    // Warm only the 1–2 favorites adjacent to the current timeframe instead of the
+    // whole list. The old all-favorites fan-out issued ~10 unsolicited low-priority
+    // /api/bars fetches per mount that route-admission 429-sheds under pressure; the
+    // timeframe picker still warms any other favorite on demand (onPrewarmTimeframe).
+    selectAdjacentChartTimeframeFavorites(chartFavoriteTimeframes, tf).forEach(
+      prewarmFavoriteTimeframe,
+    );
   }, [
     barsQuery.data?.bars?.length,
     chartHydrationScopeKey,
@@ -582,6 +590,7 @@ export const TradeEquityPanel = ({
     historicalDataEnabled,
     prewarmFavoriteTimeframesEnabled,
     prewarmFavoriteTimeframe,
+    tf,
   ]);
   const prependableBars = usePrependableHistoricalBars({
     scopeKey: baseBarsScopeKey,

@@ -689,6 +689,76 @@ function compactGexSnapshotPayload(input: {
   };
 }
 
+type ChartGexSnapshotCore = { payload: GexResponse; computedAt: Date };
+
+// The chart GEX projection endpoint re-ran this jsonb-expanding + dense_rank SQL on
+// EVERY request, on the shared DB pool with a ~10s foreground wait budget — the 9.4s
+// p50 / 10s-timeout hot spot under concurrent chart loads. The snapshot it reads is a
+// periodic worker compute, so the result is identical between snapshots. Cache the SQL
+// result (payload + computedAt) per (symbol, maxExpirations, strikes) with a short TTL
+// and single-flight, so a request burst collapses to one query and steady-state runs
+// it at most once per TTL. ageMs/stale are recomputed live by the caller below.
+const CHART_GEX_SNAPSHOT_CACHE_TTL_MS = (() => {
+  const raw = Number.parseInt(
+    process.env["GEX_CHART_SNAPSHOT_CACHE_TTL_MS"] ?? "",
+    10,
+  );
+  return Number.isFinite(raw) && raw >= 0 ? raw : 2_000;
+})();
+type ChartGexSnapshotCacheEntry = {
+  expiresAt: number;
+  value?: ChartGexSnapshotCore | null;
+  pending?: Promise<ChartGexSnapshotCore | null>;
+};
+const chartGexSnapshotCache = new Map<string, ChartGexSnapshotCacheEntry>();
+let chartGexSnapshotQueryForTests:
+  | ((input: {
+      symbol: string;
+      maxExpirations: number;
+      strikesPerExpiration: number;
+    }) => Promise<ChartGexSnapshotCore | null>)
+  | null = null;
+let chartGexSnapshotCacheTtlMsForTests: number | null = null;
+
+function chartGexSnapshotCacheTtlMs(): number {
+  return chartGexSnapshotCacheTtlMsForTests ?? CHART_GEX_SNAPSHOT_CACHE_TTL_MS;
+}
+
+function loadChartGexSnapshotCore(input: {
+  symbol: string;
+  maxExpirations: number;
+  strikesPerExpiration: number;
+}): Promise<ChartGexSnapshotCore | null> {
+  const key = `${input.symbol}:${input.maxExpirations}:${input.strikesPerExpiration}`;
+  const cached = chartGexSnapshotCache.get(key);
+  if (cached?.pending) {
+    return cached.pending;
+  }
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.value ?? null);
+  }
+  const pending = runChartGexSnapshotQuery(input)
+    .then((value) => {
+      // Only cache a real snapshot; a missing snapshot / error is cheap to re-query
+      // (the jsonb expansion has nothing to do) and must not be pinned for the TTL.
+      if (value) {
+        chartGexSnapshotCache.set(key, {
+          expiresAt: Date.now() + chartGexSnapshotCacheTtlMs(),
+          value,
+        });
+      } else {
+        chartGexSnapshotCache.delete(key);
+      }
+      return value;
+    })
+    .catch((error) => {
+      chartGexSnapshotCache.delete(key);
+      throw error;
+    });
+  chartGexSnapshotCache.set(key, { expiresAt: 0, pending });
+  return pending;
+}
+
 export async function getLatestChartGexSnapshot(
   symbolInput: string,
   maxAgeMs: number,
@@ -698,14 +768,41 @@ export async function getLatestChartGexSnapshot(
   if (!symbol) {
     return null;
   }
+  const maxExpirations = Math.max(1, Math.floor(options.maxExpirations));
+  const strikesPerExpiration =
+    Math.max(1, Math.floor(options.strikesAroundMoney)) * 2 + 1;
+  const core = await loadChartGexSnapshotCore({
+    symbol,
+    maxExpirations,
+    strikesPerExpiration,
+  });
+  if (!core) {
+    return null;
+  }
+  // ageMs / stale recompute live from the caller's maxAgeMs, so a cache hit never
+  // serves a frozen staleness flag.
+  const ageMs = Math.max(0, Date.now() - core.computedAt.getTime());
+  return {
+    payload: core.payload,
+    computedAt: core.computedAt,
+    ageMs,
+    stale: ageMs > maxAgeMs,
+  };
+}
+
+async function runChartGexSnapshotQuery(input: {
+  symbol: string;
+  maxExpirations: number;
+  strikesPerExpiration: number;
+}): Promise<ChartGexSnapshotCore | null> {
+  if (chartGexSnapshotQueryForTests) {
+    return chartGexSnapshotQueryForTests(input);
+  }
+  const { symbol, maxExpirations, strikesPerExpiration } = input;
   const dbModule = await loadDbModule();
   if (!dbModule) {
     return null;
   }
-
-  const maxExpirations = Math.max(1, Math.floor(options.maxExpirations));
-  const strikesPerExpiration =
-    Math.max(1, Math.floor(options.strikesAroundMoney)) * 2 + 1;
   const { pool } = dbModule;
   try {
     const result = await pool.query<{
@@ -817,14 +914,7 @@ group by
     if (!payload) {
       return null;
     }
-
-    const ageMs = Math.max(0, Date.now() - computedAt.getTime());
-    return {
-      payload,
-      computedAt,
-      ageMs,
-      stale: ageMs > maxAgeMs,
-    };
+    return { payload, computedAt };
   } catch (error) {
     logger.debug(
       { err: error, symbol },
@@ -1302,4 +1392,21 @@ export const __marketDataIngestInternalsForTests = {
   mapClaimableQueuedJobRows,
   resolveWorkerActivityDiagnostics,
   mapBlockedGexDiagnosticsRows,
+  __setChartGexSnapshotQueryForTests: (
+    fn:
+      | ((input: {
+          symbol: string;
+          maxExpirations: number;
+          strikesPerExpiration: number;
+        }) => Promise<ChartGexSnapshotCore | null>)
+      | null,
+  ) => {
+    chartGexSnapshotQueryForTests = fn;
+  },
+  __setChartGexSnapshotCacheTtlMsForTests: (ms: number | null) => {
+    chartGexSnapshotCacheTtlMsForTests = ms;
+  },
+  __resetChartGexSnapshotCacheForTests: () => {
+    chartGexSnapshotCache.clear();
+  },
 };

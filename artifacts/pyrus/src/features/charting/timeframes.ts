@@ -332,6 +332,32 @@ export const resolveChartTimeframeFavorites = (
   );
 };
 
+/**
+ * Chart prewarm should warm only the favorites NEAREST the current timeframe, not
+ * the whole favorites list. The old mount-time fan-out fired a bar fetch for every
+ * favorite (default 11), which route-admission 429-sheds under pressure. Returns the
+ * favorites within `radius` index positions of `currentTimeframe` (excluding the
+ * current one); when the current timeframe is not a favorite, returns the first
+ * `radius * 2` favorites.
+ */
+export const selectAdjacentChartTimeframeFavorites = (
+  favorites: string[],
+  currentTimeframe: string | null | undefined,
+  radius = 1,
+): string[] => {
+  if (!favorites.length || radius < 1) {
+    return [];
+  }
+  const current = normalizeChartTimeframe(currentTimeframe);
+  const currentIndex = favorites.indexOf(current);
+  if (currentIndex < 0) {
+    return favorites.slice(0, radius * 2);
+  }
+  return favorites
+    .slice(Math.max(0, currentIndex - radius), currentIndex + radius + 1)
+    .filter((timeframe) => timeframe !== current);
+};
+
 export const toggleChartTimeframeFavorite = (
   favorites: unknown,
   timeframe: string,
