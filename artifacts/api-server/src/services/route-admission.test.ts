@@ -182,3 +182,25 @@ test("active-screen algo signal sparklines are allowed under high pressure", () 
     "allow",
   );
 });
+
+test("diagnostics client-events is active-screen, not shed under pressure", () => {
+  for (const path of [
+    "/diagnostics/client-events",
+    "/api/diagnostics/client-events",
+  ]) {
+    const routeClass = classifyApiRoute({ method: "POST", path });
+    assert.equal(routeClass, "active-screen", path);
+    assert.equal(
+      resolveApiRouteAdmission({ routeClass, pressureLevel: "high" }).action,
+      "allow",
+      path,
+    );
+  }
+});
+
+test("diagnostics client-metrics stays active-screen alongside client-events", () => {
+  assert.equal(
+    classifyApiRoute({ method: "POST", path: "/diagnostics/client-metrics" }),
+    "active-screen",
+  );
+});

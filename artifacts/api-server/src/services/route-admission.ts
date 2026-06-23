@@ -328,6 +328,7 @@ export function classifyApiRoute(input: {
     path === "/diagnostics/export" ||
     path === "/diagnostics/runtime" ||
     path === "/diagnostics/client-metrics" ||
+    path === "/diagnostics/client-events" ||
     path === "/diagnostics/market-data/gex-universe-refresh" ||
     (method === "GET" && path === "/diagnostics/thresholds")
   ) {
