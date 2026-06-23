@@ -57,6 +57,7 @@ const DEFAULT_PERSIST_FLUSH_MS = 1_000;
 // reproduces the full-history rollup output. Capping the per-aggregate scan to
 // this window keeps it O(recent window) instead of O(72h retained history).
 const ROLLUP_RECENT_WINDOW_MS = TIMEFRAME_MS["1h"] * 3 + TIMEFRAME_MS["1h"];
+const DEFAULT_PERSIST_FLUSH_CONCURRENCY = 5;
 function storeSourceNames(): string[] {
   const streamSourceName = isMassiveStocksRealtimeConfigured()
     ? "massive-websocket"
@@ -80,6 +81,9 @@ let lastPersistAt: Date | null = null;
 let lastPersistError: string | null = null;
 let lastPersistErrorAt: Date | null = null;
 let lastEnqueueScannedBarCount = 0;
+
+type PersistMarketDataBarsFn = typeof persistMarketDataBars;
+let persistMarketDataBarsOverride: PersistMarketDataBarsFn | null = null;
 
 function readPositiveIntegerEnv(
   name: string,
@@ -110,6 +114,43 @@ function persistFlushMs(): number {
     100,
     60_000,
   );
+}
+
+function persistFlushConcurrency(): number {
+  return readPositiveIntegerEnv(
+    "PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_FLUSH_CONCURRENCY",
+    DEFAULT_PERSIST_FLUSH_CONCURRENCY,
+    1,
+    32,
+  );
+}
+
+// Bounded-concurrency map: runs `worker` over `items` with at most `limit`
+// invocations in flight at once, preserving per-item results by index. Errors
+// from a worker reject the returned promise (after in-flight work settles), so
+// callers can fall back to per-item handling instead.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  const bound = Math.max(1, Math.min(limit, items.length));
+  let nextIndex = 0;
+  async function runWorker(): Promise<void> {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) {
+        return;
+      }
+      results[index] = await worker(items[index] as T, index);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: bound }, () => runWorker()),
+  );
+  return results;
 }
 
 function dateOrNull(value: unknown): Date | null {
@@ -469,6 +510,7 @@ async function flushPendingPersistBars(): Promise<void> {
     return;
   }
   persistFlushInFlight = true;
+  const persist = persistMarketDataBarsOverride ?? persistMarketDataBars;
   try {
     const groups = new Map<string, PendingPersistBar[]>();
     pending.forEach((entry) => {
@@ -477,64 +519,87 @@ async function flushPendingPersistBars(): Promise<void> {
       group.push(entry);
       groups.set(key, group);
     });
-    for (const group of groups.values()) {
-      const first = group[0];
-      if (!first) {
-        continue;
-      }
-      const persisted = await persistMarketDataBars({
-        request: {
-          symbol: first.symbol,
-          timeframe: first.timeframe,
-          assetClass: "equity",
-          outsideRth: true,
-          source: "trades",
-          recentWindowMinutes: 0,
-        },
-        sourceName: first.sourceName,
-        bars: group.map((entry) => ({
-          timestamp: entry.bar.timestamp,
-          open: entry.bar.open,
-          high: entry.bar.high,
-          low: entry.bar.low,
-          close: entry.bar.close,
-          volume: entry.bar.volume,
-        })),
-      });
-      if (persisted) {
-        persistedBarCount += group.length;
-        group.forEach((entry) => {
-          persistedBarSignatures.set(
-            cacheKey({
-              symbol: entry.symbol,
-              timeframe: entry.timeframe,
-              sourceName: entry.sourceName,
+    const groupList = Array.from(groups.values()).filter(
+      (group) => group.length > 0,
+    );
+    // Drain groups with bounded concurrency. Each group is independent, so a
+    // failure (thrown or rejected) requeues only that group's bars; other
+    // groups still commit. Mutating shared bookkeeping inside the worker is
+    // safe because Node runs each await continuation to completion without
+    // interleaving synchronous work.
+    let lastError: unknown = null;
+    await mapWithConcurrency(
+      groupList,
+      persistFlushConcurrency(),
+      async (group) => {
+        const first = group[0];
+        if (!first) {
+          return;
+        }
+        try {
+          const persisted = await persist({
+            request: {
+              symbol: first.symbol,
+              timeframe: first.timeframe,
+              assetClass: "equity",
+              outsideRth: true,
+              source: "trades",
+              recentWindowMinutes: 0,
+            },
+            sourceName: first.sourceName,
+            bars: group.map((entry) => ({
               timestamp: entry.bar.timestamp,
-            }),
-            barSignature(entry.bar),
-          );
-        });
-        prunePersistedBarSignatures();
-      }
-    }
-    lastPersistAt = new Date();
-    lastPersistError = null;
-    lastPersistErrorAt = null;
-  } catch (error) {
-    pending.forEach((entry) => {
-      pendingPersistBars.set(
-        cacheKey({
-          symbol: entry.symbol,
-          timeframe: entry.timeframe,
-          sourceName: entry.sourceName,
-          timestamp: entry.bar.timestamp,
-        }),
-        entry,
+              open: entry.bar.open,
+              high: entry.bar.high,
+              low: entry.bar.low,
+              close: entry.bar.close,
+              volume: entry.bar.volume,
+            })),
+          });
+          if (persisted) {
+            persistedBarCount += group.length;
+            group.forEach((entry) => {
+              persistedBarSignatures.set(
+                cacheKey({
+                  symbol: entry.symbol,
+                  timeframe: entry.timeframe,
+                  sourceName: entry.sourceName,
+                  timestamp: entry.bar.timestamp,
+                }),
+                barSignature(entry.bar),
+              );
+            });
+            prunePersistedBarSignatures();
+          }
+        } catch (error) {
+          lastError = error;
+          group.forEach((entry) => {
+            pendingPersistBars.set(
+              cacheKey({
+                symbol: entry.symbol,
+                timeframe: entry.timeframe,
+                sourceName: entry.sourceName,
+                timestamp: entry.bar.timestamp,
+              }),
+              entry,
+            );
+          });
+        }
+      },
+    );
+    if (lastError) {
+      lastPersistError =
+        lastError instanceof Error ? lastError.message : String(lastError);
+      lastPersistErrorAt = new Date();
+      logger.warn(
+        { err: lastError },
+        "Signal monitor local bar cache persist failed",
       );
-    });
-    lastPersistError = error instanceof Error ? error.message : String(error);
-    lastPersistErrorAt = new Date();
-    logger.warn({ err: error }, "Signal monitor local bar cache persist failed");
+    } else {
+      lastPersistAt = new Date();
+      lastPersistError = null;
+      lastPersistErrorAt = null;
+    }
   } finally {
     persistFlushInFlight = false;
     if (pendingPersistBars.size) {
@@ -712,9 +777,18 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     lastPersistError = null;
     lastPersistErrorAt = null;
     lastEnqueueScannedBarCount = 0;
+    persistMarketDataBarsOverride = null;
   },
   ingest(aggregate: MassiveDelayedStockAggregate): void {
     handleMassiveAggregate(aggregate);
+  },
+  __setPersistMarketDataBarsForTests(
+    fn: typeof persistMarketDataBars | null,
+  ): void {
+    persistMarketDataBarsOverride = fn;
+  },
+  async flushNow(): Promise<void> {
+    await flushPendingPersistBars();
   },
   storeSourceNames,
   readMemoryBars,
