@@ -19,6 +19,10 @@ import {
   registerOvernightSpotWorkerSnapshotGetter,
   type OvernightSpotWorkerSnapshot,
 } from "./overnight-spot-worker-state";
+import {
+  resolveUsEquityMarketStatus,
+  type UsEquityMarketSessionKey,
+} from "@workspace/market-calendar";
 
 const WORKER_WAKEUP_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
@@ -27,6 +31,9 @@ const DEFAULT_WORKER_SCAN_TIMEOUT_MS = 45_000;
 const WORKER_SCAN_TIMEOUT_MIN_MS = 5_000;
 const WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
 const OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS = 30_000;
+// Overnight-spot deployments are dormant during regular trading hours (RTH).
+// Re-check at a calm cadence so they resume promptly once RTH ends.
+const OVERNIGHT_SPOT_REGULAR_SESSION_RETRY_MS = 60_000;
 export const OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY = 1_930_514_023;
 
 type ReleaseLock = () => Promise<void>;
@@ -40,6 +47,7 @@ type WorkerDependencies = {
     recordSignals: true;
   }) => Promise<OvernightSpotSignalScanResult>;
   getResourcePressure: () => ApiResourcePressureSnapshot;
+  getMarketSessionKey: (now: Date) => UsEquityMarketSessionKey;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   setTimer: (
     callback: () => void,
@@ -215,6 +223,9 @@ function defaultDependencies(
         })),
     getResourcePressure:
       options.getResourcePressure ?? getApiResourcePressureSnapshot,
+    getMarketSessionKey:
+      options.getMarketSessionKey ??
+      ((now) => resolveUsEquityMarketStatus(now).session.key),
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
@@ -358,6 +369,23 @@ function pauseDeploymentForResourcePressure(input: {
     input.nowMs + OVERNIGHT_SPOT_RESOURCE_PRESSURE_RETRY_MS;
 }
 
+function pauseDeploymentForRegularSession(input: {
+  runtime: DeploymentRuntime;
+  nowMs: number;
+}) {
+  markSkipped({
+    runtime: input.runtime,
+    reason: "regular_market_session",
+    nowMs: input.nowMs,
+  });
+  input.runtime.lastCheckedAtMs = input.nowMs;
+  input.runtime.currentScanStartedAtMs = null;
+  input.runtime.timedOut = false;
+  input.runtime.unsettledAfterTimeout = false;
+  input.runtime.nextScanDueAtMs =
+    input.nowMs + OVERNIGHT_SPOT_REGULAR_SESSION_RETRY_MS;
+}
+
 function dateString(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
@@ -401,6 +429,12 @@ export function createOvernightSpotWorker(
       });
 
       const pressure = dependencies.getResourcePressure();
+      // Overnight-spot trades the overnight session; during RTH it would scan the
+      // live feed with a hardcoded overnight tradingSession, get no/wide quotes,
+      // and emit "overnight signal blocked" events (user-facing toasts). Keep it
+      // dormant during RTH so that wasted work — and the toasts — never happen.
+      const inRegularSession =
+        dependencies.getMarketSessionKey(new Date(nowMs)) === "rth";
       for (const deployment of deployments) {
         const signature = deploymentSignature(deployment);
         let runtime = deploymentRuntime.get(deployment.id);
@@ -426,6 +460,11 @@ export function createOvernightSpotWorker(
 
         if (isApiResourcePressureHardBlock(pressure)) {
           pauseDeploymentForResourcePressure({ runtime, nowMs });
+          continue;
+        }
+
+        if (inRegularSession) {
+          pauseDeploymentForRegularSession({ runtime, nowMs });
           continue;
         }
 
@@ -493,6 +532,11 @@ export function createOvernightSpotWorker(
       started = true;
       cockpitUnsubscribe = dependencies.subscribeCockpitChanges((change) => {
         if (change.reason === "signal_monitor_event_created" && !tickRunning) {
+          // During RTH the deployment is dormant anyway; don't let intraday
+          // signal events force an overnight rescan (pure wasted wakeups).
+          if (dependencies.getMarketSessionKey(dependencies.now()) === "rth") {
+            return;
+          }
           requestRunSoon();
         }
       });
