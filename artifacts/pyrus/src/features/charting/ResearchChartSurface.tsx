@@ -12065,12 +12065,7 @@ const ResearchChartSurfaceComponent = ({
                     strokeWidth={1}
                     strokeDasharray="3 4"
                   />
-                  <path
-                    d={gexProjectionConeSvgOverlay.outerPath}
-                    fill={gexProjectionConeSvgOverlay.outerFill}
-                    stroke={gexProjectionConeSvgOverlay.outerStroke}
-                    strokeWidth={0.75}
-                  />
+                  {/* 2σ outer band intentionally not rendered — only the 1σ inner cone is shown. */}
                   <path
                     d={gexProjectionConeSvgOverlay.innerPath}
                     fill={gexProjectionConeSvgOverlay.innerFill}
