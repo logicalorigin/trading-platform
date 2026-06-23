@@ -6159,6 +6159,127 @@ function resolveSignalMonitorCurrentSignalExcursion(input: {
   };
 }
 
+// --- Signal-matrix heavy-evaluation memoization -----------------------------
+// evaluatePyrusSignalsSignals (WMA/ATR/SMA/ADX/volatility + an O(n) structure/
+// CHoCH scan over the full ~240-bar series) is the dominant CPU cost on the
+// signal-matrix stream hot-path. It was being recomputed for every
+// (symbol,timeframe) on every intra-minute aggregate tick AND once per connected
+// subscriber, even though its output is a pure function of (resolved signal
+// settings, completed bars) — it reads no clock and no mutable global, so the
+// signal cannot change between bar closes. Memoize that pure result keyed by
+// (settingsSignature, symbol, timeframe) with a completed-bars fingerprint:
+//   - across ticks: the heavy pass now runs once per NEW completed bar instead of
+//     ~10x/sec/symbol (this is what pins the loop at ~102% CPU even at idle), and
+//   - within a flush: once across all same-settings subscribers instead of N×.
+// The time-dependent fields (stale/fresh/status/lastEvaluatedAt/canonicalSignalEvent)
+// are intentionally NOT cached — the caller recomputes them every evaluation with
+// the live evaluatedAt, so staleness/age stay correct on a cache hit.
+// Cache ONLY the output of evaluatePyrusSignalsSignals: it is a pure function of
+// (settings, completed-bar OHLCV) and the dominant CPU cost. Signal selection and
+// the indicator snapshot are deliberately NOT cached — they depend on the live
+// chartBarEntries (partial/stable filtering) and are cheaply recomputed by the
+// caller every evaluation, so the cache can never serve a stale signal.
+type SignalMonitorMatrixHeavyEvaluation = ReturnType<
+  typeof evaluatePyrusSignalsSignals
+>;
+const SIGNAL_MONITOR_MATRIX_EVAL_CACHE_MAX = 8_000;
+const signalMonitorMatrixHeavyEvaluationCache = new Map<
+  string,
+  { fingerprint: string; value: SignalMonitorMatrixHeavyEvaluation }
+>();
+let signalMonitorMatrixHeavyEvaluationCacheHits = 0;
+let signalMonitorMatrixHeavyEvaluationCacheMisses = 0;
+
+function signalMonitorPyrusSettingsSignature(
+  settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>,
+): string {
+  // Resolved settings is a small flat config object with a fixed key order, so a
+  // JSON serialization is a stable, content-addressed signature: identical
+  // settings (incl. content-equal profiles on different subscribers) share a
+  // cache entry; any settings difference forks it.
+  return JSON.stringify(settings);
+}
+
+function fingerprintSignalMonitorMatrixCompletedBars(
+  chartBars: PyrusSignalsBar[],
+): string {
+  // Hash the whole completed-bar series so corrected historical bars cannot hit a
+  // cache entry whose first/last edge still matches. This is still much cheaper
+  // than the indicator/structure evaluation it guards.
+  const n = chartBars.length;
+  if (!n) {
+    return "0";
+  }
+  let hash = 2166136261;
+  for (const bar of chartBars) {
+    const fields = [bar.time, bar.o, bar.h, bar.l, bar.c, bar.v];
+    for (const field of fields) {
+      const value = Number.isFinite(Number(field)) ? Number(field) : 0;
+      // Fold the integer and fractional parts separately so the fingerprint is
+      // lossless to 1e-8 — finer than any real OHLCV/price tick — instead of the
+      // old Math.trunc(value*1000) that ignored sub-0.001 bar corrections.
+      const whole = Math.trunc(value);
+      const frac = Math.round((value - whole) * 1e8);
+      hash = Math.imul(hash ^ (whole | 0), 16777619) >>> 0;
+      hash = Math.imul(hash ^ (frac | 0), 16777619) >>> 0;
+    }
+  }
+  return `${n}:${hash}`;
+}
+
+function evaluateSignalMonitorMatrixHeavyEvaluation(input: {
+  settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  chartBars: PyrusSignalsBar[];
+}): SignalMonitorMatrixHeavyEvaluation {
+  const fingerprint = fingerprintSignalMonitorMatrixCompletedBars(input.chartBars);
+  const key = [
+    signalMonitorPyrusSettingsSignature(input.settings),
+    input.symbol,
+    input.timeframe,
+  ].join("\u0000");
+  const cached = signalMonitorMatrixHeavyEvaluationCache.get(key);
+  if (cached && cached.fingerprint === fingerprint) {
+    signalMonitorMatrixHeavyEvaluationCacheHits += 1;
+    return cached.value;
+  }
+  signalMonitorMatrixHeavyEvaluationCacheMisses += 1;
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: input.chartBars,
+    settings: input.settings,
+    includeProvisionalSignals: !input.settings.waitForBarClose,
+  });
+  // The key set is bounded by (distinct settings × universe symbols × timeframes);
+  // this guard only trips if symbol churn leaks entries. Clear-on-overflow keeps it
+  // simple and bounded without per-entry LRU bookkeeping on the hot path.
+  if (
+    signalMonitorMatrixHeavyEvaluationCache.size >=
+    SIGNAL_MONITOR_MATRIX_EVAL_CACHE_MAX
+  ) {
+    signalMonitorMatrixHeavyEvaluationCache.clear();
+  }
+  signalMonitorMatrixHeavyEvaluationCache.set(key, {
+    fingerprint,
+    value: evaluation,
+  });
+  return evaluation;
+}
+
+function getSignalMonitorMatrixHeavyEvaluationCacheStats() {
+  return {
+    size: signalMonitorMatrixHeavyEvaluationCache.size,
+    hits: signalMonitorMatrixHeavyEvaluationCacheHits,
+    misses: signalMonitorMatrixHeavyEvaluationCacheMisses,
+  };
+}
+
+function resetSignalMonitorMatrixHeavyEvaluationCache() {
+  signalMonitorMatrixHeavyEvaluationCache.clear();
+  signalMonitorMatrixHeavyEvaluationCacheHits = 0;
+  signalMonitorMatrixHeavyEvaluationCacheMisses = 0;
+}
+
 export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
@@ -6207,10 +6328,16 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   const settings = resolvePyrusSignalsSignalSettings(
     asRecord(input.profile.pyrusSignalsSettings),
   );
-  const evaluation = evaluatePyrusSignalsSignals({
-    chartBars,
+  // Only the heavy indicator pass (evaluatePyrusSignalsSignals) is memoized — it is
+  // a pure function of (settings, completed-bar OHLCV). Signal selection and the
+  // snapshot are recomputed every call so they always reflect the live
+  // chartBarEntries (partial/stable filtering); staleness/age below likewise
+  // recompute from input.evaluatedAt, so a cache hit never serves a stale field.
+  const evaluation = evaluateSignalMonitorMatrixHeavyEvaluation({
     settings,
-    includeProvisionalSignals: !settings.waitForBarClose,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    chartBars,
   });
   const signal = selectStableSignalMonitorSignalEvent(
     evaluation.signalEvents,
@@ -8612,6 +8739,7 @@ function resetSignalMonitorMatrixStreamForTests() {
   signalMonitorMatrixStreamAggregateEventCount = 0;
   signalMonitorMatrixStreamLastAggregateAt = null;
   nextSignalMonitorMatrixStreamSubscriberId = 1;
+  resetSignalMonitorMatrixHeavyEvaluationCache();
 }
 
 async function evaluateSymbolsInBatches(input: {
@@ -10368,6 +10496,9 @@ export const __signalMonitorInternalsForTests = {
   normalizeSignalMonitorMatrixStreamScope,
   evaluateSignalMonitorMatrixStreamScopeDelta,
   emitSignalMonitorMatrixStreamAggregateDelta,
+  evaluateSignalMonitorMatrixStateFromCompletedBars,
+  getSignalMonitorMatrixHeavyEvaluationCacheStats,
+  resetSignalMonitorMatrixHeavyEvaluationCache,
   createSignalMonitorMatrixStreamSubscriptionForTests,
   buildSignalMonitorServerOwnedProducerScope,
   registerSignalMonitorServerOwnedProducer,
