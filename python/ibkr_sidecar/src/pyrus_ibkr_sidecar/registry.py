@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
@@ -54,6 +54,7 @@ class SubscriptionHandle:
     line_key: str
     contract: object
     ticker: object
+    tick_callback: Callable[..., None] | None = None
 
 
 class IbkrMarketDataAdapter(Protocol):
@@ -161,6 +162,7 @@ class MarketDataRegistry:
 
         current = self._lines.get(status.line_key)
         if current is not status:
+            self._detach_tick_listener(handle)
             try:
                 async with self._adapter_semaphore:
                     await self._adapter.cancel_live(handle)
@@ -169,6 +171,7 @@ class MarketDataRegistry:
             return
 
         status.handle = handle
+        self._attach_tick_listener(status, handle)
         if status.state == "releasing":
             await self._release_line(status)
             return
@@ -176,9 +179,38 @@ class MarketDataRegistry:
         status.state = "live"
         status.subscribed_at = utc_now_iso()
 
+    def _attach_tick_listener(
+        self,
+        status: LineStatus,
+        handle: SubscriptionHandle,
+    ) -> None:
+        update_event = getattr(handle.ticker, "updateEvent", None)
+        connect = getattr(update_event, "connect", None)
+        if not callable(connect):
+            return
+
+        def on_tick(*_args: object) -> None:
+            current = self._lines.get(status.line_key)
+            if current is status and current.state in {"subscribing", "live"}:
+                current.last_tick_at = utc_now_iso()
+
+        connect(on_tick, keep_ref=True)
+        handle.tick_callback = on_tick
+
+    def _detach_tick_listener(self, handle: SubscriptionHandle) -> None:
+        callback = handle.tick_callback
+        if callback is None:
+            return
+        update_event = getattr(handle.ticker, "updateEvent", None)
+        disconnect = getattr(update_event, "disconnect", None)
+        if callable(disconnect):
+            disconnect(callback)
+        handle.tick_callback = None
+
     async def _release_line(self, status: LineStatus) -> None:
         try:
             if status.handle:
+                self._detach_tick_listener(status.handle)
                 async with self._adapter_semaphore:
                     await self._adapter.cancel_live(status.handle)
             if self._lines.get(status.line_key) is status:

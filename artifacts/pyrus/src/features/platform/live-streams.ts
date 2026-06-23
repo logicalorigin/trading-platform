@@ -4654,21 +4654,19 @@ const accountPositionsQueryRequestsLiveQuotes = (
 
 const accountPositionsQueryMatchesDetail = (
   params: Record<string, unknown> | null,
-  positionsLiveQuotes: boolean,
-): boolean =>
-  positionsLiveQuotes
-    ? optionalParamMatches(params, "detail", null)
-    : optionalParamMatches(params, "detail", "fast");
+): boolean => optionalParamMatches(params, "detail", "fast");
 
 const accountPositionsQueryMatchesPayload = (
   params: Record<string, unknown> | null,
   payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId" | "assetClass">,
+  options: Pick<SeedAccountPagePrimaryQueryKeysOptions, "positionsLiveQuotes"> = {},
 ): boolean => {
-  const positionsLiveQuotes = primaryAccountPositionsUseLiveQuotes(payload);
+  const positionsLiveQuotes =
+    options.positionsLiveQuotes ?? primaryAccountPositionsUseLiveQuotes(payload);
   return (
     assetClassParamMatches(params, payload.assetClass) &&
     accountPositionsQueryRequestsLiveQuotes(params) === positionsLiveQuotes &&
-    accountPositionsQueryMatchesDetail(params, positionsLiveQuotes)
+    accountPositionsQueryMatchesDetail(params)
   );
 };
 
@@ -4753,7 +4751,7 @@ const accountPositionsParams = (
   return {
     mode: payload.mode,
     assetClass: accountPositionTypeParam(payload.assetClass),
-    ...(positionsLiveQuotes ? {} : { detail: "fast" as const }),
+    detail: "fast" as const,
     liveQuotes: positionsLiveQuotes,
   };
 };
@@ -5051,7 +5049,9 @@ export const applyAccountPageLivePayloadToCache = (
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
-        accountPositionsQueryMatchesPayload(params, payload)
+        accountPositionsQueryMatchesPayload(params, payload, {
+          positionsLiveQuotes: true,
+        })
       ) {
         queryClient.setQueryData(
           query.queryKey,

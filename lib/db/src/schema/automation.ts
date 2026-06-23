@@ -91,6 +91,14 @@ export const executionEventsTable = pgTable(
     index("execution_events_account_idx").on(table.providerAccountId),
     index("execution_events_symbol_idx").on(table.symbol),
     index("execution_events_occurred_at_idx").on(table.occurredAt),
+    // Generic deployment event readers use:
+    // WHERE deployment_id = ? ORDER BY occurred_at DESC LIMIT n.
+    // Keep this separate from event-type partial indexes below; the partial
+    // indexes cannot help deployment-only readers such as /algo/events.
+    index("execution_events_deployment_occurred_idx").on(
+      table.deploymentId,
+      table.occurredAt.desc(),
+    ),
     // Partial index for the hot listDeploymentEvents query
     // (WHERE deployment_id = ? AND event_type LIKE 'signal_options_%'
     // ORDER BY occurred_at DESC LIMIT n). A deployment's events are mostly
@@ -105,6 +113,9 @@ export const executionEventsTable = pgTable(
     index("execution_events_sigopt_deploy_occurred_idx")
       .on(table.deploymentId, table.occurredAt.desc())
       .where(sql`${table.eventType} LIKE 'signal_options_%'`),
+    index("execution_events_overnight_deploy_occurred_idx")
+      .on(table.deploymentId, table.occurredAt.desc())
+      .where(sql`${table.eventType} LIKE 'overnight_spot_%'`),
   ],
 );
 

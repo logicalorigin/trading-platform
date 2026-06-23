@@ -39,6 +39,7 @@ import { NotificationsDrawer } from "./NotificationsDrawer.jsx";
 import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
 import { ToastStack } from "./ToastStack.jsx";
 import { buildAlgoEventToast } from "./algoEventToasts.js";
+import { useCriticalApiMutationPause } from "./criticalApiMutationPause.js";
 import { useAlgoCockpitStream } from "./live-streams";
 import { useToast } from "./platformContexts.jsx";
 import {
@@ -787,6 +788,7 @@ export const PlatformShell = ({
   const resizeCleanupRef = useRef(null);
   const toastedEventIdsRef = useRef(new Set());
   const hasReceivedLiveRef = useRef(false);
+  const criticalApiMutationPaused = useCriticalApiMutationPause();
   const toast = useToast();
   const handleSetScreen = useCallback(
     (screenId) => {
@@ -842,6 +844,7 @@ export const PlatformShell = ({
 
   const algoFrameRuntimeEnabled = Boolean(
     frameAuxiliaryDataEnabled &&
+      !criticalApiMutationPaused &&
       (
         activeScreen === "algo" ||
         (!auxiliaryDrawerViewport && !activitySidebarCollapsed) ||

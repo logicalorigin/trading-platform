@@ -77,6 +77,7 @@ import {
   resolveSignalDayMove,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
+  isMarketIdleSignalRecord,
   signalActionBlockerLabel,
   signalActionLabel,
   signalFreshnessLabel,
@@ -907,6 +908,9 @@ const statusPillMeta = (signal, candidate, blocker) => {
     ) {
       return { label, tone: CSS_COLOR.green, Icon: CheckCircle2 };
     }
+    if (normalized.includes("idle")) {
+      return { label, tone: CSS_COLOR.cyan, Icon: Clock };
+    }
     if (normalized.includes("stale")) {
       return { label, tone: CSS_COLOR.amber, Icon: Clock };
     }
@@ -926,6 +930,9 @@ const statusPillMeta = (signal, candidate, blocker) => {
   if (signal?.status === "unavailable") {
     return { label: "Unavailable", tone: CSS_COLOR.textDim, Icon: MinusCircle };
   }
+  if (isMarketIdleSignalRecord(signal)) {
+    return { label: "Market idle", tone: CSS_COLOR.cyan, Icon: Clock };
+  }
   if (signal?.fresh === false) {
     return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
@@ -941,6 +948,7 @@ const compactPillLabel = (label) => {
   if (normalized.includes("block") || normalized.includes("pass")) return "NO";
   if (normalized.includes("wait") || normalized.includes("pending"))
     return "WAIT";
+  if (normalized.includes("idle")) return "IDLE";
   if (normalized.includes("stale")) return "OLD";
   if (normalized.includes("unavailable")) return "--";
   return String(label).trim().slice(0, 4).toUpperCase();
@@ -2560,7 +2568,9 @@ export const OperationsSignalRow = ({
           status:
             signalRecord.fresh === true
               ? "active-fresh"
-              : direction.primitive
+              : direction.primitive && isMarketIdleSignalRecord(signalRecord)
+                ? "active-idle"
+                : direction.primitive
                 ? "active-stale"
                 : signalRecord.status,
         },

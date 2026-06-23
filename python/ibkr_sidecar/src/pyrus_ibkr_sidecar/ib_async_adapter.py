@@ -308,12 +308,14 @@ class LazyIbAsyncMarketDataAdapter:
         )
 
     async def _ensure_delegate(self) -> IbAsyncMarketDataAdapter:
-        if self._delegate is not None:
-            return self._delegate
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
 
         async with self._connect_lock:
-            if self._delegate is not None:
-                return self._delegate
+            delegate = self._delegate
+            if delegate is not None:
+                return delegate
 
             ib_async = cast(IbAsyncModule, import_module("ib_async"))
             ib = ib_async.IB()

@@ -10,11 +10,11 @@
     "typecheck": "node ../../scripts/run-validation-command.mjs --label typecheck -- tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@workspace/ibkr-contracts": "workspace:*",
     "@workspace/account-math": "workspace:*",
-    "@workspace/backtest-core": "workspace:*",
     "@workspace/api-zod": "workspace:*",
+    "@workspace/backtest-core": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/ibkr-contracts": "workspace:*",
     "@workspace/market-calendar": "workspace:*",
     "@workspace/pyrus-signals-core": "workspace:*",
     "cors": "catalog:",
@@ -26,6 +26,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
     "@types/cors": "catalog:",
     "@types/express": "catalog:",
     "@types/node": "catalog:",

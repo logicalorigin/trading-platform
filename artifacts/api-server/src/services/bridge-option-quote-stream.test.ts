@@ -186,6 +186,84 @@ test("a genuine upstream error still records a connection error", async () => {
   );
 });
 
+test("account monitor can refresh stale cached option quotes with a bounded timeout", async () => {
+  __resetBridgeOptionQuoteStreamForTests();
+  __resetBridgeGovernorForTests();
+  __resetMarketDataAdmissionForTests();
+  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-08T18:00:00.000Z"));
+
+  let snapshotCalls = 0;
+  const observedTimeouts: Array<number | undefined> = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws" as const,
+        marketDataMode: "live" as const,
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { timeoutMs?: number }) {
+      snapshotCalls += 1;
+      observedTimeouts.push(input.timeoutMs);
+      return [
+        {
+          symbol: "SPY",
+          providerContractId: "contract-1",
+          bid: snapshotCalls === 1 ? 1 : 2,
+          ask: snapshotCalls === 1 ? 1.1 : 2.1,
+          price: snapshotCalls === 1 ? 1.05 : 2.05,
+          delayed: false,
+          freshness: snapshotCalls === 1 ? "stale" : "live",
+          transport: "tws",
+          updatedAt: new Date(
+            snapshotCalls === 1
+              ? "2026-06-08T18:00:01.000Z"
+              : "2026-06-08T18:00:02.000Z",
+          ),
+        },
+      ] as never;
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["contract-1"],
+    owner: "account-position-option-quotes:test:prime",
+    intent: "account-monitor-live",
+    requiresGreeks: false,
+    hydrateCached: true,
+    timeoutMs: 1234,
+  });
+
+  const cachedPayload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["contract-1"],
+    owner: "account-position-option-quotes:test:cached",
+    intent: "account-monitor-live",
+    requiresGreeks: false,
+  });
+  assert.equal(snapshotCalls, 1);
+  assert.equal(cachedPayload.quotes[0]?.bid, 1);
+  assert.equal(cachedPayload.quotes[0]?.freshness, "stale");
+
+  const refreshedPayload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["contract-1"],
+    owner: "account-position-option-quotes:test:refresh",
+    intent: "account-monitor-live",
+    requiresGreeks: false,
+    hydrateCached: true,
+    timeoutMs: 1234,
+  });
+  assert.equal(snapshotCalls, 2);
+  assert.deepEqual(observedTimeouts, [1234, 1234]);
+  assert.equal(refreshedPayload.quotes[0]?.bid, 2);
+  assert.equal(refreshedPayload.quotes[0]?.freshness, "live");
+});
+
 test("option stream generic Output exceeded error does not shed scanner demand", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();

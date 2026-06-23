@@ -128,6 +128,7 @@ const SIGNALS_EVENT_LIMIT = 250;
 const SIGNAL_STATUS_FILTERS = [
   { value: "all", label: "All" },
   { value: SIGNALS_ROW_STATUS.activeFresh, label: "Fresh" },
+  { value: SIGNALS_ROW_STATUS.activeIdle, label: "Idle" },
   { value: SIGNALS_ROW_STATUS.activeStale, label: "Aged" },
   { value: SIGNALS_ROW_STATUS.problem, label: "Attention" },
   { value: SIGNALS_ROW_STATUS.skipped, label: "Scan pending" },
@@ -153,7 +154,7 @@ const isRenderableSignalMatrixState = (state) => {
   const status = normalizeSignalStatus(state);
   return Boolean(
     state?.active !== false &&
-      (status === "ok" || status === "stale") &&
+      (status === "ok" || status === "idle" || status === "stale") &&
       !state?.lastError &&
       (state?.latestBarAt || state?.currentSignalAt),
   );
@@ -344,6 +345,8 @@ const toneForStatus = (status) => {
   switch (status) {
     case SIGNALS_ROW_STATUS.activeFresh:
       return CSS_COLOR.green;
+    case SIGNALS_ROW_STATUS.activeIdle:
+      return CSS_COLOR.cyan;
     case SIGNALS_ROW_STATUS.activeStale:
       return CSS_COLOR.amber;
     case SIGNALS_ROW_STATUS.problem:
@@ -630,8 +633,13 @@ function SignalsTickerSearchInput({ value, onCommit, style }) {
   );
 }
 
-function DirectionBadge({ direction }) {
-  const tone = toneForDirection(direction);
+function DirectionBadge({ direction, stale = false }) {
+  // A directional badge whose signal is not currently fresh (stale / aged /
+  // idle with a latched direction) recolors the whole arrow amber in its
+  // last-known direction, matching the SignalDots MTF matrix. Direction
+  // otherwise drives the color (buy = blue, sell = red).
+  const isDirectional = direction === "buy" || direction === "sell";
+  const tone = stale && isDirectional ? CSS_COLOR.amber : toneForDirection(direction);
   const Icon = direction === "sell" ? ArrowDown : direction === "buy" ? ArrowUp : Clock3;
   return (
     <span
@@ -1584,6 +1592,8 @@ function StatusCell({ row }) {
           ? row.lastError
             ? "error"
             : "unavailable"
+          : row.status === SIGNALS_ROW_STATUS.activeIdle
+            ? "idle"
           : row.status === SIGNALS_ROW_STATUS.activeStale
             ? "stale"
             : row.status,
@@ -1600,7 +1610,7 @@ function StatusCell({ row }) {
   );
   return (
     <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(4) }}>
-      <DirectionBadge direction={row.direction} />
+      <DirectionBadge direction={row.direction} stale={row.fresh === false} />
       <span
         style={{
           ...cellTextStyle,
@@ -1623,6 +1633,8 @@ function CoverageCell({ row }) {
       status:
         row.status === SIGNALS_ROW_STATUS.problem
           ? "unavailable"
+          : row.status === SIGNALS_ROW_STATUS.activeIdle
+            ? "idle"
           : row.status === SIGNALS_ROW_STATUS.activeStale
             ? "stale"
             : row.status,
@@ -1670,12 +1682,13 @@ function CompactIntervalCell({
 }) {
   const status = normalizeSignalStatus(state);
   const pending = status === "pending";
+  const idle = status === "idle";
   const stale = status === "stale";
   const hydrated = isHydratedSignalMatrixState(state);
   const hasSignalTiming = Boolean(
     state?.currentSignalAt || state?.latestBarAt || state?.lastEvaluatedAt,
   );
-  const problem = !pending && !stale && isProblemSignalState(state);
+  const problem = !pending && !idle && !stale && isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const sparklineFallbackDirection = signalSparklineDirectionOrFallback(
     direction,
@@ -1714,9 +1727,11 @@ function CompactIntervalCell({
           currentSignalAt: state?.currentSignalAt || null,
           status:
             hydrated && direction
-              ? state?.fresh
-                ? SIGNALS_ROW_STATUS.activeFresh
-                : SIGNALS_ROW_STATUS.activeStale
+              ? idle
+                ? SIGNALS_ROW_STATUS.activeIdle
+                : state?.fresh
+                  ? SIGNALS_ROW_STATUS.activeFresh
+                  : SIGNALS_ROW_STATUS.activeStale
               : normalizeSignalStatus(state),
         },
         signalEvents,
@@ -1753,7 +1768,7 @@ function CompactIntervalCell({
         : normalizeSignalStatus(state) === "stale"
           ? "stale"
           : status,
-      lastError: stale ? null : state?.lastError,
+      lastError: idle || stale ? null : state?.lastError,
       lastEvaluatedAt: state?.lastEvaluatedAt,
       latestBarAt: state?.latestBarAt,
     },
@@ -1778,6 +1793,8 @@ function CompactIntervalCell({
     ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
     : pending
       ? `${timeframe} pending`
+      : idle
+        ? `${timeframe} market idle · ${intervalAge}`
       : stale
         ? `${timeframe} aged · ${intervalAge}`
         : hydrated
@@ -2800,7 +2817,7 @@ function SignalIntervalMatrix({ matrixEntries }) {
               <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.label }}>
                 {timeframe}
               </span>
-              <DirectionBadge direction={direction} />
+              <DirectionBadge direction={direction} stale={Boolean(state) && !fresh} />
               <span style={{ color: state ? CSS_COLOR.textSec : CSS_COLOR.textMuted }}>
                 {state ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
               </span>

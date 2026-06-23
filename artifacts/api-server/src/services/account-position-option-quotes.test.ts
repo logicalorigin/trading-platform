@@ -12,12 +12,17 @@ function functionSource(name: string): string {
   return source.slice(start, nextType);
 }
 
-test("account position option quote refresh is background work", () => {
+test("account position option quote refresh merges bounded snapshot results", () => {
   const body = functionSource("fetchOptionQuoteSnapshotsForPositions");
 
-  assert.match(body, /void Promise\.allSettled\(/);
+  assert.match(body, /const snapshotResults = await Promise\.allSettled\(/);
   assert.match(body, /fetchBridgeOptionQuoteSnapshots/);
+  assert.match(body, /hydrateCached:\s*true/);
+  assert.match(body, /timeoutMs:\s*ACCOUNT_POSITION_OPTION_QUOTE_REFRESH_TIMEOUT_MS/);
+  assert.match(body, /optionQuoteDemandStateFromSnapshot/);
   assert.match(body, /readIbkrLiveDemandState/);
+  assert.match(body, /bestOptionQuoteDemandState/);
+  assert.doesNotMatch(body, /void Promise\.allSettled\(/);
   assert.doesNotMatch(body, /await Promise\.race/);
   assert.doesNotMatch(body, /ACCOUNT_OPTION_QUOTE_SNAPSHOT_TASK_MAX_WAIT_MS/);
 });

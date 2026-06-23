@@ -23,6 +23,14 @@ timeoutMs = 20000
 [gitHubImport]
 requiredFiles = [".replit", "replit.nix"]
 
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 18747
+externalPort = 3000
+
 [userenv]
 
 [userenv.development]
@@ -35,19 +43,3 @@ TZ = "America/Denver"
 
 [nix]
 channel = "stable-25_05"
-
-[[ports]]
-localPort = 8000
-externalPort = 8000
-
-[[ports]]
-localPort = 8080
-externalPort = 80
-
-[[ports]]
-localPort = 18181
-externalPort = 3001
-
-[[ports]]
-localPort = 18747
-externalPort = 3000

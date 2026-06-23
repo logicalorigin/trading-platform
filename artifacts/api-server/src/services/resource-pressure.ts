@@ -81,10 +81,16 @@ const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
 const API_ROUTE_LATENCY_WATCH_MS = 1_000;
 const API_ROUTE_LATENCY_HIGH_MS = 10_000;
 // Event-loop delay thresholds: the direct measure of server CPU/loop saturation
-// (unlike request latency, which external I/O waits inflate). Cooperative yields
-// keep steady-state delay well under the watch line.
-const API_EVENT_LOOP_DELAY_WATCH_MS = 60;
-const API_EVENT_LOOP_DELAY_HIGH_MS = 250;
+// (unlike request latency, which external I/O waits inflate). Calibrated to the
+// observed healthy baseline (~130-186ms p95 under the 500-symbol workload): the
+// old 60ms watch line sat BELOW normal operation, so every sample read "watch"
+// and transient ~300-470ms spikes hit "high". watch=150 keeps healthy steady
+// state in "normal"; high=400 (with the 2-sample hysteresis) trips only on
+// sustained multi-hundred-ms-to-second stalls (genuine loop saturation, e.g. the
+// bar-cache freeze's 1-3s spikes), not transient bursts. Pairs with the
+// finer-yield work that drops the baseline further.
+const API_EVENT_LOOP_DELAY_WATCH_MS = 150;
+const API_EVENT_LOOP_DELAY_HIGH_MS = 400;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 const RESOURCE_HIGH_ENTER_SAMPLE_COUNT = 2;
@@ -197,6 +203,13 @@ function readCgroupMemoryLimitMb(): number | null {
   } catch {
     return null;
   }
+}
+
+// Container memory ceiling (cgroup v2 memory.max), in MB, or null when
+// unbounded/unreadable. Exposed so heap pressure can be scaled against real
+// container memory rather than the ~2.7GB V8 heap ceiling.
+export function getContainerMemoryLimitMb(): number | null {
+  return readCgroupMemoryLimitMb();
 }
 
 export function resolveApiRssPressureThresholds(
@@ -386,9 +399,16 @@ function buildSnapshot(
   );
   // Actual server saturation: memory + event-loop + local DB pool exhaustion.
   // Request latency is excluded so a slow external (broker) route can't freeze
-  // signal/action work.
-  const immediateResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel);
-  const rawResourceLevel = maxLevel(immediateResourceLevel, eventLoopLevel);
+  // signal/action work. Only RSS (true container-memory exhaustion) is an
+  // INSTANT hard-block — waiting ~30s on a climbing RSS risks an OOM/restart, so
+  // it must gate immediately. heap and dbPool are noisy 15s-spaced point samples
+  // (a fully-used pool with a transient 2-deep queue is normal fan-out, not
+  // sustained saturation), so they go through the SAME 2-sample hysteresis as
+  // event-loop: a single blip caps at "watch" and only sustained (≥2 consecutive
+  // samples ≈ 30s) saturation reaches "high". This de-flaps the trading gate
+  // without weakening the genuine-stress response.
+  const immediateResourceLevel = rssLevel;
+  const rawResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel, eventLoopLevel);
   const resourceLevel = applyResourceLevelHysteresis({
     rawLevel: rawResourceLevel,
     immediateHigh: immediateResourceLevel === "high",

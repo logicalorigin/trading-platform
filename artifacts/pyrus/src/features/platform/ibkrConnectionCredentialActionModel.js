@@ -46,6 +46,7 @@ export const resolveIbkrBridgeProcessActions = ({
   bridgeLaunchInFlight = false,
   bridgeManagementToken = null,
   bridgeRuntimeOverrideActive = false,
+  desktopAgentOnline = false,
   gatewayConnectedForBridge = false,
   runtime = null,
 } = {}) => {
@@ -73,6 +74,8 @@ export const resolveIbkrBridgeProcessActions = ({
     !hasManagementToken && hasRuntimeOverride && !bridgeLaunchInFlight,
   );
 
+  const hasTeardownTarget = hasManagedTeardownTarget || hasOverrideCleanupTarget;
+
   return {
     cancelLaunchAction: bridgeLaunchCancelable
       ? {
@@ -81,21 +84,29 @@ export const resolveIbkrBridgeProcessActions = ({
         }
       : null,
     deactivateAction:
-      !bridgeDeactivationComplete && hasManagedTeardownTarget
-        ? {
-            label: "Deactivate",
-            mode: "managed-teardown",
-            queueRemoteShutdown: true,
-            stepperVariant: "deactivate",
-          }
-        : !bridgeDeactivationComplete && hasOverrideCleanupTarget
+      bridgeDeactivationComplete || !hasTeardownTarget
+        ? null
+        : // When a desktop helper is online it can tear down the Windows side
+          // (IB Gateway + the Cloudflare tunnel + the bridge/sidecar). Always
+          // command that full teardown — forcing when there is no management
+          // token — so detach actually closes those processes instead of
+          // orphaning them. Only fall back to a backend-only "Detach bridge"
+          // when no desktop is online to receive (and claim) a shutdown job.
+          desktopAgentOnline
           ? {
+              label: "Deactivate",
+              mode: "managed-teardown",
+              queueRemoteShutdown: true,
+              forceShutdown: !hasManagementToken,
+              stepperVariant: "deactivate",
+            }
+          : {
               label: "Detach bridge",
               mode: "detach-bridge",
               queueRemoteShutdown: false,
+              forceShutdown: false,
               stepperVariant: "clear-state",
-            }
-          : null,
+            },
   };
 };
 

@@ -91,7 +91,7 @@ test("glyph: a fresh sell is a down arrow in red", () => {
   assert.equal(glyph.tone, CSS_COLOR.red);
 });
 
-test("glyph: an aged buy stays blue (never amber) — the 'red for buy' fix", () => {
+test("glyph: an aged (ok, fresh=false) buy is an amber up arrow with no accent dot", () => {
   const glyph = resolveSignalDotGlyph({
     status: "ok",
     currentSignalDirection: "buy",
@@ -100,13 +100,14 @@ test("glyph: an aged buy stays blue (never amber) — the 'red for buy' fix", ()
     fresh: false,
   });
 
-  assert.equal(glyph.kind, "buy");
-  assert.equal(glyph.tone, CSS_COLOR.blue); // direction drives color, not staleness
-  assert.equal(glyph.attention, true); // staleness -> amber accent dot, not recolor
+  assert.equal(glyph.kind, "buy"); // last-known direction preserved
+  assert.equal(glyph.tone, CSS_COLOR.amber); // not-fresh directional -> whole arrow amber
+  assert.equal(glyph.attention, true);
+  assert.equal(glyph.staleDirectional, true); // -> renderer drops the dot
   assert.equal(glyph.opacity, 0.76);
 });
 
-test("glyph: an aged sell stays red, flags attention separately", () => {
+test("glyph: an aged (ok, fresh=false) sell is an amber down arrow with no accent dot", () => {
   const glyph = resolveSignalDotGlyph({
     status: "ok",
     currentSignalDirection: "sell",
@@ -115,10 +116,55 @@ test("glyph: an aged sell stays red, flags attention separately", () => {
     fresh: false,
   });
 
-  assert.equal(glyph.kind, "sell"); // direction (down) preserved
-  assert.equal(glyph.tone, CSS_COLOR.red); // color stays red, never amber
+  assert.equal(glyph.kind, "sell"); // last-known direction (down) preserved
+  assert.equal(glyph.tone, CSS_COLOR.amber); // not-fresh directional -> whole arrow amber
   assert.equal(glyph.attention, true);
+  assert.equal(glyph.staleDirectional, true);
   assert.equal(glyph.opacity, 0.76);
+});
+
+test("glyph: a stale buy is an amber up arrow with no accent dot", () => {
+  const glyph = resolveSignalDotGlyph({
+    status: "stale",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-09T18:10:00.000Z",
+    latestBarAt: "2026-06-09T18:15:00.000Z",
+    fresh: false,
+  });
+
+  assert.equal(glyph.kind, "buy"); // last-known direction preserved
+  assert.equal(glyph.tone, CSS_COLOR.amber); // whole arrow recolored amber
+  assert.equal(glyph.staleDirectional, true); // -> renderer drops the dot
+  assert.equal(glyph.attention, true);
+});
+
+test("glyph: a stale sell is an amber down arrow with no accent dot", () => {
+  const glyph = resolveSignalDotGlyph({
+    status: "stale",
+    currentSignalDirection: "sell",
+    currentSignalAt: "2026-06-09T18:10:00.000Z",
+    latestBarAt: "2026-06-09T18:15:00.000Z",
+    fresh: false,
+  });
+
+  assert.equal(glyph.kind, "sell"); // last-known direction (down) preserved
+  assert.equal(glyph.tone, CSS_COLOR.amber); // whole arrow recolored amber
+  assert.equal(glyph.staleDirectional, true);
+  assert.equal(glyph.attention, true);
+});
+
+test("glyph: an idle directional cell is an amber arrow in its latched direction (not currently fresh)", () => {
+  const glyph = resolveSignalDotGlyph({
+    status: "idle",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-09T18:10:00.000Z",
+    latestBarAt: "2026-06-09T18:15:00.000Z",
+    fresh: false,
+  });
+
+  assert.equal(glyph.kind, "buy"); // latched direction preserved
+  assert.equal(glyph.tone, CSS_COLOR.amber); // not currently fresh -> amber arrow, no dot
+  assert.equal(glyph.staleDirectional, true);
 });
 
 test("glyph: a hydrated no-signal cell is a neutral muted marker", () => {

@@ -32,6 +32,35 @@ const eventLabel = (eventType) => {
   return formatEnumLabel(stripped || eventType || "event");
 };
 
+const includesMtfNotAligned = (value) => {
+  if (typeof value !== "string") return false;
+  const normalized = value.toLowerCase().replace(/[_-]+/g, " ");
+  return normalized.includes("mtf not aligned");
+};
+
+const reasonValues = (value) =>
+  Array.isArray(value) ? value : value == null ? [] : [value];
+
+const isMtfNotAlignedControlEvent = (event, summary) => {
+  const payload =
+    event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const entryGate =
+    payload?.entryGate && typeof payload.entryGate === "object"
+      ? payload.entryGate
+      : {};
+  const values = [
+    event?.reason,
+    payload?.reason,
+    payload?.skipReason,
+    entryGate?.reason,
+    ...reasonValues(payload?.reasons),
+    ...reasonValues(payload?.reasonCodes),
+    ...reasonValues(entryGate?.reasons),
+    summary,
+  ];
+  return values.some(includesMtfNotAligned);
+};
+
 export function buildAlgoEventToast(event) {
   const category = categorize(event?.eventType);
   if (!category) return null;
@@ -43,6 +72,13 @@ export function buildAlgoEventToast(event) {
   const symbol = typeof event?.symbol === "string" ? event.symbol.trim() : "";
   const label = eventLabel(event?.eventType);
   const title = symbol ? `${symbol} · ${label}` : label;
+
+  if (
+    (category === "blocked" || category === "skipped") &&
+    isMtfNotAlignedControlEvent(event, summary)
+  ) {
+    return null;
+  }
 
   if (category === "exit") {
     const pnl = readNumber(event?.payload?.pnl);

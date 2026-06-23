@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
+    "./testing": "./src/testing.ts",
     "./transient-postgres-error": "./src/transient-postgres-error.ts"
   },
   "scripts": {
@@ -19,6 +20,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
     "@types/node": "catalog:",
     "@types/pg": "^8.18.0",
     "drizzle-kit": "^0.31.9",

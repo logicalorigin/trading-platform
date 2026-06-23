@@ -207,6 +207,9 @@ const compactImpactSummary = (field, impact) => {
 const numericField = (field) =>
   isNumericSettingType(field.type) || field.type === "number";
 
+const clampMtfRequiredCount = (_value, timeframes) =>
+  Math.max(1, Array.isArray(timeframes) ? timeframes.length : 0);
+
 export const CompactSwitch = ({
   checked,
   disabled,
@@ -378,8 +381,13 @@ export const CompactFieldInput = ({
         onPatch(field.relatedPresetPath, "custom");
       }
       if (field.requiredCountPath) {
-        // Selected frames must all align: required count tracks the selection.
-        onPatch(field.requiredCountPath, nextTimeframes.length);
+        onPatch(
+          field.requiredCountPath,
+          clampMtfRequiredCount(
+            getPathValue(draftRoot, field.requiredCountPath),
+            nextTimeframes,
+          ),
+        );
       }
     };
     return (

@@ -159,6 +159,48 @@ test("position equity quote stream does not subscribe when no account-position d
   );
 });
 
+test("account monitor stream canonicalizes option position conids to structured quote ids", () => {
+  const request =
+    __bridgeStreamsInternalsForTests.marketDataRequestFromInstrument(
+      {
+        symbol: "SPY",
+        assetClass: "Options",
+        optionContract: {
+          providerContractId: "890576032",
+          underlying: "SPY",
+          expirationDate: "2026-06-23T00:00:00.000Z",
+          strike: 740,
+          right: "call",
+          multiplier: 100,
+        },
+      },
+      { massiveStocksRealtime: false },
+    );
+
+  assert.equal(request?.assetClass, "option");
+  assert.equal(request?.symbol, "SPY");
+  assert.equal(request?.underlying, "SPY");
+  assert.match(request?.providerContractId ?? "", /^twsopt:/);
+  assert.notEqual(request?.providerContractId, "890576032");
+
+  const decoded = JSON.parse(
+    Buffer.from(
+      request!.providerContractId!.slice("twsopt:".length),
+      "base64url",
+    ).toString("utf8"),
+  );
+  assert.deepEqual(decoded, {
+    v: 1,
+    u: "SPY",
+    e: "20260623",
+    s: 740,
+    r: "C",
+    x: "SMART",
+    tc: "SPY",
+    m: 100,
+  });
+});
+
 test("position equity quote subscriptions create a bridge consumer for account-position demand", () => {
   __setBridgeQuoteRuntimeConfiguredForTests(true);
   admitMarketDataLeases({

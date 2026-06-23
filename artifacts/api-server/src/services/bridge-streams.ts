@@ -168,20 +168,33 @@ function isWorkingOrderStatus(status: unknown): boolean {
 function marketDataRequestFromInstrument(input: {
   symbol?: string | null;
   assetClass?: string | null;
-  optionContract?: { providerContractId?: unknown; underlying?: unknown } | null;
+  optionContract?: {
+    providerContractId?: unknown;
+    underlying?: unknown;
+    expirationDate?: unknown;
+    strike?: unknown;
+    right?: unknown;
+    multiplier?: unknown;
+    sharesPerContract?: unknown;
+  } | null;
 }, options: {
   massiveStocksRealtime: boolean;
 }): MarketDataLineRequest | null {
-  const assetClass = input.assetClass === "option" ? "option" : "equity";
+  const assetClass =
+    input.optionContract ||
+    String(input.assetClass ?? "").trim().toLowerCase().startsWith("option")
+      ? "option"
+      : "equity";
   const symbol = normalizeSymbol(
     String(input.optionContract?.underlying ?? input.symbol ?? ""),
   );
 
   if (assetClass === "option") {
     const providerContractId =
-      typeof input.optionContract?.providerContractId === "string"
+      structuredOptionProviderContractIdFromInstrument(input) ??
+      (typeof input.optionContract?.providerContractId === "string"
         ? input.optionContract.providerContractId.trim()
-        : String(input.optionContract?.providerContractId ?? "").trim();
+        : String(input.optionContract?.providerContractId ?? "").trim());
     if (!providerContractId) {
       return options.massiveStocksRealtime
         ? null
@@ -199,6 +212,82 @@ function marketDataRequestFromInstrument(input: {
   }
 
   return symbol ? { assetClass: "equity", symbol } : null;
+}
+
+function finiteOptionNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function optionExpirationKey(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10).replaceAll("-", "");
+  }
+  const text = String(value ?? "").trim();
+  if (/^\d{8}$/.test(text)) {
+    return text;
+  }
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) {
+    return `${dateOnly[1]}${dateOnly[2]}${dateOnly[3]}`;
+  }
+  const parsed = text ? new Date(text) : null;
+  return parsed && !Number.isNaN(parsed.getTime())
+    ? parsed.toISOString().slice(0, 10).replaceAll("-", "")
+    : null;
+}
+
+function optionRightCode(value: unknown): "C" | "P" | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") {
+    return "C";
+  }
+  if (normalized === "put" || normalized === "p") {
+    return "P";
+  }
+  return null;
+}
+
+function structuredOptionProviderContractIdFromInstrument(input: {
+  optionContract?: {
+    underlying?: unknown;
+    expirationDate?: unknown;
+    strike?: unknown;
+    right?: unknown;
+    multiplier?: unknown;
+    sharesPerContract?: unknown;
+  } | null;
+}): string | null {
+  const contract = input.optionContract;
+  const underlying = normalizeSymbol(String(contract?.underlying ?? ""));
+  const expiration = optionExpirationKey(contract?.expirationDate);
+  const strike = finiteOptionNumber(contract?.strike);
+  const right = optionRightCode(contract?.right);
+  if (!underlying || !expiration || strike === null || !right) {
+    return null;
+  }
+  const multiplier =
+    Math.trunc(
+      finiteOptionNumber(contract?.multiplier) ??
+        finiteOptionNumber(contract?.sharesPerContract) ??
+        100,
+    ) || 100;
+  return `twsopt:${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      u: underlying,
+      e: expiration,
+      s: strike,
+      r: right,
+      x: "SMART",
+      tc: underlying,
+      m: multiplier,
+    }),
+    "utf8",
+  ).toString("base64url")}`;
 }
 
 function prewarmAccountMonitorQuotes(
@@ -926,6 +1015,8 @@ export function subscribePositionQuoteSnapshots(
 
 export const __bridgeStreamsInternalsForTests = {
   filterPositionQuoteSymbols,
+  marketDataRequestFromInstrument,
+  structuredOptionProviderContractIdFromInstrument,
 };
 
 export function subscribeOptionChains(

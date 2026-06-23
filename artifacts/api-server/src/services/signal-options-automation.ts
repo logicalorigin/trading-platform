@@ -2,6 +2,7 @@ import {
   computeOptionGreeksFromPrice,
   resolveSignalOptionsExecutionProfile,
   scoreOptionGreekCandidate,
+  signalOptionsAvailableMtfTimeframes,
   signalOptionsDefaultMtfTimeframes,
   signalOptionsStrikeSlotsForRight,
   timeToExpirationYears,
@@ -38,7 +39,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
-import { and, desc, eq, gte, inArray, isNotNull, like } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -98,6 +99,7 @@ import {
   isSignalOptionsShadowConfig,
   normalizeAlgoDeploymentProviderAccountId,
 } from "./algo-deployment-account";
+import { stripOvernightSpotFromSignalOptionsConfig } from "./algo-deployment-profile-shape";
 import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import { isStockAggregateStreamingAvailable } from "./stock-aggregate-stream";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
@@ -2021,7 +2023,7 @@ async function listDeploymentEvents(deploymentId: string, limit = 500) {
     .where(
       and(
         eq(executionEventsTable.deploymentId, deploymentId),
-        like(executionEventsTable.eventType, `${SIGNAL_OPTIONS_EVENT_PREFIX}%`),
+        sql`${executionEventsTable.eventType} LIKE 'signal_options_%'`,
       ),
     )
     .orderBy(desc(executionEventsTable.occurredAt))
@@ -4175,6 +4177,27 @@ function signalOptionsConfiguredMtfTimeframes(
     : [...signalOptionsDefaultMtfTimeframes];
 }
 
+function orderedSignalOptionsMtfTimeframes(
+  timeframes: readonly SignalOptionsMtfTimeframe[],
+): SignalOptionsMtfTimeframe[] {
+  const selected = new Set(timeframes);
+  return signalOptionsAvailableMtfTimeframes.filter((timeframe) =>
+    selected.has(timeframe),
+  );
+}
+
+function signalOptionsEffectiveMtfTimeframes(input: {
+  profile: SignalOptionsExecutionProfile;
+  deployment?: Pick<AlgoDeployment, "config"> | null;
+  signalTimeframe?: unknown;
+}): SignalOptionsMtfTimeframe[] {
+  void input.deployment;
+  void input.signalTimeframe;
+  return orderedSignalOptionsMtfTimeframes(
+    signalOptionsConfiguredMtfTimeframes(input.profile),
+  );
+}
+
 function signalOptionsMtfTimeframesFromFilterState(
   filterState: Record<string, unknown>,
 ) {
@@ -4186,12 +4209,15 @@ function signalOptionsMtfTimeframesFromFilterState(
 function selectSignalOptionsMtfFrames(input: {
   filterState: Record<string, unknown>;
   profile: SignalOptionsExecutionProfile;
+  mtfTimeframes?: SignalOptionsMtfTimeframe[];
 }) {
   const rawDirections = asArray(input.filterState.mtfDirections).map((entry) =>
     Number(entry),
   );
   const directions = rawDirections.filter((entry) => Number.isFinite(entry));
-  const configuredTimeframes = signalOptionsConfiguredMtfTimeframes(input.profile);
+  const configuredTimeframes = input.mtfTimeframes?.length
+    ? orderedSignalOptionsMtfTimeframes(input.mtfTimeframes)
+    : signalOptionsConfiguredMtfTimeframes(input.profile);
   const sourceTimeframes = signalOptionsMtfTimeframesFromFilterState(
     input.filterState,
   );
@@ -4236,8 +4262,11 @@ function selectSignalOptionsMtfFrames(input: {
 function selectSignalOptionsMtfFramesFromMatrix(input: {
   profile: SignalOptionsExecutionProfile;
   mtfTimeframeDirections: Record<string, SignalMonitorDirection | null>;
+  mtfTimeframes?: SignalOptionsMtfTimeframe[];
 }) {
-  const configuredTimeframes = signalOptionsConfiguredMtfTimeframes(input.profile);
+  const configuredTimeframes = input.mtfTimeframes?.length
+    ? orderedSignalOptionsMtfTimeframes(input.mtfTimeframes)
+    : signalOptionsConfiguredMtfTimeframes(input.profile);
   const mtfDirections = configuredTimeframes.map((timeframe) => {
     const direction = input.mtfTimeframeDirections[timeframe];
     return direction === "buy" ? 1 : direction === "sell" ? -1 : 0;
@@ -4255,13 +4284,10 @@ function mtfFrameCount(mtfDirections: number[]) {
 }
 
 function requiredSignalOptionsMtfCount(
-  value: unknown,
+  _value: unknown,
   mtfDirections: number[],
 ) {
-  return Math.min(
-    mtfFrameCount(mtfDirections),
-    Math.max(1, Math.round(finiteNumber(value) ?? 2)),
-  );
+  return mtfFrameCount(mtfDirections);
 }
 
 function signalOptionsMtfAlignmentScore(
@@ -4316,6 +4342,7 @@ function evaluateSignalOptionsEntryGate(input: {
   // direction on each configured timeframe (the correct source). When omitted
   // (diagnostic/preview callers), the legacy filterState fallback is used.
   mtfTimeframeDirections?: Record<string, SignalMonitorDirection | null>;
+  mtfTimeframes?: SignalOptionsMtfTimeframe[];
 }) {
   const filterState = asRecord(asRecord(input.candidate.signal).filterState);
   const mtfGate = input.profile.entryGate.mtfAlignment ?? {
@@ -4327,10 +4354,12 @@ function evaluateSignalOptionsEntryGate(input: {
     ? selectSignalOptionsMtfFramesFromMatrix({
         profile: input.profile,
         mtfTimeframeDirections: input.mtfTimeframeDirections,
+        mtfTimeframes: input.mtfTimeframes,
       })
     : selectSignalOptionsMtfFrames({
         filterState,
         profile: input.profile,
+        mtfTimeframes: input.mtfTimeframes,
       });
   const mtfDirections = mtfSelection.mtfDirections;
   const requiredMtfCount = requiredSignalOptionsMtfCount(
@@ -12176,16 +12205,21 @@ async function processEntryCandidate(input: {
   tradingAllowanceBudget?: { available: number } | null;
   signal?: AbortSignal;
 }) {
+  const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+    profile: input.profile,
+    deployment: input.deployment,
+  });
   const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
     environment: resolveSignalSourceEnvironment(),
     symbol: input.candidate.symbol,
-    timeframes: signalOptionsConfiguredMtfTimeframes(input.profile),
+    timeframes: mtfTimeframes,
     asOf: new Date(),
   });
   const entryGate = evaluateSignalOptionsEntryGate({
     candidate: input.candidate,
     profile: input.profile,
     mtfTimeframeDirections,
+    mtfTimeframes,
   });
   if (!entryGate.ok) {
     const contractSelectionLease = acquireSignalOptionsContractSelectionLease({
@@ -14679,7 +14713,6 @@ export async function runSignalOptionsGreekSelectorSmoke(input: {
   const profile = Object.keys(profilePatch).length
     ? mergeProfilePatch(baseProfile, profilePatch)
     : baseProfile;
-  const mtfTimeframes = signalOptionsConfiguredMtfTimeframes(profile);
   const signalProfile = await getSignalMonitorProfileRow({
     environment: resolveSignalSourceEnvironment(),
   });
@@ -14705,6 +14738,11 @@ export async function runSignalOptionsGreekSelectorSmoke(input: {
     input.signalTimeframe,
     resolveSignalMonitorTimeframe(signalUniverse.profile.timeframe),
   );
+  const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+    profile,
+    deployment,
+    signalTimeframe: timeframe,
+  });
   const loadedSignals = await loadHistoricalBackfillSignals({
     profileId: signalProfile.id,
     profileSettings: pyrusSignalsSettings,
@@ -16017,7 +16055,6 @@ export async function runSignalOptionsShadowBackfill(input: {
     const profile = Object.keys(profilePatch).length
       ? mergeProfilePatch(baseProfile, profilePatch)
       : baseProfile;
-    const mtfTimeframes = signalOptionsConfiguredMtfTimeframes(profile);
     const signalProfile = await getSignalMonitorProfileRow({
       environment: resolveSignalSourceEnvironment(),
     });
@@ -16054,6 +16091,11 @@ export async function runSignalOptionsShadowBackfill(input: {
       input.signalTimeframe,
       signalProfileTimeframe,
     );
+    const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+      profile,
+      deployment,
+      signalTimeframe: timeframe,
+    });
     const summary: SignalOptionsBackfillSummary = {
       symbolsEvaluated: backfillUniverse.symbols.length,
       symbolUniverse: backfillUniverse,
@@ -16220,16 +16262,22 @@ export async function runSignalOptionsShadowBackfill(input: {
         positionsBySymbol.delete(symbol);
       }
 
+      const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+        profile,
+        deployment,
+        signalTimeframe: timeframe,
+      });
       const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
         environment: resolveSignalSourceEnvironment(),
         symbol: candidate.symbol,
-        timeframes: signalOptionsConfiguredMtfTimeframes(profile),
+        timeframes: mtfTimeframes,
         asOf: historicalSignal.signalAt,
       });
       const entryGate = evaluateSignalOptionsEntryGate({
         candidate,
         profile,
         mtfTimeframeDirections,
+        mtfTimeframes,
       });
       if (!entryGate.ok) {
         await emitBackfillSkippedCandidate({
@@ -17222,9 +17270,15 @@ export async function updateSignalOptionsExecutionProfile(input: {
   patch: Record<string, unknown>;
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
+  if (!deploymentHasSignalOptionsProfile(deployment)) {
+    throw new HttpError(400, "Deployment is not a signal-options deployment.", {
+      code: "algo_deployment_not_signal_options",
+      expose: true,
+    });
+  }
   const currentProfile = resolveDeploymentProfile(deployment);
   const nextProfile = mergeProfilePatch(currentProfile, input.patch);
-  const config = asRecord(deployment.config);
+  const config = stripOvernightSpotFromSignalOptionsConfig(deployment.config);
   const [updated] = await db
     .update(algoDeploymentsTable)
     .set({
@@ -17301,6 +17355,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   isSignalOptionsActionableSignalState,
   isSignalOptionsSignalAgeActionable,
   classifySignalOptionsSkipReason,
+  signalOptionsEffectiveMtfTimeframes,
   latestSignalDate,
   findSignalOptionsQuoteForContract,
   mergeSignalOptionsCandidate,

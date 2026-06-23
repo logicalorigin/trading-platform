@@ -15,6 +15,8 @@ import {
   resolveSignalMove,
   resolveSignalScoreBreakdown,
   signalActionLabel,
+  signalFreshnessLabel,
+  STRATEGY_SIGNAL_TIMEFRAMES,
 } from "./algoHelpers.js";
 
 test("resolveAlgoDeploymentKind routes deployments to the right control surface", () => {
@@ -167,6 +169,62 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
   assert.equal(rows[0].currentSignalClose, 545.5);
 });
 
+test("visible signal rows are signal-driven and do not preserve the universe cap", () => {
+  const symbols = Array.from(
+    { length: 500 },
+    (_, index) => `S${String(index).padStart(3, "0")}`,
+  );
+  const signalMatrixStates = symbols.flatMap((symbol, index) =>
+    STRATEGY_SIGNAL_TIMEFRAMES.map((timeframe) => {
+      const noSignal = index % 10 === 0;
+      return {
+        profileId: `profile-${timeframe}`,
+        symbol,
+        timeframe,
+        status: noSignal ? "ok" : index % 13 === 0 ? "unavailable" : "ok",
+        active: true,
+        fresh: !noSignal,
+        currentSignalDirection: noSignal
+          ? null
+          : index % 2 === 0
+            ? "buy"
+            : "sell",
+        currentSignalAt: noSignal
+          ? null
+          : `2026-06-11T16:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        currentSignalPrice: noSignal ? null : 500 + index,
+        currentSignalClose: noSignal ? null : 500.25 + index,
+        latestBarAt: `2026-06-11T17:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        latestBarClose: 501 + index,
+        actionEligible: !noSignal,
+        actionBlocker: noSignal ? "no_signal" : null,
+      };
+    }),
+  );
+
+  for (const timeframe of STRATEGY_SIGNAL_TIMEFRAMES) {
+    const rows = buildVisibleSignalRows({
+      universeSymbols: symbols,
+      signalTimeframes: [timeframe],
+      signalActionTimeframes: [timeframe],
+      signalMatrixStates,
+    });
+    assert.equal(rows.length, 450, `${timeframe} should expose signal cells only`);
+    assert.deepEqual(
+      symbols
+        .filter((_, index) => index % 10 === 0)
+        .filter((symbol) => rows.some((row) => row.symbol === symbol)),
+      [],
+    );
+    assert.equal(rows.every((row) => row.timeframe === timeframe), true);
+
+    const noSignalRow = rows.find((row) => row.symbol === "S000");
+    assert.equal(noSignalRow, undefined);
+    assert.equal(rows.every((row) => row.direction === "buy" || row.direction === "sell"), true);
+    assert.equal(rows.every((row) => row.signalAt), true);
+  }
+});
+
 test("STA matrix row carries latestBarClose as currentPrice so Move resolves without sparkline hydration", () => {
   const [row] = buildVisibleSignalRows({
     signals: [],
@@ -197,6 +255,7 @@ test("STA matrix row carries latestBarClose as currentPrice so Move resolves wit
   // currentPrice comes straight off the matrix state (latestBarClose), so the
   // Move column renders immediately — no live quote or sparkline snapshot.
   assert.equal(row.currentPrice, 525);
+  assert.equal(row.latestBarClose, 525);
   const move = resolveSignalMove(row, null, null);
   assert.equal(move.label, "+5.0%");
   assert.equal(move.detail, "+25.00");
@@ -314,6 +373,38 @@ test("signal indicator metrics use visible STA rows with buy/sell directional pa
   assert.equal(metrics.byDirection.sell.expectancyPercent, 0);
   assert.ok(Math.abs(metrics.avgDirectionalMovePercent - 10 / 3) < 1e-9);
   assert.ok(Math.abs(metrics.correctnessPercent - (2 / 3) * 100) < 1e-9);
+});
+
+test("signal indicator all-count follows STA rows even when a matrix row has no direction", () => {
+  const metrics = buildSignalIndicatorMetrics([
+    {
+      symbol: "AAPL",
+      direction: "buy",
+      signalPrice: 100,
+      currentPrice: 110,
+    },
+    {
+      symbol: "MSFT",
+      direction: "sell",
+      signalPrice: 200,
+      currentPrice: 180,
+    },
+    {
+      symbol: "SQQQ",
+      direction: null,
+      actionBlocker: "no_signal",
+      timeframe: "2m",
+    },
+  ]);
+
+  assert.equal(metrics.signalCount, 3);
+  assert.equal(metrics.observationCount, 2);
+  assert.equal(metrics.byDirection.buy.signalCount, 1);
+  assert.equal(metrics.byDirection.sell.signalCount, 1);
+  assert.equal(
+    metrics.byDirection.buy.signalCount + metrics.byDirection.sell.signalCount,
+    2,
+  );
 });
 
 test("signal indicator metrics calculate excursion from timestamped spark bars", () => {
@@ -1263,8 +1354,8 @@ test("Move from a FRESH matrix bar renders and is not flagged stale", () => {
 test("Move on a present-but-stale row is flagged stale via monitor state (FFIV shape)", () => {
   // FFIV: the quote value is present (price renders, move computes) but the
   // Signal Monitor marks the row stale -> the giant since-fire move must be
-  // flagged, not shown as live. Staleness is the row's monitor state (codex's
-  // canonical signal: status !== "ok" / actionBlocker data_stale), NOT a quote
+  // flagged, not shown as live. Staleness is the row's monitor state
+  // (status stale / actionBlocker data_stale), NOT a quote
   // freshness/cacheAgeMs heuristic.
   const okMove = resolveSignalMove(
     { symbol: "FFIV", signalPrice: 154.56, status: "ok" },
@@ -1286,6 +1377,22 @@ test("Move on a present-but-stale row is flagged stale via monitor state (FFIV s
     null,
   );
   assert.equal(blockedMove.stale, true);
+});
+
+test("Move on a market-idle row renders and is not flagged stale", () => {
+  const move = resolveSignalMove(
+    {
+      symbol: "SPY",
+      signalPrice: 100,
+      currentPrice: 101,
+      status: "idle",
+      actionBlocker: "market_idle",
+    },
+    null,
+    null,
+  );
+  assert.equal(move.label, "+1.0%");
+  assert.equal(move.stale, false);
 });
 
 test("a row with no monitor status is not spuriously flagged stale", () => {

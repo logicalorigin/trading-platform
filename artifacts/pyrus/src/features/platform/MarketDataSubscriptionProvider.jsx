@@ -33,6 +33,7 @@ import {
   applyRuntimeQuoteSnapshots,
   syncRuntimeMarketData,
 } from "./runtimeMarketDataModel";
+import { useCriticalApiMutationPause } from "./criticalApiMutationPause.js";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "./sparklineConfig";
 import {
   usePlatformFreshnessQueryHydration,
@@ -76,7 +77,11 @@ const SPARKLINE_HISTORY_SEED_LIMIT = 240;
 const SPARKLINE_SEED_CHUNK_SIZE = 96;
 const SIGNAL_SPARKLINE_SEED_LIMIT = 120;
 const SIGNAL_SPARKLINE_SEED_POINT_LIMIT = 48;
-const SPARKLINE_MIN_VISUAL_POINT_COUNT = 8;
+// The table renderer can draw a meaningful line with two points. Keep the
+// provider gate aligned with the seed route's hydrated-symbol definition so
+// thinly traded tickers do not get marked fulfilled by the server and then
+// filtered blank before reaching runtime snapshots.
+const SPARKLINE_MIN_VISUAL_POINT_COUNT = 2;
 // Client-side fan-out cap for the signal sparkline seed. Bounded to the server's
 // /api/sparklines/seed DB budget (SPARKLINE_SEED_DB_CONCURRENCY = 2 against a
 // 12-connection pool): 2 concurrent chunk POSTs keep total in-flight DB readers
@@ -247,6 +252,7 @@ const fetchSignalSparklineSeedInChunks = async (
   {
     chunkSize = SPARKLINE_SEED_CHUNK_SIZE,
     concurrency = SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
+    onChunk = null,
   } = {},
 ) => {
   const size = Math.max(1, Math.floor(Number(chunkSize) || 1));
@@ -264,21 +270,61 @@ const fetchSignalSparklineSeedInChunks = async (
   const settled = await settleWithConcurrency(
     chunks,
     Math.max(1, Math.floor(Number(concurrency) || 1)),
-    (chunk) =>
-      fetchSparklineSeed(chunk, {
+    async (chunk, index) => {
+      const chunkBarsBySymbol = await fetchSparklineSeed(chunk, {
         limit: SIGNAL_SPARKLINE_SEED_LIMIT,
         pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
         requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
         label: "Signal sparkline seed",
-      }),
+      });
+      if (typeof onChunk === "function") {
+        onChunk(chunkBarsBySymbol, { index, symbols: chunk });
+      }
+      return chunkBarsBySymbol;
+    },
   );
   const fulfilled = settled.filter((result) => result.status === "fulfilled");
-  // Preserve retry-on-total-failure: if every chunk failed, surface the error so
-  // the query retries; partial success returns whatever landed.
-  if (!fulfilled.length) {
-    throw settled[0]?.reason ?? new Error("Signal sparkline seed failed");
+  const rejected = settled.filter((result) => result.status === "rejected");
+  // A partial seed is not a stable result: treating it as success pins the failed
+  // chunk's symbols blank until the query key changes. Throw so React Query retries
+  // the whole seed request and keep prior runtime bars visible meanwhile.
+  if (rejected.length) {
+    throw rejected[0]?.reason ?? new Error("Signal sparkline seed failed");
   }
   return Object.assign({}, ...fulfilled.map((result) => result.value));
+};
+
+const buildSignalSeedVisualBarsBySymbol = ({
+  seedBarsBySymbol = {},
+  aggregateBarsBySymbol = {},
+  aggregateOnlySymbolSet = new Set(),
+} = {}) => {
+  const entries = Object.entries(seedBarsBySymbol)
+    .map(([symbol, seedBars]) => {
+      const normalized = normalizeRuntimeSymbol(symbol);
+      if (!normalized || !hasUsableSparklineBars(seedBars)) {
+        return null;
+      }
+      const bars = mergeSparklineBars(
+        seedBars,
+        aggregateBarsBySymbol[normalized],
+      );
+      if (!hasUsableSparklineBars(bars)) {
+        return null;
+      }
+      return [
+        normalized,
+        thinBarsForSparkline(
+          bars,
+          aggregateOnlySymbolSet.has(normalized)
+            ? SIGNAL_SPARKLINE_SEED_POINT_LIMIT
+            : SPARKLINE_RENDER_POINT_LIMIT,
+        ),
+      ];
+    })
+    .filter(Boolean);
+
+  return entries.length ? Object.fromEntries(entries) : {};
 };
 
 const fetchSparklineSeedInChunks = async (
@@ -333,6 +379,7 @@ export const MarketDataSubscriptionProvider = ({
   children,
 }) => {
   const queryClient = useQueryClient();
+  const criticalApiMutationPaused = useCriticalApiMutationPause();
   const positionQuoteSymbols = usePositionMarketDataSymbols();
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
@@ -445,13 +492,21 @@ export const MarketDataSubscriptionProvider = ({
     ],
   );
   const sparklineHistoryEnabled = Boolean(
-    sparklineHistoryRuntimeEnabled && historySparklineSymbols.length > 0,
+    !criticalApiMutationPaused &&
+      sparklineHistoryRuntimeEnabled &&
+      historySparklineSymbols.length > 0,
   );
   const signalSparklineSeedSymbols = useMemo(
     () => Array.from(aggregateOnlySparklineSymbolSet),
     [aggregateOnlySparklineSymbolSet],
   );
-  const signalSparklineSeedEnabled = signalSparklineSeedSymbols.length > 0;
+  const signalSparklineSeedSymbolsKey = useMemo(
+    () => signalSparklineSeedSymbols.join(","),
+    [signalSparklineSeedSymbols],
+  );
+  const signalSparklineSeedEnabled = Boolean(
+    !criticalApiMutationPaused && signalSparklineSeedSymbols.length > 0,
+  );
   const sparklineHydrationGate = useHydrationGate({
     enabled: sparklineHistoryEnabled,
     priority: BARS_REQUEST_PRIORITY.background,
@@ -459,6 +514,7 @@ export const MarketDataSubscriptionProvider = ({
   });
   const marketBaselineHydrationGate = useHydrationGate({
     enabled:
+      !criticalApiMutationPaused &&
       lowPriorityHistoryEnabled &&
       marketScreenActive &&
       MARKET_PERFORMANCE_SYMBOLS.length > 0,
@@ -471,20 +527,26 @@ export const MarketDataSubscriptionProvider = ({
     quoteStreamRuntimeEnabled,
     symbolCount: streamedQuoteSymbols.length,
     eventSourceAvailable,
-    upstreamDisabledReason: upstreamQuoteStreamDisabledReason,
+    upstreamDisabledReason: criticalApiMutationPaused
+      ? "critical-api-mutation"
+      : upstreamQuoteStreamDisabledReason,
   });
   const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
     quoteStreamRuntimeEnabled: positionQuoteStreamRuntimeEnabled,
     symbolCount: positionQuoteSymbols.length,
     eventSourceAvailable,
-    upstreamDisabledReason: upstreamPositionQuoteStreamDisabledReason,
+    upstreamDisabledReason: criticalApiMutationPaused
+      ? "critical-api-mutation"
+      : upstreamPositionQuoteStreamDisabledReason,
   });
   const quoteStreamRuntimeActive = Boolean(!quoteStreamDisabledReason);
   const positionQuoteStreamRuntimeActive = Boolean(
     !positionQuoteStreamDisabledReason,
   );
   const marketAggregateStreamRuntimeActive = Boolean(
-    marketStockAggregateStreamingEnabled && streamedAggregateSymbols.length > 0,
+    !criticalApiMutationPaused &&
+      marketStockAggregateStreamingEnabled &&
+      streamedAggregateSymbols.length > 0,
   );
   const streamCoveredQuoteSymbols = useMemo(() => {
     const symbols = [
@@ -513,7 +575,9 @@ export const MarketDataSubscriptionProvider = ({
       streamCoveredQuoteSymbols,
     ],
   );
-  const restQuoteSymbols = restQuoteSplit.restQuoteSymbols;
+  const restQuoteSymbols = criticalApiMutationPaused
+    ? []
+    : restQuoteSplit.restQuoteSymbols;
   const visibleRealtimeCoverageDiagnostics = useMemo(
     () =>
       buildVisibleRealtimeCoverageDiagnostics({
@@ -683,6 +747,55 @@ export const MarketDataSubscriptionProvider = ({
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
+  const signalSparklineSeedChunkFlushRef = useRef({
+    count: 0,
+    symbolCount: 0,
+    lastSymbolCount: 0,
+    updatedAt: null,
+  });
+  useEffect(() => {
+    signalSparklineSeedChunkFlushRef.current = {
+      count: 0,
+      symbolCount: 0,
+      lastSymbolCount: 0,
+      updatedAt: null,
+    };
+  }, [signalSparklineSeedSymbolsKey]);
+  const publishSignalSparklineSeedChunk = useCallback(
+    (seedBarsBySymbol) => {
+      const visualBarsBySymbol = buildSignalSeedVisualBarsBySymbol({
+        seedBarsBySymbol,
+        aggregateBarsBySymbol: aggregateSparklineBarsBySymbol,
+        aggregateOnlySymbolSet: aggregateOnlySparklineSymbolSet,
+      });
+      const symbolCount = Object.keys(visualBarsBySymbol).length;
+      if (!symbolCount) {
+        return;
+      }
+      syncRuntimeMarketData(
+        watchlistSymbols,
+        activeWatchlistItems,
+        quotesQuery.data?.quotes,
+        {
+          sparklineBarsBySymbol: visualBarsBySymbol,
+        },
+      );
+      signalSparklineSeedChunkFlushRef.current = {
+        count: signalSparklineSeedChunkFlushRef.current.count + 1,
+        symbolCount:
+          signalSparklineSeedChunkFlushRef.current.symbolCount + symbolCount,
+        lastSymbolCount: symbolCount,
+        updatedAt: new Date().toISOString(),
+      };
+    },
+    [
+      activeWatchlistItems,
+      aggregateOnlySparklineSymbolSet,
+      aggregateSparklineBarsBySymbol,
+      quotesQuery.data?.quotes,
+      watchlistSymbols,
+    ],
+  );
   const signalSparklineSeedQuery = useQuery({
     queryKey: [
       "signal-sparkline-seed",
@@ -694,7 +807,10 @@ export const MarketDataSubscriptionProvider = ({
     enabled: Boolean(
       signalSparklineSeedEnabled && signalSparklineSeedSymbols.length,
     ),
-    queryFn: () => fetchSignalSparklineSeedInChunks(signalSparklineSeedSymbols),
+    queryFn: () =>
+      fetchSignalSparklineSeedInChunks(signalSparklineSeedSymbols, {
+        onChunk: publishSignalSparklineSeedChunk,
+      }),
     ...BARS_QUERY_DEFAULTS,
     retry: retryUnlessTimeout(2),
     gcTime: HEAVY_PAYLOAD_GC_MS,
@@ -776,9 +892,7 @@ export const MarketDataSubscriptionProvider = ({
     sparklineQuery.data,
   ]);
   const signalSparklineSeedSettled = Boolean(
-    !signalSparklineSeedSymbols.length ||
-      signalSparklineSeedQuery.isFetched ||
-      signalSparklineSeedQuery.isError,
+    !signalSparklineSeedSymbols.length || signalSparklineSeedQuery.isSuccess,
   );
   const clearAggregateOnlySparklineSymbols = useMemo(() => {
     if (!signalSparklineSeedSettled) {
@@ -912,6 +1026,14 @@ export const MarketDataSubscriptionProvider = ({
           signalSeedSettled: signalSparklineSeedSettled,
           signalSeedChunkSize: SPARKLINE_SEED_CHUNK_SIZE,
           signalSeedFetchConcurrency: SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
+          signalSeedChunkFlushCount:
+            signalSparklineSeedChunkFlushRef.current.count,
+          signalSeedChunkFlushSymbolCount:
+            signalSparklineSeedChunkFlushRef.current.symbolCount,
+          signalSeedLastChunkFlushSymbolCount:
+            signalSparklineSeedChunkFlushRef.current.lastSymbolCount,
+          signalSeedLastChunkFlushAt:
+            signalSparklineSeedChunkFlushRef.current.updatedAt,
           visualCacheSymbolCount: visualSparklineBarsCacheRef.current.size,
           visualCacheSymbols: Array.from(
             visualSparklineBarsCacheRef.current.keys(),

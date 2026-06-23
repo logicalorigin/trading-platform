@@ -32,7 +32,10 @@ export type SignalOptionsWorkerSnapshot = {
     lastScanOutcome?:
       | "success"
       | "failed"
+      | "timed_out"
+      | "timed_out_unsettled"
       | "scan_running"
+      | "resource_pressure"
       | null;
     scanCount: number;
     totalFailureCount: number;

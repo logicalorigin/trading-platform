@@ -90,6 +90,8 @@ const equivalentSignalMatrixCellState = (current, candidate) =>
     comparableFiniteNumberOrNull(candidate?.currentSignalPrice) &&
   comparableFiniteNumberOrNull(current?.currentSignalClose) ===
     comparableFiniteNumberOrNull(candidate?.currentSignalClose) &&
+  comparableFiniteNumberOrNull(current?.latestBarClose) ===
+    comparableFiniteNumberOrNull(candidate?.latestBarClose) &&
   comparableFiniteNumberOrNull(current?.currentSignalMfePercent) ===
     comparableFiniteNumberOrNull(candidate?.currentSignalMfePercent) &&
   comparableFiniteNumberOrNull(current?.currentSignalMaePercent) ===

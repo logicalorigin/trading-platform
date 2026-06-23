@@ -1,4 +1,5 @@
 const NON_CURRENT_SIGNAL_STATUSES = new Set([
+  "idle",
   "stale",
   "error",
   "pending",
@@ -6,14 +7,21 @@ const NON_CURRENT_SIGNAL_STATUSES = new Set([
   "unknown",
 ]);
 
-// A latched buy/sell stays displayed through a data gap (status "stale");
-// staleness styles the signal, it does not hide it. Only data problems
+// A latched buy/sell stays displayed through an idle market or data gap;
+// non-current status styles the signal, it does not hide it. Only data problems
 // (error/unavailable) or not-yet-evaluated cells hide the direction.
-const SIGNAL_DIRECTION_DISPLAY_STATUSES = new Set(["ok", "stale"]);
+const SIGNAL_DIRECTION_DISPLAY_STATUSES = new Set(["ok", "idle", "stale"]);
 
 export const normalizeSignalDirection = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "buy" || normalized === "sell" ? normalized : "";
+};
+
+export const normalizeTrendSignalDirection = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "bullish") return "buy";
+  if (normalized === "bearish") return "sell";
+  return "";
 };
 
 export const normalizeSignalStatus = (state) =>
@@ -25,7 +33,10 @@ export const isSignalStateCurrent = (state) => {
 };
 
 export const getCurrentSignalDirection = (state) => {
-  const direction = normalizeSignalDirection(state?.currentSignalDirection);
+  const direction =
+    normalizeSignalDirection(state?.currentSignalDirection) ||
+    normalizeTrendSignalDirection(state?.trendDirection) ||
+    normalizeTrendSignalDirection(state?.indicatorSnapshot?.trendDirection);
   if (!direction || !state || state.active === false) return "";
   return SIGNAL_DIRECTION_DISPLAY_STATUSES.has(normalizeSignalStatus(state))
     ? direction
@@ -45,3 +56,6 @@ export const isProblemSignalState = (state) => {
 
 export const isStaleSignalState = (state) =>
   normalizeSignalStatus(state) === "stale";
+
+export const isIdleSignalState = (state) =>
+  normalizeSignalStatus(state) === "idle";

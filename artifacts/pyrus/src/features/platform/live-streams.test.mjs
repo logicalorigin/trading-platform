@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   __liveStreamsInternalsForTests,
+  applyAccountPageLivePayloadToCache,
   getSignalMonitorMatrixStreamUrl,
   isQuoteSnapshotAtLeastAsFresh,
 } from "./live-streams.ts";
@@ -487,6 +488,7 @@ test("account page positions query keys request fast real-account positions firs
     {
       mode: "live",
       assetClass: undefined,
+      detail: "fast",
       liveQuotes: true,
     },
   );
@@ -513,9 +515,121 @@ test("account page positions query keys request fast real-account positions firs
     {
       mode: "shadow",
       assetClass: "option",
+      detail: "fast",
       liveQuotes: true,
     },
   );
+});
+
+test("real account-page live payload patches the visible fast positions query", () => {
+  const fastPositionsKey = [
+    "/api/accounts/U123/positions",
+    {
+      mode: "live",
+      assetClass: "all",
+      detail: "fast",
+      liveQuotes: true,
+    },
+  ];
+  const queries = [
+    {
+      queryKey: fastPositionsKey,
+      data: {
+        accountId: "U123",
+        currency: "USD",
+        updatedAt: "2026-06-23T14:00:00.000Z",
+        totals: {},
+        positions: [
+          {
+            id: "U123:12345",
+            accountId: "U123",
+            accounts: ["U123"],
+            symbol: "NVDA",
+            assetClass: "Options",
+            quantity: 1,
+            averageCost: 2,
+            mark: null,
+            marketValue: 200,
+            unrealizedPnl: 0,
+            optionContract: {
+              ticker: "NVDA260612C00145000",
+              underlying: "NVDA",
+              expirationDate: "2026-06-12T00:00:00.000Z",
+              strike: 145,
+              right: "call",
+              multiplier: 100,
+              sharesPerContract: 100,
+              providerContractId: "12345",
+            },
+            optionQuote: null,
+            quote: null,
+          },
+        ],
+      },
+    },
+  ];
+  const queryClient = {
+    getQueryCache: () => ({
+      findAll: ({ predicate }) => queries.filter(predicate),
+    }),
+    setQueryData: (queryKey, updater) => {
+      const query = queries.find(
+        (candidate) => queryKeyText(candidate.queryKey) === queryKeyText(queryKey),
+      );
+      if (!query) {
+        queries.push({
+          queryKey,
+          data: typeof updater === "function" ? updater(undefined) : updater,
+        });
+        return;
+      }
+      query.data = typeof updater === "function" ? updater(query.data) : updater;
+    },
+  };
+  const livePosition = {
+    ...queries[0].data.positions[0],
+    mark: 2.45,
+    marketValue: 245,
+    unrealizedPnl: 45,
+    optionQuote: {
+      providerContractId: "12345",
+      bid: 2.4,
+      ask: 2.5,
+      mark: 2.45,
+      quoteStatus: "live",
+    },
+    quote: {
+      bid: 2.4,
+      ask: 2.5,
+      mark: 2.45,
+      quoteStatus: "live",
+    },
+  };
+
+  applyAccountPageLivePayloadToCache(queryClient, {
+    stream: "account-page-live",
+    accountId: "U123",
+    mode: "live",
+    orderTab: "working",
+    assetClass: "all",
+    updatedAt: "2026-06-23T14:01:00.000Z",
+    summary: {},
+    intradayEquity: {},
+    allocation: {},
+    positions: {
+      accountId: "U123",
+      currency: "USD",
+      updatedAt: "2026-06-23T14:01:00.000Z",
+      totals: {},
+      positions: [livePosition],
+    },
+    orders: { orders: [] },
+    risk: {},
+  });
+
+  assert.equal(queries[0].data.positions[0].quote.bid, 2.4);
+  assert.equal(queries[0].data.positions[0].quote.ask, 2.5);
+  assert.equal(queries[0].data.positions[0].optionQuote.bid, 2.4);
 });
 
 test("shared option quote stream demand unions visible hook subscriptions", () => {

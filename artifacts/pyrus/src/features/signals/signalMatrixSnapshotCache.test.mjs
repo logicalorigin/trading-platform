@@ -74,6 +74,10 @@ const matrixState = (overrides = {}) => ({
   currentSignalDirection: "buy",
   currentSignalAt: "2026-06-05T14:30:00.000Z",
   currentSignalPrice: 200.25,
+  currentSignalClose: 201.5,
+  latestBarClose: 203.75,
+  currentSignalMfePercent: 2.5,
+  currentSignalMaePercent: -0.75,
   latestBarAt: "2026-06-05T14:35:00.000Z",
   barsSinceSignal: 1,
   fresh: true,
@@ -111,6 +115,10 @@ test("signal matrix snapshot cache preserves fresh warm-start states inside the 
   assert.equal(cached.states[0].symbol, "AAPL");
   assert.equal(cached.states[0].status, "ok");
   assert.equal(cached.states[0].fresh, true);
+  assert.equal(cached.states[0].currentSignalClose, 201.5);
+  assert.equal(cached.states[0].latestBarClose, 203.75);
+  assert.equal(cached.states[0].currentSignalMfePercent, 2.5);
+  assert.equal(cached.states[0].currentSignalMaePercent, -0.75);
 });
 
 test("signal matrix snapshot cache drops retained warm-start states aged after the fresh window", () => {

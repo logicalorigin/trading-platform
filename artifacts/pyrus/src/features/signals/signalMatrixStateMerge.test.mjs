@@ -119,6 +119,29 @@ test("matrix cell merge treats filterState as a real state change", () => {
   assert.equal(preferSignalMatrixCellState(current, candidate), candidate);
 });
 
+test("matrix cell merge treats latestBarClose as a real state change", () => {
+  const current = {
+    symbol: "CEG",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-12T16:25:00.000Z",
+    latestBarAt: "2026-06-12T16:30:00.000Z",
+    lastEvaluatedAt: "2026-06-12T16:30:00.000Z",
+    currentSignalClose: 90,
+    latestBarClose: 93.12,
+    barsSinceSignal: 1,
+    fresh: true,
+    active: true,
+  };
+  const candidate = {
+    ...current,
+    latestBarClose: 94.5,
+  };
+
+  assert.equal(preferSignalMatrixCellState(current, candidate), candidate);
+});
+
 test("missing and zero matrix values are not treated as equivalent", () => {
   const current = {
     symbol: "CEG",

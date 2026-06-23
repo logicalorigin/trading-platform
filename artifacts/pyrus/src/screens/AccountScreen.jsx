@@ -1356,7 +1356,7 @@ const AccountScreenInner = ({
           {
             ...positionsParams,
             detail: "fast",
-            liveQuotes: false,
+            liveQuotes: true,
           },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
@@ -1778,7 +1778,7 @@ const AccountScreenInner = ({
       ...accountDataParams,
       assetClass: accountPositionTypeParam(assetFilter),
       detail: "fast",
-      liveQuotes: false,
+      liveQuotes: true,
     },
     {
       query: {

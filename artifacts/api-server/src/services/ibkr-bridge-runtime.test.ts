@@ -88,7 +88,7 @@ test("canceled IBKR activations reject later helper progress without overwriting
   );
 });
 
-test("remote launch rejects a registered desktop when its helper heartbeat is stale", () => {
+test("remote launch queues to a registered desktop even when its helper heartbeat is stale", () => {
   const pairingLauncher = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.test",
     bundleUrl: null,
@@ -126,20 +126,45 @@ test("remote launch rejects a registered desktop when its helper heartbeat is st
   assert.equal(runtimeState.desktopAgentKnownBad, true);
   assert.equal(runtimeState.desktopAgentUpgradeRequired, true);
 
-  assert.throws(
-    () =>
-      createIbkrRemoteBridgeLaunch({
-        apiBaseUrl: "https://pyrus.test",
-        body: { autoLogin: true },
-        bundleUrl: null,
-      }),
-    (error) =>
-      Boolean(
-        error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "ibkr_remote_desktop_unavailable",
-      ),
+  const launcher = createIbkrRemoteBridgeLaunch({
+    apiBaseUrl: "https://pyrus.test",
+    body: { autoLogin: true },
+    bundleUrl: null,
+  });
+
+  assert.equal(launcher.remoteLaunch.desktop.desktopId, desktopId);
+  assert.equal(launcher.remoteLaunch.desktop.online, false);
+  assert.equal(
+    readLegacyIbkrBridgeActivationStatus(launcher.activationId, {
+      managementToken: launcher.managementToken,
+    }).latestProgress?.step,
+    "queued_on_pyrus",
+  );
+
+  const claim = claimIbkrRemoteDesktopLaunchJob({
+    desktopId,
+    desktopSecret,
+    helperVersion: "2026-06-04.ib-async-sidecar-v6-fast-agent",
+  });
+
+  assert.equal(claim.ready, true);
+  assert.equal(claim.action, "launch");
+  assert.equal(claim.activationId, launcher.activationId);
+  assert.equal(claim.helperVersion, launcher.helperVersion);
+  assert.equal(claim.jobId, launcher.remoteLaunch.jobId);
+  assert.equal(
+    new URL(claim.launchUrl).searchParams.get("helperVersion"),
+    launcher.helperVersion,
+  );
+  assert.equal(
+    new URL(claim.launchUrl).searchParams.get("desktopAgentLaunch"),
+    "1",
+  );
+  assert.equal(
+    readLegacyIbkrBridgeActivationStatus(launcher.activationId, {
+      managementToken: launcher.managementToken,
+    }).latestProgress?.step,
+    "helper_launch_requested",
   );
 });
 
@@ -154,12 +179,6 @@ test("remote helper update-only launch uses an update-only protocol URL", () => 
   registerIbkrRemoteDesktop({
     activationId: pairingLauncher.activationId,
     callbackSecret: readCallbackSecret(pairingLauncher.launchUrl),
-    desktopId,
-    desktopSecret,
-    helperVersion: pairingLauncher.helperVersion,
-    label: "Home Windows",
-  });
-  heartbeatIbkrRemoteDesktop({
     desktopId,
     desktopSecret,
     helperVersion: pairingLauncher.helperVersion,

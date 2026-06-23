@@ -61,6 +61,7 @@ import {
   resolveSignalScoreBreakdown,
   resolveStableStaActionSnapshot,
   normalizeSignalOptionsMtfTimeframes,
+  isMarketIdleSignalRecord,
   signalActionLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
@@ -401,6 +402,9 @@ const signalActionStatusMeta = (signal, candidate, blocker) => {
       Icon: ScanLine,
     };
   }
+  if (isMarketIdleSignalRecord(signal)) {
+    return { label: "Market idle", tone: CSS_COLOR.cyan, Icon: Clock };
+  }
   if (signal?.fresh === false) {
     return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
@@ -414,6 +418,7 @@ const compactStatusLabel = (label) => {
   if (normalized.includes("block") || normalized.includes("pass")) return "NO";
   if (normalized.includes("wait") || normalized.includes("pending")) return "WAIT";
   if (normalized.includes("filled")) return "FILL";
+  if (normalized.includes("idle")) return "IDLE";
   if (normalized.includes("stale")) return "OLD";
   return String(label).trim().slice(0, 4).toUpperCase();
 };
@@ -977,6 +982,7 @@ const OpsSummaryBand = ({ title, metrics }) => (
 const pipelineStageTone = (status) => {
   if (status === "healthy") return CSS_COLOR.green;
   if (status === "running") return CSS_COLOR.cyan;
+  if (status === "idle") return CSS_COLOR.cyan;
   if (status === "attention" || status === "stale") return CSS_COLOR.amber;
   if (status === "blocked") return CSS_COLOR.red;
   return CSS_COLOR.textDim;

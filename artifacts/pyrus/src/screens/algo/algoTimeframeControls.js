@@ -4,7 +4,6 @@ import {
   SIGNAL_OPTIONS_MTF_TIMEFRAMES,
   STRATEGY_SIGNAL_TIMEFRAMES,
   normalizeSignalOptionsMtfTimeframes,
-  numberFrom,
 } from "./algoHelpers";
 
 export const ALGO_TIMEFRAME_OPTIONS = Object.freeze([...STRATEGY_SIGNAL_TIMEFRAMES]);
@@ -33,21 +32,12 @@ const orderedMtfTimeframes = (timeframes) => {
   );
 };
 
-const normalizeOptionalExecutionTimeframe = (value) => {
-  const timeframe = String(value || "").trim();
-  return STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe) &&
-    SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(timeframe)
-    ? timeframe
-    : "";
-};
-
 const buildMtfSelectionPatch = (timeframes) => {
   const selectedTimeframes = orderedMtfTimeframes(timeframes);
   return {
     timeframes: selectedTimeframes,
     preset: "custom",
-    // Selected frames must all align: required count tracks the selection.
-    requiredCount: Math.max(1, selectedTimeframes.length),
+    requiredCount: normalizeAlgoMtfRequiredCount(null, selectedTimeframes),
   };
 };
 
@@ -56,23 +46,16 @@ export const normalizeAlgoAlignedMtfTimeframes = (
   executionTimeframe,
   fallback = SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
 ) => {
-  const current = normalizeAlgoMtfTimeframes(selectedTimeframes, fallback);
-  const normalizedExecutionTimeframe =
-    normalizeOptionalExecutionTimeframe(executionTimeframe);
-  return normalizedExecutionTimeframe
-    ? orderedMtfTimeframes([...current, normalizedExecutionTimeframe])
-    : current;
+  void executionTimeframe;
+  return normalizeAlgoMtfTimeframes(selectedTimeframes, fallback);
 };
 
 export const normalizeAlgoMtfRequiredCount = (
-  value,
+  _value,
   selectedTimeframes,
-  fallback = 2,
+  _fallback = 2,
 ) => {
-  const selectedCount = Math.max(1, selectedTimeframes.length);
-  const parsed = Math.round(numberFrom(value, fallback));
-  const next = Number.isFinite(parsed) ? parsed : fallback;
-  return Math.min(selectedCount, Math.max(1, next));
+  return Math.max(1, Array.isArray(selectedTimeframes) ? selectedTimeframes.length : 0);
 };
 
 export const buildAlgoExecutionTimeframePatch = (
@@ -80,48 +63,29 @@ export const buildAlgoExecutionTimeframePatch = (
   fallback,
   selectedTimeframes,
 ) => {
+  void selectedTimeframes;
   const signalTimeframe = normalizeAlgoExecutionTimeframe(timeframe, fallback);
-  const patch = { signalTimeframe };
-  if (!Array.isArray(selectedTimeframes)) {
-    return patch;
-  }
-
-  return {
-    ...patch,
-    ...buildMtfSelectionPatch(
-      normalizeAlgoAlignedMtfTimeframes(selectedTimeframes, signalTimeframe),
-    ),
-  };
+  return { signalTimeframe };
 };
 
 export const buildAlgoMtfTimeframeTogglePatch = ({
   selectedTimeframes,
   timeframe,
-  executionTimeframe,
 }) => {
   const current = normalizeAlgoMtfTimeframes(selectedTimeframes);
   const normalizedTimeframe = String(timeframe || "").trim();
-  const normalizedExecutionTimeframe =
-    normalizeOptionalExecutionTimeframe(executionTimeframe);
   if (!SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(normalizedTimeframe)) {
-    return buildMtfSelectionPatch(
-      normalizeAlgoAlignedMtfTimeframes(current, normalizedExecutionTimeframe),
-    );
+    return buildMtfSelectionPatch(current);
   }
 
   const nextSet = new Set(current);
   if (nextSet.has(normalizedTimeframe)) {
-    if (
-      nextSet.size > 1 &&
-      normalizedTimeframe !== normalizedExecutionTimeframe
-    ) {
+    if (nextSet.size > 1) {
       nextSet.delete(normalizedTimeframe);
     }
   } else {
     nextSet.add(normalizedTimeframe);
   }
 
-  return buildMtfSelectionPatch(
-    normalizeAlgoAlignedMtfTimeframes([...nextSet], normalizedExecutionTimeframe),
-  );
+  return buildMtfSelectionPatch([...nextSet]);
 };

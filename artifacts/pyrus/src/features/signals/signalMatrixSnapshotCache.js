@@ -81,6 +81,7 @@ const sanitizeState = (state, allowedTimeframes) => {
   const barsSinceSignal = finiteNumberOrNull(state.barsSinceSignal);
   const currentSignalPrice = finiteNumberOrNull(state.currentSignalPrice);
   const currentSignalClose = finiteNumberOrNull(state.currentSignalClose);
+  const latestBarClose = finiteNumberOrNull(state.latestBarClose);
   const currentSignalMfePercent = finiteNumberOrNull(
     state.currentSignalMfePercent,
   );
@@ -106,6 +107,7 @@ const sanitizeState = (state, allowedTimeframes) => {
     currentSignalAt,
     currentSignalPrice,
     currentSignalClose,
+    latestBarClose,
     currentSignalMfePercent,
     currentSignalMaePercent,
     filterState,

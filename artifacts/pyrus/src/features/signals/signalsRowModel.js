@@ -2,6 +2,7 @@ import {
   getCurrentSignalDirection,
   hasCurrentSignalDirection,
   isCurrentFreshSignalState,
+  isIdleSignalState,
   isProblemSignalState,
   isSignalStateCurrent,
   isStaleSignalState,
@@ -21,6 +22,7 @@ export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze([
 
 export const SIGNALS_ROW_STATUS = Object.freeze({
   activeFresh: "active-fresh",
+  activeIdle: "active-idle",
   activeStale: "active-stale",
   problem: "problem",
   skipped: "skipped",
@@ -28,14 +30,16 @@ export const SIGNALS_ROW_STATUS = Object.freeze({
   neutral: "neutral",
 });
 
+const IDLE_STATUSES = new Set(["idle"]);
 const STALE_STATUSES = new Set(["stale"]);
 const STATUS_SORT_WEIGHT = Object.freeze({
   [SIGNALS_ROW_STATUS.activeFresh]: 0,
-  [SIGNALS_ROW_STATUS.activeStale]: 1,
-  [SIGNALS_ROW_STATUS.problem]: 2,
-  [SIGNALS_ROW_STATUS.skipped]: 3,
-  [SIGNALS_ROW_STATUS.pending]: 4,
-  [SIGNALS_ROW_STATUS.neutral]: 5,
+  [SIGNALS_ROW_STATUS.activeIdle]: 1,
+  [SIGNALS_ROW_STATUS.activeStale]: 2,
+  [SIGNALS_ROW_STATUS.problem]: 3,
+  [SIGNALS_ROW_STATUS.skipped]: 4,
+  [SIGNALS_ROW_STATUS.pending]: 5,
+  [SIGNALS_ROW_STATUS.neutral]: 6,
 });
 
 const DIRECTION_SORT_WEIGHT = Object.freeze({
@@ -509,14 +513,18 @@ const buildSignalMatrixVerdictLabel = ({
   return `${readinessLabel} ${directionLabel} ${regimeLabel}`;
 };
 
+const getMtfGateSignalDirection = (state) => {
+  if (!state || state.active === false) return "";
+  return normalizeSignalDirection(state.currentSignalDirection);
+};
+
 // Frontend mirror of the backend signal-options MTF entry gate
 // (signal-options-automation.ts evaluateSignalOptionsEntryGate). For the
 // CONFIGURED MTF timeframes, count how many agree with the signal direction
-// using the SAME per-timeframe state the bubbles display
-// (getCurrentSignalDirection), so the table can never disagree with its own
-// bubbles. A stale opposing frame counts as disagreement (its bubble is shown);
-// a missing/problem frame is neutral and cannot match. Aligned when
-// matches >= requiredCount, matching the gate that actually decides entries.
+// using the same currentSignalDirection source as the backend matrix-sourced
+// MTF gate. Trend-only display fallbacks are neutral and cannot satisfy the
+// selected-frame confluence contract. Aligned when matches >= requiredCount,
+// matching the gate that actually decides entries.
 export const resolveConfiguredMtfAlignment = ({
   matrixStatesByTimeframe = {},
   signalDirection = null,
@@ -550,7 +558,7 @@ export const resolveConfiguredMtfAlignment = ({
   let neutral = 0;
   const opposingTimeframes = [];
   for (const timeframe of frames) {
-    const tfDirection = getCurrentSignalDirection(
+    const tfDirection = getMtfGateSignalDirection(
       matrixStatesByTimeframe?.[timeframe],
     );
     if (!tfDirection) {
@@ -846,11 +854,15 @@ const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
   const hasProblem = states.some(
     (state) => isProblemSignalState(state) && !isStaleSignalState(state),
   );
+  const hasIdle = states.some(isIdleSignalState);
   const hasStale = states.some(isStaleSignalState);
   const hasFresh = states.some(isCurrentFreshSignalState);
   const hasComputed = states.some((state) =>
     Boolean(
-      isSignalStateCurrent(state) && (state?.latestBarAt || state?.currentSignalAt),
+      (isSignalStateCurrent(state) ||
+        isIdleSignalState(state) ||
+        isStaleSignalState(state)) &&
+        (state?.latestBarAt || state?.currentSignalAt),
     ),
   );
   const hasCurrentComputed = states.some((state) =>
@@ -859,7 +871,14 @@ const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
     ),
   );
 
-  return { hasProblem, hasStale, hasFresh, hasComputed, hasCurrentComputed };
+  return {
+    hasProblem,
+    hasIdle,
+    hasStale,
+    hasFresh,
+    hasComputed,
+    hasCurrentComputed,
+  };
 };
 
 const resolveRowStatus = ({
@@ -869,6 +888,7 @@ const resolveRowStatus = ({
   skipped,
 }) => {
   const status = normalizeSignalStatus(primaryState);
+  const primaryIdle = IDLE_STATUSES.has(status);
   const primaryStale = STALE_STATUSES.has(status);
   const hasProblem = isProblemSignalState(primaryState) && !primaryStale;
 
@@ -877,9 +897,11 @@ const resolveRowStatus = ({
   }
   if (!primaryState) {
     if (direction) {
-      return matrixStatus?.hasFresh
-        ? SIGNALS_ROW_STATUS.activeFresh
-        : SIGNALS_ROW_STATUS.activeStale;
+      if (matrixStatus?.hasFresh) return SIGNALS_ROW_STATUS.activeFresh;
+      if (matrixStatus?.hasIdle && !matrixStatus?.hasCurrentComputed) {
+        return SIGNALS_ROW_STATUS.activeIdle;
+      }
+      return SIGNALS_ROW_STATUS.activeStale;
     }
     if (skipped) {
       return SIGNALS_ROW_STATUS.skipped;
@@ -890,6 +912,11 @@ const resolveRowStatus = ({
     return primaryState.fresh
       ? SIGNALS_ROW_STATUS.activeFresh
       : SIGNALS_ROW_STATUS.activeStale;
+  }
+  if (primaryIdle) {
+    return direction
+      ? SIGNALS_ROW_STATUS.activeIdle
+      : SIGNALS_ROW_STATUS.neutral;
   }
   if (primaryStale) {
     return direction
@@ -903,6 +930,8 @@ const statusLabelFor = (status) => {
   switch (status) {
     case SIGNALS_ROW_STATUS.activeFresh:
       return "Fresh signal";
+    case SIGNALS_ROW_STATUS.activeIdle:
+      return "Market idle";
     case SIGNALS_ROW_STATUS.activeStale:
       return "Aged signal";
     case SIGNALS_ROW_STATUS.problem:
@@ -922,6 +951,9 @@ const coverageReasonFor = ({
   skipped,
   matrixStatus,
 }) => {
+  if (primaryState && normalizeSignalStatus(primaryState) === "idle") {
+    return "No recent market print; last signal retained";
+  }
   if (primaryState && normalizeSignalStatus(primaryState) === "stale") {
     return "Stored monitor state is aged; waiting for current market bars";
   }
@@ -929,6 +961,9 @@ const coverageReasonFor = ({
   if (rowStatus === SIGNALS_ROW_STATUS.problem) return "Signal computation unavailable";
   if (matrixStatus?.hasStale && !matrixStatus?.hasCurrentComputed) {
     return "Waiting for current market bars";
+  }
+  if (matrixStatus?.hasIdle && !matrixStatus?.hasCurrentComputed) {
+    return "No recent market print; last signal retained";
   }
   if (!primaryState && matrixStatus?.hasComputed) {
     return "Computed from market bars; primary monitor scan pending";

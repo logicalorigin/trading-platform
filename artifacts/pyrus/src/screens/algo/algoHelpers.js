@@ -88,31 +88,31 @@ export const SIGNAL_OPTIONS_MTF_PRESETS = [
     value: "custom",
     label: "Custom",
     timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
-    requiredCount: 2,
+    requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
   },
   {
     value: "scalp",
     label: "Scalp",
     timeframes: ["1m", "2m", "5m"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "balanced",
     label: "Balanced",
     timeframes: ["5m", "15m", "1h"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "higher_timeframe",
     label: "Higher TF",
     timeframes: ["15m", "1h", "1d"],
-    requiredCount: 2,
+    requiredCount: 3,
   },
   {
     value: "six_frame",
     label: "Six",
     timeframes: SIGNAL_OPTIONS_MTF_TIMEFRAMES,
-    requiredCount: 3,
+    requiredCount: SIGNAL_OPTIONS_MTF_TIMEFRAMES.length,
   },
 ];
 
@@ -144,7 +144,7 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   entryGate: {
     mtfAlignment: {
       enabled: true,
-      requiredCount: 2,
+      requiredCount: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES.length,
       timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
       preset: "custom",
     },
@@ -738,12 +738,13 @@ export const buildStaSignalMatrixRows = ({
       const signalAt =
         staIsoStringOrNull(stateRecord.currentSignalAt) ??
         staIsoStringOrNull(stateRecord.signalAt);
-      if (!direction || !signalAt) return null;
+      if (!direction || !signalAt) {
+        return null;
+      }
 
       const status = normalizeMatchKey(
         stateRecord.status || "ok",
       ).toLowerCase();
-      if (status === "pending" || status === "unknown") return null;
       const signalLevelPrice =
         staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
         staFiniteNumberOrNull(stateRecord.signalPrice);
@@ -762,7 +763,9 @@ export const buildStaSignalMatrixRows = ({
       // state instead of waiting on per-page sparkline hydration, so it stays
       // populated across execution-timeframe changes. Live quote/sparkline
       // snapshots still override this in resolveSignalMove when present.
-      const currentPrice = staFiniteNumberOrNull(stateRecord.latestBarClose);
+      const latestBarClose = staFiniteNumberOrNull(stateRecord.latestBarClose);
+      const currentPrice =
+        staFiniteNumberOrNull(stateRecord.currentPrice) ?? latestBarClose;
       const barsSinceSignal = staFiniteNumberOrNull(
         stateRecord.barsSinceSignal,
       );
@@ -771,8 +774,11 @@ export const buildStaSignalMatrixRows = ({
       // carry it). A state without the fields is ineligible by default —
       // the safe direction; no client-side age inference remains.
       const actionBlocker =
-        normalizeMatchKey(stateRecord.actionBlocker) || null;
-      const actionEligible = stateRecord.actionEligible === true;
+        normalizeMatchKey(stateRecord.actionBlocker) ||
+        (!direction ? "no_signal" : null) ||
+        (!signalAt ? "signal_age_unavailable" : null);
+      const actionEligible =
+        stateRecord.actionEligible === true && Boolean(direction && signalAt);
 
       return {
         profileId: normalizeMatchKey(stateRecord.profileId) || null,
@@ -795,6 +801,7 @@ export const buildStaSignalMatrixRows = ({
         signalLevelPrice,
         currentSignalPrice: signalLevelPrice,
         currentPrice,
+        latestBarClose: latestBarClose ?? currentPrice,
         latestBarAt:
           staIsoStringOrNull(stateRecord.latestBarAt) ??
           staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??
@@ -1187,8 +1194,24 @@ export const signalActionLabel = (signal, action) => {
   return MISSING_VALUE;
 };
 
+export const isMarketIdleSignalRecord = (record) => {
+  const status = String(record.status || "")
+    .trim()
+    .toLowerCase();
+  const actionBlocker = String(record.actionBlocker || "")
+    .trim()
+    .toLowerCase();
+  return status === "idle" || actionBlocker === "market_idle";
+};
+
 export const signalFreshnessLabel = (signal) => {
   const signalRecord = asRecord(signal);
+  if (isMarketIdleSignalRecord(signalRecord)) return "IDLE";
+  const actionBlocker = normalizeMatchKey(signalRecord.actionBlocker).toLowerCase();
+  const direction = staSignalDirectionOrNull(
+    signalRecord.currentSignalDirection || signalRecord.direction,
+  );
+  if (actionBlocker === "no_signal" && !direction) return "NO SIGNAL";
   if (signalRecord.fresh === true) return "FRESH";
   if (signalRecord.fresh === false) return "STALE";
   return MISSING_VALUE;
@@ -1351,6 +1374,8 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
     detail:
       elapsed !== MISSING_VALUE
         ? `${elapsed} since signal`
+        : isMarketIdleSignalRecord(record)
+          ? "market idle"
         : record.fresh === false
           ? "aged signal"
           : MISSING_VALUE,
@@ -1440,8 +1465,8 @@ export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
 // and the backend root-cause must agree on what "stale" means, so the canonical
 // signal lives here and nowhere else. Per the Signal Monitor model
 // (signal-monitor-actionability.ts:45-58 authors actionBlocker `data_stale`
-// from status !== "ok"), staleness is the row's own monitor state - NOT a quote
-// freshness/cacheAgeMs heuristic (those cannot represent a 15h-stale row).
+// from status "stale"), staleness is the row's own monitor state - NOT a quote
+// freshness/cacheAgeMs heuristic and NOT a market-idle/no-print lane.
 const resolveMoveStaleness = (record) => {
   if (record.stale === true) return true;
   if (String(record.actionBlocker || "").toLowerCase() === "data_stale") {
@@ -1450,7 +1475,7 @@ const resolveMoveStaleness = (record) => {
   const status = String(record.status || "")
     .trim()
     .toLowerCase();
-  return status !== "" && status !== "ok";
+  return status === "stale";
 };
 
 const isSignalMonitorDerivedSignalRecord = (record) => {
@@ -1981,10 +2006,7 @@ export const mergeSignalOptionsProfile = (source) => {
     ...mtfAlignment,
     timeframes: mtfTimeframes,
     preset: normalizeSignalOptionsMtfPreset(mtfAlignment.preset),
-    requiredCount: Math.min(
-      mtfTimeframes.length,
-      Math.max(1, Math.round(numberFrom(mtfAlignment.requiredCount, 2))),
-    ),
+    requiredCount: Math.max(1, mtfTimeframes.length),
   };
 
   if (parameters.executionMode === "signal_options") {
@@ -2339,10 +2361,7 @@ export const buildSignalIndicatorMetrics = (
   }
 
   return {
-    ...buildLiveSignalMoveMetrics(
-      observations,
-      signalCountsByDirection.buy + signalCountsByDirection.sell,
-    ),
+    ...buildLiveSignalMoveMetrics(observations, rows.length),
     byDirection: {
       buy: buildLiveSignalMoveMetrics(
         observationsByDirection.buy,
@@ -2943,6 +2962,7 @@ export const signalOptionsActionColor = (status) => {
 export const cockpitStageColor = (status) => {
   if (status === "healthy") return CSS_COLOR.green;
   if (status === "running") return CSS_COLOR.cyan;
+  if (status === "idle") return CSS_COLOR.cyan;
   if (status === "attention" || status === "stale") return CSS_COLOR.amber;
   if (status === "blocked") return CSS_COLOR.red;
   return CSS_COLOR.textDim;

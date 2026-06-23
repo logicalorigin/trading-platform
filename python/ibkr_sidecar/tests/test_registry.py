@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from collections.abc import Callable
 
 from pyrus_ibkr_sidecar.registry import (
     DesiredGeneration,
@@ -51,6 +52,43 @@ class CountingAdapter(IbkrMarketDataAdapter):
 
     async def cancel_live(self, handle: SubscriptionHandle) -> None:
         return None
+
+
+class FakeTickerUpdateEvent:
+    def __init__(self) -> None:
+        self.listeners: list[Callable[[object], None]] = []
+
+    def connect(self, listener: Callable[[object], None], keep_ref: bool = False) -> None:
+        self.listeners.append(listener)
+
+    def disconnect(self, listener: Callable[[object], None]) -> None:
+        if listener in self.listeners:
+            self.listeners.remove(listener)
+
+    def emit(self) -> None:
+        for listener in list(self.listeners):
+            listener(self)
+
+
+class FakeTicker:
+    def __init__(self) -> None:
+        self.updateEvent = FakeTickerUpdateEvent()
+
+
+class TickAdapter(IbkrMarketDataAdapter):
+    def __init__(self) -> None:
+        self.ticker = FakeTicker()
+        self.cancelled: list[str] = []
+
+    async def subscribe_live(self, line: DesiredLine) -> SubscriptionHandle:
+        return SubscriptionHandle(
+            line_key=line.line_key,
+            contract=object(),
+            ticker=self.ticker,
+        )
+
+    async def cancel_live(self, handle: SubscriptionHandle) -> None:
+        self.cancelled.append(handle.line_key)
 
 
 def desired_generation(*lines: DesiredLine) -> DesiredGeneration:
@@ -130,6 +168,24 @@ class MarketDataRegistryTests(unittest.IsolatedAsyncioTestCase):
         adapter.release_subscription.set()
         await asyncio.wait_for(self._wait_for_line_count(registry, 5), 1)
         self.assertTrue(all(line.state == "live" for line in registry.lines))
+
+    async def test_ticker_updates_refresh_line_last_tick_at(self) -> None:
+        adapter = TickAdapter()
+        registry = MarketDataRegistry(adapter)
+
+        await registry.apply_generation(desired_generation(desired_line()))
+        await asyncio.wait_for(self._wait_for_state(registry, "equity:SPY", "live"), 1)
+
+        self.assertIsNone(registry.lines[0].last_tick_at)
+        adapter.ticker.updateEvent.emit()
+
+        self.assertIsNotNone(registry.lines[0].last_tick_at)
+
+        await registry.apply_generation(desired_generation())
+        await asyncio.wait_for(self._wait_for_line_count(registry, 0), 1)
+
+        self.assertEqual(adapter.cancelled, ["equity:SPY"])
+        self.assertEqual(adapter.ticker.updateEvent.listeners, [])
 
     async def _wait_for_state(
         self,

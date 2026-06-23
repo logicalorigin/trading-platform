@@ -96,13 +96,20 @@ import {
 import {
   loadSignalMonitorLocalBarCache,
   primeSignalMonitorLocalBarCache,
+  runWithSignalMonitorStoredBarsPrefetch,
 } from "./signal-monitor-local-bar-cache";
 
 export type SignalMonitorTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe;
 export type SignalMonitorDirection = "buy" | "sell";
 export type SignalMonitorBreadthHistoryRange = "hour" | "day" | "week" | "month";
-type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
+type SignalMonitorStatus =
+  | "ok"
+  | "idle"
+  | "stale"
+  | "unavailable"
+  | "error"
+  | "unknown";
 type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorEventsSourceStatus = "database" | "runtime-fallback";
 type SignalMonitorMatrixClientRole =
@@ -1018,9 +1025,22 @@ function profileToResponse(profile: DbSignalMonitorProfile) {
   };
 }
 
+function trendDirectionToSignalDirection(
+  trendDirection: unknown,
+): SignalMonitorDirection | null {
+  if (trendDirection === "bullish") {
+    return "buy";
+  }
+  if (trendDirection === "bearish") {
+    return "sell";
+  }
+  return null;
+}
+
 function stateToResponse(state: DbSignalMonitorSymbolState) {
   const status: SignalMonitorStatus = [
     "ok",
+    "idle",
     "stale",
     "unavailable",
     "error",
@@ -1029,20 +1049,23 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     ? (state.status as SignalMonitorStatus)
     : "unknown";
   const current = status === "ok";
-  const direction =
+  const storedDirection =
     (state.currentSignalDirection === "buy" ||
       state.currentSignalDirection === "sell")
       ? state.currentSignalDirection
       : null;
-  const hasStoredSignal = Boolean(direction && state.currentSignalAt);
+  const displayDirection =
+    storedDirection ?? trendDirectionToSignalDirection(state.trendDirection);
+  const hasStoredSignal = Boolean(storedDirection && state.currentSignalAt);
   // Backend-authored actionability on REST, mirroring the SSE matrix stream,
   // so every transport carries the same verdict. freshWindowBars only feeds
   // the (discarded) fresh recompute — eligibility does not use it.
   const actionability = buildSignalMonitorActionability({
-    direction,
+    direction: storedDirection,
     signalAt: hasStoredSignal ? (state.currentSignalAt ?? null) : null,
     barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
     stale: status !== "ok",
+    staleBlocker: signalMonitorActionBlockerForStatus(status),
     freshWindowBars: 0,
   });
 
@@ -1051,7 +1074,7 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     profileId: state.profileId,
     symbol: state.symbol,
     timeframe: resolveSignalMonitorTimeframe(state.timeframe),
-    currentSignalDirection: direction,
+    currentSignalDirection: displayDirection,
     currentSignalAt: hasStoredSignal ? (state.currentSignalAt ?? null) : null,
     currentSignalPrice: hasStoredSignal
       ? numericValueOrNull(state.currentSignalPrice)
@@ -1074,7 +1097,7 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     // column's "current" side regardless of direction/freshness).
     latestBarClose: numericValueOrNull(state.latestBarClose),
     barsSinceSignal: hasStoredSignal ? (state.barsSinceSignal ?? null) : null,
-    fresh: current ? state.fresh : false,
+    fresh: current && hasStoredSignal ? state.fresh : false,
     status,
     active: state.active,
     lastEvaluatedAt: state.lastEvaluatedAt ?? null,
@@ -1099,17 +1122,30 @@ function stateToResponseForSnapshot(
     ...stateToResponse(state),
     timeframe: input.timeframe,
   };
+  // The live aggregate ring keeps streaming (incl. extended hours) even when the
+  // producer has stopped refreshing this cell, so a current ring bar must rescue
+  // a lane whose persisted bar age would otherwise trip the stale relabel below.
+  const streamLatestBarAt = signalMonitorStreamLaneLatestCompletedBarAt({
+    symbol: state.symbol,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+  });
   if (
     !input.markNonCurrentStale ||
     isSignalMonitorStateCurrentForLane({
       state,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
+      streamLatestBarAt,
     })
   ) {
     return response;
   }
 
+  const nonCurrentStatus = signalMonitorNonCurrentStatus({
+    latestBarAt: response.latestBarAt,
+    evaluatedAt: input.evaluatedAt,
+  });
   const staleDirection = response.latestBarAt
     ? response.currentSignalDirection
     : null;
@@ -1124,6 +1160,7 @@ function stateToResponseForSnapshot(
     signalAt: staleSignalAt,
     barsSinceSignal: staleBarsSinceSignal,
     stale: true,
+    staleBlocker: signalMonitorActionBlockerForStatus(nonCurrentStatus),
     freshWindowBars: 0,
   });
   return {
@@ -1145,9 +1182,7 @@ function stateToResponseForSnapshot(
     filterState: response.latestBarAt ? response.filterState : null,
     barsSinceSignal: staleBarsSinceSignal,
     fresh: false,
-    status: response.latestBarAt
-      ? ("stale" as const)
-      : ("unavailable" as const),
+    status: nonCurrentStatus,
     lastError:
       response.lastError ??
       (response.latestBarAt
@@ -3003,8 +3038,15 @@ function dailyBarDateKey(value: Date): string {
 type SignalMonitorMarketSessionContext = {
   evaluatedAtMs: number;
   quiet: boolean;
+  marketIdle: boolean;
   previousMarketCloseAt: Date | null;
 };
+
+const SIGNAL_MONITOR_MARKET_IDLE_SESSION_KEYS = new Set([
+  "overnight",
+  "pre",
+  "after",
+]);
 
 const signalMonitorMarketSessionContextCache = new Map<
   number,
@@ -3063,10 +3105,13 @@ function getSignalMonitorMarketSessionContext(
   }
 
   const status = resolveUsEquityMarketStatus(evaluatedAt);
-  const quiet = status.session.key === "closed" || !status.calendarDay?.tradingDay;
+  const sessionKey = status.session.key;
+  const quiet = sessionKey === "closed" || !status.calendarDay?.tradingDay;
   const context: SignalMonitorMarketSessionContext = {
     evaluatedAtMs,
     quiet,
+    marketIdle:
+      !quiet && SIGNAL_MONITOR_MARKET_IDLE_SESSION_KEYS.has(sessionKey),
     previousMarketCloseAt: quiet
       ? resolveSignalMonitorPreviousMarketCloseAtUncached(evaluatedAt)
       : null,
@@ -3078,6 +3123,10 @@ function getSignalMonitorMarketSessionContext(
 
 function isSignalMonitorQuietMarketSession(evaluatedAt: Date): boolean {
   return getSignalMonitorMarketSessionContext(evaluatedAt).quiet;
+}
+
+function isSignalMonitorMarketIdleSession(evaluatedAt: Date): boolean {
+  return getSignalMonitorMarketSessionContext(evaluatedAt).marketIdle;
 }
 
 function resolveSignalMonitorPreviousMarketCloseAt(
@@ -3721,6 +3770,35 @@ function loadSignalMonitorStreamCompletedBars(input: {
   });
 }
 
+// Closed-at of the freshest COMPLETED bar the live in-memory aggregate ring can
+// produce for a lane right now, or null when the ring carries nothing usable
+// (e.g. an illiquid symbol with no recent prints, or 1d which never streams).
+//
+// The stored-state read path relabels lanes stale purely on the persisted
+// `latestBarAt` age. That age freezes whenever the producer stops re-evaluating
+// a cell, even though Massive keeps streaming extended-hours aggregates for it —
+// so a lane whose live data is current (e.g. an ETF still printing after RTH)
+// gets falsely marked idle/stale. This lets the read path consult the same live
+// ring the producer evaluates off, so a current ring bar rescues the lane. An
+// empty ring (genuinely no recent print) returns null and the lane stays
+// legitimately stale/idle.
+function signalMonitorStreamLaneLatestCompletedBarAt(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}): Date | null {
+  if (input.timeframe === "1d") {
+    return null;
+  }
+  const streamBars = loadSignalMonitorStreamCompletedBars({
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+    limit: SIGNAL_MONITOR_STALE_RETRY_BARS,
+  });
+  return signalMonitorBarClosedAt(streamBars.at(-1));
+}
+
 async function refreshSignalMonitorLocalBarCacheWarmup(): Promise<void> {
   if (signalMonitorLocalBarCacheWarmupInFlight) {
     return;
@@ -3804,9 +3882,10 @@ const SIGNAL_MONITOR_BACKFILL_REFRESH_MS: Record<
 // SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT so the off-path backfill cannot
 // crowd out evaluation / chart-serving bar loads.
 const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = 3;
-// Cap cells refreshed per invocation so the first tick after boot does not fire
-// the whole ~3000-cell universe at once. Most-overdue cells go first; cells not
-// reached this cycle are picked up on a later cycle (round-robin via recency).
+// Cap warmed-cell refreshes per invocation so steady-state upkeep does not fire
+// a repeating whole-universe refresh. Cold cells are not coverage-capped: every
+// never-warmed cell must be selected on startup so all six frames become
+// producer-ready; concurrency/yielding below is the pressure control.
 const SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE = 64;
 let signalMonitorBackfillRefreshInFlight = false;
 
@@ -3916,7 +3995,22 @@ function selectSignalMonitorBackfillDueCells(input: {
     .filter((entry) => entry.overdueBy >= 0)
     .sort((left, right) => right.overdueBy - left.overdueBy);
   const cap = Math.max(0, input.maxCells);
-  return due.slice(0, cap).map(({ candidate }) => ({
+  if (cap <= 0) {
+    return [];
+  }
+
+  const coldEntries = due.filter(
+    (entry) => entry.candidate.refreshedAt === null,
+  );
+  const refreshEntries = due.filter(
+    (entry) => entry.candidate.refreshedAt !== null,
+  );
+  const selected = [
+    ...coldEntries,
+    ...refreshEntries.slice(0, Math.max(0, cap - coldEntries.length)),
+  ];
+
+  return selected.map(({ candidate }) => ({
     symbol: candidate.symbol,
     timeframe: candidate.timeframe,
   }));
@@ -4514,6 +4608,12 @@ function isSignalMonitorStateCurrentForLane(input: {
   >;
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
+  // Closed-at of the freshest completed bar the live aggregate ring can produce
+  // for this lane right now (null when the ring is empty). When the persisted
+  // `latestBarAt` has frozen but Massive is still streaming current bars, this
+  // rescues the lane from a false stale relabel. Read paths supply it; the
+  // producer-internal trace omits it and keeps the pure stored-age semantics.
+  streamLatestBarAt?: Date | null;
 }) {
   if (input.state.status !== "ok") {
     return false;
@@ -4523,9 +4623,17 @@ function isSignalMonitorStateCurrentForLane(input: {
   if (!latestBarAt || !lastEvaluatedAt) {
     return false;
   }
+  // Use the fresher of the persisted bar and the live ring's latest completed
+  // bar for the age check. A current ring bar means the data feed is alive even
+  // when the producer hasn't refreshed this cell, so the lane is not stale.
+  const streamLatestBarAt = dateOrNull(input.streamLatestBarAt ?? null);
+  const effectiveLatestBarAt =
+    streamLatestBarAt && streamLatestBarAt.getTime() > latestBarAt.getTime()
+      ? streamLatestBarAt
+      : latestBarAt;
   if (
     isLatestBarStale({
-      latestBarAt,
+      latestBarAt: effectiveLatestBarAt,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
     })
@@ -4733,6 +4841,39 @@ function isSignalMonitorLatestBarUnavailable(input: {
       timeframe: input.timeframe,
     })
   );
+}
+
+function signalMonitorActionBlockerForStatus(
+  status: SignalMonitorStatus,
+): "market_idle" | "data_stale" | null {
+  if (status === "ok") {
+    return null;
+  }
+  return status === "idle" ? "market_idle" : "data_stale";
+}
+
+function signalMonitorNonCurrentStatus(input: {
+  latestBarAt: Date | string | null | undefined;
+  evaluatedAt: Date;
+}): SignalMonitorStatus {
+  if (!dateOrNull(input.latestBarAt)) {
+    return "unavailable";
+  }
+  return isSignalMonitorMarketIdleSession(input.evaluatedAt) ? "idle" : "stale";
+}
+
+function signalMonitorLatestBarAvailabilityStatus(input: {
+  stale: boolean;
+  latestBarAt: Date | string | null | undefined;
+  evaluatedAt: Date;
+}): "ok" | "idle" | "stale" | "unavailable" {
+  if (!input.stale) {
+    return "ok";
+  }
+  return signalMonitorNonCurrentStatus({
+    latestBarAt: input.latestBarAt,
+    evaluatedAt: input.evaluatedAt,
+  }) as "idle" | "stale" | "unavailable";
 }
 
 function directionFromSignal(
@@ -5932,13 +6073,15 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       chartBarEntries,
       signalStabilityPolicy,
     );
-  const latestBarAt = latestBarEntry.closedAt;
-  const latestBarAnchorAt = latestBarEntry.anchorAt;
-  const latestSourceBar = latestBarEntry.sourceBar;
-  const latestSourceIntegrity = resolveSignalMonitorSourceIntegrity({
-    bar: latestSourceBar,
-    referenceBars: input.completedBars,
-  });
+    const latestBarAt = latestBarEntry.closedAt;
+    const latestBarAnchorAt = latestBarEntry.anchorAt;
+    const latestSourceBar = latestBarEntry.sourceBar;
+    const latestSourceIntegrity = resolveSignalMonitorSourceIntegrity({
+      bar: latestSourceBar,
+      referenceBars: input.completedBars,
+    });
+    const latestBarTrusted =
+      isSignalMonitorLatestBarSourceIntegrityTrusted(latestSourceIntegrity);
     const delayedLatestBar = isSignalMonitorDelayedLatestBar({
       latestBar: latestSourceBar,
       timeframe: input.timeframe,
@@ -5954,6 +6097,13 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       : null;
 
     if (!signal) {
+      const status = latestBarTrusted
+        ? signalMonitorLatestBarAvailabilityStatus({
+            stale,
+            latestBarAt,
+            evaluatedAt: input.evaluatedAt,
+          })
+        : "stale";
       return upsertSymbolState({
         profileId: input.profile.id,
         symbol: input.symbol,
@@ -5962,16 +6112,16 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
         signalAt: null,
         signalPrice: null,
         signalClose: null,
-        latestBarAt: latestSourceIntegrity.trusted ? latestBarAt : null,
-        latestBarClose: latestSourceIntegrity.trusted
+        latestBarAt: latestBarTrusted ? latestBarAt : null,
+        latestBarClose: latestBarTrusted
           ? numericValueOrNull(latestBar.c)
           : null,
         barsSinceSignal: null,
         fresh: false,
-        status: latestSourceIntegrity.trusted && !stale ? "ok" : "stale",
+        status,
         evaluatedAt: input.evaluatedAt,
         lastError: delayedLatestBarError,
-        allowStoredSignalLatch: latestSourceIntegrity.trusted,
+        allowStoredSignalLatch: latestBarTrusted,
       });
     }
 
@@ -6034,8 +6184,14 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     // Staleness is reported via status only; the signal identity stays on the
     // row (and on the wire) so the latched memory is never erased by a data
     // gap. fresh is already false when stale.
-    const trustedSignalIdentity =
-      sourceIntegrity.trusted && latestSourceIntegrity.trusted;
+    const trustedSignalIdentity = sourceIntegrity.trusted;
+    const status = latestBarTrusted
+      ? signalMonitorLatestBarAvailabilityStatus({
+          stale,
+          latestBarAt,
+          evaluatedAt: input.evaluatedAt,
+        })
+      : "stale";
     return upsertSymbolState({
       profileId: input.profile.id,
       symbol: input.symbol,
@@ -6050,13 +6206,13 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       filterState: trustedSignalIdentity
         ? signalMonitorFilterStateOrNull(signal.filterState)
         : null,
-      latestBarAt: latestSourceIntegrity.trusted ? latestBarAt : null,
-      latestBarClose: latestSourceIntegrity.trusted
+      latestBarAt: latestBarTrusted ? latestBarAt : null,
+      latestBarClose: latestBarTrusted
         ? numericValueOrNull(latestBar.c)
         : null,
       barsSinceSignal: trustedSignalIdentity ? barsSinceSignal : null,
       fresh: trustedSignalIdentity ? fresh : false,
-      status: latestSourceIntegrity.trusted && !stale ? "ok" : "stale",
+      status,
       evaluatedAt: input.evaluatedAt,
       lastError: delayedLatestBarError,
       allowStoredSignalLatch: trustedSignalIdentity,
@@ -6432,6 +6588,11 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
   });
+  const availabilityStatus = signalMonitorLatestBarAvailabilityStatus({
+    stale,
+    latestBarAt,
+    evaluatedAt: input.evaluatedAt,
+  });
   const delayedLatestBarError = delayedLatestBar
     ? "Latest signal monitor bar is delayed; waiting for live broker history."
     : null;
@@ -6449,7 +6610,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
       latestBarClose: numericValueOrNull(latestBar.c),
       barsSinceSignal: null,
       fresh: false,
-      status: stale ? ("stale" as const) : ("ok" as const),
+      status: availabilityStatus,
       lastError: delayedLatestBarError,
       indicatorSnapshot,
       latestBarSourceIntegrity,
@@ -6501,7 +6662,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
       freshWindowBars: input.profile.freshWindowBars,
       stale,
     }),
-    status: stale ? ("stale" as const) : ("ok" as const),
+    status: availabilityStatus,
     lastError: delayedLatestBarError,
     filterState: signalMonitorFilterStateOrNull(signal.filterState),
     indicatorSnapshot,
@@ -6720,6 +6881,11 @@ function signalMonitorMatrixStateFromPython(input: {
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
   });
+  const availabilityStatus = signalMonitorLatestBarAvailabilityStatus({
+    stale,
+    latestBarAt,
+    evaluatedAt: input.evaluatedAt,
+  });
   const delayedLatestBarError = delayedLatestBar
     ? "Latest signal monitor bar is delayed; waiting for live broker history."
     : null;
@@ -6750,7 +6916,7 @@ function signalMonitorMatrixStateFromPython(input: {
       latestBarClose: numericValueOrNull(latestBar.c),
       barsSinceSignal: null,
       fresh: false,
-      status: stale ? ("stale" as const) : ("ok" as const),
+      status: availabilityStatus,
     };
   }
   const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
@@ -6825,7 +6991,7 @@ function signalMonitorMatrixStateFromPython(input: {
       freshWindowBars: input.profile.freshWindowBars,
       stale,
     }),
-    status: stale ? ("stale" as const) : ("ok" as const),
+    status: availabilityStatus,
     canonicalSignalEvent: stale
       ? null
       : {
@@ -6967,6 +7133,8 @@ function signalMonitorStoredStateQuality(input: {
   const statusScore =
     status === "ok"
       ? 4
+      : status === "idle"
+        ? 3
       : status === "stale"
         ? 3
         : status === "unavailable"
@@ -7031,7 +7199,7 @@ function shouldPersistSignalMonitorMatrixState(
     symbol &&
       SIGNAL_MONITOR_MATRIX_TIMEFRAMES.includes(timeframe) &&
       state.active !== false &&
-      (status === "ok" || status === "stale") &&
+      (status === "ok" || status === "idle" || status === "stale") &&
       !state.lastError &&
       (dateOrNull(state.latestBarAt) || dateOrNull(state.currentSignalAt)),
   );
@@ -7043,10 +7211,24 @@ function isSignalMonitorStateSignalIdentityTrusted(
   return state.canonicalSignalEvent?.sourceIntegrity.trusted !== false;
 }
 
+function isSignalMonitorLatestBarSourceIntegrityTrusted(
+  integrity: SignalMonitorSourceIntegrityDecision | null | undefined,
+): boolean {
+  if (!integrity) {
+    return true;
+  }
+  // A missing non-live reference means the latest live edge cannot be trusted to
+  // author a canonical signal identity, but the bar's own timestamp/close still
+  // reflects the freshest market-data point we have for display/currentness.
+  return integrity.trusted !== false || integrity.reason === "missing-reference";
+}
+
 function isSignalMonitorStateLatestBarTrusted(
   state: SignalMonitorMatrixStateResult,
 ): boolean {
-  return state.latestBarSourceIntegrity?.trusted !== false;
+  return isSignalMonitorLatestBarSourceIntegrityTrusted(
+    state.latestBarSourceIntegrity,
+  );
 }
 
 async function persistSignalMonitorMatrixStateEventBestEffort(input: {
@@ -7136,9 +7318,12 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       await Promise.all(
         batch.map((state) =>
           runSignalMonitorBackgroundDbRead(async () => {
+          const normalizedStatus = String(state.status || "ok")
+            .trim()
+            .toLowerCase();
           const status =
-            String(state.status || "ok").trim().toLowerCase() === "stale"
-              ? "stale"
+            normalizedStatus === "idle" || normalizedStatus === "stale"
+              ? normalizedStatus
               : "ok";
           // Signal identity persists regardless of status; staleness only
           // gates freshness. The upsert latch and identity-ranked preserve
@@ -7148,7 +7333,6 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
           const latestBarTrusted = isSignalMonitorStateLatestBarTrusted(state);
           const direction =
             signalIdentityTrusted &&
-            latestBarTrusted &&
             (state.currentSignalDirection === "buy" ||
               state.currentSignalDirection === "sell")
               ? state.currentSignalDirection
@@ -7192,7 +7376,7 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             // Persist the always-defined current trend so the bootstrap can show
             // a buy/sell direction on load; rides with the crossover, not actionable.
             trendDirection: state.indicatorSnapshot?.trendDirection ?? null,
-            allowStoredSignalLatch: signalIdentityTrusted && latestBarTrusted,
+            allowStoredSignalLatch: signalIdentityTrusted,
           });
           if ("effectiveValues" in resolved) {
             // Last write wins on a duplicate (symbol, timeframe), matching the
@@ -7482,6 +7666,7 @@ function signalMonitorMatrixStreamStateSignature(
     currentSignalAt: dateOrNull(state.currentSignalAt)?.toISOString() ?? null,
     currentSignalPrice: state.currentSignalPrice ?? null,
     currentSignalClose: state.currentSignalClose ?? null,
+    latestBarClose: state.latestBarClose ?? null,
     currentSignalMfePercent: state.currentSignalMfePercent ?? null,
     currentSignalMaePercent: state.currentSignalMaePercent ?? null,
     filterState:
@@ -7506,6 +7691,7 @@ function withSignalMonitorMatrixStreamActionability<
     signalAt: state.currentSignalAt,
     barsSinceSignal: state.barsSinceSignal,
     stale: state.status !== "ok",
+    staleBlocker: signalMonitorActionBlockerForStatus(state.status),
     freshWindowBars: profile.freshWindowBars,
   });
   // fresh stays as authored by the eval/latch path: a latched refresh is
@@ -8332,6 +8518,12 @@ const SIGNAL_MONITOR_INTRADAY_BAR_SECONDS_SQL = sql`
   END`;
 
 const SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE = 0.02;
+const SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL = sql`(
+  'massive-history',
+  'massive-websocket',
+  'massive-delayed-websocket',
+  'ibkr-websocket-derived'
+)`;
 
 const SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL = sql`
   COALESCE(
@@ -8351,27 +8543,49 @@ function trustedSignalMonitorCanonicalEventsSql(profileId: string) {
     (
       SELECT
         signal_monitor_events.id,
+        signal_monitor_events.profile_id,
         signal_monitor_events.symbol,
         signal_monitor_events.timeframe,
         signal_monitor_events.direction,
         signal_monitor_events.signal_at,
         signal_monitor_events.signal_price,
         signal_monitor_events.payload->'filterState' AS filter_state,
-        bar_cache.close,
+        COALESCE(trusted_signal_bar.close, signal_monitor_events.close) AS close,
         ${SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL} AS signal_bar_at
       FROM signal_monitor_events
-      JOIN bar_cache
-        ON bar_cache.symbol = signal_monitor_events.symbol
-       AND bar_cache.timeframe = signal_monitor_events.timeframe
-       AND bar_cache.source = 'massive-history'
-       AND bar_cache.starts_at = ${SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL}
+      LEFT JOIN LATERAL (
+        SELECT bar_cache.close
+        FROM bar_cache
+        WHERE bar_cache.symbol = signal_monitor_events.symbol
+          AND bar_cache.timeframe = signal_monitor_events.timeframe
+          AND bar_cache.source IN ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}
+          AND bar_cache.starts_at = ${SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL}
+          AND bar_cache.close IS NOT NULL
+        ORDER BY
+          CASE bar_cache.source
+            WHEN 'massive-history' THEN 0
+            WHEN 'massive-websocket' THEN 1
+            WHEN 'ibkr-websocket-derived' THEN 2
+            WHEN 'massive-delayed-websocket' THEN 3
+            ELSE 9
+          END
+        LIMIT 1
+      ) AS trusted_signal_bar ON true
       WHERE signal_monitor_events.profile_id = ${profileId}
+        AND signal_monitor_events.direction IN ('buy', 'sell')
         AND signal_monitor_events.close IS NOT NULL
-        AND bar_cache.close IS NOT NULL
-        AND ABS(
-          (signal_monitor_events.close::numeric - bar_cache.close::numeric) /
-          NULLIF(bar_cache.close::numeric, 0)
-        ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
+        AND (
+          signal_monitor_events.payload->'sourceIntegrity'->>'trusted' = 'true'
+          OR signal_monitor_events.payload->'sourceIntegrity' IS NULL
+          OR jsonb_typeof(signal_monitor_events.payload->'sourceIntegrity') = 'null'
+          OR (
+            trusted_signal_bar.close IS NOT NULL
+            AND ABS(
+              (signal_monitor_events.close::numeric - trusted_signal_bar.close::numeric) /
+              NULLIF(trusted_signal_bar.close::numeric, 0)
+            ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
+          )
+        )
     )`;
 }
 
@@ -8412,33 +8626,11 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
           )
           AND NOT EXISTS (
             SELECT 1
-            FROM signal_monitor_events AS current_event
-            JOIN bar_cache AS current_event_bar
-              ON current_event_bar.symbol = current_event.symbol
-             AND current_event_bar.timeframe = current_event.timeframe
-             AND current_event_bar.source = 'massive-history'
-             AND current_event_bar.starts_at = COALESCE(
-                NULLIF(current_event.payload->>'signalBarAt', '')::timestamptz,
-                CASE current_event.timeframe
-                  WHEN '1m' THEN current_event.signal_at - interval '1 minute'
-                  WHEN '2m' THEN current_event.signal_at - interval '2 minutes'
-                  WHEN '5m' THEN current_event.signal_at - interval '5 minutes'
-                  WHEN '15m' THEN current_event.signal_at - interval '15 minutes'
-                  WHEN '1h' THEN current_event.signal_at - interval '1 hour'
-                  ELSE current_event.signal_at
-                END
-              )
-            WHERE current_event.profile_id = s.profile_id
-              AND current_event.symbol = s.symbol
+            FROM ${trustedEvents} AS current_event
+            WHERE current_event.symbol = s.symbol
               AND current_event.timeframe = s.timeframe
               AND current_event.direction = s.current_signal_direction
               AND current_event.signal_at = s.current_signal_at
-              AND current_event.close IS NOT NULL
-              AND current_event_bar.close IS NOT NULL
-              AND ABS(
-                (current_event.close::numeric - current_event_bar.close::numeric) /
-                NULLIF(current_event_bar.close::numeric, 0)
-              ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
           )
         ))`;
   const identityAdopted = await countOf(
@@ -8523,10 +8715,10 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
       AND s.active = true
       AND s.latest_bar_at IS NOT NULL
       AND s.latest_bar_close IS NOT NULL
-      AND trusted_latest.symbol = s.symbol
-      AND trusted_latest.timeframe = s.timeframe
-      AND trusted_latest.source = 'massive-history'
-      AND trusted_latest.starts_at = s.latest_bar_at
+	      AND trusted_latest.symbol = s.symbol
+	      AND trusted_latest.timeframe = s.timeframe
+	      AND trusted_latest.source IN ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}
+	      AND trusted_latest.starts_at = s.latest_bar_at
       AND trusted_latest.close IS NOT NULL
       AND ABS(
         (s.latest_bar_close::numeric - trusted_latest.close::numeric) /
@@ -8554,12 +8746,52 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
       FROM signal_monitor_symbol_states AS s
       JOIN LATERAL (
         SELECT starts_at, close
-        FROM bar_cache
-        WHERE bar_cache.symbol = s.symbol
-          AND bar_cache.timeframe = s.timeframe
-          AND bar_cache.source = 'massive-history'
-          AND bar_cache.close IS NOT NULL
-        ORDER BY bar_cache.starts_at DESC
+        FROM (
+          (
+            SELECT starts_at, close, 0 AS source_rank
+            FROM bar_cache
+            WHERE bar_cache.symbol = s.symbol
+              AND bar_cache.timeframe = s.timeframe
+              AND bar_cache.source = 'massive-history'
+              AND bar_cache.close IS NOT NULL
+            ORDER BY bar_cache.starts_at DESC
+            LIMIT 1
+          )
+          UNION ALL
+          (
+            SELECT starts_at, close, 1 AS source_rank
+            FROM bar_cache
+            WHERE bar_cache.symbol = s.symbol
+              AND bar_cache.timeframe = s.timeframe
+              AND bar_cache.source = 'massive-websocket'
+              AND bar_cache.close IS NOT NULL
+            ORDER BY bar_cache.starts_at DESC
+            LIMIT 1
+          )
+          UNION ALL
+          (
+            SELECT starts_at, close, 2 AS source_rank
+            FROM bar_cache
+            WHERE bar_cache.symbol = s.symbol
+              AND bar_cache.timeframe = s.timeframe
+              AND bar_cache.source = 'ibkr-websocket-derived'
+              AND bar_cache.close IS NOT NULL
+            ORDER BY bar_cache.starts_at DESC
+            LIMIT 1
+          )
+          UNION ALL
+          (
+            SELECT starts_at, close, 3 AS source_rank
+            FROM bar_cache
+            WHERE bar_cache.symbol = s.symbol
+              AND bar_cache.timeframe = s.timeframe
+              AND bar_cache.source = 'massive-delayed-websocket'
+              AND bar_cache.close IS NOT NULL
+            ORDER BY bar_cache.starts_at DESC
+            LIMIT 1
+          )
+        ) AS latest_by_source
+        ORDER BY starts_at DESC, source_rank ASC
         LIMIT 1
       ) AS trusted_latest ON true
       WHERE s.profile_id = ${profile.id}
@@ -8590,33 +8822,11 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
       AND s.current_signal_at IS NOT NULL
       AND NOT EXISTS (
         SELECT 1
-        FROM signal_monitor_events AS current_event
-        JOIN bar_cache AS current_event_bar
-          ON current_event_bar.symbol = current_event.symbol
-         AND current_event_bar.timeframe = current_event.timeframe
-         AND current_event_bar.source = 'massive-history'
-         AND current_event_bar.starts_at = COALESCE(
-            NULLIF(current_event.payload->>'signalBarAt', '')::timestamptz,
-            CASE current_event.timeframe
-              WHEN '1m' THEN current_event.signal_at - interval '1 minute'
-              WHEN '2m' THEN current_event.signal_at - interval '2 minutes'
-              WHEN '5m' THEN current_event.signal_at - interval '5 minutes'
-              WHEN '15m' THEN current_event.signal_at - interval '15 minutes'
-              WHEN '1h' THEN current_event.signal_at - interval '1 hour'
-              ELSE current_event.signal_at
-            END
-          )
-        WHERE current_event.profile_id = s.profile_id
-          AND current_event.symbol = s.symbol
+        FROM ${trustedEvents} AS current_event
+        WHERE current_event.symbol = s.symbol
           AND current_event.timeframe = s.timeframe
           AND current_event.direction = s.current_signal_direction
           AND current_event.signal_at = s.current_signal_at
-          AND current_event.close IS NOT NULL
-          AND current_event_bar.close IS NOT NULL
-          AND ABS(
-            (current_event.close::numeric - current_event_bar.close::numeric) /
-            NULLIF(current_event_bar.close::numeric, 0)
-          ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
       )
       AND EXISTS (
         SELECT 1
@@ -8629,31 +8839,9 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
       )
       AND NOT EXISTS (
         SELECT 1
-        FROM signal_monitor_events AS replacement_event
-        JOIN bar_cache AS replacement_event_bar
-          ON replacement_event_bar.symbol = replacement_event.symbol
-         AND replacement_event_bar.timeframe = replacement_event.timeframe
-         AND replacement_event_bar.source = 'massive-history'
-         AND replacement_event_bar.starts_at = COALESCE(
-            NULLIF(replacement_event.payload->>'signalBarAt', '')::timestamptz,
-            CASE replacement_event.timeframe
-              WHEN '1m' THEN replacement_event.signal_at - interval '1 minute'
-              WHEN '2m' THEN replacement_event.signal_at - interval '2 minutes'
-              WHEN '5m' THEN replacement_event.signal_at - interval '5 minutes'
-              WHEN '15m' THEN replacement_event.signal_at - interval '15 minutes'
-              WHEN '1h' THEN replacement_event.signal_at - interval '1 hour'
-              ELSE replacement_event.signal_at
-            END
-          )
-        WHERE replacement_event.profile_id = s.profile_id
-          AND replacement_event.symbol = s.symbol
+        FROM ${trustedEvents} AS replacement_event
+        WHERE replacement_event.symbol = s.symbol
           AND replacement_event.timeframe = s.timeframe
-          AND replacement_event.close IS NOT NULL
-          AND replacement_event_bar.close IS NOT NULL
-          AND ABS(
-            (replacement_event.close::numeric - replacement_event_bar.close::numeric) /
-            NULLIF(replacement_event_bar.close::numeric, 0)
-          ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
       )`;
   const untrustedIdentityCleared = await countOf(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${untrustedIdentityWhere}`,
@@ -8832,21 +9020,34 @@ async function evaluateSymbolsInBatches(input: {
   for (let index = 0; index < input.symbols.length; index += concurrency) {
     throwIfSignalMonitorAborted(input.signal);
     const batch = input.symbols.slice(index, index + concurrency);
-    const batchStates = await Promise.all(
-      batch.map((symbol) =>
-        evaluateSignalMonitorSymbol({
-          profile: input.profile,
-          symbol,
-          timeframe: input.timeframe,
-          mode: input.mode,
-          evaluatedAt: input.evaluatedAt,
-          barSourcePolicy: input.barSourcePolicy,
-          includeProvisionalLiveEdge: input.includeProvisionalLiveEdge,
-          allowHistoricalFallback: input.allowHistoricalFallback,
-          signalStabilityPolicy: input.signalStabilityPolicy,
-          signal: input.signal,
-        }),
-      ),
+    // Batch-prefetch this batch's stored bars (one set-based read per source) so
+    // the per-symbol readStoredBars calls inside serve from the prefetch instead
+    // of one pooled connection each. This whole-universe refresh is the dominant
+    // bar-cache pool load. Behavior-equal — falls back per-symbol on any miss.
+    const batchStates = await runWithSignalMonitorStoredBarsPrefetch(
+      {
+        symbols: batch,
+        timeframes: [input.timeframe],
+        evaluatedAt: input.evaluatedAt,
+        limit: PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+      },
+      () =>
+        Promise.all(
+          batch.map((symbol) =>
+            evaluateSignalMonitorSymbol({
+              profile: input.profile,
+              symbol,
+              timeframe: input.timeframe,
+              mode: input.mode,
+              evaluatedAt: input.evaluatedAt,
+              barSourcePolicy: input.barSourcePolicy,
+              includeProvisionalLiveEdge: input.includeProvisionalLiveEdge,
+              allowHistoricalFallback: input.allowHistoricalFallback,
+              signalStabilityPolicy: input.signalStabilityPolicy,
+              signal: input.signal,
+            }),
+          ),
+        ),
     );
     throwIfSignalMonitorAborted(input.signal);
     states.push(...batchStates);
@@ -9400,7 +9601,7 @@ function isHydratedSignalMonitorMatrixStateForCoverage(
     symbol &&
       timeframes.includes(timeframe) &&
       record.active !== false &&
-      (((status === "ok" || status === "stale") &&
+      (((status === "ok" || status === "idle" || status === "stale") &&
         (latestBarAt || currentSignalAt)) ||
         (status === "unavailable" &&
           lastEvaluatedAt &&
@@ -9450,7 +9651,7 @@ function isRenderableStoredSignalMonitorMatrixState(
     symbol &&
       timeframes.includes(timeframe) &&
       record.active !== false &&
-      (status === "ok" || status === "stale") &&
+      (status === "ok" || status === "idle" || status === "stale") &&
       !record.lastError &&
       (dateOrNull(record.latestBarAt) || dateOrNull(record.currentSignalAt)),
   );
@@ -10077,24 +10278,39 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
       );
       for (let index = 0; index < symbols.length; index += step) {
         const batch = symbols.slice(index, index + step);
-        const batchResults = await Promise.all(
-          batch.map((symbol) => {
-            const requestedTimeframes = cellsBySymbol?.get(symbol) ?? timeframes;
-            if (!requestedTimeframes.length) {
-              return Promise.resolve({
-                states: [] as SignalMonitorMatrixStateResult[],
-                sourceRequestCount: 0,
-              });
-            }
-            return evaluateSignalMonitorMatrixSymbol({
-              profile,
-              symbol,
-              timeframes: requestedTimeframes,
-              evaluatedAt,
-              includeProvisionalLiveEdge: true,
-              allowHistoricalFallback,
-            });
-          }),
+        // Batch-prefetch this batch's stored bars (symbols × timeframes × sources)
+        // in a few set-based queries so the per-symbol readStoredBars calls inside
+        // serve from the prefetch instead of issuing one pooled connection each.
+        // Behavior-equal to the un-prefetched evaluation (the prefetch falls back
+        // per-symbol on any miss); see runWithSignalMonitorStoredBarsPrefetch.
+        const batchResults = await runWithSignalMonitorStoredBarsPrefetch(
+          {
+            symbols: batch,
+            timeframes,
+            evaluatedAt,
+            limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+          },
+          () =>
+            Promise.all(
+              batch.map((symbol) => {
+                const requestedTimeframes =
+                  cellsBySymbol?.get(symbol) ?? timeframes;
+                if (!requestedTimeframes.length) {
+                  return Promise.resolve({
+                    states: [] as SignalMonitorMatrixStateResult[],
+                    sourceRequestCount: 0,
+                  });
+                }
+                return evaluateSignalMonitorMatrixSymbol({
+                  profile,
+                  symbol,
+                  timeframes: requestedTimeframes,
+                  evaluatedAt,
+                  includeProvisionalLiveEdge: true,
+                  allowHistoricalFallback,
+                });
+              }),
+            ),
         );
         batchResults.forEach((result) => {
           states.push(...result.states);
@@ -10577,6 +10793,7 @@ export const __signalMonitorInternalsForTests = {
   resetSignalMonitorMatrixStreamForTests,
   resolveSignalMonitorBrokerRecentWindowMinutes,
   isSignalMonitorStateCurrentForLane,
+  signalMonitorStreamLaneLatestCompletedBarAt,
   traceSignalMonitorLaneCurrentness,
   stateToResponseForSnapshot,
   shouldBypassSignalMonitorCompletedBarsCache,
@@ -10715,14 +10932,20 @@ async function readSignalMonitorPassiveStoredStateFresh(input: {
   );
   const currentStates = universeStates.filter((state) => {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    const timeframe = String(
+      state.timeframe || "",
+    ) as SignalMonitorMatrixTimeframe;
     return (
       universeSymbolSet.has(symbol) &&
       isSignalMonitorStateCurrentForLane({
         state,
-        timeframe: String(
-          state.timeframe || "",
-        ) as SignalMonitorMatrixTimeframe,
+        timeframe,
         evaluatedAt,
+        streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+          symbol: state.symbol,
+          timeframe,
+          evaluatedAt,
+        }),
       })
     );
   });
@@ -10825,14 +11048,20 @@ async function readSignalMonitorStateFresh(input: {
     });
     const currentStates = universeStates.filter((state) => {
       const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      const timeframe = String(
+        state.timeframe || "",
+      ) as SignalMonitorMatrixTimeframe;
       return (
         currentUniverseSymbols.has(symbol) &&
         isSignalMonitorStateCurrentForLane({
           state,
-          timeframe: String(
-            state.timeframe || "",
-          ) as SignalMonitorMatrixTimeframe,
+          timeframe,
           evaluatedAt,
+          streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+            symbol: state.symbol,
+            timeframe,
+            evaluatedAt,
+          }),
         })
       );
     });
@@ -10987,11 +11216,13 @@ function sortSignalMonitorPriceTraceRows(
   const severityRank = (entry: typeof left): number =>
     entry.response.status === "unavailable"
       ? 0
-      : entry.response.status === "stale"
+      : entry.response.status === "idle"
         ? 1
-        : !entry.currentness.current
-          ? 2
-          : 3;
+      : entry.response.status === "stale"
+        ? 2
+      : !entry.currentness.current
+          ? 3
+          : 4;
   const severity = severityRank(left) - severityRank(right);
   if (severity !== 0) {
     return severity;
@@ -11211,6 +11442,8 @@ export async function traceSignalMonitorPriceFreshness(
       acc.total += 1;
       if (row.response.status === "ok" && row.response.fresh) {
         acc.apiFresh += 1;
+      } else if (row.response.status === "idle") {
+        acc.apiIdle += 1;
       } else if (row.response.status === "stale") {
         acc.apiStale += 1;
       } else if (row.response.status === "unavailable") {
@@ -11224,6 +11457,7 @@ export async function traceSignalMonitorPriceFreshness(
     {
       total: 0,
       apiFresh: 0,
+      apiIdle: 0,
       apiStale: 0,
       apiUnavailable: 0,
       storedFresh: 0,

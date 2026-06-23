@@ -35,6 +35,7 @@ import {
 } from "./request-metrics";
 import {
   getApiResourcePressureSnapshot,
+  getContainerMemoryLimitMb,
   normalizeApiResourcePressureLevel,
   resolveApiRssPressureThresholds,
   updateApiResourcePressure,
@@ -2670,10 +2671,28 @@ function buildResourcePressureMetrics(
   const clientPressure = asJsonRecord(latest?.memoryPressure);
   const resourceCaches = asJsonRecord(asJsonRecord(runtime["api"])["resourceCaches"]);
   const heapUsedPercent = numeric(api["heapUsedPercent"]);
+  // Gate heap pressure on heap as a fraction of the CONTAINER memory limit
+  // (~16GB), not the ~2.7GB V8 heap ceiling that `heapUsedPercent` uses — a
+  // healthy ~1.5GB working set reads ~55-80% of the V8 ceiling and would
+  // errantly trip pressure while most of the container is free. RSS stays the
+  // primary container-memory signal; this keeps heap from false-positiving and
+  // leaves the V8-ceiling `heapUsedPercent` intact for display/GC observability.
+  // When the cgroup limit is unreadable (cgroup-v1 / sandbox / local dev), fall
+  // back to the always-available V8-ceiling percent so the heap signal is never
+  // fully inert in those environments (prod reads the 16GB cgroup limit and uses
+  // the de-flapped container-relative percent).
+  const heapUsedMbValue = numeric(api["heapUsedMb"]);
+  const containerMemoryLimitMb = getContainerMemoryLimitMb();
+  const heapPressurePercent =
+    heapUsedMbValue !== null &&
+    containerMemoryLimitMb !== null &&
+    containerMemoryLimitMb > 0
+      ? roundMetric((heapUsedMbValue / containerMemoryLimitMb) * 100)
+      : heapUsedPercent;
   const dbPool = getPoolStats();
   const apiRssThresholds = resolveApiRssPressureThresholds();
   const heapLevel = pressureLevelFromRatio(
-    heapUsedPercent === null ? null : heapUsedPercent / 100,
+    heapPressurePercent === null ? null : heapPressurePercent / 100,
   );
   const browserMemoryMb =
     numeric(browserMemory["bytes"]) !== null
@@ -2715,7 +2734,7 @@ function buildResourcePressureMetrics(
   ]);
   const resourcePressure = updateApiResourcePressure({
     rssMb: numeric(api["rssMb"]),
-    apiHeapUsedPercent: heapUsedPercent,
+    apiHeapUsedPercent: heapPressurePercent,
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
     eventLoopDelayP95Ms: numeric(api["eventLoopP95Ms"]),
@@ -3722,9 +3741,13 @@ export async function recordClientDiagnosticsMetrics(input: {
   };
   clientMetrics.push(sample);
   trimClientMetrics();
-  updateApiResourcePressure({
-    clientLevel: toResourcePressureLevel(sample.memoryPressure["level"]),
-  });
+  // Client memory pressure is folded into the snapshot by the 15s diagnostic tick
+  // (buildResourcePressureMetrics reads latestClientMetric() -> clientLevel), so we
+  // do NOT re-run updateApiResourcePressure here. A clientLevel-only update at
+  // client-POST cadence re-evaluates the resourceLevel hysteresis against the prior
+  // tick's STALE dbPool/heap inputs, advancing the 2-sample counter far faster than
+  // the intended ~30s and undoing the dbPool/heap de-flap. clientLevel only affects
+  // the display `level` (capped at watch), so deferring it to the next tick is safe.
   return { accepted: true, id };
 }
 

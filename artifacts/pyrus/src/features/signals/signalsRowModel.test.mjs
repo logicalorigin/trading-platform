@@ -348,3 +348,37 @@ test("Signal matrix state index ranks directional cells by signal-fire time", ()
     "2026-06-12T16:25:00.000Z",
   );
 });
+
+test("market-idle signal rows keep last-known direction without stale labeling", () => {
+  const rows = buildSignalsRows({
+    stateResponse: {
+      profile: { timeframe: "5m" },
+      universeSymbols: ["SPY"],
+      states: [
+        {
+          symbol: "SPY",
+          timeframe: "5m",
+          status: "idle",
+          active: true,
+          fresh: false,
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-08T19:55:00.000Z",
+          currentSignalPrice: 510.25,
+          currentSignalClose: 510.1,
+          latestBarAt: "2026-06-08T20:00:00.000Z",
+          latestBarClose: 510.7,
+          barsSinceSignal: 1,
+          actionBlocker: "market_idle",
+        },
+      ],
+    },
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, "active-idle");
+  assert.equal(rows[0].statusLabel, "Market idle");
+  assert.match(rows[0].coverageReason, /No recent market print/);
+  assert.equal(rows[0].direction, "buy");
+  assert.equal(rows[0].currentSignalClose, 510.1);
+  assert.equal(rows[0].barsSinceSignal, 1);
+});

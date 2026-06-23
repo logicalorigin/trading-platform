@@ -240,7 +240,7 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
     entryGate: {
       mtfAlignment: {
         enabled: true,
-        requiredCount: 2,
+        requiredCount: signalOptionsDefaultMtfTimeframes.length,
         timeframes: [...signalOptionsDefaultMtfTimeframes],
         preset: "custom",
       },
@@ -823,12 +823,7 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.enabled ?? root.mtfAlignmentEnabled,
           defaults.entryGate.mtfAlignment.enabled,
         ),
-        requiredCount: finiteInteger(
-          mtfAlignment.requiredCount ?? root.mtfAlignmentRequiredCount,
-          defaults.entryGate.mtfAlignment.requiredCount,
-          1,
-          mtfTimeframes.length,
-        ),
+        requiredCount: Math.max(1, mtfTimeframes.length),
         timeframes: mtfTimeframes,
         preset: signalOptionsMtfPreset(
           mtfAlignment.preset ?? root.mtfAlignmentPreset,

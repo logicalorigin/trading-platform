@@ -43,6 +43,24 @@ test("signal monitor state route does not serve cached matrix state responses", 
   );
 });
 
+test("signal matrix stream signature includes latest bar close for STA move hydration", () => {
+  const signatureStart = serviceSource.indexOf(
+    "function signalMonitorMatrixStreamStateSignature",
+  );
+  const signatureEnd = serviceSource.indexOf(
+    "function withSignalMonitorMatrixStreamActionability",
+    signatureStart,
+  );
+  assert.notEqual(signatureStart, -1);
+  assert.notEqual(signatureEnd, -1);
+  const signatureBlock = serviceSource.slice(signatureStart, signatureEnd);
+
+  assert.match(signatureBlock, /currentSignalClose: state\.currentSignalClose/);
+  assert.match(signatureBlock, /latestBarClose: state\.latestBarClose/);
+  assert.match(signatureBlock, /currentSignalMfePercent: state\.currentSignalMfePercent/);
+  assert.match(signatureBlock, /currentSignalMaePercent: state\.currentSignalMaePercent/);
+});
+
 test("signal matrix stream status uses a source bootstrap state, not fallback", () => {
   const statusTypeStart = serviceSource.indexOf(
     "type SignalMonitorMatrixStreamSourceState",
@@ -88,6 +106,23 @@ test("signal matrix persistence failures update DB fallback diagnostics", () => 
   assert.match(persistBlock, /recordSignalMonitorDbFallback\(\s*error,\s*\{/s);
   assert.match(persistBlock, /operation:\s*"persist_signal_monitor_matrix_states"/);
   assert.match(persistBlock, /sourceStatus:\s*"persistence-failed"/);
+});
+
+test("signal matrix persistence does not gate signal identity on latest-bar trust", () => {
+  const persistStart = serviceSource.indexOf(
+    "async function persistSignalMonitorMatrixStatesBestEffort",
+  );
+  const persistEnd = serviceSource.indexOf(
+    "// Coalescing single-flight for state persistence",
+    persistStart,
+  );
+  assert.notEqual(persistStart, -1);
+  assert.notEqual(persistEnd, -1);
+  const persistBlock = serviceSource.slice(persistStart, persistEnd);
+
+  assert.doesNotMatch(persistBlock, /signalIdentityTrusted\s*&&\s*latestBarTrusted/);
+  assert.match(persistBlock, /allowStoredSignalLatch:\s*signalIdentityTrusted/);
+  assert.match(persistBlock, /fresh:\s*latestBarTrusted\s*&&\s*status === "ok"/);
 });
 
 test("runtime-fallback stream profiles do not enqueue DB persistence", () => {
@@ -473,6 +508,42 @@ test("server-owned producer scope normalizes and dedupes universe symbols", () =
   assert.equal(scope.exactCells, false);
   assert.deepEqual(scope.timeframes, ["1m", "5m"]);
   assert.equal(scope.requestedSymbolCount, 2);
+});
+
+test("producer backfill selects all cold cells and only caps warmed refreshes", () => {
+  const nowMs = Date.parse("2026-06-23T18:30:00.000Z");
+  const coldCandidates = ["AAPL", "MSFT", "NVDA", "SPY"].map((symbol) => ({
+    symbol,
+    timeframe: "1h" as const,
+    refreshedAt: null,
+  }));
+  const warmCandidates = ["QQQ", "IWM", "DIA"].map((symbol) => ({
+    symbol,
+    timeframe: "1h" as const,
+    refreshedAt: 0,
+  }));
+
+  const withCold =
+    __signalMonitorInternalsForTests.selectSignalMonitorBackfillDueCells({
+      candidates: [...coldCandidates, ...warmCandidates],
+      nowMs,
+      maxCells: 2,
+    });
+
+  assert.equal(withCold.length, 4);
+  assert.deepEqual(
+    new Set(withCold.map((cell) => cell.symbol)),
+    new Set(["AAPL", "MSFT", "NVDA", "SPY"]),
+  );
+
+  const warmedOnly =
+    __signalMonitorInternalsForTests.selectSignalMonitorBackfillDueCells({
+      candidates: warmCandidates,
+      nowMs,
+      maxCells: 2,
+    });
+
+  assert.equal(warmedOnly.length, 2);
 });
 
 test("server-owned producer evaluates bar-close ticks with no UI subscriber", () => {

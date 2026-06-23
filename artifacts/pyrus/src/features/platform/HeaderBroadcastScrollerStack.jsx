@@ -224,7 +224,12 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
   selectedTimeframe = "5m",
 }) {
   const isSell = item.direction === "sell";
-  const tone = isSell ? CSS_COLOR.red : CSS_COLOR.green;
+  const isDirectional = item.direction === "buy" || item.direction === "sell";
+  // A not-fresh directional broadcast recolors the arrow amber in its last-known
+  // direction, matching the SignalDots / Signals-screen arrows. Fresh keeps the
+  // broadcast scheme (buy = green, sell = red).
+  const stale = isDirectional && item.fresh === false;
+  const tone = stale ? CSS_COLOR.amber : isSell ? CSS_COLOR.red : CSS_COLOR.green;
   const DirectionIcon = isSell ? ArrowDown : ArrowUp;
   const priceLabel =
     item.price != null && Number.isFinite(Number(item.price))

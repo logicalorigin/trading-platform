@@ -340,6 +340,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   scoreBreakdown,
   tfMatrix,
   timeframes,
+  mtfAlignmentConfig = null,
   executionTimeframe = null,
   signalEvents = [],
   alt,
@@ -364,6 +365,7 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
       scoreBreakdown={scoreBreakdown}
       tfMatrix={tfMatrix}
       timeframes={timeframes}
+      mtfAlignmentConfig={mtfAlignmentConfig}
       executionTimeframe={executionTimeframe}
       signalEvents={signalEvents}
       tickerSnapshot={tickerSnapshot}
@@ -560,6 +562,28 @@ const rowStableIdentity = (row) => {
     .join("|");
 };
 
+const rowSignalKpiDataSignature = (row) => {
+  const signal = asRecord(row.signal);
+  return [
+    signal.currentSignalClose,
+    signal.signalClose,
+    signal.signalBarClose,
+    signal.currentPrice,
+    signal.latestBarClose,
+    signal.currentSignalMfePercent,
+    signal.currentSignalMaePercent,
+    signal.latestBarAt,
+    signal.updatedAt,
+    signal.lastEvaluatedAt,
+    signal.status,
+    signal.actionBlocker,
+    signal.actionEligible,
+    signal.fresh,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .join("|");
+};
+
 const sameColumnSet = (columns, expected) => {
   const source = new Set(columns);
   const target = new Set(expected);
@@ -670,14 +694,23 @@ export const buildStaTableRowsSnapshot = ({
   actionCount = 0,
   historyCount = 0,
   activeFilterLabel = "All",
+  contextSignature = "",
 } = {}) => {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const signalRows = sourceRows
     .map((row) => asRecord(row?.signal))
     .filter((signal) => Object.keys(signal).length > 0);
+  const rowSignature = sourceRows
+    .map((row, index) =>
+      [rowStableIdentity(row) || String(index), rowSignalKpiDataSignature(row)]
+        .filter(Boolean)
+        .join("::"),
+    )
+    .join("\n");
+  const normalizedContextSignature = String(contextSignature || "").trim();
   return {
-    signature: sourceRows
-      .map((row, index) => rowStableIdentity(row) || String(index))
+    signature: [normalizedContextSignature, rowSignature]
+      .filter(Boolean)
       .join("\n"),
     signalRows,
     rowCount: sourceRows.length,
@@ -859,7 +892,8 @@ export const splitStaRowsBySignalMatrixHydration = ({
     }
   });
   return {
-    rows: rowsWithHydration,
+    rows: hydratedRows,
+    rowsWithHydration,
     hydratedRows,
     pendingRows,
   };
@@ -873,11 +907,16 @@ export const splitStaRowsBySignalMatrixHydration = ({
 // row is not aligned (matches < requiredCount).
 export const staRowPassesMtfAlignment = (row, signalMatrixBySymbol, mtfAlignmentConfig) => {
   const symbolUpper = String(asRecord(row?.signal).symbol || "").toUpperCase();
+  const timeframes = Array.isArray(mtfAlignmentConfig?.timeframes)
+    ? mtfAlignmentConfig.timeframes
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter(Boolean)
+    : [];
   const result = resolveConfiguredMtfAlignment({
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: directionMeta(asRecord(row?.signal).direction).primitive,
-    timeframes: mtfAlignmentConfig?.timeframes,
-    requiredCount: mtfAlignmentConfig?.requiredCount,
+    timeframes,
+    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
   return !(result.applicable && !result.aligned);
@@ -1333,6 +1372,22 @@ export const OperationsSignalTable = ({
     () => buildSignalMatrixBySymbol(signalMatrixStates, displaySignalTimeframes),
     [displaySignalTimeframes, signalMatrixStates],
   );
+  const staRowsContextSignature = useMemo(() => {
+    const mtfTimeframes = Array.isArray(mtfAlignmentConfig?.timeframes)
+      ? mtfAlignmentConfig.timeframes
+          .map((timeframe) => String(timeframe || "").trim())
+          .filter(Boolean)
+      : [];
+    return JSON.stringify({
+      signalTimeframes: displaySignalTimeframes,
+      executionTimeframe: String(executionTimeframe || "").trim(),
+      mtf: {
+        enabled: mtfAlignmentConfig?.enabled !== false,
+        requiredCount: mtfTimeframes.length || null,
+        timeframes: mtfTimeframes,
+      },
+    });
+  }, [displaySignalTimeframes, executionTimeframe, mtfAlignmentConfig]);
   const signalEventsBySymbol = useMemo(
     () => buildSignalEventsBySymbol(events),
     [events],
@@ -1641,6 +1696,7 @@ export const OperationsSignalTable = ({
         actionCount: actionMappedCount,
         historyCount: counts.history,
         activeFilterLabel: activeFilter.label,
+        contextSignature: staRowsContextSignature,
       }),
     [
       actionMappedCount,
@@ -1648,6 +1704,7 @@ export const OperationsSignalTable = ({
       counts.history,
       receivedSignalCount,
       rows,
+      staRowsContextSignature,
     ],
   );
   useEffect(() => {

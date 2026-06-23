@@ -155,6 +155,7 @@ import {
 } from "./account-flex-model";
 import {
   declareIbkrLiveDemand,
+  type IbkrLiveDemandStatus,
   type IbkrLiveDemandQuoteState,
   readIbkrLiveDemandState,
   releaseIbkrLiveDemand,
@@ -184,6 +185,9 @@ const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 60_000;
 const ACCOUNT_ROUTE_RESPONSE_STALE_TTL_MS = 5 * 60_000;
 const ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS =
   ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
+const ACCOUNT_POSITION_OPEN_DATE_CACHE_TTL_MS = 30_000;
+const ACCOUNT_POSITION_OPEN_DATE_STALE_TTL_MS = 5 * 60_000;
+const ACCOUNT_POSITION_OPTION_QUOTE_REFRESH_TIMEOUT_MS = 5_000;
 export const ACCOUNT_FULL_RISK_CACHE_TTL_MS = 30_000;
 export const ACCOUNT_FULL_RISK_STALE_TTL_MS = 5 * 60_000;
 const FLEX_SEND_REQUEST_URL =
@@ -279,6 +283,17 @@ const accountOrdersReadCache = new Map<
 const accountExecutionsReadCache = new Map<
   string,
   ShortLivedAccountCacheEntry<BrokerExecutionSnapshot[]>
+>();
+const accountPositionOpenDatesReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<Map<string, PositionOpenDate>>
+>();
+const accountPositionOpenDatesLastKnownCache = new Map<
+  string,
+  {
+    value: Map<string, PositionOpenDate>;
+    expiresAt: number;
+  }
 >();
 const positionMarketHydrationReadCache = new Map<
   string,
@@ -1702,6 +1717,106 @@ function bestOptionQuoteDemandState(
   );
 }
 
+function quoteCacheAgeMsForAccountOption(
+  quote: QuoteSnapshot | undefined | null,
+): number | null {
+  if (!quote) {
+    return null;
+  }
+  const explicitAge =
+    finiteQuoteNumber(quote.cacheAgeMs) ?? finiteQuoteNumber(quote.ageMs);
+  if (explicitAge !== null) {
+    return Math.max(0, explicitAge);
+  }
+  const receivedAt = quote.latency?.apiServerReceivedAt;
+  const receivedAtMs =
+    receivedAt instanceof Date
+      ? receivedAt.getTime()
+      : receivedAt
+        ? new Date(receivedAt).getTime()
+        : null;
+  return receivedAtMs !== null && Number.isFinite(receivedAtMs)
+    ? Math.max(0, Date.now() - receivedAtMs)
+    : null;
+}
+
+function optionQuoteHasAnyGreek(quote: QuoteSnapshot | undefined | null): boolean {
+  return Boolean(
+    quote &&
+      [quote.delta, quote.gamma, quote.theta, quote.vega].some(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      ),
+  );
+}
+
+function optionQuoteFreshnessState(
+  quote: QuoteSnapshot & { source?: "ibkr" },
+): { status: IbkrLiveDemandStatus; reason: string | null } {
+  const freshness = String(quote.freshness ?? "").trim();
+  if (freshness === "unavailable") {
+    return { status: "unavailable", reason: "quote_unavailable" };
+  }
+  if (freshness === "pending" || freshness === "metadata") {
+    return { status: "pending", reason: "quote_pending" };
+  }
+  if (freshness === "stale") {
+    return { status: "stale", reason: "stale_quote" };
+  }
+  return { status: "live", reason: null };
+}
+
+function optionQuoteGreeksState(input: {
+  quote: QuoteSnapshot & { source?: "ibkr" };
+  requiresGreeks: boolean;
+}): { status: IbkrLiveDemandStatus; reason: string | null } {
+  const quoteState = optionQuoteFreshnessState(input.quote);
+  if (optionQuoteHasAnyGreek(input.quote)) {
+    return quoteState;
+  }
+  if (quoteState.status === "pending") {
+    return { status: "pending", reason: "quote_pending" };
+  }
+  if (quoteState.status === "stale") {
+    return { status: "stale", reason: "stale_greeks" };
+  }
+  if (quoteState.status === "unavailable") {
+    return { status: "unavailable", reason: "greeks_unavailable" };
+  }
+  if (input.requiresGreeks) {
+    return { status: "pending", reason: "awaiting_greeks" };
+  }
+  return { status: "unavailable", reason: "greeks_not_requested" };
+}
+
+function optionQuoteDemandStateFromSnapshot(
+  quote: QuoteSnapshot & { source?: "ibkr" },
+  requiresGreeks: boolean,
+): AccountPositionOptionQuoteDemandState | null {
+  const providerContractId = String(quote.providerContractId ?? "").trim();
+  if (!providerContractId) {
+    return null;
+  }
+  const quoteState = optionQuoteFreshnessState(quote);
+  const greeksState = optionQuoteGreeksState({ quote, requiresGreeks });
+  const incompleteGreeks =
+    requiresGreeks &&
+    (greeksState.status === "pending" ||
+      greeksState.status === "stale" ||
+      greeksState.status === "unavailable");
+  const overallState = incompleteGreeks ? greeksState : quoteState;
+  return {
+    providerContractId,
+    status: overallState.status,
+    reason: overallState.reason,
+    quoteStatus: quoteState.status,
+    quoteReason: quoteState.reason,
+    greeksStatus: greeksState.status,
+    greeksReason: greeksState.reason,
+    quote,
+    cacheAgeMs: quoteCacheAgeMsForAccountOption(quote),
+  };
+}
+
 function accountOptionQuoteFromDemandState(
   state: AccountPositionOptionQuoteDemandState | null | undefined,
 ): AccountPositionOptionQuoteSnapshot | null {
@@ -1874,34 +1989,36 @@ async function fetchOptionQuoteSnapshotsForPositions(
       return map;
     }, new Map<string, { demandProviderContractIds: string[]; readProviderContractIds: string[] }>());
 
-    void Promise.allSettled(
+    const snapshotResults = await Promise.allSettled(
       Array.from(positionsByUnderlying.entries()).map(
         async ([underlying, underlyingProviderContractIds]) => {
           const ownerForUnderlying = `${owner}:${underlying}`;
           const demandProviderContractIdsForUnderlying = Array.from(
             new Set(underlyingProviderContractIds.demandProviderContractIds),
           );
-          await fetchBridgeOptionQuoteSnapshots({
+          return fetchBridgeOptionQuoteSnapshots({
             underlying,
             providerContractIds: demandProviderContractIdsForUnderlying,
             owner: `${ownerForUnderlying}:snapshot`,
             intent: "account-monitor-live",
             fallbackProvider: "cache",
             requiresGreeks: true,
+            hydrateCached: true,
+            timeoutMs: ACCOUNT_POSITION_OPTION_QUOTE_REFRESH_TIMEOUT_MS,
           });
         },
       ),
-    ).then((results) => {
-      results.forEach((result, index) => {
-        if (result.status !== "rejected") {
-          return;
-        }
-        const underlying = Array.from(positionsByUnderlying.keys())[index];
-        logger.debug?.(
-          { err: result.reason, owner: `${owner}:${underlying}`, underlying },
-          "Account position option quote background snapshot failed",
-        );
-      });
+    );
+    const underlyings = Array.from(positionsByUnderlying.keys());
+    snapshotResults.forEach((result, index) => {
+      if (result.status !== "rejected") {
+        return;
+      }
+      const underlying = underlyings[index];
+      logger.debug?.(
+        { err: result.reason, owner: `${owner}:${underlying}`, underlying },
+        "Account position option quote snapshot failed",
+      );
     });
 
     const demandStateResults = await Promise.allSettled(
@@ -1920,9 +2037,19 @@ async function fetchOptionQuoteSnapshotsForPositions(
         },
       ),
     );
-    demandStateEntries = demandStateResults.flatMap((result) =>
-      result.status === "fulfilled" ? result.value : [],
-    );
+    demandStateEntries = [
+      ...snapshotResults.flatMap((result) =>
+        result.status === "fulfilled"
+          ? result.value.quotes.flatMap((quote) => {
+              const state = optionQuoteDemandStateFromSnapshot(quote, true);
+              return state ? [state] : [];
+            })
+          : [],
+      ),
+      ...demandStateResults.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : [],
+      ),
+    ];
   } catch (error) {
     logger.debug?.(
       { err: error, owner },
@@ -1930,12 +2057,21 @@ async function fetchOptionQuoteSnapshotsForPositions(
     );
   }
 
-  const demandStatesByProviderContractId = new Map(
-    demandStateEntries.flatMap((state) => {
-      const providerContractId = String(state.providerContractId ?? "").trim();
-      return providerContractId ? [[providerContractId, state] as const] : [];
-    }),
-  );
+  const demandStatesByProviderContractId = new Map<
+    string,
+    AccountPositionOptionQuoteDemandState
+  >();
+  demandStateEntries.forEach((state) => {
+    const providerContractId = String(state.providerContractId ?? "").trim();
+    if (!providerContractId) {
+      return;
+    }
+    const current = demandStatesByProviderContractId.get(providerContractId);
+    const best = current ? bestOptionQuoteDemandState([current, state]) : state;
+    if (best) {
+      demandStatesByProviderContractId.set(providerContractId, best);
+    }
+  });
   positions.forEach((position) => {
     const providerContractIdsForPosition =
       optionQuoteProviderContractIdsForPosition(position);
@@ -2518,6 +2654,147 @@ async function fetchFlexOpenDatesForPositions(
       return opened ? [[position.id, opened] as const] : [];
     }),
   );
+}
+
+async function fetchExecutionOpenDatesForPositions(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+  positions: BrokerPositionSnapshot[],
+): Promise<Map<string, PositionOpenDate>> {
+  if (!positions.some((position) => !position.openedAt)) {
+    return new Map();
+  }
+
+  const positionIds = positions.map((position) => position.id).sort().join(",");
+  return readShortLivedAccountCache(
+    accountPositionOpenDatesReadCache,
+    accountUniverseReadCacheKey("position-open-dates", universe, mode, {
+      positionIds,
+      positions: accountPositionOpenDateSignature(positions),
+    }),
+    async () => {
+      const executions = await listExecutionsForUniverse(universe, mode, {});
+      return stabilizeExecutionOpenDatesForPositions(
+        accountUniverseReadCacheKey("position-open-dates:last-known", universe, mode, {
+          positions: accountPositionOpenDateSignature(positions),
+        }),
+        positions,
+        buildExecutionOpenDatesForPositions(positions, executions),
+      );
+    },
+    ACCOUNT_POSITION_OPEN_DATE_CACHE_TTL_MS,
+  );
+}
+
+function inferSameDayExpiringOptionOpenDatesForPositions(
+  positions: BrokerPositionSnapshot[],
+  now = new Date(),
+): Map<string, PositionOpenDate> {
+  const marketDate = accountMarketDateKey(now);
+  if (!marketDate) {
+    return new Map();
+  }
+
+  return new Map(
+    positions.flatMap((position) => {
+      if (brokerPositionOpenedAt(position).openedAt || !position.optionContract) {
+        return [];
+      }
+      const expirationDate = position.optionContract.expirationDate;
+      if (!(expirationDate instanceof Date) || Number.isNaN(expirationDate.getTime())) {
+        return [];
+      }
+      const expirationMarketDate = formatDateOnly(expirationDate);
+      if (expirationMarketDate !== marketDate) {
+        return [];
+      }
+      return [
+        [
+          position.id,
+          {
+            openedAt: dateFromDateOnly(expirationMarketDate),
+            openedAtSource: "expiration_same_day" as const,
+          },
+        ] as const,
+      ];
+    }),
+  );
+}
+
+function accountPositionOpenDateSignature(
+  positions: BrokerPositionSnapshot[],
+): string {
+  return positions
+    .map((position) =>
+      [
+        position.id,
+        position.accountId,
+        normalizeSymbol(position.symbol),
+        position.quantity,
+        position.optionContract?.providerContractId ?? "",
+        position.optionContract?.underlying ?? "",
+        position.optionContract?.expirationDate?.toISOString?.() ?? "",
+        position.optionContract?.strike ?? "",
+        position.optionContract?.right ?? "",
+      ].join("|"),
+    )
+    .sort()
+    .join(";");
+}
+
+function openDateHasValue(openDate: PositionOpenDate | null | undefined): boolean {
+  return (
+    openDate?.openedAt instanceof Date &&
+    !Number.isNaN(openDate.openedAt.getTime())
+  );
+}
+
+function readLastKnownExecutionOpenDates(
+  cacheKey: string,
+  positionIds: Set<string>,
+  now = Date.now(),
+): Map<string, PositionOpenDate> | null {
+  const cached = accountPositionOpenDatesLastKnownCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= now) {
+    accountPositionOpenDatesLastKnownCache.delete(cacheKey);
+    return null;
+  }
+  const filtered = new Map(
+    Array.from(cached.value.entries()).filter(
+      ([positionId, openDate]) =>
+        positionIds.has(positionId) && openDateHasValue(openDate),
+    ),
+  );
+  return filtered.size ? filtered : null;
+}
+
+function stabilizeExecutionOpenDatesForPositions(
+  cacheKey: string,
+  positions: BrokerPositionSnapshot[],
+  freshOpenDates: Map<string, PositionOpenDate>,
+  now = Date.now(),
+): Map<string, PositionOpenDate> {
+  const positionIds = new Set(positions.map((position) => position.id));
+  const lastKnown = readLastKnownExecutionOpenDates(cacheKey, positionIds, now);
+  const merged = new Map(lastKnown ?? []);
+  freshOpenDates.forEach((openDate, positionId) => {
+    if (positionIds.has(positionId) && openDateHasValue(openDate)) {
+      merged.set(positionId, openDate);
+    }
+  });
+
+  if (merged.size > 0) {
+    accountPositionOpenDatesLastKnownCache.set(cacheKey, {
+      value: new Map(merged),
+      expiresAt: now + ACCOUNT_POSITION_OPEN_DATE_STALE_TTL_MS,
+    });
+    return merged;
+  }
+
+  return freshOpenDates;
 }
 
 type ExecutionOpenLot = {
@@ -4931,6 +5208,24 @@ async function getAccountPositionsUncached(input: {
   let optionQuoteSnapshots = new Map<string, AccountPositionOptionQuoteDemandState>();
   let openDates = new Map<string, PositionOpenDate>();
   let realAttribution = new Map<string, RealPositionAttribution>();
+  if (input.detail === "fast") {
+    [equityQuoteSnapshots, optionQuoteSnapshots, openDates] = await Promise.all([
+      input.liveQuotes === false
+        ? new Map<string, QuoteSnapshot>()
+        : fetchEquityQuoteSnapshotsForPositions(positions),
+      input.liveQuotes === false
+        ? new Map<string, AccountPositionOptionQuoteDemandState>()
+        : fetchOptionQuoteSnapshotsForPositions(positions),
+      fetchExecutionOpenDatesForPositions(universe, mode, positions),
+    ]);
+    inferSameDayExpiringOptionOpenDatesForPositions(positions).forEach(
+      (openDate, positionId) => {
+        if (!openDates.has(positionId)) {
+          openDates.set(positionId, openDate);
+        }
+      },
+    );
+  }
   let marketHydration = await hydratePositionMarkets(
     positions,
     equityQuoteSnapshots,
@@ -4958,11 +5253,7 @@ async function getAccountPositionsUncached(input: {
         ? new Map<string, AccountPositionOptionQuoteDemandState>()
         : fetchOptionQuoteSnapshotsForPositions(positions),
       fetchFlexOpenDatesForPositions(universe.accountIds, positions),
-      positions.some((position) => !position.openedAt)
-        ? listExecutionsForUniverse(universe, mode, {}).then((executions) =>
-            buildExecutionOpenDatesForPositions(positions, executions),
-          )
-        : new Map<string, PositionOpenDate>(),
+      fetchExecutionOpenDatesForPositions(universe, mode, positions),
     ]);
     ordersResult = fullOrdersResult;
     lots = fullLots;
@@ -4976,6 +5267,13 @@ async function getAccountPositionsUncached(input: {
         openDates.set(positionId, executionOpenDate);
       }
     });
+    inferSameDayExpiringOptionOpenDatesForPositions(positions).forEach(
+      (openDate, positionId) => {
+        if (!openDates.has(positionId)) {
+          openDates.set(positionId, openDate);
+        }
+      },
+    );
     realAttribution = await buildRealPositionAttribution({
       accountIds: universe.accountIds,
       positions,
@@ -7815,13 +8113,19 @@ export const __accountPositionInternalsForTests = {
   buildPositionMarketHydration,
   buildPositionQuoteFromSnapshot,
   choosePositionQuote,
+  clearAccountPositionOpenDateCaches: () => {
+    accountPositionOpenDatesReadCache.clear();
+    accountPositionOpenDatesLastKnownCache.clear();
+  },
   filterOpenBrokerPositions,
   flexOpenPositionOpenedAt,
+  inferSameDayExpiringOptionOpenDatesForPositions,
   isOpenBrokerPosition,
   normalizeMarketDataSymbol,
   optionQuoteForPosition,
   optionQuoteDemandProviderContractIdsForPosition,
   optionQuoteProviderContractIdsForPosition,
+  stabilizeExecutionOpenDatesForPositions,
   structuredOptionProviderContractIdForRow,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,

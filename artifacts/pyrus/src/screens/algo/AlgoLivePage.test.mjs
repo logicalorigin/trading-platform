@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   alignSignalCycleStageWithStaTable,
   buildAlgoOptionQuoteStreamSubscription,
+  resolveEffectiveStaMtfAlignmentConfig,
   resolveAlgoOverviewMetricGridTemplate,
   resolveAttentionSeverity,
   resolveHeaderScanWave,
@@ -129,4 +130,41 @@ test("signal cycle display can follow the STA table snapshot without changing sc
   assert.equal(stages[1].count, 191);
   assert.equal(stages[1].detail, "191 table-visible STA rows");
   assert.equal(stages[2].count, 12);
+});
+
+test("STA MTF config uses the configured draft timeframe set for table and KPI consumers", () => {
+  const config = resolveEffectiveStaMtfAlignmentConfig({
+    mtfAlignmentDraft: {
+      enabled: true,
+      requiredCount: 1,
+      timeframes: ["1m", "2m"],
+    },
+    signalOptionsProfile: {
+      entryGate: {
+        mtfAlignment: {
+          enabled: true,
+          requiredCount: 3,
+          timeframes: ["15m", "1h", "1d"],
+        },
+      },
+    },
+    staSignalTimeframes: ["1m", "2m", "5m"],
+  });
+
+  assert.deepEqual(config.timeframes, ["1m", "2m"]);
+  assert.equal(config.requiredCount, 2);
+});
+
+test("STA MTF config requires every configured frame", () => {
+  const config = resolveEffectiveStaMtfAlignmentConfig({
+    mtfAlignmentDraft: {
+      enabled: true,
+      requiredCount: 2,
+      timeframes: ["5m", "15m", "1h"],
+    },
+    staSignalTimeframes: ["5m", "15m"],
+  });
+
+  assert.deepEqual(config.timeframes, ["5m", "15m", "1h"]);
+  assert.equal(config.requiredCount, 3);
 });

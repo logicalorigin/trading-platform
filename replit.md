@@ -53,7 +53,7 @@ The API dev script does not start Postgres; it uses Replit's managed DB by defau
 - Do not add repo-tracked `[[workflows.workflow]]` tasks, a root `run`, or a root workflow coordinator.
 - Do not add a separate API artifact service or a third root runner — competing owners for ports `8080`/`18747` caused prior reaper conflicts. The PYRUS supervisor owns both.
 - Do not add a separate Replit `IBKR Bridge` workflow; the bridge runs on the Windows machine via the activation helper.
-- `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. Only `REPLIT_MODE=workflow` may replace a supervisor or reap a foreign execution scope.
+- `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. Only `REPLIT_MODE=workflow` may replace a supervisor or reap a foreign execution scope. The in-container agent is authorized to use this to restart the app (load code changes, runtime/preview verification): `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` in the background performs the controlled handoff (SIGTERM the live supervisor + children, rebuild, relaunch). Don't run two competing supervisors at once. Note: a clean SIGTERM shutdown of the supervisor is NOT auto-restarted by pid2 (it reads it as intentional and leaves the app down) — always (re)launch via the `REPLIT_MODE=workflow` command rather than killing and waiting. An abrupt kill can instead trigger a pid2 restart that cascades against a shell-launched supervisor.
 - The PYRUS artifact TOML is the source of truth for dev/deploy service metadata.
 - `pnpm run audit:replit-startup` guards these invariants.
 

@@ -31,6 +31,10 @@ import {
   invalidateSignalOptionsDashboardCaches,
   type SignalOptionsTodayPnl,
 } from "./signal-options-automation";
+import {
+  buildOvernightSpotDeploymentConfig,
+  stripOvernightSpotFromSignalOptionsConfig,
+} from "./algo-deployment-profile-shape";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -83,6 +87,9 @@ const deploymentListInFlight = new Map<
   string,
   Promise<AlgoDeploymentListResponse>
 >();
+let mixedDeploymentRepairInFlight: Promise<void> | null = null;
+const overnightEventReassignmentInFlight = new Set<string>();
+const OVERNIGHT_EVENT_REASSIGNMENT_BATCH_SIZE = 1_000;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -258,6 +265,15 @@ function deploymentHasOvernightSpotProfile(
   );
 }
 
+function deploymentHasMixedSignalOptionsAndOvernightProfile(
+  deployment: Pick<AlgoDeploymentRow, "config" | "name">,
+) {
+  return (
+    deploymentHasSignalOptionsProfile(deployment) &&
+    deploymentHasOvernightSpotProfile(deployment)
+  );
+}
+
 const OVERNIGHT_SPOT_STRATEGY_SOURCE = "overnight_spot_seed";
 const DEFAULT_OVERNIGHT_SPOT_STRATEGY_NAME = "Overnight Equities";
 
@@ -308,6 +324,241 @@ function buildDeploymentListResponse(
   return {
     deployments: visibleDeploymentRows(rows).map(deploymentToResponse),
   };
+}
+
+function configValuesEqual(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function selectAlgoDeploymentRows(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentRow[]> {
+  return db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(
+      input.mode
+        ? eq(algoDeploymentsTable.mode, input.mode)
+        : undefined,
+    )
+    .orderBy(desc(algoDeploymentsTable.updatedAt));
+}
+
+async function repairMixedSignalOptionsOvernightDeploymentRows(
+  rows: AlgoDeploymentRow[],
+) {
+  const mixedRows = rows.filter(deploymentHasMixedSignalOptionsAndOvernightProfile);
+  if (!mixedRows.length) {
+    return;
+  }
+
+  const overnightStrategy = await ensureDefaultOvernightSpotStrategy();
+  const knownOvernightRows = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.strategyId, overnightStrategy.id));
+
+  for (const mixedRow of mixedRows) {
+    const [freshRow] = await db
+      .select()
+      .from(algoDeploymentsTable)
+      .where(eq(algoDeploymentsTable.id, mixedRow.id))
+      .limit(1);
+    const source = freshRow ?? mixedRow;
+    if (!deploymentHasMixedSignalOptionsAndOvernightProfile(source)) {
+      continue;
+    }
+
+    let overnightDeployment = knownOvernightRows.find(
+      (deployment) =>
+        deployment.mode === source.mode &&
+        deploymentHasOvernightSpotProfile(deployment) &&
+        !deploymentHasSignalOptionsProfile(deployment),
+    );
+
+    if (!overnightDeployment) {
+      const overnightConfig = buildOvernightSpotDeploymentConfig(source.config);
+      const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
+        providerAccountId: source.providerAccountId,
+        config: overnightConfig,
+        mode: source.mode,
+      });
+      const [created] = await db
+        .insert(algoDeploymentsTable)
+        .values({
+          strategyId: overnightStrategy.id,
+          name: DEFAULT_OVERNIGHT_SPOT_STRATEGY_NAME,
+          mode: source.mode,
+          enabled: source.enabled,
+          providerAccountId,
+          symbolUniverse: source.symbolUniverse,
+          config: overnightConfig,
+          lastEvaluatedAt: source.lastEvaluatedAt,
+          lastSignalAt: source.lastSignalAt,
+        })
+        .returning();
+
+      if (created) {
+        overnightDeployment = created;
+        knownOvernightRows.unshift(created);
+        await db.insert(executionEventsTable).values({
+          deploymentId: created.id,
+          providerAccountId: created.providerAccountId,
+          eventType: "deployment_created",
+          summary: `Created deployment ${created.name}`,
+          payload: {
+            strategyId: created.strategyId,
+            mode: created.mode,
+            symbolUniverse: created.symbolUniverse,
+            sourceDeploymentId: source.id,
+            reason: "split_mixed_signal_options_overnight_profile",
+            requestedProviderAccountId: source.providerAccountId,
+            providerAccountNormalized:
+              providerAccountId !== source.providerAccountId,
+          },
+        });
+        applyDeploymentToListCache(created);
+      }
+    }
+
+    if (overnightDeployment) {
+      scheduleOvernightSpotEventReassignment({
+        sourceDeploymentId: source.id,
+        overnightDeployment,
+      });
+    }
+
+    const nextConfig = stripOvernightSpotFromSignalOptionsConfig(source.config);
+    if (configValuesEqual(nextConfig, source.config)) {
+      continue;
+    }
+
+    const [updated] = await db
+      .update(algoDeploymentsTable)
+      .set({
+        config: nextConfig,
+        updatedAt: new Date(),
+      })
+      .where(eq(algoDeploymentsTable.id, source.id))
+      .returning();
+    const signalOptionsDeployment = updated ?? { ...source, config: nextConfig };
+    await db.insert(executionEventsTable).values({
+      deploymentId: signalOptionsDeployment.id,
+      providerAccountId: signalOptionsDeployment.providerAccountId,
+      eventType: "deployment_profile_split",
+      summary: `Split overnight profile from ${normalizeLegacyAlgoBrandText(signalOptionsDeployment.name)}`,
+      payload: {
+        overnightDeploymentId: overnightDeployment?.id ?? null,
+        removedKeys: [
+          "overnightSpot",
+          "parameters.overnightSpot",
+          "parameters.overnightSpotTrading",
+        ],
+      },
+    });
+    applyDeploymentToListCache(signalOptionsDeployment as AlgoDeploymentRow);
+    if (overnightDeployment) {
+      notifyAlgoCockpitChanged({
+        deploymentId: overnightDeployment.id,
+        mode: overnightDeployment.mode,
+        reason: "deployment_profile_split",
+      });
+    }
+    notifyAlgoCockpitChanged({
+      deploymentId: signalOptionsDeployment.id,
+      mode: signalOptionsDeployment.mode,
+      reason: "deployment_profile_split",
+    });
+  }
+}
+
+async function reassignOvernightSpotEvents(input: {
+  sourceDeploymentId: string;
+  overnightDeployment: AlgoDeploymentRow;
+}) {
+  let movedTotal = 0;
+  for (;;) {
+    const result = await db.execute(sql`
+      with batch as (
+        select id
+        from execution_events
+        where deployment_id = ${input.sourceDeploymentId}
+          and event_type like 'overnight_spot_%'
+        order by occurred_at desc
+        limit ${OVERNIGHT_EVENT_REASSIGNMENT_BATCH_SIZE}
+      )
+      update execution_events
+      set deployment_id = ${input.overnightDeployment.id},
+          provider_account_id = ${input.overnightDeployment.providerAccountId},
+          updated_at = now()
+      where id in (select id from batch)
+      returning id
+    `);
+    const moved = Number(result.rowCount ?? result.rows?.length ?? 0);
+    movedTotal += moved;
+    if (moved === 0) {
+      return movedTotal;
+    }
+  }
+}
+
+function scheduleOvernightSpotEventReassignment(input: {
+  sourceDeploymentId: string;
+  overnightDeployment: AlgoDeploymentRow;
+}) {
+  const key = `${input.sourceDeploymentId}:${input.overnightDeployment.id}`;
+  if (overnightEventReassignmentInFlight.has(key)) {
+    return;
+  }
+  overnightEventReassignmentInFlight.add(key);
+  void reassignOvernightSpotEvents(input)
+    .then(async (movedOvernightEventCount) => {
+      if (movedOvernightEventCount <= 0) {
+        return;
+      }
+      await db.insert(executionEventsTable).values({
+        deploymentId: input.overnightDeployment.id,
+        providerAccountId: input.overnightDeployment.providerAccountId,
+        eventType: "deployment_events_reassigned",
+        summary: `Moved overnight events to ${normalizeLegacyAlgoBrandText(input.overnightDeployment.name)}`,
+        payload: {
+          sourceDeploymentId: input.sourceDeploymentId,
+          eventTypePattern: "overnight_spot_%",
+          movedOvernightEventCount,
+          reason: "split_mixed_signal_options_overnight_profile",
+        },
+      });
+    })
+    .catch((error) => {
+      logger.warn(
+        {
+          err: error,
+          sourceDeploymentId: input.sourceDeploymentId,
+          overnightDeploymentId: input.overnightDeployment.id,
+        },
+        "Failed to reassign overnight spot events after deployment split",
+      );
+    })
+    .finally(() => {
+      overnightEventReassignmentInFlight.delete(key);
+    });
+}
+
+async function repairMixedSignalOptionsOvernightDeployments(
+  input: ListAlgoDeploymentsInput,
+  rows: AlgoDeploymentRow[],
+): Promise<AlgoDeploymentRow[]> {
+  if (!rows.some(deploymentHasMixedSignalOptionsAndOvernightProfile)) {
+    return rows;
+  }
+  if (!mixedDeploymentRepairInFlight) {
+    mixedDeploymentRepairInFlight =
+      repairMixedSignalOptionsOvernightDeploymentRows(rows).finally(() => {
+        mixedDeploymentRepairInFlight = null;
+      });
+  }
+  await mixedDeploymentRepairInFlight;
+  return selectAlgoDeploymentRows(input);
 }
 
 function readDeploymentListCache(
@@ -405,31 +656,16 @@ const deploymentListFallback = (input: ListAlgoDeploymentsInput) =>
 async function loadAlgoDeploymentList(
   input: ListAlgoDeploymentsInput,
 ): Promise<AlgoDeploymentListResponse> {
-  let rows = await db
-    .select()
-    .from(algoDeploymentsTable)
-    .where(
-      input.mode
-        ? eq(algoDeploymentsTable.mode, input.mode)
-        : undefined,
-    )
-    .orderBy(desc(algoDeploymentsTable.updatedAt));
+  let rows = await selectAlgoDeploymentRows(input);
 
   if (shouldEnsureDefaultSignalOptionsDeployment(input, rows)) {
     await ensureDefaultSignalOptionsPaperDeployment({
       enabled: true,
       preserveExistingPaused: true,
     });
-    rows = await db
-      .select()
-      .from(algoDeploymentsTable)
-      .where(
-        input.mode
-          ? eq(algoDeploymentsTable.mode, input.mode)
-          : undefined,
-      )
-      .orderBy(desc(algoDeploymentsTable.updatedAt));
+    rows = await selectAlgoDeploymentRows(input);
   }
+  rows = await repairMixedSignalOptionsOvernightDeployments(input, rows);
 
   const response = buildDeploymentListResponse(rows);
   rememberDeploymentListCache(input, response);
@@ -828,7 +1064,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     input.chochVolumeGate,
     "chochVolumeGate",
   );
-  const config = asRecord(existing.config);
+  const config = stripOvernightSpotFromSignalOptionsConfig(existing.config);
   const parameters = asRecord(config.parameters);
   const pyrusSignalsSettingsPatch = {
     timeHorizon,
@@ -931,11 +1167,14 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
 export const __algoAutomationInternalsForTests = {
   buildDeploymentListResponse,
   clearDeploymentListCacheForTests,
+  buildOvernightSpotDeploymentConfig,
   deploymentHasSignalOptionsProfile,
+  deploymentHasMixedSignalOptionsAndOvernightProfile,
   deploymentListDbBackoff,
   markDeploymentListError,
   readDeploymentListCache,
   rememberDeploymentListCache,
+  stripOvernightSpotFromSignalOptionsConfig,
   visibleDeploymentRows,
   readSignalTimeframe,
 };

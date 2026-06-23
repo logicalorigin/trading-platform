@@ -11,19 +11,41 @@ import {
   isSignalMonitorBarComplete,
 } from "./signal-monitor";
 
-const bar = (timestamp: string) =>
+const barWithClose = (timestamp: string, close: number) =>
   ({
     timestamp: new Date(timestamp),
     dataUpdatedAt: new Date(timestamp),
-    open: 1,
-    high: 1,
-    low: 1,
-    close: 1,
+    open: close,
+    high: close,
+    low: close,
+    close,
     volume: 1,
     source: "massive-history",
     outsideRth: true,
     partial: false,
   }) as never;
+
+const bar = (timestamp: string) => barWithClose(timestamp, 1);
+
+const signalMonitorTestProfile = (timestamp = "2026-06-12T14:00:00.000Z") => {
+  const now = new Date(timestamp);
+  return {
+    id: "paper-profile",
+    environment: "shadow",
+    enabled: true,
+    watchlistId: null,
+    timeframe: "5m",
+    pyrusSignalsSettings: {},
+    freshWindowBars: 8,
+    pollIntervalSeconds: 60,
+    maxSymbols: 500,
+    evaluationConcurrency: 2,
+    lastEvaluatedAt: null,
+    lastError: null,
+    createdAt: now,
+    updatedAt: now,
+  } as never;
+};
 
 test("quiet market completed bars do not retry solely because wall clock moved", () => {
   assert.equal(
@@ -358,6 +380,31 @@ test("signal monitor does not persist live-edge signal identity without a truste
   );
 });
 
+test("signal monitor still persists live-edge latest-bar metadata without a trusted reference", () => {
+  const liveOnlyBar = {
+    ...(bar("2026-06-18T08:00:00.000Z") as Record<string, unknown>),
+    source: "massive-websocket",
+    open: 76.91,
+    high: 76.91,
+    low: 76.91,
+    close: 76.91,
+  } as never;
+  const integrity =
+    __signalMonitorInternalsForTests.resolveSignalMonitorSourceIntegrity({
+      bar: liveOnlyBar,
+      referenceBars: [],
+    });
+
+  assert.equal(integrity.trusted, false);
+  assert.equal(integrity.reason, "missing-reference");
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorStateLatestBarTrusted({
+      latestBarSourceIntegrity: integrity,
+    } as never),
+    true,
+  );
+});
+
 test("daily bar completeness is consistent across the UTC/NY date boundary", () => {
   // Convention: daily bars timestamped at UTC midnight carry their TRADING
   // date; completeness compares against the NY calendar date of evaluatedAt.
@@ -665,6 +712,62 @@ test("signal monitor bar evaluation requires explicit opt-in", () => {
   );
 });
 
+test("signal matrix heavy evaluation cache keys identical completed-bar series only", () => {
+  const internals = __signalMonitorInternalsForTests;
+  internals.resetSignalMonitorMatrixHeavyEvaluationCache();
+  const evaluatedAt = new Date("2026-06-12T14:00:30.000Z");
+  const profile = signalMonitorTestProfile();
+  const baseBars = [
+    barWithClose("2026-06-12T13:58:00.000Z", 100),
+    barWithClose("2026-06-12T13:59:00.000Z", 101),
+    barWithClose("2026-06-12T14:00:00.000Z", 102),
+  ];
+  const correctedInteriorBars = [
+    barWithClose("2026-06-12T13:58:00.000Z", 100),
+    barWithClose("2026-06-12T13:59:00.000Z", 111),
+    barWithClose("2026-06-12T14:00:00.000Z", 102),
+  ];
+
+  internals.evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile,
+    symbol: "AAPL",
+    timeframe: "1m",
+    evaluatedAt,
+    completedBars: baseBars,
+  });
+  assert.deepEqual(internals.getSignalMonitorMatrixHeavyEvaluationCacheStats(), {
+    size: 1,
+    hits: 0,
+    misses: 1,
+  });
+
+  internals.evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile,
+    symbol: "AAPL",
+    timeframe: "1m",
+    evaluatedAt: new Date("2026-06-12T14:00:45.000Z"),
+    completedBars: baseBars,
+  });
+  assert.deepEqual(internals.getSignalMonitorMatrixHeavyEvaluationCacheStats(), {
+    size: 1,
+    hits: 1,
+    misses: 1,
+  });
+
+  internals.evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile,
+    symbol: "AAPL",
+    timeframe: "1m",
+    evaluatedAt: new Date("2026-06-12T14:01:00.000Z"),
+    completedBars: correctedInteriorBars,
+  });
+  assert.deepEqual(internals.getSignalMonitorMatrixHeavyEvaluationCacheStats(), {
+    size: 1,
+    hits: 1,
+    misses: 2,
+  });
+});
+
 test("non-current signal state snapshots preserve last-known direction for display hydration", () => {
   const response =
     __signalMonitorInternalsForTests.stateToResponseForSnapshot(
@@ -695,8 +798,9 @@ test("non-current signal state snapshots preserve last-known direction for displ
       },
     );
 
-  assert.equal(response.status, "stale");
+  assert.equal(response.status, "idle");
   assert.equal(response.fresh, false);
+  assert.equal(response.actionBlocker, "market_idle");
   assert.equal(response.currentSignalDirection, "sell");
   assert.equal(
     response.currentSignalAt?.toISOString(),
@@ -705,6 +809,129 @@ test("non-current signal state snapshots preserve last-known direction for displ
   assert.equal(response.currentSignalPrice, 48.12);
   assert.deepEqual(response.filterState, { mtfDirections: [-1, -1, -1], adx: 26 });
   assert.equal(response.barsSinceSignal, 42);
+});
+
+test("trend-only signal state snapshots render a non-actionable display direction", () => {
+  const response =
+    __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+      {
+        id: "state-spy-2m",
+        profileId: "profile-test",
+        symbol: "SPY",
+        timeframe: "2m",
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        currentSignalPrice: null,
+        currentSignalClose: null,
+        currentSignalMfePercent: null,
+        currentSignalMaePercent: null,
+        filterState: null,
+        latestBarAt: new Date("2026-06-23T17:58:00.000Z"),
+        latestBarClose: "672.4",
+        barsSinceSignal: null,
+        fresh: true,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: new Date("2026-06-23T17:58:30.000Z"),
+        lastError: null,
+        trendDirection: "bearish",
+      } as never,
+      {
+        timeframe: "2m",
+        evaluatedAt: new Date("2026-06-23T17:59:00.000Z"),
+        markNonCurrentStale: false,
+      },
+    );
+
+  assert.equal(response.currentSignalDirection, "sell");
+  assert.equal(response.currentSignalAt, null);
+  assert.equal(response.currentSignalPrice, null);
+  assert.equal(response.currentSignalClose, null);
+  assert.equal(response.filterState, null);
+  assert.equal(response.fresh, false);
+  assert.equal(response.actionEligible, false);
+  assert.equal(response.actionBlocker, "no_signal");
+  assert.equal(response.latestBarClose, 672.4);
+});
+
+test("non-RTH aged signal snapshots are market-idle, not stale", () => {
+  const response =
+    __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+      {
+        id: "state-spy-5m",
+        profileId: "profile-test",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-08T19:55:00.000Z"),
+        currentSignalPrice: "510.25",
+        currentSignalClose: "510.1",
+        currentSignalMfePercent: null,
+        currentSignalMaePercent: null,
+        filterState: { mtfDirections: [1, 1, 1], adx: 31 },
+        latestBarAt: new Date("2026-06-08T20:00:00.000Z"),
+        latestBarClose: "510.7",
+        barsSinceSignal: 1,
+        fresh: false,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: new Date("2026-06-08T20:00:30.000Z"),
+        lastError: null,
+      } as never,
+      {
+        timeframe: "5m",
+        // 17:05 ET after-hours: no regular-session bar is expected.
+        evaluatedAt: new Date("2026-06-08T21:05:00.000Z"),
+        markNonCurrentStale: true,
+      },
+    );
+
+  assert.equal(response.status, "idle");
+  assert.equal(response.fresh, false);
+  assert.equal(response.actionEligible, false);
+  assert.equal(response.actionBlocker, "market_idle");
+  assert.equal(response.currentSignalDirection, "buy");
+  assert.equal(response.currentSignalClose, 510.1);
+  assert.deepEqual(response.filterState, { mtfDirections: [1, 1, 1], adx: 31 });
+  assert.equal(response.latestBarClose, 510.7);
+  assert.equal(response.barsSinceSignal, 1);
+});
+
+test("RTH aged signal snapshots stay stale", () => {
+  const response =
+    __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+      {
+        id: "state-spy-5m-rth",
+        profileId: "profile-test",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-09T14:00:00.000Z"),
+        currentSignalPrice: "510.25",
+        currentSignalClose: "510.1",
+        currentSignalMfePercent: null,
+        currentSignalMaePercent: null,
+        filterState: { mtfDirections: [1, 1, 1], adx: 31 },
+        latestBarAt: new Date("2026-06-09T14:00:00.000Z"),
+        latestBarClose: "510.7",
+        barsSinceSignal: 1,
+        fresh: false,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: new Date("2026-06-09T14:00:30.000Z"),
+        lastError: null,
+      } as never,
+      {
+        timeframe: "5m",
+        // 10:45 ET regular session: a fresh 5m bar should have arrived.
+        evaluatedAt: new Date("2026-06-09T14:45:00.000Z"),
+        markNonCurrentStale: true,
+      },
+    );
+
+  assert.equal(response.status, "stale");
+  assert.equal(response.actionEligible, false);
+  assert.equal(response.actionBlocker, "data_stale");
 });
 
 test("matrix evaluation keeps configured capacity under high pressure", () => {
@@ -1123,6 +1350,68 @@ test("public signal monitor state responses do not drop state source", () => {
   assert.match(evaluateBlock, /stateSource:\s*stored\.stateSource/);
   assert.match(evaluateBlock, /stateSource:\s*"database" as const/);
   assert.match(evaluateBlock, /stateSource:\s*fallback\.stateSource/);
+});
+
+test("signal monitor reconciliation trusts event integrity and websocket-backed bar cache rows", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const sourcePolicyStart = source.indexOf(
+    "const SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL",
+  );
+  const sourcePolicyEnd = source.indexOf(
+    "const SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL",
+    sourcePolicyStart,
+  );
+  const reconcileStart = source.indexOf(
+    "function trustedSignalMonitorCanonicalEventsSql",
+  );
+  const reconcileEnd = source.indexOf(
+    "export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents",
+    reconcileStart,
+  );
+  assert.notEqual(sourcePolicyStart, -1);
+  assert.notEqual(sourcePolicyEnd, -1);
+  assert.notEqual(reconcileStart, -1);
+  assert.notEqual(reconcileEnd, -1);
+
+  const sourcePolicy = source.slice(sourcePolicyStart, sourcePolicyEnd);
+  assert.match(sourcePolicy, /'massive-history'/);
+  assert.match(sourcePolicy, /'massive-websocket'/);
+  assert.match(sourcePolicy, /'massive-delayed-websocket'/);
+  assert.match(sourcePolicy, /'ibkr-websocket-derived'/);
+
+  const reconcileBlock = source.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileBlock, /LEFT JOIN LATERAL/);
+  assert.match(
+    reconcileBlock,
+    /payload->'sourceIntegrity'->>'trusted'\s*=\s*'true'/,
+  );
+  assert.match(reconcileBlock, /jsonb_typeof\(signal_monitor_events\.payload->'sourceIntegrity'\)/);
+  assert.match(
+    reconcileBlock,
+    /source IN \${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}/,
+  );
+  const latestStart = source.indexOf(
+    "const latestBarAdvanceCandidates",
+    reconcileStart,
+  );
+  const latestEnd = source.indexOf("const latestBarAdvanced", latestStart);
+  assert.notEqual(latestStart, -1);
+  assert.notEqual(latestEnd, -1);
+  assert.doesNotMatch(
+    source.slice(reconcileStart, latestStart),
+    /JOIN bar_cache AS (current_event_bar|replacement_event_bar)/,
+  );
+  assert.doesNotMatch(source.slice(reconcileStart, latestStart), /source = 'massive-history'/);
+
+  const latestBlock = source.slice(latestStart, latestEnd);
+  assert.match(latestBlock, /source = 'massive-history'/);
+  assert.match(latestBlock, /source = 'massive-websocket'/);
+  assert.match(latestBlock, /source = 'massive-delayed-websocket'/);
+  assert.match(latestBlock, /source = 'ibkr-websocket-derived'/);
+  assert.doesNotMatch(
+    latestBlock,
+    /source IN \${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}/,
+  );
 });
 
 test("disabled signal monitor profile symbols do not evaluate bars", async () => {

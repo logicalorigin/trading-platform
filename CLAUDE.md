@@ -7,13 +7,38 @@ Source: https://github.com/multica-ai/andrej-karpathy-skills
 
 ## Project Run Rules
 
-- Use Replit's default **Run Replit App** entry for full app bring-up.
-- Do not use the generated **Configure Your App** workflow as the app runner.
-- Do not add repo-defined `.replit` workflows or a root `.replit` `run = [...]` command; `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the API and web artifact services.
-- Keep artifact development commands in `artifacts/*/.replit-artifact/artifact.toml` as the source of truth for dev startup.
-- For validation, run targeted `pnpm` test/typecheck/build commands directly instead of pressing Run.
-- If you touch `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact `dev` scripts, database startup config, or `scripts/reap-dev-port.mjs`, run `pnpm run audit:replit-startup` before handing off.
-- Do not remove `scripts/check-replit-startup-guards.mjs` from `audit:guards` or root `typecheck`; it is the regression guard for the Replit workflow and artifact startup rules.
+The agent may manage the dev app lifecycle directly — stop, rebuild, and restart it to load code
+changes and verify work at runtime. (The earlier guidance reserving app bring-up to the Replit Run
+button and telling the agent not to restart has been retired.)
+
+**Restarting the app (agent-driven).** The API runs a built bundle (`node dist/index.mjs`), not
+watch mode, so changes need a rebuild + restart; the supervisor (`artifacts/pyrus/scripts/runDevApp.mjs`,
+started by Replit's pid2 manager) does not hot-restart its children.
+- Sanctioned restart = launch a supervisor with `REPLIT_MODE=workflow`:
+  `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` in the background.
+  `REPLIT_MODE=workflow` is the only restart authority that may replace a live supervisor (see
+  `replit.md`). If a supervisor is already live it performs a controlled handoff (SIGTERM the old
+  supervisor + children); if none is live (app stopped) it starts fresh. Either way the `dev` script
+  rebuilds the bundle and runs it.
+- Do NOT just `kill` the supervisor expecting pid2 (Replit's manager) to restart it: a clean
+  supervisor shutdown is read as intentional, so pid2 will NOT bring it back and the app stays down.
+  (An abrupt kill *sometimes* triggers a pid2 restart that then cascades against a shell-launched
+  supervisor — exit 143.) Always (re)launch via the `REPLIT_MODE=workflow` command above, and never
+  run two competing supervisors at once.
+- Canonical ports: API `8080` (external 80), web/preview `18747` (external 3000); `pyrus_compute`
+  binds 18768/18770 (expected, not duplicates). Confirm a restart loaded your code by grepping the
+  live `artifacts/api-server/dist/index.mjs` or reading `.pyrus-runtime/flight-recorder/api-current.json`.
+- Targeted `pnpm` test/typecheck/build commands remain the fast path for logic validation; restart
+  only when you need runtime/preview verification.
+
+**Startup contract (keeps the Replit workflow working — not an agent-permission guard).**
+- `artifacts/*/.replit-artifact/artifact.toml` is the source of truth for dev startup;
+  `[agent] stack = "PNPM_WORKSPACE"` + `[workflows] runButton = "artifacts/pyrus: web"` start the
+  services. Do not add a root `.replit` `run = [...]` or repo-defined `[[workflows.workflow]]` tasks,
+  and ignore Replit's generated **Configure Your App** option.
+- If you change `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact `dev` scripts, DB
+  startup config, or `scripts/reap-dev-port.mjs`, run `pnpm run audit:replit-startup` and keep
+  `scripts/check-replit-startup-guards.mjs` wired into `audit:guards` / root `typecheck`.
 
 ## Fact-First Operating Rules
 

@@ -162,6 +162,7 @@ export const AlgoTimeframeControlBand = ({
       timeframe,
       executionTimeframe,
       mtfTimeframes,
+      mtfRequiredCount,
     );
     patchStrategySettingsPath?.("signalTimeframe", patch.signalTimeframe);
     if (patch.timeframes) {
@@ -180,6 +181,7 @@ export const AlgoTimeframeControlBand = ({
       selectedTimeframes: mtfTimeframes,
       timeframe,
       executionTimeframe,
+      requiredCount: mtfRequiredCount,
     });
     patchProfileDraftPath?.("entryGate.mtfAlignment.timeframes", patch.timeframes);
     patchProfileDraftPath?.("entryGate.mtfAlignment.preset", patch.preset);

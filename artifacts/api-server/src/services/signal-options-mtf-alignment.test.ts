@@ -5,7 +5,10 @@ import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 
 import { __signalOptionsAutomationInternalsForTests } from "./signal-options-automation";
 
-const { evaluateSignalOptionsEntryGate } = __signalOptionsAutomationInternalsForTests;
+const {
+  evaluateSignalOptionsEntryGate,
+  signalOptionsEffectiveMtfTimeframes,
+} = __signalOptionsAutomationInternalsForTests;
 
 // Require all three configured frames to agree before a buy entry.
 const profile = resolveSignalOptionsExecutionProfile({
@@ -63,5 +66,80 @@ test("legacy fallback (no matrix) wrongly passes — proves why the matrix sourc
   // even though the real 1d frame disagrees above. This is the bug the matrix
   // path fixes.
   const gate = evaluateSignalOptionsEntryGate({ candidate, profile });
+  assert.equal(gate.ok, true);
+});
+
+test("effective MTF frames use only the configured MTF selection", () => {
+  const twoFrameProfile = resolveSignalOptionsExecutionProfile({
+    entryGate: {
+      mtfAlignment: {
+        enabled: true,
+        requiredCount: 2,
+        timeframes: ["2m", "5m"],
+      },
+    },
+  });
+  const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+    profile: twoFrameProfile,
+    deployment: {
+      config: { parameters: { signalTimeframe: "15m" } },
+    } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
+  });
+
+  assert.deepEqual(mtfTimeframes, ["2m", "5m"]);
+});
+
+test("matrix MTF: every configured frame must align", () => {
+  const threeFrameProfile = resolveSignalOptionsExecutionProfile({
+    entryGate: {
+      mtfAlignment: {
+        enabled: true,
+        requiredCount: 2,
+        timeframes: ["2m", "5m", "15m"],
+      },
+    },
+  });
+  const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+    profile: threeFrameProfile,
+    deployment: {
+      config: { parameters: { signalTimeframe: "15m" } },
+    } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
+  });
+
+  const gate = evaluateSignalOptionsEntryGate({
+    candidate,
+    profile: threeFrameProfile,
+    mtfTimeframes,
+    mtfTimeframeDirections: { "2m": null, "5m": "buy", "15m": "buy" },
+  });
+
+  assert.equal(gate.ok, false);
+  assert.equal(gate.reason, "mtf_not_aligned");
+});
+
+test("matrix MTF: passes only when every configured frame aligns", () => {
+  const threeFrameProfile = resolveSignalOptionsExecutionProfile({
+    entryGate: {
+      mtfAlignment: {
+        enabled: true,
+        requiredCount: 2,
+        timeframes: ["2m", "5m", "15m"],
+      },
+    },
+  });
+  const mtfTimeframes = signalOptionsEffectiveMtfTimeframes({
+    profile: threeFrameProfile,
+    deployment: {
+      config: { parameters: { signalTimeframe: "15m" } },
+    } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
+  });
+
+  const gate = evaluateSignalOptionsEntryGate({
+    candidate,
+    profile: threeFrameProfile,
+    mtfTimeframes,
+    mtfTimeframeDirections: { "2m": "buy", "5m": "buy", "15m": "buy" },
+  });
+
   assert.equal(gate.ok, true);
 });

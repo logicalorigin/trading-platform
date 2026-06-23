@@ -206,6 +206,16 @@ test("Platform shells pass the STA profile timeframe into the algo monitor sideb
   );
 });
 
+test("Platform shell algo stream pauses during critical API mutations", () => {
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+
+  assert.match(shellSource, /useCriticalApiMutationPause\(\)/);
+  assert.match(
+    shellSource,
+    /const algoFrameRuntimeEnabled = Boolean\(\s*frameAuxiliaryDataEnabled &&\s*!criticalApiMutationPaused &&/s,
+  );
+});
+
 test("Algo monitor sidebar first paint is not coupled to shadow account position fallback", () => {
   const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
 

@@ -78,6 +78,20 @@ test("shadow account-page live positions keep quote hydration", () => {
   );
 });
 
+test("real account-page live positions use fast live quote hydration", () => {
+  const body = functionSource("fetchAccountPageLivePayload");
+  assert.match(
+    body,
+    /const \[primary,\s*livePositions,\s*intradayEquity\] = await Promise\.all\(\[[\s\S]*?fetchAccountPagePrimaryPayload\(normalized\)[\s\S]*?getAccountPositions\(\{[\s\S]*?detail:\s*"fast"[\s\S]*?liveQuotes:\s*true[\s\S]*?\}\)[\s\S]*?\]\);[\s\S]*?positions:\s*livePositions/,
+    "real account live payload must refresh positions with liveQuotes:true instead of reusing primary.positions",
+  );
+  assert.doesNotMatch(
+    body,
+    /positions:\s*primary\.positions/,
+    "real account live payload must not publish quote-free primary positions",
+  );
+});
+
 test("real account-page primary positions use fast quote-free first paint", () => {
   const body = functionSource("fetchAccountPagePrimaryPayload");
   assert.match(

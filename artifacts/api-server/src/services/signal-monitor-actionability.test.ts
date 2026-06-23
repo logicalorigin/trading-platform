@@ -69,6 +69,14 @@ test("actionability requires a directional signal, current data, and young age",
     "data_stale",
   );
   assert.equal(
+    buildSignalMonitorActionability({
+      ...base,
+      stale: true,
+      staleBlocker: "market_idle",
+    }).actionBlocker,
+    "market_idle",
+  );
+  assert.equal(
     buildSignalMonitorActionability({ ...base, barsSinceSignal: 5 })
       .actionBlocker,
     "signal_too_old",

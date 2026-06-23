@@ -1,3 +1,4 @@
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { attachPostgresPoolErrorHandler } from "./pool-error-handler";
@@ -364,7 +365,63 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
 }
 
 instrumentPostgresPoolDiagnostics(pool);
-export const db = drizzle(pool, { schema });
+
+/**
+ * Drizzle client over the shared production pool. This is the value `db`
+ * resolves to in every non-test code path; the test seam below NEVER swaps it
+ * unless `__setDbForTests` is explicitly called, so production behavior is
+ * unchanged.
+ */
+export type WorkspaceDatabase = NodePgDatabase<typeof schema>;
+
+const productionDb: WorkspaceDatabase = drizzle(pool, { schema });
+
+// Mutable indirection so a test harness can point `db` at an in-process
+// PGlite-backed drizzle instance for the duration of a test, then restore the
+// real one. Initialized to (and, in production, permanently) the real client.
+let activeDb: WorkspaceDatabase = productionDb;
+
+/**
+ * `db` is a thin forwarding Proxy over `activeDb`. Existing callers
+ * (`db.execute(...)`, `db.select()...`, `db.insert()...`) are unchanged: every
+ * property access/method call is forwarded to whatever `activeDb` currently is.
+ * In production `activeDb` is always `productionDb`, so this Proxy adds a single
+ * property-lookup indirection and nothing else.
+ */
+export const db: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
+  get(_target, property) {
+    const value = Reflect.get(
+      activeDb as object,
+      property,
+      activeDb as object,
+    );
+    // Bind functions to the live `activeDb` so `this` is correct after the
+    // Proxy forwards the lookup. Drizzle's query builders rely on `this`.
+    return typeof value === "function" ? value.bind(activeDb) : value;
+  },
+  has(_target, property) {
+    return Reflect.has(activeDb as object, property);
+  },
+  getPrototypeOf() {
+    return Reflect.getPrototypeOf(activeDb as object);
+  },
+}) as WorkspaceDatabase;
+
+/**
+ * TEST-ONLY seam. Swaps the drizzle instance that `db` forwards to and returns
+ * a restore function that reinstates the previous one. Never invoked by
+ * production code. The argument is intentionally typed structurally so a
+ * `PgliteDatabase` (a different concrete drizzle class that still extends the
+ * same `PgDatabase` base) can be injected without leaking PGlite types into the
+ * production surface.
+ */
+export function __setDbForTests(next: WorkspaceDatabase): () => void {
+  const previous = activeDb;
+  activeDb = next;
+  return () => {
+    activeDb = previous;
+  };
+}
 
 export type PostgresPoolStats = {
   /** Configured maximum pooled connections (`max`). */

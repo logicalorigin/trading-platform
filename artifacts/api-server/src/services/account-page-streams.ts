@@ -504,8 +504,14 @@ export async function fetchAccountPageLivePayload(
           risk,
         };
       } else {
-        const [primary, intradayEquity] = await Promise.all([
+        const [primary, livePositions, intradayEquity] = await Promise.all([
           fetchAccountPagePrimaryPayload(normalized),
+          getAccountPositions({
+            ...common,
+            assetClass: normalized.assetClass,
+            detail: "fast",
+            liveQuotes: true,
+          }),
           getAccountEquityHistory({ ...common, range: "1D" }),
         ]);
         value = {
@@ -518,7 +524,7 @@ export async function fetchAccountPageLivePayload(
           summary: primary.summary,
           intradayEquity,
           allocation: primary.allocation,
-          positions: primary.positions,
+          positions: livePositions,
           orders: primary.orders,
           risk: primary.risk,
         };

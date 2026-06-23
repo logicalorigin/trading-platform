@@ -120,6 +120,7 @@ export type PositionOpenedAtSource =
   | "lot"
   | "flex_open_position"
   | "flex_snapshot"
+  | "expiration_same_day"
   | "shadow_position"
   | "automation"
   | "unknown";

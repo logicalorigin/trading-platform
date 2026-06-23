@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { logger } from "../lib/logger";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
@@ -8,7 +10,9 @@ import {
 } from "./massive-stock-aggregate-stream";
 import {
   loadStoredMarketBars,
-  persistMarketDataBars,
+  loadStoredMarketBarsForSymbols,
+  persistMarketDataBarsForSymbols,
+  type MarketDataStoreBarInput,
   type MarketDataStoreTimeframe,
 } from "./market-data-store";
 
@@ -65,6 +69,23 @@ function storeSourceNames(): string[] {
   return [streamSourceName, "massive-history"];
 }
 
+// Request-scoped prefetch for the per-symbol stored-bar augment (readStoredBars).
+// A batch evaluator (the matrix/monitor symbol loop) prefetches all of a batch's
+// (timeframe × source × symbol) stored bars in a few set-based queries via
+// runWithSignalMonitorStoredBarsPrefetch; readStoredBars then serves from the
+// prefetch instead of issuing one pooled connection per (symbol, source). The
+// prefetched bars come from loadStoredMarketBarsForSymbols — a proven behavior-equal
+// mirror of the per-symbol loadStoredMarketBars — so results are IDENTICAL to the
+// un-prefetched path, which remains the fallback for any miss, mismatched
+// evaluatedAt/limit, or absent context.
+type StoredBarsPrefetch = {
+  evaluatedAtMs: number;
+  limit: number;
+  // timeframe -> sourceName -> normalizedSymbol -> bars
+  byTimeframe: Map<string, Map<string, Map<string, BrokerBarSnapshot[]>>>;
+};
+const storedBarsPrefetchStore = new AsyncLocalStorage<StoredBarsPrefetch>();
+
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
 const trackedSymbols = new Set<string>();
 const pendingPersistBars = new Map<string, PendingPersistBar>();
@@ -82,8 +103,9 @@ let lastPersistError: string | null = null;
 let lastPersistErrorAt: Date | null = null;
 let lastEnqueueScannedBarCount = 0;
 
-type PersistMarketDataBarsFn = typeof persistMarketDataBars;
-let persistMarketDataBarsOverride: PersistMarketDataBarsFn | null = null;
+type PersistMarketDataBarsForSymbolsFn = typeof persistMarketDataBarsForSymbols;
+let persistMarketDataBarsForSymbolsOverride: PersistMarketDataBarsForSymbolsFn | null =
+  null;
 
 function readPositiveIntegerEnv(
   name: string,
@@ -481,8 +503,27 @@ async function readStoredBars(input: {
   evaluatedAt: Date;
   limit: number;
 }): Promise<BrokerBarSnapshot[]> {
+  const sourceNames = storeSourceNames();
+  const prefetch = storedBarsPrefetchStore.getStore();
+  if (
+    prefetch !== undefined &&
+    prefetch.evaluatedAtMs === input.evaluatedAt.getTime() &&
+    prefetch.limit === input.limit &&
+    prefetch.byTimeframe.has(input.timeframe)
+  ) {
+    // Serve from the batch prefetch — the set-based read per source is already
+    // done, so no pooled connection is taken here.
+    const bySource = prefetch.byTimeframe.get(input.timeframe)!;
+    const symbol = normalizeSymbol(input.symbol);
+    const prefetched = sourceNames.map(
+      (sourceName) => bySource.get(sourceName)?.get(symbol) ?? [],
+    );
+    return mergeBarsByTimestamp(prefetched.flat(), input.limit);
+  }
+  // Fallback: per-symbol read (one pooled connection per source). Unchanged from
+  // the pre-prefetch behavior, and behavior-equal to the prefetch path above.
   const results = await Promise.all(
-    storeSourceNames().map((sourceName) =>
+    sourceNames.map((sourceName) =>
       loadStoredMarketBars({
         symbol: input.symbol,
         timeframe: input.timeframe,
@@ -499,6 +540,72 @@ async function readStoredBars(input: {
   return mergeBarsByTimestamp(results.flat(), input.limit);
 }
 
+// Prefetch a whole batch's stored bars (symbols × timeframes × sources) in a few
+// set-based queries, then run `fn` with that prefetch active so the per-symbol
+// readStoredBars calls inside serve from it instead of issuing one pooled
+// connection per (symbol, source). Behavior-equal to running `fn` without the
+// prefetch. Only the DB-augmentable LOCAL_CACHE_TIMEFRAMES are prefetched; an empty
+// symbol/timeframe set (or a non-matching evaluatedAt/limit at read time) falls
+// straight through to the per-symbol path.
+export async function runWithSignalMonitorStoredBarsPrefetch<T>(
+  input: {
+    symbols: readonly string[];
+    timeframes: readonly string[];
+    evaluatedAt: Date;
+    limit: number;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const symbols = Array.from(
+    new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  const timeframes = Array.from(
+    new Set(
+      input.timeframes.filter(
+        (timeframe): timeframe is SignalMonitorLocalBarCacheTimeframe =>
+          (LOCAL_CACHE_TIMEFRAMES as readonly string[]).includes(timeframe),
+      ),
+    ),
+  );
+  if (!symbols.length || !timeframes.length) {
+    return fn();
+  }
+  const sourceNames = storeSourceNames();
+  const byTimeframe: StoredBarsPrefetch["byTimeframe"] = new Map();
+  await Promise.all(
+    timeframes.map(async (timeframe) => {
+      const bySource = new Map<string, Map<string, BrokerBarSnapshot[]>>();
+      await Promise.all(
+        sourceNames.map(async (sourceName) => {
+          bySource.set(
+            sourceName,
+            await loadStoredMarketBarsForSymbols({
+              symbols,
+              timeframe,
+              limit: input.limit,
+              to: input.evaluatedAt,
+              assetClass: "equity",
+              outsideRth: true,
+              source: "trades",
+              recentWindowMinutes: 0,
+              sourceName,
+            }),
+          );
+        }),
+      );
+      byTimeframe.set(timeframe, bySource);
+    }),
+  );
+  return storedBarsPrefetchStore.run(
+    {
+      evaluatedAtMs: input.evaluatedAt.getTime(),
+      limit: input.limit,
+      byTimeframe,
+    },
+    fn,
+  );
+}
+
 async function flushPendingPersistBars(): Promise<void> {
   if (persistFlushInFlight) {
     schedulePersistFlush();
@@ -510,11 +617,19 @@ async function flushPendingPersistBars(): Promise<void> {
     return;
   }
   persistFlushInFlight = true;
-  const persist = persistMarketDataBarsOverride ?? persistMarketDataBars;
+  const persist =
+    persistMarketDataBarsForSymbolsOverride ?? persistMarketDataBarsForSymbols;
   try {
+    // Group by (timeframe, sourceName) — one multi-symbol upsert per group cuts
+    // write round-trips vs one INSERT-set per symbol. A group's bars across ALL
+    // symbols commit or requeue together (the merged upsert is all-or-nothing);
+    // requeue is idempotent so there is no loss or double-count. Bounded
+    // concurrency unchanged. Mutating shared bookkeeping inside the worker is
+    // safe because Node runs each await continuation to completion without
+    // interleaving synchronous work.
     const groups = new Map<string, PendingPersistBar[]>();
     pending.forEach((entry) => {
-      const key = [entry.symbol, entry.timeframe, entry.sourceName].join(":");
+      const key = [entry.timeframe, entry.sourceName].join(":");
       const group = groups.get(key) ?? [];
       group.push(entry);
       groups.set(key, group);
@@ -522,11 +637,6 @@ async function flushPendingPersistBars(): Promise<void> {
     const groupList = Array.from(groups.values()).filter(
       (group) => group.length > 0,
     );
-    // Drain groups with bounded concurrency. Each group is independent, so a
-    // failure (thrown or rejected) requeues only that group's bars; other
-    // groups still commit. Mutating shared bookkeeping inside the worker is
-    // safe because Node runs each await continuation to completion without
-    // interleaving synchronous work.
     let lastError: unknown = null;
     await mapWithConcurrency(
       groupList,
@@ -536,24 +646,43 @@ async function flushPendingPersistBars(): Promise<void> {
         if (!first) {
           return;
         }
+        const barsBySymbol = new Map<string, MarketDataStoreBarInput[]>();
+        group.forEach((entry) => {
+          const bars = barsBySymbol.get(entry.symbol) ?? [];
+          bars.push({
+            timestamp: entry.bar.timestamp,
+            open: entry.bar.open,
+            high: entry.bar.high,
+            low: entry.bar.low,
+            close: entry.bar.close,
+            volume: entry.bar.volume,
+          });
+          barsBySymbol.set(entry.symbol, bars);
+        });
+        const requeueGroup = () => {
+          group.forEach((entry) => {
+            pendingPersistBars.set(
+              cacheKey({
+                symbol: entry.symbol,
+                timeframe: entry.timeframe,
+                sourceName: entry.sourceName,
+                timestamp: entry.bar.timestamp,
+              }),
+              entry,
+            );
+          });
+        };
         try {
           const persisted = await persist({
-            request: {
-              symbol: first.symbol,
-              timeframe: first.timeframe,
-              assetClass: "equity",
-              outsideRth: true,
-              source: "trades",
-              recentWindowMinutes: 0,
-            },
+            timeframe: first.timeframe,
             sourceName: first.sourceName,
-            bars: group.map((entry) => ({
-              timestamp: entry.bar.timestamp,
-              open: entry.bar.open,
-              high: entry.bar.high,
-              low: entry.bar.low,
-              close: entry.bar.close,
-              volume: entry.bar.volume,
+            assetClass: "equity",
+            outsideRth: true,
+            source: "trades",
+            recentWindowMinutes: 0,
+            bySymbol: Array.from(barsBySymbol, ([symbol, bars]) => ({
+              symbol,
+              bars,
             })),
           });
           if (persisted) {
@@ -570,20 +699,14 @@ async function flushPendingPersistBars(): Promise<void> {
               );
             });
             prunePersistedBarSignatures();
+          } else {
+            // A false return is a swallowed DB error or a disabled/backoff store
+            // — requeue the group so the bars retry; never drop them.
+            requeueGroup();
           }
         } catch (error) {
           lastError = error;
-          group.forEach((entry) => {
-            pendingPersistBars.set(
-              cacheKey({
-                symbol: entry.symbol,
-                timeframe: entry.timeframe,
-                sourceName: entry.sourceName,
-                timestamp: entry.bar.timestamp,
-              }),
-              entry,
-            );
-          });
+          requeueGroup();
         }
       },
     );
@@ -777,15 +900,15 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     lastPersistError = null;
     lastPersistErrorAt = null;
     lastEnqueueScannedBarCount = 0;
-    persistMarketDataBarsOverride = null;
+    persistMarketDataBarsForSymbolsOverride = null;
   },
   ingest(aggregate: MassiveDelayedStockAggregate): void {
     handleMassiveAggregate(aggregate);
   },
-  __setPersistMarketDataBarsForTests(
-    fn: typeof persistMarketDataBars | null,
+  __setPersistMarketDataBarsForSymbolsForTests(
+    fn: PersistMarketDataBarsForSymbolsFn | null,
   ): void {
-    persistMarketDataBarsOverride = fn;
+    persistMarketDataBarsForSymbolsOverride = fn;
   },
   async flushNow(): Promise<void> {
     await flushPendingPersistBars();

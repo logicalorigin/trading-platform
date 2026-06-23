@@ -1736,7 +1736,7 @@ export const GetAccountPositionsResponse = zod.object({
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   "automationContext": zod.record(zod.string(), zod.unknown()).nullish().describe('Existing automation trade-management state for this open position, when available.'),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -1952,7 +1952,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   "automationContext": zod.record(zod.string(), zod.unknown()).nullish().describe('Existing automation trade-management state for this open position, when available.'),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -2505,7 +2505,7 @@ export const ListPositionsResponse = zod.object({
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -4899,7 +4899,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "latestBarClose": zod.number().nullable(),
   "barsSinceSignal": zod.number().nullable(),
   "fresh": zod.boolean(),
-  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
+  "status": zod.enum(['ok', 'idle', 'stale', 'unavailable', 'error', 'unknown']),
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable(),
@@ -4982,7 +4982,7 @@ export const GetSignalMonitorStateResponse = zod.object({
   "latestBarClose": zod.number().nullable(),
   "barsSinceSignal": zod.number().nullable(),
   "fresh": zod.boolean(),
-  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
+  "status": zod.enum(['ok', 'idle', 'stale', 'unavailable', 'error', 'unknown']),
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable(),

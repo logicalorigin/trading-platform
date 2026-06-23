@@ -4,6 +4,9 @@ import test from "node:test";
 
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
+  buildSignalIndicatorMetrics,
+} from "./algoHelpers.js";
+import {
   buildStaSignalStatusSummary,
   buildStaTableRowsSnapshot,
   hasStaCandidateAction,
@@ -188,6 +191,134 @@ test("STA table snapshot exports computed row signals for KPI consumers", () => 
   assert.match(snapshot.signature, /MSFT/);
 });
 
+test("KPI metrics are driven only by STA table-visible rows", () => {
+  const finalStaRows = [
+    {
+      signal: {
+        symbol: "AAPL",
+        timeframe: "15m",
+        direction: "buy",
+        signalPrice: 100,
+        currentPrice: 110,
+      },
+    },
+    {
+      signal: {
+        symbol: "MSFT",
+        timeframe: "15m",
+        direction: "sell",
+        signalPrice: 200,
+        currentPrice: 180,
+      },
+    },
+  ];
+  const excludedPreFilterRow = {
+    signal: {
+      symbol: "TSLA",
+      timeframe: "15m",
+      direction: "buy",
+      signalPrice: 100,
+      currentPrice: 50,
+    },
+  };
+
+  const snapshot = buildStaTableRowsSnapshot({ rows: finalStaRows });
+  const metrics = buildSignalIndicatorMetrics(snapshot.signalRows);
+  const pollutedMetrics = buildSignalIndicatorMetrics([
+    ...snapshot.signalRows,
+    excludedPreFilterRow.signal,
+  ]);
+
+  assert.equal(snapshot.rowCount, 2);
+  assert.equal(metrics.signalCount, 2);
+  assert.equal(metrics.winCount, 2);
+  assert.equal(metrics.correctnessPercent, 100);
+  assert.equal(pollutedMetrics.signalCount, 3);
+  assert.notEqual(pollutedMetrics.correctnessPercent, metrics.correctnessPercent);
+});
+
+test("STA table snapshot signature changes when draft execution or MTF context changes", () => {
+  const rows = [
+    {
+      signal: {
+        symbol: "AAPL",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-22T14:30:00.000Z",
+      },
+    },
+  ];
+  const fiveMinuteSnapshot = buildStaTableRowsSnapshot({
+    rows,
+    contextSignature: JSON.stringify({
+      signalTimeframes: ["2m", "5m"],
+      executionTimeframe: "5m",
+      mtf: { requiredCount: 2, timeframes: ["2m", "5m"] },
+    }),
+  });
+  const fifteenMinuteSnapshot = buildStaTableRowsSnapshot({
+    rows,
+    contextSignature: JSON.stringify({
+      signalTimeframes: ["2m", "5m", "15m"],
+      executionTimeframe: "15m",
+      mtf: { requiredCount: 3, timeframes: ["2m", "5m", "15m"] },
+    }),
+  });
+
+  assert.notEqual(fiveMinuteSnapshot.signature, fifteenMinuteSnapshot.signature);
+  assert.deepEqual(
+    fiveMinuteSnapshot.signalRows.map((row) => row.symbol),
+    fifteenMinuteSnapshot.signalRows.map((row) => row.symbol),
+  );
+});
+
+test("STA table snapshot signature changes when KPI move inputs hydrate", () => {
+  const baseRow = {
+    signal: {
+      symbol: "AAPL",
+      timeframe: "5m",
+      direction: "buy",
+      signalAt: "2026-06-22T14:30:00.000Z",
+      currentSignalClose: 100,
+      currentPrice: null,
+      latestBarClose: null,
+      currentSignalMfePercent: null,
+      currentSignalMaePercent: null,
+    },
+  };
+  const pendingSnapshot = buildStaTableRowsSnapshot({
+    rows: [baseRow],
+  });
+  const hydratedSnapshot = buildStaTableRowsSnapshot({
+    rows: [
+      {
+        signal: {
+          ...baseRow.signal,
+          currentPrice: 108,
+          latestBarClose: 108,
+          currentSignalMfePercent: 12,
+          currentSignalMaePercent: -3,
+        },
+      },
+    ],
+  });
+
+  assert.notEqual(pendingSnapshot.signature, hydratedSnapshot.signature);
+  assert.equal(hydratedSnapshot.signalRows[0].currentPrice, 108);
+  assert.equal(hydratedSnapshot.signalRows[0].currentSignalMfePercent, 12);
+});
+
+test("STA row component receives the same MTF config as the table filter", () => {
+  assert.match(
+    source,
+    /function OperationsSignalRuntimeRow\(\{[\s\S]*?mtfAlignmentConfig = null,/,
+  );
+  assert.match(
+    source,
+    /<OperationsSignalRow[\s\S]*?mtfAlignmentConfig=\{mtfAlignmentConfig\}/,
+  );
+});
+
 test("STA signal rows do not wait for companion timeframe bubbles", () => {
   const rows = [
     {
@@ -267,6 +398,7 @@ test("STA rows require a backing selected Signal Matrix cell", () => {
 
   assert.deepEqual(split.hydratedRows, []);
   assert.equal(split.pendingRows.length, 1);
+  assert.deepEqual(split.rows, []);
   assert.deepEqual(split.pendingRows[0].matrixHydration.blockingMissingTimeframes, [
     "5m",
   ]);
@@ -409,7 +541,7 @@ test("STA row sparklines do not use DB-backed bars batch hydration", () => {
 // A per-timeframe matrix cell as it lives in signalMatrixBySymbol[symbol].
 // getCurrentSignalDirection requires currentSignalDirection, active, and a
 // display-eligible status, matching how the row reads its bubbles.
-const matrixCell = (timeframe, direction) => ({
+const matrixCell = (timeframe, direction, overrides = {}) => ({
   symbol: "MU",
   timeframe,
   status: "ok",
@@ -418,9 +550,12 @@ const matrixCell = (timeframe, direction) => ({
   currentSignalDirection: direction,
   currentSignalAt: "2026-06-08T19:00:00.000Z",
   latestBarAt: "2026-06-08T19:10:00.000Z",
+  ...overrides,
 });
 
-const buyRow = (symbol) => ({ signal: { symbol, direction: "buy" } });
+const buyRow = (symbol, timeframe = null) => ({
+  signal: { symbol, direction: "buy", ...(timeframe ? { timeframe } : {}) },
+});
 
 test("STA MTF alignment filter hides divergent and unconfirmed rows when enabled", () => {
   const mtfAlignmentConfig = {
@@ -449,6 +584,151 @@ test("STA MTF alignment filter hides divergent and unconfirmed rows when enabled
   assert.equal(
     staRowPassesMtfAlignment(buyRow("MU"), aligned, mtfAlignmentConfig),
     true,
+  );
+});
+
+test("STA MTF alignment filter does not add execution frame to selected-frame checks", () => {
+  const configuredWithoutExecutionFrame = {
+    enabled: true,
+    timeframes: ["2m", "5m"],
+    requiredCount: 2,
+  };
+  const matrix = {
+    MU: {
+      "5m": matrixCell("5m", "buy"),
+      "15m": matrixCell("15m", "buy"),
+    },
+  };
+
+  assert.equal(
+    staRowPassesMtfAlignment(
+      buyRow("MU", "15m"),
+      matrix,
+      configuredWithoutExecutionFrame,
+    ),
+    false,
+  );
+});
+
+test("STA MTF alignment filter rejects stale partial required counts", () => {
+  const stalePartialConfig = {
+    enabled: true,
+    timeframes: ["2m", "5m", "15m"],
+    requiredCount: 2,
+  };
+  const matrix = {
+    MU: {
+      "2m": matrixCell("2m", "buy"),
+      "5m": matrixCell("5m", "buy"),
+      "15m": matrixCell("15m", "sell"),
+    },
+  };
+
+  assert.equal(
+    staRowPassesMtfAlignment(buyRow("MU", "15m"), matrix, stalePartialConfig),
+    false,
+  );
+});
+
+test("STA MTF alignment filter requires actual selected-frame signal directions", () => {
+  const config = {
+    enabled: true,
+    timeframes: ["1m", "2m", "5m", "15m"],
+    requiredCount: 4,
+  };
+  const matrix = {
+    MU: {
+      "1m": matrixCell("1m", "buy"),
+      "2m": matrixCell("2m", null, {
+        trendDirection: "bullish",
+        currentSignalAt: null,
+      }),
+      "5m": matrixCell("5m", "buy"),
+      "15m": matrixCell("15m", "buy"),
+    },
+  };
+
+  assert.equal(
+    staRowPassesMtfAlignment(buyRow("MU", "5m"), matrix, config),
+    false,
+  );
+});
+
+test("all-selected MTF keeps 2m and 5m execution rows on the same aligned symbol set", () => {
+  const config = {
+    enabled: true,
+    timeframes: ["1m", "2m", "5m", "15m"],
+    requiredCount: 4,
+  };
+  const matrix = {
+    AAPL: {
+      "1m": matrixCell("1m", "buy"),
+      "2m": matrixCell("2m", "buy"),
+      "5m": matrixCell("5m", "buy"),
+      "15m": matrixCell("15m", "buy"),
+    },
+    MSFT: {
+      "1m": matrixCell("1m", "buy"),
+      "2m": matrixCell("2m", null, {
+        trendDirection: "bullish",
+        currentSignalAt: null,
+      }),
+      "5m": matrixCell("5m", "buy"),
+      "15m": matrixCell("15m", "buy"),
+    },
+  };
+  const fiveMinuteRows = [buyRow("AAPL", "5m"), buyRow("MSFT", "5m")].filter(
+    (row) => staRowPassesMtfAlignment(row, matrix, config),
+  );
+  const twoMinuteRows = [buyRow("AAPL", "2m")].filter((row) =>
+    staRowPassesMtfAlignment(row, matrix, config),
+  );
+
+  assert.deepEqual(
+    fiveMinuteRows.map((row) => row.signal.symbol),
+    ["AAPL"],
+  );
+  assert.deepEqual(
+    twoMinuteRows.map((row) => row.signal.symbol),
+    ["AAPL"],
+  );
+});
+
+test("STA MTF alignment filter returns the configured aligned subset, not the universe cap", () => {
+  const config = {
+    enabled: true,
+    timeframes: ["1m", "2m"],
+    requiredCount: 2,
+  };
+  const alignedSymbols = new Set(["SYM001", "SYM042", "SYM499"]);
+  const symbols = Array.from(
+    { length: 500 },
+    (_, index) => `SYM${String(index).padStart(3, "0")}`,
+  );
+  const rows = symbols.map((symbol) => buyRow(symbol, "1m"));
+  const matrix = Object.fromEntries(
+    symbols.map((symbol) => [
+      symbol,
+      {
+        "1m": matrixCell("1m", "buy"),
+        "2m": matrixCell(
+          "2m",
+          alignedSymbols.has(symbol) ? "buy" : "sell",
+        ),
+      },
+    ]),
+  );
+
+  const filtered = rows.filter((row) =>
+    staRowPassesMtfAlignment(row, matrix, config),
+  );
+
+  assert.equal(rows.length, 500);
+  assert.equal(filtered.length, 3);
+  assert.notEqual(filtered.length, 500);
+  assert.deepEqual(
+    filtered.map((row) => row.signal.symbol),
+    ["SYM001", "SYM042", "SYM499"],
   );
 });
 

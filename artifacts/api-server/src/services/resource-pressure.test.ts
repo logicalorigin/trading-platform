@@ -82,7 +82,7 @@ test("single event-loop spike does not enter high resource pressure", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
-    eventLoopDelayP95Ms: 300,
+    eventLoopDelayP95Ms: 500,
   });
 
   assert.equal(snapshot.resourceLevel, "watch");
@@ -103,10 +103,10 @@ test("sustained event-loop saturation enters and exits high resource pressure wi
   __resetApiResourcePressureForTests();
 
   updateApiResourcePressure({
-    eventLoopDelayP95Ms: 300,
+    eventLoopDelayP95Ms: 500,
   });
   const sustained = updateApiResourcePressure({
-    eventLoopDelayP95Ms: 300,
+    eventLoopDelayP95Ms: 500,
   });
 
   assert.equal(sustained.resourceLevel, "high");
@@ -131,7 +131,7 @@ test("event-loop watch does not defer signal-options action work", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
-    eventLoopDelayP95Ms: 100,
+    eventLoopDelayP95Ms: 200,
   });
 
   assert.equal(snapshot.resourceLevel, "watch");
@@ -162,42 +162,63 @@ test("non-saturated db pool waiters are watch pressure, not a hard block", () =>
   __resetApiResourcePressureForTests();
 });
 
-test("saturated db pool waiters drive high resource pressure immediately", () => {
+test("saturated db pool waiters drive high resource pressure after two samples (hysteresis)", () => {
   __resetApiResourcePressureForTests();
 
-  const snapshot = updateApiResourcePressure({
+  // A single saturated-pool sample (12/12 + queue) is a transient blip: the
+  // db-pool DRIVER reads "high", but the trading gate (resourceLevel) caps at
+  // "watch" until the saturation persists across a second sample. The overall
+  // `level` (display/general shedding) still reflects the high driver at once.
+  const first = updateApiResourcePressure({
     dbPoolActive: 12,
     dbPoolWaiting: 4,
     dbPoolMax: 12,
   });
 
-  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
-  assert.equal(snapshot.level, "high");
-  assert.equal(snapshot.resourceLevel, "high");
+  const driver = first.drivers.find((entry) => entry.kind === "db-pool");
+  assert.equal(first.level, "high");
   assert.equal(driver?.level, "high");
   assert.equal(driver?.detail, "12/12 active, 4 waiting");
   assert.equal(driver?.score, 4);
-  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+  assert.equal(first.resourceLevel, "watch");
+  assert.equal(isApiResourcePressureHardBlock(first), false);
+
+  // Sustained saturation across a second sample reaches "high" and hard-blocks.
+  const second = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+  assert.equal(second.resourceLevel, "high");
+  assert.equal(isApiResourcePressureHardBlock(second), true);
 
   __resetApiResourcePressureForTests();
 });
 
-test("large db pool queues drive high pressure immediately", () => {
+test("large db pool queues drive high pressure after two samples (hysteresis)", () => {
   __resetApiResourcePressureForTests();
 
-  const snapshot = updateApiResourcePressure({
+  const first = updateApiResourcePressure({
     dbPoolActive: 12,
     dbPoolWaiting: 12,
     dbPoolMax: 12,
   });
 
-  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
-  assert.equal(snapshot.level, "high");
-  assert.equal(snapshot.resourceLevel, "high");
+  const driver = first.drivers.find((entry) => entry.kind === "db-pool");
+  assert.equal(first.level, "high");
   assert.equal(driver?.level, "high");
   assert.equal(driver?.detail, "12/12 active, 12 waiting");
   assert.equal(driver?.score, 12);
-  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+  assert.equal(first.resourceLevel, "watch");
+  assert.equal(isApiResourcePressureHardBlock(first), false);
+
+  const second = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 12,
+    dbPoolMax: 12,
+  });
+  assert.equal(second.resourceLevel, "high");
+  assert.equal(isApiResourcePressureHardBlock(second), true);
 
   __resetApiResourcePressureForTests();
 });
@@ -241,20 +262,31 @@ test("a single waiter against a full pool is watch, not high (de-flap)", () => {
   __resetApiResourcePressureForTests();
 });
 
-test("a real queue (>=2 waiters) against a full pool still enters high", () => {
+test("a real queue (>=2 waiters) against a full pool enters high after two samples", () => {
   __resetApiResourcePressureForTests();
 
-  const snapshot = updateApiResourcePressure({
+  const first = updateApiResourcePressure({
     dbPoolActive: 12,
     dbPoolWaiting: 2,
     dbPoolMax: 12,
   });
 
-  const driver = snapshot.drivers.find((entry) => entry.kind === "db-pool");
-  // A genuine queue is real saturation - the gates should still engage.
-  assert.equal(snapshot.resourceLevel, "high");
+  const driver = first.drivers.find((entry) => entry.kind === "db-pool");
+  // A genuine queue is real saturation - the driver reads high immediately, but
+  // the trading gate waits one more sample so a momentary 2-deep queue that
+  // drains in milliseconds does not instantly freeze trading.
   assert.equal(driver?.level, "high");
-  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+  assert.equal(first.resourceLevel, "watch");
+  assert.equal(isApiResourcePressureHardBlock(first), false);
+
+  // Sustained across a second sample, the genuine queue engages the gates.
+  const second = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 2,
+    dbPoolMax: 12,
+  });
+  assert.equal(second.resourceLevel, "high");
+  assert.equal(isApiResourcePressureHardBlock(second), true);
 
   __resetApiResourcePressureForTests();
 });

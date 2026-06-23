@@ -12460,7 +12460,7 @@ components:
 
     SignalMonitorSymbolStatus:
       type: string
-      enum: [ok, stale, unavailable, error, unknown]
+      enum: [ok, idle, stale, unavailable, error, unknown]
 
     SignalMonitorProfile:
       type: object

@@ -3,44 +3,46 @@
 ## Session Metadata
 
 - Session ID: `6cfc8e90-7fbe-431c-bf8f-bf1d4453554d`
-- Saved At (MT): `2026-06-22 20:05:38 MDT`
-- Saved At (UTC): `2026-06-23T02:05:38.637Z`
-- Summary: 2026-06-22 20:05:38 MDT | 6cfc8e90-7fbe-431c-bf8f-bf1d4453554d | Claude Code session
+- Saved At (MT): `2026-06-22 20:54:50 MDT`
+- Saved At (UTC): `2026-06-23T02:54:50.048Z`
+- Summary: 2026-06-22 20:54:50 MDT | 6cfc8e90-7fbe-431c-bf8f-bf1d4453554d | i need you to go through replits recent commmit. it errantly committed and pushed a bunch of in progress work. i n…
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d.jsonl`
 - Branch: `main`
-- HEAD: `7acc35624937e026fd24339759984daea1f57dec`
-- Latest Commit: `Saved progress at the end of the loop`
-- Latest Commit Session ID: `d56ae97d-ce5b-4897-beba-c1c01ae8f27e`
-- Title: Claude Code session
-- Model: `unknown`
+- HEAD: `91df94c079d7e943ed8e2fd0c9e9729d42b507f3`
+- Latest Commit: `fix(api): bound producer background DB reads with a shared concurrency gate`
+- Latest Commit Session ID: `unknown`
+- Title: i need you to go through replits recent commmit. it errantly committed and pushed a bunch of in progress work. i need y…
+- Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-(no user message captured yet)
+i need you to go through replits recent commmit. it errantly committed and pushed a bunch of in progress work. i need you to carefully go through and disect it
 
 ## Prior Handoffs
 
 - `SESSION_HANDOFF_2026-06-23_019ef1fc-9ac8-7152-a297-82bd1ecb962e.md`
+- `SESSION_HANDOFF_2026-06-22_ea53db29-10af-439e-8202-689f9a32d702.md`
+- `SESSION_HANDOFF_2026-06-22_d187047c-6b3e-49a9-90dc-523ec2d9d062.md`
 - `SESSION_HANDOFF_2026-06-22_cc510f0f-d1eb-4fcd-a0d9-e0f3bec5c378.md`
 - `SESSION_HANDOFF_2026-06-22_bb452c23-0954-4fa7-86f9-4931e966d11b.md`
+- `SESSION_HANDOFF_2026-06-22_b32152c8-6f81-42fe-b9d5-dbdf7a39c334.md`
 - `SESSION_HANDOFF_2026-06-22_a2e66210-5eb6-421b-805f-278af0fc9a12.md`
 - `SESSION_HANDOFF_2026-06-22_9d42f0f9-7a02-4b94-bb3c-57502fae54df.md`
 - `SESSION_HANDOFF_2026-06-22_8e8312c6-410f-4696-8d7f-9f88de8f09ae.md`
 - `SESSION_HANDOFF_2026-06-22_8bdb8f38-7cdb-4c8d-8795-d7e026fcea6a.md`
 - `SESSION_HANDOFF_2026-06-22_8a4e761d-02c1-421e-83ec-ee27cce9fa12.md`
 - `SESSION_HANDOFF_2026-06-22_7b37c814-b4cb-48c6-98e1-7d5678d6fc70.md`
-- `SESSION_HANDOFF_2026-06-22_67d32eb1-47dc-4432-b91d-a38d4d53df0f.md`
 - `SESSION_HANDOFF_2026-06-22_5bcf7f2f-1829-4289-812b-c3e9b079c218.md`
-- `SESSION_HANDOFF_2026-06-22_5ac5922d-ea54-4c83-9760-1f2dbb0d6ffd.md`
 - `SESSION_HANDOFF_2026-06-22_4ccb1b0a-9fa0-4e9c-8f14-784936962abe.md`
 - `SESSION_HANDOFF_2026-06-22_426c0f63-ef73-4538-a9bb-e82e66e0e34d.md`
 - `SESSION_HANDOFF_2026-06-22_3dc49906-f7c1-4ea7-8047-42d11b451386.md`
 - `SESSION_HANDOFF_2026-06-22_25851ae9-88ea-488e-8b65-65d6cd97635b.md`
+- `SESSION_HANDOFF_2026-06-22_05de08b9-412a-433f-a1e1-33040f5a9a33.md`
 - `SESSION_HANDOFF_2026-06-22_019ef0af-0e6f-7440-9a9b-38e0015449a3.md`
 - `SESSION_HANDOFF_2026-06-22_019ef0ac-dd0c-7612-8e1d-ccd88c8e9637.md`
 - `SESSION_HANDOFF_2026-06-22_000d4c5f-05da-41a2-814c-01cdb7901cab.md`
@@ -332,35 +334,87 @@
 
 ## Recent User Messages
 
-- None found.
+- `2026-06-22 20:07:14 MDT` i need you to go through replits recent commmit. it errantly committed and pushed a bunch of in progress work. i need you to carefully go through and disect it
+- `2026-06-22 20:07:20 MDT` [Request interrupted by user]
+- `2026-06-22 20:07:27 MDT` proceed
+- `2026-06-22 20:18:21 MDT` <task-notification> <task-id>war2g6515</task-id> <tool-use-id>toolu_01FYJ2A5UrC5pXXTGbHmg97h</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/war2g6515.output</output-file> <status>completed</status> <summary>Dynamic workflow "Dissect the 3 errant Replit Agent commits (c7710f6..c92ce20) into coherent workstreams and classify each" completed</summary> <result>[{"workstream":"noise-artifacts","oneLineSummary":"Bulk-committed session-handoff narratives, huge pattern-discovery benchmark dumps, a re-optimized opengraph image, and minor doc edits — mostly generated artifacts, not product code.","classification":"noise-artifact","whatItDoes":"This change set adds 26 dated SESSION_HANDOFF_*.md narrative files plus updates to the SESSION…
+- `2026-06-22 20:21:34 MDT` note another agent appears to have cleaned up some of those replit changes while you were working. please take a fresh look. 1. yes 2. intentinoal change in scoring. 3. yes delete. 4. yes can leave git, but we need that testing 5. yes thats good work
+- `2026-06-22 20:26:13 MDT` no. first i want you to audit the scoring column in the sta table. most are not populated
+- `2026-06-22 20:33:06 MDT` can you send a new subagent out to see why we're struggling to hydrate bars on charts?
+- `2026-06-22 20:44:16 MDT` <task-notification> <task-id>ab0a4a70e97158d89</task-id> <tool-use-id>toolu_01Fcmvsb2gbeUpvjsENgSNHn</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/ab0a4a70e97158d89.output</output-file> <status>completed</status> <summary>Agent "Investigate chart bar hydration" came to rest</summary> <note>A task-notification fires each time this agent comes to rest with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note> <result>I have complete evidence. Let me compile the final root-cause report. --- # Root-Cause Report: Pyrus chart/sparkline bar hydration is slow / partial / empty ## Verification method All claims below are either **observed** (re…
+- `2026-06-22 20:45:17 MDT` i do NOT want visibilty gating (visible symbols first). this fucks our system up
+- `2026-06-22 20:47:25 MDT` yes, please draft plans for all 1, 2, 3
+- `2026-06-22 20:50:34 MDT` <task-notification> <task-id>wj8yzu4kb</task-id> <tool-use-id>toolu_01Si9armLYF6YneRhrzdkb8n</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/wj8yzu4kb.output</output-file> <status>completed</status> <summary>Dynamic workflow "Trace erroneous state handling across the signal-monitor pipeline that leaves STA Score (and related fields) unpopulated" completed</summary> <result>{"traces":[{"stateBoundary":"write-path-evaluation-upsert — the live evaluation -&gt; signal_monitor_symbol_states upsert in artifacts/api-server/src/services/signal-monitor.ts (both the per-symbol path resolveSignalMonitorSignal/upsertSymbolState ~5786-6020 and the bulk matrix path persistSignalMonitorMatrixStatesBestEffort ~6859-6968), plus the value builde…
+- `2026-06-22 20:53:18 MDT` <task-notification> <task-id>wt305xl2i</task-id> <tool-use-id>toolu_01JbFBZuNwJwofKsuKo8bfM5</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/wt305xl2i.output</output-file> <status>completed</status> <summary>Dynamic workflow "Draft three visibility-agnostic implementation plans for chart/sparkline bar hydration (progressive commit, throughput, stop shedding)" completed</summary> <result>[{"approach":"RECOMMENDED OPTION: (a) an onChunk callback in fetchSignalSparklineSeedInChunks that imperatively flushes each resolved chunk through the existing derivation + syncRuntimeMarketData, while preserving the final query.data so react-query's settle path still produces the consistent full snapshot. Rejected (b) per-chunk queries (would…
 
 ## Session Activity Summary
 
-- No rollout activity summary available.
+- `2026-06-22 20:07:14 MDT` User: i need you to go through replits recent commmit. it errantly committed and pushed a bunch of in progress work. i need you to carefully go through and disect it
+- `2026-06-22 20:07:18 MDT` Agent: I'll start by examining the recent commits to find the one Replit errantly pushed with in-progress work.
+- `2026-06-22 20:07:19 MDT` Tool: Bash git log --oneline -15 --format='%h %an %ad %s' --date=short
+- `2026-06-22 20:07:20 MDT` User: [Request interrupted by user]
+- `2026-06-22 20:07:27 MDT` User: proceed
+- `2026-06-22 20:07:34 MDT` Agent: Ultracode is on. Let me scout the scope first — what these three Replit Agent commits actually contain — then fan out a workflow to dissect each change in depth.
+- … 76 lower-signal transcript events omitted …
+- `2026-06-22 20:51:09 MDT` Tool: Bash cd /home/runner/workspace F=/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/wj8yzu4kb.output echo "=== # candidates sent to…
+- `2026-06-22 20:52:06 MDT` Agent: Adversarial verification done (19 claims tested). Let me confirm the single highest-leverage fact myself before reporting — the live profile's `enabled` flag.
+- `2026-06-22 20:52:08 MDT` Tool: Bash cd /home/runner/workspace psql "$DATABASE_URL" -P pager=off -c "SELECT environment, timeframe, enabled, last_evaluated_at, now()-last_evaluated_at AS age, last…
+- `2026-06-22 20:52:58 MDT` Agent: Confirmed myself: **live profile `enabled = false`** (21 days since eval); shadow is `enabled = true` and its symbol-states are fresh (~2h, just market-closed). Here's the verifie…
+- `2026-06-22 20:53:18 MDT` User: <task-notification> <task-id>wt305xl2i</task-id> <tool-use-id>toolu_01JbFBZuNwJwofKsuKo8bfM5</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-…
+- `2026-06-22 20:53:21 MDT` Agent: The three plans are in. Let me extract them cleanly.
+- `2026-06-22 20:53:25 MDT` Tool: Bash cd /home/runner/workspace F=/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/wt305xl2i.output echo "=== keys ==="; jq -r 'key…
+- `2026-06-22 20:53:38 MDT` Agent: All three plans are grounded and complete. One thing to flag: the planners report **HEAD has moved again to `0109410`** (two commits past `7024392`) — the other agent is still com…
+- `2026-06-22 20:53:44 MDT` Tool: Bash cd /home/runner/workspace F=/tmp/claude-1000/-home-runner-workspace/6cfc8e90-7fbe-431c-bf8f-bf1d4453554d/tasks/wt305xl2i.output jq -r '.result[] | "\n### " + (…
+- `2026-06-22 20:54:48 MDT` Agent: All three plans are drafted and grounded in the *current* code. (Heads-up: HEAD has moved to `91df94c` — you've been committing on top of the Replit batch: `0109410` gex cone, `91…
 
 ## High-Signal Changed Files
 
-- `SESSION_HANDOFF_2026-06-22_5ac5922d-ea54-4c83-9760-1f2dbb0d6ffd.md`
-- `SESSION_HANDOFF_2026-06-22_67d32eb1-47dc-4432-b91d-a38d4d53df0f.md`
+- `.replit`
+- `SESSION_HANDOFF_2026-06-22_6cfc8e90-7fbe-431c-bf8f-bf1d4453554d.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/signal-monitor.ts`
-- `artifacts/backtest-worker/src/pattern-discovery-sweep.ts`
-- `reports/pattern-discovery-sweeps/2026-06-23T01-54-37-850Z/report.md`
-- `reports/pattern-discovery-sweeps/2026-06-23T01-54-37-850Z/results.json`
-- `reports/pattern-discovery-sweeps/2026-06-23T01-57-31-163Z/report.md`
-- `reports/pattern-discovery-sweeps/2026-06-23T01-57-31-163Z/results.json`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 4]
+## main...origin/main [ahead 6]
+M  .gitignore
+MM .replit
+ M SESSION_HANDOFF_2026-06-22_6cfc8e90-7fbe-431c-bf8f-bf1d4453554d.md
+ M SESSION_HANDOFF_CURRENT.md
+ M SESSION_HANDOFF_MASTER.md
+D  artifacts/api-server/src/services/_kpi-verify.ts
+D  artifacts/api-server/src/services/_score_audit.ts
+ M artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts
+ M artifacts/api-server/src/services/ibkr-bridge-runtime.ts
+D  reports/pattern-discovery-sweeps/2026-06-23T00-18-14-338Z/report.md
+D  reports/pattern-discovery-sweeps/2026-06-23T00-18-14-338Z/results.json
+D  reports/pattern-discovery-sweeps/2026-06-23T00-29-07-281Z/report.md
+D  reports/pattern-discovery-sweeps/2026-06-23T00-29-07-281Z/results.json
+D  reports/pattern-discovery-sweeps/2026-06-23T00-36-09-350Z/report.md
+D  reports/pattern-discovery-sweeps/2026-06-23T00-36-09-350Z/results.json
+D  reports/pattern-discovery-sweeps/2026-06-23T00-44-19-102Z/report.md
+D  reports/pattern-discovery-sweeps/2026-06-23T00-44-19-102Z/results.json
+D  reports/pattern-discovery-sweeps/2026-06-23T00-50-00-946Z/report.md
+D  reports/pattern-discovery-sweeps/2026-06-23T00-50-00-946Z/results.json
+?? SESSION_HANDOFF_2026-06-22_05de08b9-412a-433f-a1e1-33040f5a9a33.md
+?? SESSION_HANDOFF_2026-06-22_b32152c8-6f81-42fe-b9d5-dbdf7a39c334.md
+?? SESSION_HANDOFF_2026-06-22_d187047c-6b3e-49a9-90dc-523ec2d9d062.md
+?? SESSION_HANDOFF_2026-06-22_ea53db29-10af-439e-8202-689f9a32d702.md
 ```
 
 ## Diff Summary
 
 ```text
-No tracked changes relative to HEAD.
+ .replit                            | 10 +-
+ ...-7fbe-431c-bf8f-bf1d4453554d.md | 99 +++++++++---
+ SESSION_HANDOFF_CURRENT.md         |  6 +-
+ SESSION_HANDOFF_MASTER.md          |  6 +-
+ .../ibkr-bridge-runtime.test.ts    | 61 ++++---
+ .../ibkr-bridge-runtime.ts         |  1 +
+ 6 files changed, 134 insertions(+), 49 deletions(-)
 ```
 
 ## Validations Detected In Transcript

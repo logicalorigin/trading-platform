@@ -1,4 +1,5 @@
 export type CustomFetchOptions = RequestInit & {
+  baseUrl?: string | null;
   responseType?: "json" | "text" | "blob" | "auto";
   timeoutMs?: number | null;
 };
@@ -114,13 +115,16 @@ function isUrl(input: RequestInfo | URL): input is URL {
   return typeof URL !== "undefined" && input instanceof URL;
 }
 
-function applyBaseUrl(input: RequestInfo | URL): RequestInfo | URL {
-  if (!_baseUrl) return input;
+function applyBaseUrl(
+  input: RequestInfo | URL,
+  baseUrl: string | null = _baseUrl,
+): RequestInfo | URL {
+  if (!baseUrl) return input;
   const url = resolveUrl(input);
   // Only prepend to relative paths (starting with /)
   if (!url.startsWith("/")) return input;
 
-  const absolute = `${_baseUrl}${url}`;
+  const absolute = `${baseUrl.replace(/\/+$/u, "")}${url}`;
   if (typeof input === "string") return absolute;
   if (isUrl(input)) return new URL(absolute);
   return new Request(absolute, input as Request);
@@ -985,6 +989,7 @@ export function resetCustomFetchDedupeForTests(): void {
 }
 
 export const __customFetchInternalsForTests = {
+  applyBaseUrl,
   getHeavyGetPriority,
   isHeavyGetPath,
 };
@@ -993,13 +998,14 @@ export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
 ): Promise<T> {
-  input = applyBaseUrl(input);
   const {
+    baseUrl = null,
     responseType = "auto",
     headers: headersInit,
     timeoutMs: timeoutOption,
     ...init
   } = options;
+  input = applyBaseUrl(input, baseUrl ?? _baseUrl);
 
   const method = resolveMethod(input, init.method);
   const requestStartedAt = nowMs();

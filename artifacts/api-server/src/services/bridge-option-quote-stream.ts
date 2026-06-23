@@ -138,6 +138,7 @@ const retainedSnapshotDemands = new Map<string, RetainedSnapshotDemand>();
 const quoteCacheByProviderContractId = new Map<string, QuoteSnapshot>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const FLOW_SCANNER_STREAM_RECONFIGURE_DEBOUNCE_MS = 750;
+const ACCOUNT_MONITOR_OPTION_QUOTE_REFRESH_TIMEOUT_MS = 5_000;
 const RECONNECT_DELAY_MIN_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
 const UNCONFIGURED_OPTION_STREAM_RETRY_MS = Math.max(
@@ -1243,6 +1244,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   ttlMs?: number;
   fallbackProvider?: MarketDataFallbackProvider;
   requiresGreeks?: boolean;
+  hydrateCached?: boolean;
+  timeoutMs?: number;
   releaseLeasesOnComplete?: boolean;
   releaseLeasesOnAbort?: boolean;
   signal?: AbortSignal;
@@ -1274,8 +1277,18 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const bridgeWorkOptions = isLiveQuoteSnapshotIntent
     ? { recordFailure: false }
     : undefined;
+  const explicitTimeoutMs =
+    typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
+      ? Math.max(1, Math.floor(input.timeoutMs))
+      : undefined;
   const bridgeOptionQuoteTimeoutMs =
-    intent === "account-monitor-live" || intent === "visible-live" ? 0 : undefined;
+    explicitTimeoutMs ??
+    (intent === "account-monitor-live"
+      ? ACCOUNT_MONITOR_OPTION_QUOTE_REFRESH_TIMEOUT_MS
+      : intent === "visible-live"
+        ? 0
+        : undefined);
+  const hydrateCached = input.hydrateCached === true;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "massive";
   const requiresGreeks = input.requiresGreeks ?? true;
@@ -1454,7 +1467,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       if (!shouldHydrateQuoteSnapshot(cachedQuote, { requiresGreeks })) {
         return false;
       }
-      if (cachedQuote && servesCachedWithoutBlocking) {
+      if (cachedQuote && servesCachedWithoutBlocking && !hydrateCached) {
         return false;
       }
       return true;

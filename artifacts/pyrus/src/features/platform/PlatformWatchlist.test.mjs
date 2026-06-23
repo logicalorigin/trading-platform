@@ -162,7 +162,7 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   );
   assert.match(
     marketDataSource,
-    /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineSeedSymbols\)/s,
+    /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineSeedSymbols,\s*\{\s*onChunk: publishSignalSparklineSeedChunk,\s*\}\)/s,
   );
   assert.doesNotMatch(marketDataSource, /signalSparklinePrioritySeedQuery/);
   assert.doesNotMatch(marketDataSource, /signalSparklineBackgroundSeedQuery/);
@@ -178,11 +178,31 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketDataSource,
     /signalSparklineSeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
   );
-  assert.match(marketDataSource, /SPARKLINE_MIN_VISUAL_POINT_COUNT\s*=\s*8/);
+  assert.match(marketDataSource, /SPARKLINE_MIN_VISUAL_POINT_COUNT\s*=\s*2/);
   // Chunks fan out concurrently with a bounded cap (reusing settleWithConcurrency).
   assert.match(
     marketDataSource,
     /fetchSignalSparklineSeedInChunks = async[\s\S]*settleWithConcurrency\(/s,
+  );
+  assert.match(
+    marketDataSource,
+    /fetchSignalSparklineSeedInChunks = async[\s\S]*onChunk = null[\s\S]*onChunk\(chunkBarsBySymbol/s,
+  );
+  assert.match(
+    marketDataSource,
+    /const publishSignalSparklineSeedChunk = useCallback\([\s\S]*syncRuntimeMarketData\([\s\S]*sparklineBarsBySymbol: visualBarsBySymbol/s,
+  );
+  assert.match(
+    marketDataSource,
+    /signalSeedChunkFlushCount:\s*signalSparklineSeedChunkFlushRef\.current\.count/s,
+  );
+  assert.match(
+    marketDataSource,
+    /const rejected = settled\.filter\(\(result\) => result\.status === "rejected"\);[\s\S]*if \(rejected\.length\) \{[\s\S]*throw rejected\[0\]\?\.reason/s,
+  );
+  assert.doesNotMatch(
+    marketDataSource,
+    /if \(!fulfilled\.length\) \{[\s\S]*return Object\.assign\(\{\}, \.\.\.fulfilled\.map/s,
   );
   assert.match(
     marketDataSource,
@@ -199,6 +219,14 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   );
   assert.match(
     marketDataSource,
+    /const signalSparklineSeedSettled = Boolean\(\s*!signalSparklineSeedSymbols\.length \|\| signalSparklineSeedQuery\.isSuccess,\s*\);/s,
+  );
+  assert.doesNotMatch(
+    marketDataSource,
+    /signalSparklineSeedQuery\.isError/,
+  );
+  assert.match(
+    marketDataSource,
     /const clearAggregateOnlySparklineSymbols = useMemo\(\(\) => \{[\s\S]*!signalSparklineSeedSettled[\s\S]*aggregateOnlySparklineSymbolSet\.has\(symbol\)[\s\S]*!hasUsableSparklineBars\(sparklineBarsBySymbol\[symbol\]\)/s,
   );
   assert.match(
@@ -209,7 +237,24 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
 
 test("signal matrix surfaces seed sparklines without the market history bars path", () => {
   const source = readLocalSource("./PlatformApp.jsx");
+  const marketDataSource = readLocalSource("./MarketDataSubscriptionProvider.jsx");
 
+  assert.equal(
+    source.includes(
+      "...(signalMatrixRouteRequestActive ? signalMonitorStateUniverseSymbols : [])",
+    ),
+    false,
+  );
+  assert.equal(source.includes("quoteSnapshotSeedSymbols"), false);
+  assert.equal(marketDataSource.includes("quoteSnapshotSeedSymbols"), false);
+  assert.match(
+    source,
+    /const runtimeSparklineSymbols = useMemo\([\s\S]*\.\.\.sparklineSymbols,[\s\S]*\.\.\.recentSignalMarketDataSymbols,[\s\S]*\.\.\.openPositionMarketDataSymbols/s,
+  );
+  assert.match(
+    source,
+    /const prioritySparklineSymbols = useMemo\([\s\S]*\.\.\.recentSignalMarketDataSymbols,[\s\S]*\.\.\.watchlistMarketDataSymbols,[\s\S]*\.\.\.openPositionMarketDataSymbols/s,
+  );
   assert.match(
     source,
     /const runtimeHistorySparklineSymbols = useMemo\(\s*\(\) => \(signalMatrixRouteRequestActive \? \[\] : runtimeSparklineSymbols\)/,
@@ -255,7 +300,7 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   // onto matrix cells.
   assert.match(
     source,
-    /const signalMonitorPublishedStates = useMemo\(\s*\(\) =>\s*mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
+    /const signalMonitorPublishedStates = useMemo\(\s*\(\) => \{\s*if \(signalMonitorStateRuntimeFallback\) \{\s*return EMPTY_SIGNAL_MONITOR_STATES;\s*\}\s*return mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
   );
   assert.doesNotMatch(source, /mergeSignalEventsIntoMatrixStates/);
   assert.doesNotMatch(source, /canonicalSignalMonitorEventsForMatrixMerge/);
@@ -267,6 +312,15 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
     source,
     /const signalMonitorStates =\s*signalMonitorStateRuntimeFallback\s*\?\s*EMPTY_SIGNAL_MONITOR_STATES\s*:\s*signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES;/s,
   );
+  assert.doesNotMatch(source, /lastSignalMonitorUniverseRef/);
+  assert.match(
+    source,
+    /if \(signalMonitorStateRuntimeFallback \|\| !fresh\) \{\s*return EMPTY_UNIVERSE_SYMBOLS;\s*\}/s,
+  );
+  assert.match(
+    source,
+    /if \(!signalMonitorStateRuntimeFallback\) \{\s*return;\s*\}[\s\S]*states: EMPTY_SIGNAL_MONITOR_STATES,\s*coverage: null,/s,
+  );
   assert.match(
     source,
     /buildHeaderSignalContextSymbols\(\{\s*states:\s*signalMonitorPublishedStates,\s*events:\s*signalMonitorEvents/s,
@@ -277,7 +331,7 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     source,
-    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*signalMonitorPublishedStates\.length > 0[\s\S]*\);/,
+    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*\(!signalMonitorStateRuntimeFallback &&\s*signalMonitorPublishedStates\.length > 0\)[\s\S]*\);/,
   );
   assert.match(
     source,
@@ -299,12 +353,20 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   assert.match(source, /const headerBroadcastSignalMatrixStates = useMemo\(/);
   assert.match(source, /const watchlistSignalMonitorStates = useMemo\(/);
   assert.match(source, /const watchlistSignalMatrixStates = useMemo\(/);
-  assert.match(source, /const activitySignalMatrixStates = useMemo\(/);
+  assert.match(
+    source,
+    /const activitySignalMatrixStates = signalMonitorPublishedStates;/,
+  );
+  assert.equal(source.includes("activitySignalMatrixSymbols"), false);
+  assert.equal(
+    source.includes("symbols: activitySignalMatrixSymbols"),
+    false,
+  );
   assert.match(source, /filterSignalMatrixStatesForSymbols\(\{/);
   assert.match(source, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
   assert.match(
     source,
-    /watchlistSignalMatrixStates=\{watchlistSignalMatrixStates\}/,
+    /watchlistSignalMatrixStates=\{signalMonitorPublishedStates\}/,
   );
   assert.match(
     source,

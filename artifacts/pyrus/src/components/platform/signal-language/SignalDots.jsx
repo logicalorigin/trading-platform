@@ -65,17 +65,26 @@ export const resolveSignalDotGlyph = (state) => {
   const pending = hydrationMeta.pending;
   const fresh = hasDirection && Boolean(state?.fresh);
   const kind = hasDirection ? direction : "neutral";
-  // Direction always drives the arrow color: buy = blue, sell = red, no signal
-  // = muted. Staleness/attention is conveyed separately (dimming + an amber
-  // accent dot) and never recolors the arrow, so a buy always reads blue.
-  const tone =
-    direction === "buy"
+  // Any directional cell whose signal is not currently fresh — stale ("should
+  // have updated but didn't"), aged (status ok but fresh=false), or idle with a
+  // latched direction — recolors the WHOLE arrow amber in its last-known
+  // direction and drops the separate accent dot. `hydrationMeta.stale` is
+  // exactly that "directional + not-fresh" attention condition, so the amber
+  // arrow now appears wherever the staleness dot used to. Only non-directional
+  // attention (pending / unhydrated dashes) keeps a dot.
+  const staleDirectional = hasDirection && hydrationMeta.stale;
+  // Direction otherwise drives the arrow color: buy = blue, sell = red, no
+  // signal = muted. Non-stale attention (pending/unhydrated) is conveyed
+  // separately by an amber accent dot and never recolors the arrow.
+  const tone = staleDirectional
+    ? CSS_COLOR.amber
+    : direction === "buy"
       ? CSS_COLOR.blue
       : direction === "sell"
         ? CSS_COLOR.red
         : cssColorMix(CSS_COLOR.textDim, 58);
   const opacity = pending ? 0.72 : hasDirection ? (fresh ? 1 : 0.76) : 0.88;
-  return { kind, tone, attention, pending, fresh, opacity };
+  return { kind, tone, attention, pending, fresh, opacity, staleDirectional };
 };
 
 // Direction is carried by the arrow shape (lucide ArrowUp = buy, ArrowDown =
@@ -84,12 +93,17 @@ export const resolveSignalDotGlyph = (state) => {
 // column slot and overflows into the inter-column gaps — `flexShrink: 0` on the
 // icon (below) is required, otherwise the flex slot squishes the SVG back down
 // to ~8px and the size has no effect. Sized via dim() so it tracks the UI
-// scale. Attention (stale/unhydrated) shows as a small amber accent dot.
+// scale. Stale directional cells render the whole arrow amber (no dot);
+// non-stale attention (pending/unhydrated) shows a small amber accent dot.
 const SIGNAL_DOT_GLYPH_SIZE = 16;
 const SIGNAL_DOT_GLYPH_STROKE = 2.5;
 
-const SignalDotGlyph = ({ kind, tone, fresh, attention }) => {
+const SignalDotGlyph = ({ kind, tone, fresh, attention, staleDirectional }) => {
   const Icon = kind === "buy" ? ArrowUp : kind === "sell" ? ArrowDown : Minus;
+  // Stale directional cells already read the whole arrow in amber, so the
+  // separate amber accent dot would be redundant — drop it. Non-stale
+  // attention (pending/unhydrated neutral markers) still shows the dot.
+  const showAttentionDot = attention && !staleDirectional;
   return (
     <span
       style={{
@@ -115,7 +129,7 @@ const SignalDotGlyph = ({ kind, tone, fresh, attention }) => {
             : "none",
         }}
       />
-      {attention ? (
+      {showAttentionDot ? (
         <span
           aria-hidden="true"
           style={{
@@ -263,6 +277,7 @@ export const SignalDots = ({
           tone={glyph.tone}
           fresh={glyph.fresh}
           attention={glyph.attention}
+          staleDirectional={glyph.staleDirectional}
         />
       );
 

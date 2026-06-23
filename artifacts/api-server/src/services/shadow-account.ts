@@ -13071,7 +13071,10 @@ export function buildWatchlistBacktestFills(input: {
   return { fills, snapshots, skipped };
 }
 
-async function recomputeShadowAccountFromLedger(tx: ShadowTransaction, updatedAt: Date) {
+export async function recomputeShadowAccountFromLedger(
+  tx: ShadowTransaction,
+  updatedAt: Date,
+) {
   const [account] = await tx
     .select()
     .from(shadowAccountsTable)
@@ -13083,35 +13086,54 @@ async function recomputeShadowAccountFromLedger(tx: ShadowTransaction, updatedAt
       expose: true,
     });
   }
-  const fills = await tx
-    .select()
+  // Distinct order ids referenced by the ledger — small, instead of transferring
+  // every fill row into JS. The analytics filter stays in JS (it reads
+  // order.payload / clientOrderId, deliberately NOT duplicated into SQL), and the
+  // cash/realizedPnl/fees fold is then done set-based in SQL. This keeps the
+  // recompute from pulling the whole fill ledger across the wire and folding it in
+  // JS inside the held write transaction — a cost that grew unbounded with ledger
+  // size. Behavior-equal: same qualifying fills; SQL SUM over numeric(20,6) values
+  // equals the JS float reduce at money()'s 6-decimal rounding.
+  const orderIdRows = await tx
+    .selectDistinct({ orderId: shadowFillsTable.orderId })
     .from(shadowFillsTable)
     .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
-  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
+  const orderIds = orderIdRows.map((row) => row.orderId);
   const orders = orderIds.length
     ? await tx
         .select()
         .from(shadowOrdersTable)
         .where(inArray(shadowOrdersTable.id, orderIds))
     : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
-  const ledgerFills = fills.filter((fill) =>
-    isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-  );
+  const ledgerOrderIds = orders
+    .filter((order) => isDefaultShadowLedgerAnalyticsOrder(order))
+    .map((order) => order.id);
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  const cash = ledgerFills.reduce(
-    (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
-    startingBalance,
-  );
-  const realizedPnl = ledgerFills.reduce(
-    (sum, fill) => sum + (toNumber(fill.realizedPnl) ?? 0),
-    0,
-  );
-  const fees = ledgerFills.reduce((sum, fill) => sum + (toNumber(fill.fees) ?? 0), 0);
+  let cashDelta = 0;
+  let realizedPnl = 0;
+  let fees = 0;
+  if (ledgerOrderIds.length) {
+    const [totals] = await tx
+      .select({
+        cashDelta: sql<string>`coalesce(sum(${shadowFillsTable.cashDelta}), 0)`,
+        realizedPnl: sql<string>`coalesce(sum(${shadowFillsTable.realizedPnl}), 0)`,
+        fees: sql<string>`coalesce(sum(${shadowFillsTable.fees}), 0)`,
+      })
+      .from(shadowFillsTable)
+      .where(
+        and(
+          eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowFillsTable.orderId, ledgerOrderIds),
+        ),
+      );
+    cashDelta = toNumber(totals?.cashDelta) ?? 0;
+    realizedPnl = toNumber(totals?.realizedPnl) ?? 0;
+    fees = toNumber(totals?.fees) ?? 0;
+  }
   await tx
     .update(shadowAccountsTable)
     .set({
-      cash: money(cash),
+      cash: money(startingBalance + cashDelta),
       realizedPnl: money(realizedPnl),
       fees: money(fees),
       updatedAt,

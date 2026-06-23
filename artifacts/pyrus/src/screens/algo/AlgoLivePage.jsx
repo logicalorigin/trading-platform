@@ -44,6 +44,7 @@ import {
   normalizeStrategySignalTimeframe,
   optionProviderContractId,
 } from "./algoHelpers";
+import { normalizeAlgoMtfRequiredCount } from "./algoTimeframeControls";
 import {
   AlgoIndicatorKpiTable,
   AlgoOverviewMetric as OverviewMetric,
@@ -269,6 +270,23 @@ const EMPTY_STA_TABLE_SNAPSHOT = Object.freeze({
   historyCount: 0,
   activeFilterLabel: "All",
 });
+
+export const resolveEffectiveStaMtfAlignmentConfig = ({
+  mtfAlignmentDraft = null,
+  signalOptionsProfile = null,
+} = {}) => {
+  const source = mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment;
+  if (!source) return null;
+  const timeframes = Array.isArray(source.timeframes) ? source.timeframes : [];
+  return {
+    ...source,
+    timeframes,
+    requiredCount: normalizeAlgoMtfRequiredCount(
+      source.requiredCount,
+      timeframes,
+    ),
+  };
+};
 
 export const alignSignalCycleStageWithStaTable = (
   stages = [],
@@ -1030,8 +1048,17 @@ export const AlgoLivePage = ({
     },
   ];
 
-  const effectiveMtfAlignmentConfig =
-    mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment;
+  const effectiveMtfAlignmentConfig = useMemo(
+    () =>
+      resolveEffectiveStaMtfAlignmentConfig({
+        mtfAlignmentDraft,
+        signalOptionsProfile,
+      }),
+    [
+      mtfAlignmentDraft,
+      signalOptionsProfile,
+    ],
+  );
   const indicatorSignalRows = staTableSnapshot.signalRows || [];
   const cockpitStageItemsForDisplay = useMemo(
     () => alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),

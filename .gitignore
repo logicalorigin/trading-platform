@@ -80,6 +80,7 @@ output/
 artifacts/*.log
 scripts/reports/signal-options-greek-selector-smoke/
 scripts/reports/pyrus-performance-monitor/
+reports/pattern-discovery-sweeps/
 
 # local runtime registries
 .pyrus-runtime/

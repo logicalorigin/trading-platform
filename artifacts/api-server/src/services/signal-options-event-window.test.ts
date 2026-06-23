@@ -15,6 +15,11 @@ test("Signal Options state event query filters event type before limiting", () =
 
   assert.match(
     listDeploymentEventsSource,
-    /like\(\s*executionEventsTable\.eventType,\s*`\$\{SIGNAL_OPTIONS_EVENT_PREFIX\}%`\s*\)[\s\S]*\.limit\(/,
+    /sql`\$\{executionEventsTable\.eventType\} LIKE 'signal_options_%'`[\s\S]*\.limit\(/,
+  );
+  assert.doesNotMatch(
+    listDeploymentEventsSource,
+    /like\(\s*executionEventsTable\.eventType,/,
+    "the LIKE prefix must stay literal so Postgres can prove the partial index predicate",
   );
 });

@@ -20,6 +20,19 @@ test("positions source selector is wired to live state, not pinned to all", () =
   assert.doesNotMatch(positionsPanel, /sourceFilter="all"/);
 });
 
+test("real account positions queries request live quote snapshots", () => {
+  assert.equal(
+    (source.match(/liveQuotes:\s*true/g) || []).length,
+    2,
+    "active positions query and account-switch prefetch must request live quotes",
+  );
+  assert.doesNotMatch(
+    source,
+    /liveQuotes:\s*false/,
+    "AccountScreen must not rely on quote-free positions for visible real-account rows",
+  );
+});
+
 test("account positions trading actions use broker-safe account context", () => {
   assert.match(source, /const positionManagementAccountId = shadowMode \? null : selectedAccountId;/);
   assert.match(source, /const positionManagementGatewayReady = Boolean\(!shadowMode && gatewayTradingReady\);/);

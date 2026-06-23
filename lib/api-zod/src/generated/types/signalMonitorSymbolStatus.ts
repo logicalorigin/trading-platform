@@ -11,6 +11,7 @@ export type SignalMonitorSymbolStatus = typeof SignalMonitorSymbolStatus[keyof t
 
 export const SignalMonitorSymbolStatus = {
   ok: 'ok',
+  idle: 'idle',
   stale: 'stale',
   unavailable: 'unavailable',
   error: 'error',

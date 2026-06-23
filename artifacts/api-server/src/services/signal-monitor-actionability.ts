@@ -47,14 +47,16 @@ export function buildSignalMonitorActionability(input: {
   signalAt: Date | string | null;
   barsSinceSignal: number | null;
   stale: boolean;
+  staleBlocker?: string | null;
   freshWindowBars: number;
 }): SignalMonitorActionability {
   const directional = input.direction === "buy" || input.direction === "sell";
+  const staleBlocker = input.staleBlocker || "data_stale";
   const actionBlocker =
     !directional || !input.signalAt
       ? "no_signal"
       : input.stale
-        ? "data_stale"
+        ? staleBlocker
         : signalMonitorSignalAgeBlocker(input.barsSinceSignal);
   return {
     fresh: signalMonitorFresh(input),

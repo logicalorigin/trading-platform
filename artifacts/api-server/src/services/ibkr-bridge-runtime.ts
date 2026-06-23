@@ -2167,6 +2167,7 @@ export function createIbkrRemoteBridgeLaunch(input: {
   const useHelperUpdateOnly = payload.helperUpdateOnly === true && !useAutoLogin;
   const desktop = selectIbkrRemoteDesktop(
     readOptionalString(payload.desktopId, 160),
+    { allowStaleFallback: true },
   );
   const launcher = createIbkrBridgeLauncher({
     apiBaseUrl: input.apiBaseUrl,

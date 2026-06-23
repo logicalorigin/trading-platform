@@ -2,6 +2,7 @@ export const EMPTY_SIGNAL_EVENTS = Object.freeze([]);
 
 const DEFAULT_ACTIVE_SIGNAL_STATUSES = new Set([
   "active-fresh",
+  "active-idle",
   "active-stale",
 ]);
 

@@ -90,6 +90,101 @@ test("manual same-day option executions infer openedAt for position day PnL", ()
   assert.equal(hydrated.dayChangePercent, hydrated.unrealizedPnlPercent);
 });
 
+test("execution open dates stay stable through transient empty reads", () => {
+  __accountPositionInternalsForTests.clearAccountPositionOpenDateCaches();
+  const openDates =
+    __accountPositionInternalsForTests.buildExecutionOpenDatesForPositions(
+      [manualNvdaPosition],
+      [sameDayBuyExecution],
+    );
+  const cacheKey = "test:execution-open-date-stability";
+  const observed =
+    __accountPositionInternalsForTests.stabilizeExecutionOpenDatesForPositions(
+      cacheKey,
+      [manualNvdaPosition],
+      openDates,
+      Date.parse("2026-06-08T15:00:00.000Z"),
+    );
+
+  assert.equal(observed.get(manualNvdaPosition.id)?.openedAtSource, "execution");
+
+  const afterEmptyRead =
+    __accountPositionInternalsForTests.stabilizeExecutionOpenDatesForPositions(
+      cacheKey,
+      [manualNvdaPosition],
+      new Map(),
+      Date.parse("2026-06-08T15:00:30.000Z"),
+    );
+
+  assert.equal(
+    afterEmptyRead.get(manualNvdaPosition.id)?.openedAt?.toISOString(),
+    "2026-06-08T14:35:00.000Z",
+  );
+
+  const differentPosition = {
+    ...manualNvdaPosition,
+    quantity: 2,
+  } satisfies BrokerPositionSnapshot;
+  const changedSignatureRead =
+    __accountPositionInternalsForTests.stabilizeExecutionOpenDatesForPositions(
+      "test:changed-position-signature",
+      [differentPosition],
+      new Map(),
+      Date.parse("2026-06-08T15:00:30.000Z"),
+    );
+
+  assert.equal(changedSignatureRead.size, 0);
+});
+
+test("same-day expiring manual options infer today's open date when broker history is absent", () => {
+  const spyPosition = {
+    ...manualNvdaPosition,
+    id: "U123:890576032",
+    symbol: "SPY",
+    optionContract: {
+      ...optionContract,
+      ticker: "SPY260623C00740000",
+      underlying: "SPY",
+      expirationDate: new Date("2026-06-23T00:00:00.000Z"),
+      strike: 740,
+      providerContractId: "890576032",
+    },
+  } satisfies BrokerPositionSnapshot;
+
+  const openDates =
+    __accountPositionInternalsForTests.inferSameDayExpiringOptionOpenDatesForPositions(
+      [spyPosition],
+      new Date("2026-06-23T17:05:00.000Z"),
+    );
+
+  assert.equal(
+    openDates.get(spyPosition.id)?.openedAt?.toISOString(),
+    "2026-06-23T12:00:00.000Z",
+  );
+  assert.equal(
+    openDates.get(spyPosition.id)?.openedAtSource,
+    "expiration_same_day",
+  );
+
+  const hydrated = buildPositionMarketHydration(
+    spyPosition,
+    liveQuoteWithoutDayChange,
+    {
+      openedAt: openDates.get(spyPosition.id)?.openedAt,
+      now: new Date("2026-06-23T17:06:00.000Z"),
+    },
+  );
+
+  assert.equal(hydrated.dayChange, hydrated.unrealizedPnl);
+
+  const nextDay =
+    __accountPositionInternalsForTests.inferSameDayExpiringOptionOpenDatesForPositions(
+      [spyPosition],
+      new Date("2026-06-24T14:00:00.000Z"),
+    );
+  assert.equal(nextDay.size, 0);
+});
+
 test("missing quote and broker market price do not fabricate mark from average price", () => {
   const positionWithoutMarketPrice = {
     ...manualNvdaPosition,

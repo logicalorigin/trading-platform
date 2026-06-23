@@ -50,11 +50,11 @@ export const formatSettingValue = (field, value) => {
 
 const mtfPresetPatch = (value) => {
   const preset = signalOptionsMtfPresetDefaults(value);
+  const timeframes = [...preset.timeframes];
   return {
     "entryGate.mtfAlignment.preset": preset.value,
-    "entryGate.mtfAlignment.timeframes": [...preset.timeframes],
-    // Selected frames must all align: required count tracks the selection.
-    "entryGate.mtfAlignment.requiredCount": Math.max(1, preset.timeframes.length),
+    "entryGate.mtfAlignment.timeframes": timeframes,
+    "entryGate.mtfAlignment.requiredCount": Math.max(1, timeframes.length),
   };
 };
 
@@ -775,8 +775,8 @@ export const SETTINGS_SECTIONS = [
     ],
     fields: [
       field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
-      // Required count is derived from the selected frames (all must align);
-      // shown read-only in the section summary, not editable here.
+      // Required count resolves to the selected frame count; the selected MTF
+      // chips are the alignment gate.
       field("entryGate.mtfAlignment.preset", { compactLabel: "MTF Preset" }),
       field("entryGate.mtfAlignment.timeframes", {
         compactLabel: "MTF Frames",

@@ -67,6 +67,7 @@ export const saveAllAlgoAdjustments = async ({
   if (profileDirty) {
     tasks.push({
       section: "Profile",
+      key: "profileResult",
       run: () =>
         updateProfileMutation.mutateAsync({
           deploymentId,
@@ -78,6 +79,7 @@ export const saveAllAlgoAdjustments = async ({
   if (strategyDirty) {
     tasks.push({
       section: "Signal",
+      key: "strategyResult",
       run: () =>
         updateStrategySettingsMutation.mutateAsync({
           deploymentId,
@@ -90,9 +92,10 @@ export const saveAllAlgoAdjustments = async ({
   if (!tasks.length) return { ok: true };
 
   const failures = [];
+  const results = {};
   for (const task of tasks) {
     try {
-      await task.run();
+      results[task.key] = await task.run();
     } catch (error) {
       failures.push({ section: task.section, error });
     }
@@ -103,5 +106,5 @@ export const saveAllAlgoAdjustments = async ({
     return { ok: false, failures };
   }
 
-  return { ok: true };
+  return { ok: true, ...results };
 };

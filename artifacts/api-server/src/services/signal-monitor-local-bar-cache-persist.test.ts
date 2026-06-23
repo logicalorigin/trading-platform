@@ -59,7 +59,7 @@ function ingestSymbols(symbols: string[], minutesPerSymbol: number): void {
 test("flush drains the full pending backlog and counts every unique bar", async () => {
   internals.reset();
   try {
-    internals.__setPersistMarketDataBarsForTests(async () => true);
+    internals.__setPersistMarketDataBarsForSymbolsForTests(async () => true);
 
     const symbols = Array.from({ length: 40 }, (_, i) => `SYM${i}`);
     ingestSymbols(symbols, 6);
@@ -74,7 +74,7 @@ test("flush drains the full pending backlog and counts every unique bar", async 
     assert.equal(after.persistedBarCount, queued);
     assert.equal(after.lastPersistError, null);
   } finally {
-    internals.__setPersistMarketDataBarsForTests(null);
+    internals.__setPersistMarketDataBarsForSymbolsForTests(null);
     internals.reset();
   }
 });
@@ -85,7 +85,7 @@ test("flush persists groups with bounded concurrency above one", async () => {
     const cap = 5; // matches DEFAULT_PERSIST_FLUSH_CONCURRENCY
     let inFlight = 0;
     let maxInFlight = 0;
-    internals.__setPersistMarketDataBarsForTests(async () => {
+    internals.__setPersistMarketDataBarsForSymbolsForTests(async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       // Yield so multiple group writes overlap before any resolves.
@@ -112,31 +112,28 @@ test("flush persists groups with bounded concurrency above one", async () => {
       0,
     );
   } finally {
-    internals.__setPersistMarketDataBarsForTests(null);
+    internals.__setPersistMarketDataBarsForSymbolsForTests(null);
     internals.reset();
   }
 });
 
-test("flush requeues only the failed group and does not double-count on retry", async () => {
+test("flush requeues the whole failed (timeframe,source) group, no double-count on retry", async () => {
   internals.reset();
   try {
-    const failSymbol = "FAILSYM";
     const failTimeframe = "5m";
 
-    const shouldFail = (input: {
-      request: { symbol: string; timeframe: string };
-    }): boolean =>
-      input.request.symbol === failSymbol &&
-      input.request.timeframe === failTimeframe;
-
-    internals.__setPersistMarketDataBarsForTests(async (input) => {
-      if (shouldFail(input)) {
+    // The flush now batches all symbols of a (timeframe, source) into one upsert,
+    // so a failure requeues that whole group (every symbol's 5m bars), not just one
+    // symbol. Invariant under test: every bar is persisted OR requeued exactly once
+    // — no loss, no double-count.
+    internals.__setPersistMarketDataBarsForSymbolsForTests(async (input) => {
+      if (input.timeframe === failTimeframe) {
         throw new Error("simulated persist failure");
       }
       return true;
     });
 
-    ingestSymbols([failSymbol, "OKSYM1", "OKSYM2"], 6);
+    ingestSymbols(["FAILSYM", "OKSYM1", "OKSYM2"], 6);
 
     const queued = getSignalMonitorLocalBarCacheDiagnostics().pendingPersistBarCount;
     assert(queued > 0, "expected pending bars");
@@ -144,11 +141,11 @@ test("flush requeues only the failed group and does not double-count on retry", 
     await internals.flushNow();
 
     const after = getSignalMonitorLocalBarCacheDiagnostics();
-    // Only the failed (FAILSYM,5m) group should be back in the queue.
+    // Only the failed (5m,*) group should be back in the queue.
     assert(after.pendingPersistBarCount > 0, "failed group must be requeued");
     assert(
       after.pendingPersistBarCount < queued,
-      "successful groups must NOT be requeued",
+      "other-timeframe groups must NOT be requeued",
     );
     assert(after.persistedBarCount > 0, "successes must be counted");
     assert.equal(
@@ -164,7 +161,7 @@ test("flush requeues only the failed group and does not double-count on retry", 
     // Retry with the failing group now succeeding: the previously-successful
     // groups are gone from pending, so they must NOT be re-counted. Only the
     // requeued failed-group bars get persisted on this pass.
-    internals.__setPersistMarketDataBarsForTests(async () => true);
+    internals.__setPersistMarketDataBarsForSymbolsForTests(async () => true);
     await internals.flushNow();
 
     const final = getSignalMonitorLocalBarCacheDiagnostics();
@@ -177,7 +174,7 @@ test("flush requeues only the failed group and does not double-count on retry", 
     assert.equal(final.persistedBarCount, queued);
     assert.equal(final.lastPersistError, null);
   } finally {
-    internals.__setPersistMarketDataBarsForTests(null);
+    internals.__setPersistMarketDataBarsForSymbolsForTests(null);
     internals.reset();
   }
 });

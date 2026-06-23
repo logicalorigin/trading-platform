@@ -1213,12 +1213,20 @@ function getOptionsFlowScannerPressureGate(
   drivers: ApiResourcePressureDriver[];
   ignoredDrivers: ApiResourcePressureDriver[];
 } {
+  // The options-flow scanner gate keys on genuine server saturation only. Like
+  // the trading gate's resourceLevel, it EXCLUDES request latency: a slow
+  // external/broker route inflates api-latency without saturating the server, and
+  // the scanner cannot relieve broker latency by stopping deep scans — so latency
+  // must not gate scanner work. Automation is surfaced separately via scannerPressure.
+  const ignoredScannerDriverKinds = new Set(["automation", "api-latency"]);
   const ignoredDrivers = [
-    ...snapshot.drivers.filter((driver) => driver.kind === "automation"),
+    ...snapshot.drivers.filter((driver) =>
+      ignoredScannerDriverKinds.has(driver.kind),
+    ),
     ...(snapshot.scannerPressure?.drivers ?? []),
   ];
   const scannerDrivers = snapshot.drivers.filter(
-    (driver) => driver.kind !== "automation",
+    (driver) => !ignoredScannerDriverKinds.has(driver.kind),
   );
   const level = maxPressureDriverLevel(scannerDrivers);
   return {
@@ -1341,6 +1349,12 @@ function getOptionsFlowScannerBackgroundBlockReason(
   );
   if (sessionBlockReason) {
     return sessionBlockReason;
+  }
+  const pressureGate = getOptionsFlowScannerPressureGate(
+    getApiResourcePressureSnapshot(),
+  );
+  if (pressureGate.level === "high") {
+    return "resource-pressure";
   }
   if (!input.ignoreLineCapacity) {
     if (getOptionsFlowScannerSchedulableLineCap() <= 0) {
@@ -17308,9 +17322,13 @@ function shouldHydrateFlowScannerHistoricalBars(input: {
   }
   const pressureSnapshot =
     input.pressureSnapshot ?? getApiResourcePressureSnapshot();
+  // Suppress historical-bar hydration only at genuine "high" saturation, matching
+  // every other resourceLevel consumer. (It previously suppressed at "watch" — one
+  // rank too eager — so a single transient pool waiter or borderline event-loop
+  // sample stopped hydration under effectively-normal load.)
   return (
     PRESSURE_LEVEL_RANK[pressureSnapshot.resourceLevel] <
-    PRESSURE_LEVEL_RANK.watch
+    PRESSURE_LEVEL_RANK.high
   );
 }
 
