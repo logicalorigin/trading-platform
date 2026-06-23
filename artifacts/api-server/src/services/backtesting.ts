@@ -1346,7 +1346,77 @@ function normalizeBacktestStrategyId(strategyId: string): string {
   return normalizeLegacyAlgoBrandText(strategyId);
 }
 
-function studyRecordToResponse(study: BacktestStudy) {
+type StudyPortfolioRules = {
+  initialCapital: number;
+  positionSizePercent: number;
+  maxConcurrentPositions: number;
+  maxGrossExposurePercent: number;
+};
+type StudyExecutionProfile = {
+  commissionBps: number;
+  slippageBps: number;
+};
+
+// Pattern-discovery studies (strategyId "mtf_pattern_discovery") have no
+// portfolio/execution semantics, so they are stored with portfolioRules={} /
+// executionProfile={}. The shared list response schema nonetheless requires
+// those numeric objects, so a bare `as`-cast of {} produced a value that failed
+// ListBacktestStudiesResponse.parse() — failing the WHOLE list with a 400. Until
+// the response contract can be made nullable (blocked on api-spec codegen), emit
+// an explicit zeroed placeholder for any row whose stored shape is incomplete so
+// every row is schema-valid and the value reads as plainly unset, not fabricated.
+const STUDY_PORTFOLIO_RULES_PLACEHOLDER: StudyPortfolioRules = {
+  initialCapital: 0,
+  positionSizePercent: 0,
+  maxConcurrentPositions: 0,
+  maxGrossExposurePercent: 0,
+};
+const STUDY_EXECUTION_PROFILE_PLACEHOLDER: StudyExecutionProfile = {
+  commissionBps: 0,
+  slippageBps: 0,
+};
+
+function isCompleteStudyPortfolioRules(
+  value: unknown,
+): value is StudyPortfolioRules {
+  const record = value as Record<string, unknown> | null;
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    typeof record.initialCapital === "number" &&
+    typeof record.positionSizePercent === "number" &&
+    typeof record.maxConcurrentPositions === "number" &&
+    typeof record.maxGrossExposurePercent === "number"
+  );
+}
+
+function isCompleteStudyExecutionProfile(
+  value: unknown,
+): value is StudyExecutionProfile {
+  const record = value as Record<string, unknown> | null;
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    typeof record.commissionBps === "number" &&
+    typeof record.slippageBps === "number"
+  );
+}
+
+function resolveStudyPortfolioRules(value: unknown): StudyPortfolioRules {
+  const normalized = normalizeLegacyAlgoBranding(value);
+  return isCompleteStudyPortfolioRules(normalized)
+    ? normalized
+    : STUDY_PORTFOLIO_RULES_PLACEHOLDER;
+}
+
+function resolveStudyExecutionProfile(value: unknown): StudyExecutionProfile {
+  const normalized = normalizeLegacyAlgoBranding(value);
+  return isCompleteStudyExecutionProfile(normalized)
+    ? normalized
+    : STUDY_EXECUTION_PROFILE_PLACEHOLDER;
+}
+
+export function studyRecordToResponse(study: BacktestStudy) {
   return {
     id: study.id,
     name: normalizeLegacyAlgoBrandText(study.name),
@@ -1359,16 +1429,8 @@ function studyRecordToResponse(study: BacktestStudy) {
     startsAt: study.startsAt,
     endsAt: study.endsAt,
     parameters: normalizeLegacyAlgoBranding(study.parameters),
-    portfolioRules: normalizeLegacyAlgoBranding(study.portfolioRules) as {
-      initialCapital: number;
-      positionSizePercent: number;
-      maxConcurrentPositions: number;
-      maxGrossExposurePercent: number;
-    },
-    executionProfile: normalizeLegacyAlgoBranding(study.executionProfile) as {
-      commissionBps: number;
-      slippageBps: number;
-    },
+    portfolioRules: resolveStudyPortfolioRules(study.portfolioRules),
+    executionProfile: resolveStudyExecutionProfile(study.executionProfile),
     optimizerMode: study.optimizerMode,
     optimizerConfig: normalizeLegacyAlgoBranding(study.optimizerConfig),
     createdAt: study.createdAt,
