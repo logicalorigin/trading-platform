@@ -13,6 +13,32 @@ test("Signal Options performance is active-screen", () => {
   );
 });
 
+test("Signal Quality KPIs are background-maintenance", () => {
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/algo/deployments/paper-id/signal-quality-kpis",
+    }),
+    "background-maintenance",
+  );
+});
+
+test("Signal Quality KPIs are shed under high pressure", () => {
+  const routeClass = classifyApiRoute({
+    method: "GET",
+    path: "/api/algo/deployments/paper-id/signal-quality-kpis",
+  });
+
+  assert.equal(routeClass, "background-maintenance");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "shed",
+  );
+});
+
 test("Signal Options full state remains active-screen", () => {
   assert.equal(
     classifyApiRoute({

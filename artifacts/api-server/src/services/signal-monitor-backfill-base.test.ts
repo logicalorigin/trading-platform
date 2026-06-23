@@ -28,6 +28,7 @@ const {
   mergeCompletedBars,
   selectSignalMonitorBackfillDueCells,
   shouldSkipSignalMonitorBackfillForPressure,
+  traceSignalMonitorLaneCurrentness,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
@@ -145,6 +146,50 @@ test("pressure-high skips the backfill cycle; watch/normal keep running", () => 
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("high"), true);
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("watch"), false);
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("normal"), false);
+});
+
+test("price trace explains daily rows marked stale by the policy window", () => {
+  const trace = traceSignalMonitorLaneCurrentness({
+    state: {
+      status: "ok",
+      latestBarAt: new Date("2026-06-18T00:00:00.000Z"),
+      lastEvaluatedAt: new Date("2026-06-18T22:26:03.679Z"),
+    },
+    timeframe: "1d",
+    evaluatedAt: new Date("2026-06-22T20:18:00.000Z"),
+  });
+
+  assert.equal(trace.current, false);
+  assert.equal(trace.reason, "latest_bar_age_exceeds_policy_window");
+  assert.equal(trace.completedBarsQueryTo, "2026-06-22T00:00:00.000Z");
+  assert.equal(trace.latestBarStaleWindowMs, 4 * 24 * 60 * 60_000);
+  assert.ok((trace.latestBarAgeMs ?? 0) > trace.latestBarStaleWindowMs);
+});
+
+test("price trace distinguishes current rows from stale stored status", () => {
+  const current = traceSignalMonitorLaneCurrentness({
+    state: {
+      status: "ok",
+      latestBarAt: new Date("2026-06-22T20:00:00.000Z"),
+      lastEvaluatedAt: new Date("2026-06-22T20:18:00.000Z"),
+    },
+    timeframe: "1h",
+    evaluatedAt: new Date("2026-06-22T20:18:00.000Z"),
+  });
+  const storedStale = traceSignalMonitorLaneCurrentness({
+    state: {
+      status: "stale",
+      latestBarAt: new Date("2026-06-22T20:00:00.000Z"),
+      lastEvaluatedAt: new Date("2026-06-22T20:18:00.000Z"),
+    },
+    timeframe: "1h",
+    evaluatedAt: new Date("2026-06-22T20:18:00.000Z"),
+  });
+
+  assert.equal(current.current, true);
+  assert.equal(current.reason, "current");
+  assert.equal(storedStale.current, false);
+  assert.equal(storedStale.reason, "stored_status_not_ok");
 });
 
 test("backfill cadence is slow and the concurrency budget is small and dedicated", () => {

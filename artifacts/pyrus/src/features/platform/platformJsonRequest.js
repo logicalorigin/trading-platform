@@ -1,6 +1,6 @@
 export const platformJsonRequest = async (
   path,
-  { method = "GET", body, timeoutMs = 0 } = {},
+  { method = "GET", body, signal, timeoutMs = 0 } = {},
 ) => {
   const controller =
     timeoutMs > 0 && typeof AbortController !== "undefined"
@@ -17,7 +17,7 @@ export const platformJsonRequest = async (
   try {
     response = await fetch(path, {
       method,
-      signal: controller?.signal,
+      signal: signal || controller?.signal,
       headers:
         body == null
           ? undefined
@@ -28,7 +28,11 @@ export const platformJsonRequest = async (
     });
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error(`Request timed out after ${timeoutMs}ms`);
+      throw new Error(
+        signal?.aborted
+          ? "Request canceled."
+          : `Request timed out after ${timeoutMs}ms`,
+      );
     }
     throw error;
   } finally {

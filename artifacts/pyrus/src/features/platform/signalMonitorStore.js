@@ -62,6 +62,13 @@ const areSignalStatesEquivalent = (left, right) => {
     left.currentSignalDirection === right.currentSignalDirection &&
     String(left.currentSignalAt || "") === String(right.currentSignalAt || "") &&
     left.currentSignalPrice === right.currentSignalPrice &&
+    left.currentSignalClose === right.currentSignalClose &&
+    left.currentSignalMfePercent === right.currentSignalMfePercent &&
+    left.currentSignalMaePercent === right.currentSignalMaePercent &&
+    areStructuredValuesEquivalent(
+      readSignalStateFilterState(left),
+      readSignalStateFilterState(right),
+    ) &&
     String(left.latestBarAt || "") === String(right.latestBarAt || "") &&
     left.barsSinceSignal === right.barsSinceSignal &&
     left.fresh === right.fresh &&
@@ -87,6 +94,9 @@ const areStructuredValuesEquivalent = (left, right) => {
     return false;
   }
 };
+
+const readSignalStateFilterState = (state) =>
+  state?.filterState ?? state?.indicatorSnapshot?.filterState ?? null;
 
 const areSignalMonitorSnapshotsEquivalent = (left, right) => {
   if (left === right) return true;

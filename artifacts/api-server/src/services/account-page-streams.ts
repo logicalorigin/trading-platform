@@ -450,57 +450,79 @@ export async function fetchAccountPageLivePayload(
         mode: normalized.mode,
       };
       const isShadow = isShadowAccountId(normalized.accountId);
-      const [primary, intradayEquity, shadowOrders, livePositions] = await Promise.all([
-        fetchAccountPagePrimaryPayload(normalized),
-        getAccountEquityHistory({ ...common, range: "1D" }),
-        isShadow
-          ? getAccountOrders({ ...common, tab: normalized.orderTab })
-          : Promise.resolve(null),
-        isShadow
-          ? getAccountPositions({
-              ...common,
-              assetClass: normalized.assetClass,
-              liveQuotes: true,
-            })
-          : Promise.resolve(null),
-      ]);
-      const positions = livePositions ?? primary.positions;
-      const [summary, allocation, risk] =
-        isShadow && livePositions
-          ? await Promise.all([
-              getShadowAccountSummaryFromPositions({
-                positionsResponse:
-                  livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
-              }),
-              Promise.resolve(
-                getShadowAccountAllocationFromPositions({
-                  positionsResponse:
-                    livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
-                }),
-              ),
-              getShadowAccountRisk({
-                positionsResponse:
-                  livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
-                closedTrades: deferredShadowClosedTrades(normalized.accountId),
-                detail: "fast",
-              }),
-            ])
-          : [primary.summary, primary.allocation, primary.risk];
 
-      const value: AccountPageLivePayload = {
-        stream: "account-page-live",
-        accountId: normalized.accountId,
-        mode: normalized.mode,
-        orderTab: normalized.orderTab,
-        assetClass: normalized.assetClass,
-        updatedAt: new Date().toISOString(),
-        summary,
-        intradayEquity,
-        allocation,
-        positions,
-        orders: shadowOrders ?? primary.orders,
-        risk,
-      };
+      // For shadow accounts the live tick used to call
+      // fetchAccountPagePrimaryPayload and then DISCARD it: positions, summary,
+      // allocation and risk are recomputed below from the fresh `livePositions`,
+      // and orders come from the separately-fetched shadow orders. That made
+      // every 1s tick do a redundant second positions/ledger read plus a
+      // duplicate in-memory derivation, holding extra connections of the hard
+      // 12-connection pool. Fetch positions/orders/equity ONCE here and derive
+      // once. The primary payload's 2s cache is still warmed by the initial
+      // snapshot (routes/platform.ts). Real accounts keep consuming the primary
+      // payload, whose fan-out IS used here.
+      let value: AccountPageLivePayload;
+      if (isShadow) {
+        const [livePositions, shadowOrders, intradayEquity] = await Promise.all([
+          getAccountPositions({
+            ...common,
+            assetClass: normalized.assetClass,
+            liveQuotes: true,
+          }),
+          getAccountOrders({ ...common, tab: normalized.orderTab }),
+          getAccountEquityHistory({ ...common, range: "1D" }),
+        ]);
+        const shadowPositions =
+          livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>;
+        const [summary, allocation, risk] = await Promise.all([
+          getShadowAccountSummaryFromPositions({
+            positionsResponse: shadowPositions,
+          }),
+          Promise.resolve(
+            getShadowAccountAllocationFromPositions({
+              positionsResponse: shadowPositions,
+            }),
+          ),
+          getShadowAccountRisk({
+            positionsResponse: shadowPositions,
+            closedTrades: deferredShadowClosedTrades(normalized.accountId),
+            detail: "fast",
+          }),
+        ]);
+        value = {
+          stream: "account-page-live",
+          accountId: normalized.accountId,
+          mode: normalized.mode,
+          orderTab: normalized.orderTab,
+          assetClass: normalized.assetClass,
+          updatedAt: new Date().toISOString(),
+          summary,
+          intradayEquity,
+          allocation,
+          positions: livePositions,
+          orders: shadowOrders,
+          risk,
+        };
+      } else {
+        const [primary, intradayEquity] = await Promise.all([
+          fetchAccountPagePrimaryPayload(normalized),
+          getAccountEquityHistory({ ...common, range: "1D" }),
+        ]);
+        value = {
+          stream: "account-page-live",
+          accountId: normalized.accountId,
+          mode: normalized.mode,
+          orderTab: normalized.orderTab,
+          assetClass: normalized.assetClass,
+          updatedAt: new Date().toISOString(),
+          summary: primary.summary,
+          intradayEquity,
+          allocation: primary.allocation,
+          positions: primary.positions,
+          orders: primary.orders,
+          risk: primary.risk,
+        };
+      }
       return value;
     } finally {
       recordAccountPageTiming("liveMs", startedAt);

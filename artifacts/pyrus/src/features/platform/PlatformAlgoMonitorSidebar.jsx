@@ -40,6 +40,7 @@ import {
   RADII,
   T,
   cssColorAlpha,
+  cssColorMix,
   dim,
   fs,
   sp,
@@ -64,6 +65,7 @@ import {
   signalOptionsActionColor,
   signalOptionsActionLabel,
   buildVisibleSignalRows,
+  buildSignalIndicatorMetrics,
 } from "../../screens/algo/algoHelpers";
 import { normalizeAlgoAlignedMtfTimeframes } from "../../screens/algo/algoTimeframeControls";
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
@@ -81,6 +83,7 @@ import {
   useAlgoStaExecutionTimeframe,
   useAlgoStaMtfTimeframes,
 } from "./algoStaExecutionTimeframeStore.js";
+import { useAlgoDeploymentFocus } from "./algoDeploymentFocusStore.js";
 import { useAlgoCockpitStream } from "./live-streams";
 import { buildSignalMatrixBySymbol } from "./watchlistModel";
 
@@ -1129,14 +1132,28 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     },
   );
   const deployments = deploymentsQuery.data?.deployments || [];
-  const focusedDeployment = useMemo(
-    () => pickDeployment(deployments, mode),
-    [deployments, mode],
-  );
+  // Sidebar deployment selection: follow the Algo screen's focused tab by
+  // default; the user can pin their own (diverge) and re-follow. Falls back to
+  // the mode-based auto-pick when nothing is published/pinned (e.g. off the algo
+  // screen). pinnedDeploymentId === null means "following".
+  const [pinnedDeploymentId, setPinnedDeploymentId] = useState(null);
+  const screenFocusDeploymentId = useAlgoDeploymentFocus();
+  const isFollowingDeployment = !pinnedDeploymentId;
+  const focusedDeployment = useMemo(() => {
+    const byId = (id) =>
+      id ? deployments.find((deployment) => deployment.id === id) || null : null;
+    return (
+      (pinnedDeploymentId && byId(pinnedDeploymentId)) ||
+      (isFollowingDeployment && byId(screenFocusDeploymentId)) ||
+      pickDeployment(deployments, mode)
+    );
+  }, [deployments, mode, pinnedDeploymentId, isFollowingDeployment, screenFocusDeploymentId]);
   const focusedDeploymentName = normalizeLegacyAlgoBrandText(
     focusedDeployment?.name || "Pyrus Signals Shadow",
   );
   const deploymentId = focusedDeployment?.id || "";
+  const sidebarSqPct = (value, digits = 2) =>
+    Number.isFinite(value) ? formatPct(value, digits) : MISSING_VALUE;
   const activeStaExecutionTimeframe = useAlgoStaExecutionTimeframe();
   const activeStaMtfTimeframes = useAlgoStaMtfTimeframes();
   const externalStreamHydratesDeployment = isAlgoStreamFreshnessForDeployment(
@@ -1297,6 +1314,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       signalMatrixStates,
     ],
   );
+  const sidebarSq = useMemo(
+    () => buildSignalIndicatorMetrics(staSignalRows),
+    [staSignalRows],
+  );
+  const sidebarSqHasSignals = sidebarSq.signalCount > 0;
   const signalActionRows = useMemo(() => {
     return buildAlgoMonitorSignalActionRows({
       signals: staSignalRows,
@@ -1410,43 +1432,67 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       ],
     },
     {
-      title: "Outcome",
+      title: "Signal Quality",
       metrics: [
         {
-          label: "P&L",
-          value: `R ${formatMoneyValue(realizedPnl, 0)}`,
-          detail: `U ${formatMoneyValue(openPnl, 0)}`,
-          tone: toneForNumber(combinedPnl),
-          icon: Wallet,
+          label: "Correct",
+          value: sidebarSqPct(sidebarSq?.correctnessPercent, 0),
+          detail: sidebarSqHasSignals
+            ? `${sidebarSq.signalCount} sig`
+            : "no signals",
+          tone:
+            Number.isFinite(sidebarSq?.correctnessPercent) &&
+            sidebarSq.correctnessPercent >= 50
+              ? CSS_COLOR.green
+              : CSS_COLOR.textSec,
+          icon: ShieldCheck,
         },
         {
-          label: "Record",
-          value: `${wins}W/${losses}L`,
-          detail: recordDetail || "session",
-          tone: profitFactor != null && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
-          icon: ShieldCheck,
+          label: "Expect",
+          value: sidebarSqPct(sidebarSq?.expectancyPercent, 2),
+          detail:
+            sidebarSqHasSignals &&
+            Number.isFinite(sidebarSq.payoffRatio) &&
+            sidebarSq.payoffRatio > 0
+              ? `pay ${sidebarSq.payoffRatio.toFixed(2)}`
+              : "payoff —",
+          tone: toneForNumber(sidebarSq?.expectancyPercent),
+          icon: Activity,
         },
       ],
     },
   ];
   const exposureFooterMetrics = [
     {
-      label: "Realized",
-      value: formatMoneyValue(performanceSummary.realizedPnl, 0),
-      detail: `${performanceSummary.closedTrades ?? 0} closed`,
-      tone: toneForNumber(performanceSummary.realizedPnl),
+      label: "Avg Move",
+      value: sidebarSqPct(sidebarSq?.avgDirectionalMovePercent, 2),
+      detail: sidebarSqHasSignals
+        ? `${sidebarSq.signalCount} signals`
+        : "no signals",
+      tone: toneForNumber(sidebarSq?.avgDirectionalMovePercent),
     },
     {
-      label: "Win",
-      value: formatPctValue(winRate, 0),
-      detail: `PF ${profitFactor == null ? MISSING_VALUE : profitFactor.toFixed(2)}`,
-      tone: profitFactor != null && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
+      label: "Excursion",
+      value:
+        Number.isFinite(sidebarSq.avgMfePercent) ||
+        Number.isFinite(sidebarSq.avgMaePercent)
+        ? `${sidebarSqPct(sidebarSq.avgMfePercent, 1)} / ${sidebarSqPct(sidebarSq.avgMaePercent, 1)}`
+        : MISSING_VALUE,
+      detail: "MFE / MAE",
+      tone: CSS_COLOR.textSec,
     },
     {
-      label: "Expect",
-      value: formatMoneyValue(performanceSummary.expectancy, 0),
-      detail: `trades ${performanceSummary.tradeEvents ?? MISSING_VALUE}`,
-      tone: toneForNumber(performanceSummary.expectancy, CSS_COLOR.textSec),
+      label: "Signals",
+      value: sidebarSqHasSignals
+        ? sidebarSq.signalCount.toLocaleString()
+        : "0",
+      detail:
+        sidebarSqHasSignals && Number.isFinite(sidebarSq.consistencyStdDevPercent)
+          ? `±${formatPct(sidebarSq.consistencyStdDevPercent, 1)}`
+          : staSignalRows.length
+            ? `${staSignalRows.length} rows`
+            : "dispersion",
+      tone: CSS_COLOR.textSec,
     },
   ];
   const hasSignalActionRows = signalActionRows.length > 0;
@@ -1548,19 +1594,47 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
             }}
           >
             <div style={{ minWidth: 0, display: "grid", gap: sp(1) }}>
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
-                {focusedDeploymentName}
-              </span>
+              {deployments.length > 1 ? (
+                <select
+                  data-testid="algo-monitor-deployment-select"
+                  value={focusedDeployment?.id || ""}
+                  onChange={(event) => setPinnedDeploymentId(event.target.value)}
+                  aria-label="Algo deployment"
+                  style={{ minWidth: 0, maxWidth: "100%", background: "transparent", border: "none", padding: 0, color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label, cursor: "pointer" }}
+                >
+                  {deployments.map((deployment) => (
+                    <option key={deployment.id} value={deployment.id}>
+                      {normalizeLegacyAlgoBrandText(deployment.name || "Deployment")}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+                  {focusedDeploymentName}
+                </span>
+              )}
               <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
                 {String(focusedDeployment?.mode || mode).toUpperCase()} · {focusedDeployment?.providerAccountId || "shadow"}
               </span>
             </div>
-            <OperationsStatusOrb
-              gatewayReady={monitorReadinessStatus.gatewayReady}
-              scanOn={monitorReadinessStatus.scanOn}
-              deploymentEnabled={focusedDeployment?.enabled ?? true}
-              attentionItems={attentionItems}
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: sp(4), flexShrink: 0 }}>
+              <button
+                type="button"
+                data-testid="algo-monitor-deployment-follow"
+                onClick={() => setPinnedDeploymentId(null)}
+                disabled={isFollowingDeployment}
+                title={isFollowingDeployment ? "Following the Algo screen's selection" : "Pinned — click to follow the Algo screen"}
+                style={{ flexShrink: 0, border: `1px solid ${isFollowingDeployment ? CSS_COLOR.border : CSS_COLOR.accent}`, borderRadius: dim(RADII.pill), background: isFollowingDeployment ? "transparent" : cssColorMix(CSS_COLOR.accent, 12), color: isFollowingDeployment ? CSS_COLOR.textMuted : CSS_COLOR.accent, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: "0.04em", textTransform: "uppercase", padding: sp("1px 6px"), cursor: isFollowingDeployment ? "default" : "pointer" }}
+              >
+                {isFollowingDeployment ? "Following" : "Follow"}
+              </button>
+              <OperationsStatusOrb
+                gatewayReady={monitorReadinessStatus.gatewayReady}
+                scanOn={monitorReadinessStatus.scanOn}
+                deploymentEnabled={focusedDeployment?.enabled ?? true}
+                attentionItems={attentionItems}
+              />
+            </div>
           </div>
 
           <Section title="Ops Summary" meta={latestEvent ? latestEventTime : ""}>

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ALGO_DEPLOYMENT_KIND,
+  buildSignalIndicatorMetrics,
   buildStaSignalHistoryRows,
   buildVisibleSignalRows,
   findSignalOptionsCandidateForSignal,
@@ -12,6 +13,7 @@ import {
   resolveSignalAge,
   resolveSignalDayMove,
   resolveSignalMove,
+  resolveSignalScoreBreakdown,
   signalActionLabel,
 } from "./algoHelpers.js";
 
@@ -125,6 +127,7 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
         currentSignalDirection: "buy",
         currentSignalAt: "2026-06-11T16:55:00.000Z",
         currentSignalPrice: 545.25,
+        currentSignalClose: 545.5,
         latestBarAt: "2026-06-11T16:55:00.000Z",
         barsSinceSignal: 0,
         fresh: true,
@@ -159,7 +162,9 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
   assert.equal(rows[0].direction, "buy");
   assert.equal(rows[0].sourceType, "signal_matrix_state");
   assert.equal(rows[0].actionEligible, true);
-  assert.equal(rows[0].signalPrice, 545.25);
+  assert.equal(rows[0].signalLevelPrice, 545.25);
+  assert.equal(rows[0].signalPrice, 545.5);
+  assert.equal(rows[0].currentSignalClose, 545.5);
 });
 
 test("STA matrix row carries latestBarClose as currentPrice so Move resolves without sparkline hydration", () => {
@@ -177,6 +182,7 @@ test("STA matrix row carries latestBarClose as currentPrice so Move resolves wit
         currentSignalDirection: "buy",
         currentSignalAt: "2026-06-11T16:55:00.000Z",
         currentSignalPrice: 500,
+        currentSignalClose: 500,
         latestBarAt: "2026-06-11T17:30:00.000Z",
         latestBarClose: 525,
         barsSinceSignal: 7,
@@ -194,6 +200,206 @@ test("STA matrix row carries latestBarClose as currentPrice so Move resolves wit
   const move = resolveSignalMove(row, null, null);
   assert.equal(move.label, "+5.0%");
   assert.equal(move.detail, "+25.00");
+});
+
+test("STA matrix Move uses signal bar close, not structural signal level", () => {
+  const [row] = buildVisibleSignalRows({
+    signals: [],
+    candidates: [],
+    universeSymbols: ["AIZ"],
+    signalTimeframes: ["2m"],
+    signalActionTimeframes: ["2m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-2m",
+        symbol: "AIZ",
+        timeframe: "2m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-22T13:30:00.000Z",
+        currentSignalPrice: 139.769852,
+        currentSignalClose: 261.61,
+        latestBarAt: "2026-06-22T21:46:00.000Z",
+        latestBarClose: 261.58,
+        barsSinceSignal: 248,
+        fresh: false,
+        status: "stale",
+        actionEligible: false,
+        actionBlocker: "data_stale",
+      },
+    ],
+  });
+
+  assert.equal(row.signalLevelPrice, 139.769852);
+  assert.equal(row.signalPrice, 261.61);
+  assert.equal(row.currentPrice, 261.58);
+  const move = resolveSignalMove(row, null, null);
+  assert.equal(move.label, "-0.0%");
+  assert.equal(move.detail, "-0.03");
+  assert.equal(move.stale, true);
+});
+
+test("STA matrix Move stays blank when monitor state lacks signal close", () => {
+  const [row] = buildVisibleSignalRows({
+    signals: [],
+    candidates: [],
+    universeSymbols: ["AIZ"],
+    signalTimeframes: ["2m"],
+    signalActionTimeframes: ["2m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-2m",
+        symbol: "AIZ",
+        timeframe: "2m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-22T13:30:00.000Z",
+        currentSignalPrice: 139.769852,
+        latestBarAt: "2026-06-22T21:46:00.000Z",
+        latestBarClose: 261.58,
+        barsSinceSignal: 248,
+        fresh: false,
+        status: "stale",
+        actionEligible: false,
+        actionBlocker: "data_stale",
+      },
+    ],
+  });
+
+  assert.equal(row.signalLevelPrice, 139.769852);
+  assert.equal(row.signalPrice, null);
+  assert.equal(row.currentPrice, 261.58);
+  const move = resolveSignalMove(row, null, null);
+  assert.equal(move.label, "—");
+});
+
+test("signal indicator metrics use visible STA rows with buy/sell directional partitions", () => {
+  const metrics = buildSignalIndicatorMetrics([
+    {
+      symbol: "AAPL",
+      direction: "buy",
+      signalPrice: 100,
+      currentPrice: 110,
+    },
+    {
+      symbol: "MSFT",
+      direction: "sell",
+      signalPrice: 200,
+      currentPrice: 180,
+    },
+    {
+      symbol: "NVDA",
+      direction: "sell",
+      signalPrice: 50,
+      currentPrice: 55,
+    },
+    {
+      symbol: "TSLA",
+      direction: "buy",
+      signalPrice: 0,
+      currentPrice: 120,
+    },
+  ]);
+
+  assert.equal(metrics.source, "live");
+  assert.equal(metrics.signalCount, 4);
+  assert.equal(metrics.observationCount, 3);
+  assert.equal(metrics.winCount, 2);
+  assert.equal(metrics.byDirection.buy.signalCount, 2);
+  assert.equal(metrics.byDirection.buy.observationCount, 1);
+  assert.equal(metrics.byDirection.buy.avgDirectionalMovePercent, 10);
+  assert.equal(metrics.byDirection.buy.correctnessPercent, 100);
+  assert.equal(metrics.byDirection.sell.signalCount, 2);
+  assert.equal(metrics.byDirection.sell.observationCount, 2);
+  assert.equal(metrics.byDirection.sell.avgDirectionalMovePercent, 0);
+  assert.equal(metrics.byDirection.sell.correctnessPercent, 50);
+  assert.equal(metrics.byDirection.sell.expectancyPercent, 0);
+  assert.ok(Math.abs(metrics.avgDirectionalMovePercent - 10 / 3) < 1e-9);
+  assert.ok(Math.abs(metrics.correctnessPercent - (2 / 3) * 100) < 1e-9);
+});
+
+test("signal indicator metrics calculate excursion from timestamped spark bars", () => {
+  const metrics = buildSignalIndicatorMetrics(
+    [
+      {
+        symbol: "AAPL",
+        direction: "buy",
+        signalAt: "2026-06-22T14:30:00.000Z",
+        signalPrice: 100,
+      },
+      {
+        symbol: "MSFT",
+        direction: "sell",
+        signalAt: "2026-06-22T14:30:00.000Z",
+        signalPrice: 200,
+      },
+    ],
+    {
+      tickerSnapshotsBySymbol: {
+        AAPL: {
+          sparkBars: [
+            {
+              timestamp: "2026-06-22T14:20:00.000Z",
+              high: 120,
+              low: 80,
+              close: 100,
+            },
+            {
+              timestamp: "2026-06-22T14:35:00.000Z",
+              high: 112,
+              low: 95,
+              close: 108,
+            },
+          ],
+        },
+        MSFT: {
+          sparkBars: [
+            {
+              timestamp: "2026-06-22T14:35:00.000Z",
+              high: 210,
+              low: 180,
+              close: 184,
+            },
+          ],
+        },
+      },
+    },
+  );
+
+  assert.equal(metrics.byDirection.buy.avgMfePercent, 12);
+  assert.equal(metrics.byDirection.buy.avgMaePercent, -5);
+  assert.equal(metrics.byDirection.sell.avgMfePercent, 10);
+  assert.equal(metrics.byDirection.sell.avgMaePercent, -5);
+  assert.equal(metrics.avgMfePercent, 11);
+  assert.equal(metrics.avgMaePercent, -5);
+});
+
+test("signal indicator metrics use persisted state excursion fields", () => {
+  const metrics = buildSignalIndicatorMetrics([
+    {
+      symbol: "AAPL",
+      direction: "buy",
+      signalAt: "2026-06-22T14:30:00.000Z",
+      currentSignalClose: 100,
+      latestBarClose: 108,
+      currentSignalMfePercent: 12,
+      currentSignalMaePercent: -5,
+    },
+    {
+      symbol: "MSFT",
+      direction: "sell",
+      signalAt: "2026-06-22T14:30:00.000Z",
+      currentSignalClose: 200,
+      latestBarClose: 184,
+      currentSignalMfePercent: 10,
+      currentSignalMaePercent: -5,
+    },
+  ]);
+
+  assert.equal(metrics.byDirection.buy.avgMfePercent, 12);
+  assert.equal(metrics.byDirection.buy.avgMaePercent, -5);
+  assert.equal(metrics.byDirection.sell.avgMfePercent, 10);
+  assert.equal(metrics.byDirection.sell.avgMaePercent, -5);
+  assert.equal(metrics.avgMfePercent, 11);
+  assert.equal(metrics.avgMaePercent, -5);
 });
 
 test("STA matrix row Move is blank without latestBarClose until async hydration arrives", () => {
@@ -395,7 +601,8 @@ test("STA signal history keeps received events from the fetched lookback window"
         direction: "sell",
         signalAt: "2026-06-08T20:05:00.000Z",
         emittedAt: "2026-06-08T20:05:00.695Z",
-        signalPrice: 9.42,
+        signalPrice: 8.91,
+        close: 9.42,
       },
       {
         id: "event-abfl-current-session",
@@ -405,7 +612,8 @@ test("STA signal history keeps received events from the fetched lookback window"
         direction: "buy",
         signalAt: "2026-06-09T14:05:00.000Z",
         emittedAt: "2026-06-09T14:05:03.100Z",
-        signalPrice: 14.18,
+        signalPrice: 14.1,
+        close: 14.18,
       },
     ],
   });
@@ -418,8 +626,10 @@ test("STA signal history keeps received events from the fetched lookback window"
     ],
   );
   assert.equal(rows[1].direction, "sell");
+  assert.equal(rows[1].signalLevelPrice, 8.91);
   assert.equal(rows[1].signalPrice, 9.42);
-  assert.equal(rows[1].currentSignalPrice, 9.42);
+  assert.equal(rows[1].currentSignalPrice, 8.91);
+  assert.equal(rows[1].currentSignalClose, 9.42);
   assert.equal(rows[1].emittedAt, "2026-06-08T20:05:00.695Z");
 });
 
@@ -1088,4 +1298,100 @@ test("a row with no monitor status is not spuriously flagged stale", () => {
   );
   assert.equal(move.label, "+10.0%");
   assert.equal(move.stale, false);
+});
+
+test("resolveSignalScoreBreakdown drops signal-age scoring and rescales to 0-100", () => {
+  // Client-side fallback (no candidate.signalQuality). A fully-aligned,
+  // ADX-confirmed, strong-liquidity, risk-sized buy maxes the four remaining
+  // components (25+15+20+10 = 70), which rescale to 100.
+  const fresh = resolveSignalScoreBreakdown({
+    signal: { filterState: { mtfDirections: [1, 1, 1], adx: 30 }, barsSinceSignal: 0 },
+    candidate: {
+      direction: "buy",
+      liquidity: { spreadPctOfMid: 10 },
+      orderPlan: { premiumAtRisk: 100 },
+    },
+  });
+  assert.equal(fresh.score, 100);
+  assert.equal(fresh.tier, "high");
+  // Score no longer carries age (freshness) or quote-liveness (dataQuality).
+  assert.equal(fresh.components.freshness, undefined);
+  assert.equal(fresh.components.dataQuality, undefined);
+  assert.ok(!fresh.reasons.includes("fresh_signal"));
+  assert.ok(!fresh.reasons.includes("aging_signal"));
+  // The four remaining components sum to the total.
+  const sum =
+    fresh.components.mtfAlignment +
+    fresh.components.trendStrength +
+    fresh.components.liquidity +
+    fresh.components.riskFit;
+  assert.ok(Math.abs(sum - fresh.components.total) < 0.2);
+
+  // Age-independence: an "aged" signal (25 bars old) scores identically.
+  const aged = resolveSignalScoreBreakdown({
+    signal: { filterState: { mtfDirections: [1, 1, 1], adx: 30 }, barsSinceSignal: 25 },
+    candidate: {
+      direction: "buy",
+      liquidity: { spreadPctOfMid: 10 },
+      orderPlan: { premiumAtRisk: 100 },
+    },
+  });
+  assert.equal(aged.score, fresh.score);
+});
+
+test("buildVisibleSignalRows lifts indicatorSnapshot.filterState so the score isn't the 46.4 fallback", () => {
+  // Live SSE matrix deltas nest the scoring inputs under indicatorSnapshot.filterState
+  // (NOT top-level). Before the lift, the row carried no filterState -> the scorer hit
+  // its all-defaults value (46.4) on every row.
+  const [row] = buildVisibleSignalRows({
+    signals: [],
+    candidates: [],
+    universeSymbols: ["SPY"],
+    signalTimeframes: ["5m"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "SPY",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-11T16:55:00.000Z",
+        currentSignalPrice: 500,
+        currentSignalClose: 500,
+        latestBarAt: "2026-06-11T17:00:00.000Z",
+        latestBarClose: 505,
+        barsSinceSignal: 1,
+        fresh: true,
+        status: "ok",
+        actionEligible: true,
+        actionBlocker: null,
+        indicatorSnapshot: { filterState: { mtfDirections: [1, 1, 1], adx: 30 } },
+      },
+    ],
+  });
+
+  // The lift surfaces mtfDirections/adx onto the row's filterState...
+  assert.deepEqual(row.filterState.mtfDirections, [1, 1, 1]);
+  assert.equal(row.filterState.adx, 30);
+  // ...so the score reflects real inputs (full MTF align + strong ADX) instead of 46.4.
+  const breakdown = resolveSignalScoreBreakdown({ signal: row });
+  assert.notEqual(breakdown.score, 46.4);
+  assert.ok(breakdown.score > 46.4);
+});
+
+test("resolveSignalScoreBreakdown returns null score (not the 46.4 fallback) when there are no real inputs", () => {
+  // No backend signalQuality and no filterState (mtfDirections/adx) / liquidity / premium:
+  // the score must NOT show the misleading all-defaults 46.4 — it surfaces "no data".
+  const breakdown = resolveSignalScoreBreakdown({
+    signal: { symbol: "AGZ", timeframe: "15m", direction: "buy" },
+  });
+  assert.equal(breakdown.score, null);
+  assert.equal(breakdown.tier, "unknown");
+  assert.deepEqual(breakdown.reasonLabels, []);
+
+  // But a row WITH a real input still computes a real score (no false "no data").
+  const scored = resolveSignalScoreBreakdown({
+    signal: { filterState: { mtfDirections: [1, 1, 1], adx: 30 }, direction: "buy" },
+  });
+  assert.ok(Number.isFinite(scored.score));
 });

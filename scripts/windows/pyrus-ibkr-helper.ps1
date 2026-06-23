@@ -50,7 +50,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-13.ib-async-sidecar-v23-responsive-agent-loop'
+$HelperVersion = '2026-06-22.ib-async-sidecar-v24-long-poll-claim'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -365,8 +365,9 @@ function Claim-DesktopAgentLaunchJob([string]$BaseUrl) {
         desktopSecret = $identity['desktopSecret']
         helperVersion = $HelperVersion
         label = Get-DesktopAgentLabel
+        waitMs = 25000
     }
-    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 5
+    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 30
 }
 
 function Complete-DesktopAgentJob([string]$BaseUrl, [string]$JobId, [string]$CompletionToken, [bool]$Ok, [string]$Message) {

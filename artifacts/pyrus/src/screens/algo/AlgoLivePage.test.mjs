@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  alignSignalCycleStageWithStaTable,
   buildAlgoOptionQuoteStreamSubscription,
   resolveAlgoOverviewMetricGridTemplate,
   resolveAttentionSeverity,
@@ -103,4 +104,29 @@ test("algo overview metrics use packed intrinsic tracks outside phone layouts", 
     }),
     "repeat(auto-fit, minmax(104px, max-content))",
   );
+});
+
+test("signal cycle display can follow the STA table snapshot without changing scan universe", () => {
+  const stages = alignSignalCycleStageWithStaTable(
+    [
+      { id: "scan_universe", status: "healthy", count: 500 },
+      {
+        id: "signal_detected",
+        status: "healthy",
+        count: 463,
+        detail: "463 live STA rows from Signal Matrix",
+      },
+      { id: "contract_selected", status: "healthy", count: 12 },
+    ],
+    {
+      rowCount: 191,
+      signalRows: [],
+      signature: "table-visible",
+    },
+  );
+
+  assert.equal(stages[0].count, 500);
+  assert.equal(stages[1].count, 191);
+  assert.equal(stages[1].detail, "191 table-visible STA rows");
+  assert.equal(stages[2].count, 12);
 });

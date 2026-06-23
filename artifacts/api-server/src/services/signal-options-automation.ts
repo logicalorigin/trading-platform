@@ -4469,25 +4469,6 @@ function classifySignalOptionsEntryQuality(input: {
       candidateLiquidity.spreadPctOfMid ??
       quote.spreadPctOfMid,
   );
-  const barsSinceSignal = finiteNumber(signal.barsSinceSignal);
-  const freshWindowBars = clampNumber(
-    Math.round(finiteNumber(signal.freshWindowBars) ?? 3),
-    1,
-    20,
-  );
-  const signalFresh = signal.fresh !== false;
-  const freshnessRatio =
-    barsSinceSignal == null
-      ? signalFresh
-        ? 0.75
-        : 0
-      : clampNumber(1 - barsSinceSignal / freshWindowBars, 0, 1);
-  const quoteFreshness = compactString(
-    quote.quoteFreshness ?? quote.freshness ?? orderLiquidity.freshness,
-  );
-  const marketDataMode = compactString(
-    quote.marketDataMode ?? orderLiquidity.marketDataMode,
-  );
   const premiumAtRisk = finiteNumber(input.orderPlan?.premiumAtRisk);
   const bullishRegime =
     mtfDirections.length > 0 &&
@@ -4506,36 +4487,27 @@ function classifySignalOptionsEntryQuality(input: {
     mtfDirections,
     mtfMatches,
   );
-  const freshnessScore = freshnessRatio * 20;
   const trendStrengthScore =
     adx == null ? 7.5 : clampNumber(adx / 25, 0, 1) * 15;
   const liquidityScore =
     liquidityTier === "strong" ? 20 : liquidityTier === "weak" ? 0 : 12;
   const riskFitScore = premiumAtRisk != null && premiumAtRisk > 0 ? 10 : 5;
-  const dataQualityScore =
-    quoteFreshness === "live" || marketDataMode === "live"
-      ? 10
-      : quoteFreshness || marketDataMode
-        ? 7
-        : input.candidate.status === "skipped"
-          ? 3
-          : 8;
+  // Score ignores signal age and quote liveness: only MTF alignment, trend,
+  // liquidity, and risk-fit contribute. Rescale the remaining max (70) back to a
+  // 0-100 score so the tier cutoffs and the policy.minScore admission gate keep
+  // their 0-100 meaning.
+  const maxRawScore = 25 + 15 + 20 + 10;
+  const scoreScale = 100 / maxRawScore;
   const components = {
-    mtfAlignment: roundScore(mtfAlignmentScore),
-    freshness: roundScore(freshnessScore),
-    trendStrength: roundScore(trendStrengthScore),
-    liquidity: roundScore(liquidityScore),
-    riskFit: roundScore(riskFitScore),
-    dataQuality: roundScore(dataQualityScore),
+    mtfAlignment: roundScore(mtfAlignmentScore * scoreScale),
+    trendStrength: roundScore(trendStrengthScore * scoreScale),
+    liquidity: roundScore(liquidityScore * scoreScale),
+    riskFit: roundScore(riskFitScore * scoreScale),
     total: 0,
   };
   const score = roundScore(
-    mtfAlignmentScore +
-      freshnessScore +
-      trendStrengthScore +
-      liquidityScore +
-      riskFitScore +
-      dataQualityScore,
+    (mtfAlignmentScore + trendStrengthScore + liquidityScore + riskFitScore) *
+      scoreScale,
   );
   components.total = score;
 
@@ -4545,8 +4517,6 @@ function classifySignalOptionsEntryQuality(input: {
   );
   if (mtfAlignmentReason) reasons.push(mtfAlignmentReason);
   if ((adx ?? 0) >= 25) reasons.push("adx_confirmed");
-  if (freshnessRatio >= 0.67) reasons.push("fresh_signal");
-  if (freshnessRatio <= 0.2) reasons.push("aging_signal");
   if (liquidityTier === "strong") reasons.push("strong_liquidity");
   if (liquidityTier === "weak") reasons.push("weak_liquidity");
   if (premiumAtRisk != null && premiumAtRisk > 0) reasons.push("risk_sized");
@@ -4565,11 +4535,6 @@ function classifySignalOptionsEntryQuality(input: {
     reasons,
     components,
     raw: {
-      barsSinceSignal,
-      freshWindowBars,
-      freshnessRatio: roundScore(freshnessRatio * 100),
-      quoteFreshness,
-      marketDataMode,
       premiumAtRisk,
     },
     adx: adx ?? null,
@@ -10542,6 +10507,56 @@ export async function getAlgoDeploymentCockpit(input: {
     startedAt: Date.now(),
   });
   return work;
+}
+
+export type SignalOptionsTodayPnl = {
+  todayPnl: number | null;
+  dailyRealizedPnl: number | null;
+  openUnrealizedPnl: number | null;
+};
+
+// Per-deployment "today's net P&L" (realized + unrealized) for the deployment-tab
+// strip. Reuses the cached summary dashboard snapshot (15s TTL, shared with the
+// focused cockpit) and reads only the risk P&L numbers — far lighter than the full
+// cockpit payload. One deployment's failure degrades to nulls rather than failing
+// the batch. The caller restricts ids to signal-options deployments.
+export async function getSignalOptionsTodayPnlByDeployment(
+  deploymentIds: string[],
+): Promise<Record<string, SignalOptionsTodayPnl>> {
+  const uniqueIds = [...new Set(deploymentIds.filter(Boolean))];
+  const toNumberOrNull = (value: unknown) =>
+    Number.isFinite(Number(value)) ? Number(value) : null;
+  const entries = await Promise.all(
+    uniqueIds.map(
+      async (deploymentId): Promise<[string, SignalOptionsTodayPnl]> => {
+        try {
+          const snapshot = await getSignalOptionsDashboardSnapshot({
+            deploymentId,
+            view: "summary",
+          });
+          const risk = snapshot.state.risk;
+          return [
+            deploymentId,
+            {
+              todayPnl: toNumberOrNull(risk.dailyPnl),
+              dailyRealizedPnl: toNumberOrNull(risk.dailyRealizedPnl),
+              openUnrealizedPnl: toNumberOrNull(risk.openUnrealizedPnl),
+            },
+          ];
+        } catch (error) {
+          logger.warn(
+            { err: error, deploymentId },
+            "Failed to resolve today's P&L for deployment tab",
+          );
+          return [
+            deploymentId,
+            { todayPnl: null, dailyRealizedPnl: null, openUnrealizedPnl: null },
+          ];
+        }
+      },
+    ),
+  );
+  return Object.fromEntries(entries);
 }
 
 export async function listEnabledSignalOptionsDeployments() {

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -13,13 +14,17 @@ import {
 } from "recharts";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import {
+  getListBacktestStudiesQueryKey,
   getGetPatternDiscoveryResultsQueryKey,
+  getPatternDiscoveryResults,
   getGetPatternOccurrencesQueryKey,
   useCreatePatternDiscoveryStudy,
   useGetPatternDiscoveryResults,
   useGetPatternOccurrences,
+  useListBacktestStudies,
 } from "@workspace/api-client-react";
 import type {
+  BacktestStudyRecord,
   PatternDiscoveryResult,
   PatternDiscoveryResults,
   PatternDiscoveryStudyInput,
@@ -50,6 +55,17 @@ import {
   // @ts-expect-error JSX module imported into TypeScript context
 } from "../../lib/uiTokens.jsx";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
+import {
+  classifyPatternBiasAlignment,
+  classifyPatternSetup,
+  expectedBiasForPatternSetup,
+  PATTERN_SETUP_FAMILIES,
+  setupFamilyById,
+  summarizePatternSetupFamilies,
+  totalPossiblePatternCombinations,
+  type PatternSetupFamilyId,
+  type PatternSetupFamilySummary,
+} from "./patternDiscoveryFamilies";
 
 // ---------------------------------------------------------------------------
 // Local style replicas.
@@ -250,6 +266,113 @@ function BiasChip({ bias }: { bias: string }) {
         fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1,
         whiteSpace: "nowrap",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function familyTone(familyId: PatternSetupFamilyId): string {
+  switch (familyId) {
+    case "bull_confluence":
+      return CSS_COLOR.blue;
+    case "bear_confluence":
+      return CSS_COLOR.red;
+    case "fast_bullish_reversal":
+      return CSS_COLOR.cyan;
+    case "fast_bearish_reversal":
+      return CSS_COLOR.amber;
+    case "mixed_divergence":
+      return CSS_COLOR.purple;
+    case "inactive":
+    default:
+      return cssColorMix(CSS_COLOR.textDim, 58);
+  }
+}
+
+function FamilyChip({
+  familyId,
+  compact = false,
+}: {
+  familyId: PatternSetupFamilyId;
+  compact?: boolean;
+}) {
+  const family = setupFamilyById(familyId);
+  const tone = familyTone(familyId);
+  return (
+    <span
+      title={family.description}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        maxWidth: "100%",
+        height: dim(16),
+        padding: sp("0 5px"),
+        borderRadius: dim(RADII.pill),
+        border: `1px solid ${cssColorAlpha(tone, "55")}`,
+        background: cssColorAlpha(tone, "18"),
+        color: tone,
+        fontFamily: SANS,
+        fontSize: fs(8),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+      }}
+    >
+      {compact ? family.shortLabel : family.label}
+    </span>
+  );
+}
+
+function edgeTone(alignment: ReturnType<typeof classifyPatternBiasAlignment>): string {
+  switch (alignment) {
+    case "aligned":
+      return CSS_COLOR.green;
+    case "counter":
+      return CSS_COLOR.red;
+    case "neutral":
+    default:
+      return cssColorMix(CSS_COLOR.textDim, 58);
+  }
+}
+
+function EdgeChip({ result }: { result: PatternDiscoveryResult }) {
+  const family = classifyPatternSetup(result.patternKey);
+  const expected = expectedBiasForPatternSetup(family.id);
+  const alignment = classifyPatternBiasAlignment(result.patternKey, result.bias);
+  const tone = edgeTone(alignment);
+  const label =
+    alignment === "aligned" ? "Aligned" : alignment === "counter" ? "Counter" : "Neutral";
+  const title = expected
+    ? `${family.label}: expected ${expected}, observed ${result.bias}.`
+    : `${family.label}: no directional thesis.`;
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        maxWidth: "100%",
+        height: dim(16),
+        padding: sp("0 5px"),
+        borderRadius: dim(RADII.pill),
+        border: `1px solid ${cssColorAlpha(tone, "55")}`,
+        background: cssColorAlpha(tone, "18"),
+        color: tone,
+        fontFamily: SANS,
+        fontSize: fs(8),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
       }}
@@ -803,7 +926,9 @@ function PatternDetail({
           bias={result.bias}
           showLabels
         />
+        <FamilyChip familyId={classifyPatternSetup(result.patternKey).id} />
         <BiasChip bias={result.bias} />
+        <EdgeChip result={result} />
         <span
           style={{
             fontFamily: MONO,
@@ -881,6 +1006,140 @@ function PatternDetail({
   );
 }
 
+type FamilyFilter = "all" | PatternSetupFamilyId;
+
+function PatternSetupAtlasStrip({
+  summaries,
+  activeFamily,
+  onFamilyChange,
+  observedCount,
+  possibleCount,
+  visibleCount,
+}: {
+  summaries: PatternSetupFamilySummary[];
+  activeFamily: FamilyFilter;
+  onFamilyChange: (family: FamilyFilter) => void;
+  observedCount: number;
+  possibleCount: number;
+  visibleCount: number;
+}) {
+  const allActive = activeFamily === "all";
+  const totalSamples = summaries.reduce((sum, summary) => sum + summary.sampleCount, 0);
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(140px, 0.9fr) minmax(0, 2.4fr)",
+        gap: sp(10),
+        alignItems: "stretch",
+        marginBottom: sp(10),
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => onFamilyChange("all")}
+        style={{
+          ...buttonStyle(allActive ? "primary" : "secondary"),
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          justifyContent: "center",
+          minHeight: dim(54),
+          gap: sp(3),
+          textAlign: "left",
+        }}
+      >
+        <span style={{ fontFamily: SANS, fontSize: fs(9), textTransform: "uppercase" }}>
+          All combinations
+        </span>
+        <span style={{ fontFamily: MONO, fontSize: fs(13), fontWeight: FONT_WEIGHTS.medium }}>
+          {observedCount}/{possibleCount}
+        </span>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: fs(8),
+            color: allActive ? CSS_COLOR.onAccent : CSS_COLOR.textMuted,
+          }}
+        >
+          visible {visibleCount} | samples {totalSamples}
+        </span>
+      </button>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(126px, 1fr))",
+          gap: sp(6),
+        }}
+      >
+        {summaries.map((summary) => {
+          const active = activeFamily === summary.id;
+          const tone = familyTone(summary.id);
+          return (
+            <button
+              key={summary.id}
+              type="button"
+              title={summary.description}
+              onClick={() => onFamilyChange(active ? "all" : summary.id)}
+              style={{
+                border: `1px solid ${active ? cssColorAlpha(tone, "88") : CSS_COLOR.border}`,
+                background: active ? cssColorAlpha(tone, "20") : CSS_COLOR.bg0,
+                color: active ? tone : CSS_COLOR.textSec,
+                borderRadius: dim(5),
+                padding: sp("6px 7px"),
+                minHeight: dim(54),
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: sp(4),
+                textAlign: "left",
+              }}
+            >
+              <FamilyChip familyId={summary.id} compact />
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: sp(6),
+                  width: "100%",
+                  fontFamily: MONO,
+                  fontSize: fs(9),
+                  color: active ? tone : CSS_COLOR.textMuted,
+                }}
+              >
+                <span>{summary.patternCount} patterns</span>
+                <span>{summary.sampleCount} n</span>
+              </span>
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: sp(6),
+                  width: "100%",
+                  fontFamily: MONO,
+                  fontSize: fs(9),
+                }}
+              >
+                <span style={{ color: signedColor(summary.weightedMeanReturnPct) }}>
+                  {fmtSignedPct(summary.weightedMeanReturnPct, 3)}
+                </span>
+                <span style={{ color: active ? tone : CSS_COLOR.textDim }}>
+                  |t| {fmtNum(summary.bestAbsTStat, 2)}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Leaderboard column model
 // ---------------------------------------------------------------------------
@@ -912,6 +1171,261 @@ type LeaderboardColumn = {
 // context. We adapt by reading `row.original` inside a thin wrapper.
 type CellContext = { row: { original: PatternDiscoveryResult } };
 
+type ComparisonColumn = {
+  id: string;
+  label: string;
+  rows: PatternDiscoveryResult[];
+  loading: boolean;
+  errored: boolean;
+};
+
+function PatternSweepComparison({
+  columns,
+}: {
+  columns: ComparisonColumn[];
+}) {
+  const activeColumns = columns.filter(
+    (column) => column.rows.length > 0 || column.loading || column.errored,
+  );
+  if (activeColumns.length < 2) return null;
+
+  const familyRows = PATTERN_SETUP_FAMILIES.map((family) => ({
+    family,
+    summaries: activeColumns.map((column) => ({
+      column,
+      summary: summarizePatternSetupFamilies(column.rows).find(
+        (item) => item.id === family.id,
+      ),
+    })),
+  }));
+  const patternKeys = Array.from(
+    new Set(
+      activeColumns.flatMap((column) => column.rows.map((row) => row.patternKey)),
+    ),
+  ).sort((a, b) => {
+    const familyOrder =
+      PATTERN_SETUP_FAMILIES.findIndex(
+        (family) => family.id === classifyPatternSetup(a).id,
+      ) -
+      PATTERN_SETUP_FAMILIES.findIndex(
+        (family) => family.id === classifyPatternSetup(b).id,
+      );
+    return familyOrder || a.localeCompare(b);
+  });
+  const rowByColumn = new Map(
+    activeColumns.map((column) => [
+      column.id,
+      new Map(column.rows.map((row) => [row.patternKey, row])),
+    ]),
+  );
+  const cellBox: CSSProperties = {
+    padding: sp("5px 6px"),
+    borderBottom: `1px solid ${CSS_COLOR.border}`,
+    minWidth: dim(118),
+  };
+  const headerCell: CSSProperties = {
+    ...cellBox,
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
+    background: CSS_COLOR.bg2,
+    color: CSS_COLOR.textMuted,
+    fontFamily: SANS,
+    fontSize: fs(8),
+    fontWeight: FONT_WEIGHTS.label,
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  };
+  const metricLine = (
+    left: string,
+    value: number | null | undefined,
+    decimals = 3,
+  ) => (
+    <span
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: sp(6),
+        fontFamily: MONO,
+        fontSize: fs(9),
+        color: signedColor(value),
+      }}
+    >
+      <span style={{ color: CSS_COLOR.textDim }}>{left}</span>
+      <span>{fmtSignedPct(value, decimals)}</span>
+    </span>
+  );
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg0,
+        overflow: "hidden",
+        marginBottom: sp(10),
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(8),
+          padding: sp("8px 10px"),
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: DISPLAY,
+            fontSize: fs(11),
+            color: CSS_COLOR.text,
+          }}
+        >
+          Sweep Comparison
+        </div>
+        <div style={{ fontFamily: MONO, fontSize: fs(9), color: CSS_COLOR.textDim }}>
+          {activeColumns.length} studies | {patternKeys.length} patterns
+        </div>
+      </div>
+      <div style={{ overflowX: "auto", maxHeight: dim(360) }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `minmax(${dim(150)}px, 1.1fr) repeat(${activeColumns.length}, minmax(${dim(118)}px, 0.9fr))`,
+            minWidth: dim(150 + activeColumns.length * 118),
+          }}
+        >
+          <div style={headerCell}>Setup / Pattern</div>
+          {activeColumns.map((column) => (
+            <div key={column.id} style={headerCell} title={column.label}>
+              {column.label}
+            </div>
+          ))}
+
+          {familyRows.map(({ family, summaries }) => (
+            <Fragment key={family.id}>
+              <div
+                style={{
+                  ...cellBox,
+                  background: cssColorAlpha(familyTone(family.id), "0D"),
+                }}
+              >
+                <FamilyChip familyId={family.id} />
+              </div>
+              {summaries.map(({ column, summary }) => (
+                <div
+                  key={`${family.id}-${column.id}`}
+                  style={{
+                    ...cellBox,
+                    background: cssColorAlpha(familyTone(family.id), "0A"),
+                  }}
+                >
+                  {column.loading ? (
+                    <span style={{ color: CSS_COLOR.textDim, fontSize: fs(9) }}>
+                      Loading
+                    </span>
+                  ) : column.errored || !summary ? (
+                    <span style={{ color: CSS_COLOR.red, fontSize: fs(9) }}>
+                      Error
+                    </span>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
+                      <span
+                        style={{
+                          fontFamily: MONO,
+                          fontSize: fs(9),
+                          color: CSS_COLOR.textMuted,
+                        }}
+                      >
+                        n {summary.sampleCount} | {summary.patternCount} rows
+                      </span>
+                      {metricLine("mean", summary.weightedMeanReturnPct)}
+                      <span
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: sp(6),
+                          fontFamily: MONO,
+                          fontSize: fs(9),
+                          color: CSS_COLOR.textSec,
+                        }}
+                      >
+                        <span style={{ color: CSS_COLOR.textDim }}>|t|</span>
+                        <span>{fmtNum(summary.bestAbsTStat, 2)}</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Fragment>
+          ))}
+
+          {patternKeys.map((patternKey) => (
+            <Fragment key={patternKey}>
+              <div style={cellBox}>
+                <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+                  <PatternVector patternKey={patternKey} bias="neutral" />
+                  <FamilyChip familyId={classifyPatternSetup(patternKey).id} compact />
+                </div>
+              </div>
+              {activeColumns.map((column) => {
+                const row = rowByColumn.get(column.id)?.get(patternKey);
+                return (
+                  <div key={`${patternKey}-${column.id}`} style={cellBox}>
+                    {column.loading ? (
+                      <span style={{ color: CSS_COLOR.textDim, fontSize: fs(9) }}>
+                        Loading
+                      </span>
+                    ) : column.errored ? (
+                      <span style={{ color: CSS_COLOR.red, fontSize: fs(9) }}>
+                        Error
+                      </span>
+                    ) : !row ? (
+                      <span style={{ color: CSS_COLOR.textDim, fontSize: fs(9) }}>
+                        {MISSING_VALUE}
+                      </span>
+                    ) : (
+                      <div
+                        style={{ display: "flex", flexDirection: "column", gap: sp(2) }}
+                      >
+                        <span
+                          style={{
+                            fontFamily: MONO,
+                            fontSize: fs(9),
+                            color: CSS_COLOR.textMuted,
+                          }}
+                        >
+                          n {row.sampleCount} | t {fmtNum(row.tStat, 2)}
+                        </span>
+                        {metricLine("mean", row.meanReturnPct)}
+                        <span
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: sp(6),
+                            fontFamily: MONO,
+                            fontSize: fs(9),
+                            color: CSS_COLOR.textSec,
+                          }}
+                        >
+                          <span style={{ color: CSS_COLOR.textDim }}>win</span>
+                          <span>{fmtPct(row.winRatePct, 1)}</span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main panel
 // ---------------------------------------------------------------------------
@@ -925,22 +1439,53 @@ export function PatternDiscoveryPanel() {
   const [horizonsRaw, setHorizonsRaw] = useState("3,6,12");
   const [startsAt, setStartsAt] = useState(daysAgoISO(30));
   const [endsAt, setEndsAt] = useState(todayISO());
-  const [minSampleThreshold, setMinSampleThreshold] = useState(30);
+  const [minSampleThreshold, setMinSampleThreshold] = useState(1);
 
   // --- study lifecycle ---
   const [studyId, setStudyId] = useState<string | null>(null);
+  const [comparisonStudyIds, setComparisonStudyIds] = useState<string[]>([]);
 
   // --- explore controls ---
   const [horizonBars, setHorizonBars] = useState(3);
   const [sort, setSort] = useState<{ id: SortColumnId; direction: "asc" | "desc" }>(
     { id: "tStat", direction: "desc" },
   );
-  const [nFloor, setNFloor] = useState(30);
+  const [nFloor, setNFloor] = useState(1);
   const [biasFilter, setBiasFilter] = useState<"all" | "long" | "short">("all");
+  const [familyFilter, setFamilyFilter] = useState<FamilyFilter>("all");
   const [significantOnly, setSignificantOnly] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const createStudy = useCreatePatternDiscoveryStudy();
+  const studiesQuery = useListBacktestStudies({
+    query: {
+      queryKey: getListBacktestStudiesQueryKey(),
+      staleTime: 5_000,
+      refetchInterval: 15_000,
+    },
+  });
+  const patternStudies = useMemo(
+    () =>
+      (studiesQuery.data?.studies ?? []).filter(
+        (study) => study.strategyId === "mtf_pattern_discovery",
+      ),
+    [studiesQuery.data?.studies],
+  );
+  const selectedStudy = useMemo(
+    () => patternStudies.find((study) => study.id === studyId) ?? null,
+    [patternStudies, studyId],
+  );
+  const activeSweepId = selectedStudy ? patternStudySweepId(selectedStudy) : null;
+  const sweepPeerStudies = useMemo(
+    () =>
+      activeSweepId
+        ? patternStudies.filter(
+            (study) =>
+              study.id !== studyId && patternStudySweepId(study) === activeSweepId,
+          )
+        : [],
+    [activeSweepId, patternStudies, studyId],
+  );
 
   const resultsQuery = useGetPatternDiscoveryResults(
     studyId ?? "",
@@ -969,6 +1514,62 @@ export function PatternDiscoveryPanel() {
     () => resultsData?.results ?? [],
     [resultsData],
   );
+  const resultTimeframeSet = useMemo(
+    () => resolveResultTimeframeSet(resultsData, timeframeSet),
+    [resultsData, timeframeSet],
+  );
+  const possiblePatternCount = useMemo(
+    () => totalPossiblePatternCombinations(resultTimeframeSet),
+    [resultTimeframeSet],
+  );
+  const familySummaries = useMemo(
+    () => summarizePatternSetupFamilies(allResults),
+    [allResults],
+  );
+  const comparisonQueries = useQueries({
+    queries: comparisonStudyIds.map((id) => ({
+      queryKey: getGetPatternDiscoveryResultsQueryKey(id, { horizonBars }),
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        getPatternDiscoveryResults(id, { horizonBars }, { signal }),
+      enabled: Boolean(id),
+      staleTime: 5_000,
+    })),
+  });
+  const comparisonColumns = useMemo<ComparisonColumn[]>(() => {
+    const active: ComparisonColumn[] =
+      selectedStudy && resultsData
+        ? [
+            {
+              id: selectedStudy.id,
+              label: formatPatternStudyComparisonLabel(selectedStudy),
+              rows: allResults,
+              loading: resultsQuery.isLoading,
+              errored: resultsQuery.isError,
+            },
+          ]
+        : [];
+    const compared = comparisonStudyIds.map((id, index) => {
+      const study = patternStudies.find((item) => item.id === id);
+      const query = comparisonQueries[index];
+      return {
+        id,
+        label: study ? formatPatternStudyComparisonLabel(study) : id,
+        rows: (query?.data as PatternDiscoveryResults | undefined)?.results ?? [],
+        loading: Boolean(query?.isLoading),
+        errored: Boolean(query?.isError),
+      };
+    });
+    return [...active, ...compared];
+  }, [
+    allResults,
+    comparisonQueries,
+    comparisonStudyIds,
+    patternStudies,
+    resultsData,
+    resultsQuery.isError,
+    resultsQuery.isLoading,
+    selectedStudy,
+  ]);
 
   const horizonChoices = useMemo(() => parseHorizons(horizonsRaw), [horizonsRaw]);
 
@@ -992,8 +1593,11 @@ export function PatternDiscoveryPanel() {
       {
         onSuccess: (created) => {
           setStudyId(created.studyId);
+          setComparisonStudyIds([]);
           setNFloor(minSampleThreshold);
+          setFamilyFilter("all");
           setExpandedKey(null);
+          void studiesQuery.refetch();
           if (forwardHorizonsBars.length > 0) {
             setHorizonBars(forwardHorizonsBars[0]);
           }
@@ -1012,6 +1616,12 @@ export function PatternDiscoveryPanel() {
     const filtered = allResults.filter((row) => {
       if (row.sampleCount < nFloor) return false;
       if (biasFilter !== "all" && row.bias !== biasFilter) return false;
+      if (
+        familyFilter !== "all" &&
+        classifyPatternSetup(row.patternKey).id !== familyFilter
+      ) {
+        return false;
+      }
       if (significantOnly && !(isNum(row.tStat) && Math.abs(row.tStat) >= 1.5)) {
         return false;
       }
@@ -1025,7 +1635,7 @@ export function PatternDiscoveryPanel() {
       return isNum(raw) ? raw : -Infinity;
     };
     return [...filtered].sort((a, b) => (value(a) - value(b)) * dir);
-  }, [allResults, nFloor, biasFilter, significantOnly, sort]);
+  }, [allResults, nFloor, biasFilter, familyFilter, significantOnly, sort]);
 
   const allLowN = allResults.length > 0 && qualifyingCount === 0;
 
@@ -1044,16 +1654,28 @@ export function PatternDiscoveryPanel() {
       {
         id: "pattern",
         header: "Pattern",
-        meta: { width: "minmax(140px, 1.4fr)", align: "left", label: "Pattern" },
+        meta: { width: "minmax(132px, 1.2fr)", align: "left", label: "Pattern" },
         cell: (row) => (
           <PatternVector patternKey={row.patternKey} bias={row.bias} />
         ),
+      },
+      {
+        id: "family",
+        header: "Family",
+        meta: { width: "minmax(104px, 0.9fr)", align: "left", label: "Family" },
+        cell: (row) => <FamilyChip familyId={classifyPatternSetup(row.patternKey).id} compact />,
       },
       {
         id: "bias",
         header: "Bias",
         meta: { width: dim(70) + "px", align: "left", label: "Bias" },
         cell: (row) => <BiasChip bias={row.bias} />,
+      },
+      {
+        id: "edge",
+        header: "Edge",
+        meta: { width: dim(76) + "px", align: "left", label: "Edge" },
+        cell: (row) => <EdgeChip result={row} />,
       },
       {
         id: "sampleCount",
@@ -1171,9 +1793,30 @@ export function PatternDiscoveryPanel() {
     });
   };
 
-  const isExploring = status === "completed";
+  const isExploring = status === "completed" || allResults.length > 0;
   const isRunningState = status != null && RUNNING_STATUSES.has(status);
   const isFailed = status === "failed" || status === "canceled";
+
+  const handleLoadStudy = (nextStudyId: string) => {
+    setStudyId(nextStudyId || null);
+    setFamilyFilter("all");
+    setExpandedKey(null);
+    const study = patternStudies.find((item) => item.id === nextStudyId);
+    setComparisonStudyIds(defaultComparisonStudyIds(study, patternStudies));
+    if (!study) return;
+    applyPatternStudyDefaults(study, {
+      setName,
+      setSymbolsRaw,
+      setTimeframeSet,
+      setBaseTimeframe,
+      setHorizonsRaw,
+      setHorizonBars,
+      setStartsAt,
+      setEndsAt,
+      setMinSampleThreshold,
+      setNFloor,
+    });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: sp(12) }}>
@@ -1184,6 +1827,51 @@ export function PatternDiscoveryPanel() {
           createStudy.isPending ? <StatusBadge status="queued" /> : undefined
         }
       >
+        <div style={{ marginBottom: sp(10) }}>
+          <Field label="Saved pattern study">
+            <select
+              value={studyId ?? ""}
+              onChange={(event) => handleLoadStudy(event.target.value)}
+              style={inputStyle}
+            >
+              <option value="">
+                {patternStudies.length > 0
+                  ? "New discovery study"
+                  : "No saved pattern studies"}
+              </option>
+              {patternStudies.map((study) => (
+                <option key={study.id} value={study.id}>
+                  {formatPatternStudyOption(study)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {activeSweepId && sweepPeerStudies.length > 0 ? (
+            <div style={{ marginTop: sp(10) }}>
+              <Field label="Compare sweep studies">
+                <select
+                  multiple
+                  value={comparisonStudyIds}
+                  onChange={(event) =>
+                    setComparisonStudyIds(
+                      Array.from(event.currentTarget.selectedOptions).map(
+                        (option) => option.value,
+                      ),
+                    )
+                  }
+                  style={{ ...inputStyle, minHeight: dim(92) }}
+                >
+                  {sweepPeerStudies.map((study) => (
+                    <option key={study.id} value={study.id}>
+                      {formatPatternStudyComparisonLabel(study)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          ) : null}
+        </div>
+
         <div
           style={{
             display: "grid",
@@ -1400,6 +2088,19 @@ export function PatternDiscoveryPanel() {
             </div>
           }
         >
+          <PatternSetupAtlasStrip
+            summaries={familySummaries}
+            activeFamily={familyFilter}
+            onFamilyChange={(nextFamily) => {
+              setFamilyFilter(nextFamily);
+              setExpandedKey(null);
+            }}
+            observedCount={allResults.length}
+            possibleCount={possiblePatternCount}
+            visibleCount={visibleRows.length}
+          />
+          <PatternSweepComparison columns={comparisonColumns} />
+
           {/* Filters strip */}
           <div
             style={{
@@ -1456,6 +2157,8 @@ export function PatternDiscoveryPanel() {
                 detail={`No patterns met the threshold (n >= ${minSampleThreshold}). Lower the threshold or widen the date range.`}
               />
             </>
+          ) : visibleRows.length === 0 ? (
+            <EmptyInline detail="No patterns match the current filters." />
           ) : (
             <>
               {allLowN ? (
@@ -1687,6 +2390,122 @@ function CautionBanner({ detail }: { detail: string }) {
 // ---------------------------------------------------------------------------
 // Parsing helpers (declared after use; function declarations hoist)
 // ---------------------------------------------------------------------------
+
+function resolveResultTimeframeSet(
+  resultsData: PatternDiscoveryResults | undefined,
+  fallback: string[],
+): string[] {
+  const parameters = resultsData?.parameters as Record<string, unknown> | undefined;
+  const raw = parameters?.timeframeSet;
+  if (!Array.isArray(raw)) return fallback;
+  const parsed = raw.filter((value): value is string => typeof value === "string");
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+function dateInputFromIso(value: string): string {
+  return value.slice(0, 10);
+}
+
+function patternStudyParameters(study: BacktestStudyRecord): Record<string, unknown> {
+  return study.parameters as Record<string, unknown>;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item))
+    : [];
+}
+
+function formatPatternStudyOption(study: BacktestStudyRecord): string {
+  const parameters = patternStudyParameters(study);
+  const frames = stringArray(parameters.timeframeSet);
+  const horizons = numberArray(parameters.forwardHorizonsBars);
+  const symbolPreview = study.symbols.slice(0, 3).join(",");
+  const symbolSuffix = study.symbols.length > 3 ? `+${study.symbols.length - 3}` : "";
+  return `${study.name} | ${symbolPreview}${symbolSuffix} | ${frames.join("/")} | h ${horizons.join("/")}`;
+}
+
+function patternStudySweepId(study: BacktestStudyRecord): string | null {
+  const sweep = patternStudyParameters(study).sweep;
+  return typeof sweep === "string" && sweep.length > 0 ? sweep : null;
+}
+
+function formatPatternStudyComparisonLabel(study: BacktestStudyRecord): string {
+  const parameters = patternStudyParameters(study);
+  const variantLabel =
+    typeof parameters.variantLabel === "string" && parameters.variantLabel.length > 0
+      ? parameters.variantLabel
+      : study.name;
+  const sweepKind =
+    typeof parameters.sweepKind === "string" && parameters.sweepKind.length > 0
+      ? parameters.sweepKind
+      : typeof parameters.sweep === "string"
+        ? parameters.sweep
+        : "study";
+  return `${variantLabel} | ${sweepKind}`;
+}
+
+function defaultComparisonStudyIds(
+  study: BacktestStudyRecord | undefined,
+  studies: BacktestStudyRecord[],
+): string[] {
+  if (!study) return [];
+  const sweep = patternStudySweepId(study);
+  if (!sweep) return [];
+  return studies
+    .filter((item) => item.id !== study.id && patternStudySweepId(item) === sweep)
+    .slice(0, 4)
+    .map((item) => item.id);
+}
+
+function applyPatternStudyDefaults(
+  study: BacktestStudyRecord,
+  setters: {
+    setName: (value: string) => void;
+    setSymbolsRaw: (value: string) => void;
+    setTimeframeSet: (value: string[]) => void;
+    setBaseTimeframe: (value: string) => void;
+    setHorizonsRaw: (value: string) => void;
+    setHorizonBars: (value: number) => void;
+    setStartsAt: (value: string) => void;
+    setEndsAt: (value: string) => void;
+    setMinSampleThreshold: (value: number) => void;
+    setNFloor: (value: number) => void;
+  },
+): void {
+  const parameters = patternStudyParameters(study);
+  const frames = stringArray(parameters.timeframeSet);
+  const horizons = numberArray(parameters.forwardHorizonsBars);
+  const minSampleThreshold =
+    typeof parameters.minSampleThreshold === "number" &&
+    Number.isFinite(parameters.minSampleThreshold)
+      ? Math.max(1, Math.floor(parameters.minSampleThreshold))
+      : 1;
+  setters.setName(study.name);
+  setters.setSymbolsRaw(study.symbols.join(","));
+  if (frames.length > 0) {
+    setters.setTimeframeSet(frames);
+  }
+  setters.setBaseTimeframe(
+    typeof parameters.baseTimeframe === "string"
+      ? parameters.baseTimeframe
+      : study.timeframe,
+  );
+  if (horizons.length > 0) {
+    setters.setHorizonsRaw(horizons.join(","));
+    setters.setHorizonBars(horizons[0]);
+  }
+  setters.setStartsAt(dateInputFromIso(study.startsAt));
+  setters.setEndsAt(dateInputFromIso(study.endsAt));
+  setters.setMinSampleThreshold(minSampleThreshold);
+  setters.setNFloor(minSampleThreshold);
+}
 
 function parseHorizons(raw: string): number[] {
   const parsed = raw

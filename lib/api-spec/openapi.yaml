@@ -3679,6 +3679,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlgoDeployment"
 
+  /algo/deployments/{deploymentId}/mode:
+    post:
+      operationId: setAlgoDeploymentMode
+      tags: [automation]
+      summary: Set an algo deployment's execution mode (shadow/live)
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAlgoDeploymentModeRequest"
+      responses:
+        "200":
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
   /algo/deployments/{deploymentId}/strategy-settings:
     patch:
       operationId: updateAlgoDeploymentStrategySettings
@@ -3703,6 +3728,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UpdateAlgoDeploymentStrategySettingsResponse"
+
+  /algo/deployments/{deploymentId}/signal-quality-kpis:
+    get:
+      operationId: getAlgoDeploymentSignalQualityKpis
+      tags: [automation]
+      summary: Get per-deployment signal-quality KPIs from a rolling signal backtest
+      description: >-
+        Computes signal-INDICATOR quality KPIs (not trading P&L) for a deployment
+        from a rolling stored-bar backtest of its signals under the current
+        control-panel settings. Optional draft strategy-settings fields may be
+        passed as query parameters to preview unsaved settings; an omitted field
+        falls back to the saved deployment config, then the signal-monitor
+        profile defaults.
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: signalTimeframe
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1m", "2m", "5m", "15m", "1h", "1d"]
+        - name: timeHorizon
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: bosConfirmation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [close, wicks]
+        - name: chochAtrBuffer
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: chochBodyExpansionAtr
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: chochVolumeGate
+          in: query
+          required: false
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Signal-quality KPIs for the deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalQualityKpiResponse"
 
   /algo/deployments/{deploymentId}/signal-options/state:
     get:
@@ -11366,8 +11449,37 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AlgoDeployment"
+        pnlByDeployment:
+          type: object
+          description: >-
+            Today's net P&L keyed by deployment id, for the deployment tab strip.
+            Present only for signal-options deployments; other kinds are omitted.
+          additionalProperties:
+            $ref: "#/components/schemas/AlgoDeploymentTodayPnl"
       required:
         - deployments
+
+    AlgoDeploymentTodayPnl:
+      type: object
+      properties:
+        todayPnl:
+          type: [number, "null"]
+        dailyRealizedPnl:
+          type: [number, "null"]
+        openUnrealizedPnl:
+          type: [number, "null"]
+      required:
+        - todayPnl
+        - dailyRealizedPnl
+        - openUnrealizedPnl
+
+    SetAlgoDeploymentModeRequest:
+      type: object
+      properties:
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+      required:
+        - mode
 
     UpdateAlgoDeploymentStrategySettingsRequest:
       type: object
@@ -11418,6 +11530,204 @@ components:
       required:
         - deployment
         - profile
+
+    SignalQualityKpiMetrics:
+      type: object
+      description: >-
+        Eight signal-INDICATOR quality KPIs. Percentages are in percentage
+        points (e.g. 0.42 = 0.42%).
+      properties:
+        signalCount:
+          type: integer
+        avgDirectionalMovePercent:
+          type: number
+        correctnessPercent:
+          type: number
+        expectancyPercent:
+          type: number
+        payoffRatio:
+          type: number
+        avgMfePercent:
+          type: number
+        avgMaePercent:
+          type: number
+        consistencyStdDevPercent:
+          type: number
+      required:
+        - signalCount
+        - avgDirectionalMovePercent
+        - correctnessPercent
+        - expectancyPercent
+        - payoffRatio
+        - avgMfePercent
+        - avgMaePercent
+        - consistencyStdDevPercent
+
+    SignalQualitySymbolBreakdown:
+      allOf:
+        - $ref: "#/components/schemas/SignalQualityKpiMetrics"
+        - type: object
+          properties:
+            symbol:
+              type: string
+          required:
+            - symbol
+
+    SignalQualityKpiDirectionalBreakdown:
+      type: object
+      description: >-
+        The eight KPIs computed over only buy (long) signals and only sell
+        (short) signals. Each side is a clean partition of the same observations
+        (realized return / MFE / MAE are already signed in the signal direction).
+      properties:
+        buy:
+          $ref: "#/components/schemas/SignalQualityKpiMetrics"
+        sell:
+          $ref: "#/components/schemas/SignalQualityKpiMetrics"
+      required:
+        - buy
+        - sell
+
+    SignalQualityKpiResult:
+      allOf:
+        - $ref: "#/components/schemas/SignalQualityKpiMetrics"
+        - type: object
+          properties:
+            horizonBars:
+              type: integer
+            mtfFilteredOutCount:
+              type: integer
+            perSymbol:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignalQualitySymbolBreakdown"
+            byDirection:
+              $ref: "#/components/schemas/SignalQualityKpiDirectionalBreakdown"
+          required:
+            - horizonBars
+            - mtfFilteredOutCount
+            - perSymbol
+            - byDirection
+
+    SignalQualityResolvedSettings:
+      type: object
+      properties:
+        signalTimeframe:
+          type: string
+          enum: ["1m", "2m", "5m", "15m", "1h", "1d"]
+        timeHorizon:
+          type: integer
+        bosConfirmation:
+          type: string
+          enum: [close, wicks]
+        chochAtrBuffer:
+          type: number
+        chochBodyExpansionAtr:
+          type: number
+        chochVolumeGate:
+          type: number
+      required:
+        - signalTimeframe
+        - timeHorizon
+        - bosConfirmation
+        - chochAtrBuffer
+        - chochBodyExpansionAtr
+        - chochVolumeGate
+
+    SignalQualityMtfConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        requiredCount:
+          type: number
+        timeframes:
+          type: array
+          items:
+            type: string
+      required:
+        - enabled
+        - requiredCount
+        - timeframes
+
+    SignalQualityCoverage:
+      type: object
+      description: >-
+        Actual data coverage backing the KPIs (window, timeframe, symbol slice),
+        including any fallback applied when the requested timeframe/window could
+        not be fully served.
+      properties:
+        requestedTimeframe:
+          type: string
+        resolvedTimeframe:
+          type: string
+        requestedWindowDays:
+          type: integer
+        windowStart:
+          type: string
+          format: date-time
+          nullable: true
+        windowEnd:
+          type: string
+          format: date-time
+          nullable: true
+        requestedSymbolCount:
+          type: integer
+        evaluatedSymbolCount:
+          type: integer
+        symbolsWithBars:
+          type: integer
+        symbolsTimedOut:
+          type: integer
+        barsPerSymbolCap:
+          type: integer
+        totalBars:
+          type: integer
+        truncatedSymbolUniverse:
+          type: boolean
+        usedTimeframeFallback:
+          type: boolean
+      required:
+        - requestedTimeframe
+        - resolvedTimeframe
+        - requestedWindowDays
+        - windowStart
+        - windowEnd
+        - requestedSymbolCount
+        - evaluatedSymbolCount
+        - symbolsWithBars
+        - symbolsTimedOut
+        - barsPerSymbolCap
+        - totalBars
+        - truncatedSymbolUniverse
+        - usedTimeframeFallback
+
+    SignalQualityKpiResponse:
+      type: object
+      properties:
+        deploymentId:
+          type: string
+        asOfDay:
+          type: string
+        settings:
+          $ref: "#/components/schemas/SignalQualityResolvedSettings"
+        mtf:
+          $ref: "#/components/schemas/SignalQualityMtfConfig"
+        kpis:
+          $ref: "#/components/schemas/SignalQualityKpiResult"
+        coverage:
+          $ref: "#/components/schemas/SignalQualityCoverage"
+        generatedAt:
+          type: string
+          format: date-time
+      required:
+        - deploymentId
+        - asOfDay
+        - settings
+        - mtf
+        - kpis
+        - coverage
+        - generatedAt
 
     OvernightSpotExecutionMode:
       type: string
@@ -12340,6 +12650,16 @@ components:
           format: date-time
         currentSignalPrice:
           type: [number, "null"]
+        currentSignalClose:
+          type: [number, "null"]
+        currentSignalMfePercent:
+          type: [number, "null"]
+        currentSignalMaePercent:
+          type: [number, "null"]
+        filterState:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
         latestBarAt:
           type: [string, "null"]
           format: date-time
@@ -12370,6 +12690,10 @@ components:
         - currentSignalDirection
         - currentSignalAt
         - currentSignalPrice
+        - currentSignalClose
+        - currentSignalMfePercent
+        - currentSignalMaePercent
+        - filterState
         - latestBarAt
         - latestBarClose
         - barsSinceSignal
@@ -12469,6 +12793,16 @@ components:
           format: date-time
         currentSignalPrice:
           type: [number, "null"]
+        currentSignalClose:
+          type: [number, "null"]
+        currentSignalMfePercent:
+          type: [number, "null"]
+        currentSignalMaePercent:
+          type: [number, "null"]
+        filterState:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
         latestBarAt:
           type: [string, "null"]
           format: date-time
@@ -12503,6 +12837,10 @@ components:
         - currentSignalDirection
         - currentSignalAt
         - currentSignalPrice
+        - currentSignalClose
+        - currentSignalMfePercent
+        - currentSignalMaePercent
+        - filterState
         - latestBarAt
         - latestBarClose
         - barsSinceSignal

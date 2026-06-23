@@ -1,4 +1,3 @@
-import { useSearchUniverseTickers } from "@workspace/api-client-react";
 import {
   ChevronDown,
   GripVertical,
@@ -8,7 +7,14 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { SignalDots } from "../../components/platform/signal-language";
 import {
@@ -58,6 +64,49 @@ import {
   sortWatchlistRows,
 } from "./watchlistModel";
 import { AppTooltip } from "@/components/ui/tooltip";
+import {
+  LazyWatchlistTickerSearch,
+  preloadWatchlistTickerSearch,
+} from "./tickerSearch/chartTickerSearchLoader.js";
+
+const WatchlistTickerSearchFallback = () => (
+  <div
+    data-testid="watchlist-ticker-search-loading"
+    aria-live="polite"
+    style={{
+      minHeight: dim(220),
+      display: "grid",
+      gap: sp(8),
+      padding: sp(12),
+      background: CSS_COLOR.bg1,
+      border: `1px solid ${CSS_COLOR.border}`,
+      borderRadius: dim(RADII.sm),
+    }}
+  >
+    <div
+      style={{
+        color: CSS_COLOR.textMuted,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+      }}
+    >
+      Loading search
+    </div>
+    {[0, 1, 2].map((index) => (
+      <div
+        key={index}
+        className="ra-skeleton-shimmer"
+        style={{
+          height: dim(34),
+          width: `${92 - index * 8}%`,
+          borderRadius: dim(RADII.xs),
+        }}
+      />
+    ))}
+  </div>
+);
 
 const formatSignedQuoteMove = (value) =>
   isFiniteNumber(value)
@@ -92,33 +141,6 @@ const WatchlistFilterInput = memo(({ value, onCommit }) => {
 });
 
 WatchlistFilterInput.displayName = "WatchlistFilterInput";
-
-const WatchlistAddSymbolInput = memo(({ value, onCommit }) => {
-  const { inputProps } = useDebouncedTextCommit({
-    value,
-    onCommit,
-  });
-
-  return (
-    <input
-      {...inputProps}
-      placeholder="Add symbol…"
-      style={{
-        flex: 1,
-        minWidth: 0,
-        background: "transparent",
-        border: "none",
-        outline: "none",
-        fontSize: textSize("paragraphMuted"),
-        fontFamily: T.sans,
-        color: CSS_COLOR.text,
-        letterSpacing: 0,
-      }}
-    />
-  );
-});
-
-WatchlistAddSymbolInput.displayName = "WatchlistAddSymbolInput";
 
 export const resolveWatchlistSparklineData = (snapshot, fallback) => {
   if (extractSparklinePoints(snapshot?.sparkBars).length >= 2) {
@@ -872,14 +894,12 @@ export const Watchlist = ({
   const [watchlistMenuOpen, setWatchlistMenuOpen] = useState(false);
   const [manageSheetOpen, setManageSheetOpen] = useState(false);
   const [addMode, setAddMode] = useState(false);
-  const [addQuery, setAddQuery] = useState("");
   const [sortMode, setSortMode] = useState(WATCHLIST_SORT_MODE.MANUAL);
   const [sortDirection, setSortDirection] = useState("desc");
   const [draggedItemId, setDraggedItemId] = useState(null);
   const [dragOverItemId, setDragOverItemId] = useState(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState(() => new Set());
-  const deferredAddQuery = useDeferredValue(addQuery.trim());
   const effectiveSignalEvents =
     Array.isArray(signalEvents) && signalEvents.length
       ? signalEvents
@@ -923,23 +943,6 @@ export const Watchlist = ({
   // sparklines color by this signal so the watchlist matches the STA table.
   const watchlistExecutionTimeframe =
     String(signalProfile?.timeframe || "").trim() || null;
-  const addSymbolSearch = useSearchUniverseTickers(
-    addMode && deferredAddQuery.length > 0
-      ? {
-          search: deferredAddQuery,
-          markets: ["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"],
-          active: true,
-          limit: 8,
-        }
-      : undefined,
-    {
-      query: {
-        enabled: addMode && deferredAddQuery.length > 0,
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
-  );
   const filtered = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     if (!normalizedSearch) return items;
@@ -996,20 +999,16 @@ export const Watchlist = ({
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
   const mobileDense = density === "mobile-dense";
   const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
-  const closeAddMode = ({ clearQuery = false } = {}) => {
-    setAddMode(false);
-    if (clearQuery) {
-      setAddQuery("");
-    }
-  };
+  const closeAddMode = () => setAddMode(false);
   const openManageSheet = () => {
     closeWatchlistMenu();
+    preloadWatchlistTickerSearch();
     setAddMode(true);
     setManageSheetOpen(true);
   };
   const closeManageSheet = () => {
     setManageSheetOpen(false);
-    closeAddMode({ clearQuery: true });
+    closeAddMode();
   };
   const toggleWatchlistMenu = () => {
     const nextOpen = !watchlistMenuOpen;
@@ -1021,8 +1020,8 @@ export const Watchlist = ({
   const toggleAddMode = () => {
     const nextOpen = !addMode;
     closeWatchlistMenu();
-    if (!nextOpen) {
-      setAddQuery("");
+    if (nextOpen) {
+      preloadWatchlistTickerSearch();
     }
     setAddMode(nextOpen);
   };
@@ -1136,10 +1135,26 @@ export const Watchlist = ({
     onDeleteWatchlist?.(activeWatchlist.id);
   };
 
-  const handleAddQuickSymbol = (symbol) => {
-    onAddSymbol?.(symbol, symbol);
-    closeAddMode({ clearQuery: true });
+  const handleSelectTickerSearchResult = (result, close = closeAddMode) => {
+    const ticker = result?.ticker;
+    if (!ticker) {
+      return;
+    }
+    onAddSymbol?.(ticker, result.name || ticker, result);
+    close();
   };
+  const renderWatchlistTickerSearch = (close = closeAddMode) => (
+    <Suspense fallback={<WatchlistTickerSearchFallback />}>
+      <LazyWatchlistTickerSearch
+        open
+        ticker={selected || quickAddSymbols[0] || "SPY"}
+        recentTickerRows={[]}
+        embedded
+        onClose={close}
+        onSelectTicker={(result) => handleSelectTickerSearchResult(result, close)}
+      />
+    </Suspense>
+  );
 
   const handleSelectSortMode = (nextMode) => {
     setSortMode(nextMode);
@@ -1598,139 +1613,7 @@ export const Watchlist = ({
               overflow: "hidden",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(8),
-                padding: sp("10px 12px"),
-                borderBottom: `1px solid ${CSS_COLOR.border}`,
-              }}
-            >
-              <WatchlistAddSymbolInput
-                value={addQuery}
-                onCommit={setAddQuery}
-              />
-              <AppTooltip content="Close add symbol"><button
-                type="button"
-                onClick={() => {
-                  closeAddMode({ clearQuery: true });
-                }}
-                style={{
-                  width: dim(28),
-                  height: dim(28),
-                  display: "grid",
-                  placeItems: "center",
-                  border: "none",
-                  background: "transparent",
-                  color: CSS_COLOR.textSec,
-                  cursor: "pointer",
-                  borderRadius: dim(RADII.sm),
-                }}
-              >
-                <X size={15} />
-              </button></AppTooltip>
-            </div>
-
-            <div style={{ maxHeight: dim(220), overflowY: "auto" }}>
-              {deferredAddQuery.length > 0
-                ? (addSymbolSearch.data?.results || []).map((result) => (
-                    <button
-                      key={`${result.ticker}-${result.name}`}
-                      type="button"
-                      onClick={() => {
-                        onAddSymbol?.(result.ticker, result.name || result.ticker, result);
-                        closeAddMode({ clearQuery: true });
-                      }}
-                      style={{
-                        width: "100%",
-                        display: "grid",
-                        gridTemplateColumns: `${dim(64)}px 1fr`,
-                        gap: sp(10),
-                        alignItems: "center",
-                        padding: sp("10px 12px"),
-                        background: "transparent",
-                        border: "none",
-                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-                        textAlign: "left",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: textSize("paragraphMuted"),
-                          fontWeight: FONT_WEIGHTS.medium,
-                          fontFamily: T.sans,
-                          color: CSS_COLOR.text,
-                          letterSpacing: 0,
-                        }}
-                      >
-                        {result.ticker}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: textSize("body"),
-                          color: CSS_COLOR.textSec,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {result.name || result.primaryExchange || "Equity"}
-                      </span>
-                    </button>
-                  ))
-                : quickAddSymbols.map((symbol) => (
-                    <button
-                      key={symbol}
-                      type="button"
-                      onClick={() => handleAddQuickSymbol(symbol)}
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: sp("10px 12px"),
-                        background: "transparent",
-                        border: "none",
-                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-                        cursor: "pointer",
-                        fontFamily: T.sans,
-                        fontSize: textSize("paragraphMuted"),
-                        fontWeight: FONT_WEIGHTS.medium,
-                        color: CSS_COLOR.text,
-                      }}
-                    >
-                      <span>{symbol}</span>
-                      <span
-                        style={{
-                          color: CSS_COLOR.textMuted,
-                          fontSize: textSize("caption"),
-                          letterSpacing: "0.04em",
-                          textTransform: "uppercase",
-                          fontWeight: FONT_WEIGHTS.medium,
-                        }}
-                      >
-                        Quick Add
-                      </span>
-                    </button>
-                  ))}
-              {addMode &&
-              deferredAddQuery.length > 0 &&
-              !addSymbolSearch.isPending &&
-              !(addSymbolSearch.data?.results || []).length ? (
-                <div
-                  style={{
-                    padding: sp("10px 8px"),
-                    color: CSS_COLOR.textDim,
-                    fontSize: textSize("caption"),
-                    fontFamily: T.sans,
-                  }}
-                >
-                  No matching symbols.
-                </div>
-              ) : null}
-            </div>
+            {renderWatchlistTickerSearch(closeAddMode)}
           </div>
         ) : null}
       </div>
@@ -1798,6 +1681,9 @@ export const Watchlist = ({
           type="button"
           data-testid="watchlist-add-toggle"
           onClick={mobileDense ? openManageSheet : toggleAddMode}
+          onPointerEnter={preloadWatchlistTickerSearch}
+          onPointerDownCapture={preloadWatchlistTickerSearch}
+          onFocus={preloadWatchlistTickerSearch}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1944,125 +1830,7 @@ export const Watchlist = ({
               overflow: "hidden",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(8),
-                padding: sp("12px 14px"),
-                borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-              }}
-            >
-              <Search size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
-              <WatchlistAddSymbolInput
-                value={addQuery}
-                onCommit={setAddQuery}
-              />
-            </div>
-            <div style={{ maxHeight: dim(280), overflowY: "auto" }}>
-              {deferredAddQuery.length > 0
-                ? (addSymbolSearch.data?.results || []).map((result) => (
-                    <button
-                      key={`${result.ticker}-${result.name}`}
-                      type="button"
-                      onClick={() => {
-                        onAddSymbol?.(result.ticker, result.name || result.ticker, result);
-                        closeManageSheet();
-                      }}
-                      style={{
-                        width: "100%",
-                        minHeight: dim(48),
-                        display: "grid",
-                        gridTemplateColumns: `${dim(72)}px minmax(0, 1fr)`,
-                        gap: sp(10),
-                        alignItems: "center",
-                        padding: sp("0 14px"),
-                        background: "transparent",
-                        border: "none",
-                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-                        color: CSS_COLOR.text,
-                        textAlign: "left",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontFamily: T.sans,
-                          fontSize: textSize("paragraphMuted"),
-                          fontWeight: FONT_WEIGHTS.medium,
-                          letterSpacing: 0,
-                        }}
-                      >
-                        {result.ticker}
-                      </span>
-                      <span
-                        style={{
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: CSS_COLOR.textSec,
-                          fontSize: textSize("body"),
-                        }}
-                      >
-                        {result.name || result.primaryExchange || "Equity"}
-                      </span>
-                    </button>
-                  ))
-                : quickAddSymbols.map((symbol) => (
-                    <button
-                      key={symbol}
-                      type="button"
-                      onClick={() => {
-                        handleAddQuickSymbol(symbol);
-                        closeManageSheet();
-                      }}
-                      style={{
-                        width: "100%",
-                        minHeight: dim(44),
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: sp("0 14px"),
-                        background: "transparent",
-                        border: "none",
-                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-                        color: CSS_COLOR.text,
-                        cursor: "pointer",
-                        fontFamily: T.sans,
-                        fontSize: textSize("paragraphMuted"),
-                        fontWeight: FONT_WEIGHTS.medium,
-                      }}
-                    >
-                      <span>{symbol}</span>
-                      <span
-                        style={{
-                          color: CSS_COLOR.textMuted,
-                          fontSize: textSize("caption"),
-                          letterSpacing: "0.04em",
-                          textTransform: "uppercase",
-                          fontWeight: FONT_WEIGHTS.medium,
-                        }}
-                      >
-                        Quick Add
-                      </span>
-                    </button>
-                  ))}
-              {deferredAddQuery.length > 0 &&
-              !addSymbolSearch.isPending &&
-              !(addSymbolSearch.data?.results || []).length ? (
-                <div
-                  style={{
-                    padding: sp("12px 8px"),
-                    color: CSS_COLOR.textDim,
-                    fontFamily: T.sans,
-                    fontSize: textSize("caption"),
-                  }}
-                >
-                  No matching symbols.
-                </div>
-              ) : null}
-            </div>
+            {renderWatchlistTickerSearch(closeManageSheet)}
           </div>
         </div>
       </BottomSheet>

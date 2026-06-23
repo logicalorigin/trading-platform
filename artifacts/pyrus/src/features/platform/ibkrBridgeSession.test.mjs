@@ -111,7 +111,7 @@ test("Windows browsers still use direct protocol when the paired desktop is stal
   );
 });
 
-test("Windows browsers queue remote launch when the paired desktop agent is online", () => {
+test("Windows browsers use direct protocol even when the paired desktop agent is online", () => {
   setNavigatorPlatform("Win32");
 
   assert.equal(
@@ -119,7 +119,7 @@ test("Windows browsers queue remote launch when the paired desktop agent is onli
       desktopAgentOnline: true,
       desktopAgentRegistered: true,
     }),
-    true,
+    false,
   );
 });
 
@@ -137,13 +137,27 @@ test("Windows browsers use direct protocol when the paired desktop agent needs a
   );
 });
 
-test("non-Windows browsers use remote launch", () => {
+test("non-Windows browsers use direct protocol when no desktop agent is online", () => {
   setNavigatorPlatform("MacIntel");
 
   assert.equal(
     shouldUseRemoteIbkrLaunchBrowser({
       desktopAgentOnline: false,
       desktopAgentRegistered: false,
+    }),
+    false,
+  );
+});
+
+test("non-Windows browsers queue remote launch when the paired desktop agent is online", () => {
+  setNavigatorPlatform("MacIntel");
+
+  assert.equal(
+    shouldUseRemoteIbkrLaunchBrowser({
+      desktopAgentCompatible: true,
+      desktopAgentOnline: true,
+      desktopAgentRegistered: true,
+      desktopAgentUpgradeRequired: false,
     }),
     true,
   );

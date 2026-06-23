@@ -5393,10 +5393,8 @@ const UNIVERSE_SEARCH_CACHE_TTL_MS = 30_000;
 // keystroke is warm without masking background IBKR trade-contract hydration.
 const UNIVERSE_SEARCH_NON_TRADABLE_CACHE_TTL_MS = 8_000;
 const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 6_000;
-// Non-strict (chart) search only reaches the IBKR fall-through when Massive and
-// the catalog both came up empty (e.g. a typo or an IBKR-only/futures symbol).
-// Cap that wait so a no-match keystroke settles fast instead of blocking on the
-// broker for the full strict budget; strict trade resolution keeps the 6s.
+// Strict trade resolution keeps the full IBKR budget. Non-strict chart search
+// returns from the Massive-only branch before the interactive broker path.
 const UNIVERSE_SEARCH_NON_STRICT_IBKR_BUDGET_MS = 2_000;
 const UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS = 1_500;
 // Foreground (chart / non-strict) search is pointed at Massive. Keep its budget
@@ -6227,8 +6225,8 @@ function writeUniverseSearchCache(
 // Cache a response the foreground search is about to return, decoupled from
 // whether it carries an IBKR trade contract. IBKR-tradable responses keep the
 // full TTL; everything else (Massive/catalog-only matches, no-match results)
-// gets the short TTL so repeated keystrokes are warm but background IBKR
-// hydration still upgrades the row shortly after.
+// gets the short TTL so repeated keystrokes are warm without pinning stale
+// catalog coverage.
 function cacheUniverseSearchResponse(
   key: string,
   data: UniverseSearchResponse,
@@ -7022,6 +7020,26 @@ function sanitizeUniverseSearchResponse(
   };
 }
 
+function toMassiveOnlyUniverseTicker(
+  ticker: UniverseTicker,
+): UniverseTicker | null {
+  const hydrated = hydrateUniverseTickerMetadata(ticker);
+  const hasMassiveCoverage =
+    hydrated.providers.includes("massive") ||
+    hydrated.provider === "massive" ||
+    hydrated.dataProviderPreference === "massive";
+  if (!hasMassiveCoverage) return null;
+
+  return {
+    ...hydrated,
+    providers: ["massive"],
+    provider: "massive",
+    tradeProvider: null,
+    dataProviderPreference: "massive",
+    providerContractId: null,
+  };
+}
+
 function normalizeUniverseLogoSymbols(symbols: string[] | string | undefined) {
   const rawSymbols = Array.isArray(symbols)
     ? symbols
@@ -7197,6 +7215,22 @@ function finalizeUniverseSearchResponse(input: {
     .slice(0, input.resultLimit);
 
   return sanitizeUniverseSearchResponse({ count: results.length, results });
+}
+
+function finalizeMassiveOnlyUniverseSearchResponse(input: {
+  providerResults: UniverseTicker[];
+  requestedMarketSet: Set<UniverseMarket>;
+  normalizedSearch: string;
+  resultLimit: number;
+}): UniverseSearchResponse {
+  const providerResults = input.providerResults
+    .map(toMassiveOnlyUniverseTicker)
+    .filter((ticker): ticker is UniverseTicker => Boolean(ticker));
+
+  return finalizeUniverseSearchResponse({
+    ...input,
+    providerResults,
+  });
 }
 
 async function runUniverseSearchTask(
@@ -7682,8 +7716,7 @@ async function runInteractiveUniverseSearch(input: {
 // "point ticker search at Massive, not the broker" path: it queries Massive's
 // free-text reference search (plus the exact ticker lookup) under a tight
 // budget and never blocks on the IBKR bridge. IBKR remains the authority for
-// strict trade resolution and continues to hydrate trade contracts in the
-// background.
+// strict trade resolution.
 async function runMassiveForegroundUniverseSearch(input: {
   searchInput: SearchUniverseTickersInput;
   normalizedSearch: string;
@@ -7725,6 +7758,24 @@ async function runMassiveForegroundUniverseSearch(input: {
           results: ticker ? [ticker] : [],
         })),
     );
+  }
+
+  for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
+    for (const market of massiveMarkets.filter(
+      (candidate) =>
+        candidate === "stocks" || candidate === "etf" || candidate === "otc",
+    )) {
+      tasks.push(
+        massiveClient.searchUniverseTickers({
+          market,
+          markets: [market],
+          cusip,
+          active: input.searchInput.active,
+          limit: searchLimit,
+          signal: budgetSignal.signal,
+        }),
+      );
+    }
   }
 
   for (const market of massiveMarkets) {
@@ -7908,7 +7959,6 @@ export async function searchUniverseTickers(
   const resultLimit = normalizeUniverseSearchLimit(input.limit);
   const requestedMarkets = resolveRequestedUniverseMarkets(input);
   const requestedMarketSet = new Set(requestedMarkets);
-  const identifierSearch = isUniverseIdentifierSearch(normalizedSearch);
   const strictTradeResolve =
     input.mode === "trade-resolve" || input.strictTrade === true;
   const cacheKey = getUniverseSearchCacheKey(
@@ -7951,32 +8001,9 @@ export async function searchUniverseTickers(
         }
       }
 
-      if (!strictTradeResolve && !identifierSearch) {
-        enqueueUniverseCatalogIbkrHydrationRows(catalogResponse.listingRows);
-        if (
-          shouldUseUniverseCatalogImmediateResponse({
-            response: catalogResponse,
-            normalizedSearch,
-            requestedMarkets,
-          })
-        ) {
-          cacheUniverseSearchResponse(cacheKey, catalogResponse);
-          return catalogResponse;
-        }
-      }
-
-      if (
-        !strictTradeResolve &&
-        identifierSearch &&
-        shouldUseUniverseCatalogResponse({
-          response: catalogResponse,
-          normalizedSearch,
-          requestedMarkets,
-        })
-      ) {
-        cacheUniverseSearchResponse(cacheKey, catalogResponse);
-        return catalogResponse;
-      }
+      // Non-strict chart search keeps catalog rows only as a Massive coverage
+      // seed below; it does not return them before the Massive foreground
+      // lookup and does not enqueue IBKR contract hydration.
     }
   } catch (error) {
     logger.debug(
@@ -7986,12 +8013,10 @@ export async function searchUniverseTickers(
   }
 
   // Chart (non-strict) search is pointed at Massive rather than the IBKR
-  // broker. Run a fast Massive foreground search, merge it with whatever the
-  // catalog returned, and return immediately when anything matches. Only a
-  // genuinely empty Massive+catalog result falls through to the live IBKR
-  // interactive search below (which still covers IBKR-only markets such as
-  // futures and seeds trade-contract hydration in the background).
-  if (!strictTradeResolve && !identifierSearch) {
+  // broker. Run a fast Massive foreground search, merge it with Massive-covered
+  // catalog rows, strip broker-only metadata, and return immediately. Strict
+  // trade resolution remains the IBKR-authoritative path below.
+  if (!strictTradeResolve) {
     const massiveForeground = await runMassiveForegroundUniverseSearch({
       searchInput,
       normalizedSearch,
@@ -8000,25 +8025,25 @@ export async function searchUniverseTickers(
       resultLimit,
       signal: options.signal,
     });
-    const mergedResponse = finalizeUniverseSearchResponse({
+    const mergedResponse = finalizeMassiveOnlyUniverseSearchResponse({
       providerResults: [
-        ...(catalogResponse?.results ?? []),
         ...massiveForeground.results,
+        ...(catalogResponse?.results ?? []),
       ],
       requestedMarketSet,
       normalizedSearch,
       resultLimit,
     });
+    cacheUniverseSearchResponse(cacheKey, mergedResponse, { allowEmpty: true });
     if (mergedResponse.results.length) {
-      cacheUniverseSearchResponse(cacheKey, mergedResponse);
       void upsertUniverseCatalogRows(mergedResponse.results).catch((err) => {
         logger.debug(
           { err, search: normalizedSearch },
           "persisted universe catalog upsert failed",
         );
       });
-      return mergedResponse;
     }
+    return mergedResponse;
   }
 
   let flight = universeSearchInFlight.get(cacheKey);
@@ -16106,7 +16131,10 @@ export async function getOptionExpirationsWithDebug(input: {
       { err: error, underlying: normalizedUnderlying },
       "Returning degraded empty option expirations after transient upstream failure",
     );
-    return {
+    const degradedResult: {
+      expirations: IbkrOptionExpirationDates;
+      debug: RequestDebugMetadata;
+    } = {
       expirations: [],
       debug: {
         cacheStatus: "miss" as const,
@@ -16117,6 +16145,7 @@ export async function getOptionExpirationsWithDebug(input: {
         reason: "options_upstream_failure",
       },
     };
+    return degradedResult;
   });
   const today = new Date();
   const todayUtc = Date.UTC(

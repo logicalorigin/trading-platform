@@ -1,6 +1,14 @@
 // Shared chart-widget types, style helpers, and the symbol-search trigger.
 // Extracted verbatim from ResearchChartFrame.tsx.
-import { memo, type CSSProperties, type ReactNode } from "react";
+import {
+  memo,
+  useRef,
+  type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 // @ts-expect-error JSX module imported into TypeScript context
 import { FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
 import type { ChartDisplayType, ChartSurfaceControls } from "./ResearchChartSurface";
@@ -72,6 +80,7 @@ export type ResearchChartWidgetHeaderProps = {
   onToggleFavoriteTimeframe?: (next: string) => void;
   onPrewarmTimeframe?: (next: string) => void;
   onOpenSearch?: () => void;
+  onSearchIntent?: () => void;
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
   searchContent?: ReactNode;
@@ -337,6 +346,7 @@ type ChartSymbolSearchTriggerProps = {
   hasAnchoredSearch: boolean;
   searchOpen?: boolean;
   onOpenSearch?: () => void;
+  onSearchIntent?: () => void;
   onSearchOpenChange?: (open: boolean) => void;
   searchContent?: ReactNode;
   chromeDense: boolean;
@@ -353,6 +363,7 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
   hasAnchoredSearch,
   searchOpen,
   onOpenSearch,
+  onSearchIntent,
   onSearchOpenChange,
   searchContent,
   chromeDense,
@@ -360,6 +371,7 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
   iconOnlyChrome,
   identitySlot = null,
 }: ChartSymbolSearchTriggerProps) {
+  const suppressNextTriggerClickRef = useRef(false);
   const triggerStyle = {
     ...barButtonStyle({ theme, palette, dense: chromeDense }),
     color: theme.text,
@@ -384,6 +396,33 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
       {canSearch ? <ChevronDown style={iconStyle(chromeDense)} /> : null}
     </>
   );
+  const handleSearchIntent = () => {
+    if (canSearch) {
+      onSearchIntent?.();
+    }
+  };
+  const handleSearchPointerDownCapture = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    if (!canSearch) return;
+    onSearchIntent?.();
+    if (hasAnchoredSearch && !searchOpen) {
+      suppressNextTriggerClickRef.current = true;
+      event.preventDefault();
+      onSearchOpenChange?.(true);
+    }
+  };
+  const handleSearchClickCapture = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) => {
+    if (!suppressNextTriggerClickRef.current) return;
+    suppressNextTriggerClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const handleSearchFocus = (_event: ReactFocusEvent<HTMLButtonElement>) => {
+    handleSearchIntent();
+  };
 
   if (hasAnchoredSearch) {
     return (
@@ -393,6 +432,10 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
             type="button"
             aria-label={`Search ${symbol}`}
             data-testid="chart-symbol-search-button"
+            onPointerEnter={handleSearchIntent}
+            onPointerDownCapture={handleSearchPointerDownCapture}
+            onClickCapture={handleSearchClickCapture}
+            onFocus={handleSearchFocus}
             style={triggerStyle}
           >
             {triggerContent}
@@ -426,6 +469,9 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
         aria-label={canSearch ? `Search ${symbol}` : symbol}
         data-testid={canSearch ? "chart-symbol-search-button" : undefined}
         onClick={canSearch ? onOpenSearch : undefined}
+        onPointerEnter={handleSearchIntent}
+        onPointerDownCapture={handleSearchPointerDownCapture}
+        onFocus={handleSearchFocus}
         style={triggerStyle}
       >
         {triggerContent}

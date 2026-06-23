@@ -127,6 +127,7 @@ import {
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
 import { loadStoredMarketBarsBySymbol } from "../services/market-data-store";
+import { normalizeSymbol } from "../lib/values";
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
@@ -2400,7 +2401,10 @@ router.post("/sparklines/seed", async (req, res) => {
   const barsBySymbol = await loadSparklineSeedBarsBySymbol(body);
   const items = body.symbols.map((symbol) => {
     const normalized = symbol.trim().toUpperCase();
-    const bars = barsBySymbol[normalized] || [];
+    // The bars map is keyed by normalizeSymbol() (share-class dashes -> dots, e.g.
+    // BRK-B -> BRK.B); look it up with the SAME normalization or dash tickers miss
+    // and render a blank sparkline. Keep `symbol: normalized` so the client matches the row.
+    const bars = barsBySymbol[normalizeSymbol(symbol)] || [];
     return {
       symbol: normalized,
       status: bars.length ? "fulfilled" : "empty",

@@ -25,3 +25,39 @@ test("trade equity ticker search content is memoized by open state", () => {
     /searchContent=\{equityTickerSearchContent\}/,
   );
 });
+
+test("trade ticker search module is not preloaded with the screen", () => {
+  const preloadScreenModulesBlock =
+    /export const preloadScreenModules = \(\) =>[\s\S]*?\]\)\.then\(\(\) => undefined\);/.exec(
+      tradeScreenSource,
+    )?.[0] ?? "";
+
+  assert.match(
+    tradeScreenSource,
+    /from "\.\.\/features\/platform\/tickerSearch\/chartTickerSearchLoader\.js";/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /scheduleChartTickerSearchPreload\(preloadMiniChartTickerSearch\)/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /<LazyMiniChartTickerSearch/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /onSearchIntent=\{preloadMiniChartTickerSearch\}/,
+  );
+  assert.doesNotMatch(
+    preloadScreenModulesBlock,
+    /preloadMiniChartTickerSearch/,
+  );
+  assert.doesNotMatch(
+    tradeScreenSource,
+    /import\("\.\.\/features\/platform\/tickerSearch\/ChartTickerSearch\.jsx"\)/,
+  );
+  assert.doesNotMatch(
+    tradeScreenSource,
+    /import\("\.\.\/features\/platform\/tickerSearch\/TickerSearch\.jsx"\)/,
+  );
+});

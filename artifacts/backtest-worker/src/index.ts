@@ -2315,14 +2315,6 @@ async function persistPatternResults(
   occurrenceRows: PatternOccurrenceRow[],
   coverageWarnings: string[],
 ): Promise<void> {
-  // Re-runnable: replace any prior results for this study.
-  await db
-    .delete(mtfPatternResultsTable)
-    .where(eq(mtfPatternResultsTable.studyId, studyId));
-  await db
-    .delete(mtfPatternOccurrencesTable)
-    .where(eq(mtfPatternOccurrencesTable.studyId, studyId));
-
   const dataQuality = {
     signalSource: "pyrus-signals-core",
     timeframeSet: config.timeframeSet,
@@ -2330,43 +2322,53 @@ async function persistPatternResults(
     coverageWarnings: coverageWarnings.slice(0, 50),
   };
 
-  for (let index = 0; index < results.length; index += 500) {
-    const chunk = results.slice(index, index + 500).map((row) => ({
-      studyId,
-      jobId,
-      patternKey: row.patternKey,
-      timeframeSet: config.timeframeSet,
-      baseTimeframe: config.baseTimeframe,
-      horizonBars: row.horizonBars,
-      sampleCount: row.sampleCount,
-      bias: row.bias,
-      winRatePct: patternNumericString(row.winRatePct),
-      meanReturnPct: patternNumericString(row.meanReturnPct),
-      medianReturnPct: patternNumericString(row.medianReturnPct),
-      stdReturnPct: patternNumericString(row.stdReturnPct),
-      avgMaePct: patternNumericString(row.avgMaePct),
-      avgMfePct: patternNumericString(row.avgMfePct),
-      score: patternNumericString(row.score),
-      tStat: patternNumericString(row.tStat),
-      rank: row.rank,
-      dataQuality,
-    }));
-    await db.insert(mtfPatternResultsTable).values(chunk);
-  }
+  await db.transaction(async (tx) => {
+    // Re-runnable: atomically replace any prior results for this study.
+    await tx
+      .delete(mtfPatternResultsTable)
+      .where(eq(mtfPatternResultsTable.studyId, studyId));
+    await tx
+      .delete(mtfPatternOccurrencesTable)
+      .where(eq(mtfPatternOccurrencesTable.studyId, studyId));
 
-  for (let index = 0; index < occurrenceRows.length; index += 1000) {
-    const chunk = occurrenceRows.slice(index, index + 1000).map((row) => ({
-      studyId,
-      symbol: row.symbol,
-      occurredAt: row.occurredAt,
-      patternKey: row.patternKey,
-      horizonBars: row.horizonBars,
-      realizedReturnPct: patternNumericString(row.realizedReturnPct),
-      maePct: patternNumericString(row.maePct),
-      mfePct: patternNumericString(row.mfePct),
-    }));
-    await db.insert(mtfPatternOccurrencesTable).values(chunk);
-  }
+    for (let index = 0; index < results.length; index += 500) {
+      const chunk = results.slice(index, index + 500).map((row) => ({
+        studyId,
+        jobId,
+        patternKey: row.patternKey,
+        timeframeSet: config.timeframeSet,
+        baseTimeframe: config.baseTimeframe,
+        horizonBars: row.horizonBars,
+        sampleCount: row.sampleCount,
+        bias: row.bias,
+        winRatePct: patternNumericString(row.winRatePct),
+        meanReturnPct: patternNumericString(row.meanReturnPct),
+        medianReturnPct: patternNumericString(row.medianReturnPct),
+        stdReturnPct: patternNumericString(row.stdReturnPct),
+        avgMaePct: patternNumericString(row.avgMaePct),
+        avgMfePct: patternNumericString(row.avgMfePct),
+        score: patternNumericString(row.score),
+        tStat: patternNumericString(row.tStat),
+        rank: row.rank,
+        dataQuality,
+      }));
+      await tx.insert(mtfPatternResultsTable).values(chunk);
+    }
+
+    for (let index = 0; index < occurrenceRows.length; index += 1000) {
+      const chunk = occurrenceRows.slice(index, index + 1000).map((row) => ({
+        studyId,
+        symbol: row.symbol,
+        occurredAt: row.occurredAt,
+        patternKey: row.patternKey,
+        horizonBars: row.horizonBars,
+        realizedReturnPct: patternNumericString(row.realizedReturnPct),
+        maePct: patternNumericString(row.maePct),
+        mfePct: patternNumericString(row.mfePct),
+      }));
+      await tx.insert(mtfPatternOccurrencesTable).values(chunk);
+    }
+  });
 }
 
 async function processPatternDiscovery(job: JobRow): Promise<void> {

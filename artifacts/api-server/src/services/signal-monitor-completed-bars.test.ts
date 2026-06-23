@@ -89,6 +89,62 @@ test("bars since signal never reads fresher than the present-bar count", () => {
   );
 });
 
+test("signal monitor excursion uses bars after the signal close", () => {
+  const excursion =
+    __signalMonitorInternalsForTests.resolveSignalMonitorCurrentSignalExcursion({
+      direction: "buy",
+      signalClose: 100,
+      signalAt: new Date("2026-06-11T14:30:00.000Z"),
+      barEntries: [
+        {
+          chartBar: { h: 130, l: 70, c: 100 },
+          closedAt: new Date("2026-06-11T14:30:00.000Z"),
+        },
+        {
+          chartBar: { h: 112, l: 95, c: 108 },
+          closedAt: new Date("2026-06-11T14:35:00.000Z"),
+        },
+        {
+          chartBar: { h: 118, l: 104, c: 110 },
+          closedAt: new Date("2026-06-11T14:40:00.000Z"),
+        },
+      ] as never,
+    });
+
+  assert.deepEqual(excursion, {
+    mfePercent: 18,
+    maePercent: -5,
+  });
+});
+
+test("signal monitor excursion is direction-aware for sell signals", () => {
+  const excursion =
+    __signalMonitorInternalsForTests.resolveSignalMonitorCurrentSignalExcursion({
+      direction: "sell",
+      signalClose: 200,
+      signalAt: new Date("2026-06-11T14:30:00.000Z"),
+      barEntries: [
+        {
+          chartBar: { h: 260, l: 100, c: 200 },
+          closedAt: new Date("2026-06-11T14:30:00.000Z"),
+        },
+        {
+          chartBar: { h: 210, l: 180, c: 184 },
+          closedAt: new Date("2026-06-11T14:35:00.000Z"),
+        },
+        {
+          chartBar: { h: 206, l: 170, c: 175 },
+          closedAt: new Date("2026-06-11T14:40:00.000Z"),
+        },
+      ] as never,
+    });
+
+  assert.deepEqual(excursion, {
+    mfePercent: 15,
+    maePercent: -5,
+  });
+});
+
 test("cross-session intraday signal is counted as very old, not artificially fresh", () => {
   // Signal from the prior session with a current latest bar must not look fresh
   // just because the gappy cache only holds 1 bar.
@@ -231,6 +287,77 @@ test("a delayed bar replay never displaces a live bar for the same bucket", () =
   assert.equal((upgraded[0] as { delayed?: boolean }).delayed, false);
 });
 
+test("signal monitor rejects live-edge bars that conflict with trusted same-symbol history", () => {
+  const filterLiveEdge =
+    __signalMonitorInternalsForTests.filterSignalMonitorLiveEdgeBarsForTrustedMove;
+  const trustedBase = {
+    ...(bar("2026-06-17T20:00:00.000Z") as Record<string, unknown>),
+    source: "massive-history",
+    open: 109,
+    high: 109.3,
+    low: 108.9,
+    close: 109,
+  } as never;
+  const corruptLiveEdge = {
+    ...(bar("2026-06-18T08:00:00.000Z") as Record<string, unknown>),
+    source: "massive-websocket",
+    open: 76.91,
+    high: 76.91,
+    low: 76.91,
+    close: 76.91,
+  } as never;
+  const plausibleLiveEdge = {
+    ...(bar("2026-06-18T08:01:00.000Z") as Record<string, unknown>),
+    source: "massive-websocket",
+    open: 110,
+    high: 110,
+    low: 110,
+    close: 110,
+  } as never;
+
+  const filtered = filterLiveEdge({
+    symbol: "AGZ",
+    timeframe: "1m",
+    baseBars: [trustedBase],
+    liveEdgeBars: [corruptLiveEdge, plausibleLiveEdge],
+  });
+
+  assert.equal(filtered.length, 1);
+  assert.equal((filtered[0] as { close: number }).close, 110);
+});
+
+test("signal monitor does not persist live-edge signal identity without a trusted reference", () => {
+  const liveOnlyBar = {
+    ...(bar("2026-06-18T08:00:00.000Z") as Record<string, unknown>),
+    source: "massive-websocket",
+    open: 76.91,
+    high: 76.91,
+    low: 76.91,
+    close: 76.91,
+  } as never;
+
+  const integrity =
+    __signalMonitorInternalsForTests.resolveSignalMonitorSourceIntegrity({
+      bar: liveOnlyBar,
+      referenceBars: [],
+    });
+
+  assert.equal(integrity.trusted, false);
+  assert.equal(integrity.reason, "missing-reference");
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistCanonicalSignalMonitorEvent({
+      fresh: true,
+      barsSinceSignal: 0,
+      freshWindowBars: 3,
+      signalAt: new Date("2026-06-18T08:01:00.000Z"),
+      evaluatedAt: new Date("2026-06-18T08:01:10.000Z"),
+      sourceBarPartial: false,
+      sourceBarTrusted: integrity.trusted,
+    }),
+    false,
+  );
+});
+
 test("daily bar completeness is consistent across the UTC/NY date boundary", () => {
   // Convention: daily bars timestamped at UTC midnight carry their TRADING
   // date; completeness compares against the NY calendar date of evaluatedAt.
@@ -289,7 +416,11 @@ test("reconciliation keeps adopted 1d rows age-less until the next daily eval", 
     "utf8",
   );
   assert.match(source, /bars_since_signal = NULL/);
-  const recomputeTimeframes = source.match(/timeframe IN \(([^)]*)\)/);
+  const recomputeBlock = source.match(
+    /const barsUndercountWhere = sql`([\s\S]*?)`;/,
+  );
+  assert.ok(recomputeBlock, "intraday recompute block exists");
+  const recomputeTimeframes = recomputeBlock[1]?.match(/timeframe IN \(([^)]*)\)/);
   assert.ok(recomputeTimeframes, "intraday recompute timeframe list exists");
   assert.doesNotMatch(recomputeTimeframes[1], /'1d'/);
   assert.equal(
@@ -327,6 +458,10 @@ type LatchValues = {
   currentSignalDirection: "buy" | "sell" | null;
   currentSignalAt: Date | null;
   currentSignalPrice: string | null;
+  currentSignalClose: string | null;
+  currentSignalMfePercent: string | null;
+  currentSignalMaePercent: string | null;
+  filterState: Record<string, unknown> | null;
   barsSinceSignal: number | null;
   fresh: boolean;
   latestBarAt: Date;
@@ -337,6 +472,10 @@ const latchValues = (overrides: Partial<LatchValues> = {}): LatchValues => ({
   currentSignalDirection: null,
   currentSignalAt: null,
   currentSignalPrice: null,
+  currentSignalClose: null,
+  currentSignalMfePercent: null,
+  currentSignalMaePercent: null,
+  filterState: null,
   barsSinceSignal: null,
   fresh: false,
   latestBarAt: new Date("2026-06-10T22:00:00.000Z"),
@@ -347,6 +486,10 @@ const latchExisting = {
   currentSignalDirection: "sell",
   currentSignalAt: new Date("2026-06-09T15:00:00.000Z"),
   currentSignalPrice: "12.5",
+  currentSignalClose: null,
+  currentSignalMfePercent: null,
+  currentSignalMaePercent: null,
+  filterState: { mtfDirections: [-1, -1, 1], adx: 28 },
   barsSinceSignal: 21,
 } as never;
 
@@ -358,8 +501,10 @@ test("matrix cache latches the last signal when a re-eval finds no new signal", 
   // No new signal this eval -> keep the cached sell, refresh freshness/bars meta.
   assert.equal(result.currentSignalDirection, "sell");
   assert.equal(result.currentSignalPrice, "12.5");
+  assert.deepEqual(result.filterState, { mtfDirections: [-1, -1, 1], adx: 28 });
   assert.equal(result.fresh, false);
   // Bar metadata still advances.
+  assert.ok(result.latestBarAt);
   assert.equal(result.latestBarAt.toISOString(), "2026-06-10T22:00:00.000Z");
 });
 
@@ -369,6 +514,10 @@ test("matrix cache advances latched signal bar age from timestamps", () => {
       currentSignalDirection: "buy",
       currentSignalAt: new Date("2026-06-12T16:25:00.000Z"),
       currentSignalPrice: "100",
+      currentSignalClose: null,
+      currentSignalMfePercent: null,
+      currentSignalMaePercent: null,
+      filterState: { mtfDirections: [1, 1, 1], adx: 31 },
       barsSinceSignal: 1,
     } as never,
     values: latchValues({
@@ -389,6 +538,7 @@ test("matrix cache flips direction when an opposite signal arrives", () => {
     values: latchValues({
       currentSignalDirection: "buy",
       currentSignalPrice: "13.1",
+      currentSignalClose: null,
       fresh: true,
     }),
   });
@@ -526,6 +676,10 @@ test("non-current signal state snapshots preserve last-known direction for displ
         currentSignalDirection: "sell",
         currentSignalAt: new Date("2026-06-08T17:02:00.000Z"),
         currentSignalPrice: "48.12",
+        currentSignalClose: null,
+        currentSignalMfePercent: null,
+        currentSignalMaePercent: null,
+        filterState: { mtfDirections: [-1, -1, -1], adx: 26 },
         latestBarAt: new Date("2026-06-08T17:44:00.000Z"),
         barsSinceSignal: 42,
         fresh: false,
@@ -549,6 +703,7 @@ test("non-current signal state snapshots preserve last-known direction for displ
     "2026-06-08T17:02:00.000Z",
   );
   assert.equal(response.currentSignalPrice, 48.12);
+  assert.deepEqual(response.filterState, { mtfDirections: [-1, -1, -1], adx: 26 });
   assert.equal(response.barsSinceSignal, 42);
 });
 
@@ -1068,6 +1223,10 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
           currentSignalDirection: "buy",
           currentSignalAt: evaluatedAt,
           currentSignalPrice: 500,
+          currentSignalClose: null,
+          currentSignalMfePercent: null,
+          currentSignalMaePercent: null,
+          filterState: { mtfDirections: [1, 1, 1], adx: 30 },
           latestBarAt: evaluatedAt,
           latestBarClose: 501,
           barsSinceSignal: 0,

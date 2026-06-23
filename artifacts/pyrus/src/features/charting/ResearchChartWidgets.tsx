@@ -318,6 +318,7 @@ export const ResearchChartWidgetHeader = ({
   onToggleFavoriteTimeframe,
   onPrewarmTimeframe,
   onOpenSearch,
+  onSearchIntent,
   searchOpen,
   onSearchOpenChange,
   searchContent,
@@ -490,6 +491,7 @@ export const ResearchChartWidgetHeader = ({
           hasAnchoredSearch={hasAnchoredSearch}
           searchOpen={searchOpen}
           onOpenSearch={onOpenSearch}
+          onSearchIntent={onSearchIntent}
           onSearchOpenChange={onSearchOpenChange}
           searchContent={searchContent}
           chromeDense={chromeDense}

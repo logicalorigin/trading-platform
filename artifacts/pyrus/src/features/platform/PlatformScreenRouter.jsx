@@ -122,7 +122,6 @@ export const PlatformScreenRouter = ({
       onSymClick={onSelectSymbol}
       onChartFocus={onFocusMarketChart}
       symbols={watchlistSymbols}
-      signalSuggestionSymbols={signalMonitorSymbols}
       isVisible={marketDataActive}
       researchConfigured={researchConfigured}
       safeQaMode={safeQaMode}

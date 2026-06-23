@@ -6,7 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { AlgoDeployment } from './algoDeployment';
+import type { AlgoDeploymentsResponsePnlByDeployment } from './algoDeploymentsResponsePnlByDeployment';
 
 export interface AlgoDeploymentsResponse {
   deployments: AlgoDeployment[];
+  /** Today's net P&L keyed by deployment id, for the deployment tab strip. Present only for signal-options deployments; other kinds are omitted. */
+  pnlByDeployment?: AlgoDeploymentsResponsePnlByDeployment;
 }

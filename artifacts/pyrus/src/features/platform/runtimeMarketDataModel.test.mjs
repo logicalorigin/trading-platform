@@ -3,7 +3,10 @@ import test from "node:test";
 
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import { TRADE_TICKER_INFO } from "./runtimeTickerStore.js";
-import { syncRuntimeMarketData } from "./runtimeMarketDataModel.js";
+import {
+  applyRuntimeQuoteSnapshots,
+  syncRuntimeMarketData,
+} from "./runtimeMarketDataModel.js";
 
 test("runtime market-data sync rejects non-drawable sparkline bars", () => {
   delete TRADE_TICKER_INFO.FFAI_TEST;
@@ -111,4 +114,41 @@ test("runtime market-data sync carries extended-hours baseline fields", () => {
   );
 
   delete TRADE_TICKER_INFO.EXT_TEST;
+});
+
+test("runtime quote snapshots advance same-timestamp live prices", () => {
+  delete TRADE_TICKER_INFO.EQUAL_TS_TEST;
+
+  const timestamp = "2026-06-09T18:45:00.000Z";
+  assert.equal(
+    applyRuntimeQuoteSnapshots([
+      {
+        symbol: "EQUAL_TS_TEST",
+        price: 100.25,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+      },
+    ]),
+    1,
+  );
+  assert.equal(TRADE_TICKER_INFO.EQUAL_TS_TEST.price, 100.25);
+
+  assert.equal(
+    applyRuntimeQuoteSnapshots([
+      {
+        symbol: "EQUAL_TS_TEST",
+        price: 100.31,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+      },
+    ]),
+    1,
+  );
+  assert.equal(TRADE_TICKER_INFO.EQUAL_TS_TEST.price, 100.31);
+
+  delete TRADE_TICKER_INFO.EQUAL_TS_TEST;
 });

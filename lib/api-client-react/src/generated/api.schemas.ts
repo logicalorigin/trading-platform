@@ -4410,8 +4410,28 @@ export interface CreateAlgoDeploymentRequest {
   config?: JsonObject;
 }
 
+export interface AlgoDeploymentTodayPnl {
+  /** @nullable */
+  todayPnl: number | null;
+  /** @nullable */
+  dailyRealizedPnl: number | null;
+  /** @nullable */
+  openUnrealizedPnl: number | null;
+}
+
+/**
+ * Today's net P&L keyed by deployment id, for the deployment tab strip. Present only for signal-options deployments; other kinds are omitted.
+ */
+export type AlgoDeploymentsResponsePnlByDeployment = {[key: string]: AlgoDeploymentTodayPnl};
+
 export interface AlgoDeploymentsResponse {
   deployments: AlgoDeployment[];
+  /** Today's net P&L keyed by deployment id, for the deployment tab strip. Present only for signal-options deployments; other kinds are omitted. */
+  pnlByDeployment?: AlgoDeploymentsResponsePnlByDeployment;
+}
+
+export interface SetAlgoDeploymentModeRequest {
+  mode: EnvironmentMode;
 }
 
 export type UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation = typeof UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation[keyof typeof UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation];
@@ -4505,6 +4525,103 @@ export interface SignalOptionsExecutionProfile {
 export interface UpdateSignalOptionsExecutionProfileResponse {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
+}
+
+/**
+ * Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).
+ */
+export interface SignalQualityKpiMetrics {
+  signalCount: number;
+  avgDirectionalMovePercent: number;
+  correctnessPercent: number;
+  expectancyPercent: number;
+  payoffRatio: number;
+  avgMfePercent: number;
+  avgMaePercent: number;
+  consistencyStdDevPercent: number;
+}
+
+export type SignalQualitySymbolBreakdown = SignalQualityKpiMetrics & {
+  symbol: string;
+};
+
+/**
+ * The eight KPIs computed over only buy (long) signals and only sell (short) signals. Each side is a clean partition of the same observations (realized return / MFE / MAE are already signed in the signal direction).
+ */
+export interface SignalQualityKpiDirectionalBreakdown {
+  buy: SignalQualityKpiMetrics;
+  sell: SignalQualityKpiMetrics;
+}
+
+export type SignalQualityKpiResult = SignalQualityKpiMetrics & {
+  horizonBars: number;
+  mtfFilteredOutCount: number;
+  perSymbol: SignalQualitySymbolBreakdown[];
+  byDirection: SignalQualityKpiDirectionalBreakdown;
+};
+
+export type SignalQualityResolvedSettingsSignalTimeframe = typeof SignalQualityResolvedSettingsSignalTimeframe[keyof typeof SignalQualityResolvedSettingsSignalTimeframe];
+
+
+export const SignalQualityResolvedSettingsSignalTimeframe = {
+  '1m': '1m',
+  '2m': '2m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
+} as const;
+
+export type SignalQualityResolvedSettingsBosConfirmation = typeof SignalQualityResolvedSettingsBosConfirmation[keyof typeof SignalQualityResolvedSettingsBosConfirmation];
+
+
+export const SignalQualityResolvedSettingsBosConfirmation = {
+  close: 'close',
+  wicks: 'wicks',
+} as const;
+
+export interface SignalQualityResolvedSettings {
+  signalTimeframe: SignalQualityResolvedSettingsSignalTimeframe;
+  timeHorizon: number;
+  bosConfirmation: SignalQualityResolvedSettingsBosConfirmation;
+  chochAtrBuffer: number;
+  chochBodyExpansionAtr: number;
+  chochVolumeGate: number;
+}
+
+export interface SignalQualityMtfConfig {
+  enabled: boolean;
+  requiredCount: number;
+  timeframes: string[];
+}
+
+/**
+ * Actual data coverage backing the KPIs (window, timeframe, symbol slice), including any fallback applied when the requested timeframe/window could not be fully served.
+ */
+export interface SignalQualityCoverage {
+  requestedTimeframe: string;
+  resolvedTimeframe: string;
+  requestedWindowDays: number;
+  windowStart: string | null;
+  windowEnd: string | null;
+  requestedSymbolCount: number;
+  evaluatedSymbolCount: number;
+  symbolsWithBars: number;
+  symbolsTimedOut: number;
+  barsPerSymbolCap: number;
+  totalBars: number;
+  truncatedSymbolUniverse: boolean;
+  usedTimeframeFallback: boolean;
+}
+
+export interface SignalQualityKpiResponse {
+  deploymentId: string;
+  asOfDay: string;
+  settings: SignalQualityResolvedSettings;
+  mtf: SignalQualityMtfConfig;
+  kpis: SignalQualityKpiResult;
+  coverage: SignalQualityCoverage;
+  generatedAt: string;
 }
 
 export type OvernightSpotExecutionMode = typeof OvernightSpotExecutionMode[keyof typeof OvernightSpotExecutionMode];
@@ -5047,6 +5164,13 @@ export interface SignalMonitorSymbolState {
   /** @nullable */
   currentSignalPrice: number | null;
   /** @nullable */
+  currentSignalClose: number | null;
+  /** @nullable */
+  currentSignalMfePercent: number | null;
+  /** @nullable */
+  currentSignalMaePercent: number | null;
+  filterState: JsonObject | null;
+  /** @nullable */
   latestBarAt: string | null;
   /** @nullable */
   latestBarClose: number | null;
@@ -5120,6 +5244,13 @@ export interface SignalMonitorMatrixState {
   currentSignalAt: string | null;
   /** @nullable */
   currentSignalPrice: number | null;
+  /** @nullable */
+  currentSignalClose: number | null;
+  /** @nullable */
+  currentSignalMfePercent: number | null;
+  /** @nullable */
+  currentSignalMaePercent: number | null;
+  filterState: JsonObject | null;
   /** @nullable */
   latestBarAt: string | null;
   /** @nullable */
@@ -7306,6 +7437,35 @@ export type PauseAlgoDeploymentView = typeof PauseAlgoDeploymentView[keyof typeo
 export const PauseAlgoDeploymentView = {
   summary: 'summary',
   full: 'full',
+} as const;
+
+export type GetAlgoDeploymentSignalQualityKpisParams = {
+signalTimeframe?: GetAlgoDeploymentSignalQualityKpisSignalTimeframe;
+timeHorizon?: number;
+bosConfirmation?: GetAlgoDeploymentSignalQualityKpisBosConfirmation;
+chochAtrBuffer?: number;
+chochBodyExpansionAtr?: number;
+chochVolumeGate?: number;
+};
+
+export type GetAlgoDeploymentSignalQualityKpisSignalTimeframe = typeof GetAlgoDeploymentSignalQualityKpisSignalTimeframe[keyof typeof GetAlgoDeploymentSignalQualityKpisSignalTimeframe];
+
+
+export const GetAlgoDeploymentSignalQualityKpisSignalTimeframe = {
+  '1m': '1m',
+  '2m': '2m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
+} as const;
+
+export type GetAlgoDeploymentSignalQualityKpisBosConfirmation = typeof GetAlgoDeploymentSignalQualityKpisBosConfirmation[keyof typeof GetAlgoDeploymentSignalQualityKpisBosConfirmation];
+
+
+export const GetAlgoDeploymentSignalQualityKpisBosConfirmation = {
+  close: 'close',
+  wicks: 'wicks',
 } as const;
 
 export type RunSignalOptionsShadowBackfillBody = {

@@ -444,14 +444,8 @@ export const applyRuntimeTickerInfoPatch = (symbol, fallbackName, patch) => {
     if (quotePatchIsOlder && RUNTIME_QUOTE_FIELDS.has(field)) {
       return;
     }
-    if (
-      quotePatchHasSameTimestamp &&
-      RUNTIME_QUOTE_FIELDS.has(field) &&
-      tradeInfo[field] != null &&
-      !isRuntimeTickerFieldEqual(field, tradeInfo[field], nextValue)
-    ) {
-      return;
-    }
+    // Equal provider timestamps are common on batched live quote frames; after
+    // the older-frame checks above, accept the arriving value and notify readers.
     if (isRuntimeTickerFieldEqual(field, tradeInfo[field], nextValue)) {
       return;
     }

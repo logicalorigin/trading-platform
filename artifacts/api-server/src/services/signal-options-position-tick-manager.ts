@@ -18,6 +18,7 @@ import {
 } from "./signal-options-automation";
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 5_000;
+const DEFAULT_ACTIVE_POSITION_SNAPSHOT_TTL_MS = 15_000;
 
 type Logger = {
   debug?: (...args: unknown[]) => void;
@@ -29,6 +30,11 @@ type Logger = {
 type ActivePositionSnapshot = {
   positions: SignalOptionsPosition[];
   events: ExecutionEvent[];
+};
+
+type ActivePositionSnapshotCacheEntry = {
+  snapshot: ActivePositionSnapshot;
+  loadedAtMs: number;
 };
 
 type SubscribeDemand = (
@@ -61,6 +67,7 @@ export type SignalOptionsPositionTickManagerDependencies = {
   setInterval?: typeof setInterval;
   clearInterval?: typeof clearInterval;
   reconcileIntervalMs?: number;
+  activePositionSnapshotTtlMs?: number;
   logger?: Logger;
 };
 
@@ -168,8 +175,13 @@ export class SignalOptionsPositionTickManager {
   private readonly setIntervalFn: typeof setInterval;
   private readonly clearIntervalFn: typeof clearInterval;
   private readonly reconcileIntervalMs: number;
+  private readonly activePositionSnapshotTtlMs: number;
   private readonly logger: Logger;
   private readonly runtimes = new Map<string, Runtime>();
+  private readonly activePositionSnapshots = new Map<
+    string,
+    ActivePositionSnapshotCacheEntry
+  >();
   private timer: ReturnType<typeof setInterval> | null = null;
   private reconcileInFlight: Promise<void> | null = null;
 
@@ -194,6 +206,9 @@ export class SignalOptionsPositionTickManager {
     this.clearIntervalFn = dependencies.clearInterval ?? clearInterval;
     this.reconcileIntervalMs =
       dependencies.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS;
+    this.activePositionSnapshotTtlMs =
+      dependencies.activePositionSnapshotTtlMs ??
+      DEFAULT_ACTIVE_POSITION_SNAPSHOT_TTL_MS;
     this.logger = dependencies.logger ?? defaultLogger;
   }
 
@@ -249,7 +264,7 @@ export class SignalOptionsPositionTickManager {
 
     for (const deployment of deployments) {
       const profile = this.resolveProfile(deployment);
-      const activeSnapshot = await this.listActivePositions({ deployment });
+      const activeSnapshot = await this.loadActivePositionSnapshot(deployment);
       const pyrusSignalsSettings =
         usesWireTrail(profile) && activeSnapshot.positions.length > 0
           ? await this.safeLoadPyrusSignalsSettings(deployment)
@@ -314,6 +329,29 @@ export class SignalOptionsPositionTickManager {
         this.releaseRuntime(key);
       }
     }
+  }
+
+  private async loadActivePositionSnapshot(
+    deployment: AlgoDeployment,
+  ): Promise<ActivePositionSnapshot> {
+    const nowMs = this.now().getTime();
+    const cached = this.activePositionSnapshots.get(deployment.id);
+    if (
+      cached &&
+      nowMs - cached.loadedAtMs < this.activePositionSnapshotTtlMs
+    ) {
+      return cached.snapshot;
+    }
+    const snapshot = await this.listActivePositions({ deployment });
+    this.activePositionSnapshots.set(deployment.id, {
+      snapshot,
+      loadedAtMs: nowMs,
+    });
+    return snapshot;
+  }
+
+  private invalidateActivePositionSnapshot(deploymentId: string): void {
+    this.activePositionSnapshots.delete(deploymentId);
   }
 
   private async safeLoadPyrusSignalsSettings(
@@ -445,6 +483,7 @@ export class SignalOptionsPositionTickManager {
           active.position = result.position;
         }
         if (result.exited) {
+          this.invalidateActivePositionSnapshot(active.deployment.id);
           this.releaseRuntime(key);
           break;
         }

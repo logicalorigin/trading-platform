@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -36,6 +37,7 @@ import { resolveOperationsStatus } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import {
   asRecord,
+  buildSignalIndicatorMetrics,
   compactButtonStyle,
   formatMoney,
   formatPct,
@@ -43,13 +45,14 @@ import {
   optionProviderContractId,
 } from "./algoHelpers";
 import {
+  AlgoIndicatorKpiTable,
   AlgoOverviewMetric as OverviewMetric,
   AlgoPipelineOverview as PipelineOverview,
 } from "./AlgoOperationsPrimitives";
 import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
-import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
+import { AlgoDeploymentTabs } from "./AlgoDeploymentTabs.jsx";
 import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
 import {
   canonicalizeStreamState,
@@ -206,7 +209,7 @@ const EmptyOperationsState = ({
             />
             <button
               type="button"
-              onClick={handleCreateDeployment}
+              onClick={() => handleCreateDeployment()}
               disabled={createDeploymentMutation.isPending}
               style={{
                 ...compactButtonStyle({
@@ -257,21 +260,30 @@ export const resolveAlgoOverviewMetricGridTemplate = ({
     : "repeat(auto-fit, minmax(128px, max-content))";
 };
 
-const compactDeploymentName = (deployment) => {
-  const normalized = normalizeLegacyAlgoBrandText(deployment?.name || "");
-  let compact = normalized
-    .replace(/^Pyrus Signal-Options\s*/i, "")
-    .replace(/^Pyrus Signals Options\s*/i, "")
-    .replace(/^Pyrus Signals\s*/i, "")
-    .trim();
-  const mode = String(deployment?.mode || "").toUpperCase();
-  if (mode === "SHADOW" && !/^shadow$/i.test(compact)) {
-    compact = compact.replace(/\s+Shadow$/i, "").trim();
-  }
-  if (mode === "LIVE" && !/^live$/i.test(compact)) {
-    compact = compact.replace(/\s+Live$/i, "").trim();
-  }
-  return compact || normalized || "Deployment";
+const EMPTY_STA_TABLE_SNAPSHOT = Object.freeze({
+  signature: "",
+  signalRows: Object.freeze([]),
+  rowCount: 0,
+  receivedCount: 0,
+  actionCount: 0,
+  historyCount: 0,
+  activeFilterLabel: "All",
+});
+
+export const alignSignalCycleStageWithStaTable = (
+  stages = [],
+  staTableSnapshot = null,
+) => {
+  if (!staTableSnapshot || !Array.isArray(stages)) return stages;
+  return stages.map((stage) => {
+    const record = asRecord(stage);
+    if (record.id !== "signal_detected") return stage;
+    return {
+      ...record,
+      count: staTableSnapshot.rowCount,
+      detail: `${staTableSnapshot.rowCount.toLocaleString()} table-visible STA rows`,
+    };
+  });
 };
 
 const resolveDeploymentAccountLabel = ({ deployment, accountId }) => {
@@ -592,6 +604,7 @@ const ActivitySummaryInline = ({ activitySummary }) => {
 export const AlgoLivePage = ({
   // Empty state
   deployments,
+  pnlByDeploymentId = null,
   candidateDrafts,
   setupDataSettled = true,
   deploymentListUnavailable = false,
@@ -649,6 +662,9 @@ export const AlgoLivePage = ({
   // Pause / Scan-now (existing mutations + handlers)
   focusedDeployment,
   onSelectDeployment,
+  onAddDeployment,
+  onToggleDeploymentMode,
+  modeChangePending = false,
   accountId,
   environment,
   bridgeTone,
@@ -752,6 +768,22 @@ export const AlgoLivePage = ({
     settingsDrawerRef.current?.focus();
   }, [settingsDrawerOpen]);
   const renderedRightRail = rightRail ?? rightRailFallback;
+  const [staTableSnapshot, setStaTableSnapshot] = useState(
+    EMPTY_STA_TABLE_SNAPSHOT,
+  );
+  const handleStaRowsChange = useCallback((nextSnapshot) => {
+    const snapshot = nextSnapshot || EMPTY_STA_TABLE_SNAPSHOT;
+    setStaTableSnapshot((current) =>
+      current.signature === snapshot.signature &&
+      current.rowCount === snapshot.rowCount &&
+      current.receivedCount === snapshot.receivedCount &&
+      current.actionCount === snapshot.actionCount &&
+      current.historyCount === snapshot.historyCount &&
+      current.activeFilterLabel === snapshot.activeFilterLabel
+        ? current
+        : snapshot,
+    );
+  }, []);
 
   const showEmptyOperationsState = Boolean(setupDataSettled && !deployments.length);
   if (showEmptyOperationsState) {
@@ -998,6 +1030,20 @@ export const AlgoLivePage = ({
     },
   ];
 
+  const effectiveMtfAlignmentConfig =
+    mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment;
+  const indicatorSignalRows = staTableSnapshot.signalRows || [];
+  const cockpitStageItemsForDisplay = useMemo(
+    () => alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),
+    [cockpitStageItems, staTableSnapshot],
+  );
+  // Keep the header cards tied to the rows computed by the STA table below.
+  // The table owns filtering; KPI consumers only read its published snapshot.
+  const liveIndicatorMetrics = useMemo(
+    () => buildSignalIndicatorMetrics(indicatorSignalRows),
+    [indicatorSignalRows],
+  );
+
   return (
     <div
       style={{
@@ -1123,33 +1169,6 @@ export const AlgoLivePage = ({
                     <span>{headerScanWave.badgeLabel}</span>
                   </span>
                 </FailurePointTooltip>
-                {deployments.length ? (
-                  <select
-                    data-testid="algo-operations-deployment-select"
-                    value={focusedDeployment?.id || ""}
-                    onChange={(event) => onSelectDeployment?.(event.target.value)}
-                    aria-label="Signal-options deployment"
-                    style={{
-                      minHeight: dim(26),
-                      maxWidth: dim(algoIsPhone ? 220 : 260),
-                      minWidth: 0,
-                      padding: sp("4px 24px 4px 8px"),
-                      border: `1px solid ${CSS_COLOR.border}`,
-                      borderRadius: dim(RADII.xs),
-                      background: CSS_COLOR.bg1,
-                      color: CSS_COLOR.text,
-                      fontFamily: T.sans,
-                      fontSize: textSize("caption"),
-                      fontWeight: 600,
-                    }}
-                  >
-                    {deployments.map((deployment) => (
-                      <option key={deployment.id} value={deployment.id}>
-                        {compactDeploymentName(deployment)}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
                 {!algoIsPhone
                   ? headerStatusItems.map((item) => (
                       <span
@@ -1280,6 +1299,17 @@ export const AlgoLivePage = ({
             </div>
           </div>
 
+          <AlgoDeploymentTabs
+            deployments={deployments}
+            focusedDeploymentId={focusedDeploymentId}
+            onSelectDeployment={onSelectDeployment}
+            algoIsPhone={algoIsPhone}
+            pnlByDeploymentId={pnlByDeploymentId}
+            onToggleMode={onToggleDeploymentMode}
+            modeChangePending={modeChangePending}
+            onAddDeployment={onAddDeployment}
+          />
+
           <section
             data-testid="algo-operations-overview"
             style={{
@@ -1294,44 +1324,17 @@ export const AlgoLivePage = ({
               minWidth: 0,
             }}
           >
-            <div
-              data-testid="algo-snapshot-details"
-              data-algo-pocket-grid={
-                algoIsPhone && algoIsPocketWidth
-                  ? "metrics"
-                  : algoIsPocketWidth
-                    ? "two"
-                    : undefined
-              }
-              style={{
-                display: "grid",
-                gridTemplateColumns: resolveAlgoOverviewMetricGridTemplate({
-                  algoIsPhone,
-                  algoIsPocketWidth,
-                  denseOperationsLayout,
-                }),
-                justifyContent:
-                  algoIsPhone && algoIsPocketWidth ? undefined : "start",
-                gap: sp(algoIsPhone ? 2 : 4),
-                minWidth: 0,
-              }}
-            >
-              {overviewMetrics.map((metric) => (
-                <OverviewMetric
-                  key={metric.label}
-                  label={metric.label}
-                  value={metric.value}
-                  detail={metric.detail}
-                  tone={metric.color}
-                  icon={metric.icon}
-                  severity={metric.severity}
-                  dense={algoIsPhone}
-                />
-              ))}
+            <div data-testid="algo-snapshot-details" style={{ minWidth: 0 }}>
+              <AlgoIndicatorKpiTable
+                metrics={liveIndicatorMetrics}
+                algoIsPhone={algoIsPhone}
+                algoIsPocketWidth={algoIsPocketWidth}
+                dense={denseOperationsLayout}
+              />
             </div>
 
             <PipelineOverview
-              stages={cockpitStageItems}
+              stages={cockpitStageItemsForDisplay}
               selectedStageId={selectedStage?.id}
               onSelectStage={(id) => setSelectedPipelineStageId(id)}
               pocket={algoIsPhone && algoIsPocketWidth}
@@ -1385,7 +1388,7 @@ export const AlgoLivePage = ({
             signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
-            mtfAlignmentConfig={mtfAlignmentDraft ?? signalOptionsProfile?.entryGate?.mtfAlignment}
+            mtfAlignmentConfig={effectiveMtfAlignmentConfig}
             executionTimeframe={normalizeStrategySignalTimeframe(
               strategySettingsDraft?.signalTimeframe,
             )}
@@ -1396,6 +1399,7 @@ export const AlgoLivePage = ({
             algoIsNarrow={algoIsNarrow}
             safeQaMode={safeQaMode}
             onOpenCandidateInTrade={onOpenCandidateInTrade}
+            onStaRowsChange={handleStaRowsChange}
           />
 
           <OperationsPositionsTable

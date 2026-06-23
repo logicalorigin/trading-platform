@@ -109,6 +109,7 @@ export const TradeEquityPanel = ({
   surfaceUiStateKey = "trade-equity-chart",
   viewportLayoutKey = null,
   onOpenSearch,
+  onSearchIntent,
   searchOpen,
   onSearchOpenChange,
   searchContent,
@@ -1058,6 +1059,7 @@ export const TradeEquityPanel = ({
             onToggleFavoriteTimeframe={toggleChartFavoriteTimeframe}
             onPrewarmTimeframe={prewarmFavoriteTimeframe}
             onOpenSearch={hasAnchoredTickerSearch ? undefined : onOpenSearch}
+            onSearchIntent={onSearchIntent}
             searchOpen={searchOpen}
             onSearchOpenChange={onSearchOpenChange}
             searchContent={searchContent}

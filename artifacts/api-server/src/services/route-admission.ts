@@ -308,6 +308,7 @@ export function classifyApiRoute(input: {
     /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-backfill$/.test(
       path,
     ) ||
+    /^\/algo\/deployments\/[^/]+\/signal-quality-kpis$/.test(path) ||
     path.includes("/watchlist-backtest/")
   ) {
     return "background-maintenance";

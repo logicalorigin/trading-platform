@@ -20,6 +20,10 @@ import {
   refreshGexUniverseSnapshots,
   type GexUniverseRefreshScope,
 } from "../services/gex-universe-refresh";
+import {
+  resolveSignalSourceEnvironment,
+  traceSignalMonitorPriceFreshness,
+} from "../services/signal-monitor";
 import { recordLatestClientPerfMetrics } from "../services/ibkr-perf-capture";
 import { HttpError } from "../lib/errors";
 
@@ -105,6 +109,10 @@ function readGexUniverseRefreshScope(
     return value;
   }
   return undefined;
+}
+
+function readSignalMonitorEnvironment(value: unknown): "shadow" | "live" | undefined {
+  return value === "shadow" || value === "live" ? value : undefined;
 }
 
 function readStringList(value: unknown): string[] | undefined {
@@ -316,6 +324,19 @@ router.post("/diagnostics/market-data/gex-universe-refresh", async (req, res) =>
   });
 
   res.status(dryRun ? 200 : 202).json(result);
+});
+
+router.get("/diagnostics/market-data/price-trace", async (req, res) => {
+  res.json(
+    await traceSignalMonitorPriceFreshness({
+      environment:
+        readSignalMonitorEnvironment(req.query.environment) ??
+        resolveSignalSourceEnvironment(),
+      symbols: readStringList(req.query.symbols),
+      timeframes: readStringList(req.query.timeframes),
+      limit: readOptionalPositiveInteger(req.query.limit, 100),
+    }),
+  );
 });
 
 router.get("/diagnostics/stream", (req, res) => {

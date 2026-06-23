@@ -23,20 +23,16 @@ import {
 } from "./chartInteractionSelectors.js";
 import { MarketChartPremiumFlowIndicator } from "./MarketChartPremiumFlowIndicator.jsx";
 import { CSS_COLOR, cssColorMix, RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
-import { lazyWithRetry } from "../../lib/dynamicImport";
 import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
+import {
+  LazyMarketChartTickerSearch,
+  preloadMarketChartTickerSearch,
+  scheduleChartTickerSearchPreload,
+} from "../platform/tickerSearch/chartTickerSearchLoader.js";
 
 const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
 
 export const preloadMarketChartRuntime = () => undefined;
-
-const LazyMarketChartTickerSearch = lazyWithRetry(
-  () =>
-    import("../platform/tickerSearch/TickerSearch.jsx").then((module) => ({
-      default: module.MarketChartTickerSearch,
-    })),
-  { label: "MarketChartTickerSearch" },
-);
 
 const isMarketChartShellControlTarget = (target) =>
   isMarketChartInteractiveTarget(target) && !isMarketChartPlotTarget(target);
@@ -79,12 +75,94 @@ const MarketChartPanelFallback = ({ dataTestId }) => (
 const MarketChartTickerSearchFallback = () => (
   <div
     data-testid="ticker-search-popover-loading"
+    aria-live="polite"
     style={{
       minHeight: dim(220),
       borderRadius: dim(RADII.xs),
       background: CSS_COLOR.bg1,
+      border: `1px solid ${CSS_COLOR.border}`,
+      boxSizing: "border-box",
+      padding: sp(12),
+      display: "grid",
+      gridTemplateRows: "auto 1fr",
+      gap: sp(10),
     }}
-  />
+  >
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: sp(8),
+        color: CSS_COLOR.textMuted,
+        fontFamily: T.sans,
+        fontSize: dim(10),
+        textTransform: "uppercase",
+      }}
+    >
+      <span>Loading search</span>
+      <span
+        className="ra-skeleton-shimmer"
+        style={{
+          width: dim(76),
+          height: dim(9),
+          borderRadius: dim(RADII.xs),
+        }}
+      />
+    </div>
+    <div style={{ display: "grid", gap: sp(8), alignContent: "start" }}>
+      {[0, 1, 2].map((index) => (
+        <div
+          key={index}
+          style={{
+            display: "grid",
+            gridTemplateColumns: `${dim(32)}px 1fr ${dim(54)}px`,
+            gap: sp(8),
+            alignItems: "center",
+            padding: sp("8px 0"),
+          }}
+        >
+          <span
+            className="ra-skeleton-shimmer"
+            style={{
+              width: dim(24),
+              height: dim(24),
+              borderRadius: dim(RADII.pill),
+            }}
+          />
+          <span>
+            <span
+              className="ra-skeleton-shimmer"
+              style={{
+                display: "block",
+                width: `${68 - index * 8}%`,
+                height: dim(10),
+                borderRadius: dim(RADII.xs),
+                marginBottom: sp(6),
+              }}
+            />
+            <span
+              className="ra-skeleton-shimmer"
+              style={{
+                display: "block",
+                width: `${86 - index * 9}%`,
+                height: dim(8),
+                borderRadius: dim(RADII.xs),
+              }}
+            />
+          </span>
+          <span
+            className="ra-skeleton-shimmer"
+            style={{
+              width: dim(48),
+              height: dim(10),
+              borderRadius: dim(RADII.xs),
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
 );
 
 const MarketChartReadyProbe = ({ onReady, readyKey }) => {
@@ -115,12 +193,7 @@ export const MarketChartCell = ({
   onEnterSoloMode,
   onChangeTicker,
   onChangeTimeframe,
-  recentTickers = [],
   recentTickerRows = [],
-  watchlistSymbols = [],
-  popularTickers = [],
-  smartSuggestionSymbols = [],
-  signalSuggestionSymbols = [],
   onRememberTicker,
   tickerSearchOpen = false,
   onTickerSearchOpenChange,
@@ -243,6 +316,13 @@ export const MarketChartCell = ({
       clearFrameClickSuppression,
     ],
   );
+
+  useEffect(() => {
+    if (!historicalDataEnabled) {
+      return undefined;
+    }
+    return scheduleChartTickerSearchPreload(preloadMarketChartTickerSearch);
+  }, [historicalDataEnabled]);
 
   const handleFramePointerDown = useCallback((event) => {
     if (event.button != null && event.button !== 0) {
@@ -528,6 +608,7 @@ export const MarketChartCell = ({
               viewportLayoutKey={chartViewportLayoutKey}
               searchOpen={searchOpen}
               onSearchOpenChange={setSearchOpen}
+              onSearchIntent={preloadMarketChartTickerSearch}
               searchContent={
                 searchOpen ? (
                   <Suspense fallback={<MarketChartTickerSearchFallback />}>
@@ -535,11 +616,6 @@ export const MarketChartCell = ({
                       open={searchOpen}
                       ticker={ticker}
                       recentTickerRows={recentTickerRows}
-                      watchlistSymbols={watchlistSymbols}
-                      popularTickers={popularTickers}
-                      contextSymbols={recentTickers}
-                      flowSuggestionSymbols={smartSuggestionSymbols}
-                      signalSuggestionSymbols={signalSuggestionSymbols}
                       embedded
                       onClose={() => setSearchOpen(false)}
                       onSelectTicker={(result) => {

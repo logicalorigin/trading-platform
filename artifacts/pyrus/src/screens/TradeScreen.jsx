@@ -215,6 +215,11 @@ import {
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
+import {
+  LazyMiniChartTickerSearch,
+  preloadMiniChartTickerSearch,
+  scheduleChartTickerSearchPreload,
+} from "../features/platform/tickerSearch/chartTickerSearchLoader.js";
 
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
@@ -227,14 +232,6 @@ const OPTION_CHAIN_QUERY_DEFAULTS = {
   gcTime: 5 * 60_000,
 };
 
-const loadMiniChartTickerSearch = () =>
-  import("../features/platform/tickerSearch/TickerSearch.jsx").then((module) => ({
-    default: module.MiniChartTickerSearch,
-  }));
-const LazyMiniChartTickerSearch = lazyWithRetry(loadMiniChartTickerSearch, {
-  label: "TradeMiniChartTickerSearch",
-});
-
 const loadTradeDrawer = () =>
   import("../components/platform/Drawer.jsx").then((module) => ({
     default: module.Drawer,
@@ -243,9 +240,6 @@ const LazyDrawer = lazyWithRetry(loadTradeDrawer, { label: "TradeDrawer" });
 
 export const preloadScreenModules = () =>
   Promise.allSettled([
-    preloadDynamicImport(loadMiniChartTickerSearch, {
-      label: "TradeMiniChartTickerSearch",
-    }),
     preloadDynamicImport(loadTradeDrawer, { label: "TradeDrawer" }),
   ]).then(() => undefined);
 
@@ -3539,6 +3533,12 @@ const TradeScreenInner = ({
       backgroundAllowed: Boolean(isVisible && !safeQaMode),
     });
   }, [isVisible, onReadinessChange, safeQaMode]);
+  useEffect(() => {
+    if (!isVisible) {
+      return undefined;
+    }
+    return scheduleChartTickerSearchPreload(preloadMiniChartTickerSearch);
+  }, [isVisible]);
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated && !safeQaMode,
   );
@@ -4078,13 +4078,9 @@ const TradeScreenInner = ({
             open={open}
             ticker={activeTicker}
             recentTickerRows={tradeRecentTickerRows}
-            contextSymbols={recentTickers}
             embedded={embedded}
-            initialMarketFilter="all"
-            persistMarketFilter={false}
             onClose={closeTradeTickerSearch}
             onSelectTicker={handleSelectUniverseTicker}
-            onRememberTickerRow={handleRememberTradeTickerRow}
           />
         </Suspense>
       ) : null
@@ -4092,9 +4088,7 @@ const TradeScreenInner = ({
     [
       activeTicker,
       closeTradeTickerSearch,
-      handleRememberTradeTickerRow,
       handleSelectUniverseTicker,
-      recentTickers,
       tradeRecentTickerRows,
     ],
   );
@@ -4209,6 +4203,7 @@ const TradeScreenInner = ({
       historicalDataEnabled={tradePrimaryChartDataEnabled}
       stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
       onOpenSearch={openEquitySearch}
+      onSearchIntent={preloadMiniChartTickerSearch}
       searchOpen={equityTickerSearchOpen}
       onSearchOpenChange={handleEquitySearchOpenChange}
       searchContent={equityTickerSearchContent}

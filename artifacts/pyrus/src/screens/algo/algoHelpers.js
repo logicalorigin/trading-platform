@@ -744,9 +744,19 @@ export const buildStaSignalMatrixRows = ({
         stateRecord.status || "ok",
       ).toLowerCase();
       if (status === "pending" || status === "unknown") return null;
-      const signalPrice =
+      const signalLevelPrice =
         staFiniteNumberOrNull(stateRecord.currentSignalPrice) ??
         staFiniteNumberOrNull(stateRecord.signalPrice);
+      const signalClose =
+        staFiniteNumberOrNull(stateRecord.currentSignalClose) ??
+        staFiniteNumberOrNull(stateRecord.signalClose) ??
+        staFiniteNumberOrNull(stateRecord.signalBarClose);
+      const currentSignalMfePercent = staFiniteNumberOrNull(
+        stateRecord.currentSignalMfePercent,
+      );
+      const currentSignalMaePercent = staFiniteNumberOrNull(
+        stateRecord.currentSignalMaePercent,
+      );
       // Current price as of the last evaluation (close of the bar at
       // latestBarAt). Lets the Move column render immediately from the matrix
       // state instead of waiting on per-page sparkline hydration, so it stays
@@ -776,8 +786,14 @@ export const buildStaSignalMatrixRows = ({
         direction,
         signalAt,
         currentSignalAt: signalAt,
-        signalPrice,
-        currentSignalPrice: signalPrice,
+        signalPrice: signalClose,
+        signalClose,
+        signalBarClose: signalClose,
+        currentSignalClose: signalClose,
+        currentSignalMfePercent,
+        currentSignalMaePercent,
+        signalLevelPrice,
+        currentSignalPrice: signalLevelPrice,
         currentPrice,
         latestBarAt:
           staIsoStringOrNull(stateRecord.latestBarAt) ??
@@ -788,9 +804,17 @@ export const buildStaSignalMatrixRows = ({
         actionEligible,
         actionBlocker: actionEligible ? null : actionBlocker,
         status,
+        // Live SSE deltas carry mtfDirections/adx under indicatorSnapshot.filterState
+        // (signalMatrixSnapshotCache preserves indicatorSnapshot); a stored snapshot
+        // may instead hold it top-level. Source either, else the score falls to its
+        // all-defaults fallback (the "every row is 46.4" bug).
         filterState: Object.keys(asRecord(stateRecord.filterState)).length
           ? asRecord(stateRecord.filterState)
-          : null,
+          : Object.keys(
+                asRecord(asRecord(stateRecord.indicatorSnapshot).filterState),
+              ).length
+            ? asRecord(asRecord(stateRecord.indicatorSnapshot).filterState)
+            : null,
         updatedAt: staIsoStringOrNull(stateRecord.lastEvaluatedAt),
       };
     })
@@ -832,9 +856,8 @@ export const buildStaSignalHistoryRows = ({
 
       const payload = asRecord(eventRecord.payload);
       const filterState = asRecord(payload.filterState);
-      const signalPrice =
-        staFiniteNumberOrNull(eventRecord.signalPrice) ??
-        staFiniteNumberOrNull(eventRecord.close);
+      const signalLevelPrice = staFiniteNumberOrNull(eventRecord.signalPrice);
+      const signalClose = staFiniteNumberOrNull(eventRecord.close);
       const latestBarAt =
         staIsoStringOrNull(payload.latestBarAt) ??
         staIsoStringOrNull(payload.signalBarAt) ??
@@ -856,9 +879,13 @@ export const buildStaSignalHistoryRows = ({
         direction: normalizeMatchKey(eventRecord.direction) || null,
         signalAt,
         currentSignalAt: signalAt,
-        signalPrice,
-        currentSignalPrice: signalPrice,
-        close: staFiniteNumberOrNull(eventRecord.close),
+        signalPrice: signalClose,
+        signalClose,
+        signalBarClose: signalClose,
+        currentSignalClose: signalClose,
+        signalLevelPrice,
+        currentSignalPrice: signalLevelPrice,
+        close: signalClose,
         latestBarAt,
         barsSinceSignal: null,
         fresh: false,
@@ -1390,6 +1417,7 @@ export const resolveDisplayCurrentPrice = (signal, tickerSnapshot = null) => {
   }
   const barClose = firstPositivePresentMetric(
     record.currentPrice,
+    record.latestBarClose,
     record.last,
     record.mark,
     latestSparklineClose(snapshot, record),
@@ -1425,15 +1453,49 @@ const resolveMoveStaleness = (record) => {
   return status !== "" && status !== "ok";
 };
 
-export const resolveSignalMove = (
-  signal,
-  tickerSnapshot = null,
-  candidate = null,
-) => {
-  const record = asRecord(signal);
-  const snapshot = asRecord(tickerSnapshot);
-  const candidateRecord = asRecord(candidate);
-  const signalPrice = firstPositivePresentMetric(
+const isSignalMonitorDerivedSignalRecord = (record) => {
+  const sourceType = normalizeMatchKey(record.sourceType).toLowerCase();
+  const source = normalizeMatchKey(record.source).toLowerCase();
+  return (
+    sourceType === "signal_matrix_state" ||
+    sourceType === "signal_monitor_event" ||
+    source === "signal-matrix" ||
+    source === "pyrus-signals"
+  );
+};
+
+const resolveSignalEquityBasisPrice = (record, candidateRecord = {}) => {
+  const signalClose = firstPositivePresentMetric(
+    record.signalClose,
+    record.signalBarClose,
+    record.currentSignalClose,
+    record.close,
+    candidateRecord.signalClose,
+    candidateRecord.signalBarClose,
+    candidateRecord.currentSignalClose,
+    candidateRecord.close,
+  );
+  const signalLevelPrice = firstPositivePresentMetric(
+    record.signalLevelPrice,
+    record.currentSignalPrice,
+    candidateRecord.signalLevelPrice,
+    candidateRecord.currentSignalPrice,
+  );
+  if (signalClose != null) {
+    return {
+      price: signalClose,
+      source: "signal-close",
+      signalLevelPrice,
+    };
+  }
+  if (isSignalMonitorDerivedSignalRecord(record)) {
+    return {
+      price: null,
+      source: null,
+      signalLevelPrice,
+    };
+  }
+  const legacyBasis = firstPositivePresentMetric(
     record.signalPrice,
     record.currentSignalPrice,
     record.entryPrice,
@@ -1443,6 +1505,23 @@ export const resolveSignalMove = (
     candidateRecord.entryPrice,
     candidateRecord.basisPrice,
   );
+  return {
+    price: legacyBasis,
+    source: legacyBasis == null ? null : "legacy-signal-price",
+    signalLevelPrice,
+  };
+};
+
+export const resolveSignalMove = (
+  signal,
+  tickerSnapshot = null,
+  candidate = null,
+) => {
+  const record = asRecord(signal);
+  const snapshot = asRecord(tickerSnapshot);
+  const candidateRecord = asRecord(candidate);
+  const signalBasis = resolveSignalEquityBasisPrice(record, candidateRecord);
+  const signalPrice = signalBasis.price;
   // Measure the Move against the SAME price the row displays. Only a real
   // current (live quote or a bar close) yields a Move; a fire-only/absent
   // current leaves it blank rather than fabricating a 0% or a phantom move.
@@ -1458,16 +1537,35 @@ export const resolveSignalMove = (
       label: MISSING_VALUE,
       detail: MISSING_VALUE,
       stale: false,
+      basisPrice: null,
+      basisSource: signalBasis.source,
+      signalLevelPrice: signalBasis.signalLevelPrice ?? null,
+      auditDetail: signalBasis.signalLevelPrice
+        ? `Signal level ${formatMoney(signalBasis.signalLevelPrice, 2)}`
+        : MISSING_VALUE,
     };
   }
   const value = currentPrice - signalPrice;
   const pct = (value / signalPrice) * 100;
+  const signalLevelPrice = signalBasis.signalLevelPrice ?? null;
+  const levelDetail = signalLevelPrice
+    ? `Level ${formatMoney(signalLevelPrice, 2)}`
+    : null;
   return {
     value,
     pct,
     label: `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`,
     detail: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
     stale: resolveMoveStaleness(record),
+    basisPrice: signalPrice,
+    basisSource: signalBasis.source,
+    signalLevelPrice,
+    auditDetail: [
+      `${formatMoney(signalPrice, 2)} -> ${formatMoney(currentPrice, 2)}`,
+      levelDetail,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   };
 };
 
@@ -1521,7 +1619,6 @@ export const resolveSignalScoreBreakdown = ({
   candidate,
   quote,
   liquidity,
-  freshWindowBars,
 } = {}) => {
   const candidateRecord = asRecord(candidate);
   const signalRecord = asRecord(signal ?? candidateRecord.signal);
@@ -1554,7 +1651,6 @@ export const resolveSignalScoreBreakdown = ({
     (item) => item === directionSign,
   ).length;
   const adx = finiteNumberOrNull(filterState.adx);
-  const signalAge = resolveSignalAge(signalRecord, { freshWindowBars });
   const quoteRecord = asRecord(quote ?? candidateRecord.quote);
   const orderPlanRecord = asRecord(candidateRecord.orderPlan);
   const orderLiquidity = asRecord(orderPlanRecord.liquidity);
@@ -1573,43 +1669,41 @@ export const resolveSignalScoreBreakdown = ({
           ? "weak"
           : "standard";
   const premiumAtRisk = finiteNumberOrNull(orderPlanRecord.premiumAtRisk);
-  const quoteFreshness = firstText(
-    quoteRecord.quoteFreshness,
-    quoteRecord.freshness,
-    orderLiquidity.freshness,
-  );
-  const marketDataMode = firstText(
-    quoteRecord.marketDataMode,
-    orderLiquidity.marketDataMode,
-  );
+  // No real scoring inputs (no backend signalQuality, no MTF directions, no ADX,
+  // no liquidity/premium): every component would collapse to its default and the
+  // score would be the misleading all-defaults constant (~46.4). Surface an explicit
+  // "no data" instead of a fake score; a real score still computes once any input exists.
+  if (
+    mtfDirections.length === 0 &&
+    adx == null &&
+    spreadPctOfMid == null &&
+    premiumAtRisk == null
+  ) {
+    return {
+      tier: "unknown",
+      score: null,
+      liquidityTier: "standard",
+      reasons: [],
+      reasonLabels: [],
+      components: {},
+      raw: {},
+      label: MISSING_VALUE,
+    };
+  }
   const mtfAlignment = mtfAlignmentScore(mtfDirections, mtfMatches);
-  const freshness = (signalAge.freshnessPct / 100) * 20;
   const trendStrength = adx == null ? 7.5 : clampMetric(adx / 25, 0, 1) * 15;
   const liquidityScore =
     liquidityTier === "strong" ? 20 : liquidityTier === "weak" ? 0 : 12;
   const riskFit = premiumAtRisk != null && premiumAtRisk > 0 ? 10 : 5;
-  const dataQuality =
-    quoteFreshness === "live" || marketDataMode === "live"
-      ? 10
-      : quoteFreshness || marketDataMode
-        ? 7
-        : signalRecord.status === "unavailable"
-          ? 3
-          : 8;
+  // Score ignores signal age and quote liveness: only MTF alignment, trend,
+  // liquidity, and risk-fit contribute. Rescale the remaining max (70) back to
+  // 0-100 so the tier cutoffs and admission gate keep their 0-100 meaning.
+  const maxRawScore = 25 + 15 + 20 + 10;
+  const scoreScale = 100 / maxRawScore;
   const score =
-    mtfAlignment +
-    freshness +
-    trendStrength +
-    liquidityScore +
-    riskFit +
-    dataQuality;
+    (mtfAlignment + trendStrength + liquidityScore + riskFit) * scoreScale;
   const reasons = [
     mtfAlignmentReason(mtfDirections, mtfMatches),
-    signalAge.freshnessPct >= 67
-      ? "fresh_signal"
-      : signalAge.freshnessPct <= 20
-        ? "aging_signal"
-        : null,
     adx != null && adx >= 25 ? "adx_confirmed" : null,
     liquidityTier === "strong"
       ? "strong_liquidity"
@@ -1632,24 +1726,18 @@ export const resolveSignalScoreBreakdown = ({
     reasons,
     reasonLabels: reasons.slice(0, 3).map(scoreReasonLabel),
     components: {
-      mtfAlignment: Number(mtfAlignment.toFixed(1)),
-      freshness: Number(freshness.toFixed(1)),
-      trendStrength: Number(trendStrength.toFixed(1)),
-      liquidity: Number(liquidityScore.toFixed(1)),
-      riskFit: Number(riskFit.toFixed(1)),
-      dataQuality: Number(dataQuality.toFixed(1)),
+      mtfAlignment: Number((mtfAlignment * scoreScale).toFixed(1)),
+      trendStrength: Number((trendStrength * scoreScale).toFixed(1)),
+      liquidity: Number((liquidityScore * scoreScale).toFixed(1)),
+      riskFit: Number((riskFit * scoreScale).toFixed(1)),
       total: roundedScore,
     },
     raw: {
-      barsSinceSignal: signalAge.barsSinceSignal,
-      freshWindowBars: signalAge.freshWindowBars,
       adx,
       mtfMatches,
       mtfDirections,
       spreadPctOfMid,
       premiumAtRisk,
-      quoteFreshness,
-      marketDataMode,
     },
     label: `${formatEnumLabel(tier)} · ${roundedScore.toFixed(1)}`,
   };
@@ -2011,6 +2099,266 @@ export const formatPct = (value, digits = 1) =>
   Number.isFinite(Number(value))
     ? `${Number(value).toFixed(digits)}%`
     : MISSING_VALUE;
+
+const finiteAverage = (values) => {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (!finiteValues.length) return null;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+};
+
+const medianOf = (values) => {
+  const sorted = values
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => left - right);
+  const count = sorted.length;
+  if (count === 0) return null;
+  const mid = Math.floor(count / 2);
+  return count % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+const buildLiveSignalMoveMetrics = (observations, signalCountOverride = null) => {
+  const observationCount = observations.length;
+  const signalCount =
+    Number.isFinite(signalCountOverride) && signalCountOverride >= 0
+      ? signalCountOverride
+      : observationCount;
+  if (observationCount === 0) {
+    return {
+      signalCount,
+      observationCount: 0,
+      avgMovePct: null,
+      avgDirectionalMovePercent: null,
+      medianMovePct: null,
+      medianDirectionalMovePercent: null,
+      correctnessPct: null,
+      correctnessPercent: null,
+      winCount: 0,
+      moveStdDevPct: null,
+      consistencyStdDevPercent: null,
+      avgWinPct: null,
+      avgLossPct: null,
+      payoffRatio: null,
+      expectancyPct: null,
+      expectancyPercent: null,
+      mfePct: null,
+      maePct: null,
+      avgMfePercent: null,
+      avgMaePercent: null,
+    };
+  }
+  const moves = observations.map((observation) => observation.movePercent);
+  const total = moves.reduce((sum, move) => sum + move, 0);
+  const avgMovePct = total / observationCount;
+  const medianMovePct = medianOf(moves);
+  const wins = moves.filter((move) => move > 0);
+  const losses = moves.filter((move) => move < 0);
+  const avgWinPct = wins.length
+    ? wins.reduce((sum, move) => sum + move, 0) / wins.length
+    : 0;
+  const avgLossPct = losses.length
+    ? Math.abs(losses.reduce((sum, move) => sum + move, 0) / losses.length)
+    : 0;
+  const hitRate = wins.length / observationCount;
+  const variance =
+    moves.reduce((sum, move) => sum + (move - avgMovePct) ** 2, 0) /
+    observationCount;
+  const moveStdDevPct = Math.sqrt(variance);
+  const expectancyPct = hitRate * avgWinPct - (1 - hitRate) * avgLossPct;
+  const avgMfePercent = finiteAverage(
+    observations.map((observation) => observation.mfePercent),
+  );
+  const avgMaePercent = finiteAverage(
+    observations.map((observation) => observation.maePercent),
+  );
+
+  return {
+    signalCount,
+    observationCount,
+    avgMovePct,
+    avgDirectionalMovePercent: avgMovePct,
+    medianMovePct,
+    medianDirectionalMovePercent: medianMovePct,
+    correctnessPct: hitRate * 100,
+    correctnessPercent: hitRate * 100,
+    winCount: wins.length,
+    moveStdDevPct,
+    consistencyStdDevPercent: moveStdDevPct,
+    avgWinPct,
+    avgLossPct,
+    payoffRatio: avgLossPct > 0 ? avgWinPct / avgLossPct : null,
+    expectancyPct,
+    expectancyPercent: expectancyPct,
+    mfePct: avgMfePercent,
+    maePct: avgMaePercent,
+    avgMfePercent,
+    avgMaePercent,
+  };
+};
+
+const sparklineBarHigh = (point) => {
+  const high =
+    finiteNumberOrNull(point?.high) ??
+    finiteNumberOrNull(point?.h) ??
+    sparklineBarClose(point);
+  return high;
+};
+
+const sparklineBarLow = (point) => {
+  const low =
+    finiteNumberOrNull(point?.low) ??
+    finiteNumberOrNull(point?.l) ??
+    sparklineBarClose(point);
+  return low;
+};
+
+const sparklineBarTimestampMs = (point) => {
+  const raw = point?.timestamp ?? point?.time ?? point?.t;
+  if (raw instanceof Date) {
+    const value = raw.getTime();
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return null;
+    return raw > 0 && raw < 1_000_000_000_000 ? raw * 1000 : raw;
+  }
+  if (typeof raw === "string") {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const sparklineBarsForSignal = (snapshot, record) =>
+  (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars) ||
+  (Array.isArray(snapshot?.spark) && snapshot.spark) ||
+  (Array.isArray(record?.sparkBars) && record.sparkBars) ||
+  (Array.isArray(record?.spark) && record.spark) ||
+  (Array.isArray(record?.bars) && record.bars) ||
+  [];
+
+const resolvePersistedSignalExcursionMetrics = (record) => {
+  const mfePercent = finiteNumberOrNull(
+    record.currentSignalMfePercent ?? record.signalMfePercent,
+  );
+  const maePercent = finiteNumberOrNull(
+    record.currentSignalMaePercent ?? record.signalMaePercent,
+  );
+  return mfePercent != null || maePercent != null
+    ? { mfePercent, maePercent }
+    : null;
+};
+
+const resolveSignalExcursionMetrics = ({
+  record,
+  snapshot,
+  signalPrice,
+  direction,
+}) => {
+  const signalAtMs = Date.parse(record.signalAt ?? record.currentSignalAt ?? "");
+  if (!Number.isFinite(signalAtMs) || signalPrice <= 0) return null;
+  const bars = sparklineBarsForSignal(snapshot, record)
+    .map((bar) => ({
+      bar,
+      timeMs: sparklineBarTimestampMs(bar),
+      high: sparklineBarHigh(bar),
+      low: sparklineBarLow(bar),
+    }))
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.timeMs) &&
+        entry.timeMs >= signalAtMs &&
+        Number.isFinite(entry.high) &&
+        Number.isFinite(entry.low),
+    );
+  if (!bars.length) return null;
+
+  const highest = Math.max(...bars.map((entry) => entry.high));
+  const lowest = Math.min(...bars.map((entry) => entry.low));
+  if (direction === "sell") {
+    return {
+      mfePercent: ((signalPrice - lowest) / signalPrice) * 100,
+      maePercent: ((signalPrice - highest) / signalPrice) * 100,
+    };
+  }
+  return {
+    mfePercent: ((highest - signalPrice) / signalPrice) * 100,
+    maePercent: ((lowest - signalPrice) / signalPrice) * 100,
+  };
+};
+
+// Signal-indicator KPIs computed from the live signal rows already on the page
+// (directional move since each signal). This keeps the header cards fed by the
+// same Signal Matrix / STA rows the user is looking at.
+export const buildSignalIndicatorMetrics = (
+  signalRows,
+  { tickerSnapshotsBySymbol = null } = {},
+) => {
+  const rows = Array.isArray(signalRows) ? signalRows : [];
+  const observations = [];
+  const observationsByDirection = {
+    buy: [],
+    sell: [],
+  };
+  const signalCountsByDirection = {
+    buy: 0,
+    sell: 0,
+  };
+  for (const row of rows) {
+    const record = asRecord(row);
+    const symbol = String(record.symbol || "").trim().toUpperCase();
+    const snapshot = asRecord(tickerSnapshotsBySymbol?.[symbol]);
+    const direction = String(record.direction || "").toLowerCase();
+    if (direction !== "buy" && direction !== "sell") continue;
+    signalCountsByDirection[direction] += 1;
+    const signalPrice = resolveSignalEquityBasisPrice(record).price;
+    const current = resolveDisplayCurrentPrice(record, snapshot);
+    const currentPrice =
+      current.source === "quote" || current.source === "bar"
+        ? current.price
+        : null;
+    if (signalPrice == null || currentPrice == null) {
+      continue;
+    }
+    const rawPct = ((currentPrice - signalPrice) / signalPrice) * 100;
+    const directionalMove = direction === "sell" ? -rawPct : rawPct;
+    const excursion = resolveSignalExcursionMetrics({
+      record,
+      snapshot,
+      signalPrice,
+      direction,
+    });
+    const persistedExcursion =
+      resolvePersistedSignalExcursionMetrics(record) ?? excursion;
+    const observation = {
+      movePercent: directionalMove,
+      mfePercent: persistedExcursion?.mfePercent ?? null,
+      maePercent: persistedExcursion?.maePercent ?? null,
+    };
+    observations.push(observation);
+    observationsByDirection[direction].push(observation);
+  }
+
+  return {
+    ...buildLiveSignalMoveMetrics(
+      observations,
+      signalCountsByDirection.buy + signalCountsByDirection.sell,
+    ),
+    byDirection: {
+      buy: buildLiveSignalMoveMetrics(
+        observationsByDirection.buy,
+        signalCountsByDirection.buy,
+      ),
+      sell: buildLiveSignalMoveMetrics(
+        observationsByDirection.sell,
+        signalCountsByDirection.sell,
+      ),
+    },
+    mtfFilteredOutCount: 0,
+    horizonBars: null,
+    perSymbol: [],
+    source: "live",
+  };
+};
 
 export const formatChaseSteps = (steps) =>
   Array.isArray(steps)

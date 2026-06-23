@@ -740,7 +740,7 @@ test("session response preserves compact IBKR runtime bridge failure fields", ()
         desktopAgentHelperVersion: "2026-06-10.ib-async-sidecar-v21-continuous-claim",
         desktopAgentKnownBad: true,
         desktopAgentExpectedHelperVersion:
-          "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop",
+          "2026-06-22.ib-async-sidecar-v24-long-poll-claim",
         desktopAgentUpgradeRequired: true,
         reconnectAvailable: false,
         activation: getIbkrBridgeActivationDiagnostics(),

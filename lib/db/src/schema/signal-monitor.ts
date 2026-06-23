@@ -61,6 +61,21 @@ export const signalMonitorSymbolStatesTable = pgTable(
       precision: 18,
       scale: 6,
     }),
+    currentSignalClose: numeric("current_signal_close", {
+      precision: 18,
+      scale: 6,
+    }),
+    currentSignalMfePercent: numeric("current_signal_mfe_percent", {
+      precision: 18,
+      scale: 6,
+    }),
+    currentSignalMaePercent: numeric("current_signal_mae_percent", {
+      precision: 18,
+      scale: 6,
+    }),
+    // Score inputs captured at the current signal. This keeps the STA Score
+    // column sourced from the same durable signal state as price/move/excursion.
+    filterState: jsonb("filter_state").$type<Record<string, unknown> | null>(),
     latestBarAt: timestamp("latest_bar_at", { withTimezone: true }),
     // Close of the bar at latestBarAt: the current price as of the last
     // evaluation. Lets the STA "Move since signal" column render synchronously

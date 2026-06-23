@@ -43,6 +43,7 @@ test("warm-start states never replay prior-session trade eligibility", () => {
           currentSignalDirection: "buy",
           currentSignalAt: "2026-06-05T14:30:00.000Z",
           currentSignalPrice: 200.25,
+          filterState: { mtfDirections: [1, 1, 1], adx: 32 },
           latestBarAt: "2026-06-05T14:35:00.000Z",
           barsSinceSignal: 1,
           fresh: true,
@@ -58,6 +59,10 @@ test("warm-start states never replay prior-session trade eligibility", () => {
   );
   const cached = readSignalMatrixSnapshotCache({ storage, nowMs });
   assert.equal(cached?.states?.length, 1);
+  assert.deepEqual(cached.states[0].filterState, {
+    mtfDirections: [1, 1, 1],
+    adx: 32,
+  });
   assert.equal(cached.states[0].actionEligible, false);
   assert.equal(cached.states[0].actionBlocker, "signal_age_unavailable");
 });

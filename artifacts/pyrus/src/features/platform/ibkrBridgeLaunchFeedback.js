@@ -15,7 +15,7 @@ export const waitForBridgeLaunchFeedbackPaint = ({
 
     let finished = false;
     let timeoutId = null;
-    const finish = (afterFrame) => {
+    const finish = () => {
       if (finished) {
         return;
       }
@@ -26,26 +26,32 @@ export const waitForBridgeLaunchFeedbackPaint = ({
       ) {
         windowRef.clearTimeout(timeoutId);
       }
-      if (afterFrame && typeof windowRef.setTimeout === "function") {
-        windowRef.setTimeout(resolve, 0);
+      resolve();
+    };
+    const finishAfterFrame = () => {
+      if (finished) {
         return;
       }
-      resolve();
+      if (typeof windowRef.setTimeout === "function") {
+        windowRef.setTimeout(finish, 0);
+        return;
+      }
+      finish();
     };
 
     if (
       hasHiddenDocument(documentRef) ||
       typeof windowRef.requestAnimationFrame !== "function"
     ) {
-      finish(false);
+      finish();
       return;
     }
 
     if (typeof windowRef.setTimeout === "function") {
       timeoutId = windowRef.setTimeout(
-        () => finish(false),
+        finish,
         IBKR_BRIDGE_FEEDBACK_PAINT_MAX_WAIT_MS,
       );
     }
-    windowRef.requestAnimationFrame(() => finish(true));
+    windowRef.requestAnimationFrame(finishAfterFrame);
   });

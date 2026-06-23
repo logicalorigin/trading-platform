@@ -431,6 +431,9 @@ export const signalPrimaryStateForMatrix = (signal) => ({
   currentSignalDirection: signal?.currentSignalDirection || signal?.direction,
   currentSignalAt: signal?.currentSignalAt || signal?.signalAt,
   currentSignalPrice: signal?.currentSignalPrice ?? signal?.price ?? null,
+  currentSignalClose: signal?.currentSignalClose ?? signal?.close ?? null,
+  currentSignalMfePercent: signal?.currentSignalMfePercent ?? null,
+  currentSignalMaePercent: signal?.currentSignalMaePercent ?? null,
   latestBarAt: signal?.latestBarAt || signal?.signalAt || null,
   barsSinceSignal: signal?.barsSinceSignal,
   fresh: signal?.fresh,
@@ -1098,6 +1101,19 @@ export const buildSignalsRows = ({
             : null,
         currentSignalAt: displaySignalAt,
         currentSignalPrice: displaySignalPrice,
+        currentSignalClose:
+          currentPrimaryState?.currentSignalClose ??
+          currentMatrixSignalState?.currentSignalClose ??
+          latestEvent?.close ??
+          null,
+        currentSignalMfePercent:
+          currentPrimaryState?.currentSignalMfePercent ??
+          currentMatrixSignalState?.currentSignalMfePercent ??
+          null,
+        currentSignalMaePercent:
+          currentPrimaryState?.currentSignalMaePercent ??
+          currentMatrixSignalState?.currentSignalMaePercent ??
+          null,
         latestBarAt:
           primaryState?.latestBarAt ||
           Object.values(matrixStatesByTimeframe)

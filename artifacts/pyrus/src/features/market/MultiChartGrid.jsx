@@ -58,7 +58,7 @@ import {
   getTickerSearchRowStorageKey,
   normalizePersistedTickerSearchRows,
   normalizeTickerSearchResultForStorage,
-} from "../platform/tickerSearch/model";
+} from "../platform/tickerUniverseRows";
 import {
   MarketChartCell,
   preloadMarketChartRuntime as preloadMarketChartCellRuntime,
@@ -258,8 +258,6 @@ export const MultiChartGrid = ({
   externalSelection = null,
   onSymClick,
   watchlistSymbols = [],
-  popularTickers = [],
-  signalSuggestionSymbols = [],
   stockAggregateStreamingEnabled = false,
   isVisible = false,
   unusualThreshold,
@@ -909,17 +907,6 @@ export const MultiChartGrid = ({
     isVisible,
     streamedSymbols,
   ]);
-  const chartFlowSuggestionSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (chartFlowEvents || [])
-            .map((event) => normalizeTickerSymbol(event?.ticker || event?.underlying))
-            .filter(Boolean),
-        ),
-      ).slice(0, 12),
-    [chartFlowEvents],
-  );
   useEffect(() => {
     setSlots((current) => {
       let changed = current.length !== MAX_MULTI_CHART_SLOTS;
@@ -1660,12 +1647,7 @@ export const MultiChartGrid = ({
                   onSymClick?.(ticker);
                 }}
                 onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
-                recentTickers={recentTickers}
                 recentTickerRows={recentTickerRows}
-                watchlistSymbols={watchlistSymbols}
-                popularTickers={popularTickers}
-                smartSuggestionSymbols={chartFlowSuggestionSymbols}
-                signalSuggestionSymbols={signalSuggestionSymbols}
                 onRememberTicker={rememberSearchRow}
                 tickerSearchOpen={openTickerSearchSlotIndex === index}
                 onTickerSearchOpenChange={(open) => {

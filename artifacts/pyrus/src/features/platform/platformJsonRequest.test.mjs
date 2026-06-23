@@ -62,6 +62,26 @@ test("without timeoutMs no abort signal is wired — the old unbounded behavior"
   );
 });
 
+test("an external abort signal can cancel an unbounded request", async () => {
+  const controller = new AbortController();
+  let observedSignal = null;
+  globalThis.fetch = (_path, init) =>
+    new Promise((_resolve, reject) => {
+      observedSignal = init.signal;
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  const request = platformJsonRequest("/x", { signal: controller.signal });
+  controller.abort();
+
+  await assert.rejects(() => request, /Request canceled/);
+  assert.equal(observedSignal, controller.signal);
+});
+
 test("a fast success within the timeout still returns parsed JSON (happy path)", async () => {
   globalThis.fetch = () =>
     Promise.resolve({

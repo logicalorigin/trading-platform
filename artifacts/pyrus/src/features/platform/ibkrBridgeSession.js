@@ -170,16 +170,20 @@ export const shouldUseRemoteIbkrLaunchBrowser = ({
     return false;
   }
 
-  // A Windows browser can launch the registered local protocol directly when
-  // no paired desktop helper is online yet. This is also the repair path for a
-  // stale home helper: queueing to an offline agent cannot restart it.
-  if (isWindowsIbkrLaunchBrowser() && !desktopAgentOnline) {
+  // A Windows browser can invoke the registered local protocol directly. The
+  // remote desktop-agent path intentionally starts the helper child hidden, so
+  // using it for local Windows clicks makes a valid launch look inert.
+  if (isWindowsIbkrLaunchBrowser()) {
     return false;
   }
-  if (
-    isWindowsIbkrLaunchBrowser() &&
-    (desktopAgentUpgradeRequired || desktopAgentCompatible === false)
-  ) {
+
+  // Remote launch only works when a desktop helper is actively polling Pyrus.
+  // A stale helper cannot claim the queued job, so use the direct protocol path
+  // for repair/update launches instead of leaving the UI waiting.
+  if (!desktopAgentOnline) {
+    return false;
+  }
+  if (desktopAgentUpgradeRequired || desktopAgentCompatible === false) {
     return false;
   }
 

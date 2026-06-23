@@ -107,13 +107,14 @@ const getIbkrInsightToneColor = (tone) => {
 
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const IBKR_LOGIN_HANDOFF_POLL_MS = 150;
-const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 0;
+const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 25_000;
 const IBKR_LOGIN_HANDOFF_WAIT_MS = 60_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
 const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 500;
 const IBKR_DESKTOP_JOB_POLL_MS = 250;
 const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
+const IBKR_CREDENTIAL_AUTOFILL_SYNC_MS = 250;
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -172,7 +173,12 @@ const createIbkrLaunchCanceledError = () => {
   return error;
 };
 
-const waitForIbkrLoginKey = async ({ activationId, managementToken, shouldAbort }) => {
+const waitForIbkrLoginKey = async ({
+  activationId,
+  managementToken,
+  shouldAbort,
+  signal,
+}) => {
   const deadline = Date.now() + IBKR_LOGIN_HANDOFF_WAIT_MS;
   let lastTransientError = null;
   while (Date.now() < deadline) {
@@ -190,6 +196,7 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken, shouldAbort 
               ? { waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS }
               : {}),
           },
+          signal,
           timeoutMs: 0,
         },
       );
@@ -204,6 +211,9 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken, shouldAbort 
       }
       lastTransientError = null;
     } catch (error) {
+      if (shouldAbort?.()) {
+        throw createIbkrLaunchCanceledError();
+      }
       if (isIbkrLoginKeyReadActivationNotFoundError(error)) {
         return {
           completedWithoutCredentials: true,
@@ -2434,6 +2444,17 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
       setCredentialsReady(false);
     }
   }, [passwordInputRef, usernameInputRef]);
+  useEffect(() => {
+    if (busy || typeof window === "undefined") {
+      return undefined;
+    }
+    syncCredentialsReady();
+    const syncTimerId = window.setInterval(
+      syncCredentialsReady,
+      IBKR_CREDENTIAL_AUTOFILL_SYNC_MS,
+    );
+    return () => window.clearInterval(syncTimerId);
+  }, [busy, syncCredentialsReady]);
   const handleSubmit = useCallback(
     async (event) => {
       event.preventDefault();
@@ -3675,10 +3696,18 @@ export const HeaderStatusCluster = ({
   );
 
   const deliverIbkrLoginCredentials = useCallback(
-    async ({ activationId, managementToken, username, password }) => {
+    async ({
+      activationId,
+      managementToken,
+      password,
+      shouldAbort: shouldAbortOverride,
+      signal,
+      username,
+    }) => {
       // The user-cancel signal. Read live (not captured) so a cancel that lands
       // mid-handoff is observed by the key-wait loop and the pre-POST guard.
-      const shouldAbort = () => bridgeLaunchCancelRequestedRef.current;
+      const shouldAbort = () =>
+        bridgeLaunchCancelRequestedRef.current || shouldAbortOverride?.() === true;
       let handoff;
       reportIbkrBrowserConnectionEvent({
         activationId,
@@ -3691,6 +3720,7 @@ export const HeaderStatusCluster = ({
         handoff = await waitForIbkrLoginKey({
           activationId,
           managementToken,
+          signal,
           shouldAbort,
         });
       } catch (error) {
@@ -4051,26 +4081,7 @@ export const HeaderStatusCluster = ({
         ? "Sending the IBKR launch request to the paired Windows desktop."
         : "Preparing the Windows helper secure credential handoff.",
     );
-    appendBridgeActivationProgress({
-      activationId: null,
-      status: "starting_bridge",
-      step: initialUseRemoteDesktopLaunch
-        ? "queued_on_pyrus"
-        : "helper_launch_requested",
-      message: initialUseRemoteDesktopLaunch
-        ? "Sending the IBKR launch request to Pyrus for the paired Windows desktop."
-        : "Preparing the Windows helper secure credential handoff.",
-    });
-    if (initialUseRemoteDesktopLaunch) {
-      appendBridgeActivationProgress({
-        activationId: null,
-        status: "starting_bridge",
-        step: "waiting_desktop_agent",
-        message:
-          "Waiting for the paired Windows desktop helper to claim the launch request.",
-      });
-    }
-    await waitForBridgeLaunchFeedbackPaint();
+    void waitForBridgeLaunchFeedbackPaint();
     if (!initialUseRemoteDesktopLaunch) {
       protocolLauncher = openIbkrProtocolLauncher();
     }
@@ -4081,6 +4092,29 @@ export const HeaderStatusCluster = ({
           protocolLauncher = openIbkrProtocolLauncher();
         }
 
+        const requestController =
+          typeof AbortController === "function" ? new AbortController() : null;
+        const credentialDeliveryController =
+          typeof AbortController === "function" ? new AbortController() : null;
+        let credentialDeliveryCanceled = false;
+        const startCredentialDelivery = (payload) => {
+          if (
+            !credentialsReady ||
+            !payload?.activationId ||
+            !payload?.managementToken
+          ) {
+            return Promise.resolve({ delivered: false });
+          }
+          return deliverIbkrLoginCredentials({
+            activationId: payload.activationId,
+            managementToken: payload.managementToken,
+            password,
+            signal: credentialDeliveryController?.signal,
+            shouldAbort: () => credentialDeliveryCanceled,
+            username: normalizedUsername,
+          });
+        };
+
         const payload = await platformJsonRequest(
           useRemoteDesktopLaunch
             ? "/api/ibkr/remote-launch"
@@ -4090,6 +4124,7 @@ export const HeaderStatusCluster = ({
             body: useRemoteDesktopLaunch
               ? { autoLogin: credentialsReady, helperUpdateOnly }
               : undefined,
+            signal: requestController?.signal,
             timeoutMs: 0,
           },
         );
@@ -4118,6 +4153,7 @@ export const HeaderStatusCluster = ({
           IBKR_BRIDGE_SESSION_KEYS.launchUrl,
           selectedLaunchUrl,
         );
+        const pendingCredentialDelivery = startCredentialDelivery(payload);
         const launched = useRemoteDesktopLaunch
           ? Boolean(payload.remoteLaunch?.jobId)
           : navigateIbkrProtocolLauncher(
@@ -4125,6 +4161,9 @@ export const HeaderStatusCluster = ({
               selectedLaunchUrl,
             );
         if (!launched) {
+          credentialDeliveryCanceled = true;
+          credentialDeliveryController?.abort();
+          void pendingCredentialDelivery.catch(() => {});
           clearBridgeLaunchSessionState();
           throw new Error(
             useRemoteDesktopLaunch
@@ -4166,7 +4205,7 @@ export const HeaderStatusCluster = ({
             ? "Waiting for the Windows desktop helper to claim the launch request."
             : "Waiting for the Windows helper to request encrypted credentials.",
         );
-        return { payload, useRemoteDesktopLaunch };
+        return { payload, pendingCredentialDelivery, useRemoteDesktopLaunch };
       };
 
       let launchResult;
@@ -4189,20 +4228,16 @@ export const HeaderStatusCluster = ({
       }
 
       if (!credentialsReady) {
-        clearBridgeLaunchSessionState();
         setBridgeLauncherNotice(
-          "Helper update launched in PowerShell. Re-run broker launch with credentials after the helper updates.",
+          launchResult.useRemoteDesktopLaunch
+            ? "Helper update request queued for the Windows desktop. Waiting for the helper to report the update result."
+            : "Helper update launched in PowerShell. Waiting for the helper to report the update result.",
         );
         void refreshIbkrConnectionStatus({ includeSupplementalState: true });
         return { clearPassword: true };
       }
 
-      const deliveryResult = await deliverIbkrLoginCredentials({
-        activationId: launchResult.payload.activationId,
-        managementToken: launchResult.payload.managementToken,
-        username: normalizedUsername,
-        password,
-      });
+      const deliveryResult = await launchResult.pendingCredentialDelivery;
       if (deliveryResult?.delivered) {
         bridgePendingAutoLoginCredentialsRef.current = null;
       }

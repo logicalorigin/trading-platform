@@ -664,6 +664,30 @@ export const buildStaSignalStatusSummary = ({
   };
 };
 
+export const buildStaTableRowsSnapshot = ({
+  rows = [],
+  receivedCount = 0,
+  actionCount = 0,
+  historyCount = 0,
+  activeFilterLabel = "All",
+} = {}) => {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const signalRows = sourceRows
+    .map((row) => asRecord(row?.signal))
+    .filter((signal) => Object.keys(signal).length > 0);
+  return {
+    signature: sourceRows
+      .map((row, index) => rowStableIdentity(row) || String(index))
+      .join("\n"),
+    signalRows,
+    rowCount: sourceRows.length,
+    receivedCount,
+    actionCount,
+    historyCount,
+    activeFilterLabel,
+  };
+};
+
 export const signalTableFilterMatches = (row, filter) => {
   if (filter === "all") return true;
   if (filter === "current") return !isHistoricalSignalRow(row);
@@ -1241,6 +1265,7 @@ export const OperationsSignalTable = ({
   algoIsNarrow = false,
   safeQaMode = false,
   onOpenCandidateInTrade,
+  onStaRowsChange,
 }) => {
   const [filter, setFilter] = useState("all");
   const [sortState, setSortState] = useState({
@@ -1608,6 +1633,26 @@ export const OperationsSignalTable = ({
         },
         ...COMPACT_SORT_OPTIONS,
       ];
+  const staRowsSnapshot = useMemo(
+    () =>
+      buildStaTableRowsSnapshot({
+        rows,
+        receivedCount: receivedSignalCount,
+        actionCount: actionMappedCount,
+        historyCount: counts.history,
+        activeFilterLabel: activeFilter.label,
+      }),
+    [
+      actionMappedCount,
+      activeFilter.label,
+      counts.history,
+      receivedSignalCount,
+      rows,
+    ],
+  );
+  useEffect(() => {
+    onStaRowsChange?.(staRowsSnapshot);
+  }, [onStaRowsChange, staRowsSnapshot]);
   const handleSortChange = (nextSortKey) => {
     setSortState((current) => ({
       key: nextSortKey,

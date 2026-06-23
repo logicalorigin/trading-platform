@@ -346,7 +346,6 @@ function rollupMinuteBars(input: {
       .slice(-input.limit);
   }
 
-  const requiredChildBars = Math.max(1, timeframeMs / TIMEFRAME_MS["1m"]);
   const grouped = new Map<number, CachedBar[]>();
   sorted.forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
@@ -374,12 +373,6 @@ function rollupMinuteBars(input: {
           bars.length,
       );
       if (!complete && !provisional) {
-        return null;
-      }
-      const childBuckets = new Set(
-        bars.map((bar) => Math.floor(bar.timestamp.getTime() / TIMEFRAME_MS["1m"])),
-      );
-      if (complete && childBuckets.size < requiredChildBars) {
         return null;
       }
       const first = bars[0];
@@ -619,6 +612,26 @@ export async function loadSignalMonitorLocalBarCache(input: {
   }
   const storedBars = await readStoredBars(input);
   return mergeBarsByTimestamp([...storedBars, ...memoryBars], input.limit);
+}
+
+// Memory-only read: NEVER touches the database (no readStoredBars augment), so it
+// adds zero DB-pool load even under contention. Returns the rolled-up bars
+// currently held in the in-process minute cache for the symbol/timeframe,
+// newest-capped to `limit`, ascending. Callers (e.g. the signal-quality KPI
+// preview) accept the bounded ~retention-window depth (≈72h) the cache holds in
+// exchange for never queueing on the shared pool. Mirrors the memory branch of
+// loadSignalMonitorLocalBarCache.
+export function readSignalMonitorLocalMemoryBars(input: {
+  symbol: string;
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  evaluatedAt: Date;
+  limit: number;
+  includeProvisional?: boolean;
+}): BrokerBarSnapshot[] {
+  if (!LOCAL_CACHE_TIMEFRAMES.includes(input.timeframe)) {
+    return [];
+  }
+  return mergeBarsByTimestamp(readMemoryBars(input), input.limit);
 }
 
 export function getSignalMonitorLocalBarCacheDiagnostics() {

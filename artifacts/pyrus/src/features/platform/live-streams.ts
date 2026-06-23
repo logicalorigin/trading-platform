@@ -2223,40 +2223,6 @@ const readQuoteReceivedAtMs = (quote: QuoteSnapshot | undefined): number | null 
   );
 };
 
-const QUOTE_VALUE_FIELDS: Array<keyof QuoteSnapshot> = [
-  "price",
-  "bid",
-  "ask",
-  "change",
-  "changePercent",
-  "open",
-  "high",
-  "low",
-  "prevClose",
-  "volume",
-  "delayed",
-  "freshness",
-  "marketDataMode",
-  "source",
-  "transport",
-];
-
-const hasSameTimestampQuoteConflict = (
-  incoming: QuoteSnapshot,
-  current: QuoteSnapshot,
-): boolean =>
-  QUOTE_VALUE_FIELDS.some((field) => {
-    const currentValue = current[field];
-    const incomingValue = incoming[field];
-    return (
-      currentValue !== undefined &&
-      currentValue !== null &&
-      incomingValue !== undefined &&
-      incomingValue !== null &&
-      !Object.is(currentValue, incomingValue)
-    );
-  });
-
 export const isQuoteSnapshotAtLeastAsFresh = (
   incoming: QuoteSnapshot,
   current: QuoteSnapshot | undefined,
@@ -2300,7 +2266,10 @@ export const isQuoteSnapshotAtLeastAsFresh = (
   if (incomingReceivedAt !== null && currentReceivedAt !== null) {
     return incomingReceivedAt >= currentReceivedAt;
   }
-  return !hasSameTimestampQuoteConflict(incoming, current);
+  // Massive Q/T frames can share the same provider event timestamp and carry no
+  // API latency tie-breaker. Once strictly older data is ruled out, preserve
+  // EventSource arrival order so live prices keep advancing.
+  return true;
 };
 
 const collectLatestCachedQuotesBySymbol = (

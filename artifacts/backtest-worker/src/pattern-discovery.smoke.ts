@@ -10,6 +10,7 @@ import {
   db,
   historicalBarDatasetsTable,
   historicalBarsTable,
+  mtfPatternOccurrencesTable,
   mtfPatternResultsTable,
 } from "@workspace/db";
 import { DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS } from "@workspace/pyrus-signals-core";
@@ -211,13 +212,32 @@ async function main(): Promise<void> {
       })),
     );
   }
+  for (let i = 0; i < occurrenceRows.length; i += 1000) {
+    await db.insert(mtfPatternOccurrencesTable).values(
+      occurrenceRows.slice(i, i + 1000).map((row) => ({
+        studyId: study.id,
+        symbol: row.symbol,
+        occurredAt: row.occurredAt,
+        patternKey: row.patternKey,
+        horizonBars: row.horizonBars,
+        realizedReturnPct: numStr(row.realizedReturnPct),
+        maePct: numStr(row.maePct),
+        mfePct: numStr(row.mfePct),
+      })),
+    );
+  }
 
   // Read back from the DB to prove persistence.
   const persisted = await db
     .select()
     .from(mtfPatternResultsTable)
     .where(eq(mtfPatternResultsTable.studyId, study.id));
+  const persistedOccurrences = await db
+    .select()
+    .from(mtfPatternOccurrencesTable)
+    .where(eq(mtfPatternOccurrencesTable.studyId, study.id));
   console.log(`\n=== persisted ${persisted.length} rows to mtf_pattern_results (study ${study.id}) ===`);
+  console.log(`=== persisted ${persistedOccurrences.length} rows to mtf_pattern_occurrences ===`);
 
   for (const horizon of HORIZONS) {
     const top = persisted

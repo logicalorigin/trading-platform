@@ -25,6 +25,24 @@ const comparableFiniteNumberOrNull = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const structuredStateValue = (state, key) => {
+  const topLevelValue = state?.[key];
+  if (topLevelValue != null) return topLevelValue;
+  if (key === "filterState") {
+    return state?.indicatorSnapshot?.filterState ?? null;
+  }
+  return null;
+};
+
+const equivalentStructuredValue = (left, right) => {
+  if (left === right) return true;
+  try {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  } catch (_error) {
+    return false;
+  }
+};
+
 const normalizeSignalDirection = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "buy" || normalized === "sell" ? normalized : "";
@@ -70,6 +88,16 @@ const equivalentSignalMatrixCellState = (current, candidate) =>
   timestampMs(current?.lastEvaluatedAt) === timestampMs(candidate?.lastEvaluatedAt) &&
   comparableFiniteNumberOrNull(current?.currentSignalPrice) ===
     comparableFiniteNumberOrNull(candidate?.currentSignalPrice) &&
+  comparableFiniteNumberOrNull(current?.currentSignalClose) ===
+    comparableFiniteNumberOrNull(candidate?.currentSignalClose) &&
+  comparableFiniteNumberOrNull(current?.currentSignalMfePercent) ===
+    comparableFiniteNumberOrNull(candidate?.currentSignalMfePercent) &&
+  comparableFiniteNumberOrNull(current?.currentSignalMaePercent) ===
+    comparableFiniteNumberOrNull(candidate?.currentSignalMaePercent) &&
+  equivalentStructuredValue(
+    structuredStateValue(current, "filterState"),
+    structuredStateValue(candidate, "filterState"),
+  ) &&
   comparableFiniteNumberOrNull(current?.barsSinceSignal) ===
     comparableFiniteNumberOrNull(candidate?.barsSinceSignal) &&
   Boolean(current?.fresh) === Boolean(candidate?.fresh) &&

@@ -96,6 +96,29 @@ test("equivalent matrix cell updates keep the current object identity", () => {
   );
 });
 
+test("matrix cell merge treats filterState as a real state change", () => {
+  const current = {
+    symbol: "CEG",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-12T16:25:00.000Z",
+    latestBarAt: "2026-06-12T16:30:00.000Z",
+    lastEvaluatedAt: "2026-06-12T16:30:00.000Z",
+    currentSignalPrice: 93.12,
+    barsSinceSignal: 1,
+    fresh: true,
+    active: true,
+    filterState: null,
+  };
+  const candidate = {
+    ...current,
+    filterState: { mtfDirections: [1, 1, 1], adx: 30 },
+  };
+
+  assert.equal(preferSignalMatrixCellState(current, candidate), candidate);
+});
+
 test("missing and zero matrix values are not treated as equivalent", () => {
   const current = {
     symbol: "CEG",

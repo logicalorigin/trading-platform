@@ -3,8 +3,9 @@ import {
   algoStrategiesTable,
   db,
   executionEventsTable,
+  shadowPositionsTable,
 } from "@workspace/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 import {
   createTransientPostgresBackoff,
   isPoolContentionError,
@@ -13,6 +14,7 @@ import {
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { assertAlgoGatewayReady } from "./algo-gateway";
+import { SHADOW_ACCOUNT_ID } from "./shadow-account";
 import { normalizeAlgoDeploymentProviderAccountId } from "./algo-deployment-account";
 import {
   normalizeLegacyAlgoBranding,
@@ -25,7 +27,9 @@ import {
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
   ensureDefaultSignalOptionsPaperDeployment,
+  getSignalOptionsTodayPnlByDeployment,
   invalidateSignalOptionsDashboardCaches,
+  type SignalOptionsTodayPnl,
 } from "./signal-options-automation";
 
 type CreateAlgoDeploymentInput = {
@@ -62,6 +66,10 @@ type AlgoDeploymentRow = typeof algoDeploymentsTable.$inferSelect;
 type AlgoDeploymentListResponse = {
   deployments: ReturnType<typeof deploymentToResponse>[];
   cacheStatus?: "hit" | "stale" | "unavailable";
+  // Sidecar map (deployment id -> today's net P&L) for the deployment tabs.
+  // Kept off the deployment entity (and the entity cache) so create/enable/pause
+  // responses stay P&L-free; attached per-request in listAlgoDeployments.
+  pnlByDeployment?: Record<string, SignalOptionsTodayPnl>;
 };
 
 type DeploymentListCacheEntry = {
@@ -238,6 +246,54 @@ function deploymentHasSignalOptionsProfile(
       deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
       deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
   );
+}
+
+function deploymentHasOvernightSpotProfile(
+  deployment: Pick<AlgoDeploymentRow, "config">,
+) {
+  const config = asRecord(deployment.config);
+  const parameters = asRecord(config.parameters);
+  return Boolean(
+    config.overnightSpot != null || parameters.overnightSpotTrading != null,
+  );
+}
+
+const OVERNIGHT_SPOT_STRATEGY_SOURCE = "overnight_spot_seed";
+const DEFAULT_OVERNIGHT_SPOT_STRATEGY_NAME = "Overnight Equities";
+
+// A dedicated strategy row for overnight deployments. Without it, overnight
+// deployments would reuse a signal-options strategyId as their FK, so an Options
+// and an Overnight deployment could share a strategyId — and a strategyId-keyed
+// consolidation (the merge of duplicate shadow/live rows) would wrongly fuse two
+// different algos. Giving overnight its own strategy keeps strategyId a clean
+// per-algo key. Created lazily on the first overnight deployment.
+async function ensureDefaultOvernightSpotStrategy() {
+  const [existing] = await db
+    .select()
+    .from(algoStrategiesTable)
+    .where(
+      sql`(${algoStrategiesTable.config} ->> 'source') = ${OVERNIGHT_SPOT_STRATEGY_SOURCE}`,
+    )
+    .limit(1);
+  if (existing) {
+    return existing;
+  }
+  const [created] = await db
+    .insert(algoStrategiesTable)
+    .values({
+      name: DEFAULT_OVERNIGHT_SPOT_STRATEGY_NAME,
+      mode: "shadow",
+      enabled: false,
+      symbolUniverse: [],
+      config: {
+        source: OVERNIGHT_SPOT_STRATEGY_SOURCE,
+        strategyId: "pyrus_signals",
+        parameters: { overnightSpotTrading: true },
+        overnightSpot: {},
+      },
+    })
+    .returning();
+  return created;
 }
 
 function visibleDeploymentRows(rows: AlgoDeploymentRow[]) {
@@ -446,7 +502,101 @@ function executionEventToResponse(
   };
 }
 
-export async function listAlgoDeployments(
+// Attach per-deployment today's P&L without mutating the cached entity list.
+// Only signal-options deployments carry P&L; other kinds (and an empty/
+// unavailable list) get no entries. Computed fresh per request from the shared
+// 15s summary cache, so it stays current under the client's ~15s list poll.
+// Today's net P&L for shadow-mode overnight-spot deployments, sourced from the
+// shadow ledger's equity positions (which already carry unrealized/realized P&L):
+// open positions -> unrealized; positions closed today (UTC) -> realized.
+// Attributed to a deployment by its symbol universe. Live overnight positions
+// live in the real broker account (not the shadow ledger) and are not computed
+// here. NOTE: unverified against real overnight data (none exists yet).
+async function getOvernightTodayPnlByDeployment(
+  deployments: ReturnType<typeof deploymentToResponse>[],
+): Promise<Record<string, SignalOptionsTodayPnl>> {
+  const overnight = deployments.filter(
+    (deployment) =>
+      deployment.mode === "shadow" &&
+      deploymentHasOvernightSpotProfile(deployment),
+  );
+  if (overnight.length === 0) {
+    return {};
+  }
+  const now = new Date();
+  const startOfUtcDay = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const rows = await db
+    .select({
+      symbol: shadowPositionsTable.symbol,
+      status: shadowPositionsTable.status,
+      unrealizedPnl: shadowPositionsTable.unrealizedPnl,
+      realizedPnl: shadowPositionsTable.realizedPnl,
+      closedAt: shadowPositionsTable.closedAt,
+    })
+    .from(shadowPositionsTable)
+    .where(
+      and(
+        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.assetClass, "equity"),
+        or(
+          eq(shadowPositionsTable.status, "open"),
+          gte(shadowPositionsTable.closedAt, startOfUtcDay),
+        ),
+      ),
+    );
+
+  const num = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const result: Record<string, SignalOptionsTodayPnl> = {};
+  for (const deployment of overnight) {
+    const universe = new Set(
+      (deployment.symbolUniverse ?? []).map((symbol) =>
+        String(symbol).toUpperCase(),
+      ),
+    );
+    let realized = 0;
+    let unrealized = 0;
+    for (const row of rows) {
+      if (!universe.has(String(row.symbol).toUpperCase())) continue;
+      if (row.status === "open") {
+        unrealized += num(row.unrealizedPnl);
+      } else if (row.closedAt) {
+        realized += num(row.realizedPnl);
+      }
+    }
+    result[deployment.id] = {
+      todayPnl: Number((realized + unrealized).toFixed(2)),
+      dailyRealizedPnl: Number(realized.toFixed(2)),
+      openUnrealizedPnl: Number(unrealized.toFixed(2)),
+    };
+  }
+  return result;
+}
+
+async function attachTodayPnlToDeploymentList(
+  response: AlgoDeploymentListResponse,
+): Promise<AlgoDeploymentListResponse> {
+  const signalOptionsIds = response.deployments
+    .filter((deployment) => deploymentHasSignalOptionsProfile(deployment))
+    .map((deployment) => deployment.id);
+  const [signalOptionsPnl, overnightPnl] = await Promise.all([
+    signalOptionsIds.length
+      ? getSignalOptionsTodayPnlByDeployment(signalOptionsIds)
+      : Promise.resolve({}),
+    getOvernightTodayPnlByDeployment(response.deployments),
+  ]);
+  const pnlByDeployment = { ...signalOptionsPnl, ...overnightPnl };
+  if (Object.keys(pnlByDeployment).length === 0) {
+    return response;
+  }
+  return { ...response, pnlByDeployment };
+}
+
+async function resolveAlgoDeploymentList(
   input: ListAlgoDeploymentsInput,
 ): Promise<AlgoDeploymentListResponse> {
   const nowMs = Date.now();
@@ -473,8 +623,19 @@ export async function listAlgoDeployments(
   }
 }
 
+export async function listAlgoDeployments(
+  input: ListAlgoDeploymentsInput,
+): Promise<AlgoDeploymentListResponse> {
+  return attachTodayPnlToDeploymentList(await resolveAlgoDeploymentList(input));
+}
+
 export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
-  const strategy = await getStrategyOrThrow(input.strategyId);
+  // Overnight deployments bind to a dedicated overnight strategy (server-resolved)
+  // so they never share a strategyId with signal-options; the requested
+  // strategyId is ignored for overnight. Other kinds use the requested strategy.
+  const strategy = deploymentHasOvernightSpotProfile({ config: input.config ?? {} })
+    ? await ensureDefaultOvernightSpotStrategy()
+    : await getStrategyOrThrow(input.strategyId);
   const config = {
     ...(strategy.config as Record<string, unknown>),
     ...(input.config ?? {}),
@@ -585,6 +746,63 @@ export async function setAlgoDeploymentEnabled(input: {
   return deploymentToResponse(deployment);
 }
 
+// Switch a deployment's execution mode in place (shadow <-> live), one mode at a
+// time. Setting mode=live NEVER auto-arms real trading: it force-pauses the
+// deployment so the user must explicitly enable it to start live orders.
+// Switching to shadow keeps the existing enabled state (shadow is safe).
+export async function setAlgoDeploymentMode(input: {
+  deploymentId: string;
+  mode: "shadow" | "live";
+}) {
+  const existing = await getDeploymentOrThrow(input.deploymentId);
+
+  if (existing.mode === input.mode) {
+    return deploymentToResponse(existing);
+  }
+
+  const pausedForLiveSwitch = input.mode === "live" && existing.enabled;
+  const enabled = input.mode === "live" ? false : existing.enabled;
+  const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
+    providerAccountId: existing.providerAccountId,
+    config: existing.config,
+    mode: input.mode,
+  });
+
+  const [deployment] = await db
+    .update(algoDeploymentsTable)
+    .set({
+      mode: input.mode,
+      enabled,
+      providerAccountId,
+      updatedAt: new Date(),
+      lastError: null,
+    })
+    .where(eq(algoDeploymentsTable.id, input.deploymentId))
+    .returning();
+
+  await db.insert(executionEventsTable).values({
+    deploymentId: deployment.id,
+    providerAccountId: deployment.providerAccountId,
+    eventType: "deployment_mode_changed",
+    summary: `Set deployment ${normalizeLegacyAlgoBrandText(deployment.name)} to ${input.mode.toUpperCase()}`,
+    payload: {
+      mode: input.mode,
+      previousMode: existing.mode,
+      pausedForLiveSwitch,
+    },
+  });
+
+  invalidateSignalOptionsDashboardCaches(deployment.id);
+  applyDeploymentToListCache(deployment);
+  notifyAlgoCockpitChanged({
+    deploymentId: deployment.id,
+    mode: deployment.mode,
+    reason: "deployment_mode_changed",
+  });
+
+  return deploymentToResponse(deployment);
+}
+
 export async function updateAlgoDeploymentStrategySettings(input: {
   deploymentId: string;
   timeHorizon: unknown;
@@ -630,9 +848,18 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   const profile = await getSignalMonitorProfile({
     environment: existing.mode,
   });
+  const currentPyrusSignalsSettings = asRecord(profile.pyrusSignalsSettings);
   const nextPyrusSignalsSettings = {
-    ...asRecord(profile.pyrusSignalsSettings),
+    ...currentPyrusSignalsSettings,
     ...pyrusSignalsSettingsPatch,
+    // The Pyrus Signals reader prefers the nested marketStructure values over
+    // the top-level keys, so the patch has to land there too -- otherwise the
+    // saved value is shadowed by a stale marketStructure entry, the control
+    // snaps back, and the Algo save bar never clears its dirty state.
+    marketStructure: {
+      ...asRecord(currentPyrusSignalsSettings.marketStructure),
+      ...pyrusSignalsSettingsPatch,
+    },
   };
 
   const [updated] = await db

@@ -8,14 +8,28 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
 ]);
 const DEFAULT_MAX_STATES = null;
 
+// v5: state carries persisted current-signal filterState so the STA Score column
+// can render from durable bootstrap rows instead of waiting for live deltas.
+//
+// v4: state carries persisted current-signal excursion percentages so the KPI
+// row can render MFE/MAE without broad quote/sparkline hydration.
+//
+// v3: state semantics changed again to distinguish the structural signal level
+// (`currentSignalPrice`) from the actual equity close at the signal
+// (`currentSignalClose`). v2 snapshots predate that and are discarded rather
+// than replayed as confident equity-return bases.
+//
 // v2: state semantics changed (latched identity survives staleness; backend
 // authors actionEligible/actionBlocker). v1 snapshots predate that and are
 // discarded rather than replayed with old semantics.
-export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v2";
+export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v5";
 const SIGNAL_MATRIX_SNAPSHOT_CACHE_LEGACY_KEYS = Object.freeze([
+  "pyrus:signal-matrix-snapshot:v4",
+  "pyrus:signal-matrix-snapshot:v3",
+  "pyrus:signal-matrix-snapshot:v2",
   "pyrus:signal-matrix-snapshot:v1",
 ]);
-const SIGNAL_MATRIX_SNAPSHOT_CACHE_VERSION = 2;
+const SIGNAL_MATRIX_SNAPSHOT_CACHE_VERSION = 5;
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_FRESH_MS = 15 * 60_000;
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS = 72 * 60 * 60_000;
 
@@ -66,6 +80,20 @@ const sanitizeState = (state, allowedTimeframes) => {
   if (!symbol || !allowedTimeframes.has(timeframe)) return null;
   const barsSinceSignal = finiteNumberOrNull(state.barsSinceSignal);
   const currentSignalPrice = finiteNumberOrNull(state.currentSignalPrice);
+  const currentSignalClose = finiteNumberOrNull(state.currentSignalClose);
+  const currentSignalMfePercent = finiteNumberOrNull(
+    state.currentSignalMfePercent,
+  );
+  const currentSignalMaePercent = finiteNumberOrNull(
+    state.currentSignalMaePercent,
+  );
+  const filterState =
+    state.filterState && typeof state.filterState === "object"
+      ? state.filterState
+      : state.indicatorSnapshot?.filterState &&
+          typeof state.indicatorSnapshot.filterState === "object"
+        ? state.indicatorSnapshot.filterState
+        : null;
   const currentSignalAt = readTimestamp(state.currentSignalAt);
   const latestBarAt = readTimestamp(state.latestBarAt);
   if (!currentSignalAt && !latestBarAt) return null;
@@ -77,6 +105,10 @@ const sanitizeState = (state, allowedTimeframes) => {
     currentSignalDirection: normalizeDirection(state.currentSignalDirection),
     currentSignalAt,
     currentSignalPrice,
+    currentSignalClose,
+    currentSignalMfePercent,
+    currentSignalMaePercent,
+    filterState,
     latestBarAt,
     barsSinceSignal,
     fresh: Boolean(state.fresh),

@@ -59,8 +59,8 @@ directory to define separate Replit app runners.
 - `check-replit-startup-guards.mjs` verifies that `.replit` stays in
   `PNPM_WORKSPACE` artifact mode, PYRUS keeps its guarded artifact identity, and the
   PYRUS web artifact owns full app bring-up. It also guards the
-  Replit-workflow replacement path in `reap-dev-port.mjs`, the duplicate-start
-  supervisor no-op policy, and the supervisor lifecycle JSONL evidence path.
+  Replit-workflow replacement path in `reap-dev-port.mjs`, the controlled
+  supervisor handoff policy, and the supervisor lifecycle JSONL evidence path.
 - `protect-replit-config.mjs` locks or unlocks Replit startup config files
   (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
   Keep them locked during routine work; unlock only for an intentional
@@ -108,12 +108,10 @@ directory to define separate Replit app runners.
   replace older Replit execution scopes on the same pinned port.
   `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority.
 - `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
-  duplicate Replit-owned Run event exits without restart only during the
-  startup guard window while the supervisor lock points at a live
-  `artifacts/pyrus/scripts/runDevApp.mjs` process. After
-  `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new Replit-owned
-  Run is treated as an intentional Run-button restart and uses a controlled
-  handoff so the current workflow owns API/Vite again. Use
+  duplicate Replit-owned Run event is treated as an intentional Run-button
+  restart immediately while the supervisor lock points at a live
+  `artifacts/pyrus/scripts/runDevApp.mjs` process. The new Replit-owned Run
+  uses a controlled handoff so the current workflow owns API/Vite again. Use
   `PYRUS_DEV_FORCE_RESTART=1` only for an intentional Replit-owned recovery
   restart that may request a controlled handoff from a live supervisor. Shell
   smoke tests for the duplicate path must include
@@ -121,5 +119,5 @@ directory to define separate Replit app runners.
   exits without starting API/web processes.
 - The supervisor writes lifecycle evidence to
   `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`, including heartbeats, child
-  starts/exits, duplicate-start no-ops, ignored SIGHUP, shutdown, and previous
+  starts/exits, controlled handoffs, ignored SIGHUP, shutdown, and previous
   heartbeat classification.

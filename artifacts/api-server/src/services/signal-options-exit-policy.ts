@@ -10,11 +10,9 @@ export type SignalOptionsEntryQuality = {
   reasons: string[];
   components?: {
     mtfAlignment: number;
-    freshness: number;
     trendStrength: number;
     liquidity: number;
     riskFit: number;
-    dataQuality: number;
     total: number;
   };
   raw?: Record<string, unknown>;

@@ -9,6 +9,7 @@ import {
   listAlgoDeployments,
   listExecutionEvents,
   setAlgoDeploymentEnabled,
+  setAlgoDeploymentMode,
   updateAlgoDeploymentStrategySettings,
 } from "../services/automation";
 import {
@@ -22,6 +23,10 @@ import {
   updateSignalOptionsExecutionProfile,
 } from "../services/signal-options-automation";
 import { runOvernightSpotSignalScan } from "../services/overnight-spot-execution";
+import {
+  getDeploymentSignalQualityKpis,
+  type SignalQualityDraftOverride,
+} from "../services/signal-quality-kpis-service";
 import {
   getApiRouteAdmission,
   withRouteAdmissionMetadata,
@@ -194,6 +199,15 @@ router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<v
   );
 });
 
+router.post("/algo/deployments/:deploymentId/mode", async (req, res): Promise<void> => {
+  res.json(
+    await setAlgoDeploymentMode({
+      deploymentId: req.params.deploymentId,
+      mode: readRequiredMode(req.body?.mode),
+    }),
+  );
+});
+
 router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, res): Promise<void> => {
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -209,6 +223,47 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
       chochAtrBuffer: body.chochAtrBuffer,
       chochBodyExpansionAtr: body.chochBodyExpansionAtr,
       chochVolumeGate: body.chochVolumeGate,
+    }),
+  );
+});
+
+// Reads an optional draft strategy-settings override from the query string (and
+// body, as a fallback) so the control panel can preview signal-quality KPIs for
+// unsaved settings. Only the strategy-settings fields are honored; anything else
+// is ignored. An undefined field means "fall back to saved config / profile".
+function readSignalQualityDraftOverride(
+  req: { query: Record<string, unknown>; body?: unknown },
+): SignalQualityDraftOverride | undefined {
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : {};
+  const source = { ...body, ...req.query };
+  const fields = [
+    "signalTimeframe",
+    "timeHorizon",
+    "bosConfirmation",
+    "chochAtrBuffer",
+    "chochBodyExpansionAtr",
+    "chochVolumeGate",
+  ] as const;
+  const draft: SignalQualityDraftOverride = {};
+  let hasAny = false;
+  for (const field of fields) {
+    const value = source[field];
+    if (value !== undefined && value !== "") {
+      draft[field] = value;
+      hasAny = true;
+    }
+  }
+  return hasAny ? draft : undefined;
+}
+
+router.get("/algo/deployments/:deploymentId/signal-quality-kpis", async (req, res): Promise<void> => {
+  res.json(
+    await getDeploymentSignalQualityKpis({
+      deploymentId: req.params.deploymentId,
+      draft: readSignalQualityDraftOverride(req),
     }),
   );
 });

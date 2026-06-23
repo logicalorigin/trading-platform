@@ -55,7 +55,7 @@ const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
 const LEGACY_LOGIN_ENVELOPE_RECLAIM_TTL_MS = 3 * 60_000;
 const MAX_LONG_POLL_WAIT_MS = 30_000;
 const BRIDGE_HELPER_VERSION =
-  "2026-06-13.ib-async-sidecar-v23-responsive-agent-loop";
+  "2026-06-22.ib-async-sidecar-v24-long-poll-claim";
 const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
   "2026-06-04.ib-async-sidecar-v6-fast-agent",
 ]);
@@ -2167,7 +2167,6 @@ export function createIbkrRemoteBridgeLaunch(input: {
   const useHelperUpdateOnly = payload.helperUpdateOnly === true && !useAutoLogin;
   const desktop = selectIbkrRemoteDesktop(
     readOptionalString(payload.desktopId, 160),
-    { allowStaleFallback: true },
   );
   const launcher = createIbkrBridgeLauncher({
     apiBaseUrl: input.apiBaseUrl,

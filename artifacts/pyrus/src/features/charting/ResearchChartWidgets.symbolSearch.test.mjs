@@ -23,4 +23,14 @@ test("chart symbol search trigger stays isolated from live quote header churn", 
   assert.match(triggerRender, /theme=\{theme\}/);
   assert.match(triggerRender, /palette=\{palette\}/);
   assert.match(triggerRender, /searchOpen=\{searchOpen\}/);
+  assert.match(triggerRender, /onSearchIntent=\{onSearchIntent\}/);
+  assert.match(chartWidgetSharedSource, /const suppressNextTriggerClickRef = useRef\(false\);/);
+  assert.match(chartWidgetSharedSource, /onSearchOpenChange\?\.\(true\);/);
+  assert.match(chartWidgetSharedSource, /onPointerEnter=\{handleSearchIntent\}/);
+  assert.match(
+    chartWidgetSharedSource,
+    /onPointerDownCapture=\{handleSearchPointerDownCapture\}/,
+  );
+  assert.match(chartWidgetSharedSource, /onClickCapture=\{handleSearchClickCapture\}/);
+  assert.match(chartWidgetSharedSource, /onFocus=\{handleSearchFocus\}/);
 });

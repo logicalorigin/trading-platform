@@ -1,5 +1,15 @@
 import React from "react";
-import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  cssColorAlpha,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   FailurePointInlineIcon,
   FailurePointTooltip,
@@ -8,6 +18,7 @@ import {
   buildAlgoMetricFailurePoint,
   buildPipelineStageFailurePoint,
 } from "../../features/platform/failurePointModel.js";
+import { formatPct } from "./algoHelpers";
 
 const overviewSeverityBackground = (severity) => {
   if (severity === "warning") return CSS_COLOR.amberBg;
@@ -128,6 +139,217 @@ export const AlgoOverviewMetric = ({
     </FailurePointTooltip>
   ) : (
     metricBody
+  );
+};
+
+// Indicator KPI table: directions as rows (All / Buy / Sell), KPIs as columns.
+// Pure, side-effect-free row builder kept exported for unit tests. Reads straight
+// from buildSignalIndicatorMetrics output (overall fields + byDirection.{buy,sell}).
+export const buildIndicatorKpiTableRows = (metrics) => {
+  const root = metrics && typeof metrics === "object" ? metrics : {};
+  const byDirection =
+    root.byDirection && typeof root.byDirection === "object"
+      ? root.byDirection
+      : {};
+  const pick = (source) => {
+    const value = source && typeof source === "object" ? source : {};
+    return {
+      signalCount: Number.isFinite(value.signalCount) ? value.signalCount : 0,
+      medianMovePercent: value.medianDirectionalMovePercent,
+      avgMovePercent: value.avgDirectionalMovePercent,
+      correctnessPercent: value.correctnessPercent,
+      expectancyPercent: value.expectancyPercent,
+      avgMfePercent: value.avgMfePercent,
+      avgMaePercent: value.avgMaePercent,
+    };
+  };
+  return [
+    { key: "all", label: "All", ...pick(root) },
+    { key: "buy", label: "Buy", ...pick(byDirection.buy) },
+    { key: "sell", label: "Sell", ...pick(byDirection.sell) },
+  ];
+};
+
+const INDICATOR_KPI_PLACEHOLDER = "—";
+
+const indicatorKpiPct = (value, digits) =>
+  Number.isFinite(value) ? formatPct(value, digits) : INDICATOR_KPI_PLACEHOLDER;
+
+const indicatorKpiMoveColor = (value) =>
+  Number.isFinite(value) && value > 0
+    ? CSS_COLOR.green
+    : Number.isFinite(value) && value < 0
+      ? CSS_COLOR.red
+      : CSS_COLOR.text;
+
+const indicatorKpiCorrectnessColor = (value) =>
+  Number.isFinite(value) && value >= 50 ? CSS_COLOR.green : CSS_COLOR.textSec;
+
+const indicatorKpiExcursionText = (row) =>
+  Number.isFinite(row.avgMfePercent) || Number.isFinite(row.avgMaePercent)
+    ? `${Number.isFinite(row.avgMfePercent) ? row.avgMfePercent.toFixed(1) : INDICATOR_KPI_PLACEHOLDER} / ${Number.isFinite(row.avgMaePercent) ? row.avgMaePercent.toFixed(1) : INDICATOR_KPI_PLACEHOLDER}`
+    : INDICATOR_KPI_PLACEHOLDER;
+
+const INDICATOR_KPI_COLUMNS = [
+  {
+    key: "signals",
+    label: "Signals",
+    render: (row) => ({
+      text: row.signalCount.toLocaleString(),
+      color: CSS_COLOR.textSec,
+    }),
+  },
+  {
+    key: "medianMove",
+    label: "Median Move",
+    render: (row) => ({
+      text: indicatorKpiPct(row.medianMovePercent, 2),
+      color: indicatorKpiMoveColor(row.medianMovePercent),
+    }),
+  },
+  {
+    key: "avgMove",
+    label: "Avg Move",
+    render: (row) => ({
+      text: indicatorKpiPct(row.avgMovePercent, 2),
+      color: indicatorKpiMoveColor(row.avgMovePercent),
+    }),
+  },
+  {
+    key: "correctness",
+    label: "Correct",
+    render: (row) => ({
+      text: indicatorKpiPct(row.correctnessPercent, 0),
+      color: indicatorKpiCorrectnessColor(row.correctnessPercent),
+    }),
+  },
+  {
+    key: "expectancy",
+    label: "Expect",
+    render: (row) => ({
+      text: indicatorKpiPct(row.expectancyPercent, 2),
+      color: indicatorKpiMoveColor(row.expectancyPercent),
+    }),
+  },
+  {
+    key: "excursion",
+    label: "Excursion",
+    render: (row) => ({
+      text: indicatorKpiExcursionText(row),
+      color: CSS_COLOR.textSec,
+    }),
+  },
+];
+
+const indicatorKpiRowLabelTone = (key) =>
+  key === "buy"
+    ? CSS_COLOR.green
+    : key === "sell"
+      ? CSS_COLOR.red
+      : CSS_COLOR.text;
+
+// Indicator-signal KPIs as a compact table: rows = All / Buy / Sell, columns =
+// Signals + the four KPIs. Same dense-table aesthetic as the STA table; values
+// come from the live buildSignalIndicatorMetrics output (no fetch).
+export const AlgoIndicatorKpiTable = ({
+  metrics,
+  algoIsPhone = false,
+  algoIsPocketWidth = false,
+  dense = false,
+}) => {
+  const rows = buildIndicatorKpiTableRows(metrics);
+  const hasSignals = rows.some((row) => row.signalCount > 0);
+  const compact = algoIsPhone && algoIsPocketWidth;
+  const cellPad = sp(dense ? "2px 5px" : "3px 6px");
+  const valueFontSize = fs(dense ? 10 : 11);
+  const headCellStyle = {
+    color: CSS_COLOR.textMuted,
+    fontFamily: T.sans,
+    fontSize: textSize("caption"),
+    fontWeight: FONT_WEIGHTS.medium,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    textAlign: "right",
+    padding: cellPad,
+    whiteSpace: "nowrap",
+  };
+  const labelCellStyle = (tone) => ({
+    color: tone,
+    fontFamily: T.sans,
+    fontSize: valueFontSize,
+    fontWeight: FONT_WEIGHTS.label,
+    textAlign: "left",
+    padding: cellPad,
+    whiteSpace: "nowrap",
+    borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+  });
+  const dataCellStyle = (color) => ({
+    color,
+    fontFamily: T.sans,
+    fontSize: valueFontSize,
+    fontWeight: 600,
+    textAlign: "right",
+    padding: cellPad,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+  });
+  return (
+    <div
+      data-testid="algo-indicator-kpi-table"
+      style={{ minWidth: 0, overflowX: compact ? "auto" : "visible" }}
+    >
+      <div
+        role="table"
+        style={{
+          display: "grid",
+          gridTemplateColumns: `minmax(${dim(38)}px, max-content) repeat(${INDICATOR_KPI_COLUMNS.length}, minmax(0, 1fr))`,
+          alignItems: "center",
+          minWidth: compact ? dim(360) : 0,
+        }}
+      >
+        <span
+          role="columnheader"
+          style={{ ...headCellStyle, textAlign: "left" }}
+        />
+        {INDICATOR_KPI_COLUMNS.map((column) => (
+          <span key={column.key} role="columnheader" style={headCellStyle}>
+            {column.label}
+          </span>
+        ))}
+        {rows.map((row) => (
+          <React.Fragment key={row.key}>
+            <span
+              role="rowheader"
+              style={labelCellStyle(indicatorKpiRowLabelTone(row.key))}
+            >
+              {row.label}
+            </span>
+            {INDICATOR_KPI_COLUMNS.map((column) => {
+              const { text, color } = column.render(row);
+              return (
+                <span key={column.key} role="cell" style={dataCellStyle(color)}>
+                  {text}
+                </span>
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+      {!hasSignals ? (
+        <div
+          style={{
+            color: CSS_COLOR.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            padding: cellPad,
+          }}
+        >
+          No signals yet
+        </div>
+      ) : null}
+    </div>
   );
 };
 

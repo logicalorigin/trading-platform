@@ -1,0 +1,6253 @@
+# MTF Pattern Discovery Settings Sweep
+
+- Symbols: SPY, QQQ
+- Timeframes: 1m, 2m, 5m, 15m
+- Horizons: 3, 6, 12, 24
+- Study window: 2026-04-24T00:00:00.000Z through latest loaded bar
+- Min sample threshold: 1
+- Sweep kind: settings
+- Sweep ID: pattern-discovery-settings-v1
+- Possible direction combinations per horizon: 81
+- Variants: 37
+
+## Cross-Variant Best By Family/Horizon
+
+| Horizon | Family | Variant | Study ID | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | --- | --- | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1m CHOCH ATR buffer loose | `9495cd8b-5b80-47bb-99d9-c12552475f4d` | 41 | 0.047995 | `1m:buy|2m:buy|5m:buy|15m:buy` | 4.306471 | long |
+| 3 | bear_confluence | 1m CHOCH ATR buffer strict | `e75eb50f-dce0-45fd-8918-da7629d37b62` | 14 | -0.043264 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.232004 | short |
+| 3 | fast_bullish_reversal | 2m BOS wicks | `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e` | 11 | -0.050369 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.022326 | short |
+| 3 | fast_bearish_reversal | 2m BOS wicks | `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e` | 25 | 0.042474 | `1m:sell|2m:sell|5m:buy|15m:buy` | 2.054326 | long |
+| 3 | mixed_divergence | 5m BOS close | `a7b10f8a-2c13-4e83-90b7-4e8f80a0b3ca` | 108 | 0.003142 | `1m:buy|2m:buy|5m:buy|15m:sell` | 3.607942 | long |
+| 6 | bull_confluence | 2m CHOCH ATR buffer loose | `198c42da-4cff-4425-bdc4-5a98af980e69` | 38 | 0.049179 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.466895 | long |
+| 6 | bear_confluence | 1m CHOCH ATR buffer strict | `e75eb50f-dce0-45fd-8918-da7629d37b62` | 13 | -0.040900 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.925251 | short |
+| 6 | fast_bullish_reversal | 1m BOS wicks | `caaaefeb-2327-42b9-ba07-01f6930283b7` | 11 | 0.031560 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.496042 | long |
+| 6 | fast_bearish_reversal | 1m BOS wicks | `caaaefeb-2327-42b9-ba07-01f6930283b7` | 22 | 0.025385 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.811974 | long |
+| 6 | mixed_divergence | 1m CHOCH ATR buffer loose | `9495cd8b-5b80-47bb-99d9-c12552475f4d` | 123 | 0.023021 | `1m:sell|2m:buy|5m:buy|15m:sell` | 4.242498 | long |
+| 12 | bull_confluence | 2m CHOCH ATR buffer loose | `198c42da-4cff-4425-bdc4-5a98af980e69` | 38 | 0.072584 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.840813 | long |
+| 12 | bear_confluence | 1m CHOCH ATR buffer loose | `9495cd8b-5b80-47bb-99d9-c12552475f4d` | 14 | 0.050805 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.816414 | long |
+| 12 | fast_bullish_reversal | 1m BOS wicks | `caaaefeb-2327-42b9-ba07-01f6930283b7` | 11 | 0.109585 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.630993 | long |
+| 12 | fast_bearish_reversal | 1m CHOCH ATR buffer loose | `9495cd8b-5b80-47bb-99d9-c12552475f4d` | 22 | -0.021047 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.253179 | short |
+| 12 | mixed_divergence | 2m BOS wicks | `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e` | 127 | 0.006070 | `1m:buy|2m:sell|5m:buy|15m:sell` | 3.688488 | long |
+| 24 | bull_confluence | 2m CHOCH ATR buffer strict | `55b999ea-a2fc-4491-ae72-81eeb24ed77b` | 38 | 0.081665 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.279755 | long |
+| 24 | bear_confluence | 2m BOS wicks | `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e` | 14 | 0.043279 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.052649 | long |
+| 24 | fast_bullish_reversal | 1m BOS wicks | `caaaefeb-2327-42b9-ba07-01f6930283b7` | 11 | 0.133915 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.871852 | long |
+| 24 | fast_bearish_reversal | 1m CHOCH ATR buffer loose | `9495cd8b-5b80-47bb-99d9-c12552475f4d` | 22 | -0.026974 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.267225 | short |
+| 24 | mixed_divergence | 2m BOS wicks | `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e` | 127 | 0.039909 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.994636 | long |
+
+## Baseline calibrated defaults
+
+- Study ID: `de2de1bd-833a-4e08-b315-36feb7cf2f46`
+- Variant: `baseline-calibrated-defaults`
+- Description: Current per-timeframe defaults from pattern-discovery.ts.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m BOS wicks
+
+- Study ID: `caaaefeb-2327-42b9-ba07-01f6930283b7`
+- Variant: `setting-1m-bos-confirmation-wicks`
+- Description: One-factor bosConfirmation change: 1m close -> wicks.
+- Observed transitions: 232
+- Result rows: 64
+- Occurrence rows: 923
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 43 | 0.046506 | `1m:buy|2m:buy|5m:buy|15m:buy` | 4.293348 | long |
+| 3 | bear_confluence | 1 | 17 | -0.030409 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.016473 | short |
+| 3 | fast_bullish_reversal | 1 | 11 | 0.023205 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.352139 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.012697 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.518473 | long |
+| 3 | mixed_divergence | 12 | 139 | 0.007023 | `1m:sell|2m:buy|5m:buy|15m:sell` | 2.712753 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 43 | 0.041202 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.068483 | long |
+| 6 | bear_confluence | 1 | 16 | -0.004805 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.117813 | short |
+| 6 | fast_bullish_reversal | 1 | 11 | 0.031560 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.496042 | long |
+| 6 | fast_bearish_reversal | 1 | 22 | 0.025385 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.811974 | long |
+| 6 | mixed_divergence | 12 | 139 | 0.018700 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.141636 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 43 | 0.062244 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.014665 | long |
+| 12 | bear_confluence | 1 | 15 | 0.031664 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.526452 | long |
+| 12 | fast_bullish_reversal | 1 | 11 | 0.109585 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.630993 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021047 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.253173 | short |
+| 12 | mixed_divergence | 12 | 139 | 0.017440 | `1m:sell|2m:buy|5m:buy|15m:buy` | 2.605700 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 43 | 0.066802 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.710354 | long |
+| 24 | bear_confluence | 1 | 15 | 0.033005 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.841410 | long |
+| 24 | fast_bullish_reversal | 1 | 11 | 0.133915 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.871852 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.022980 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.228227 | short |
+| 24 | mixed_divergence | 12 | 139 | 0.056883 | `1m:buy|2m:buy|5m:buy|15m:sell` | 2.684477 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.046506 | +0.001707 | 72.093023 | +3.671970 | 0.026560 | 0.071031 | -0.011665 | 0.080217 | 4.293348 | 0.654729 |
+| 3 | 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.056315 | +0.024297 | 83.333333 | +3.333333 | 0.066600 | 0.050850 | -0.031959 | 0.101368 | 2.712753 | 1.107477 |
+| 3 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.035790 | -0.012436 | 75.000000 | 0.000000 | 0.037531 | 0.031805 | -0.015454 | 0.051306 | 2.250583 | 1.125291 |
+| 3 | 4 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.023205 | +0.011907 | 72.727273 | +12.727273 | 0.031375 | 0.056919 | -0.029942 | 0.057351 | 1.352139 | 0.407685 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.014955 | -0.007318 | 65.517241 | -9.482759 | 0.007984 | 0.061175 | -0.042648 | 0.048796 | 1.316463 | 0.244461 |
+| 3 | 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.020916 | -0.012832 | 58.333333 | -1.666667 | 0.032190 | 0.059879 | -0.041260 | 0.051283 | 1.210022 | 0.349303 |
+| 3 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.018416 | +0.008195 | 33.333333 | +2.564102 | -0.009498 | 0.062842 | -0.059816 | 0.028419 | -1.135024 | -0.293062 |
+| 3 | 8 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 17 | short | -0.030409 | -0.008796 | 41.176471 | -12.156862 | -0.009858 | 0.123349 | -0.095559 | 0.056545 | -1.016473 | -0.246531 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.012697 | -0.009937 | 50.000000 | -4.545455 | -0.000349 | 0.114865 | -0.056315 | 0.054941 | 0.518473 | 0.110539 |
+| 3 | 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 16 | short | -0.006639 | +0.037625 | 50.000000 | +13.636364 | -0.008422 | 0.074205 | -0.054578 | 0.041700 | -0.357871 | -0.089468 |
+| 3 | 11 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.005135 | -0.000122 | 43.478261 | +2.569170 | -0.008756 | 0.081697 | -0.047230 | 0.046399 | 0.301459 | 0.062858 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.007302 | -0.004764 | 37.500000 | -19.642857 | -0.022308 | 0.071178 | -0.042883 | 0.039443 | 0.290168 | 0.102590 |
+| 3 | 13 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003096 | -0.000573 | 25.000000 | 0.000000 | -0.011166 | 0.047403 | -0.067790 | 0.040887 | 0.130615 | 0.065307 |
+| 3 | 14 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.000951 | +0.002616 | 42.857143 | +14.285714 | -0.020368 | 0.032691 | -0.026092 | 0.019358 | -0.077000 | -0.029103 |
+| 3 | 15 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | long | 0.000358 | +0.009605 | 40.000000 | -2.857143 | -0.003867 | 0.015489 | -0.027919 | 0.021951 | 0.073170 | 0.023138 |
+| 3 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 5 | long | 0.001408 | +0.047315 | 60.000000 | +10.000000 | 0.023804 | 0.090155 | -0.082137 | 0.055560 | 0.034917 | 0.015615 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.092454 | +0.054020 | 100.000000 | +20.000000 | 0.057797 | 0.072085 | -0.031959 | 0.144918 | 3.141636 | 1.282567 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.041202 | -0.004046 | 65.116279 | +4.589963 | 0.017758 | 0.088050 | -0.026946 | 0.098937 | 3.068483 | 0.467939 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.052039 | -0.006198 | 73.913043 | +1.185770 | 0.025616 | 0.105187 | -0.051170 | 0.080444 | 2.372632 | 0.494728 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.029814 | -0.009918 | 62.068966 | -17.931034 | 0.010852 | 0.073849 | -0.051465 | 0.070462 | 2.174096 | 0.403719 |
+| 6 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.036296 | +0.003269 | 66.666667 | +6.666667 | 0.051405 | 0.076345 | -0.045934 | 0.075094 | 1.646888 | 0.475416 |
+| 6 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.024885 | +0.012181 | 33.333333 | +10.256410 | -0.016821 | 0.060422 | -0.082139 | 0.030234 | -1.595107 | -0.411855 |
+| 6 | 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.031560 | +0.055171 | 54.545455 | +4.545455 | 0.026054 | 0.069966 | -0.040186 | 0.070563 | 1.496042 | 0.451074 |
+| 6 | 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.027809 | -0.003800 | 75.000000 | 0.000000 | 0.015974 | 0.054243 | -0.067790 | 0.056715 | 1.025356 | 0.512678 |
+| 6 | 9 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.046526 | -0.036344 | 50.000000 | -25.000000 | 0.028152 | 0.098075 | -0.026552 | 0.092050 | 0.948775 | 0.474387 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010552 | +0.001162 | 42.857143 | 0.000000 | -0.010850 | 0.030477 | -0.035157 | 0.028165 | -0.916068 | -0.346241 |
+| 6 | 11 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.025385 | +0.057079 | 50.000000 | -4.545455 | 0.003773 | 0.146640 | -0.071267 | 0.075224 | 0.811974 | 0.173113 |
+| 6 | 12 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 5 | short | -0.063094 | -0.023611 | 60.000000 | +10.000000 | 0.033474 | 0.258053 | -0.164378 | 0.078057 | -0.546721 | -0.244501 |
+| 6 | 13 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | short | -0.007858 | +0.072639 | 40.000000 | +25.714286 | -0.009464 | 0.063161 | -0.047170 | 0.027614 | -0.393442 | -0.124417 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.007239 | +0.002472 | 37.500000 | -5.357143 | -0.005893 | 0.059193 | -0.053396 | 0.046056 | 0.345928 | 0.122304 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 16 | short | -0.004805 | +0.008222 | 56.250000 | +6.250000 | 0.025983 | 0.163147 | -0.126431 | 0.091110 | -0.117813 | -0.029453 |
+| 6 | 16 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 16 | long | 0.002088 | +0.030404 | 43.750000 | +16.477273 | -0.009684 | 0.101124 | -0.072778 | 0.061279 | 0.082599 | 0.020650 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.062244 | -0.009974 | 62.790698 | +2.264382 | 0.029832 | 0.135392 | -0.047018 | 0.129887 | 3.014665 | 0.459732 |
+| 12 | 2 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.109585 | +0.040439 | 81.818182 | +11.818182 | 0.078349 | 0.138142 | -0.050159 | 0.145909 | 2.630993 | 0.793274 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.076345 | +0.013479 | 62.068966 | -2.931034 | 0.045790 | 0.157782 | -0.065363 | 0.139527 | 2.605700 | 0.483866 |
+| 12 | 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082387 | -0.032544 | 100.000000 | 0.000000 | 0.046473 | 0.082045 | -0.030524 | 0.110672 | 2.008333 | 1.004166 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.049153 | -0.003383 | 66.666667 | -3.333333 | 0.027054 | 0.089021 | -0.062531 | 0.091676 | 1.912733 | 0.552158 |
+| 12 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | short | -0.068460 | +0.049400 | 20.000000 | +5.714286 | -0.030224 | 0.120615 | -0.105185 | 0.042340 | -1.794866 | -0.567587 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.069431 | +0.114011 | 66.666667 | +46.666667 | 0.119359 | 0.181934 | -0.070546 | 0.187010 | 0.934793 | 0.381628 |
+| 12 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.023688 | -0.011140 | 26.666667 | -4.102564 | -0.040707 | 0.126427 | -0.115109 | 0.079584 | -0.725650 | -0.187362 |
+| 12 | 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.029830 | -0.003697 | 50.000000 | +7.142857 | 0.017390 | 0.118998 | -0.084491 | 0.089784 | 0.709031 | 0.250680 |
+| 12 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 5 | short | -0.039291 | -0.049373 | 20.000000 | -30.000000 | -0.002975 | 0.160518 | -0.179148 | 0.084990 | -0.547335 | -0.244776 |
+| 12 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | long | 0.031664 | -0.008407 | 46.666667 | -14.871795 | -0.026472 | 0.232943 | -0.152270 | 0.155746 | 0.526452 | 0.135929 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.013346 | -0.001066 | 42.857143 | -14.285714 | -0.005425 | 0.069558 | -0.062970 | 0.040920 | -0.507629 | -0.191866 |
+| 12 | 13 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.014727 | +0.003787 | 25.000000 | 0.000000 | -0.019127 | 0.103303 | -0.068493 | 0.067718 | 0.285122 | 0.142561 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021047 | +0.000081 | 50.000000 | -9.090909 | 0.001452 | 0.389923 | -0.159767 | 0.127164 | -0.253173 | -0.053977 |
+| 12 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 16 | short | -0.006956 | +0.015626 | 56.250000 | +1.704545 | 0.033029 | 0.116572 | -0.102925 | 0.090421 | -0.238676 | -0.059669 |
+| 12 | 16 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.000768 | -0.032867 | 73.913043 | +5.731225 | 0.062141 | 0.337881 | -0.149988 | 0.120404 | 0.010902 | 0.002273 |
+| 24 | 1 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.133915 | +0.058821 | 90.909091 | +10.909091 | 0.106532 | 0.154655 | -0.074627 | 0.191607 | 2.871852 | 0.865896 |
+| 24 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.066802 | -0.009024 | 65.116279 | -0.673195 | 0.041075 | 0.161622 | -0.064359 | 0.172516 | 2.710354 | 0.413325 |
+| 24 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.070751 | +0.047708 | 83.333333 | +23.333333 | 0.066316 | 0.091298 | -0.075945 | 0.140799 | 2.684477 | 0.774942 |
+| 24 | 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.276900 | -0.023172 | 75.000000 | -10.714286 | 0.180213 | 0.339406 | -0.097312 | 0.323427 | 2.307532 | 0.815836 |
+| 24 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | short | -0.057609 | +0.017819 | 40.000000 | -2.857143 | -0.038322 | 0.115983 | -0.146178 | 0.055391 | -1.570712 | -0.496703 |
+| 24 | 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.015618 | -0.001139 | 75.000000 | 0.000000 | 0.015822 | 0.021309 | -0.082574 | 0.088998 | 1.465897 | 0.732948 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.070229 | +0.008812 | 75.000000 | +25.000000 | 0.067151 | 0.096279 | -0.048465 | 0.146510 | 1.458864 | 0.729432 |
+| 24 | 8 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.043579 | -0.008660 | 58.620690 | +3.620690 | 0.028565 | 0.216813 | -0.103230 | 0.173533 | 1.082413 | 0.200999 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.131341 | -0.001453 | 57.142857 | 0.000000 | 0.014403 | 0.334928 | -0.100154 | 0.203621 | 1.037526 | 0.392148 |
+| 24 | 10 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | long | 0.080411 | -0.037085 | 40.000000 | -13.846154 | -0.008141 | 0.309273 | -0.159504 | 0.167853 | 1.006977 | 0.260000 |
+| 24 | 11 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.054623 | -0.005733 | 78.260870 | +14.624506 | 0.086163 | 0.272410 | -0.156090 | 0.164135 | 0.961650 | 0.200518 |
+| 24 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 16 | long | 0.031890 | +0.025993 | 62.500000 | +7.954545 | 0.078786 | 0.140899 | -0.118056 | 0.120485 | 0.905317 | 0.226329 |
+| 24 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | long | 0.033005 | +0.002500 | 60.000000 | -9.230769 | 0.031036 | 0.151919 | -0.183719 | 0.175478 | 0.841410 | 0.217251 |
+| 24 | 14 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.043191 | +0.063844 | 66.666667 | +6.666667 | 0.034126 | 0.153622 | -0.098945 | 0.204677 | 0.688677 | 0.281151 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 5 | short | -0.067954 | -0.082631 | 40.000000 | -10.000000 | -0.016365 | 0.244110 | -0.195340 | 0.092395 | -0.622465 | -0.278375 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.022980 | -0.012932 | 50.000000 | -4.545455 | 0.007943 | 0.472281 | -0.206816 | 0.165635 | -0.228227 | -0.048658 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.046506 | 72.093023 | 4.293348 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.056315 | 83.333333 | 2.712753 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.035790 | 75.000000 | 2.250583 |
+| 4 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.023205 | 72.727273 | 1.352139 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.014955 | 65.517241 | 1.316463 |
+| 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.020916 | 58.333333 | 1.210022 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.018416 | 33.333333 | -1.135024 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 17 | short | -0.030409 | 41.176471 | -1.016473 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.012697 | 50.000000 | 0.518473 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 16 | short | -0.006639 | 50.000000 | -0.357871 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.092454 | 100.000000 | 3.141636 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.041202 | 65.116279 | 3.068483 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.052039 | 73.913043 | 2.372632 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.029814 | 62.068966 | 2.174096 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.036296 | 66.666667 | 1.646888 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.024885 | 33.333333 | -1.595107 |
+| 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.031560 | 54.545455 | 1.496042 |
+| 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.027809 | 75.000000 | 1.025356 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.046526 | 50.000000 | 0.948775 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010552 | 42.857143 | -0.916068 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.062244 | 62.790698 | 3.014665 |
+| 2 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.109585 | 81.818182 | 2.630993 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.076345 | 62.068966 | 2.605700 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082387 | 100.000000 | 2.008333 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.049153 | 66.666667 | 1.912733 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | short | -0.068460 | 20.000000 | -1.794866 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.069431 | 66.666667 | 0.934793 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | short | -0.023688 | 26.666667 | -0.725650 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.029830 | 50.000000 | 0.709031 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 5 | short | -0.039291 | 20.000000 | -0.547335 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.133915 | 90.909091 | 2.871852 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 43 | long | 0.066802 | 65.116279 | 2.710354 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.070751 | 83.333333 | 2.684477 |
+| 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.276900 | 75.000000 | 2.307532 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 10 | short | -0.057609 | 40.000000 | -1.570712 |
+| 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.015618 | 75.000000 | 1.465897 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.070229 | 75.000000 | 1.458864 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 29 | long | 0.043579 | 58.620690 | 1.082413 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.131341 | 57.142857 | 1.037526 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 15 | long | 0.080411 | 40.000000 | 1.006977 |
+
+## 2m BOS wicks
+
+- Study ID: `45e591d9-9942-4d6d-bcaf-bdae3ce9a50e`
+- Variant: `setting-2m-bos-confirmation-wicks`
+- Description: One-factor bosConfirmation change: 2m close -> wicks.
+- Observed transitions: 218
+- Result rows: 64
+- Occurrence rows: 867
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"fast_bearish_reversal":4,"bear_confluence":4,"fast_bullish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 39 | 0.041584 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.572143 | long |
+| 3 | bear_confluence | 1 | 16 | -0.014188 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.405352 | short |
+| 3 | fast_bullish_reversal | 1 | 11 | -0.050369 | `1m:buy|2m:buy|5m:sell|15m:sell` | 2.022326 | short |
+| 3 | fast_bearish_reversal | 1 | 25 | 0.042474 | `1m:sell|2m:sell|5m:buy|15m:buy` | 2.054326 | long |
+| 3 | mixed_divergence | 12 | 127 | 0.004559 | `1m:sell|2m:buy|5m:buy|15m:sell` | 2.394136 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 39 | 0.043736 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.137953 | long |
+| 6 | bear_confluence | 1 | 15 | -0.000197 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.004520 | short |
+| 6 | fast_bullish_reversal | 1 | 11 | -0.070226 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.383574 | short |
+| 6 | fast_bearish_reversal | 1 | 25 | -0.003686 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.055432 | short |
+| 6 | mixed_divergence | 12 | 127 | 0.011912 | `1m:sell|2m:buy|5m:buy|15m:buy` | 2.691840 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 39 | 0.061042 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.196987 | long |
+| 12 | bear_confluence | 1 | 14 | 0.049831 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.802837 | long |
+| 12 | fast_bullish_reversal | 1 | 11 | 0.023631 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.411081 | long |
+| 12 | fast_bearish_reversal | 1 | 25 | 0.013687 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.163453 | long |
+| 12 | mixed_divergence | 12 | 127 | 0.006070 | `1m:buy|2m:sell|5m:buy|15m:sell` | 3.688488 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 39 | 0.063374 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.436348 | long |
+| 24 | bear_confluence | 1 | 14 | 0.043279 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.052649 | long |
+| 24 | fast_bullish_reversal | 1 | 11 | 0.013373 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.198036 | long |
+| 24 | fast_bearish_reversal | 1 | 25 | 0.019630 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225516 | long |
+| 24 | mixed_divergence | 12 | 127 | 0.039909 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.994636 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.041584 | -0.003215 | 69.230769 | +0.809716 | 0.023763 | 0.072698 | -0.019318 | 0.072599 | 3.572143 | 0.572001 |
+| 3 | 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.039603 | +0.007585 | 100.000000 | +20.000000 | 0.021587 | 0.036988 | -0.034693 | 0.072046 | 2.394136 | 1.070690 |
+| 3 | 3 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 25 | long | 0.042474 | +0.019840 | 56.000000 | +1.454545 | 0.008407 | 0.103378 | -0.035291 | 0.073311 | 2.054326 | 0.410865 |
+| 3 | 4 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.050369 | -0.061667 | 27.272727 | -32.727273 | -0.043141 | 0.082606 | -0.080416 | 0.027960 | -2.022326 | -0.609754 |
+| 3 | 5 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.025719 | +0.022050 | 80.000000 | +55.000000 | 0.022501 | 0.034614 | -0.039366 | 0.046059 | 1.661446 | 0.743021 |
+| 3 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.034898 | -0.013328 | 50.000000 | -25.000000 | 0.034049 | 0.053766 | -0.023965 | 0.070476 | 1.298144 | 0.649072 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.017626 | -0.004647 | 71.428571 | -3.571429 | 0.010928 | 0.064564 | -0.040663 | 0.045950 | 1.251064 | 0.273005 |
+| 3 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.026571 | +0.014505 | 66.666667 | +9.523810 | 0.024855 | 0.052254 | -0.031618 | 0.044714 | 1.245537 | 0.508488 |
+| 3 | 9 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.019848 | -0.013900 | 58.333333 | -1.666667 | 0.024311 | 0.057872 | -0.035156 | 0.050535 | 1.188075 | 0.342968 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.037451 | +0.008456 | 62.500000 | +12.500000 | 0.011183 | 0.101438 | -0.074050 | 0.053451 | -1.044252 | -0.369199 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.009732 | +0.016879 | 43.750000 | +12.980769 | -0.009276 | 0.063293 | -0.060161 | 0.034933 | -0.615055 | -0.153764 |
+| 3 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.011918 | +0.032346 | 50.000000 | +13.636364 | -0.010602 | 0.078168 | -0.077692 | 0.049420 | -0.431238 | -0.152466 |
+| 3 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 16 | short | -0.014188 | +0.007425 | 56.250000 | +2.916667 | 0.008542 | 0.140004 | -0.089464 | 0.073117 | -0.405352 | -0.101338 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | short | -0.004213 | -0.009470 | 44.000000 | +3.090909 | -0.005385 | 0.088134 | -0.057374 | 0.040531 | -0.238988 | -0.047798 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.002256 | +0.005823 | 37.500000 | +8.928571 | -0.002734 | 0.027618 | -0.023806 | 0.023463 | 0.230990 | 0.081667 |
+| 3 | 16 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.001890 | +0.007357 | 33.333333 | -9.523810 | -0.017284 | 0.041381 | -0.036695 | 0.021275 | -0.137005 | -0.045668 |
+| 6 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.043736 | -0.001512 | 64.102564 | +3.576248 | 0.020963 | 0.087042 | -0.027531 | 0.091462 | 3.137953 | 0.502475 |
+| 6 | 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.038678 | -0.001054 | 80.952381 | +0.952381 | 0.024888 | 0.065846 | -0.041949 | 0.071784 | 2.691840 | 0.587408 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.092211 | +0.009341 | 75.000000 | 0.000000 | 0.108280 | 0.091866 | -0.025195 | 0.124833 | 2.007512 | 1.003756 |
+| 6 | 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.038652 | -0.019585 | 64.000000 | -8.727273 | 0.017959 | 0.107851 | -0.066015 | 0.072952 | 1.791936 | 0.358387 |
+| 6 | 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.028576 | -0.009858 | 80.000000 | 0.000000 | 0.039087 | 0.042322 | -0.042858 | 0.089171 | 1.509786 | 0.675197 |
+| 6 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.021775 | +0.015291 | 31.250000 | +8.173077 | -0.034624 | 0.060293 | -0.079746 | 0.036534 | -1.444617 | -0.361154 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.057066 | +0.023431 | 33.333333 | +19.047619 | -0.015434 | 0.120388 | -0.093305 | 0.028316 | -1.422054 | -0.474018 |
+| 6 | 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.070226 | -0.046615 | 27.272727 | -22.727273 | -0.054965 | 0.168342 | -0.129058 | 0.037323 | -1.383574 | -0.417163 |
+| 6 | 9 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.047568 | -0.008085 | 37.500000 | -12.500000 | -0.026391 | 0.121578 | -0.109883 | 0.066454 | -1.106640 | -0.391256 |
+| 6 | 10 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.019042 | -0.013985 | 50.000000 | -10.000000 | 0.012671 | 0.084267 | -0.050888 | 0.070640 | 0.782793 | 0.225973 |
+| 6 | 11 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.019956 | -0.011653 | 40.000000 | -35.000000 | -0.005401 | 0.059815 | -0.048278 | 0.059509 | 0.746004 | 0.333623 |
+| 6 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.017702 | +0.012935 | 50.000000 | +7.142857 | 0.004561 | 0.061249 | -0.039648 | 0.052923 | 0.707948 | 0.289019 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.001890 | +0.013604 | 37.500000 | -5.357143 | -0.013514 | 0.039590 | -0.029274 | 0.034773 | 0.135019 | 0.047736 |
+| 6 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 25 | short | -0.003686 | +0.028008 | 60.000000 | +5.454545 | 0.011868 | 0.332468 | -0.110385 | 0.095188 | -0.055432 | -0.011086 |
+| 6 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.001929 | +0.030245 | 37.500000 | +10.227273 | -0.016144 | 0.125698 | -0.092527 | 0.069826 | 0.043398 | 0.015343 |
+| 6 | 16 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.000197 | +0.012830 | 53.333333 | +3.333333 | 0.019802 | 0.168448 | -0.111959 | 0.097039 | -0.004520 | -0.001167 |
+| 12 | 1 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.136247 | +0.021316 | 100.000000 | 0.000000 | 0.154193 | 0.073877 | -0.025371 | 0.166620 | 3.688488 | 1.844244 |
+| 12 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.061042 | -0.011176 | 56.410256 | -4.116060 | 0.022846 | 0.119240 | -0.043253 | 0.119862 | 3.196987 | 0.511928 |
+| 12 | 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.075985 | +0.041875 | 33.333333 | +19.047619 | -0.042911 | 0.173574 | -0.130580 | 0.046571 | -1.313296 | -0.437765 |
+| 12 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.035692 | -0.016844 | 58.333333 | -11.666667 | 0.022815 | 0.102861 | -0.066891 | 0.088054 | 1.202014 | 0.346992 |
+| 12 | 5 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.034207 | +0.023267 | 40.000000 | +15.000000 | -0.011245 | 0.084876 | -0.058404 | 0.076197 | 0.901199 | 0.403028 |
+| 12 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.040824 | +0.003756 | 40.000000 | +20.000000 | -0.025806 | 0.110456 | -0.094020 | 0.106509 | -0.826441 | -0.369596 |
+| 12 | 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.049831 | +0.009760 | 64.285714 | +2.747252 | 0.072746 | 0.232239 | -0.136558 | 0.163117 | 0.802837 | 0.214567 |
+| 12 | 8 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.030583 | -0.003052 | 72.000000 | +3.818182 | 0.053356 | 0.221305 | -0.103381 | 0.109834 | 0.690979 | 0.138196 |
+| 12 | 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.018738 | -0.014789 | 33.333333 | -9.523810 | -0.006424 | 0.069143 | -0.041624 | 0.062435 | 0.663807 | 0.270998 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.015133 | -0.002585 | 37.500000 | +6.730769 | -0.035444 | 0.122616 | -0.115279 | 0.078623 | -0.493657 | -0.123414 |
+| 12 | 11 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.023631 | -0.045515 | 45.454545 | -24.545455 | -0.014082 | 0.190655 | -0.138366 | 0.106398 | 0.411081 | 0.123946 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.008856 | +0.003424 | 50.000000 | -7.142857 | 0.001017 | 0.073688 | -0.057775 | 0.045523 | -0.339918 | -0.120179 |
+| 12 | 13 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.014339 | +0.008243 | 75.000000 | +20.454545 | 0.029063 | 0.141182 | -0.116748 | 0.091068 | -0.287266 | -0.101564 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 25 | long | 0.013687 | +0.034815 | 60.000000 | +0.909091 | 0.047055 | 0.418673 | -0.132552 | 0.148456 | 0.163453 | 0.032691 |
+| 12 | 15 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.003477 | -0.059389 | 71.428571 | +6.428571 | 0.040925 | 0.277390 | -0.110276 | 0.102351 | 0.057435 | 0.012533 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.000980 | -0.011062 | 50.000000 | 0.000000 | 0.017672 | 0.113824 | -0.121031 | 0.099702 | -0.024362 | -0.008613 |
+| 24 | 1 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.106473 | +0.045056 | 100.000000 | +50.000000 | 0.115653 | 0.071109 | -0.025371 | 0.208149 | 2.994636 | 1.497318 |
+| 24 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.063374 | -0.012452 | 61.538462 | -4.251012 | 0.041075 | 0.162445 | -0.063513 | 0.165721 | 2.436348 | 0.390128 |
+| 24 | 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | long | 0.125703 | +0.008207 | 56.250000 | +2.403846 | 0.033492 | 0.283811 | -0.144613 | 0.194337 | 1.771652 | 0.442913 |
+| 24 | 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.047373 | -0.252699 | 66.666667 | -19.047619 | 0.051858 | 0.070012 | -0.069000 | 0.095515 | 1.657453 | 0.676653 |
+| 24 | 5 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.143093 | +0.010299 | 75.000000 | +17.857143 | 0.027543 | 0.307403 | -0.099617 | 0.229988 | 1.316604 | 0.465490 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.043279 | +0.012774 | 71.428571 | +2.197802 | 0.046869 | 0.153836 | -0.170256 | 0.185202 | 1.052649 | 0.281332 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.038054 | -0.022302 | 60.000000 | -3.636364 | 0.038535 | 0.201093 | -0.128541 | 0.137073 | 0.946172 | 0.189234 |
+| 24 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.028842 | +0.005799 | 58.333333 | -1.666667 | 0.052527 | 0.116532 | -0.098532 | 0.120576 | 0.857365 | 0.247500 |
+| 24 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.010334 | -0.006423 | 60.000000 | -15.000000 | 0.006752 | 0.029069 | -0.072964 | 0.082472 | 0.794891 | 0.355486 |
+| 24 | 10 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.048709 | +0.026719 | 33.333333 | -9.523810 | -0.039995 | 0.186064 | -0.150876 | 0.076855 | -0.785352 | -0.261784 |
+| 24 | 11 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.022555 | -0.001902 | 60.000000 | 0.000000 | 0.004554 | 0.086466 | -0.133564 | 0.106509 | -0.583289 | -0.260855 |
+| 24 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.027183 | +0.021286 | 62.500000 | +7.954545 | 0.068139 | 0.136774 | -0.142396 | 0.130441 | 0.562133 | 0.198744 |
+| 24 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 25 | long | 0.019630 | +0.029678 | 60.000000 | +5.454545 | 0.063219 | 0.435218 | -0.188599 | 0.197022 | 0.225516 | 0.045103 |
+| 24 | 14 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.009568 | -0.042671 | 57.142857 | +2.142857 | 0.029427 | 0.213565 | -0.120426 | 0.131162 | 0.205305 | 0.044801 |
+| 24 | 15 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.013373 | -0.061721 | 54.545455 | -25.454545 | 0.035206 | 0.223966 | -0.143768 | 0.120032 | 0.198036 | 0.059710 |
+| 24 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.001754 | -0.016431 | 50.000000 | 0.000000 | 0.003933 | 0.188158 | -0.136322 | 0.107314 | -0.026372 | -0.009324 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.041584 | 69.230769 | 3.572143 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.039603 | 100.000000 | 2.394136 |
+| 3 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 25 | long | 0.042474 | 56.000000 | 2.054326 |
+| 4 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.050369 | 27.272727 | -2.022326 |
+| 5 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.025719 | 80.000000 | 1.661446 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.034898 | 50.000000 | 1.298144 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.017626 | 71.428571 | 1.251064 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.026571 | 66.666667 | 1.245537 |
+| 9 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.019848 | 58.333333 | 1.188075 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.037451 | 62.500000 | -1.044252 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.043736 | 64.102564 | 3.137953 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.038678 | 80.952381 | 2.691840 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.092211 | 75.000000 | 2.007512 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.038652 | 64.000000 | 1.791936 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.028576 | 80.000000 | 1.509786 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.021775 | 31.250000 | -1.444617 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.057066 | 33.333333 | -1.422054 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.070226 | 27.272727 | -1.383574 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.047568 | 37.500000 | -1.106640 |
+| 10 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.019042 | 50.000000 | 0.782793 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.136247 | 100.000000 | 3.688488 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.061042 | 56.410256 | 3.196987 |
+| 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.075985 | 33.333333 | -1.313296 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.035692 | 58.333333 | 1.202014 |
+| 5 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.034207 | 40.000000 | 0.901199 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.040824 | 40.000000 | -0.826441 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.049831 | 64.285714 | 0.802837 |
+| 8 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.030583 | 72.000000 | 0.690979 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.018738 | 33.333333 | 0.663807 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.015133 | 37.500000 | -0.493657 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.106473 | 100.000000 | 2.994636 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 39 | long | 0.063374 | 61.538462 | 2.436348 |
+| 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | long | 0.125703 | 56.250000 | 1.771652 |
+| 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.047373 | 66.666667 | 1.657453 |
+| 5 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.143093 | 75.000000 | 1.316604 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.043279 | 71.428571 | 1.052649 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.038054 | 60.000000 | 0.946172 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 12 | long | 0.028842 | 58.333333 | 0.857365 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.010334 | 60.000000 | 0.794891 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.048709 | 33.333333 | -0.785352 |
+
+## 5m BOS close
+
+- Study ID: `a7b10f8a-2c13-4e83-90b7-4e8f80a0b3ca`
+- Variant: `setting-5m-bos-confirmation-close`
+- Description: One-factor bosConfirmation change: 5m wicks -> close.
+- Observed transitions: 193
+- Result rows: 64
+- Occurrence rows: 770
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"fast_bearish_reversal":4,"bear_confluence":4,"fast_bullish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.043477 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.705737 | long |
+| 3 | bear_confluence | 1 | 14 | -0.024266 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.619420 | short |
+| 3 | fast_bullish_reversal | 1 | 12 | 0.008612 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.441840 | long |
+| 3 | fast_bearish_reversal | 1 | 21 | 0.020133 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.748512 | long |
+| 3 | mixed_divergence | 12 | 108 | 0.003142 | `1m:buy|2m:buy|5m:buy|15m:sell` | 3.607942 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.046341 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.196701 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 12 | -0.027010 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.568728 | short |
+| 6 | fast_bearish_reversal | 1 | 21 | -0.034520 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.438504 | short |
+| 6 | mixed_divergence | 12 | 108 | 0.012868 | `1m:sell|2m:sell|5m:sell|15m:buy` | 2.731819 | short |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.075299 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.626282 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 12 | 0.049451 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.958821 | long |
+| 12 | fast_bearish_reversal | 1 | 21 | -0.016814 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.170652 | short |
+| 12 | mixed_divergence | 12 | 108 | 0.015455 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.076608 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.989183 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 12 | 0.065703 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.066968 | long |
+| 24 | fast_bearish_reversal | 1 | 21 | -0.012759 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.125487 | short |
+| 24 | mixed_divergence | 12 | 108 | 0.064620 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.065751 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.043477 | -0.001322 | 65.789474 | -2.631579 | 0.026928 | 0.072323 | -0.018767 | 0.071199 | 3.705737 | 0.601150 |
+| 3 | 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043207 | +0.009459 | 90.000000 | +30.000000 | 0.044697 | 0.037870 | -0.025848 | 0.063504 | 3.607942 | 1.140932 |
+| 3 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.027077 | +0.004804 | 77.272727 | +2.272727 | 0.023242 | 0.072654 | -0.039976 | 0.051215 | 1.748067 | 0.372689 |
+| 3 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.026496 | +0.000115 | 25.000000 | -5.769231 | -0.009276 | 0.053937 | -0.064006 | 0.028051 | -1.701691 | -0.491236 |
+| 3 | 6 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009550 | -0.000303 | 42.857143 | 0.000000 | -0.004929 | 0.018615 | -0.039397 | 0.011890 | -1.357304 | -0.513013 |
+| 3 | 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.034312 | +0.002294 | 66.666667 | -13.333333 | 0.018869 | 0.063192 | -0.035384 | 0.097761 | 0.940454 | 0.542972 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | long | 0.020133 | -0.002501 | 52.380952 | -2.164503 | 0.002005 | 0.123258 | -0.054090 | 0.066073 | 0.748512 | 0.163339 |
+| 3 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.024266 | -0.002653 | 50.000000 | -3.333333 | -0.000975 | 0.146578 | -0.101229 | 0.066801 | -0.619420 | -0.165547 |
+| 3 | 11 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | short | -0.008658 | -0.020724 | 40.000000 | -17.142857 | -0.017594 | 0.039922 | -0.049332 | 0.018754 | -0.484925 | -0.216865 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.008612 | -0.002686 | 50.000000 | -10.000000 | 0.014929 | 0.067519 | -0.034398 | 0.047783 | 0.441840 | 0.127548 |
+| 3 | 14 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.006196 | +0.009763 | 40.000000 | +11.428571 | -0.004068 | 0.033201 | -0.020180 | 0.026738 | 0.417265 | 0.186607 |
+| 3 | 15 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.003274 | -0.001983 | 38.095238 | -2.813853 | -0.005385 | 0.084911 | -0.059444 | 0.045833 | 0.176675 | 0.038554 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.046341 | +0.001093 | 63.157895 | +2.631579 | 0.013884 | 0.089363 | -0.027113 | 0.091383 | 3.196701 | 0.518573 |
+| 6 | 2 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.044011 | -0.006945 | 16.666667 | -6.410256 | -0.048800 | 0.055809 | -0.096804 | 0.028051 | -2.731819 | -0.788608 |
+| 6 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.041862 | +0.002130 | 81.818182 | +1.818182 | 0.021046 | 0.072718 | -0.042583 | 0.073393 | 2.700172 | 0.575679 |
+| 6 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.048234 | +0.015207 | 70.000000 | +10.000000 | 0.053100 | 0.063702 | -0.033001 | 0.087951 | 2.394411 | 0.757179 |
+| 6 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.058239 | +0.000002 | 71.428571 | -1.298702 | 0.025660 | 0.111947 | -0.060981 | 0.086685 | 2.384035 | 0.520239 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | short | -0.034402 | -0.039169 | 20.000000 | -22.857143 | -0.045463 | 0.041056 | -0.081208 | 0.020955 | -1.873685 | -0.837938 |
+| 6 | 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.033039 | -0.005395 | 66.666667 | -13.333333 | 0.039087 | 0.032129 | -0.035384 | 0.107580 | 1.781112 | 1.028326 |
+| 6 | 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.082987 | -0.002490 | 14.285714 | 0.000000 | -0.032867 | 0.124208 | -0.117334 | 0.017313 | -1.767705 | -0.668130 |
+| 6 | 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | short | -0.008635 | +0.003079 | 40.000000 | -2.857143 | -0.018985 | 0.033895 | -0.032426 | 0.037513 | -0.569646 | -0.254753 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | short | -0.027010 | -0.003399 | 41.666667 | -8.333333 | -0.004929 | 0.164516 | -0.080495 | 0.059894 | -0.568728 | -0.164178 |
+| 6 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.034520 | -0.002826 | 52.380952 | -2.164503 | 0.011072 | 0.360756 | -0.142886 | 0.085153 | -0.438504 | -0.095689 |
+| 6 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 16 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075299 | +0.003081 | 63.157895 | +2.631579 | 0.042616 | 0.128004 | -0.042601 | 0.128447 | 3.626282 | 0.588261 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.077268 | +0.024732 | 70.000000 | 0.000000 | 0.047704 | 0.098666 | -0.038950 | 0.113440 | 2.476449 | 0.783122 |
+| 12 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.056535 | -0.006331 | 63.636364 | -1.363636 | 0.046042 | 0.125067 | -0.058173 | 0.105615 | 2.120234 | 0.452035 |
+| 12 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.123750 | -0.005890 | 0.000000 | -14.285714 | -0.042911 | 0.165481 | -0.155161 | 0.026490 | -1.978549 | -0.747821 |
+| 12 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.097970 | -0.053390 | 0.000000 | -20.000000 | -0.070087 | 0.104127 | -0.120651 | 0.107580 | -1.629636 | -0.940871 |
+| 12 | 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.049451 | -0.019695 | 66.666667 | -3.333333 | 0.059931 | 0.178659 | -0.093557 | 0.120348 | 0.958821 | 0.276788 |
+| 12 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.025259 | -0.012711 | 25.000000 | -5.769231 | -0.050111 | 0.139351 | -0.125298 | 0.083660 | -0.627918 | -0.181264 |
+| 12 | 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.031231 | -0.002404 | 71.428571 | +3.246753 | 0.053356 | 0.245624 | -0.110704 | 0.127981 | 0.582682 | 0.127152 |
+| 12 | 11 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.031486 | -0.002041 | 40.000000 | -2.857143 | -0.005425 | 0.122430 | -0.095386 | 0.077589 | 0.575059 | 0.257174 |
+| 12 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 13 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.016814 | +0.004314 | 61.904762 | +2.813853 | 0.021520 | 0.451502 | -0.167279 | 0.144049 | -0.170652 | -0.037239 |
+| 12 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 12 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.001464 | +0.013744 | 60.000000 | +2.857143 | 0.002034 | 0.042042 | -0.051826 | 0.039225 | 0.077854 | 0.034817 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.076608 | +0.000782 | 65.789474 | 0.000000 | 0.061699 | 0.157984 | -0.055436 | 0.171566 | 2.989183 | 0.484909 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.353584 | +0.053512 | 80.000000 | -5.714286 | 0.369553 | 0.382736 | -0.122495 | 0.412190 | 2.065751 | 0.923832 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.098376 | +0.046137 | 59.090909 | +4.090909 | 0.071110 | 0.236387 | -0.075108 | 0.185161 | 1.951984 | 0.416164 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.096088 | -0.020660 | 28.571429 | -14.285714 | -0.063307 | 0.177020 | -0.180433 | 0.041108 | -1.436132 | -0.542807 |
+| 24 | 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.064982 | +0.004626 | 66.666667 | +3.030303 | 0.067310 | 0.210294 | -0.132452 | 0.167467 | 1.416036 | 0.309004 |
+| 24 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | long | 0.124848 | +0.007352 | 50.000000 | -3.846154 | 0.011081 | 0.331960 | -0.153551 | 0.193788 | 1.302821 | 0.376092 |
+| 24 | 8 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 9 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.050076 | +0.027033 | 70.000000 | +10.000000 | 0.053610 | 0.145695 | -0.075424 | 0.144827 | 1.086897 | 0.343707 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.065703 | -0.009391 | 75.000000 | -5.000000 | 0.080222 | 0.213315 | -0.100785 | 0.148626 | 1.066968 | 0.308007 |
+| 24 | 11 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.054896 | -0.034243 | 33.333333 | -26.666667 | -0.106599 | 0.098928 | -0.177450 | 0.136115 | -0.961135 | -0.554912 |
+| 24 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.016847 | -0.115947 | 60.000000 | +2.857143 | 0.014403 | 0.043958 | -0.093470 | 0.078801 | 0.856956 | 0.383242 |
+| 24 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.012759 | -0.002711 | 57.142857 | +2.597402 | 0.025231 | 0.465933 | -0.220584 | 0.181364 | -0.125487 | -0.027383 |
+| 24 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.043477 | 65.789474 | 3.705737 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043207 | 90.000000 | 3.607942 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.027077 | 77.272727 | 1.748067 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.026496 | 25.000000 | -1.701691 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009550 | 42.857143 | -1.357304 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.034312 | 66.666667 | 0.940454 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | long | 0.020133 | 52.380952 | 0.748512 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.024266 | 50.000000 | -0.619420 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.046341 | 63.157895 | 3.196701 |
+| 2 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.044011 | 16.666667 | -2.731819 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.041862 | 81.818182 | 2.700172 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.048234 | 70.000000 | 2.394411 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.058239 | 71.428571 | 2.384035 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | short | -0.034402 | 20.000000 | -1.873685 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.033039 | 66.666667 | 1.781112 |
+| 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.082987 | 14.285714 | -1.767705 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075299 | 63.157895 | 3.626282 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.077268 | 70.000000 | 2.476449 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.056535 | 63.636364 | 2.120234 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.123750 | 0.000000 | -1.978549 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.097970 | 0.000000 | -1.629636 |
+| 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.049451 | 66.666667 | 0.958821 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | short | -0.025259 | 25.000000 | -0.627918 |
+| 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+| 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.031231 | 71.428571 | 0.582682 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.076608 | 65.789474 | 2.989183 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.353584 | 80.000000 | 2.065751 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.098376 | 59.090909 | 1.951984 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.096088 | 28.571429 | -1.436132 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.064982 | 66.666667 | 1.416036 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 12 | long | 0.124848 | 50.000000 | 1.302821 |
+| 8 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 9 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.050076 | 70.000000 | 1.086897 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.065703 | 75.000000 | 1.066968 |
+
+## 15m BOS close
+
+- Study ID: `981b6e5f-a3f0-4df0-9b6f-a01a0dff9fc0`
+- Variant: `setting-15m-bos-confirmation-close`
+- Description: One-factor bosConfirmation change: 15m wicks -> close.
+- Observed transitions: 202
+- Result rows: 64
+- Occurrence rows: 803
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.036928 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.386872 | long |
+| 3 | bear_confluence | 1 | 14 | -0.050501 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.208886 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 118 | 0.003250 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.040426 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.673466 | long |
+| 6 | bear_confluence | 1 | 13 | -0.046527 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.891841 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 118 | 0.012814 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.069607 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.133828 | long |
+| 12 | bear_confluence | 1 | 12 | -0.046898 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.641861 | short |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 118 | 0.019517 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.074902 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.774266 | long |
+| 24 | bear_confluence | 1 | 12 | -0.037165 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.620974 | short |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 118 | 0.059690 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.036928 | -0.007871 | 65.789474 | -2.631579 | 0.025896 | 0.067213 | -0.024643 | 0.061649 | 3.386872 | 0.549423 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.017314 | -0.008067 | 37.500000 | -5.357143 | -0.011107 | 0.028385 | -0.047193 | 0.015241 | -1.725296 | -0.609984 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.050501 | -0.028888 | 50.000000 | -3.333333 | -0.000975 | 0.156308 | -0.117466 | 0.062435 | -1.208886 | -0.323088 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.032336 | +0.011928 | 45.454545 | +9.090909 | -0.040910 | 0.094124 | -0.082135 | 0.042366 | -1.139429 | -0.343551 |
+| 3 | 9 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.016525 | +0.010086 | 37.500000 | +6.730769 | -0.009276 | 0.060881 | -0.065566 | 0.034724 | -1.085739 | -0.271435 |
+| 3 | 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 11 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.040426 | -0.004822 | 57.894737 | -2.631579 | 0.009606 | 0.093214 | -0.034240 | 0.082009 | 2.673466 | 0.433693 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.074875 | +0.005622 | 12.500000 | -1.785714 | -0.025683 | 0.117317 | -0.112485 | 0.019986 | -1.805178 | -0.638227 |
+| 6 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.029001 | +0.008065 | 31.250000 | +8.173077 | -0.032257 | 0.069409 | -0.091404 | 0.040370 | -1.671321 | -0.417830 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | short | -0.046527 | -0.033500 | 46.153846 | -3.846154 | -0.022251 | 0.188102 | -0.147010 | 0.079520 | -0.891841 | -0.247352 |
+| 6 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.024962 | +0.003354 | 36.363636 | +9.090909 | -0.007742 | 0.124867 | -0.101971 | 0.057206 | -0.663027 | -0.199910 |
+| 6 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 14 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.069607 | -0.002611 | 63.157895 | +2.631579 | 0.042616 | 0.136920 | -0.050180 | 0.119419 | 3.133828 | 0.508374 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.099029 | +0.018831 | 25.000000 | +10.714286 | -0.041069 | 0.166097 | -0.145583 | 0.030098 | -1.686332 | -0.596208 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.025314 | -0.002732 | 54.545455 | 0.000000 | 0.002734 | 0.130567 | -0.125552 | 0.085843 | -0.643019 | -0.193878 |
+| 12 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 12 | short | -0.046898 | -0.086969 | 50.000000 | -11.538462 | -0.051957 | 0.253107 | -0.193571 | 0.117011 | -0.641861 | -0.185289 |
+| 12 | 12 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | long | 0.023841 | +0.036389 | 37.500000 | +6.730769 | -0.028326 | 0.161232 | -0.118387 | 0.109814 | 0.591462 | 0.147866 |
+| 12 | 13 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.074902 | -0.000924 | 68.421053 | +2.631579 | 0.078031 | 0.166433 | -0.060813 | 0.179731 | 2.774266 | 0.450045 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | long | 0.108196 | -0.009300 | 56.250000 | +2.403846 | 0.026631 | 0.291427 | -0.140610 | 0.202725 | 1.485054 | 0.371263 |
+| 24 | 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.073344 | +0.002084 | 37.500000 | -5.357143 | -0.060001 | 0.175526 | -0.168417 | 0.051300 | -1.181858 | -0.417850 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 12 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 12 | short | -0.037165 | -0.067670 | 58.333333 | -10.897436 | 0.014045 | 0.207323 | -0.247344 | 0.128334 | -0.620974 | -0.179260 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+| 24 | 16 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.000196 | -0.006093 | 54.545455 | 0.000000 | 0.058038 | 0.133058 | -0.159118 | 0.112477 | -0.004886 | -0.001473 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.036928 | 65.789474 | 3.386872 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.017314 | 37.500000 | -1.725296 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.050501 | 50.000000 | -1.208886 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.032336 | 45.454545 | -1.139429 |
+| 9 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.016525 | 37.500000 | -1.085739 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.040426 | 57.894737 | 2.673466 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.074875 | 12.500000 | -1.805178 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | short | -0.029001 | 31.250000 | -1.671321 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.069607 | 63.157895 | 3.133828 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.099029 | 25.000000 | -1.686332 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.025314 | 54.545455 | -0.643019 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.074902 | 68.421053 | 2.774266 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 16 | long | 0.108196 | 56.250000 | 1.485054 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.073344 | 37.500000 | -1.181858 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m basis length short
+
+- Study ID: `19d04d2b-ced9-4279-9d3c-df7c328b14c3`
+- Variant: `setting-1m-basisLength-short`
+- Description: One-factor basisLength change: 1m 100 -> 75.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m basis length long
+
+- Study ID: `44253185-6a83-4e3a-9fb3-1cf2c337cf54`
+- Variant: `setting-1m-basisLength-long`
+- Description: One-factor basisLength change: 1m 100 -> 125.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m basis length short
+
+- Study ID: `4abeb2a0-6846-423f-9868-6355ff154c8c`
+- Variant: `setting-2m-basisLength-short`
+- Description: One-factor basisLength change: 2m 90 -> 68.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m basis length long
+
+- Study ID: `03dfa45f-9c35-46d6-875a-8445fcb20ab6`
+- Variant: `setting-2m-basisLength-long`
+- Description: One-factor basisLength change: 2m 90 -> 113.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m basis length short
+
+- Study ID: `35ca5e0f-08e0-4c69-afd0-0e2275d8ad9e`
+- Variant: `setting-5m-basisLength-short`
+- Description: One-factor basisLength change: 5m 80 -> 60.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m basis length long
+
+- Study ID: `07ea01d8-7123-4147-9a7a-20220ab7a224`
+- Variant: `setting-5m-basisLength-long`
+- Description: One-factor basisLength change: 5m 80 -> 100.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m basis length short
+
+- Study ID: `e05f8775-2124-4eda-9902-830716a1281a`
+- Variant: `setting-15m-basisLength-short`
+- Description: One-factor basisLength change: 15m 60 -> 45.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m basis length long
+
+- Study ID: `80823a46-e0c9-4257-8e2b-8ab3200b7e5c`
+- Variant: `setting-15m-basisLength-long`
+- Description: One-factor basisLength change: 15m 60 -> 75.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m ATR smoothing fast
+
+- Study ID: `5ad79a42-b027-403d-a723-e7db5c10d683`
+- Variant: `setting-1m-atrSmoothing-fast`
+- Description: One-factor atrSmoothing change: 1m 30 -> 20.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m ATR smoothing slow
+
+- Study ID: `6a42cfe3-1f3e-4922-9c94-2fe2e3e46aef`
+- Variant: `setting-1m-atrSmoothing-slow`
+- Description: One-factor atrSmoothing change: 1m 30 -> 40.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m ATR smoothing fast
+
+- Study ID: `2bedcc93-b991-4fbe-9d15-5046a90b5238`
+- Variant: `setting-2m-atrSmoothing-fast`
+- Description: One-factor atrSmoothing change: 2m 25 -> 17.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m ATR smoothing slow
+
+- Study ID: `514d18d6-d610-487d-baf4-fdd4db44a9a6`
+- Variant: `setting-2m-atrSmoothing-slow`
+- Description: One-factor atrSmoothing change: 2m 25 -> 33.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m ATR smoothing fast
+
+- Study ID: `51b572d6-8714-4c7a-a904-39ad9cbefc64`
+- Variant: `setting-5m-atrSmoothing-fast`
+- Description: One-factor atrSmoothing change: 5m 21 -> 14.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m ATR smoothing slow
+
+- Study ID: `ff53c66c-4a06-45f8-85f6-74bf3af59930`
+- Variant: `setting-5m-atrSmoothing-slow`
+- Description: One-factor atrSmoothing change: 5m 21 -> 28.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m ATR smoothing fast
+
+- Study ID: `2c9b3b52-d371-4820-a6ce-75085037b7a9`
+- Variant: `setting-15m-atrSmoothing-fast`
+- Description: One-factor atrSmoothing change: 15m 18 -> 12.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m ATR smoothing slow
+
+- Study ID: `410ec761-366f-41cb-836c-c3b22ea1668b`
+- Variant: `setting-15m-atrSmoothing-slow`
+- Description: One-factor atrSmoothing change: 15m 18 -> 24.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m volatility multiplier tight
+
+- Study ID: `74dd98ab-f206-4319-a2f8-316c224b8cef`
+- Variant: `setting-1m-volatilityMultiplier-tight`
+- Description: One-factor volatilityMultiplier change: 1m 2.5 -> 2.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m volatility multiplier wide
+
+- Study ID: `1e2ffdc7-4ac0-4865-9c35-b75ab951e236`
+- Variant: `setting-1m-volatilityMultiplier-wide`
+- Description: One-factor volatilityMultiplier change: 1m 2.5 -> 3.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m volatility multiplier tight
+
+- Study ID: `e3d1259c-36d0-4bf7-ad82-c8bb94341c93`
+- Variant: `setting-2m-volatilityMultiplier-tight`
+- Description: One-factor volatilityMultiplier change: 2m 2.25 -> 1.8.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 2m volatility multiplier wide
+
+- Study ID: `9773b503-328d-4dd1-955f-58c18b8a9013`
+- Variant: `setting-2m-volatilityMultiplier-wide`
+- Description: One-factor volatilityMultiplier change: 2m 2.25 -> 2.7.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m volatility multiplier tight
+
+- Study ID: `5b3c187d-c624-4264-bc84-c4ec0d8e8e35`
+- Variant: `setting-5m-volatilityMultiplier-tight`
+- Description: One-factor volatilityMultiplier change: 5m 2 -> 1.6.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 5m volatility multiplier wide
+
+- Study ID: `18e5c319-e2a9-4092-b7ad-bd83b9e7920a`
+- Variant: `setting-5m-volatilityMultiplier-wide`
+- Description: One-factor volatilityMultiplier change: 5m 2 -> 2.4.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m volatility multiplier tight
+
+- Study ID: `da638d62-b38d-48d7-bb7c-4de7b9cb3478`
+- Variant: `setting-15m-volatilityMultiplier-tight`
+- Description: One-factor volatilityMultiplier change: 15m 2 -> 1.6.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 15m volatility multiplier wide
+
+- Study ID: `895d6565-1a9e-4bd9-985e-a847da0f66f8`
+- Variant: `setting-15m-volatilityMultiplier-wide`
+- Description: One-factor volatilityMultiplier change: 15m 2 -> 2.4.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+
+## 1m CHOCH ATR buffer loose
+
+- Study ID: `9495cd8b-5b80-47bb-99d9-c12552475f4d`
+- Variant: `setting-1m-chochAtrBuffer-loose`
+- Description: One-factor chochAtrBuffer change: 1m 0.25 -> 0.
+- Observed transitions: 212
+- Result rows: 64
+- Occurrence rows: 843
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 41 | 0.047995 | `1m:buy|2m:buy|5m:buy|15m:buy` | 4.306471 | long |
+| 3 | bear_confluence | 1 | 16 | -0.009599 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.264788 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.013081 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.562164 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.011469 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.467021 | long |
+| 3 | mixed_divergence | 12 | 123 | 0.007910 | `1m:buy|2m:sell|5m:buy|15m:sell` | 3.112629 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 41 | 0.043363 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.049833 | long |
+| 6 | bear_confluence | 1 | 15 | -0.003699 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.086846 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.018562 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.325721 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | 0.024341 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.776923 | long |
+| 6 | mixed_divergence | 12 | 123 | 0.023021 | `1m:sell|2m:buy|5m:buy|15m:sell` | 4.242498 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 41 | 0.067795 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.170533 | long |
+| 12 | bear_confluence | 1 | 14 | 0.050805 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.816414 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.071224 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.210444 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021047 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.253179 | short |
+| 12 | mixed_divergence | 12 | 123 | 0.021213 | `1m:sell|2m:buy|5m:buy|15m:buy` | 2.480350 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 41 | 0.072028 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.820437 | long |
+| 24 | bear_confluence | 1 | 14 | 0.040512 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.004260 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.072048 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.962669 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.026974 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.267225 | short |
+| 24 | mixed_divergence | 12 | 123 | 0.062390 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.169271 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.047995 | +0.003196 | 73.170732 | +4.749679 | 0.028029 | 0.071361 | -0.011012 | 0.082608 | 4.306471 | 0.672558 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.047087 | -0.001139 | 100.000000 | +25.000000 | 0.053474 | 0.026202 | -0.011008 | 0.060670 | 3.112629 | 1.797077 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.038301 | +0.004553 | 70.000000 | +10.000000 | 0.046607 | 0.043073 | -0.025776 | 0.060717 | 2.811944 | 0.889215 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.025171 | +0.001440 | 30.769231 | 0.000000 | -0.009498 | 0.058498 | -0.063326 | 0.025685 | -1.551412 | -0.430284 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.032705 | +0.010432 | 60.000000 | -15.000000 | 0.009679 | 0.112639 | -0.042372 | 0.069810 | 1.451752 | 0.290350 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.023394 | -0.008624 | 66.666667 | -13.333333 | 0.017025 | 0.046079 | -0.045870 | 0.071982 | 1.243551 | 0.507677 |
+| 3 | 7 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.013081 | +0.001783 | 60.000000 | 0.000000 | 0.035042 | 0.073581 | -0.038354 | 0.052579 | 0.562164 | 0.177772 |
+| 3 | 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.003979 | +0.005268 | 37.500000 | -5.357143 | -0.004575 | 0.020056 | -0.036804 | 0.017906 | -0.561158 | -0.198399 |
+| 3 | 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.011469 | -0.011165 | 50.000000 | -4.545455 | -0.002014 | 0.115182 | -0.057175 | 0.055494 | 0.467021 | 0.099569 |
+| 3 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 13 | short | -0.008712 | +0.035552 | 53.846154 | +17.482518 | 0.014651 | 0.075854 | -0.056143 | 0.049389 | -0.414085 | -0.114847 |
+| 3 | 12 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.005108 | -0.000149 | 34.782609 | -6.126482 | -0.008155 | 0.081255 | -0.046001 | 0.045969 | 0.301487 | 0.062864 |
+| 3 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 16 | short | -0.009599 | +0.012014 | 56.250000 | +2.916667 | 0.008542 | 0.145011 | -0.088840 | 0.076080 | -0.264788 | -0.066197 |
+| 3 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003096 | -0.000573 | 25.000000 | 0.000000 | -0.011166 | 0.047403 | -0.067790 | 0.040887 | 0.130615 | 0.065307 |
+| 3 | 15 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.001763 | -0.010303 | 42.857143 | -14.285714 | -0.020194 | 0.063106 | -0.049813 | 0.030776 | 0.073933 | 0.027944 |
+| 3 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.000635 | +0.004202 | 42.857143 | +14.285714 | -0.011112 | 0.031743 | -0.023447 | 0.022215 | 0.052951 | 0.020014 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.041008 | +0.002574 | 83.333333 | +3.333333 | 0.046482 | 0.023677 | -0.045870 | 0.092224 | 4.242498 | 1.731992 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.043363 | -0.001885 | 63.414634 | +2.888318 | 0.016291 | 0.091040 | -0.027149 | 0.103361 | 3.049833 | 0.476304 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.049184 | -0.009053 | 65.217391 | -7.509882 | 0.025616 | 0.106490 | -0.052275 | 0.077144 | 2.215030 | 0.461866 |
+| 6 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043108 | +0.010081 | 70.000000 | +10.000000 | 0.034474 | 0.064009 | -0.033888 | 0.079495 | 2.129725 | 0.673478 |
+| 6 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.055745 | +0.016013 | 72.000000 | -8.000000 | 0.021150 | 0.134351 | -0.052115 | 0.095158 | 2.074604 | 0.414921 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.082185 | -0.000685 | 66.666667 | -8.333333 | 0.075990 | 0.086855 | -0.011008 | 0.119683 | 1.638931 | 0.946237 |
+| 6 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026921 | +0.010145 | 30.769231 | +7.692308 | -0.020511 | 0.066438 | -0.090484 | 0.028788 | -1.460987 | -0.405205 |
+| 6 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.054807 | +0.025690 | 25.000000 | +10.714286 | -0.015308 | 0.130991 | -0.092614 | 0.026149 | -1.183430 | -0.418406 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.027809 | -0.003800 | 75.000000 | 0.000000 | 0.015974 | 0.054243 | -0.067790 | 0.056715 | 1.025356 | 0.512678 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010404 | +0.001310 | 42.857143 | 0.000000 | -0.010850 | 0.030547 | -0.032512 | 0.030493 | -0.901103 | -0.340585 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 13 | long | 0.023202 | +0.051518 | 76.923077 | +49.650350 | 0.026745 | 0.097969 | -0.071480 | 0.068796 | 0.853885 | 0.236825 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.024341 | +0.056035 | 50.000000 | -4.545455 | 0.003773 | 0.146951 | -0.072495 | 0.075777 | 0.776923 | 0.165641 |
+| 6 | 13 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 14 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.018562 | +0.005049 | 50.000000 | 0.000000 | 0.010791 | 0.180211 | -0.080733 | 0.067112 | -0.325721 | -0.103002 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.003699 | +0.009328 | 53.333333 | +3.333333 | 0.019802 | 0.164957 | -0.111293 | 0.100642 | -0.086846 | -0.022424 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.001523 | -0.006290 | 28.571429 | -14.285714 | -0.010393 | 0.058479 | -0.056852 | 0.038417 | -0.068917 | -0.026048 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.067795 | -0.004423 | 63.414634 | +2.888318 | 0.040898 | 0.136916 | -0.046633 | 0.136539 | 3.170533 | 0.495154 |
+| 12 | 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.102817 | +0.039951 | 64.000000 | -1.000000 | 0.051159 | 0.207263 | -0.064410 | 0.160887 | 2.480350 | 0.496070 |
+| 12 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.061941 | +0.009405 | 70.000000 | 0.000000 | 0.035874 | 0.089212 | -0.044944 | 0.100393 | 2.195612 | 0.694313 |
+| 12 | 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.099981 | -0.014950 | 100.000000 | 0.000000 | 0.057696 | 0.090858 | -0.012883 | 0.127174 | 1.905950 | 1.100401 |
+| 12 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.086658 | +0.031202 | 25.000000 | +10.714286 | -0.018333 | 0.175618 | -0.126415 | 0.040589 | -1.395679 | -0.493447 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.071224 | +0.002078 | 70.000000 | 0.000000 | 0.074122 | 0.186071 | -0.094223 | 0.134784 | 1.210444 | 0.382776 |
+| 12 | 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.050805 | +0.010734 | 64.285714 | +2.747252 | 0.072746 | 0.232839 | -0.135845 | 0.164501 | 0.816414 | 0.218196 |
+| 12 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.019318 | -0.006770 | 23.076923 | -7.692308 | -0.040707 | 0.134432 | -0.122598 | 0.088722 | -0.518121 | -0.143701 |
+| 12 | 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.019546 | -0.013981 | 42.857143 | 0.000000 | -0.007424 | 0.119624 | -0.092389 | 0.086239 | 0.432311 | 0.163398 |
+| 12 | 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.014727 | +0.003787 | 25.000000 | 0.000000 | -0.019127 | 0.103303 | -0.068493 | 0.067718 | 0.285122 | 0.142561 |
+| 12 | 11 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.008159 | +0.004121 | 42.857143 | -14.285714 | -0.005425 | 0.076142 | -0.060325 | 0.043145 | -0.283505 | -0.107155 |
+| 12 | 12 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | short | -0.013499 | +0.031081 | 33.333333 | +13.333333 | -0.018215 | 0.126144 | -0.090021 | 0.111272 | -0.262137 | -0.107017 |
+| 12 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021047 | +0.000081 | 50.000000 | -9.090909 | 0.001452 | 0.389923 | -0.159393 | 0.127717 | -0.253179 | -0.053978 |
+| 12 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 13 | long | 0.004432 | +0.027014 | 61.538462 | +6.993007 | 0.035082 | 0.100173 | -0.092102 | 0.101438 | 0.159519 | 0.044243 |
+| 12 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 12 | 16 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | short | -0.003987 | -0.037622 | 69.565217 | +1.383399 | 0.062141 | 0.338071 | -0.153090 | 0.117702 | -0.056554 | -0.011792 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.072028 | -0.003798 | 65.853659 | +0.064185 | 0.045814 | 0.163523 | -0.061093 | 0.179899 | 2.820437 | 0.440478 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.293571 | -0.006501 | 71.428571 | -14.285715 | 0.151463 | 0.358053 | -0.107043 | 0.331549 | 2.169271 | 0.819907 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.079458 | +0.027219 | 60.000000 | +5.000000 | 0.028565 | 0.200193 | -0.084192 | 0.190329 | 1.984534 | 0.396907 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.015618 | -0.001139 | 75.000000 | 0.000000 | 0.015822 | 0.021309 | -0.082574 | 0.088998 | 1.465897 | 0.732948 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.095281 | +0.033864 | 66.666667 | +16.666667 | 0.139227 | 0.116299 | -0.036805 | 0.175432 | 1.419022 | 0.819273 |
+| 24 | 6 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.138018 | +0.005224 | 71.428571 | +14.285714 | 0.014403 | 0.331390 | -0.097509 | 0.206269 | 1.101906 | 0.416481 |
+| 24 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.100204 | -0.017292 | 46.153846 | -7.692308 | 0.000000 | 0.329499 | -0.164484 | 0.190247 | 1.096488 | 0.304111 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.065519 | +0.009909 | 50.000000 | +7.142857 | -0.015918 | 0.175170 | -0.152225 | 0.057080 | -1.057914 | -0.374029 |
+| 24 | 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.040512 | +0.010007 | 71.428571 | +2.197802 | 0.046869 | 0.150941 | -0.169542 | 0.184159 | 1.004260 | 0.268400 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.072048 | -0.003046 | 80.000000 | 0.000000 | 0.094437 | 0.236672 | -0.100463 | 0.168718 | 0.962669 | 0.304423 |
+| 24 | 11 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.044077 | -0.016279 | 69.565217 | +5.928853 | 0.082461 | 0.274675 | -0.162980 | 0.158726 | 0.769585 | 0.160470 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.024712 | +0.001669 | 60.000000 | 0.000000 | 0.052527 | 0.116016 | -0.083338 | 0.119104 | 0.673573 | 0.213002 |
+| 24 | 13 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 13 | long | 0.023992 | +0.018095 | 61.538462 | +6.993007 | 0.087274 | 0.165646 | -0.115544 | 0.128959 | 0.522221 | 0.144838 |
+| 24 | 14 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | short | -0.015314 | +0.005339 | 66.666667 | +6.666667 | 0.007968 | 0.078220 | -0.122974 | 0.131816 | -0.479554 | -0.195777 |
+| 24 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.026974 | -0.016926 | 50.000000 | -4.545455 | 0.007943 | 0.473453 | -0.210564 | 0.166188 | -0.267225 | -0.056973 |
+| 24 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.047995 | 73.170732 | 4.306471 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.047087 | 100.000000 | 3.112629 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.038301 | 70.000000 | 2.811944 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.025171 | 30.769231 | -1.551412 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.032705 | 60.000000 | 1.451752 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.023394 | 66.666667 | 1.243551 |
+| 7 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.013081 | 60.000000 | 0.562164 |
+| 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.003979 | 37.500000 | -0.561158 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.011469 | 50.000000 | 0.467021 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.041008 | 83.333333 | 4.242498 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.043363 | 63.414634 | 3.049833 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.049184 | 65.217391 | 2.215030 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043108 | 70.000000 | 2.129725 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.055745 | 72.000000 | 2.074604 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.082185 | 66.666667 | 1.638931 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026921 | 30.769231 | -1.460987 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.054807 | 25.000000 | -1.183430 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.027809 | 75.000000 | 1.025356 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010404 | 42.857143 | -0.901103 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.067795 | 63.414634 | 3.170533 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.102817 | 64.000000 | 2.480350 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.061941 | 70.000000 | 2.195612 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.099981 | 100.000000 | 1.905950 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.086658 | 25.000000 | -1.395679 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.071224 | 70.000000 | 1.210444 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.050805 | 64.285714 | 0.816414 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.019318 | 23.076923 | -0.518121 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.019546 | 42.857143 | 0.432311 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.014727 | 25.000000 | 0.285122 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 41 | long | 0.072028 | 65.853659 | 2.820437 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.293571 | 71.428571 | 2.169271 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 25 | long | 0.079458 | 60.000000 | 1.984534 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.015618 | 75.000000 | 1.465897 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.095281 | 66.666667 | 1.419022 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.138018 | 71.428571 | 1.101906 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.100204 | 46.153846 | 1.096488 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.065519 | 50.000000 | -1.057914 |
+| 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | long | 0.040512 | 71.428571 | 1.004260 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.072048 | 80.000000 | 0.962669 |
+
+## 1m CHOCH ATR buffer strict
+
+- Study ID: `e75eb50f-dce0-45fd-8918-da7629d37b62`
+- Variant: `setting-1m-chochAtrBuffer-strict`
+- Description: One-factor chochAtrBuffer change: 1m 0.25 -> 0.5.
+- Observed transitions: 191
+- Result rows: 64
+- Occurrence rows: 759
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 37 | 0.042755 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.517076 | long |
+| 3 | bear_confluence | 1 | 14 | -0.043264 | `1m:sell|2m:sell|5m:sell|15m:sell` | 1.232004 | short |
+| 3 | fast_bullish_reversal | 1 | 8 | -0.009780 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413335 | short |
+| 3 | fast_bearish_reversal | 1 | 21 | -0.040692 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.555812 | short |
+| 3 | mixed_divergence | 12 | 111 | 0.007094 | `1m:sell|2m:sell|5m:buy|15m:sell` | 2.943676 | short |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 37 | 0.046242 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.088247 | long |
+| 6 | bear_confluence | 1 | 13 | -0.040900 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.925251 | short |
+| 6 | fast_bullish_reversal | 1 | 8 | -0.041134 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.583631 | short |
+| 6 | fast_bearish_reversal | 1 | 21 | -0.036219 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.435096 | short |
+| 6 | mixed_divergence | 12 | 111 | 0.014094 | `1m:sell|2m:buy|5m:buy|15m:sell` | 2.888906 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 37 | 0.076586 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.583079 | long |
+| 12 | bear_confluence | 1 | 12 | 0.042119 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.585384 | long |
+| 12 | fast_bullish_reversal | 1 | 8 | 0.077819 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.094550 | long |
+| 12 | fast_bearish_reversal | 1 | 21 | -0.019676 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.203299 | short |
+| 12 | mixed_divergence | 12 | 111 | 0.015263 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 37 | 0.078447 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.999727 | long |
+| 24 | bear_confluence | 1 | 12 | 0.026244 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.572456 | long |
+| 24 | fast_bullish_reversal | 1 | 8 | 0.073855 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.812190 | long |
+| 24 | fast_bearish_reversal | 1 | 21 | -0.016130 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.158046 | short |
+| 24 | mixed_divergence | 12 | 111 | 0.061951 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.503903 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.042755 | -0.002044 | 64.864865 | -3.556188 | 0.028029 | 0.073945 | -0.019335 | 0.070616 | 3.517076 | 0.578204 |
+| 3 | 2 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.024807 | -0.028476 | 0.000000 | -25.000000 | -0.027449 | 0.016854 | -0.075593 | 0.055360 | -2.943676 | -1.471838 |
+| 3 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.035790 | +0.002042 | 70.000000 | +10.000000 | 0.045588 | 0.046296 | -0.028966 | 0.057387 | 2.444678 | 0.773075 |
+| 3 | 5 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.015200 | -0.011633 | 14.285714 | -14.285715 | -0.021875 | 0.017594 | -0.032125 | 0.013273 | -2.285791 | -0.863948 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.028000 | +0.005727 | 84.210526 | +9.210526 | 0.036466 | 0.069383 | -0.031533 | 0.051839 | 1.759072 | 0.403559 |
+| 3 | 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.024864 | +0.001747 | 30.769231 | 0.000000 | -0.009498 | 0.053737 | -0.068639 | 0.022691 | -1.668305 | -0.462705 |
+| 3 | 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.044069 | +0.012051 | 75.000000 | -5.000000 | 0.046106 | 0.056445 | -0.041602 | 0.084414 | 1.561486 | 0.780743 |
+| 3 | 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.017860 | -0.008613 | 33.333333 | -9.523810 | -0.011619 | 0.032233 | -0.037471 | 0.020384 | -1.357282 | -0.554108 |
+| 3 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.043264 | -0.021651 | 42.857143 | -10.476190 | -0.010984 | 0.131395 | -0.101309 | 0.058256 | -1.232004 | -0.329267 |
+| 3 | 11 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.012647 | +0.000581 | 50.000000 | -7.142857 | -0.002977 | 0.062481 | -0.042067 | 0.040064 | 0.572506 | 0.202411 |
+| 3 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.040692 | -0.063326 | 57.142857 | +2.597402 | 0.002005 | 0.335498 | -0.116924 | 0.065919 | -0.555812 | -0.121288 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | short | -0.009780 | -0.021078 | 37.500000 | -22.500000 | -0.009265 | 0.066923 | -0.050415 | 0.035036 | -0.413335 | -0.146136 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.003803 | -0.001454 | 42.857143 | +1.948052 | -0.004055 | 0.094537 | -0.067322 | 0.046859 | 0.184348 | 0.040228 |
+| 3 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 7 | short | -0.002301 | +0.041963 | 57.142857 | +20.779221 | 0.019706 | 0.105360 | -0.058079 | 0.059587 | -0.057774 | -0.021837 |
+| 3 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | neutral | -0.000076 | +0.045831 | 62.500000 | +12.500000 | 0.035042 | 0.115207 | -0.059018 | 0.081011 | -0.001866 | -0.000660 |
+| 6 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.046242 | +0.000994 | 59.459459 | -1.066857 | 0.016291 | 0.091081 | -0.029823 | 0.092137 | 3.088247 | 0.507705 |
+| 6 | 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.044638 | +0.006204 | 75.000000 | -5.000000 | 0.059260 | 0.030903 | -0.041602 | 0.105819 | 2.888906 | 1.444453 |
+| 6 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.052247 | +0.012515 | 78.947368 | -1.052632 | 0.030856 | 0.083788 | -0.034257 | 0.083805 | 2.718024 | 0.623558 |
+| 6 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037447 | -0.000381 | 23.076923 | 0.000000 | -0.044003 | 0.057357 | -0.094155 | 0.022691 | -2.353951 | -0.652869 |
+| 6 | 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.093051 | -0.012554 | 33.333333 | +19.047619 | -0.062254 | 0.131953 | -0.139756 | 0.026502 | -1.727349 | -0.705187 |
+| 6 | 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.046110 | -0.012127 | 66.666667 | -6.060606 | 0.024330 | 0.129111 | -0.076484 | 0.083073 | 1.636601 | 0.357136 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.036717 | +0.003690 | 70.000000 | +10.000000 | 0.038729 | 0.074667 | -0.046529 | 0.077926 | 1.555019 | 0.491740 |
+| 6 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010327 | +0.001387 | 42.857143 | 0.000000 | -0.018985 | 0.024782 | -0.043040 | 0.017178 | -1.102540 | -0.416721 |
+| 6 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | short | -0.040900 | -0.027873 | 38.461538 | -11.538462 | -0.061494 | 0.159381 | -0.129631 | 0.073735 | -0.925251 | -0.256618 |
+| 6 | 11 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.014711 | -0.046320 | 50.000000 | -25.000000 | -0.008812 | 0.040319 | -0.082775 | 0.060185 | -0.729727 | -0.364863 |
+| 6 | 12 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | short | -0.041134 | -0.017523 | 50.000000 | 0.000000 | 0.010888 | 0.199344 | -0.104447 | 0.055296 | -0.583631 | -0.206345 |
+| 6 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.036219 | -0.004525 | 52.380952 | -2.164503 | 0.011072 | 0.381472 | -0.134074 | 0.084824 | -0.435096 | -0.094946 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | short | -0.020348 | +0.019135 | 50.000000 | 0.000000 | 0.008098 | 0.137580 | -0.091393 | 0.087233 | -0.418318 | -0.147898 |
+| 6 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.007960 | +0.036276 | 42.857143 | +15.584416 | -0.007742 | 0.113180 | -0.074247 | 0.079887 | 0.186080 | 0.070332 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.001199 | -0.003568 | 37.500000 | -5.357143 | -0.010621 | 0.057127 | -0.053845 | 0.048421 | 0.059358 | 0.020986 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.076586 | +0.004368 | 64.864865 | +4.338549 | 0.044333 | 0.130016 | -0.045691 | 0.129617 | 3.583079 | 0.589055 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.098806 | -0.054226 | 0.000000 | -20.000000 | -0.085701 | 0.097263 | -0.132434 | 0.105819 | -2.031727 | -1.015864 |
+| 12 | 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.048279 | +0.014752 | 50.000000 | +7.142857 | 0.018173 | 0.083871 | -0.055528 | 0.091336 | 1.628149 | 0.575638 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.055562 | +0.003026 | 70.000000 | 0.000000 | 0.047704 | 0.112838 | -0.051512 | 0.097336 | 1.557114 | 0.492403 |
+| 12 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.095198 | +0.022662 | 16.666667 | +2.380953 | -0.042581 | 0.185778 | -0.164167 | 0.036290 | -1.255186 | -0.512428 |
+| 12 | 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | long | 0.077819 | +0.008673 | 75.000000 | +5.000000 | 0.066526 | 0.201093 | -0.112952 | 0.139697 | 1.094550 | 0.386982 |
+| 12 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.050996 | +0.063544 | 38.461538 | +7.692307 | -0.030180 | 0.241347 | -0.125798 | 0.150588 | 0.761844 | 0.211297 |
+| 12 | 9 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.024712 | +0.014630 | 62.500000 | +12.500000 | 0.059931 | 0.113684 | -0.094216 | 0.098999 | 0.614835 | 0.217377 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 12 | long | 0.042119 | +0.002048 | 58.333333 | -3.205129 | 0.074111 | 0.249243 | -0.161943 | 0.146332 | 0.585384 | 0.168986 |
+| 12 | 11 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.013520 | -0.024460 | 25.000000 | 0.000000 | -0.019127 | 0.050115 | -0.083478 | 0.060185 | -0.539570 | -0.269785 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010331 | +0.001949 | 57.142857 | 0.000000 | 0.002034 | 0.074528 | -0.071675 | 0.037130 | -0.366753 | -0.138620 |
+| 12 | 13 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.007592 | +0.030174 | 57.142857 | +2.597402 | 0.025336 | 0.061811 | -0.086494 | 0.094715 | 0.324963 | 0.122824 |
+| 12 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.016131 | -0.017504 | 66.666667 | -1.515151 | 0.053356 | 0.262760 | -0.127265 | 0.122962 | 0.281327 | 0.061391 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.019676 | +0.001452 | 57.142857 | -1.948052 | 0.014035 | 0.443510 | -0.161327 | 0.138186 | -0.203299 | -0.044363 |
+| 12 | 16 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.006992 | -0.055874 | 57.894737 | -7.105263 | 0.032639 | 0.281852 | -0.101878 | 0.110418 | 0.108125 | 0.024806 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.078447 | +0.002621 | 64.864865 | -0.924609 | 0.077583 | 0.159073 | -0.058332 | 0.173487 | 2.999727 | 0.493152 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.148406 | -0.151666 | 87.500000 | +1.785714 | 0.095913 | 0.167641 | -0.085087 | 0.196742 | 2.503903 | 0.885263 |
+| 24 | 3 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.040504 | +0.023747 | 100.000000 | +25.000000 | 0.029505 | 0.034492 | -0.092626 | 0.079379 | 2.348574 | 1.174287 |
+| 24 | 4 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.259146 | +0.126352 | 57.142857 | 0.000000 | 0.040683 | 0.438492 | -0.110911 | 0.307813 | 1.563622 | 0.590993 |
+| 24 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117074 | -0.000422 | 53.846154 | 0.000000 | 0.025231 | 0.312488 | -0.152209 | 0.192266 | 1.350825 | 0.374652 |
+| 24 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 7 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.033366 | +0.027469 | 71.428571 | +16.883116 | 0.058038 | 0.088818 | -0.103994 | 0.134284 | 0.993913 | 0.375664 |
+| 24 | 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | long | 0.073855 | -0.001239 | 75.000000 | -5.000000 | 0.106650 | 0.257199 | -0.122057 | 0.174834 | 0.812190 | 0.287153 |
+| 24 | 9 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.030603 | -0.009950 | 50.000000 | -10.000000 | -0.037492 | 0.076300 | -0.159963 | 0.127221 | -0.802178 | -0.401089 |
+| 24 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.050704 | +0.036027 | 75.000000 | +25.000000 | 0.080222 | 0.189554 | -0.106101 | 0.138553 | 0.756584 | 0.267493 |
+| 24 | 11 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.033594 | -0.026762 | 61.904762 | -1.731602 | 0.038535 | 0.247145 | -0.161936 | 0.158305 | 0.622896 | 0.135927 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.022402 | -0.000641 | 60.000000 | 0.000000 | 0.052355 | 0.116830 | -0.087326 | 0.117536 | 0.606364 | 0.191749 |
+| 24 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 12 | long | 0.026244 | -0.004261 | 58.333333 | -10.897436 | 0.020450 | 0.158812 | -0.196790 | 0.172420 | 0.572456 | 0.165254 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.061569 | +0.136997 | 33.333333 | -9.523810 | -0.060202 | 0.525835 | -0.191838 | 0.222846 | 0.286805 | 0.117088 |
+| 24 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.016130 | -0.006082 | 52.380952 | -2.164503 | 0.009107 | 0.467696 | -0.211749 | 0.172261 | -0.158046 | -0.034489 |
+| 24 | 16 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.006842 | -0.045397 | 63.157895 | +8.157895 | 0.057504 | 0.323968 | -0.125416 | 0.150476 | 0.092051 | 0.021118 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.042755 | 64.864865 | 3.517076 |
+| 2 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.024807 | 0.000000 | -2.943676 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.035790 | 70.000000 | 2.444678 |
+| 5 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.015200 | 14.285714 | -2.285791 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.028000 | 84.210526 | 1.759072 |
+| 7 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.024864 | 30.769231 | -1.668305 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.044069 | 75.000000 | 1.561486 |
+| 9 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.017860 | 33.333333 | -1.357282 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.043264 | 42.857143 | -1.232004 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.046242 | 59.459459 | 3.088247 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.044638 | 75.000000 | 2.888906 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 19 | long | 0.052247 | 78.947368 | 2.718024 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037447 | 23.076923 | -2.353951 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.093051 | 33.333333 | -1.727349 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.046110 | 66.666667 | 1.636601 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.036717 | 70.000000 | 1.555019 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.010327 | 42.857143 | -1.102540 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | short | -0.040900 | 38.461538 | -0.925251 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.076586 | 64.864865 | 3.583079 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.098806 | 0.000000 | -2.031727 |
+| 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.048279 | 50.000000 | 1.628149 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.055562 | 70.000000 | 1.557114 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.095198 | 16.666667 | -1.255186 |
+| 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | long | 0.077819 | 75.000000 | 1.094550 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.050996 | 38.461538 | 0.761844 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.024712 | 62.500000 | 0.614835 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 12 | long | 0.042119 | 58.333333 | 0.585384 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 37 | long | 0.078447 | 64.864865 | 2.999727 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.148406 | 87.500000 | 2.503903 |
+| 3 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.040504 | 100.000000 | 2.348574 |
+| 4 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.259146 | 57.142857 | 1.563622 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117074 | 53.846154 | 1.350825 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.033366 | 71.428571 | 0.993913 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 8 | long | 0.073855 | 75.000000 | 0.812190 |
+| 9 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.030603 | 50.000000 | -0.802178 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 8 | long | 0.050704 | 75.000000 | 0.756584 |
+
+## 2m CHOCH ATR buffer loose
+
+- Study ID: `198c42da-4cff-4425-bdc4-5a98af980e69`
+- Variant: `setting-2m-chochAtrBuffer-loose`
+- Description: One-factor chochAtrBuffer change: 2m 0.2 -> 0.
+- Observed transitions: 209
+- Result rows: 64
+- Occurrence rows: 831
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"fast_bearish_reversal":4,"bear_confluence":4,"fast_bullish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.047811 | `1m:buy|2m:buy|5m:buy|15m:buy` | 4.246097 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 11 | -0.033402 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.280244 | short |
+| 3 | fast_bearish_reversal | 1 | 23 | 0.030367 | `1m:sell|2m:sell|5m:buy|15m:buy` | 1.353753 | long |
+| 3 | mixed_divergence | 12 | 122 | 0.005701 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.049179 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.466895 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 11 | -0.052136 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.008581 | short |
+| 6 | fast_bearish_reversal | 1 | 23 | -0.030161 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.419020 | short |
+| 6 | mixed_divergence | 12 | 122 | 0.012043 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072584 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.840813 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 11 | 0.038523 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.676049 | long |
+| 12 | fast_bearish_reversal | 1 | 23 | -0.019989 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.222372 | short |
+| 12 | mixed_divergence | 12 | 122 | 0.008854 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.078598 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.145069 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 11 | 0.036106 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.532354 | long |
+| 24 | fast_bearish_reversal | 1 | 23 | -0.006694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.071730 | short |
+| 24 | mixed_divergence | 12 | 122 | 0.052072 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.238180 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.047811 | +0.003012 | 76.315789 | +7.894736 | 0.029354 | 0.069412 | -0.016324 | 0.074038 | 4.246097 | 0.688808 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.031446 | -0.002302 | 63.636364 | +3.636364 | 0.040195 | 0.043158 | -0.023074 | 0.056268 | 2.416596 | 0.728631 |
+| 3 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.013600 | -0.004353 | 28.571429 | -14.285714 | -0.017284 | 0.017608 | -0.041378 | 0.011458 | -2.043542 | -0.772386 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.019740 | -0.002533 | 73.913043 | -1.086957 | 0.010928 | 0.067902 | -0.038958 | 0.049488 | 1.394236 | 0.290718 |
+| 3 | 7 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 23 | long | 0.030367 | +0.007733 | 56.521739 | +1.976284 | 0.007542 | 0.107580 | -0.041141 | 0.065649 | 1.353753 | 0.282277 |
+| 3 | 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.024525 | +0.020856 | 75.000000 | +50.000000 | 0.021379 | 0.037706 | -0.045480 | 0.046234 | 1.300821 | 0.650411 |
+| 3 | 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.033402 | -0.044700 | 36.363636 | -23.636364 | -0.023769 | 0.086533 | -0.069105 | 0.033158 | -1.280244 | -0.386008 |
+| 3 | 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 9 | short | -0.023640 | +0.020624 | 44.444444 | +8.080808 | -0.040910 | 0.081136 | -0.082969 | 0.045962 | -0.874079 | -0.291360 |
+| 3 | 11 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.012977 | +0.000911 | 62.500000 | +5.357143 | 0.017385 | 0.055141 | -0.041451 | 0.039632 | 0.665631 | 0.235336 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | short | -0.025437 | +0.020470 | 57.142857 | +7.142857 | 0.002977 | 0.110995 | -0.069823 | 0.085779 | -0.606341 | -0.229175 |
+| 3 | 13 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 14 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.011080 | +0.015531 | 38.461538 | +7.692307 | -0.009054 | 0.070035 | -0.062643 | 0.037972 | -0.570424 | -0.158207 |
+| 3 | 15 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | short | -0.001551 | -0.006808 | 34.782609 | -6.126482 | -0.008756 | 0.085289 | -0.057033 | 0.043119 | -0.087215 | -0.018186 |
+| 3 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.000795 | +0.004362 | 50.000000 | +21.428571 | 0.000430 | 0.028966 | -0.025379 | 0.020474 | 0.077665 | 0.027459 |
+| 6 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.049179 | +0.003931 | 68.421053 | +7.894737 | 0.025759 | 0.087445 | -0.024856 | 0.096612 | 3.466895 | 0.562405 |
+| 6 | 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.034344 | -0.005388 | 73.913043 | -6.086957 | 0.011868 | 0.070263 | -0.042763 | 0.071378 | 2.344128 | 0.488784 |
+| 6 | 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.041832 | -0.016405 | 65.217391 | -7.509882 | 0.025660 | 0.108762 | -0.064536 | 0.073900 | 1.844598 | 0.384625 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.083080 | -0.002583 | 14.285714 | 0.000000 | -0.033929 | 0.124174 | -0.113845 | 0.016881 | -1.770177 | -0.669064 |
+| 6 | 7 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.029131 | -0.003896 | 54.545455 | -5.454545 | 0.025342 | 0.073349 | -0.039685 | 0.073339 | 1.317203 | 0.397152 |
+| 6 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026279 | +0.010787 | 30.769231 | +7.692308 | -0.044003 | 0.072210 | -0.088100 | 0.038457 | -1.312162 | -0.363928 |
+| 6 | 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.052136 | -0.028525 | 36.363636 | -13.636364 | -0.009858 | 0.171444 | -0.113898 | 0.042521 | -1.008581 | -0.304099 |
+| 6 | 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.017157 | -0.014452 | 25.000000 | -50.000000 | -0.012931 | 0.068208 | -0.045480 | 0.060503 | 0.503068 | 0.251534 |
+| 6 | 11 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | short | -0.027027 | +0.012456 | 57.142857 | +7.142857 | 0.016371 | 0.159394 | -0.115913 | 0.104062 | -0.448615 | -0.169561 |
+| 6 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.004096 | +0.007618 | 50.000000 | +7.142857 | -0.007180 | 0.026348 | -0.030605 | 0.030840 | -0.439691 | -0.155454 |
+| 6 | 13 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.008541 | +0.003774 | 50.000000 | +7.142857 | -0.003730 | 0.055655 | -0.049644 | 0.045263 | 0.434065 | 0.153465 |
+| 6 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 23 | short | -0.030161 | +0.001533 | 56.521739 | +1.976284 | 0.032318 | 0.345203 | -0.131090 | 0.084625 | -0.419020 | -0.087372 |
+| 6 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 9 | short | -0.013195 | +0.015121 | 33.333333 | +6.060606 | -0.024546 | 0.126030 | -0.100860 | 0.064101 | -0.314100 | -0.104700 |
+| 6 | 16 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072584 | +0.000366 | 65.789474 | +5.263158 | 0.042616 | 0.116496 | -0.039067 | 0.127768 | 3.840813 | 0.623062 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.122917 | -0.005057 | 14.285714 | 0.000000 | -0.054659 | 0.167713 | -0.161769 | 0.027462 | -1.939073 | -0.732901 |
+| 12 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.045078 | -0.007458 | 63.636364 | -6.363636 | 0.025327 | 0.100961 | -0.046806 | 0.092336 | 1.480850 | 0.446493 |
+| 12 | 5 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.038252 | +0.004725 | 50.000000 | +7.142857 | 0.007475 | 0.108053 | -0.070423 | 0.085349 | 1.001281 | 0.354006 |
+| 12 | 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.036279 | +0.025339 | 50.000000 | +25.000000 | 0.005856 | 0.078012 | -0.065903 | 0.072900 | 0.930086 | 0.465043 |
+| 12 | 7 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.046814 | +0.036732 | 71.428571 | +21.428571 | 0.069928 | 0.135594 | -0.115913 | 0.132430 | 0.913454 | 0.345253 |
+| 12 | 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.033868 | +0.000233 | 73.913043 | +5.731225 | 0.055342 | 0.228312 | -0.106359 | 0.113080 | 0.711420 | 0.148341 |
+| 12 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.038523 | -0.030623 | 54.545455 | -15.454545 | 0.049968 | 0.188988 | -0.123207 | 0.117279 | 0.676049 | 0.203836 |
+| 12 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 9 | short | -0.020539 | +0.002043 | 66.666667 | +12.121212 | 0.025336 | 0.133368 | -0.122390 | 0.082982 | -0.462019 | -0.154006 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012599 | -0.000051 | 30.769231 | 0.000000 | -0.040707 | 0.137617 | -0.120213 | 0.092262 | -0.330097 | -0.091552 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 23 | short | -0.019989 | +0.001139 | 60.869565 | +1.778656 | 0.021520 | 0.431089 | -0.153491 | 0.134109 | -0.222372 | -0.046368 |
+| 12 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.001505 | +0.010775 | 62.500000 | +5.357143 | 0.018420 | 0.078255 | -0.058230 | 0.049394 | -0.054396 | -0.019232 |
+| 12 | 16 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.000469 | -0.062397 | 65.217391 | +0.217391 | 0.040925 | 0.305260 | -0.108242 | 0.101364 | 0.007375 | 0.001538 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.078598 | +0.002772 | 68.421053 | +2.631579 | 0.061699 | 0.154054 | -0.052599 | 0.175280 | 3.145069 | 0.510197 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.267444 | -0.032628 | 87.500000 | +1.785714 | 0.116849 | 0.337974 | -0.088131 | 0.311473 | 2.238180 | 0.791316 |
+| 24 | 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.124508 | +0.007012 | 53.846154 | 0.000000 | 0.028031 | 0.317770 | -0.150400 | 0.195141 | 1.412717 | 0.391817 |
+| 24 | 4 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.144615 | +0.011821 | 62.500000 | +5.357143 | 0.027543 | 0.313170 | -0.096398 | 0.233639 | 1.306105 | 0.461778 |
+| 24 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.086764 | -0.011336 | 28.571429 | -14.285714 | -0.061252 | 0.182734 | -0.187865 | 0.044688 | -1.256227 | -0.474809 |
+| 24 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.048637 | -0.011719 | 60.869565 | -2.766799 | 0.038535 | 0.201354 | -0.125960 | 0.141952 | 1.158422 | 0.241548 |
+| 24 | 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.008390 | -0.025147 | 25.000000 | -50.000000 | -0.013021 | 0.016527 | -0.084103 | 0.077019 | -1.015342 | -0.507671 |
+| 24 | 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.042790 | +0.028113 | 57.142857 | +7.142857 | 0.090107 | 0.209158 | -0.129494 | 0.143858 | 0.541269 | 0.204580 |
+| 24 | 11 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 12 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.036106 | -0.038988 | 63.636364 | -16.363636 | 0.078843 | 0.224946 | -0.128609 | 0.133547 | 0.532354 | 0.160511 |
+| 24 | 13 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.015265 | -0.007778 | 54.545455 | -5.454545 | 0.047841 | 0.113564 | -0.085157 | 0.109346 | 0.445823 | 0.134421 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 9 | long | 0.013997 | +0.008100 | 55.555556 | +1.010101 | 0.058038 | 0.133916 | -0.145187 | 0.117981 | 0.313562 | 0.104521 |
+| 24 | 15 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.009743 | -0.042496 | 52.173913 | -2.826087 | 0.016041 | 0.214315 | -0.125612 | 0.131645 | 0.218019 | 0.045460 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 23 | short | -0.006694 | +0.003354 | 56.521739 | +1.976284 | 0.029083 | 0.447558 | -0.202812 | 0.173090 | -0.071730 | -0.014957 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.047811 | 76.315789 | 4.246097 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.031446 | 63.636364 | 2.416596 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.013600 | 28.571429 | -2.043542 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.019740 | 73.913043 | 1.394236 |
+| 7 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 23 | long | 0.030367 | 56.521739 | 1.353753 |
+| 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.024525 | 75.000000 | 1.300821 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.033402 | 36.363636 | -1.280244 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 9 | short | -0.023640 | 44.444444 | -0.874079 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.049179 | 68.421053 | 3.466895 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.034344 | 73.913043 | 2.344128 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.041832 | 65.217391 | 1.844598 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.083080 | 14.285714 | -1.770177 |
+| 7 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.029131 | 54.545455 | 1.317203 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026279 | 30.769231 | -1.312162 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | short | -0.052136 | 36.363636 | -1.008581 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.017157 | 25.000000 | 0.503068 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072584 | 65.789474 | 3.840813 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.122917 | 14.285714 | -1.939073 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 11 | long | 0.045078 | 63.636364 | 1.480850 |
+| 5 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.038252 | 50.000000 | 1.001281 |
+| 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.036279 | 50.000000 | 0.930086 |
+| 7 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.046814 | 71.428571 | 0.913454 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.033868 | 73.913043 | 0.711420 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 11 | long | 0.038523 | 54.545455 | 0.676049 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.078598 | 68.421053 | 3.145069 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.267444 | 87.500000 | 2.238180 |
+| 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.124508 | 53.846154 | 1.412717 |
+| 4 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.144615 | 62.500000 | 1.306105 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.086764 | 28.571429 | -1.256227 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.048637 | 60.869565 | 1.158422 |
+| 8 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.008390 | 25.000000 | -1.015342 |
+| 9 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 69.230769 | 0.722684 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 7 | long | 0.042790 | 57.142857 | 0.541269 |
+
+## 2m CHOCH ATR buffer strict
+
+- Study ID: `55b999ea-a2fc-4491-ae72-81eeb24ed77b`
+- Variant: `setting-2m-chochAtrBuffer-strict`
+- Description: One-factor chochAtrBuffer change: 2m 0.2 -> 0.4.
+- Observed transitions: 198
+- Result rows: 64
+- Occurrence rows: 787
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.037618 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.188441 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 9 | 0.005661 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.221970 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.020755 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.834602 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.001406 | `1m:sell|2m:sell|5m:buy|15m:sell` | 2.564941 | short |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.042375 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.911714 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 9 | -0.040169 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.657817 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.030593 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.410393 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.010793 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.183089 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.067818 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.625806 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 9 | 0.059448 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.906339 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021844 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.234439 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.013402 | `1m:sell|2m:buy|5m:buy|15m:buy` | 1.929859 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.081665 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.279755 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 9 | 0.071601 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.866890 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.017488 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.183116 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.068290 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.191355 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.037618 | -0.007181 | 60.526316 | -7.894737 | 0.011089 | 0.072728 | -0.019667 | 0.066411 | 3.188441 | 0.517233 |
+| 3 | 2 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.023794 | -0.027463 | 0.000000 | -25.000000 | -0.027449 | 0.018553 | -0.063102 | 0.055363 | -2.564941 | -1.282470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.038952 | +0.006934 | 83.333333 | +3.333333 | 0.030422 | 0.044334 | -0.037017 | 0.078311 | 2.152150 | 0.878612 |
+| 3 | 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.040524 | -0.007702 | 66.666667 | -8.333333 | 0.053474 | 0.037187 | -0.016163 | 0.060200 | 1.887500 | 1.089749 |
+| 3 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.027574 | -0.000963 | 28.571429 | -2.197802 | -0.016030 | 0.055334 | -0.068923 | 0.025835 | -1.864513 | -0.498312 |
+| 3 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.010113 | -0.000866 | 33.333333 | -9.523810 | -0.004929 | 0.016523 | -0.037644 | 0.011108 | -1.836195 | -0.612065 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 9 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.017479 | -0.004794 | 66.666667 | -8.333333 | 0.012595 | 0.070788 | -0.041953 | 0.044012 | 1.131551 | 0.246925 |
+| 3 | 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.020755 | -0.001879 | 54.545455 | 0.000000 | 0.003234 | 0.116640 | -0.051249 | 0.063102 | 0.834602 | 0.177938 |
+| 3 | 11 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.013034 | +0.007777 | 57.142857 | +16.233766 | 0.002816 | 0.085616 | -0.056221 | 0.057120 | 0.697633 | 0.152236 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.022062 | +0.009996 | 60.000000 | +2.857143 | 0.020531 | 0.072544 | -0.048795 | 0.048814 | 0.680025 | 0.304116 |
+| 3 | 13 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 14 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.006808 | -0.003241 | 33.333333 | +4.761904 | -0.022002 | 0.031383 | -0.026939 | 0.024009 | -0.531416 | -0.216949 |
+| 3 | 16 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | long | 0.005661 | -0.005637 | 55.555556 | -4.444444 | 0.031375 | 0.076512 | -0.041628 | 0.049654 | 0.221970 | 0.073990 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.051762 | +0.013328 | 83.333333 | +3.333333 | 0.049145 | 0.039833 | -0.037017 | 0.102852 | 3.183089 | 1.299491 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.042375 | -0.002873 | 60.526316 | 0.000000 | 0.012514 | 0.089712 | -0.030718 | 0.089623 | 2.911714 | 0.472342 |
+| 6 | 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.035160 | +0.001906 | 21.428571 | -1.648352 | -0.032257 | 0.055056 | -0.092561 | 0.027214 | -2.389537 | -0.638631 |
+| 6 | 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.055232 | -0.003005 | 66.666667 | -6.060606 | 0.025616 | 0.113701 | -0.059891 | 0.092888 | 2.226060 | 0.485766 |
+| 6 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.036255 | -0.003477 | 71.428571 | -8.571429 | 0.017758 | 0.074933 | -0.047444 | 0.065976 | 2.217209 | 0.483835 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.064553 | +0.015944 | 22.222222 | +7.936508 | -0.015842 | 0.113352 | -0.096514 | 0.015888 | -1.708479 | -0.569493 |
+| 6 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.076092 | -0.006778 | 66.666667 | -8.333333 | 0.075990 | 0.095829 | -0.017803 | 0.114525 | 1.375316 | 0.794039 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.016735 | -0.048344 | 50.000000 | -25.000000 | -0.008812 | 0.037737 | -0.070283 | 0.067957 | -0.886895 | -0.443447 |
+| 6 | 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 11 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | short | -0.040169 | -0.016558 | 44.444444 | -5.555556 | -0.009858 | 0.183194 | -0.092181 | 0.059659 | -0.657817 | -0.219272 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.030593 | +0.001101 | 54.545455 | 0.000000 | 0.008509 | 0.349655 | -0.132553 | 0.081570 | -0.410393 | -0.087496 |
+| 6 | 13 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.010922 | +0.006155 | 60.000000 | +17.142857 | 0.002933 | 0.069251 | -0.056751 | 0.051191 | 0.352677 | 0.157722 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.000832 | +0.010882 | 50.000000 | +7.142857 | -0.000662 | 0.032561 | -0.032263 | 0.027948 | -0.062615 | -0.025563 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.067818 | -0.004400 | 63.157895 | +2.631579 | 0.042616 | 0.115301 | -0.046616 | 0.125255 | 3.625806 | 0.588183 |
+| 12 | 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.053455 | -0.009411 | 57.142857 | -7.857143 | 0.040925 | 0.126932 | -0.057584 | 0.097411 | 1.929859 | 0.421130 |
+| 12 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.098099 | -0.016832 | 100.000000 | 0.000000 | 0.057696 | 0.092822 | -0.018038 | 0.126703 | 1.830533 | 1.056859 |
+| 12 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.085847 | +0.032013 | 33.333333 | +19.047619 | -0.039227 | 0.160744 | -0.125935 | 0.033239 | -1.602176 | -0.534059 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | long | 0.059448 | -0.009698 | 66.666667 | -3.333333 | 0.069895 | 0.196773 | -0.104034 | 0.128107 | 0.906339 | 0.302113 |
+| 12 | 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.049508 | +0.015981 | 60.000000 | +17.142857 | 0.042204 | 0.129914 | -0.088187 | 0.113985 | 0.852126 | 0.381082 |
+| 12 | 8 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 9 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.027914 | -0.005721 | 66.666667 | -1.515151 | 0.049810 | 0.245827 | -0.110664 | 0.130790 | 0.520352 | 0.113550 |
+| 12 | 11 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.012182 | +0.000366 | 28.571429 | -2.197802 | -0.035444 | 0.132270 | -0.122381 | 0.084974 | -0.344618 | -0.092103 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | short | -0.007863 | +0.004417 | 66.666667 | +9.523810 | 0.021471 | 0.080992 | -0.065671 | 0.043879 | -0.237789 | -0.097077 |
+| 12 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021844 | -0.000716 | 59.090909 | 0.000000 | 0.017778 | 0.437025 | -0.158315 | 0.134057 | -0.234439 | -0.049983 |
+| 12 | 14 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | short | -0.012103 | +0.032477 | 33.333333 | +13.333333 | -0.018215 | 0.128237 | -0.081168 | 0.116084 | -0.231190 | -0.094383 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.005729 | -0.005211 | 50.000000 | +25.000000 | 0.019372 | 0.057457 | -0.072338 | 0.068970 | 0.199438 | 0.099719 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.081665 | +0.005839 | 68.421053 | +2.631579 | 0.073344 | 0.153492 | -0.057938 | 0.169713 | 3.279755 | 0.532046 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.383705 | +0.083633 | 80.000000 | -5.714286 | 0.369553 | 0.391535 | -0.108704 | 0.436089 | 2.191355 | 0.980004 |
+| 24 | 3 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.295294 | +0.162500 | 50.000000 | -7.142857 | 0.010520 | 0.467803 | -0.112954 | 0.347282 | 1.546207 | 0.631236 |
+| 24 | 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.068431 | +0.008075 | 66.666667 | +3.030303 | 0.081048 | 0.208570 | -0.129709 | 0.171578 | 1.503518 | 0.328095 |
+| 24 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | long | 0.119922 | +0.002426 | 57.142857 | +3.296703 | 0.026631 | 0.306589 | -0.146906 | 0.188629 | 1.463545 | 0.391149 |
+| 24 | 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.044720 | -0.007519 | 52.380952 | -2.619048 | 0.016041 | 0.141508 | -0.079399 | 0.134542 | 1.448200 | 0.316023 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.085431 | +0.024014 | 66.666667 | +16.666667 | 0.109677 | 0.111884 | -0.041960 | 0.174488 | 1.322538 | 0.763568 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.058590 | +0.016838 | 44.444444 | +1.587301 | -0.039995 | 0.168674 | -0.156025 | 0.058564 | -1.042067 | -0.347356 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | long | 0.071601 | -0.003493 | 77.777778 | -2.222222 | 0.082342 | 0.247787 | -0.110636 | 0.165811 | 0.866890 | 0.288963 |
+| 24 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 11 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 12 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | short | -0.018223 | +0.002430 | 50.000000 | -10.000000 | -0.000759 | 0.077348 | -0.119687 | 0.135111 | -0.577087 | -0.235595 |
+| 24 | 13 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016524 | -0.000233 | 75.000000 | 0.000000 | 0.027771 | 0.070407 | -0.099557 | 0.090193 | 0.469401 | 0.234700 |
+| 24 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.017488 | -0.007440 | 50.000000 | -4.545455 | -0.002045 | 0.447946 | -0.208230 | 0.167257 | -0.183116 | -0.039040 |
+| 24 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.037618 | 60.526316 | 3.188441 |
+| 2 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.023794 | 0.000000 | -2.564941 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.038952 | 83.333333 | 2.152150 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.040524 | 66.666667 | 1.887500 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.027574 | 28.571429 | -1.864513 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.010113 | 33.333333 | -1.836195 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 9 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.017479 | 66.666667 | 1.131551 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.020755 | 54.545455 | 0.834602 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 6 | long | 0.051762 | 83.333333 | 3.183089 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.042375 | 60.526316 | 2.911714 |
+| 3 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.035160 | 21.428571 | -2.389537 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.055232 | 66.666667 | 2.226060 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.036255 | 71.428571 | 2.217209 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.064553 | 22.222222 | -1.708479 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.076092 | 66.666667 | 1.375316 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | short | -0.016735 | 50.000000 | -0.886895 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 27.272727 | -0.753813 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.067818 | 63.157895 | 3.625806 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.053455 | 57.142857 | 1.929859 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.098099 | 100.000000 | 1.830533 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.085847 | 33.333333 | -1.602176 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | long | 0.059448 | 66.666667 | 0.906339 |
+| 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.049508 | 60.000000 | 0.852126 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+| 9 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 54.545455 | -0.569438 |
+| 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.027914 | 66.666667 | 0.520352 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.081665 | 68.421053 | 3.279755 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 5 | long | 0.383705 | 80.000000 | 2.191355 |
+| 3 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 6 | long | 0.295294 | 50.000000 | 1.546207 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.068431 | 66.666667 | 1.503518 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | long | 0.119922 | 57.142857 | 1.463545 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.044720 | 52.380952 | 1.448200 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.085431 | 66.666667 | 1.322538 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 9 | short | -0.058590 | 44.444444 | -1.042067 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 9 | long | 0.071601 | 77.777778 | 0.866890 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 69.230769 | 0.722684 |
+
+## 5m CHOCH ATR buffer loose
+
+- Study ID: `d821b355-56ad-4434-b3b8-c53bf2e5c613`
+- Variant: `setting-5m-chochAtrBuffer-loose`
+- Description: One-factor chochAtrBuffer change: 5m 0.15 -> 0.
+- Observed transitions: 200
+- Result rows: 64
+- Occurrence rows: 795
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044799 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.859992 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 115 | 0.002389 | `1m:buy|2m:buy|5m:buy|15m:sell` | 2.383484 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045248 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.093057 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 115 | 0.012329 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.072218 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.424105 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 115 | 0.016661 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.656115 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.075826 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.946292 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 115 | 0.054924 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.365248 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 0.000000 | 68.421053 | 0.000000 | 0.029061 | 0.071544 | -0.017776 | 0.072092 | 3.859992 | 0.626173 |
+| 3 | 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.013875 | -0.004628 | 37.500000 | -5.357143 | -0.011107 | 0.021363 | -0.042595 | 0.015880 | -1.836939 | -0.649456 |
+| 3 | 4 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.023306 | +0.003305 | 35.714286 | +4.945055 | -0.009276 | 0.056585 | -0.067284 | 0.026497 | -1.541107 | -0.411878 |
+| 3 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.032746 | -0.015480 | 50.000000 | -25.000000 | 0.034049 | 0.043600 | -0.032135 | 0.053436 | 1.502117 | 0.751059 |
+| 3 | 8 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.006777 | +0.010344 | 42.857143 | +14.285714 | -0.004068 | 0.032325 | -0.021488 | 0.024963 | 0.554680 | 0.209649 |
+| 3 | 13 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 14 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 15 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.007711 | +0.002454 | 42.857143 | +1.948052 | -0.002702 | 0.084723 | -0.056416 | 0.048315 | 0.417059 | 0.091010 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 0.000000 | 60.526316 | 0.000000 | 0.013884 | 0.090178 | -0.027193 | 0.092452 | 3.093057 | 0.501760 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.061144 | +0.002907 | 76.190476 | +3.463203 | 0.031768 | 0.111784 | -0.059968 | 0.088900 | 2.506579 | 0.546980 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.034619 | +0.002447 | 21.428571 | -1.648352 | -0.032257 | 0.055355 | -0.090922 | 0.029105 | -2.340009 | -0.625394 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.070785 | +0.009712 | 12.500000 | -1.785714 | -0.015638 | 0.119436 | -0.105501 | 0.021326 | -1.676297 | -0.592660 |
+| 6 | 7 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 8 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.054021 | -0.028849 | 50.000000 | -25.000000 | 0.041758 | 0.100818 | -0.040754 | 0.092866 | 1.071649 | 0.535824 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 11 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.005537 | +0.006177 | 57.142857 | +14.285714 | 0.001481 | 0.028179 | -0.030553 | 0.033608 | -0.519884 | -0.196498 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 0.000000 | 60.526316 | 0.000000 | 0.031872 | 0.130014 | -0.043539 | 0.127392 | 3.424105 | 0.555463 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.112822 | -0.002109 | 100.000000 | 0.000000 | 0.107342 | 0.084952 | -0.040930 | 0.123211 | 2.656115 | 1.328057 |
+| 12 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.076103 | +0.042468 | 71.428571 | +3.246753 | 0.059404 | 0.138872 | -0.069156 | 0.131162 | 2.511289 | 0.548008 |
+| 12 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.210401 | -0.092541 | 12.500000 | -1.785714 | -0.048785 | 0.305389 | -0.245006 | 0.030584 | -1.948676 | -0.688961 |
+| 12 | 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.007403 | +0.019683 | 57.142857 | 0.000000 | 0.002034 | 0.039303 | -0.045457 | 0.046364 | 0.498320 | 0.188347 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.009446 | +0.003102 | 35.714286 | +4.945055 | -0.035444 | 0.132771 | -0.120742 | 0.086082 | -0.266186 | -0.071141 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 0.000000 | 65.789474 | 0.000000 | 0.061699 | 0.158648 | -0.057036 | 0.170510 | 2.946292 | 0.477952 |
+| 24 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.094489 | +0.033072 | 75.000000 | +25.000000 | 0.102689 | 0.079898 | -0.045863 | 0.181139 | 2.365248 | 1.182624 |
+| 24 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.085802 | +0.025446 | 66.666667 | +3.030303 | 0.067310 | 0.173621 | -0.090362 | 0.169044 | 2.264666 | 0.494191 |
+| 24 | 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.125251 | -0.049823 | 37.500000 | -5.357143 | -0.069103 | 0.225017 | -0.268541 | 0.051786 | -1.574377 | -0.556626 |
+| 24 | 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | long | 0.121540 | +0.004044 | 57.142857 | +3.296703 | 0.026631 | 0.306828 | -0.145267 | 0.190137 | 1.482143 | 0.396119 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 11 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 12 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 13 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003735 | -0.136529 | 42.857143 | -14.285714 | -0.006961 | 0.050996 | -0.096604 | 0.074632 | -0.193755 | -0.073233 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044799 | 68.421053 | 3.859992 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.013875 | 37.500000 | -1.836939 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.023306 | 35.714286 | -1.541107 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.032746 | 50.000000 | 1.502117 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045248 | 60.526316 | 3.093057 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.061144 | 76.190476 | 2.506579 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | short | -0.034619 | 21.428571 | -2.340009 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.070785 | 12.500000 | -1.676297 |
+| 7 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 8 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.054021 | 50.000000 | 1.071649 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 27.272727 | -0.753813 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.072218 | 60.526316 | 3.424105 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.112822 | 100.000000 | 2.656115 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.076103 | 71.428571 | 2.511289 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.210401 | 12.500000 | -1.948676 |
+| 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 7 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 8 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 9 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.075826 | 65.789474 | 2.946292 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.094489 | 75.000000 | 2.365248 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.085802 | 66.666667 | 2.264666 |
+| 4 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 6 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.125251 | 37.500000 | -1.574377 |
+| 8 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 14 | long | 0.121540 | 57.142857 | 1.482143 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 69.230769 | 0.722684 |
+
+## 5m CHOCH ATR buffer strict
+
+- Study ID: `cdfa612a-ab66-4fcf-bce9-75c16b114f75`
+- Variant: `setting-5m-chochAtrBuffer-strict`
+- Description: One-factor chochAtrBuffer change: 5m 0.15 -> 0.3.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 794
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.046787 | `1m:buy|2m:buy|5m:buy|15m:buy` | 4.021427 | long |
+| 3 | bear_confluence | 1 | 14 | -0.024266 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.619420 | short |
+| 3 | fast_bullish_reversal | 1 | 12 | 0.008612 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.441840 | long |
+| 3 | fast_bearish_reversal | 1 | 21 | 0.022996 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.865954 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.000529 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.049157 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.386208 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 12 | -0.027010 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.568728 | short |
+| 6 | fast_bearish_reversal | 1 | 21 | -0.035155 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.446587 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.010515 | `1m:sell|2m:sell|5m:sell|15m:buy` | 2.684842 | short |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.076562 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.681177 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 12 | 0.049451 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.958821 | long |
+| 12 | fast_bearish_reversal | 1 | 21 | -0.024801 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.252154 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.016371 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.079037 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.110134 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 12 | 0.065703 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.066968 | long |
+| 24 | fast_bearish_reversal | 1 | 21 | -0.016544 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.162715 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.063172 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.339378 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.046787 | +0.001988 | 71.052632 | +2.631579 | 0.030180 | 0.071719 | -0.017935 | 0.074935 | 4.021427 | 0.652362 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.034888 | +0.001140 | 70.000000 | +10.000000 | 0.044697 | 0.044935 | -0.026916 | 0.057668 | 2.455178 | 0.776395 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.033022 | -0.006411 | 23.076923 | -7.692308 | -0.009498 | 0.053077 | -0.074828 | 0.026089 | -2.243174 | -0.622145 |
+| 3 | 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.027131 | +0.004858 | 76.190476 | +1.190476 | 0.020531 | 0.074448 | -0.041750 | 0.052223 | 1.670019 | 0.364428 |
+| 3 | 6 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.014974 | -0.027040 | 37.500000 | -19.642857 | -0.018894 | 0.039869 | -0.053936 | 0.018266 | -1.062322 | -0.375588 |
+| 3 | 9 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.034312 | +0.002294 | 66.666667 | -13.333333 | 0.018869 | 0.063192 | -0.035384 | 0.097761 | 0.940454 | 0.542972 |
+| 3 | 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | long | 0.022996 | +0.000362 | 52.380952 | -2.164503 | 0.002005 | 0.121695 | -0.050047 | 0.066791 | 0.865954 | 0.188967 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.024266 | -0.002653 | 50.000000 | -3.333333 | -0.000975 | 0.146578 | -0.101229 | 0.066801 | -0.619420 | -0.165547 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.008612 | -0.002686 | 50.000000 | -10.000000 | 0.014929 | 0.067519 | -0.034398 | 0.047783 | 0.441840 | 0.127548 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 3 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | neutral | -0.000017 | +0.003550 | 28.571429 | 0.000000 | -0.008878 | 0.029365 | -0.021876 | 0.022318 | -0.001532 | -0.000579 |
+| 6 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.049157 | +0.003909 | 63.157895 | +2.631579 | 0.021097 | 0.089487 | -0.026222 | 0.095130 | 3.386208 | 0.549316 |
+| 6 | 2 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.040484 | -0.003418 | 15.384615 | -7.692308 | -0.044003 | 0.054367 | -0.099221 | 0.026089 | -2.684842 | -0.744641 |
+| 6 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.043010 | +0.003278 | 80.952381 | +0.952381 | 0.024334 | 0.074309 | -0.044351 | 0.075457 | 2.652383 | 0.578797 |
+| 6 | 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 5 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.031005 | -0.035772 | 25.000000 | -17.857143 | -0.028157 | 0.041999 | -0.074201 | 0.022054 | -2.088041 | -0.738234 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.033039 | -0.005395 | 66.666667 | -13.333333 | 0.039087 | 0.032129 | -0.035384 | 0.107580 | 1.781112 | 1.028326 |
+| 6 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.027818 | -0.005209 | 60.000000 | 0.000000 | 0.034474 | 0.086038 | -0.044201 | 0.077136 | 1.022421 | 0.323318 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | short | -0.027010 | -0.003399 | 41.666667 | -8.333333 | -0.004929 | 0.164516 | -0.080495 | 0.059894 | -0.568728 | -0.164178 |
+| 6 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.035155 | -0.003461 | 52.380952 | -2.164503 | 0.011072 | 0.360735 | -0.140637 | 0.085871 | -0.446587 | -0.097453 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.001956 | +0.009758 | 57.142857 | +14.285714 | 0.001481 | 0.030897 | -0.030940 | 0.032690 | -0.167496 | -0.063307 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.076562 | +0.004344 | 63.157895 | +2.631579 | 0.036156 | 0.128210 | -0.041710 | 0.129962 | 3.681177 | 0.597166 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.056170 | -0.006696 | 61.904762 | -3.095238 | 0.040925 | 0.128144 | -0.060683 | 0.107327 | 2.008696 | 0.438333 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.097970 | -0.053390 | 0.000000 | -20.000000 | -0.070087 | 0.104127 | -0.120651 | 0.107580 | -1.629636 | -0.940871 |
+| 12 | 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043885 | -0.008651 | 60.000000 | -10.000000 | 0.035874 | 0.111473 | -0.050889 | 0.093161 | 1.244928 | 0.393681 |
+| 12 | 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.037901 | +0.004374 | 50.000000 | +7.142857 | 0.018389 | 0.096747 | -0.083062 | 0.077438 | 1.108054 | 0.391756 |
+| 12 | 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.049451 | -0.019695 | 66.666667 | -3.333333 | 0.059931 | 0.178659 | -0.093557 | 0.120348 | 0.958821 | 0.276788 |
+| 12 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.014972 | +0.027252 | 71.428571 | +14.285714 | 0.034806 | 0.041370 | -0.044797 | 0.048958 | 0.957529 | 0.361912 |
+| 12 | 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 12 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 13 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.024801 | -0.003673 | 57.142857 | -1.948052 | 0.014035 | 0.450733 | -0.165174 | 0.139026 | -0.252154 | -0.055024 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.005888 | +0.006660 | 38.461538 | +7.692307 | -0.036003 | 0.138873 | -0.124653 | 0.089967 | -0.152870 | -0.042399 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.079037 | +0.003211 | 68.421053 | +2.631579 | 0.072862 | 0.156655 | -0.055208 | 0.173116 | 3.110134 | 0.504530 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.262260 | -0.037812 | 87.500000 | +1.785714 | 0.143006 | 0.317086 | -0.100005 | 0.309496 | 2.339378 | 0.827095 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.096653 | +0.044414 | 57.142857 | +2.142857 | 0.063219 | 0.242083 | -0.078425 | 0.187409 | 1.829624 | 0.399257 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.125333 | +0.007837 | 53.846154 | 0.000000 | 0.025231 | 0.315976 | -0.151064 | 0.192234 | 1.430161 | 0.396655 |
+| 24 | 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.065703 | -0.009391 | 75.000000 | -5.000000 | 0.080222 | 0.213315 | -0.100785 | 0.148626 | 1.066968 | 0.308007 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.026139 | -0.106655 | 57.142857 | 0.000000 | 0.014403 | 0.064823 | -0.074543 | 0.088739 | 1.066852 | 0.403232 |
+| 24 | 10 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 11 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.054896 | -0.034243 | 33.333333 | -26.666667 | -0.106599 | 0.098928 | -0.177450 | 0.136115 | -0.961135 | -0.554912 |
+| 24 | 12 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 13 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.019011 | -0.004032 | 60.000000 | 0.000000 | 0.032377 | 0.115961 | -0.090017 | 0.112278 | 0.518446 | 0.163947 |
+| 24 | 14 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | short | -0.016544 | -0.006496 | 52.380952 | -2.164503 | 0.009107 | 0.465932 | -0.219197 | 0.175874 | -0.162715 | -0.035507 |
+| 24 | 15 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.046787 | 71.052632 | 4.021427 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.034888 | 70.000000 | 2.455178 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.033022 | 23.076923 | -2.243174 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.027131 | 76.190476 | 1.670019 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.014974 | 37.500000 | -1.062322 |
+| 9 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.034312 | 66.666667 | 0.940454 |
+| 10 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 21 | long | 0.022996 | 52.380952 | 0.865954 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.049157 | 63.157895 | 3.386208 |
+| 2 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.040484 | 15.384615 | -2.684842 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.043010 | 80.952381 | 2.652383 |
+| 4 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 5 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | short | -0.031005 | 25.000000 | -2.088041 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | long | 0.033039 | 66.666667 | 1.781112 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.027818 | 60.000000 | 1.022421 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.076562 | 63.157895 | 3.681177 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.056170 | 61.904762 | 2.008696 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 3 | short | -0.097970 | 0.000000 | -1.629636 |
+| 6 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.043885 | 60.000000 | 1.244928 |
+| 7 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.037901 | 50.000000 | 1.108054 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.049451 | 66.666667 | 0.958821 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.014972 | 71.428571 | 0.957529 |
+| 10 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.079037 | 68.421053 | 3.110134 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 8 | long | 0.262260 | 87.500000 | 2.339378 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 21 | long | 0.096653 | 57.142857 | 1.829624 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.125333 | 53.846154 | 1.430161 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 12 | long | 0.065703 | 75.000000 | 1.066968 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.026139 | 57.142857 | 1.066852 |
+| 10 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+
+## 15m CHOCH ATR buffer loose
+
+- Study ID: `763a1616-1f3c-45c0-abda-e0bb8da39d6e`
+- Variant: `setting-15m-chochAtrBuffer-loose`
+- Description: One-factor chochAtrBuffer change: 15m 0.1 -> 0.
+- Observed transitions: 201
+- Result rows: 64
+- Occurrence rows: 799
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.044638 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.836417 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 116 | 0.002332 | `1m:buy|2m:buy|5m:buy|15m:sell` | 2.383484 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.045384 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.109317 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 116 | 0.013220 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.073153 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.482474 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 116 | 0.014026 | `1m:sell|2m:buy|5m:buy|15m:buy` | 2.255449 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.081477 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.249036 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 116 | 0.059708 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044638 | -0.000161 | 68.421053 | 0.000000 | 0.029061 | 0.071726 | -0.018455 | 0.072052 | 3.836417 | 0.622349 |
+| 3 | 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.034783 | -0.013443 | 60.000000 | -15.000000 | 0.053474 | 0.042107 | -0.021765 | 0.055413 | 1.847132 | 0.826063 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.006984 | +0.001727 | 43.478261 | +2.569170 | -0.002702 | 0.081978 | -0.054988 | 0.048204 | 0.408583 | 0.085195 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045384 | +0.000136 | 60.526316 | 0.000000 | 0.013884 | 0.089976 | -0.027635 | 0.092412 | 3.109317 | 0.504398 |
+| 6 | 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.059371 | +0.001134 | 73.913043 | +1.185770 | 0.031768 | 0.107549 | -0.058292 | 0.087093 | 2.647506 | 0.552043 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.057577 | -0.025293 | 60.000000 | -15.000000 | 0.075990 | 0.089039 | -0.040755 | 0.098217 | 1.445950 | 0.646649 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.073153 | +0.000935 | 63.157895 | +2.631579 | 0.031872 | 0.129490 | -0.043583 | 0.128108 | 3.482474 | 0.564932 |
+| 12 | 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 5 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.055372 | -0.059559 | 80.000000 | -20.000000 | 0.057696 | 0.151310 | -0.065653 | 0.114327 | 0.818286 | 0.365949 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.034525 | +0.000890 | 69.565217 | +1.383399 | 0.054114 | 0.235424 | -0.103692 | 0.126230 | 0.703316 | 0.146652 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.081477 | +0.005651 | 68.421053 | +2.631579 | 0.076999 | 0.154587 | -0.054215 | 0.174214 | 3.249036 | 0.527063 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.058710 | -0.001646 | 65.217391 | +1.581027 | 0.038535 | 0.202642 | -0.123298 | 0.160818 | 1.389458 | 0.289722 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 8 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 10 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.036755 | -0.024662 | 40.000000 | -10.000000 | -0.010624 | 0.105024 | -0.083952 | 0.146033 | 0.782553 | 0.349968 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.044638 | 68.421053 | 3.836417 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.034783 | 60.000000 | 1.847132 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.045384 | 60.526316 | 3.109317 |
+| 3 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.059371 | 73.913043 | 2.647506 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.057577 | 60.000000 | 1.445950 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.073153 | 63.157895 | 3.482474 |
+| 2 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 3 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 4 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 5 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.055372 | 80.000000 | 0.818286 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.034525 | 69.565217 | 0.703316 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.081477 | 68.421053 | 3.249036 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 23 | long | 0.058710 | 65.217391 | 1.389458 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 8 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+| 10 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.036755 | 40.000000 | 0.782553 |
+
+## 15m CHOCH ATR buffer strict
+
+- Study ID: `e17cf9e6-3270-4de3-9f8a-4dba373eae59`
+- Variant: `setting-15m-chochAtrBuffer-strict`
+- Description: One-factor chochAtrBuffer change: 15m 0.1 -> 0.2.
+- Observed transitions: 199
+- Result rows: 64
+- Occurrence rows: 791
+- Family rows: `{"mixed_divergence":48,"bull_confluence":4,"bear_confluence":4,"fast_bullish_reversal":4,"fast_bearish_reversal":4}`
+
+### Family Summary By Horizon
+
+| Horizon | Family | Patterns | Samples | Weighted Mean% | Best Pattern | Best Abs T | Bias |
+| ---: | --- | ---: | ---: | ---: | --- | ---: | --- |
+| 3 | bull_confluence | 1 | 38 | 0.035209 | `1m:buy|2m:buy|5m:buy|15m:buy` | 3.182592 | long |
+| 3 | bear_confluence | 1 | 15 | -0.021613 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.591072 | short |
+| 3 | fast_bullish_reversal | 1 | 10 | 0.011298 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.480820 | long |
+| 3 | fast_bearish_reversal | 1 | 22 | 0.022634 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.893825 | long |
+| 3 | mixed_divergence | 12 | 114 | 0.002145 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.832940 | long |
+| 3 | inactive | 0 | 0 |  | `` |  |  |
+| 6 | bull_confluence | 1 | 38 | 0.037148 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.425520 | long |
+| 6 | bear_confluence | 1 | 14 | -0.013027 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.291830 | short |
+| 6 | fast_bullish_reversal | 1 | 10 | -0.023611 | `1m:buy|2m:buy|5m:sell|15m:sell` | 0.413707 | short |
+| 6 | fast_bearish_reversal | 1 | 22 | -0.031694 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.421825 | short |
+| 6 | mixed_divergence | 12 | 114 | 0.013095 | `1m:sell|2m:buy|5m:buy|15m:sell` | 3.368174 | long |
+| 6 | inactive | 0 | 0 |  | `` |  |  |
+| 12 | bull_confluence | 1 | 38 | 0.065298 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.915762 | long |
+| 12 | bear_confluence | 1 | 13 | 0.040071 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.605227 | long |
+| 12 | fast_bullish_reversal | 1 | 10 | 0.069146 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.162843 | long |
+| 12 | fast_bearish_reversal | 1 | 22 | -0.021128 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.225118 | short |
+| 12 | mixed_divergence | 12 | 114 | 0.015401 | `1m:buy|2m:sell|5m:buy|15m:sell` | 2.771812 | long |
+| 12 | inactive | 0 | 0 |  | `` |  |  |
+| 24 | bull_confluence | 1 | 38 | 0.066252 | `1m:buy|2m:buy|5m:buy|15m:buy` | 2.387880 | long |
+| 24 | bear_confluence | 1 | 13 | 0.030505 | `1m:sell|2m:sell|5m:sell|15m:sell` | 0.722684 | long |
+| 24 | fast_bullish_reversal | 1 | 10 | 0.075094 | `1m:buy|2m:buy|5m:sell|15m:sell` | 1.015361 | long |
+| 24 | fast_bearish_reversal | 1 | 22 | -0.010048 | `1m:sell|2m:sell|5m:buy|15m:buy` | 0.103414 | short |
+| 24 | mixed_divergence | 12 | 114 | 0.061101 | `1m:sell|2m:buy|5m:sell|15m:buy` | 2.256215 | long |
+| 24 | inactive | 0 | 0 |  | `` |  |  |
+
+### All Observed Combination Outcomes
+
+| Horizon | Rank | Pattern | Family | n | Bias | Mean% | Delta Mean% | Win% | Delta Win% | Median% | Std% | MAE% | MFE% | t-stat | Score |
+| ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.035209 | -0.009590 | 63.157895 | -5.263158 | 0.022248 | 0.068198 | -0.025669 | 0.061085 | 3.182592 | 0.516285 |
+| 3 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 0.000000 | 75.000000 | 0.000000 | 0.061490 | 0.034047 | -0.021228 | 0.067156 | 2.832940 | 1.416470 |
+| 3 | 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 0.000000 | 60.000000 | 0.000000 | 0.044697 | 0.044775 | -0.024257 | 0.057680 | 2.383484 | 0.753724 |
+| 3 | 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 0.000000 | 30.769231 | 0.000000 | -0.009498 | 0.057471 | -0.069543 | 0.027023 | -1.669475 | -0.463029 |
+| 3 | 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 0.000000 | 36.363636 | 0.000000 | -0.043141 | 0.089827 | -0.090208 | 0.039630 | -1.634309 | -0.492763 |
+| 3 | 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 0.000000 | 80.000000 | 0.000000 | 0.018869 | 0.045785 | -0.043813 | 0.072418 | 1.563723 | 0.699318 |
+| 3 | 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 0.000000 | 75.000000 | 0.000000 | 0.019274 | 0.072479 | -0.042708 | 0.047608 | 1.374286 | 0.307300 |
+| 3 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 0.000000 | 42.857143 | 0.000000 | -0.004929 | 0.018238 | -0.040467 | 0.012539 | -1.341500 | -0.507039 |
+| 3 | 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 0.000000 | 54.545455 | 0.000000 | 0.004773 | 0.118774 | -0.047741 | 0.064624 | 0.893825 | 0.190564 |
+| 3 | 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 0.000000 | 50.000000 | 0.000000 | -0.016243 | 0.148797 | -0.102693 | 0.096799 | -0.617037 | -0.308518 |
+| 3 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 15 | short | -0.021613 | 0.000000 | 53.333333 | 0.000000 | 0.006504 | 0.141619 | -0.095610 | 0.068838 | -0.591072 | -0.152614 |
+| 3 | 12 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.012066 | 0.000000 | 57.142857 | 0.000000 | 0.014240 | 0.063607 | -0.044614 | 0.038773 | 0.501878 | 0.189692 |
+| 3 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.011298 | 0.000000 | 60.000000 | 0.000000 | 0.035042 | 0.074306 | -0.038949 | 0.051836 | 0.480820 | 0.152049 |
+| 3 | 14 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.005257 | 0.000000 | 40.909091 | 0.000000 | -0.004044 | 0.083478 | -0.056466 | 0.047903 | 0.295387 | 0.062977 |
+| 3 | 15 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.003567 | 0.000000 | 28.571429 | 0.000000 | -0.020368 | 0.031998 | -0.027351 | 0.018679 | -0.294921 | -0.111470 |
+| 3 | 16 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.003669 | 0.000000 | 25.000000 | 0.000000 | -0.011166 | 0.048503 | -0.059442 | 0.045825 | 0.151269 | 0.075634 |
+| 6 | 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 0.000000 | 80.000000 | 0.000000 | 0.039087 | 0.025516 | -0.043813 | 0.093063 | 3.368174 | 1.506293 |
+| 6 | 2 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 0.000000 | 72.727273 | 0.000000 | 0.028714 | 0.109938 | -0.059920 | 0.086899 | 2.484614 | 0.529722 |
+| 6 | 3 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.037148 | -0.008100 | 55.263158 | -5.263158 | 0.007094 | 0.094410 | -0.034820 | 0.080155 | 2.425520 | 0.393471 |
+| 6 | 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 0.000000 | 80.000000 | 0.000000 | 0.021046 | 0.073553 | -0.045576 | 0.071688 | 2.415745 | 0.540177 |
+| 6 | 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 0.000000 | 23.076923 | 0.000000 | -0.044003 | 0.056822 | -0.095000 | 0.027023 | -2.351953 | -0.652314 |
+| 6 | 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 0.000000 | 75.000000 | 0.000000 | 0.089596 | 0.079410 | -0.022458 | 0.118903 | 2.087142 | 1.043571 |
+| 6 | 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 0.000000 | 14.285714 | 0.000000 | -0.015842 | 0.125548 | -0.112158 | 0.017961 | -1.696356 | -0.641162 |
+| 6 | 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 0.000000 | 60.000000 | 0.000000 | 0.034474 | 0.076107 | -0.040563 | 0.076458 | 1.372284 | 0.433954 |
+| 6 | 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 0.000000 | 75.000000 | 0.000000 | 0.015974 | 0.061352 | -0.059442 | 0.061655 | 1.030425 | 0.515212 |
+| 6 | 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 0.000000 | 42.857143 | 0.000000 | -0.018985 | 0.030645 | -0.036416 | 0.026905 | -1.011385 | -0.382267 |
+| 6 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.028316 | 0.000000 | 27.272727 | 0.000000 | -0.024546 | 0.124584 | -0.111907 | 0.054470 | -0.753813 | -0.227283 |
+| 6 | 12 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.031694 | 0.000000 | 54.545455 | 0.000000 | 0.021695 | 0.352415 | -0.134214 | 0.084017 | -0.421825 | -0.089933 |
+| 6 | 13 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | short | -0.023611 | 0.000000 | 50.000000 | 0.000000 | 0.008098 | 0.180480 | -0.084446 | 0.066369 | -0.413707 | -0.130826 |
+| 6 | 14 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.039483 | 0.000000 | 50.000000 | 0.000000 | 0.000763 | 0.218289 | -0.157459 | 0.124920 | -0.361755 | -0.180877 |
+| 6 | 15 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 14 | short | -0.013027 | 0.000000 | 50.000000 | 0.000000 | -0.001224 | 0.167027 | -0.120150 | 0.090911 | -0.291830 | -0.077995 |
+| 6 | 16 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.004767 | 0.000000 | 42.857143 | 0.000000 | -0.010393 | 0.057512 | -0.053978 | 0.044004 | 0.219298 | 0.082887 |
+| 12 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.065298 | -0.006920 | 57.894737 | -2.631579 | 0.020509 | 0.138050 | -0.052298 | 0.114985 | 2.915762 | 0.472999 |
+| 12 | 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 0.000000 | 100.000000 | 0.000000 | 0.111561 | 0.082929 | -0.022634 | 0.139040 | 2.771812 | 1.385906 |
+| 12 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 0.000000 | 65.000000 | 0.000000 | 0.046042 | 0.124651 | -0.055539 | 0.105524 | 2.255449 | 0.504334 |
+| 12 | 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 0.000000 | 14.285714 | 0.000000 | -0.042911 | 0.169931 | -0.149985 | 0.028542 | -1.835027 | -0.693575 |
+| 12 | 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 0.000000 | 70.000000 | 0.000000 | 0.035874 | 0.103179 | -0.047975 | 0.097356 | 1.610151 | 0.509174 |
+| 12 | 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 0.000000 | 70.000000 | 0.000000 | 0.074122 | 0.188037 | -0.095114 | 0.134041 | 1.162843 | 0.367723 |
+| 12 | 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 0.000000 | 20.000000 | 0.000000 | -0.025806 | 0.112451 | -0.096794 | 0.099834 | -0.886464 | -0.396439 |
+| 12 | 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 0.000000 | 42.857143 | 0.000000 | -0.005425 | 0.109530 | -0.076432 | 0.092020 | 0.809862 | 0.306099 |
+| 12 | 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 0.000000 | 68.181818 | 0.000000 | 0.056380 | 0.240924 | -0.107383 | 0.127240 | 0.654818 | 0.139608 |
+| 12 | 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 0.000000 | 61.538462 | 0.000000 | 0.048613 | 0.238714 | -0.147272 | 0.158934 | 0.605227 | 0.167860 |
+| 12 | 11 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.022582 | 0.000000 | 54.545455 | 0.000000 | 0.025336 | 0.131524 | -0.129523 | 0.083728 | -0.569438 | -0.171692 |
+| 12 | 12 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.012280 | 0.000000 | 57.142857 | 0.000000 | 0.002034 | 0.069756 | -0.064228 | 0.039661 | -0.465769 | -0.176044 |
+| 12 | 13 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.012548 | 0.000000 | 30.769231 | 0.000000 | -0.040707 | 0.137663 | -0.127113 | 0.087627 | -0.328658 | -0.091153 |
+| 12 | 14 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.010940 | 0.000000 | 25.000000 | 0.000000 | -0.019127 | 0.095954 | -0.060146 | 0.073040 | 0.228032 | 0.114016 |
+| 12 | 15 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.021128 | 0.000000 | 59.090909 | 0.000000 | 0.017778 | 0.440208 | -0.157635 | 0.135750 | -0.225118 | -0.047995 |
+| 12 | 16 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.010082 | 0.000000 | 50.000000 | 0.000000 | 0.044153 | 0.172867 | -0.157459 | 0.133586 | 0.116645 | 0.058322 |
+| 24 | 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.066252 | -0.009574 | 65.789474 | 0.000000 | 0.061699 | 0.171033 | -0.065795 | 0.157771 | 2.387880 | 0.387365 |
+| 24 | 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 0.000000 | 85.714286 | 0.000000 | 0.151463 | 0.351880 | -0.103680 | 0.345274 | 2.256215 | 0.852769 |
+| 24 | 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 0.000000 | 55.000000 | 0.000000 | 0.039630 | 0.128154 | -0.071408 | 0.139571 | 1.822973 | 0.407629 |
+| 24 | 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 0.000000 | 75.000000 | 0.000000 | 0.015822 | 0.019484 | -0.077643 | 0.093940 | 1.720036 | 0.860018 |
+| 24 | 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 0.000000 | 63.636364 | 0.000000 | 0.052922 | 0.207253 | -0.127880 | 0.163400 | 1.365942 | 0.291220 |
+| 24 | 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 0.000000 | 53.846154 | 0.000000 | 0.025231 | 0.318968 | -0.153525 | 0.191261 | 1.328148 | 0.368362 |
+| 24 | 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 0.000000 | 50.000000 | 0.000000 | 0.049527 | 0.103208 | -0.045509 | 0.178673 | 1.190158 | 0.595079 |
+| 24 | 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 0.000000 | 42.857143 | 0.000000 | -0.061252 | 0.189483 | -0.176081 | 0.052773 | -1.053205 | -0.398074 |
+| 24 | 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 0.000000 | 57.142857 | 0.000000 | 0.014403 | 0.334439 | -0.101412 | 0.202360 | 1.050533 | 0.397064 |
+| 24 | 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 0.000000 | 80.000000 | 0.000000 | 0.094437 | 0.233877 | -0.101056 | 0.167975 | 1.015361 | 0.321085 |
+| 24 | 11 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.030505 | 0.000000 | 69.230769 | 0.000000 | 0.031036 | 0.152193 | -0.183561 | 0.180103 | 0.722684 | 0.200437 |
+| 24 | 12 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.023043 | 0.000000 | 60.000000 | 0.000000 | 0.052527 | 0.116578 | -0.086368 | 0.116067 | 0.625054 | 0.197659 |
+| 24 | 13 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.020653 | 0.000000 | 60.000000 | 0.000000 | 0.004554 | 0.086221 | -0.136338 | 0.119934 | -0.535615 | -0.239534 |
+| 24 | 14 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | long | 0.005897 | 0.000000 | 54.545455 | 0.000000 | 0.058038 | 0.128178 | -0.148175 | 0.110362 | 0.152586 | 0.046006 |
+| 24 | 15 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | long | 0.014677 | 0.000000 | 50.000000 | 0.000000 | 0.096487 | 0.279257 | -0.181227 | 0.146266 | 0.105113 | 0.052557 |
+| 24 | 16 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | short | -0.010048 | 0.000000 | 54.545455 | 0.000000 | 0.019095 | 0.455723 | -0.209202 | 0.174462 | -0.103414 | -0.022048 |
+
+### Horizon 3 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.035209 | 63.157895 | 3.182592 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.048226 | 75.000000 | 2.832940 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033748 | 60.000000 | 2.383484 |
+| 4 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.026611 | 30.769231 | -1.669475 |
+| 5 | `1m:buy|2m:sell|5m:sell|15m:sell` | mixed_divergence | 11 | short | -0.044264 | 36.363636 | -1.634309 |
+| 6 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.032018 | 80.000000 | 1.563723 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.022273 | 75.000000 | 1.374286 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.009247 | 42.857143 | -1.341500 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:buy` | fast_bearish_reversal | 22 | long | 0.022634 | 54.545455 | 0.893825 |
+| 10 | `1m:sell|2m:buy|5m:sell|15m:sell` | mixed_divergence | 4 | short | -0.045907 | 50.000000 | -0.617037 |
+
+### Horizon 6 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | long | 0.038434 | 80.000000 | 3.368174 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.058237 | 72.727273 | 2.484614 |
+| 3 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.037148 | 55.263158 | 2.425520 |
+| 4 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.039732 | 80.000000 | 2.415745 |
+| 5 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | short | -0.037066 | 23.076923 | -2.351953 |
+| 6 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.082870 | 75.000000 | 2.087142 |
+| 7 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.080497 | 14.285714 | -1.696356 |
+| 8 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.033027 | 60.000000 | 1.372284 |
+| 9 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.031609 | 75.000000 | 1.030425 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.011714 | 42.857143 | -1.011385 |
+
+### Horizon 12 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.065298 | 57.894737 | 2.915762 |
+| 2 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.114931 | 100.000000 | 2.771812 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.062866 | 65.000000 | 2.255449 |
+| 4 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.117860 | 14.285714 | -1.835027 |
+| 5 | `1m:buy|2m:buy|5m:buy|15m:sell` | mixed_divergence | 10 | long | 0.052536 | 70.000000 | 1.610151 |
+| 6 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.069146 | 70.000000 | 1.162843 |
+| 7 | `1m:sell|2m:buy|5m:buy|15m:sell` | mixed_divergence | 5 | short | -0.044580 | 20.000000 | -0.886464 |
+| 8 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.033527 | 42.857143 | 0.809862 |
+| 9 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.033635 | 68.181818 | 0.654818 |
+| 10 | `1m:sell|2m:sell|5m:sell|15m:sell` | bear_confluence | 13 | long | 0.040071 | 61.538462 | 0.605227 |
+
+### Horizon 24 bars
+
+| Rank | Pattern | Family | n | Bias | Mean% | Win% | t-stat |
+| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |
+| 1 | `1m:buy|2m:buy|5m:buy|15m:buy` | bull_confluence | 38 | long | 0.066252 | 65.789474 | 2.387880 |
+| 2 | `1m:sell|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.300072 | 85.714286 | 2.256215 |
+| 3 | `1m:sell|2m:buy|5m:buy|15m:buy` | mixed_divergence | 20 | long | 0.052239 | 55.000000 | 1.822973 |
+| 4 | `1m:sell|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.016757 | 75.000000 | 1.720036 |
+| 5 | `1m:buy|2m:sell|5m:buy|15m:buy` | mixed_divergence | 22 | long | 0.060356 | 63.636364 | 1.365942 |
+| 6 | `1m:sell|2m:sell|5m:sell|15m:buy` | mixed_divergence | 13 | long | 0.117496 | 53.846154 | 1.328148 |
+| 7 | `1m:buy|2m:sell|5m:buy|15m:sell` | mixed_divergence | 4 | long | 0.061417 | 50.000000 | 1.190158 |
+| 8 | `1m:buy|2m:sell|5m:sell|15m:buy` | mixed_divergence | 7 | short | -0.075428 | 42.857143 | -1.053205 |
+| 9 | `1m:buy|2m:buy|5m:sell|15m:buy` | mixed_divergence | 7 | long | 0.132794 | 57.142857 | 1.050533 |
+| 10 | `1m:buy|2m:buy|5m:sell|15m:sell` | fast_bullish_reversal | 10 | long | 0.075094 | 80.000000 | 1.015361 |
+

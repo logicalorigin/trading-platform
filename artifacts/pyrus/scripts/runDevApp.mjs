@@ -36,9 +36,8 @@ const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000"
 const supervisorTakeoverGraceMs = Number(
   process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
 );
-const duplicateRestartAfterMs = Number(
-  process.env.PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS || "30000",
-);
+const API_NODE_MAX_OLD_SPACE_MB = "2560";
+const WEB_NODE_MAX_OLD_SPACE_MB = "1536";
 // PYRUS_REPLIT_RUN is a tag set by dev:replit. It is not authority to
 // replace a live supervisor because any shell can set it by running that
 // package script. Only Replit's workflow env may request handoff/reaping.
@@ -100,8 +99,6 @@ function readPreviousLifecycleState() {
         ![
           "duplicate-check-start",
           "duplicate-check-complete",
-          "duplicate-start-noop",
-          "duplicate-live-exit",
           "launch-start",
         ].includes(String(entry.event || "")),
     );
@@ -150,6 +147,40 @@ function currentFlightHeartbeat(extra = {}) {
 function nonEmptyEnv(name) {
   const value = process.env[name];
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function nodeOptionsWithMaxOldSpace(maxOldSpaceMb) {
+  const existing = (process.env.NODE_OPTIONS || "").trim();
+  if (/(^|\s)--max-old-space-size(?:=|\s|$)/.test(existing)) {
+    return existing;
+  }
+  return [existing, `--max-old-space-size=${maxOldSpaceMb}`]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function defaultDevMallocArenaMax() {
+  return process.env.MALLOC_ARENA_MAX || "2";
+}
+
+function apiServiceEnv() {
+  return {
+    PORT: apiPort,
+    LOG_LEVEL: process.env.LOG_LEVEL || "warn",
+    MALLOC_ARENA_MAX: defaultDevMallocArenaMax(),
+    NODE_OPTIONS: nodeOptionsWithMaxOldSpace(API_NODE_MAX_OLD_SPACE_MB),
+  };
+}
+
+function webServiceEnv() {
+  return {
+    PORT: webPort,
+    BASE_PATH: process.env.BASE_PATH || "/",
+    MALLOC_ARENA_MAX: defaultDevMallocArenaMax(),
+    NODE_OPTIONS: nodeOptionsWithMaxOldSpace(WEB_NODE_MAX_OLD_SPACE_MB),
+    VITE_PROXY_API_TARGET:
+      process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
+  };
 }
 
 function hasMarketDataWorkerDatabaseConfig() {
@@ -264,47 +295,12 @@ function readProcessCommand(pid) {
   }
 }
 
-function readProcessParentId(pid) {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
-    return Number(fields[1]);
-  } catch {
-    return null;
-  }
-}
-
 function pidIsAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return error?.code === "EPERM";
-  }
-}
-
-function launchedByCodexAgent() {
-  let pid = process.ppid;
-  for (let depth = 0; Number.isInteger(pid) && pid > 1 && depth < 32; depth += 1) {
-    const command = readProcessCommand(pid);
-    if (command.includes("@openai/codex") || command.includes("/codex/codex")) {
-      return true;
-    }
-    pid = readProcessParentId(pid);
-  }
-  return false;
-}
-
-function assertAllowedLauncher() {
-  if (
-    process.env.PYRUS_DEV_ALLOW_CODEX_RUN !== "1" &&
-    process.env.PYRUS_DEV_ALLOW_CODEX_RUN !== "1" &&
-    launchedByCodexAgent()
-  ) {
-    console.error(
-      "[pyrus-dev] refusing to start the full app supervisor from a Codex-owned shell. Use the default Replit Run App entry so Replit owns the API/web lifecycle.",
-    );
-    process.exit(1);
   }
 }
 
@@ -365,12 +361,6 @@ function sendSignal(pid, signal) {
   }
 }
 
-function duplicateRestartThresholdMs() {
-  return Number.isFinite(duplicateRestartAfterMs) && duplicateRestartAfterMs >= 0
-    ? duplicateRestartAfterMs
-    : 30_000;
-}
-
 function supervisorLockAgeMs(lock) {
   const startedAt = Date.parse(typeof lock?.startedAt === "string" ? lock.startedAt : "");
   if (!Number.isFinite(startedAt)) return null;
@@ -381,21 +371,6 @@ function formatDurationMs(value) {
   if (!Number.isFinite(value)) return "unknown age";
   if (value < 1000) return `${Math.round(value)}ms`;
   return `${Math.round(value / 1000)}s`;
-}
-
-function shouldHandoffDuplicateReplitStart(lock) {
-  const ageMs = supervisorLockAgeMs(lock);
-  return ageMs !== null && ageMs >= duplicateRestartThresholdMs();
-}
-
-function skipDuplicateReplitStart(ownerPid, lock) {
-  const ageMs = supervisorLockAgeMs(lock);
-  const ageMessage = ageMs === null ? "with unknown age" : `for ${formatDurationMs(ageMs)}`;
-  console.warn(
-    `[pyrus-dev] duplicate Replit workflow start detected while PYRUS dev supervisor ${ownerPid} is already alive ${ageMessage}; still inside the duplicate-start guard window, leaving the active API/web processes running and exiting without restart. Set PYRUS_DEV_FORCE_RESTART=1 only for an intentional supervisor takeover.`,
-  );
-  writeLifecycleEvent("duplicate-start-noop", { ownerPid, ageMs });
-  return true;
 }
 
 function checkDuplicateReplitStartOnly() {
@@ -416,11 +391,16 @@ function checkDuplicateReplitStartOnly() {
   }
 
   if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-    return skipDuplicateReplitStart(ownerPid, lockState.lock);
+    const ageMs = supervisorLockAgeMs(lockState.lock);
+    console.warn(
+      `[pyrus-dev] duplicate-check-only found live PYRUS dev supervisor ${ownerPid}${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; a real Replit workflow start would request controlled handoff.`,
+    );
+    writeLifecycleEvent("duplicate-check-live", { ownerPid, ageMs });
+    return true;
   }
 
   console.warn(
-    `[pyrus-dev] duplicate-check-only found live PYRUS dev supervisor ${ownerPid}, but this launch is not an ordinary duplicate Replit workflow start; exiting without starting API/web processes.`,
+    `[pyrus-dev] duplicate-check-only found live PYRUS dev supervisor ${ownerPid}, but this launch is not a Replit workflow; exiting without starting API/web processes.`,
   );
   return false;
 }
@@ -532,24 +512,13 @@ async function acquireSupervisorLock() {
     }
 
     if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-      if (shouldHandoffDuplicateReplitStart(lockState.lock)) {
-        const ageMs = supervisorLockAgeMs(lockState.lock);
-        const thresholdMs = duplicateRestartThresholdMs();
-        console.warn(
-          `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive for ${formatDurationMs(ageMs)}; treating this as an intentional Run-button restart after the ${formatDurationMs(thresholdMs)} duplicate-start guard window.`,
-        );
-        writeLifecycleEvent("duplicate-start-handoff", {
-          ownerPid,
-          ageMs,
-          thresholdMs,
-        });
-        await requestSupervisorHandoff(ownerPid);
-        continue;
-      }
-
-      return skipDuplicateReplitStart(ownerPid, lockState.lock)
-        ? "duplicate-live"
-        : false;
+      const ageMs = supervisorLockAgeMs(lockState.lock);
+      console.warn(
+        `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; treating this as an intentional Run-button restart and requesting controlled handoff.`,
+      );
+      writeLifecycleEvent("duplicate-start-handoff", { ownerPid, ageMs });
+      await requestSupervisorHandoff(ownerPid);
+      continue;
     }
 
     if (Date.now() >= deadline) {
@@ -780,14 +749,7 @@ try {
     runningInsideReplitWorkflow,
   });
 
-  assertAllowedLauncher();
-
   const lockAcquired = await acquireSupervisorLock();
-  if (lockAcquired === "duplicate-live") {
-    writeLifecycleEvent("duplicate-live-exit");
-    stopLifecycleHeartbeat();
-    process.exit(0);
-  }
   if (!lockAcquired) {
     writeLifecycleEvent("lock-refused-exit");
     stopLifecycleHeartbeat();
@@ -805,7 +767,7 @@ try {
   const api = spawnService(
     "API",
     ["--filter", "@workspace/api-server", "run", "dev"],
-    { PORT: apiPort, LOG_LEVEL: process.env.LOG_LEVEL || "warn" },
+    apiServiceEnv(),
   );
   apiChild = api;
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
@@ -820,12 +782,7 @@ try {
   const web = spawnService(
     "PYRUS web",
     ["--filter", "@workspace/pyrus", "run", "dev:web"],
-    {
-      PORT: webPort,
-      BASE_PATH: process.env.BASE_PATH || "/",
-      VITE_PROXY_API_TARGET:
-        process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
-    },
+    webServiceEnv(),
   );
   webChild = web;
   const webExit = exitPromise("PYRUS web", web);

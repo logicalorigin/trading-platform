@@ -37,3 +37,70 @@ test("every detach/clear request is bounded by a timeout so a stalled connection
     `expected the 3 detach/clear fetches to be bounded; found ${boundedRequests.length}`,
   );
 });
+
+test("update-only broker launch keeps activation visible until helper reports result", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+  const updateOnlyBranch = source.match(
+    /if \(!credentialsReady\) \{(?<body>[\s\S]*?)return \{ clearPassword: true \};\n      \}/,
+  )?.groups?.body;
+
+  assert.ok(updateOnlyBranch, "expected the update-only launch branch");
+  assert.doesNotMatch(updateOnlyBranch, /clearBridgeLaunchSessionState\(\)/);
+  assert.match(updateOnlyBranch, /launchResult\.useRemoteDesktopLaunch/);
+  assert.match(
+    updateOnlyBranch,
+    /Helper update request queued for the Windows desktop/,
+  );
+  assert.match(
+    updateOnlyBranch,
+    /Waiting for the helper to report the update result/,
+  );
+});
+
+test("broker launcher request preserves the known-good unbounded launch wait", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+  const launchRequest = source.match(
+    /payload = await platformJsonRequest\(\s+useRemoteDesktopLaunch[\s\S]*?signal: requestController\?\.signal,\s+timeoutMs: (?<timeout>\d+),/,
+  );
+
+  assert.ok(launchRequest, "expected the broker launcher request");
+  assert.equal(launchRequest.groups.timeout, "0");
+});
+
+test("credential key wait starts before direct protocol launch can interrupt browser continuation", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+
+  assert.match(
+    source,
+    /const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 25_000;/,
+  );
+  assert.match(
+    source,
+    /const pendingCredentialDelivery = startCredentialDelivery\(payload\);[\s\S]*?const launched = useRemoteDesktopLaunch/,
+  );
+});
+
+test("broker credential form polls DOM values so browser autofill enables launch", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+
+  assert.match(source, /const IBKR_CREDENTIAL_AUTOFILL_SYNC_MS = 250;/);
+  assert.match(
+    source,
+    /window\.setInterval\(\s+syncCredentialsReady,\s+IBKR_CREDENTIAL_AUTOFILL_SYNC_MS,\s+\)/,
+  );
+  assert.match(source, /syncCredentialsReady\(\);\s+const syncTimerId/);
+});
+
+test("broker launch does not show opening-helper before backend activation exists", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+  const preRequestBlock = source.match(
+    /setBridgeLauncherNotice\(\s+initialUseRemoteDesktopLaunch[\s\S]*?const payload = await platformJsonRequest/,
+  )?.[0];
+
+  assert.ok(preRequestBlock, "expected launch pre-request block");
+  assert.doesNotMatch(preRequestBlock, /appendBridgeActivationProgress/);
+  assert.match(
+    source,
+    /const launched = useRemoteDesktopLaunch[\s\S]*?if \(!launched\)[\s\S]*?setBridgeActivationActive\(true\);[\s\S]*?appendBridgeActivationProgress\({[\s\S]*?step: useRemoteDesktopLaunch/,
+  );
+});

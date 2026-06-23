@@ -77,8 +77,11 @@ const SPARKLINE_SEED_CHUNK_SIZE = 96;
 const SIGNAL_SPARKLINE_SEED_LIMIT = 120;
 const SIGNAL_SPARKLINE_SEED_POINT_LIMIT = 48;
 const SPARKLINE_MIN_VISUAL_POINT_COUNT = 8;
-const SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT = SPARKLINE_SEED_CHUNK_SIZE;
-const SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE = SPARKLINE_SEED_CHUNK_SIZE;
+// Client-side fan-out cap for the signal sparkline seed. Bounded to the server's
+// /api/sparklines/seed DB budget (SPARKLINE_SEED_DB_CONCURRENCY = 2 against a
+// 12-connection pool): 2 concurrent chunk POSTs keep total in-flight DB readers
+// within the safe budget so background seed hydration cannot starve live reads.
+const SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY = 2;
 const SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "signal-sparkline-seed",
@@ -239,25 +242,43 @@ const fetchSparklineSeed = async (
   );
 };
 
-const fetchSignalSparklineSeed = async (symbols) =>
-  fetchSparklineSeed(symbols, {
-    limit: SIGNAL_SPARKLINE_SEED_LIMIT,
-    pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
-    requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
-    label: "Signal sparkline seed",
-  });
-
 const fetchSignalSparklineSeedInChunks = async (
   symbols,
-  chunkSize = SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE,
+  {
+    chunkSize = SPARKLINE_SEED_CHUNK_SIZE,
+    concurrency = SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
+  } = {},
 ) => {
-  return fetchSparklineSeedInChunks(symbols, {
-    chunkSize,
-    limit: SIGNAL_SPARKLINE_SEED_LIMIT,
-    pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
-    requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
-    label: "Signal sparkline seed",
-  });
+  const size = Math.max(1, Math.floor(Number(chunkSize) || 1));
+  const chunks = [];
+  for (let index = 0; index < symbols.length; index += size) {
+    chunks.push(symbols.slice(index, index + size));
+  }
+  if (!chunks.length) {
+    return {};
+  }
+  // Fan the chunks out concurrently with a bounded cap so all signal symbols seed
+  // in one non-serialized pass (no priority/background ordering). settleWithConcurrency
+  // never rejects — it returns per-chunk fulfilled/rejected — so a single slow or
+  // failed chunk blanks only its own symbols instead of a whole batch.
+  const settled = await settleWithConcurrency(
+    chunks,
+    Math.max(1, Math.floor(Number(concurrency) || 1)),
+    (chunk) =>
+      fetchSparklineSeed(chunk, {
+        limit: SIGNAL_SPARKLINE_SEED_LIMIT,
+        pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
+        requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
+        label: "Signal sparkline seed",
+      }),
+  );
+  const fulfilled = settled.filter((result) => result.status === "fulfilled");
+  // Preserve retry-on-total-failure: if every chunk failed, surface the error so
+  // the query retries; partial success returns whatever landed.
+  if (!fulfilled.length) {
+    throw settled[0]?.reason ?? new Error("Signal sparkline seed failed");
+  }
+  return Object.assign({}, ...fulfilled.map((result) => result.value));
 };
 
 const fetchSparklineSeedInChunks = async (
@@ -429,21 +450,6 @@ export const MarketDataSubscriptionProvider = ({
   const signalSparklineSeedSymbols = useMemo(
     () => Array.from(aggregateOnlySparklineSymbolSet),
     [aggregateOnlySparklineSymbolSet],
-  );
-  const signalSparklinePrioritySeedSymbols = useMemo(
-    () =>
-      signalSparklineSeedSymbols.slice(
-        0,
-        SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT,
-      ),
-    [signalSparklineSeedSymbols],
-  );
-  const signalSparklineBackgroundSeedSymbols = useMemo(
-    () =>
-      signalSparklineSeedSymbols.slice(
-        SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT,
-      ),
-    [signalSparklineSeedSymbols],
   );
   const signalSparklineSeedEnabled = signalSparklineSeedSymbols.length > 0;
   const sparklineHydrationGate = useHydrationGate({
@@ -677,72 +683,30 @@ export const MarketDataSubscriptionProvider = ({
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
-  const signalSparklinePrioritySeedQuery = useQuery({
+  const signalSparklineSeedQuery = useQuery({
     queryKey: [
       "signal-sparkline-seed",
-      "priority",
       SPARKLINE_HISTORY_TIMEFRAME,
       SIGNAL_SPARKLINE_SEED_LIMIT,
       SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
-      signalSparklinePrioritySeedSymbols,
+      signalSparklineSeedSymbols,
     ],
     enabled: Boolean(
-      signalSparklineSeedEnabled && signalSparklinePrioritySeedSymbols.length,
+      signalSparklineSeedEnabled && signalSparklineSeedSymbols.length,
     ),
-    queryFn: () => fetchSignalSparklineSeed(signalSparklinePrioritySeedSymbols),
-    ...BARS_QUERY_DEFAULTS,
-    retry: retryUnlessTimeout(2),
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  const signalSparklineBackgroundSeedQuery = useQuery({
-    queryKey: [
-      "signal-sparkline-seed",
-      "background",
-      SPARKLINE_HISTORY_TIMEFRAME,
-      SIGNAL_SPARKLINE_SEED_LIMIT,
-      SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
-      signalSparklineBackgroundSeedSymbols,
-    ],
-    enabled: Boolean(
-      signalSparklineSeedEnabled &&
-        signalSparklineBackgroundSeedSymbols.length &&
-        signalSparklinePrioritySeedQuery.status === "success",
-    ),
-    queryFn: () =>
-      fetchSignalSparklineSeedInChunks(signalSparklineBackgroundSeedSymbols),
+    queryFn: () => fetchSignalSparklineSeedInChunks(signalSparklineSeedSymbols),
     ...BARS_QUERY_DEFAULTS,
     retry: retryUnlessTimeout(2),
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const signalSparklineSeedData = useMemo(
-    () => ({
-      ...(signalSparklineBackgroundSeedQuery.data || {}),
-      ...(signalSparklinePrioritySeedQuery.data || {}),
-    }),
-    [
-      signalSparklineBackgroundSeedQuery.data,
-      signalSparklinePrioritySeedQuery.data,
-    ],
+    () => signalSparklineSeedQuery.data || {},
+    [signalSparklineSeedQuery.data],
   );
-  const signalSparklineSeedStatus =
-    signalSparklinePrioritySeedQuery.status === "error" ||
-    signalSparklineBackgroundSeedQuery.status === "error"
-      ? "error"
-      : signalSparklineBackgroundSeedSymbols.length
-        ? signalSparklineBackgroundSeedQuery.status
-        : signalSparklinePrioritySeedQuery.status;
-  const signalSparklineSeedFetchStatus =
-    signalSparklinePrioritySeedQuery.fetchStatus === "fetching" ||
-    signalSparklineBackgroundSeedQuery.fetchStatus === "fetching"
-      ? "fetching"
-      : signalSparklinePrioritySeedQuery.fetchStatus === "paused" ||
-          signalSparklineBackgroundSeedQuery.fetchStatus === "paused"
-        ? "paused"
-        : "idle";
-  const signalSparklineSeedDataUpdatedAt = Math.max(
-    signalSparklinePrioritySeedQuery.dataUpdatedAt || 0,
-    signalSparklineBackgroundSeedQuery.dataUpdatedAt || 0,
-  );
+  const signalSparklineSeedStatus = signalSparklineSeedQuery.status;
+  const signalSparklineSeedFetchStatus = signalSparklineSeedQuery.fetchStatus;
+  const signalSparklineSeedDataUpdatedAt =
+    signalSparklineSeedQuery.dataUpdatedAt || 0;
   const visualSparklineBarsCacheRef = useRef(new Map());
   const sparklineBarsBySymbol = useMemo(() => {
     const cache = visualSparklineBarsCacheRef.current;
@@ -811,22 +775,10 @@ export const MarketDataSubscriptionProvider = ({
     signalSparklineSeedData,
     sparklineQuery.data,
   ]);
-  const signalSparklinePrioritySeedSettled = Boolean(
-    !signalSparklinePrioritySeedSymbols.length ||
-      signalSparklinePrioritySeedQuery.isFetched ||
-      signalSparklinePrioritySeedQuery.isError,
-  );
-  const signalSparklineBackgroundSeedExpected = Boolean(
-    signalSparklineBackgroundSeedSymbols.length &&
-      signalSparklinePrioritySeedQuery.status === "success",
-  );
-  const signalSparklineBackgroundSeedSettled = Boolean(
-    !signalSparklineBackgroundSeedExpected ||
-      signalSparklineBackgroundSeedQuery.isFetched ||
-      signalSparklineBackgroundSeedQuery.isError,
-  );
   const signalSparklineSeedSettled = Boolean(
-    signalSparklinePrioritySeedSettled && signalSparklineBackgroundSeedSettled,
+    !signalSparklineSeedSymbols.length ||
+      signalSparklineSeedQuery.isFetched ||
+      signalSparklineSeedQuery.isError,
   );
   const clearAggregateOnlySparklineSymbols = useMemo(() => {
     if (!signalSparklineSeedSettled) {
@@ -956,22 +908,10 @@ export const MarketDataSubscriptionProvider = ({
           signalSeedStatus: signalSparklineSeedStatus,
           signalSeedFetchStatus: signalSparklineSeedFetchStatus,
           signalSeedUpdatedAt: signalSparklineSeedDataUpdatedAt || null,
-          signalSeedPrioritySymbolCount:
-            signalSparklinePrioritySeedSymbols.length,
-          signalSeedPriorityStatus: signalSparklinePrioritySeedQuery.status,
-          signalSeedPriorityFetchStatus:
-            signalSparklinePrioritySeedQuery.fetchStatus,
-          signalSeedPriorityUpdatedAt:
-            signalSparklinePrioritySeedQuery.dataUpdatedAt || null,
-          signalSeedBackgroundSymbolCount:
-            signalSparklineBackgroundSeedSymbols.length,
-          signalSeedBackgroundChunkSize:
-            SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE,
-          signalSeedBackgroundStatus: signalSparklineBackgroundSeedQuery.status,
-          signalSeedBackgroundFetchStatus:
-            signalSparklineBackgroundSeedQuery.fetchStatus,
-          signalSeedBackgroundUpdatedAt:
-            signalSparklineBackgroundSeedQuery.dataUpdatedAt || null,
+          signalSeedSymbolCount: signalSparklineSeedSymbols.length,
+          signalSeedSettled: signalSparklineSeedSettled,
+          signalSeedChunkSize: SPARKLINE_SEED_CHUNK_SIZE,
+          signalSeedFetchConcurrency: SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
           visualCacheSymbolCount: visualSparklineBarsCacheRef.current.size,
           visualCacheSymbols: Array.from(
             visualSparklineBarsCacheRef.current.keys(),

@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { JsonObject } from './jsonObject';
 import type { SignalMonitorDirection } from './signalMonitorDirection';
 import type { SignalMonitorSymbolStatus } from './signalMonitorSymbolStatus';
 import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
@@ -19,6 +20,13 @@ export interface SignalMonitorSymbolState {
   currentSignalAt: Date | null;
   /** @nullable */
   currentSignalPrice: number | null;
+  /** @nullable */
+  currentSignalClose: number | null;
+  /** @nullable */
+  currentSignalMfePercent: number | null;
+  /** @nullable */
+  currentSignalMaePercent: number | null;
+  filterState: JsonObject | null;
   /** @nullable */
   latestBarAt: Date | null;
   /** @nullable */

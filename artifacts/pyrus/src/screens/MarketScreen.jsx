@@ -218,7 +218,6 @@ const MarketScreenInner = ({
   onSymClick,
   onChartFocus,
   symbols = [],
-  signalSuggestionSymbols = [],
   isVisible = false,
   researchConfigured = false,
   safeQaMode = false,
@@ -324,27 +323,7 @@ const MarketScreenInner = ({
     putCall,
     sectorFlow,
     flowStatus,
-    flowEvents,
   } = flowSnapshot;
-  const popularTickers = useMemo(() => {
-    const bySymbol = new Map();
-    for (const event of flowEvents || []) {
-      const symbol = (event?.ticker || event?.underlying)?.toUpperCase?.();
-      if (!symbol) continue;
-      const current = bySymbol.get(symbol) || { symbol, count: 0, premium: 0 };
-      current.count += 1;
-      current.premium += Number.isFinite(event?.premium) ? event.premium : 0;
-      bySymbol.set(symbol, current);
-    }
-    return Array.from(bySymbol.values())
-      .sort((left, right) => right.count - left.count || right.premium - left.premium)
-      .map((entry) => entry.symbol)
-      .slice(0, 5);
-  }, [flowEvents]);
-  const stablePopularTickers = useMemo(
-    () => popularTickers,
-    [popularTickers.join(",")],
-  );
   const calendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -730,8 +709,6 @@ const MarketScreenInner = ({
                 externalSelection={marketSymPing}
                 onSymClick={onChartFocus || onSymClick}
                 watchlistSymbols={symbols}
-                popularTickers={stablePopularTickers}
-                signalSuggestionSymbols={signalSuggestionSymbols}
                 stockAggregateStreamingEnabled={
                   stockAggregateStreamingEnabled && !safeQaMode
                 }

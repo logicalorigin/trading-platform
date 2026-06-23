@@ -87,6 +87,7 @@ import type {
   GetAccountPositionsParams,
   GetAccountRiskParams,
   GetAccountSummaryParams,
+  GetAlgoDeploymentSignalQualityKpisParams,
   GetBacktestRunChartParams,
   GetBarsParams,
   GetFlowPremiumDistributionParams,
@@ -191,6 +192,7 @@ import type {
   RuntimeDiagnosticsResponse,
   SearchUniverseTickersParams,
   SessionInfo,
+  SetAlgoDeploymentModeRequest,
   SignalMonitorBreadthHistoryResponse,
   SignalMonitorEventsResponse,
   SignalMonitorProfile,
@@ -200,6 +202,7 @@ import type {
   SignalOptionsManualDeviationRequest,
   SignalOptionsManualDeviationResponse,
   SignalOptionsPerformanceResponse,
+  SignalQualityKpiResponse,
   SseStream,
   StockAggregateStreamSessionResponse,
   StreamAccountPageParams,
@@ -10562,6 +10565,78 @@ export const usePauseAlgoDeployment = <TError = ErrorType<unknown>,
     }
 
 /**
+ * @summary Set an algo deployment's execution mode (shadow/live)
+ */
+export const getSetAlgoDeploymentModeUrl = (deploymentId: string,) => {
+
+
+
+
+  return `/api/algo/deployments/${deploymentId}/mode`
+}
+
+export const setAlgoDeploymentMode = async (deploymentId: string,
+    setAlgoDeploymentModeRequest: SetAlgoDeploymentModeRequest, options?: RequestInit): Promise<AlgoDeployment> => {
+
+  return customFetch<AlgoDeployment>(getSetAlgoDeploymentModeUrl(deploymentId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setAlgoDeploymentModeRequest,)
+  }
+);}
+
+
+
+
+export const getSetAlgoDeploymentModeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlgoDeploymentMode>>, TError,{deploymentId: string;data: BodyType<SetAlgoDeploymentModeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAlgoDeploymentMode>>, TError,{deploymentId: string;data: BodyType<SetAlgoDeploymentModeRequest>}, TContext> => {
+
+const mutationKey = ['setAlgoDeploymentMode'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAlgoDeploymentMode>>, {deploymentId: string;data: BodyType<SetAlgoDeploymentModeRequest>}> = (props) => {
+          const {deploymentId,data} = props ?? {};
+
+          return  setAlgoDeploymentMode(deploymentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAlgoDeploymentModeMutationResult = NonNullable<Awaited<ReturnType<typeof setAlgoDeploymentMode>>>
+    export type SetAlgoDeploymentModeMutationBody = BodyType<SetAlgoDeploymentModeRequest>
+    export type SetAlgoDeploymentModeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Set an algo deployment's execution mode (shadow/live)
+ */
+export const useSetAlgoDeploymentMode = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlgoDeploymentMode>>, TError,{deploymentId: string;data: BodyType<SetAlgoDeploymentModeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setAlgoDeploymentMode>>,
+        TError,
+        {deploymentId: string;data: BodyType<SetAlgoDeploymentModeRequest>},
+        TContext
+      > => {
+      return useMutation(getSetAlgoDeploymentModeMutationOptions(options));
+    }
+
+/**
  * @summary Update algo strategy signal settings
  */
 export const getUpdateAlgoDeploymentStrategySettingsUrl = (deploymentId: string,) => {
@@ -10632,6 +10707,94 @@ export const useUpdateAlgoDeploymentStrategySettings = <TError = ErrorType<unkno
       > => {
       return useMutation(getUpdateAlgoDeploymentStrategySettingsMutationOptions(options));
     }
+
+/**
+ * Computes signal-INDICATOR quality KPIs (not trading P&L) for a deployment from a rolling stored-bar backtest of its signals under the current control-panel settings. Optional draft strategy-settings fields may be passed as query parameters to preview unsaved settings; an omitted field falls back to the saved deployment config, then the signal-monitor profile defaults.
+ * @summary Get per-deployment signal-quality KPIs from a rolling signal backtest
+ */
+export const getGetAlgoDeploymentSignalQualityKpisUrl = (deploymentId: string,
+    params?: GetAlgoDeploymentSignalQualityKpisParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/algo/deployments/${deploymentId}/signal-quality-kpis?${stringifiedParams}` : `/api/algo/deployments/${deploymentId}/signal-quality-kpis`
+}
+
+export const getAlgoDeploymentSignalQualityKpis = async (deploymentId: string,
+    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: RequestInit): Promise<SignalQualityKpiResponse> => {
+
+  return customFetch<SignalQualityKpiResponse>(getGetAlgoDeploymentSignalQualityKpisUrl(deploymentId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAlgoDeploymentSignalQualityKpisQueryKey = (deploymentId: string,
+    params?: GetAlgoDeploymentSignalQualityKpisParams,) => {
+    return [
+    `/api/algo/deployments/${deploymentId}/signal-quality-kpis`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAlgoDeploymentSignalQualityKpisQueryOptions = <TData = Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError = ErrorType<unknown>>(deploymentId: string,
+    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlgoDeploymentSignalQualityKpisQueryKey(deploymentId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>> = ({ signal }) => getAlgoDeploymentSignalQualityKpis(deploymentId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(deploymentId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAlgoDeploymentSignalQualityKpisQueryResult = NonNullable<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>>
+export type GetAlgoDeploymentSignalQualityKpisQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get per-deployment signal-quality KPIs from a rolling signal backtest
+ */
+
+export function useGetAlgoDeploymentSignalQualityKpis<TData = Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError = ErrorType<unknown>>(
+ deploymentId: string,
+    params?: GetAlgoDeploymentSignalQualityKpisParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentSignalQualityKpis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAlgoDeploymentSignalQualityKpisQueryOptions(deploymentId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
 
 /**
  * @summary Get signal-options shadow automation state for a deployment

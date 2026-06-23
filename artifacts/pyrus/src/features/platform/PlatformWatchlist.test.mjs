@@ -144,7 +144,7 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   );
   const marketSparklineQueryBlock =
     marketDataSource.match(
-      /const sparklineQuery = useQuery\(\{[\s\S]*?const signalSparklinePrioritySeedQuery = useQuery/s,
+      /const sparklineQuery = useQuery\(\{[\s\S]*?const signalSparklineSeedQuery = useQuery/s,
     )?.[0] || "";
   assert.match(
     marketSparklineQueryBlock,
@@ -153,24 +153,40 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   assert.match(marketSparklineQueryBlock, /enabled:\s*sparklineHistoryEnabled/);
   assert.doesNotMatch(marketSparklineQueryBlock, /getBarsRequest\(/);
   assert.doesNotMatch(marketDataSource, /const SPARKLINE_HISTORY_LIMIT = 720/);
+  // Signal sparkline seed is a SINGLE concurrent chunked query over ALL signal
+  // symbols. The deprecated priority/background split (which hydrated rows in
+  // symbol order, not data availability) must stay gone.
   assert.match(
     marketDataSource,
-    /"signal-sparkline-seed"[\s\S]*"priority"[\s\S]*signalSparklinePrioritySeedSymbols/s,
+    /"signal-sparkline-seed"[\s\S]*signalSparklineSeedSymbols/s,
   );
   assert.match(
     marketDataSource,
-    /"signal-sparkline-seed"[\s\S]*"background"[\s\S]*signalSparklineBackgroundSeedSymbols/s,
+    /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineSeedSymbols\)/s,
+  );
+  assert.doesNotMatch(marketDataSource, /signalSparklinePrioritySeedQuery/);
+  assert.doesNotMatch(marketDataSource, /signalSparklineBackgroundSeedQuery/);
+  assert.doesNotMatch(
+    marketDataSource,
+    /SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT/,
   );
   assert.doesNotMatch(
     marketDataSource,
-    /signalSparkline(?:Priority|Background)?SeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
+    /SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE/,
   );
-  assert.match(marketDataSource, /SIGNAL_SPARKLINE_PRIORITY_SEED_SYMBOL_LIMIT/);
-  assert.match(marketDataSource, /SIGNAL_SPARKLINE_BACKGROUND_SEED_CHUNK_SIZE/);
+  assert.doesNotMatch(
+    marketDataSource,
+    /signalSparklineSeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
+  );
   assert.match(marketDataSource, /SPARKLINE_MIN_VISUAL_POINT_COUNT\s*=\s*8/);
+  // Chunks fan out concurrently with a bounded cap (reusing settleWithConcurrency).
   assert.match(
     marketDataSource,
-    /queryFn:\s*\(\) =>\s*fetchSignalSparklineSeedInChunks\(signalSparklineBackgroundSeedSymbols\)/s,
+    /fetchSignalSparklineSeedInChunks = async[\s\S]*settleWithConcurrency\(/s,
+  );
+  assert.match(
+    marketDataSource,
+    /SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY\s*=\s*2/,
   );
   assert.match(marketDataSource, /retry:\s*retryUnlessTimeout\(2\)/s);
   assert.match(

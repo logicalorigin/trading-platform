@@ -81,11 +81,34 @@ test("bridge launch feedback wait defers until after animation frame when visibl
 
   fake.animationFrames[0]();
   assert.equal(resolved, false);
-  assert.deepEqual(fake.clearedTimers, [1]);
+  assert.deepEqual(fake.clearedTimers, []);
   assert.equal(fake.timers.length, 2);
   assert.equal(fake.timers[1].delay, 0);
   fake.timers[1].callback();
   await wait;
 
   assert.equal(resolved, true);
+  assert.deepEqual(fake.clearedTimers, [1]);
+});
+
+test("bridge launch feedback wait keeps timeout live until post-frame callback resolves", async () => {
+  const fake = createFakeWindow();
+  let resolved = false;
+
+  const wait = waitForBridgeLaunchFeedbackPaint({
+    documentRef: { visibilityState: "visible" },
+    windowRef: fake.windowRef,
+  }).then(() => {
+    resolved = true;
+  });
+
+  fake.animationFrames[0]();
+  assert.equal(resolved, false);
+  assert.deepEqual(fake.clearedTimers, []);
+  assert.equal(fake.timers.length, 2);
+  fake.timers[0].callback();
+  await wait;
+
+  assert.equal(resolved, true);
+  assert.deepEqual(fake.clearedTimers, [1]);
 });

@@ -22,10 +22,12 @@ import {
   useListBacktestDraftStrategies,
   useListExecutionEvents,
   usePauseAlgoDeployment,
+  useSetAlgoDeploymentMode,
   useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
 import {
+  ALGO_DEPLOYMENT_KIND,
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
   PROFILE_NUMBER_FIELDS,
@@ -72,6 +74,8 @@ import {
   AlgoLivePage,
   preloadAlgoLivePageModules,
 } from "./algo/AlgoLivePage";
+import { CreateDeploymentModal } from "./algo/CreateDeploymentModal.jsx";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog.jsx";
 import { buildCockpitGateSummary as buildCockpitGateSummaryImpl } from "./algoCockpitDiagnosticsModel";
 import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
 import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
@@ -90,6 +94,10 @@ import {
   publishAlgoStaExecutionTimeframe,
   publishAlgoStaMtfTimeframes,
 } from "../features/platform/algoStaExecutionTimeframeStore.js";
+import {
+  clearAlgoDeploymentFocus,
+  publishAlgoDeploymentFocus,
+} from "../features/platform/algoDeploymentFocusStore.js";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import {
@@ -354,6 +362,8 @@ export const AlgoScreen = ({
   const [deploymentName, setDeploymentName] = useState("");
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [pendingLiveSwitch, setPendingLiveSwitch] = useState(null);
   const [diagExpansion, setDiagExpansion] = useState({});
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
@@ -502,6 +512,7 @@ export const AlgoScreen = ({
     },
   );
   const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
+  const deploymentPnlById = deploymentsQuery.data?.pnlByDeployment || null;
   const deploymentListEmptyUnavailable = Boolean(
     deploymentsQuery.data?.cacheStatus === "unavailable" && !deployments.length,
   );
@@ -1037,6 +1048,13 @@ export const AlgoScreen = ({
     },
     [],
   );
+  // Publish the focused deployment so the global Algo Monitor sidebar can follow
+  // the active tab (the sidebar may also pin its own selection). Cleared on
+  // unmount so other screens fall back to the sidebar's own pick.
+  useEffect(() => {
+    publishAlgoDeploymentFocus(focusedDeploymentId || "");
+  }, [focusedDeploymentId]);
+  useEffect(() => () => clearAlgoDeploymentFocus(), []);
 
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
@@ -1216,6 +1234,7 @@ export const AlgoScreen = ({
       onSuccess: (deployment) => {
         refreshAlgoQueries();
         setFocusedDeploymentId(deployment.id);
+        setCreateModalOpen(false);
         toast.push({
           kind: "success",
           title: "Deployment created",
@@ -1269,22 +1288,39 @@ export const AlgoScreen = ({
       },
     },
   });
+  const setDeploymentModeMutation = useSetAlgoDeploymentMode({
+    mutation: {
+      onSuccess: (deployment) => {
+        refreshAlgoQueries();
+        setPendingLiveSwitch(null);
+        toast.push({
+          kind: "success",
+          title: `Mode set to ${String(deployment.mode || "").toUpperCase()}`,
+          body:
+            deployment.mode === "live"
+              ? `${normalizeLegacyAlgoBrandText(deployment.name)} · paused — enable to start live trading`
+              : normalizeLegacyAlgoBrandText(deployment.name),
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Mode change failed",
+          body: error?.message || "The deployment mode could not be changed.",
+        });
+      },
+    },
+  });
 
-  const handleCreateDeployment = () => {
-    if (!selectedDraft) {
-      toast.push({
-        kind: "warn",
-        title: "No strategy draft",
-        body: "Select a strategy draft before creating a custom signal-options deployment.",
-      });
-      return;
-    }
-
+  const handleCreateDeployment = (
+    kind = ALGO_DEPLOYMENT_KIND.SIGNAL_OPTIONS,
+    overnightFields = null,
+  ) => {
     if (!brokerConfigured) {
       toast.push({
         kind: "warn",
         title: "IBKR data not configured",
-        body: "Market-data connectivity must be configured before creating a signal-options shadow deployment.",
+        body: "Market-data connectivity must be configured before creating a shadow deployment.",
       });
       return;
     }
@@ -1294,6 +1330,81 @@ export const AlgoScreen = ({
         kind: "warn",
         title: "No data account selected",
         body: "The bridge is authenticated, but no IBKR data account is active yet.",
+      });
+      return;
+    }
+
+    if (kind === ALGO_DEPLOYMENT_KIND.OVERNIGHT_SPOT) {
+      // No overnight strategy exists, so reuse an existing signal-options
+      // strategyId purely as the required FK; the kind is driven entirely by
+      // config.overnightSpot below. Override the strategy's inherited
+      // signal-options config (parameters.executionMode / source / signalOptions)
+      // so the shallow {...strategy.config, ...config} merge can't misclassify
+      // this as a signal-options deployment.
+      const overnightStrategyId =
+        selectedDraft?.id || deployments[0]?.strategyId || null;
+      if (!overnightStrategyId) {
+        toast.push({
+          kind: "warn",
+          title: "No strategy available",
+          body: "An existing strategy is required to seed an overnight deployment.",
+        });
+        return;
+      }
+      const symbols = parseSymbolUniverseInput(symbolUniverseInput);
+      if (!symbols.length) {
+        toast.push({
+          kind: "warn",
+          title: "Symbols required",
+          body: "Add at least one symbol for the overnight deployment.",
+        });
+        return;
+      }
+      const notional = Number(overnightFields?.defaultOrderNotional);
+      if (!Number.isFinite(notional) || notional <= 0) {
+        toast.push({
+          kind: "warn",
+          title: "Order notional required",
+          body: "Set a positive order notional for the overnight deployment.",
+        });
+        return;
+      }
+      const maxNotional = Number(overnightFields?.maxOrderNotional);
+      createDeploymentMutation.mutate({
+        data: {
+          strategyId: overnightStrategyId,
+          name: deploymentName.trim() || "Overnight Shadow",
+          providerAccountId: "shadow",
+          mode: "shadow",
+          symbolUniverse: symbols,
+          config: {
+            source: "overnight_spot_manual",
+            parameters: { overnightSpotTrading: true },
+            signalOptions: null,
+            marketDataAccountId: activeAccountId,
+            executionAccountId: "shadow",
+            overnightSpot: {
+              enabled: true,
+              executionMode: "shadow",
+              tradingSession: overnightFields?.tradingSession || "overnight",
+              defaultOrderNotional: notional,
+              maxOrderNotional:
+                Number.isFinite(maxNotional) && maxNotional > 0
+                  ? maxNotional
+                  : notional * 2,
+              signalTimeframe: overnightFields?.signalTimeframe || "15m",
+            },
+          },
+        },
+      });
+      return;
+    }
+
+    if (!selectedDraft) {
+      toast.push({
+        kind: "warn",
+        title: "No strategy draft",
+        body: "Select a strategy draft before creating a custom signal-options deployment.",
       });
       return;
     }
@@ -1327,6 +1438,33 @@ export const AlgoScreen = ({
     }
 
     enableDeploymentMutation.mutate({ deploymentId: deployment.id });
+  };
+
+  // Shadow/live mode toggle. Switching to live is real-money intent, so it goes
+  // through a confirmation; switching back to shadow is safe and applies directly.
+  const handleToggleDeploymentMode = (deployment) => {
+    if (!deployment) return;
+    const targetMode = deployment.mode === "live" ? "shadow" : "live";
+    if (targetMode === "live") {
+      setPendingLiveSwitch({
+        deploymentId: deployment.id,
+        name: normalizeLegacyAlgoBrandText(deployment.name),
+        wasEnabled: Boolean(deployment.enabled),
+      });
+      return;
+    }
+    setDeploymentModeMutation.mutate({
+      deploymentId: deployment.id,
+      data: { mode: "shadow" },
+    });
+  };
+
+  const confirmLiveSwitch = () => {
+    if (!pendingLiveSwitch) return;
+    setDeploymentModeMutation.mutate({
+      deploymentId: pendingLiveSwitch.deploymentId,
+      data: { mode: "live" },
+    });
   };
 
   const handleRefreshSignals = () => {
@@ -1706,6 +1844,7 @@ export const AlgoScreen = ({
       >
         <AlgoLivePage
             deployments={deployments}
+            pnlByDeploymentId={deploymentPnlById}
             candidateDrafts={candidateDrafts}
             setupDataSettled={algoSetupDataSettled}
             deploymentListUnavailable={deploymentListUnavailable}
@@ -1753,6 +1892,9 @@ export const AlgoScreen = ({
             activitySummary={activitySummary}
             focusedDeployment={focusedDeployment}
             onSelectDeployment={setFocusedDeploymentId}
+            onAddDeployment={() => setCreateModalOpen(true)}
+            onToggleDeploymentMode={handleToggleDeploymentMode}
+            modeChangePending={setDeploymentModeMutation.isPending}
             accountId={activeAccountId}
             environment={environment}
             bridgeTone={bridgeTone}
@@ -1799,6 +1941,35 @@ export const AlgoScreen = ({
                 algoIsNarrow={algoIsNarrow}
               />
             }
+          />
+          <CreateDeploymentModal
+            open={createModalOpen}
+            onClose={() => setCreateModalOpen(false)}
+            candidateDrafts={candidateDrafts}
+            selectedDraft={selectedDraft}
+            setSelectedDraftId={setSelectedDraftId}
+            deploymentName={deploymentName}
+            setDeploymentName={setDeploymentName}
+            symbolUniverseInput={symbolUniverseInput}
+            setSymbolUniverseInput={setSymbolUniverseInput}
+            createPending={createDeploymentMutation.isPending}
+            onCreate={handleCreateDeployment}
+          />
+          <ConfirmDialog
+            open={Boolean(pendingLiveSwitch)}
+            eyebrow="Switch to live"
+            title="Run this algo with real money?"
+            detail={
+              pendingLiveSwitch
+                ? `${pendingLiveSwitch.name} will switch from shadow to LIVE. It will be paused on switch — you must enable it to start placing real orders.`
+                : ""
+            }
+            confirmLabel="Switch to live"
+            destructive
+            pending={setDeploymentModeMutation.isPending}
+            onConfirm={confirmLiveSwitch}
+            onCancel={() => setPendingLiveSwitch(null)}
+            dialogTestId="algo-live-switch-confirm"
           />
       </div>
     </div>

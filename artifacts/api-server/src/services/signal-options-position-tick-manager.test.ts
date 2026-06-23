@@ -33,10 +33,17 @@ function createHarness() {
   let greeksEnabled = false;
   let releaseManageQuote = () => {};
   let manageQuoteGate: Promise<void> | null = null;
+  let nowMs = 0;
+  let activePositions = [position];
+  let listActivePositionsCalls = 0;
+  let exitOnManageQuote = false;
 
   const manager = createSignalOptionsPositionTickManager({
     listDeployments: async () => [deployment],
-    listActivePositions: async () => ({ positions: [position], events: [] }),
+    listActivePositions: async () => {
+      listActivePositionsCalls += 1;
+      return { positions: activePositions, events: [] };
+    },
     resolveProfile: () => profileWithGreeks(greeksEnabled),
     loadPyrusSignalsSettings: async () => null,
     subscribeDemand: (input, onSnapshot) => {
@@ -55,16 +62,31 @@ function createHarness() {
       if (manageQuoteGate) {
         await manageQuoteGate;
       }
+      if (exitOnManageQuote) {
+        activePositions = [];
+        return { managed: true, position: null, exited: true } as never;
+      }
       return { managed: true, position: null, exited: false } as never;
     },
+    now: () => new Date(nowMs),
+    activePositionSnapshotTtlMs: 1_000,
   });
 
   return {
     manager,
     subscriptions,
     managedMarks,
+    get listActivePositionsCalls() {
+      return listActivePositionsCalls;
+    },
+    advanceNow(ms: number) {
+      nowMs += ms;
+    },
     setGreeks(enabled: boolean) {
       greeksEnabled = enabled;
+    },
+    setExitOnManageQuote(enabled: boolean) {
+      exitOnManageQuote = enabled;
     },
     blockManageQuote() {
       manageQuoteGate = new Promise((resolve) => {
@@ -126,4 +148,37 @@ test("ticks after the swap flow through the new subscription", async () => {
   harness.subscriptions[0]?.onSnapshot(payload(104) as never);
   await settle();
   assert.deepEqual(harness.managedMarks, [103, 104]);
+});
+
+test("reconcile reuses active-position snapshot within the TTL", async () => {
+  const harness = createHarness();
+
+  await harness.manager.runOnce();
+  await harness.manager.runOnce();
+
+  assert.equal(harness.listActivePositionsCalls, 1);
+
+  harness.advanceNow(1_001);
+  await harness.manager.runOnce();
+
+  assert.equal(harness.listActivePositionsCalls, 2);
+});
+
+test("position exit invalidates the active-position snapshot", async () => {
+  const harness = createHarness();
+  harness.setExitOnManageQuote(true);
+
+  await harness.manager.runOnce();
+  assert.equal(harness.listActivePositionsCalls, 1);
+  assert.equal(harness.subscriptions.length, 1);
+
+  harness.subscriptions[0]?.onSnapshot(payload(105) as never);
+  await settle();
+  await settle();
+
+  assert.equal(harness.subscriptions[0]?.unsubscribed, true);
+  await harness.manager.runOnce();
+
+  assert.equal(harness.listActivePositionsCalls, 2);
+  assert.equal(harness.subscriptions.length, 1);
 });

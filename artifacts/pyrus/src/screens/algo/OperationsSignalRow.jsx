@@ -718,6 +718,7 @@ export const formatSpreadWidth = (widthPct) => {
 };
 
 const scoreTone = (score) => {
+  if (score == null) return CSS_COLOR.textDim;
   const numeric = Number(score);
   if (!Number.isFinite(numeric)) return CSS_COLOR.textDim;
   if (numeric >= 75) return CSS_COLOR.green;
@@ -2848,7 +2849,7 @@ export const OperationsSignalRow = ({
             ? `Data defect: quote stale during market hours (move ${signalMove.label})`
             : moveStale
               ? `Stale data - move ${signalMove.label} not from a live quote`
-              : signalMove.detail,
+              : signalMove.auditDetail || signalMove.detail,
           underlyingPrice !== MISSING_VALUE
             ? `underlying ${underlyingPrice}`
             : null,

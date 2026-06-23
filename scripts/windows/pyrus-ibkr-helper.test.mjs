@@ -18,15 +18,15 @@ const sectionBetween = (start, end) => {
   return helperSource.slice(startIndex, endIndex);
 };
 
-test("desktop agent launch claim does not long-poll", () => {
+test("desktop agent launch claim long-polls so queued launches wake immediately", () => {
   const claimJob = sectionBetween(
     "function Claim-DesktopAgentLaunchJob",
     "function Complete-DesktopAgentJob",
   );
 
-  assert.doesNotMatch(claimJob, /waitMs\s*=/);
+  assert.match(claimJob, /waitMs\s*=\s*25000/);
   assert.match(claimJob, /\/api\/ibkr\/desktop\/jobs\/claim/);
-  assert.match(claimJob, /-TimeoutSec\s+5\b/);
+  assert.match(claimJob, /-TimeoutSec\s+30\b/);
 });
 
 test("remote desktop launch runs off the claim loop in a separate process", () => {

@@ -5,6 +5,7 @@ import test from "node:test";
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
   buildStaSignalStatusSummary,
+  buildStaTableRowsSnapshot,
   hasStaCandidateAction,
   hasUsableSparklineData,
   resolveRowTickerSnapshot,
@@ -144,6 +145,47 @@ test("STA status summary separates rows, received signals, actions, and history"
     "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago",
   );
   assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5");
+});
+
+test("STA table snapshot exports computed row signals for KPI consumers", () => {
+  const snapshot = buildStaTableRowsSnapshot({
+    rows: [
+      {
+        signal: {
+          symbol: "AAPL",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-22T14:30:00.000Z",
+        },
+        candidate: { id: "candidate-aapl" },
+      },
+      {
+        signal: {
+          symbol: "MSFT",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-22T14:35:00.000Z",
+        },
+        candidate: { id: "candidate-msft" },
+      },
+    ],
+    receivedCount: 2,
+    actionCount: 1,
+    historyCount: 0,
+    activeFilterLabel: "Ready",
+  });
+
+  assert.equal(snapshot.rowCount, 2);
+  assert.deepEqual(
+    snapshot.signalRows.map((row) => row.symbol),
+    ["AAPL", "MSFT"],
+  );
+  assert.equal(snapshot.receivedCount, 2);
+  assert.equal(snapshot.actionCount, 1);
+  assert.equal(snapshot.historyCount, 0);
+  assert.equal(snapshot.activeFilterLabel, "Ready");
+  assert.match(snapshot.signature, /AAPL/);
+  assert.match(snapshot.signature, /MSFT/);
 });
 
 test("STA signal rows do not wait for companion timeframe bubbles", () => {

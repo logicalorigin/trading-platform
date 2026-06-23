@@ -4891,6 +4891,10 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
   "currentSignalAt": zod.coerce.date().nullable(),
   "currentSignalPrice": zod.number().nullable(),
+  "currentSignalClose": zod.number().nullable(),
+  "currentSignalMfePercent": zod.number().nullable(),
+  "currentSignalMaePercent": zod.number().nullable(),
+  "filterState": zod.union([zod.record(zod.string(), zod.unknown()),zod.null()]),
   "latestBarAt": zod.coerce.date().nullable(),
   "latestBarClose": zod.number().nullable(),
   "barsSinceSignal": zod.number().nullable(),
@@ -4970,6 +4974,10 @@ export const GetSignalMonitorStateResponse = zod.object({
   "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
   "currentSignalAt": zod.coerce.date().nullable(),
   "currentSignalPrice": zod.number().nullable(),
+  "currentSignalClose": zod.number().nullable(),
+  "currentSignalMfePercent": zod.number().nullable(),
+  "currentSignalMaePercent": zod.number().nullable(),
+  "filterState": zod.union([zod.record(zod.string(), zod.unknown()),zod.null()]),
   "latestBarAt": zod.coerce.date().nullable(),
   "latestBarClose": zod.number().nullable(),
   "barsSinceSignal": zod.number().nullable(),
@@ -5463,7 +5471,12 @@ export const ListAlgoDeploymentsResponse = zod.object({
   "lastError": zod.string().nullable(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}))
+})),
+  "pnlByDeployment": zod.record(zod.string(), zod.object({
+  "todayPnl": zod.number().nullable(),
+  "dailyRealizedPnl": zod.number().nullable(),
+  "openUnrealizedPnl": zod.number().nullable()
+})).optional().describe('Today\'s net P&L keyed by deployment id, for the deployment tab strip. Present only for signal-options deployments; other kinds are omitted.')
 })
 
 
@@ -5520,6 +5533,34 @@ export const PauseAlgoDeploymentQueryParams = zod.object({
 })
 
 export const PauseAlgoDeploymentResponse = zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['shadow', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Set an algo deployment's execution mode (shadow/live)
+ */
+export const SetAlgoDeploymentModeParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const SetAlgoDeploymentModeBody = zod.object({
+  "mode": zod.enum(['shadow', 'live'])
+})
+
+export const SetAlgoDeploymentModeResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
   "name": zod.string(),
@@ -5598,6 +5639,105 @@ export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
+})
+
+
+/**
+ * Computes signal-INDICATOR quality KPIs (not trading P&L) for a deployment from a rolling stored-bar backtest of its signals under the current control-panel settings. Optional draft strategy-settings fields may be passed as query parameters to preview unsaved settings; an omitted field falls back to the saved deployment config, then the signal-monitor profile defaults.
+ * @summary Get per-deployment signal-quality KPIs from a rolling signal backtest
+ */
+export const GetAlgoDeploymentSignalQualityKpisParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const GetAlgoDeploymentSignalQualityKpisQueryParams = zod.object({
+  "signalTimeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']).optional(),
+  "timeHorizon": zod.coerce.number().optional(),
+  "bosConfirmation": zod.enum(['close', 'wicks']).optional(),
+  "chochAtrBuffer": zod.coerce.number().optional(),
+  "chochBodyExpansionAtr": zod.coerce.number().optional(),
+  "chochVolumeGate": zod.coerce.number().optional()
+})
+
+export const GetAlgoDeploymentSignalQualityKpisResponse = zod.object({
+  "deploymentId": zod.string(),
+  "asOfDay": zod.string(),
+  "settings": zod.object({
+  "signalTimeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
+  "timeHorizon": zod.number(),
+  "bosConfirmation": zod.enum(['close', 'wicks']),
+  "chochAtrBuffer": zod.number(),
+  "chochBodyExpansionAtr": zod.number(),
+  "chochVolumeGate": zod.number()
+}),
+  "mtf": zod.object({
+  "enabled": zod.boolean(),
+  "requiredCount": zod.number(),
+  "timeframes": zod.array(zod.string())
+}),
+  "kpis": zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).').and(zod.object({
+  "horizonBars": zod.number(),
+  "mtfFilteredOutCount": zod.number(),
+  "perSymbol": zod.array(zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).').and(zod.object({
+  "symbol": zod.string()
+}))),
+  "byDirection": zod.object({
+  "buy": zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).'),
+  "sell": zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).')
+}).describe('The eight KPIs computed over only buy (long) signals and only sell (short) signals. Each side is a clean partition of the same observations (realized return \/ MFE \/ MAE are already signed in the signal direction).')
+})),
+  "coverage": zod.object({
+  "requestedTimeframe": zod.string(),
+  "resolvedTimeframe": zod.string(),
+  "requestedWindowDays": zod.number(),
+  "windowStart": zod.coerce.date().nullable(),
+  "windowEnd": zod.coerce.date().nullable(),
+  "requestedSymbolCount": zod.number(),
+  "evaluatedSymbolCount": zod.number(),
+  "symbolsWithBars": zod.number(),
+  "symbolsTimedOut": zod.number(),
+  "barsPerSymbolCap": zod.number(),
+  "totalBars": zod.number(),
+  "truncatedSymbolUniverse": zod.boolean(),
+  "usedTimeframeFallback": zod.boolean()
+}).describe('Actual data coverage backing the KPIs (window, timeframe, symbol slice), including any fallback applied when the requested timeframe\/window could not be fully served.'),
+  "generatedAt": zod.coerce.date()
 })
 
 
