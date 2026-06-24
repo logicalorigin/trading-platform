@@ -4547,18 +4547,16 @@ const buildWindowOverlays = (
         (indicatorWindow.direction === "short" ? "bearish" : "bullish");
       const meta = indicatorWindow.meta ?? {};
       const marketSessionKey = meta.marketSessionKey as string | undefined;
-      const marketSessionFill =
-        marketSessionKey === "pre"
-          ? withAlpha(theme.blue || theme.cyan || theme.accent || theme.textMuted, "16")
-          : marketSessionKey === "after"
-            ? withAlpha(theme.amber, "18")
-            : null;
-      const marketSessionBorder =
-        marketSessionKey === "pre"
-          ? withAlpha(theme.blue || theme.cyan || theme.accent || theme.textMuted, "32")
-          : marketSessionKey === "after"
-            ? withAlpha(theme.amber, "38")
-            : null;
+      const isExtendedSession =
+        marketSessionKey === "pre" ||
+        marketSessionKey === "after" ||
+        marketSessionKey === "overnight";
+      const marketSessionFill = isExtendedSession
+        ? withAlpha(theme.amber, "18")
+        : null;
+      const marketSessionBorder = isExtendedSession
+        ? withAlpha(theme.amber, "38")
+        : null;
       const fill =
         (meta.fillColor as string | undefined) ||
         marketSessionFill ||
