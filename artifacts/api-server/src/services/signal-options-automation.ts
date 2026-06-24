@@ -26,6 +26,7 @@ import {
 import {
   algoDeploymentsTable,
   algoStrategiesTable,
+  automationDiagnosticsTable,
   backtestRunsTable,
   db,
   executionEventsTable,
@@ -2066,7 +2067,7 @@ async function normalizeSignalOptionsDeploymentAccount(
     .returning();
   const normalized = updated ?? { ...deployment, providerAccountId };
 
-  await db.insert(executionEventsTable).values({
+  await db.insert(automationDiagnosticsTable).values({
     deploymentId: deployment.id,
     providerAccountId,
     eventType: "deployment_account_normalized",
@@ -15841,7 +15842,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
       })
       .returning();
 
-    await db.insert(executionEventsTable).values({
+    await db.insert(automationDiagnosticsTable).values({
       deploymentId: deployment.id,
       providerAccountId: deployment.providerAccountId,
       eventType: "deployment_created",
@@ -15869,7 +15870,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
       .where(eq(algoDeploymentsTable.id, deployment.id))
       .returning();
     deployment = updated ?? deployment;
-    await db.insert(executionEventsTable).values({
+    await db.insert(automationDiagnosticsTable).values({
       deploymentId: deployment.id,
       providerAccountId: deployment.providerAccountId,
       eventType: "deployment_enabled",

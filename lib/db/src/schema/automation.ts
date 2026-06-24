@@ -119,6 +119,48 @@ export const executionEventsTable = pgTable(
   ],
 );
 
+// Telemetry/diagnostics split out of the execution_events ledger. Mirrors
+// execution_events column-for-column so union-reads (listExecutionEvents,
+// findExistingEventByClientOrderId) need no row reshaping. Holds high-volume
+// noise (overnight_spot_signal_blocked/tracked) and deployment_* lifecycle/audit
+// events. The ledger keeps everything load-bearing: all signal_options_* run
+// events, overnight_spot_{shadow,live}_*, and overnight_spot_order_failed.
+export const automationDiagnosticsTable = pgTable(
+  "automation_diagnostics",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    deploymentId: uuid("deployment_id").references(() => algoDeploymentsTable.id),
+    algoRunId: uuid("algo_run_id").references(() => algoRunsTable.id),
+    providerAccountId: varchar("provider_account_id", { length: 128 }),
+    symbol: varchar("symbol", { length: 64 }),
+    eventType: text("event_type").notNull(),
+    summary: text("summary").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    // Per-deployment union branch of listExecutionEvents /
+    // findExistingEventByClientOrderId:
+    //   WHERE deployment_id = ? ORDER BY occurred_at DESC LIMIT n.
+    index("automation_diagnostics_deployment_occurred_idx").on(
+      table.deploymentId,
+      table.occurredAt.desc(),
+    ),
+    // Global (no deploymentId) union branch of listExecutionEvents.
+    index("automation_diagnostics_occurred_idx").on(table.occurredAt.desc()),
+    // Expression index for the dedup union's clientOrderId lookup. Correctness
+    // does NOT depend on this index (the JS match loop is the source of truth);
+    // it only keeps the deployment-scoped scan cheap once the table grows.
+    index("automation_diagnostics_deployment_client_order_idx").on(
+      table.deploymentId,
+      sql`(${table.payload}->>'clientOrderId')`,
+    ),
+  ],
+);
+
 export const insertAlgoStrategySchema = createInsertSchema(algoStrategiesTable);
 export const insertAlgoDeploymentSchema = createInsertSchema(algoDeploymentsTable);
 
@@ -127,3 +169,4 @@ export type AlgoRun = typeof algoRunsTable.$inferSelect;
 export type AlgoDeployment = typeof algoDeploymentsTable.$inferSelect;
 export type InsertAlgoDeployment = typeof algoDeploymentsTable.$inferInsert;
 export type ExecutionEvent = typeof executionEventsTable.$inferSelect;
+export type AutomationDiagnostic = typeof automationDiagnosticsTable.$inferSelect;

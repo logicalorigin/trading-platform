@@ -1,6 +1,7 @@
 import {
   algoDeploymentsTable,
   algoStrategiesTable,
+  automationDiagnosticsTable,
   db,
   executionEventsTable,
   shadowPositionsTable,
@@ -401,7 +402,7 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
       if (created) {
         overnightDeployment = created;
         knownOvernightRows.unshift(created);
-        await db.insert(executionEventsTable).values({
+        await db.insert(automationDiagnosticsTable).values({
           deploymentId: created.id,
           providerAccountId: created.providerAccountId,
           eventType: "deployment_created",
@@ -442,7 +443,7 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
       .where(eq(algoDeploymentsTable.id, source.id))
       .returning();
     const signalOptionsDeployment = updated ?? { ...source, config: nextConfig };
-    await db.insert(executionEventsTable).values({
+    await db.insert(automationDiagnosticsTable).values({
       deploymentId: signalOptionsDeployment.id,
       providerAccountId: signalOptionsDeployment.providerAccountId,
       eventType: "deployment_profile_split",
@@ -472,22 +473,24 @@ async function repairMixedSignalOptionsOvernightDeploymentRows(
   }
 }
 
-async function reassignOvernightSpotEvents(input: {
+async function reassignOvernightSpotRowsInTable(input: {
+  table: "execution_events" | "automation_diagnostics";
   sourceDeploymentId: string;
   overnightDeployment: AlgoDeploymentRow;
 }) {
+  const table = sql.raw(input.table);
   let movedTotal = 0;
   for (;;) {
     const result = await db.execute(sql`
       with batch as (
         select id
-        from execution_events
+        from ${table}
         where deployment_id = ${input.sourceDeploymentId}
           and event_type like 'overnight_spot_%'
         order by occurred_at desc
         limit ${OVERNIGHT_EVENT_REASSIGNMENT_BATCH_SIZE}
       )
-      update execution_events
+      update ${table}
       set deployment_id = ${input.overnightDeployment.id},
           provider_account_id = ${input.overnightDeployment.providerAccountId},
           updated_at = now()
@@ -502,6 +505,30 @@ async function reassignOvernightSpotEvents(input: {
   }
 }
 
+// Move overnight_spot_% rows from the source deployment onto the new overnight
+// deployment on split. The ledger keeps the staying overnight types
+// (shadow/live/order_failed) and diagnostics keeps the moved telemetry
+// (blocked/tracked); both must follow the deployment or the new deployment's UI
+// feed and the dedup union (which key on deployment_id) lose those rows.
+async function reassignOvernightSpotEvents(input: {
+  sourceDeploymentId: string;
+  overnightDeployment: AlgoDeploymentRow;
+}) {
+  const [movedLedger, movedDiagnostics] = await Promise.all([
+    reassignOvernightSpotRowsInTable({
+      table: "execution_events",
+      sourceDeploymentId: input.sourceDeploymentId,
+      overnightDeployment: input.overnightDeployment,
+    }),
+    reassignOvernightSpotRowsInTable({
+      table: "automation_diagnostics",
+      sourceDeploymentId: input.sourceDeploymentId,
+      overnightDeployment: input.overnightDeployment,
+    }),
+  ]);
+  return { movedLedger, movedDiagnostics };
+}
+
 function scheduleOvernightSpotEventReassignment(input: {
   sourceDeploymentId: string;
   overnightDeployment: AlgoDeploymentRow;
@@ -512,11 +539,12 @@ function scheduleOvernightSpotEventReassignment(input: {
   }
   overnightEventReassignmentInFlight.add(key);
   void reassignOvernightSpotEvents(input)
-    .then(async (movedOvernightEventCount) => {
+    .then(async ({ movedLedger, movedDiagnostics }) => {
+      const movedOvernightEventCount = movedLedger + movedDiagnostics;
       if (movedOvernightEventCount <= 0) {
         return;
       }
-      await db.insert(executionEventsTable).values({
+      await db.insert(automationDiagnosticsTable).values({
         deploymentId: input.overnightDeployment.id,
         providerAccountId: input.overnightDeployment.providerAccountId,
         eventType: "deployment_events_reassigned",
@@ -525,6 +553,8 @@ function scheduleOvernightSpotEventReassignment(input: {
           sourceDeploymentId: input.sourceDeploymentId,
           eventTypePattern: "overnight_spot_%",
           movedOvernightEventCount,
+          movedLedgerEventCount: movedLedger,
+          movedDiagnosticEventCount: movedDiagnostics,
           reason: "split_mixed_signal_options_overnight_profile",
         },
       });
@@ -904,7 +934,7 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     })
     .returning();
 
-  await db.insert(executionEventsTable).values({
+  await db.insert(automationDiagnosticsTable).values({
     deploymentId: deployment.id,
     providerAccountId: deployment.providerAccountId,
     eventType: "deployment_created",
@@ -957,7 +987,7 @@ export async function setAlgoDeploymentEnabled(input: {
     .where(eq(algoDeploymentsTable.id, input.deploymentId))
     .returning();
 
-  await db.insert(executionEventsTable).values({
+  await db.insert(automationDiagnosticsTable).values({
     deploymentId: deployment.id,
     providerAccountId: deployment.providerAccountId,
     eventType: input.enabled ? "deployment_enabled" : "deployment_paused",
@@ -1016,7 +1046,7 @@ export async function setAlgoDeploymentMode(input: {
     .where(eq(algoDeploymentsTable.id, input.deploymentId))
     .returning();
 
-  await db.insert(executionEventsTable).values({
+  await db.insert(automationDiagnosticsTable).values({
     deploymentId: deployment.id,
     providerAccountId: deployment.providerAccountId,
     eventType: "deployment_mode_changed",
@@ -1115,7 +1145,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   });
   const deployment = updated ?? existing;
 
-  await db.insert(executionEventsTable).values({
+  await db.insert(automationDiagnosticsTable).values({
     deploymentId: deployment.id,
     providerAccountId: deployment.providerAccountId,
     eventType: "deployment_strategy_settings_updated",
@@ -1143,17 +1173,55 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   };
 }
 
+// Merge two already-desc-sorted, per-branch-limited row lists into the global
+// top-`limit` by occurred_at desc. Correct because a row outside a branch's
+// top-`limit` cannot be in the global top-`limit` (each branch is desc-sorted).
+function mergeExecutionEventRows<T extends { occurredAt: Date }>(
+  ledgerRows: T[],
+  diagnosticRows: T[],
+  limit: number,
+): T[] {
+  return [...ledgerRows, ...diagnosticRows]
+    .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
+    .slice(0, limit);
+}
+
 export async function listExecutionEvents(input: ListExecutionEventsInput) {
-  const rows = await db
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+
+  // Union the ledger (execution_events) with telemetry (automation_diagnostics)
+  // so the feed is identical to before the split: the cockpit/operations UI and
+  // /algo/events still surface blocked/tracked/lifecycle events. Each branch is
+  // sorted+limited independently then merge-sorted with an outer limit — correct
+  // because a row outside a branch's top-`limit` (each branch sorted desc) can
+  // never be in the global top-`limit`. Columns mirror exactly, so the two table
+  // selects are union-compatible and executionEventToResponse maps both.
+  const ledgerQuery = db
     .select()
     .from(executionEventsTable)
     .where(
       input.deploymentId
-        ? and(eq(executionEventsTable.deploymentId, input.deploymentId))
+        ? eq(executionEventsTable.deploymentId, input.deploymentId)
         : undefined,
     )
     .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(Math.min(Math.max(input.limit ?? 100, 1), 500));
+    .limit(limit);
+  const diagnosticsQuery = db
+    .select()
+    .from(automationDiagnosticsTable)
+    .where(
+      input.deploymentId
+        ? eq(automationDiagnosticsTable.deploymentId, input.deploymentId)
+        : undefined,
+    )
+    .orderBy(desc(automationDiagnosticsTable.occurredAt))
+    .limit(limit);
+
+  const [ledgerRows, diagnosticRows] = await Promise.all([
+    ledgerQuery,
+    diagnosticsQuery,
+  ]);
+  const rows = mergeExecutionEventRows(ledgerRows, diagnosticRows, limit);
 
   return {
     events: rows.map((event) =>
@@ -1177,4 +1245,5 @@ export const __algoAutomationInternalsForTests = {
   stripOvernightSpotFromSignalOptionsConfig,
   visibleDeploymentRows,
   readSignalTimeframe,
+  mergeExecutionEventRows,
 };

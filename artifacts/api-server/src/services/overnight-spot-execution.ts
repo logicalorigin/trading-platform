@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   algoDeploymentsTable,
+  automationDiagnosticsTable,
   db,
   executionEventsTable,
   shadowOrdersTable,
@@ -40,7 +41,6 @@ const OVERNIGHT_SPOT_TRACKED_EVENT = "overnight_spot_signal_tracked";
 const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
 const OVERNIGHT_SPOT_FAILED_EVENT = "overnight_spot_order_failed";
 const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
-const OVERNIGHT_SPOT_BLOCKED_EVENT_DEDUPE_MS = 30 * 60 * 1000;
 
 type OvernightSpotDeployment = Pick<
   AlgoDeployment,
@@ -105,6 +105,9 @@ export type OvernightSpotExecutionDependencies = {
     clientOrderId: string;
   }) => Promise<Record<string, unknown> | null>;
   insertExecutionEvent: (
+    input: OvernightSpotExecutionEventInput,
+  ) => Promise<Record<string, unknown>>;
+  insertDiagnosticEvent: (
     input: OvernightSpotExecutionEventInput,
   ) => Promise<Record<string, unknown>>;
   placeShadowOrder: (
@@ -358,21 +361,17 @@ function sameOvernightSpotBlockerCodes(left: string[], right: string[]) {
 function shouldSkipDuplicateBlockedPlan(input: {
   existing: Record<string, unknown>;
   plan: OvernightSpotPlanBlocked;
-  now: Date;
-  dedupeMs?: number;
 }) {
   const eventType = asString(input.existing.eventType) ?? "";
   if (eventType !== OVERNIGHT_SPOT_BLOCKED_EVENT) {
     return false;
   }
-  const occurredAt = dateOrNull(input.existing.occurredAt);
-  if (!occurredAt) {
-    return false;
-  }
-  const dedupeMs = input.dedupeMs ?? OVERNIGHT_SPOT_BLOCKED_EVENT_DEDUPE_MS;
-  if (input.now.getTime() - occurredAt.getTime() > dedupeMs) {
-    return false;
-  }
+  // Log a blocked row only on a state TRANSITION: suppress whenever the most
+  // recent blocked event for this client order has the SAME blocker codes,
+  // regardless of age. A new block, a changed blocker reason, or a non-blocked
+  // event in between all fall through and record. This replaces the old 30-minute
+  // re-log window that re-persisted an unchanged block every half hour all night
+  // (the dominant source of execution_events bloat).
   const payload = asRecord(input.existing.payload) ?? {};
   const existingPlan = asRecord(payload.plan) ?? {};
   return sameOvernightSpotBlockerCodes(
@@ -380,6 +379,16 @@ function shouldSkipDuplicateBlockedPlan(input: {
     overnightSpotBlockerCodes(input.plan),
   );
 }
+
+// Telemetry/noise events redirected to automation_diagnostics. The ledger
+// (execution_events) keeps everything load-bearing: shadow/live execution events
+// and overnight_spot_order_failed (the latter is the order-idempotency terminal
+// marker). Keep this set in sync with the dedup union in
+// findExistingEventByClientOrderId, which reads BOTH tables.
+const OVERNIGHT_SPOT_DIAGNOSTIC_EVENT_TYPES = new Set<string>([
+  OVERNIGHT_SPOT_TRACKED_EVENT,
+  OVERNIGHT_SPOT_BLOCKED_EVENT,
+]);
 
 async function insertEvent(
   deps: OvernightSpotExecutionDependencies,
@@ -392,7 +401,10 @@ async function insertEvent(
     occurredAt: Date;
   },
 ) {
-  const event = await deps.insertExecutionEvent({
+  const write = OVERNIGHT_SPOT_DIAGNOSTIC_EVENT_TYPES.has(input.eventType)
+    ? deps.insertDiagnosticEvent
+    : deps.insertExecutionEvent;
+  const event = await write({
     deploymentId: input.deployment.id,
     providerAccountId: input.deployment.providerAccountId,
     symbol: input.symbol ? normalizeSymbol(input.symbol).toUpperCase() : null,
@@ -683,7 +695,7 @@ export async function runOvernightSpotSignalScan(
     if (
       plan.status === "blocked" &&
       existing &&
-      shouldSkipDuplicateBlockedPlan({ existing, plan, now })
+      shouldSkipDuplicateBlockedPlan({ existing, plan })
     ) {
       results.push({
         symbol: signal.symbol,
@@ -904,34 +916,88 @@ function payloadClientOrderId(payload: unknown): string | null {
   return null;
 }
 
-async function findExistingEventByClientOrderId(input: {
-  deploymentId: string;
+type ClientOrderRow = {
+  eventType?: unknown;
+  payload?: unknown;
+  occurredAt?: Date | string | number | null;
+};
+
+function clientOrderRowOccurredAtMs(row: ClientOrderRow): number {
+  const occurredAt = dateOrNull(row.occurredAt);
+  return occurredAt ? occurredAt.getTime() : 0;
+}
+
+// Pure merge+match for the dedup/idempotency lookup. Merges ledger rows
+// (execution_events: overnight_spot_{shadow,live}_* + overnight_spot_order_failed,
+// the order-idempotency terminal markers) with diagnostics rows
+// (automation_diagnostics: overnight_spot_signal_blocked, the blocked-dedup
+// marker) and returns the SINGLE newest payload-clientOrderId match across BOTH
+// tables — reproducing the pre-split single-table "first match in occurred_at
+// desc" semantics. clientOrderId is a deterministic sha256, so one id can carry
+// BOTH a blocked row (diagnostics) AND a terminal order row (ledger); the newest
+// wins, so a placed/failed order always shadows an older block -> no re-place.
+// hasShadowOrder gates a shadow-execution row on the shadow order actually
+// existing (matches the original behavior); kept as a callback so this stays a
+// pure, DB-free, testable function.
+async function selectExistingEventByClientOrderId<T extends ClientOrderRow>(input: {
+  ledgerRows: T[];
+  diagnosticRows: T[];
   clientOrderId: string;
-}) {
-  const rows = await db
-    .select()
-    .from(executionEventsTable)
-    .where(eq(executionEventsTable.deploymentId, input.deploymentId))
-    .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(1_000);
+  hasShadowOrder: (clientOrderId: string) => Promise<boolean>;
+}): Promise<T | null> {
+  const rows = [...input.ledgerRows, ...input.diagnosticRows].sort(
+    (left, right) =>
+      clientOrderRowOccurredAtMs(right) - clientOrderRowOccurredAtMs(left),
+  );
   for (const row of rows) {
     if (payloadClientOrderId(row.payload) !== input.clientOrderId) {
       continue;
     }
     const eventType = asString(row.eventType) ?? "";
     if (eventType.startsWith("overnight_spot_shadow_")) {
-      const orders = await db
-        .select({ id: shadowOrdersTable.id })
-        .from(shadowOrdersTable)
-        .where(eq(shadowOrdersTable.clientOrderId, input.clientOrderId))
-        .limit(1);
-      if (!orders[0]) {
+      if (!(await input.hasShadowOrder(input.clientOrderId))) {
         continue;
       }
     }
     return row;
   }
   return null;
+}
+
+async function findExistingEventByClientOrderId(input: {
+  deploymentId: string;
+  clientOrderId: string;
+}) {
+  // Two reads, one per table, then merge in JS. The dedup/idempotency consumers
+  // need: terminal order rows (shadow/live/failed) -> execution_events; the
+  // blocked-dedup marker (overnight_spot_signal_blocked) -> automation_diagnostics.
+  const [ledgerRows, diagnosticRows] = await Promise.all([
+    db
+      .select()
+      .from(executionEventsTable)
+      .where(eq(executionEventsTable.deploymentId, input.deploymentId))
+      .orderBy(desc(executionEventsTable.occurredAt))
+      .limit(1_000),
+    db
+      .select()
+      .from(automationDiagnosticsTable)
+      .where(eq(automationDiagnosticsTable.deploymentId, input.deploymentId))
+      .orderBy(desc(automationDiagnosticsTable.occurredAt))
+      .limit(1_000),
+  ]);
+  return selectExistingEventByClientOrderId({
+    ledgerRows: ledgerRows as ClientOrderRow[],
+    diagnosticRows: diagnosticRows as ClientOrderRow[],
+    clientOrderId: input.clientOrderId,
+    hasShadowOrder: async (clientOrderId) => {
+      const orders = await db
+        .select({ id: shadowOrdersTable.id })
+        .from(shadowOrdersTable)
+        .where(eq(shadowOrdersTable.clientOrderId, clientOrderId))
+        .limit(1);
+      return Boolean(orders[0]);
+    },
+  });
 }
 
 async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
@@ -948,6 +1014,22 @@ async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
     })
     .returning();
   return event as ExecutionEvent;
+}
+
+async function insertDiagnosticEvent(input: OvernightSpotExecutionEventInput) {
+  const [event] = await db
+    .insert(automationDiagnosticsTable)
+    .values({
+      deploymentId: input.deploymentId,
+      providerAccountId: input.providerAccountId,
+      symbol: input.symbol,
+      eventType: input.eventType,
+      summary: input.summary,
+      payload: input.payload,
+      occurredAt: input.occurredAt,
+    })
+    .returning();
+  return event;
 }
 
 async function evaluateSignals(input: {
@@ -970,6 +1052,7 @@ export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDe
   loadPositionQuantities,
   findExistingEventByClientOrderId,
   insertExecutionEvent,
+  insertDiagnosticEvent,
   placeShadowOrder,
   placeLiveOrder: placeOrder,
   notifyChanged: notifyAlgoCockpitChanged,
@@ -979,6 +1062,8 @@ export const __overnightSpotExecutionInternalsForTests = {
   signalStateToSignal,
   isSignalStateActionableForOvernightSpot,
   shouldSkipDuplicateBlockedPlan,
+  shouldSkipExistingClientOrderEvent,
+  selectExistingEventByClientOrderId,
   loadQuotes,
   resolveSignalTimeframe,
   payloadClientOrderId,
