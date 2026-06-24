@@ -87,7 +87,10 @@ export const executionEventsTable = pgTable(
     ...timestamps,
   },
   (table) => [
-    index("execution_events_deployment_idx").on(table.deploymentId),
+    // execution_events_deployment_idx (deployment_id only) dropped 2026-06-24:
+    // redundant with execution_events_deployment_occurred_idx (deployment_id,
+    // occurred_at DESC) and non-selective (n_distinct=2, idx_scan~0). See
+    // migration 20260624_drop_execution_events_deployment_idx.sql.
     index("execution_events_account_idx").on(table.providerAccountId),
     index("execution_events_symbol_idx").on(table.symbol),
     index("execution_events_occurred_at_idx").on(table.occurredAt),

@@ -3,7 +3,9 @@
 **Status:** Phase 0 (backlog delete) DONE. Phase 1 (Tasks 1–3) IMPLEMENTED + APPLIED (2026-06-24):
 `automation_diagnostics` table + indexes created in heliumdb; telemetry/lifecycle writes redirected;
 `listExecutionEvents` + `findExistingEventByClientOrderId` union both tables. **Sink = Option A.**
-Phase 2 (Task 4: 7-day prune) IMPLEMENTED (2026-06-24); goes live on the next bundle rebuild. See "Application record" below.
+Phase 2 (Task 4: 7-day prune) IMPLEMENTED (2026-06-24); goes live on the next bundle rebuild.
+Phase 3 (Task 5) MEASURED + heap reclaim DONE (2026-06-24): `VACUUM FULL` freed 3.33 GB (3,588→255 MB),
+dedup read 308ms→0.93ms. See "Application record" and Task 5 below.
 
 ## Application record (2026-06-24)
 - Migration applied to heliumdb via psql (drizzle-kit push disabled on shared DB):
@@ -141,17 +143,32 @@ never on a standalone timer, and never blocks/breaks the write path.
 **Scope:** S (was M).
 
 ### Phase 3 — read-side, MEASURE FIRST (ledger is now small)
-#### Task 5: Re-measure, fix only what's still hot
-With telemetry gone and the backlog cleared, the ledger is ~1/10th its size. Re-measure the
-former hot reads before touching them:
-- shadow mirror-repair `event_type IN (...)` (`shadow-account.ts:1261`) — likely fine on a small
-  table; if not, two-phase + partial index.
-- `listDeploymentEvents` `LIKE 'signal_options_%'` (`signal-options-automation.ts:2019`) — if
-  still slow, column projection (drop `payload`) and/or a position-state projection.
-- Drop the dead `execution_events_deployment_idx` (n_distinct=1) after confirming idx_scan ~0.
-**Acceptance:** recorder confirms execution_events is no longer a multi-second slow-query source;
-only do sub-fixes that the measurement still justifies.
-**Scope:** XS (measure) + M each (conditional).
+#### Task 5: Re-measure, fix only what's still hot — MEASURED + heap reclaim DONE (2026-06-24)
+**Measurement (live DB + flight recorder, post-split):**
+- The split is validated: pressure dropped (API latency 13.4s→1.1s, event-loop 653ms→240ms,
+  level high→watch); `automation_diagnostics` is healthy (40kB, indexed, union reads hit the index,
+  no seq-scan, no regression vs single-table).
+- ROOT remaining issue found: `execution_events` was **93% bloat** — 3,299 MB heap for only 216 MB
+  live data (Task 0's delete never shrank the file). Index-ordered `limit` reads were unaffected
+  (0.2–0.8ms) but heap-visiting reads were inflated: dedup `limit 1000` = 308ms, mirror-repair
+  `limit 10000` = 1,443ms.
+**Action taken: `VACUUM (FULL, ANALYZE) execution_events`** (lock_timeout 10s; ran during RTH on
+owner authorization). Result: total 3,588 MB→255 MB, heap 3,299→134 MB (−3.33 GB); indexes ~130 MB→
+~13 MB; dedup read 308ms→**0.93ms** (~330×); mirror-repair 1,443ms→**244ms**. Cost: the ~88s
+ACCESS EXCLUSIVE lock canceled 56 in-flight queries (statement-timeout) within that window; fully
+recovered, no errors after lock release.
+**Remaining (conditional, NOT done):**
+- Drop dead index `execution_events_deployment_idx` (n_distinct=2, idx_scan=1, redundant with the
+  `deployment+occurred` composite). Online `DROP INDEX CONCURRENTLY`; needs explicit owner OK.
+- `execution_events_account_idx` / `execution_events_overnight_deploy_occurred_idx` show 0 scans but
+  idx_scan stats reset at the 11:05 restart — defer judgment until stats cover an overnight window.
+- mirror-repair at 244ms is acceptable for a periodic TTL'd job; a partial index on
+  `(occurred_at desc) where event_type in (entry,exit)` would cut it further only if it proves hot.
+- Residual multi-second `execution_events` query times in the recorder are pool/event-loop queue-wait
+  (chronic CPU pressure — the parent db-pool-saturation workstream), not query cost.
+**Acceptance:** ✅ heap no longer bloated; hot dedup read sub-ms. Partial on the broader "no multi-second
+source" goal (gated by the parent pool/event-loop work, out of scope here).
+**Scope:** XS (measure) + S (reclaim, done).
 
 ---
 
