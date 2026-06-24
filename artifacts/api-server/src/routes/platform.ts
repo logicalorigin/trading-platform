@@ -3157,42 +3157,42 @@ router.get("/streams/bars", async (req, res) => {
     // subscription below re-delivers. Bounded so the stream always becomes ready
     // promptly. A reject still propagates (preserves prior error semantics); only
     // the hang case is newly bounded.
-    const BAR_STREAM_SNAPSHOT_BUDGET_MS = 2_000;
-    const initialBarSnapshot = await Promise.race([
-      fetchHistoricalBarSnapshotPayload({
-        symbol,
-        timeframe,
-        assetClass:
-          req.query.assetClass === "option"
-            ? "option"
-            : req.query.assetClass === "equity"
-              ? "equity"
-              : undefined,
-        providerContractId,
-        outsideRth:
-          typeof req.query.outsideRth === "string"
-            ? req.query.outsideRth === "true"
+    // Seed the live edge from the initial bridge snapshot whenever it resolves. The live
+    // subscription below only streams FUTURE ticks and does NOT re-deliver this current
+    // bar, so the one-time seed must come from here. Deliver it fire-and-forget so a slow
+    // or hung bridge can never block the stream from becoming "ready": under a slow bridge
+    // the seed "bar" event simply arrives shortly after "ready" instead of before it. The
+    // client overlays bars by timestamp regardless of event order, and writeBarPayload
+    // de-dupes by signature, so a late seed is harmless. The catch swallows the expected
+    // timeout/abort/closed-stream errors (and prevents an unhandledRejection).
+    void fetchHistoricalBarSnapshotPayload({
+      symbol,
+      timeframe,
+      assetClass:
+        req.query.assetClass === "option"
+          ? "option"
+          : req.query.assetClass === "equity"
+            ? "equity"
             : undefined,
-        source:
-          req.query.source === "midpoint" || req.query.source === "bid_ask"
-            ? req.query.source
-            : req.query.source === "trades"
-              ? "trades"
-              : undefined,
-        priority:
-          typeof req.query.priority === "string" &&
-          Number.isFinite(Number(req.query.priority))
-            ? Number(req.query.priority)
+      providerContractId,
+      outsideRth:
+        typeof req.query.outsideRth === "string"
+          ? req.query.outsideRth === "true"
+          : undefined,
+      source:
+        req.query.source === "midpoint" || req.query.source === "bid_ask"
+          ? req.query.source
+          : req.query.source === "trades"
+            ? "trades"
             : undefined,
-      }),
-      new Promise<null>((resolve) => {
-        const timer = setTimeout(() => resolve(null), BAR_STREAM_SNAPSHOT_BUDGET_MS);
-        timer.unref?.();
-      }),
-    ]);
-    if (initialBarSnapshot) {
-      await writeBarPayload(initialBarSnapshot);
-    }
+      priority:
+        typeof req.query.priority === "string" &&
+        Number.isFinite(Number(req.query.priority))
+          ? Number(req.query.priority)
+          : undefined,
+    })
+      .then((payload) => writeBarPayload(payload))
+      .catch(() => {});
     await writeEvent("ready", {
       symbol,
       timeframe,

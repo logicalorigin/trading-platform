@@ -9614,6 +9614,20 @@ function delayBarsRetry(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+// The cold-miss stored-first serve in getBarsWithDebug returns slightly-stale stored bars
+// plus a background revalidate — correct for interactive charts (stale-then-fresh), but
+// WRONG for consumers that need the complete provider-topped history in a single response
+// (backtests, signal evaluation). Allow-list the interactive chart UI families only;
+// everything else (backtest, signal-matrix, sparkline, unspecified) stays on the blocking
+// full fetch. Forward-compatible: any new chart-*/option-chart-* family is auto-included,
+// any new data-consumer family is auto-excluded.
+function barsRequestAllowsStaleFirstServe(normalizedFamily: string): boolean {
+  return (
+    normalizedFamily.startsWith("chart-") ||
+    normalizedFamily.startsWith("option-chart-")
+  );
+}
+
 export async function getBarsWithDebug(
   input: GetBarsInput,
   options: GetBarsOptions = {},
@@ -9770,14 +9784,23 @@ export async function getBarsWithDebug(
   // provider-topped result in the background, so first paint isn't gated on a
   // multi-second upstream fetch. Falls back to the blocking fetch when no stored bars
   // exist (true cold) or background hydration is disabled (kill switch / pressure).
-  if (isChartHydrationBackgroundEnabled()) {
+  if (
+    isChartHydrationBackgroundEnabled() &&
+    barsRequestAllowsStaleFirstServe(debugContext.family)
+  ) {
     const storedFirst = await getBarsImpl(sanitizedInput, {
       ...options,
       skipProviderHistoryFetch: true,
     });
     if (storedFirst.bars.length > 0) {
       barsHydrationCounters.backgroundRefresh += 1;
-      refreshBarsCache(key, sanitizedInput, options).catch(() => {});
+      // Detach the background revalidate from the request signal so it runs to completion
+      // (and populates the cache) even after the response is sent or the client
+      // disconnects — matching the stale-serve background refresh above.
+      refreshBarsCache(key, sanitizedInput, {
+        priority: options.priority,
+        family: debugContext.family,
+      }).catch(() => {});
       return withBarsDebug(storedFirst, {
         ...debugContext,
         cacheStatus: "miss",
