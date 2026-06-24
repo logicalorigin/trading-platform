@@ -417,3 +417,53 @@ test("scan routes tracked telemetry to diagnostics and places no order", async (
       result.results[0]?.status === "blocked",
   );
 });
+
+// --- Section 6.6: automation_diagnostics 7-day retention prune ---------------
+const HOUR_MS = 60 * 60 * 1000;
+const SEVEN_DAYS_MS = 7 * 24 * HOUR_MS;
+
+test("computeAutomationDiagnosticsPrune throttles within the hour and cuts at 7 days", () => {
+  const now = new Date("2026-06-24T12:00:00.000Z").getTime();
+
+  // Pruned 10 min ago -> skip.
+  assert.equal(
+    internals.computeAutomationDiagnosticsPrune(now, now - 10 * 60 * 1000)
+      .shouldPrune,
+    false,
+  );
+
+  // Never pruned, or > 1h ago, or exactly at the 1h boundary -> prune, cutoff = now - 7d.
+  for (const lastPruneMs of [0, now - 2 * HOUR_MS, now - HOUR_MS]) {
+    const decision = internals.computeAutomationDiagnosticsPrune(
+      now,
+      lastPruneMs,
+    );
+    assert.equal(decision.shouldPrune, true);
+    assert.equal(decision.cutoff.getTime(), now - SEVEN_DAYS_MS);
+  }
+});
+
+test("pruneAutomationDiagnostics deletes when due, throttles repeats, advances the window", async () => {
+  const cutoffs: Date[] = [];
+  const del = async (cutoff: Date) => {
+    cutoffs.push(cutoff);
+  };
+  // First call (module state starts at 0) is always due.
+  const t0 = new Date("2026-07-01T00:00:00.000Z");
+  await internals.pruneAutomationDiagnostics(t0, del);
+  assert.equal(cutoffs.length, 1);
+  assert.equal(cutoffs[0]?.getTime(), t0.getTime() - SEVEN_DAYS_MS);
+
+  // 5 min later -> throttled, no delete.
+  await internals.pruneAutomationDiagnostics(
+    new Date(t0.getTime() + 5 * 60 * 1000),
+    del,
+  );
+  assert.equal(cutoffs.length, 1);
+
+  // 61 min later -> due again, cutoff tracks the new now.
+  const t2 = new Date(t0.getTime() + 61 * 60 * 1000);
+  await internals.pruneAutomationDiagnostics(t2, del);
+  assert.equal(cutoffs.length, 2);
+  assert.equal(cutoffs[1]?.getTime(), t2.getTime() - SEVEN_DAYS_MS);
+});

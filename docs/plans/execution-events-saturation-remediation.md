@@ -3,7 +3,7 @@
 **Status:** Phase 0 (backlog delete) DONE. Phase 1 (Tasks 1–3) IMPLEMENTED + APPLIED (2026-06-24):
 `automation_diagnostics` table + indexes created in heliumdb; telemetry/lifecycle writes redirected;
 `listExecutionEvents` + `findExistingEventByClientOrderId` union both tables. **Sink = Option A.**
-Phase 2 (retention) is next; window = **7 days** (owner-decided 2026-06-24). See "Application record" below.
+Phase 2 (Task 4: 7-day prune) IMPLEMENTED (2026-06-24); goes live on the next bundle rebuild. See "Application record" below.
 
 ## Application record (2026-06-24)
 - Migration applied to heliumdb via psql (drizzle-kit push disabled on shared DB):
@@ -127,12 +127,18 @@ available via the chosen sink; cockpit feed behaves per the decision.
 - [ ] After deploy: execution_events write rate collapses; it stops growing on idle nights.
 
 ### Phase 2 — retention on the telemetry sink (Option A only)
-#### Task 4: Retention/partitioning for `automation_diagnostics`
-**Description:** Time-partition or TTL-prune the diagnostics table so it stays bounded; one-time
-cleanup of any seeded history. (Option B: N/A — recorder handles its own rotation.)
-**Acceptance:** diagnostics row count/age bounded; nothing that reads it starves.
-**Dependencies:** Task 3 (Option A). Design window with owner (longest tuning lookback).
-**Scope:** M
+#### Task 4: Retention/partitioning for `automation_diagnostics` — DONE (2026-06-24)
+**Description:** TTL-prune to a 7-day lookback. Implemented as `pruneAutomationDiagnostics`
+(`overnight-spot-execution.ts`), mirroring `pruneHistoricalFlowEvents`: piggybacked on the
+diagnostic write (`insertDiagnosticEvent`, fire-and-forget), self-throttled to ≤1/hour, deleting
+`occurred_at < now() - 7d` (served by `automation_diagnostics_occurred_idx`). Pure
+`computeAutomationDiagnosticsPrune` carries the throttle+cutoff logic and is unit-tested.
+**Acceptance:** ✅ diagnostics bounded to 7 days; prune runs only while the table grows (overnight),
+never on a standalone timer, and never blocks/breaks the write path.
+**Verification:** typecheck exit 0; 12/12 overnight-spot-execution tests (incl. 2 new prune tests).
+**Note:** the table currently grows only overnight (transition-only logging), so it won't approach
+7 days for a week — goes live on the next bundle rebuild; no urgent restart needed.
+**Scope:** S (was M).
 
 ### Phase 3 — read-side, MEASURE FIRST (ledger is now small)
 #### Task 5: Re-measure, fix only what's still hot

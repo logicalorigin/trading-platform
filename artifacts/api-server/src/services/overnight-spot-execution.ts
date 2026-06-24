@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import {
   algoDeploymentsTable,
   automationDiagnosticsTable,
@@ -1029,7 +1029,57 @@ async function insertDiagnosticEvent(input: OvernightSpotExecutionEventInput) {
       occurredAt: input.occurredAt,
     })
     .returning();
+  // Phase 2 retention: best-effort, self-throttled prune piggybacked on the
+  // diagnostic write. Off the write path (fire-and-forget) and never throws back.
+  void pruneAutomationDiagnostics().catch(() => {});
   return event;
+}
+
+// Keep automation_diagnostics bounded to a 7-day lookback (owner-decided
+// 2026-06-24; deeper "why blocked" history lives in the flight recorder). Mirrors
+// pruneHistoricalFlowEvents: piggybacked on the diagnostic write path and
+// self-throttled, so it runs only while the table is actually growing (overnight)
+// and never on a standalone timer.
+const AUTOMATION_DIAGNOSTICS_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+const AUTOMATION_DIAGNOSTICS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
+let lastAutomationDiagnosticsPruneMs = 0;
+
+// Pure decision so the throttle window and 7-day cutoff are unit-testable without
+// a DB or module state.
+function computeAutomationDiagnosticsPrune(
+  nowMs: number,
+  lastPruneMs: number,
+): { shouldPrune: boolean; cutoff: Date } {
+  return {
+    shouldPrune:
+      nowMs - lastPruneMs >= AUTOMATION_DIAGNOSTICS_PRUNE_INTERVAL_MS,
+    cutoff: new Date(nowMs - AUTOMATION_DIAGNOSTICS_RETENTION_MS),
+  };
+}
+
+async function deleteAutomationDiagnosticsOlderThan(cutoff: Date) {
+  return db
+    .delete(automationDiagnosticsTable)
+    .where(lt(automationDiagnosticsTable.occurredAt, cutoff));
+}
+
+async function pruneAutomationDiagnostics(
+  now = new Date(),
+  deleteOlderThan: (
+    cutoff: Date,
+  ) => Promise<unknown> = deleteAutomationDiagnosticsOlderThan,
+): Promise<void> {
+  const { shouldPrune, cutoff } = computeAutomationDiagnosticsPrune(
+    now.getTime(),
+    lastAutomationDiagnosticsPruneMs,
+  );
+  if (!shouldPrune) {
+    return;
+  }
+  // Set synchronously (before the await) so concurrent diagnostic writes can't
+  // each launch a prune in the same window.
+  lastAutomationDiagnosticsPruneMs = now.getTime();
+  await deleteOlderThan(cutoff);
 }
 
 async function evaluateSignals(input: {
@@ -1067,4 +1117,6 @@ export const __overnightSpotExecutionInternalsForTests = {
   loadQuotes,
   resolveSignalTimeframe,
   payloadClientOrderId,
+  computeAutomationDiagnosticsPrune,
+  pruneAutomationDiagnostics,
 };
