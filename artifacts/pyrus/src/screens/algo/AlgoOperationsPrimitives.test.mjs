@@ -69,19 +69,39 @@ test("buildIndicatorKpiTableRows maps All/Buy/Sell rows from overall + byDirecti
         avgMaePercent: -1.6,
       },
     },
+    byScoreBucket: {
+      high: { signalCount: 30, avgDirectionalMovePercent: 0.5 },
+      standard: { signalCount: 40, avgDirectionalMovePercent: 0.1 },
+      low: { signalCount: 20, avgDirectionalMovePercent: -0.6 },
+      unknown: { signalCount: 0 },
+    },
   };
 
   const rows = buildIndicatorKpiTableRows(metrics);
+  // Direction rows first, then High/Standard/Low (Unknown omitted — no signals).
   assert.deepEqual(
     rows.map((row) => row.key),
-    ["all", "buy", "sell"],
+    ["all", "buy", "sell", "score-high", "score-standard", "score-low"],
   );
   assert.deepEqual(
     rows.map((row) => row.label),
-    ["All", "Buy", "Sell"],
+    ["All", "Buy", "Sell", "High", "Standard", "Low"],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.group),
+    ["direction", "direction", "direction", "score", "score", "score"],
   );
 
-  const [all, buy, sell] = rows;
+  const [all, buy, sell, high, standard, low] = rows;
+  // Score rows carry a tone and read byScoreBucket; counts sum to All.
+  assert.ok(high.tone && standard.tone && low.tone);
+  assert.equal(high.signalCount, 30);
+  assert.equal(standard.signalCount, 40);
+  assert.equal(low.signalCount, 20);
+  assert.equal(
+    high.signalCount + standard.signalCount + low.signalCount,
+    all.signalCount,
+  );
   // All row reads overall fields (avgDirectionalMovePercent -> avgMovePercent).
   assert.equal(all.signalCount, 90);
   assert.equal(all.avgMovePercent, -0.13);
@@ -100,12 +120,32 @@ test("buildIndicatorKpiTableRows maps All/Buy/Sell rows from overall + byDirecti
   assert.equal(buy.signalCount + sell.signalCount, all.signalCount);
 });
 
-test("buildIndicatorKpiTableRows tolerates missing metrics / byDirection", () => {
+test("buildIndicatorKpiTableRows tolerates missing metrics / byDirection / byScoreBucket", () => {
   const rows = buildIndicatorKpiTableRows(null);
-  assert.equal(rows.length, 3);
+  // All/Buy/Sell + always-shown High/Standard/Low; Unknown omitted (no signals).
+  assert.deepEqual(
+    rows.map((row) => row.key),
+    ["all", "buy", "sell", "score-high", "score-standard", "score-low"],
+  );
   for (const row of rows) {
     assert.equal(row.signalCount, 0);
     assert.equal(row.avgMovePercent, undefined);
     assert.equal(row.avgMfePercent, undefined);
   }
+});
+
+test("buildIndicatorKpiTableRows shows Unknown score row only when it has signals", () => {
+  const rows = buildIndicatorKpiTableRows({
+    signalCount: 5,
+    byScoreBucket: {
+      high: { signalCount: 2 },
+      standard: { signalCount: 1 },
+      low: { signalCount: 1 },
+      unknown: { signalCount: 1 },
+    },
+  });
+  const unknown = rows.find((row) => row.key === "score-unknown");
+  assert.ok(unknown, "Unknown row present when populated");
+  assert.equal(unknown.group, "score");
+  assert.equal(unknown.signalCount, 1);
 });

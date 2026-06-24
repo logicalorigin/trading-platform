@@ -189,6 +189,12 @@ test("STA table snapshot exports computed row signals for KPI consumers", () => 
   assert.equal(snapshot.activeFilterLabel, "Ready");
   assert.match(snapshot.signature, /AAPL/);
   assert.match(snapshot.signature, /MSFT/);
+  // KPI score-bucket consumers need each exported row to carry the same
+  // scoreBreakdown the table renders with (tier drives the By-score buckets).
+  for (const row of snapshot.signalRows) {
+    assert.ok(row.scoreBreakdown, "snapshot row carries scoreBreakdown");
+    assert.equal(typeof row.scoreBreakdown.tier, "string");
+  }
 });
 
 test("KPI metrics are driven only by STA table-visible rows", () => {

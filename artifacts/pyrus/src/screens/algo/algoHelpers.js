@@ -2311,6 +2311,13 @@ const resolveSignalExcursionMetrics = ({
 // Signal-indicator KPIs computed from the live signal rows already on the page
 // (directional move since each signal). This keeps the header cards fed by the
 // same Signal Matrix / STA rows the user is looking at.
+const resolveScoreBucketKey = (scoreBreakdown) => {
+  const tier = String(asRecord(scoreBreakdown).tier || "").trim().toLowerCase();
+  return tier === "high" || tier === "standard" || tier === "low"
+    ? tier
+    : "unknown";
+};
+
 export const buildSignalIndicatorMetrics = (
   signalRows,
   { tickerSnapshotsBySymbol = null } = {},
@@ -2325,8 +2332,24 @@ export const buildSignalIndicatorMetrics = (
     buy: 0,
     sell: 0,
   };
+  const observationsByScoreBucket = {
+    high: [],
+    standard: [],
+    low: [],
+    unknown: [],
+  };
+  const signalCountsByScoreBucket = {
+    high: 0,
+    standard: 0,
+    low: 0,
+    unknown: 0,
+  };
   for (const row of rows) {
     const record = asRecord(row);
+    // Count every row into its score bucket (incl. directionless rows) so the
+    // per-bucket signalCounts sum to the overall (All) signalCount = rows.length.
+    const scoreBucket = resolveScoreBucketKey(record.scoreBreakdown);
+    signalCountsByScoreBucket[scoreBucket] += 1;
     const symbol = String(record.symbol || "").trim().toUpperCase();
     const snapshot = asRecord(tickerSnapshotsBySymbol?.[symbol]);
     const direction = String(record.direction || "").toLowerCase();
@@ -2358,6 +2381,7 @@ export const buildSignalIndicatorMetrics = (
     };
     observations.push(observation);
     observationsByDirection[direction].push(observation);
+    observationsByScoreBucket[scoreBucket].push(observation);
   }
 
   return {
@@ -2370,6 +2394,24 @@ export const buildSignalIndicatorMetrics = (
       sell: buildLiveSignalMoveMetrics(
         observationsByDirection.sell,
         signalCountsByDirection.sell,
+      ),
+    },
+    byScoreBucket: {
+      high: buildLiveSignalMoveMetrics(
+        observationsByScoreBucket.high,
+        signalCountsByScoreBucket.high,
+      ),
+      standard: buildLiveSignalMoveMetrics(
+        observationsByScoreBucket.standard,
+        signalCountsByScoreBucket.standard,
+      ),
+      low: buildLiveSignalMoveMetrics(
+        observationsByScoreBucket.low,
+        signalCountsByScoreBucket.low,
+      ),
+      unknown: buildLiveSignalMoveMetrics(
+        observationsByScoreBucket.unknown,
+        signalCountsByScoreBucket.unknown,
       ),
     },
     mtfFilteredOutCount: 0,

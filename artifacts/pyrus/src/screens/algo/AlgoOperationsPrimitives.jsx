@@ -142,14 +142,20 @@ export const AlgoOverviewMetric = ({
   );
 };
 
-// Indicator KPI table: directions as rows (All / Buy / Sell), KPIs as columns.
+// Indicator KPI table rows: directions (All / Buy / Sell) then, under a "By
+// score" divider, score buckets (High / Standard / Low, + Unknown when present).
 // Pure, side-effect-free row builder kept exported for unit tests. Reads straight
-// from buildSignalIndicatorMetrics output (overall fields + byDirection.{buy,sell}).
+// from buildSignalIndicatorMetrics output (overall fields + byDirection.{buy,sell}
+// + byScoreBucket.{high,standard,low,unknown}).
 export const buildIndicatorKpiTableRows = (metrics) => {
   const root = metrics && typeof metrics === "object" ? metrics : {};
   const byDirection =
     root.byDirection && typeof root.byDirection === "object"
       ? root.byDirection
+      : {};
+  const byScoreBucket =
+    root.byScoreBucket && typeof root.byScoreBucket === "object"
+      ? root.byScoreBucket
       : {};
   const pick = (source) => {
     const value = source && typeof source === "object" ? source : {};
@@ -163,11 +169,39 @@ export const buildIndicatorKpiTableRows = (metrics) => {
       avgMaePercent: value.avgMaePercent,
     };
   };
-  return [
-    { key: "all", label: "All", ...pick(root) },
-    { key: "buy", label: "Buy", ...pick(byDirection.buy) },
-    { key: "sell", label: "Sell", ...pick(byDirection.sell) },
+  const rows = [
+    { key: "all", label: "All", group: "direction", ...pick(root) },
+    { key: "buy", label: "Buy", group: "direction", ...pick(byDirection.buy) },
+    {
+      key: "sell",
+      label: "Sell",
+      group: "direction",
+      ...pick(byDirection.sell),
+    },
   ];
+  const scoreBuckets = [
+    { key: "score-high", bucket: "high", label: "High", tone: CSS_COLOR.green },
+    {
+      key: "score-standard",
+      bucket: "standard",
+      label: "Standard",
+      tone: CSS_COLOR.amber,
+    },
+    { key: "score-low", bucket: "low", label: "Low", tone: CSS_COLOR.red },
+    {
+      key: "score-unknown",
+      bucket: "unknown",
+      label: "Unknown",
+      tone: CSS_COLOR.textMuted,
+    },
+  ];
+  for (const { key, bucket, label, tone } of scoreBuckets) {
+    const picked = pick(byScoreBucket[bucket]);
+    // High/Standard/Low always shown (like Buy/Sell); Unknown only when populated.
+    if (bucket === "unknown" && picked.signalCount <= 0) continue;
+    rows.push({ key, label, group: "score", tone, ...picked });
+  }
+  return rows;
 };
 
 const INDICATOR_KPI_PLACEHOLDER = "—";
@@ -318,24 +352,56 @@ export const AlgoIndicatorKpiTable = ({
             {column.label}
           </span>
         ))}
-        {rows.map((row) => (
-          <React.Fragment key={row.key}>
-            <span
-              role="rowheader"
-              style={labelCellStyle(indicatorKpiRowLabelTone(row.key))}
-            >
-              {row.label}
-            </span>
-            {INDICATOR_KPI_COLUMNS.map((column) => {
-              const { text, color } = column.render(row);
-              return (
-                <span key={column.key} role="cell" style={dataCellStyle(color)}>
-                  {text}
+        {rows.map((row, index) => {
+          const isFirstScoreRow =
+            row.group === "score" &&
+            (index === 0 || rows[index - 1].group !== "score");
+          const labelTone =
+            row.group === "score"
+              ? row.tone
+              : indicatorKpiRowLabelTone(row.key);
+          return (
+            <React.Fragment key={row.key}>
+              {isFirstScoreRow ? (
+                <span
+                  role="presentation"
+                  style={{
+                    gridColumn: "1 / -1",
+                    color: CSS_COLOR.textMuted,
+                    fontFamily: T.sans,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    padding: cellPad,
+                    borderTop: `1px solid ${CSS_COLOR.border}`,
+                  }}
+                >
+                  By score
                 </span>
-              );
-            })}
-          </React.Fragment>
-        ))}
+              ) : null}
+              <span
+                role="rowheader"
+                data-testid={`algo-indicator-kpi-row-${row.key}`}
+                style={labelCellStyle(labelTone)}
+              >
+                {row.label}
+              </span>
+              {INDICATOR_KPI_COLUMNS.map((column) => {
+                const { text, color } = column.render(row);
+                return (
+                  <span
+                    key={column.key}
+                    role="cell"
+                    style={dataCellStyle(color)}
+                  >
+                    {text}
+                  </span>
+                );
+              })}
+            </React.Fragment>
+          );
+        })}
       </div>
       {!hasSignals ? (
         <div

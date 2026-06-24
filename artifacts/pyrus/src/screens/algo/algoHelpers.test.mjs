@@ -407,6 +407,63 @@ test("signal indicator all-count follows STA rows even when a matrix row has no 
   );
 });
 
+test("signal indicator metrics split by score bucket and bucket counts sum to All", () => {
+  const metrics = buildSignalIndicatorMetrics([
+    {
+      symbol: "AAPL",
+      direction: "buy",
+      signalPrice: 100,
+      currentPrice: 110,
+      scoreBreakdown: { tier: "high" },
+    },
+    {
+      symbol: "MSFT",
+      direction: "sell",
+      signalPrice: 200,
+      currentPrice: 180,
+      scoreBreakdown: { tier: "high" },
+    },
+    {
+      symbol: "NVDA",
+      direction: "buy",
+      signalPrice: 50,
+      currentPrice: 45,
+      scoreBreakdown: { tier: "standard" },
+    },
+    {
+      symbol: "TSLA",
+      direction: "sell",
+      signalPrice: 300,
+      currentPrice: 330,
+      scoreBreakdown: { tier: "low" },
+    },
+    // No scoreBreakdown -> lands in unknown; directionless -> no observation.
+    {
+      symbol: "SQQQ",
+      direction: null,
+      timeframe: "2m",
+    },
+  ]);
+
+  assert.equal(metrics.byScoreBucket.high.signalCount, 2);
+  assert.equal(metrics.byScoreBucket.standard.signalCount, 1);
+  assert.equal(metrics.byScoreBucket.low.signalCount, 1);
+  assert.equal(metrics.byScoreBucket.unknown.signalCount, 1);
+  // Per-bucket counts sum to the overall (All) signalCount.
+  assert.equal(
+    metrics.byScoreBucket.high.signalCount +
+      metrics.byScoreBucket.standard.signalCount +
+      metrics.byScoreBucket.low.signalCount +
+      metrics.byScoreBucket.unknown.signalCount,
+    metrics.signalCount,
+  );
+  // High bucket: AAPL +10% (win) and MSFT short 200->180 = +10% (win).
+  assert.equal(metrics.byScoreBucket.high.observationCount, 2);
+  assert.equal(metrics.byScoreBucket.high.correctnessPercent, 100);
+  // Unknown bucket has a directionless row only -> no observations.
+  assert.equal(metrics.byScoreBucket.unknown.observationCount, 0);
+});
+
 test("signal indicator metrics calculate excursion from timestamped spark bars", () => {
   const metrics = buildSignalIndicatorMetrics(
     [

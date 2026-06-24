@@ -698,8 +698,18 @@ export const buildStaTableRowsSnapshot = ({
 } = {}) => {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const signalRows = sourceRows
-    .map((row) => asRecord(row?.signal))
-    .filter((signal) => Object.keys(signal).length > 0);
+    .map((row) => {
+      const signal = asRecord(row?.signal);
+      if (Object.keys(signal).length === 0) return null;
+      return {
+        ...signal,
+        scoreBreakdown: resolveSignalScoreBreakdown({
+          signal,
+          candidate: row?.candidate,
+        }),
+      };
+    })
+    .filter(Boolean);
   const rowSignature = sourceRows
     .map((row, index) =>
       [rowStableIdentity(row) || String(index), rowSignalKpiDataSignature(row)]
