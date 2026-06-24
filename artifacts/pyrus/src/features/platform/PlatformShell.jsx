@@ -302,6 +302,13 @@ const PlatformScreenStack = memo(({
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
+        // Inverse of screenFitZoom, exposed so descendants that must run at the
+        // true (unzoomed) coordinate space — lightweight-charts, whose internal
+        // pointer mapping uses visual px and would otherwise draw the crosshair
+        // left of the cursor under zoom<1 — can counter-zoom back to net 1.
+        // Set on the OUTER (never-zoomed) wrapper so the value itself is stable
+        // and inherits down through the zoomed inner wrapper.
+        "--screen-fit-counter-zoom": screenFitZoom < 1 ? 1 / screenFitZoom : 1,
       }}
     >
       <div

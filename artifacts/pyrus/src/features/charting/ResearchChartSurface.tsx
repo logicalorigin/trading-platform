@@ -11790,6 +11790,14 @@ const ResearchChartSurfaceComponent = ({
         overflow: "hidden",
         background: theme.bg2,
         touchAction: chartInteractionConfig.touchAction,
+        // Cancel the ancestor screenFitZoom (CSS zoom<1 below the design width)
+        // so the chart subtree renders at net zoom 1. lightweight-charts maps
+        // the pointer in visual px (getBoundingClientRect) but sizes its canvas
+        // and overlays in layout px; under zoom<1 those diverge and the
+        // crosshair lands left of the cursor. At net zoom 1 visual == layout, so
+        // the crosshair tracks the pointer and overlays stay unclipped. Defaults
+        // to 1 (no-op) when no screenFitZoom ancestor is present.
+        zoom: "var(--screen-fit-counter-zoom, 1)",
       }}
     >
       {resolvedTopOverlay ? (
