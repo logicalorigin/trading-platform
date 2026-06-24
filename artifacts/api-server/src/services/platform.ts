@@ -8178,6 +8178,11 @@ type GetBarsOptions = {
   signal?: AbortSignal;
   priority?: number;
   family?: string | null;
+  // When true, getBaseBarsImpl skips the (blocking) Massive provider gap-fill and
+  // returns only already-stored + broker bars. getBarsWithDebug uses this to serve a
+  // fast stored-first response on a cold cache miss while the full provider-topped
+  // result refreshes in the background (stale-while-revalidate for first paint).
+  skipProviderHistoryFetch?: boolean;
 };
 
 type BarsHistoryPage = {
@@ -9759,6 +9764,31 @@ export async function getBarsWithDebug(
 
   const upstreamStartedAt = Date.now();
   barsHydrationCounters.cacheMiss += 1;
+
+  // Cold cache miss. Before blocking on the provider gap-fill (~BARS_PROVIDER_BUDGET_MS),
+  // serve already-stored bars immediately (stamped "warming") and refresh the full
+  // provider-topped result in the background, so first paint isn't gated on a
+  // multi-second upstream fetch. Falls back to the blocking fetch when no stored bars
+  // exist (true cold) or background hydration is disabled (kill switch / pressure).
+  if (isChartHydrationBackgroundEnabled()) {
+    const storedFirst = await getBarsImpl(sanitizedInput, {
+      ...options,
+      skipProviderHistoryFetch: true,
+    });
+    if (storedFirst.bars.length > 0) {
+      barsHydrationCounters.backgroundRefresh += 1;
+      refreshBarsCache(key, sanitizedInput, options).catch(() => {});
+      return withBarsDebug(storedFirst, {
+        ...debugContext,
+        cacheStatus: "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+        gapFilled: storedFirst.gapFilled,
+        stale: true,
+      });
+    }
+  }
+
   const value = await refreshBarsCache(key, sanitizedInput, options);
 
   return withBarsDebug(value, {
@@ -10699,6 +10729,7 @@ async function getBaseBarsImpl(
       recentCoverageNeedsGapFill);
   const needsProviderHistoryFetch =
     historicalProviderAvailable &&
+    !options.skipProviderHistoryFetch &&
     (needsGapFill ||
       chartBackfillRequest ||
       providerCursorContinuationRequested);

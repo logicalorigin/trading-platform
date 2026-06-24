@@ -3151,8 +3151,15 @@ router.get("/streams/bars", async (req, res) => {
       await writeEvent("bar", payload);
     };
 
-    await writeBarPayload(
-      await fetchHistoricalBarSnapshotPayload({
+    // Cap the initial bridge snapshot fetch so a slow/hung bridge can't block the
+    // "ready" event (and the live subscription below) indefinitely. REST /api/bars
+    // owns first paint; this snapshot only seeds the live edge, which the
+    // subscription below re-delivers. Bounded so the stream always becomes ready
+    // promptly. A reject still propagates (preserves prior error semantics); only
+    // the hang case is newly bounded.
+    const BAR_STREAM_SNAPSHOT_BUDGET_MS = 2_000;
+    const initialBarSnapshot = await Promise.race([
+      fetchHistoricalBarSnapshotPayload({
         symbol,
         timeframe,
         assetClass:
@@ -3178,7 +3185,14 @@ router.get("/streams/bars", async (req, res) => {
             ? Number(req.query.priority)
             : undefined,
       }),
-    );
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), BAR_STREAM_SNAPSHOT_BUDGET_MS);
+        timer.unref?.();
+      }),
+    ]);
+    if (initialBarSnapshot) {
+      await writeBarPayload(initialBarSnapshot);
+    }
     await writeEvent("ready", {
       symbol,
       timeframe,
