@@ -3438,6 +3438,7 @@ export const HeaderStatusCluster = ({
   const clearBridgeLaunchSessionState = useCallback(() => {
     bridgePendingAutoLoginCredentialsRef.current = null;
     setBridgeActivationActive(false);
+    setBridgeActivationStatus(null);
     setBridgeLaunchCancelInFlight(false);
     setBridgeLaunchInFlightUntil(0);
     setBridgeActivationId(null);
