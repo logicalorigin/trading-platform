@@ -9,6 +9,8 @@ import {
   recordApiRequest,
 } from "./request-metrics";
 import {
+  appendFlightRecorderJsonLine,
+  flushRuntimeFlightRecorderBuffersSync,
   rssPressureThresholdBytes,
   writeRuntimeFlightRecorderHeartbeat,
 } from "./runtime-flight-recorder";
@@ -134,6 +136,44 @@ test("flight recorder recent failures include lower 4xx errors", () => {
     assert.equal(current.requests.recentFailures[0]?.path, "/api/missing");
   } finally {
     __resetRequestMetricsForTests();
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("appendFlightRecorderJsonLine buffers and does not block the loop with a sync write", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+  const file = path.join(recorderDir, "buffer-test.jsonl");
+
+  try {
+    appendFlightRecorderJsonLine(file, { marker: "buffered-write-test", n: 1 });
+
+    // The write is buffered, NOT synchronously flushed — the file must not exist
+    // yet (this is the whole point: no appendFileSync on the hot loop).
+    let existsBeforeFlush = true;
+    try {
+      readFileSync(file, "utf8");
+    } catch {
+      existsBeforeFlush = false;
+    }
+    assert.equal(
+      existsBeforeFlush,
+      false,
+      "append must buffer, not write synchronously",
+    );
+
+    // The exit/crash sync-flush path persists the buffered line.
+    flushRuntimeFlightRecorderBuffersSync();
+    const contents = readFileSync(file, "utf8");
+    assert.match(contents, /"marker":"buffered-write-test"/);
+    assert.match(contents, /\n$/);
+  } finally {
     if (previousRecorderDir === undefined) {
       delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
     } else {

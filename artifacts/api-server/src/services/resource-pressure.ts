@@ -22,12 +22,17 @@ export type ApiResourcePressureCaps = {
 };
 
 export type ApiResourcePressureSnapshot = {
+  // Display/telemetry pressure: rss + heap + local DB pool + client + cache.
+  // Request latency is intentionally EXCLUDED so a slow external (broker/shadow)
+  // route can't latch a misleading pressure headline — a single slow sample
+  // lingered in the 5-min latency window long enough to read `watch` for minutes.
+  // Latency is still surfaced via the `api-latency` driver and the independent
+  // API-latency severity instead.
   level: ApiResourcePressureLevel;
   // Server-saturation level: rss + heap + event-loop delay + local DB pool
   // exhaustion. Trading caps gate on this, NOT on request latency — a slow
   // external (broker) route inflates request latency without saturating the
-  // server, and must not freeze signal/action work. `level` (which includes
-  // request latency) still drives general shedding and display.
+  // server, and must not freeze signal/action work.
   resourceLevel: ApiResourcePressureLevel;
   // Finite-resource saturation only: max(rss, heap, db pool) — EXCLUDES
   // event-loop delay (and request latency). Consequential user-facing sheds
@@ -51,6 +56,7 @@ export type ApiResourcePressureSnapshot = {
     apiP95LatencyMs: number | null;
     dominantSlowRouteP95Ms: number | null;
     eventLoopDelayP95Ms: number | null;
+    eventLoopUtilization: number | null;
     dbPoolActive: number | null;
     dbPoolWaiting: number | null;
     dbPoolMax: number | null;
@@ -74,6 +80,7 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   apiP95LatencyMs: null,
   dominantSlowRouteP95Ms: null,
   eventLoopDelayP95Ms: null,
+  eventLoopUtilization: null,
   dbPoolActive: null,
   dbPoolWaiting: null,
   dbPoolMax: null,
@@ -99,6 +106,16 @@ const API_ROUTE_LATENCY_HIGH_MS = 10_000;
 // finer-yield work that drops the baseline further.
 const API_EVENT_LOOP_DELAY_WATCH_MS = 150;
 const API_EVENT_LOOP_DELAY_HIGH_MS = 400;
+// Event-loop UTILIZATION thresholds (0..1): fraction of wall-clock the loop was
+// active over the window. This is the saturation signal event-loop DELAY misses —
+// a loop pegged at ~90%+ CPU by many back-to-back medium tasks shows only modest
+// delay (~200-600ms) yet starves SSE price delivery, so the headline `level` read
+// "normal" while a core was maxed. Feeds the DISPLAY level only (not
+// resourceLevel/hardResourceLevel), so trading/admission/scan gating is unchanged.
+// Initial estimates: watch clears normal busy operation; high trips only on genuine
+// saturation. Confirm against live ELU and tune if needed.
+const API_EVENT_LOOP_UTILIZATION_WATCH = 0.75;
+const API_EVENT_LOOP_UTILIZATION_HIGH = 0.9;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 const RESOURCE_HIGH_ENTER_SAMPLE_COUNT = 2;
@@ -279,6 +296,14 @@ function eventLoopDelayLevel(value: number | null): ApiResourcePressureLevel {
   return value >= API_EVENT_LOOP_DELAY_WATCH_MS ? "watch" : "normal";
 }
 
+function eventLoopUtilizationLevel(
+  value: number | null,
+): ApiResourcePressureLevel {
+  if (value === null) return "normal";
+  if (value >= API_EVENT_LOOP_UTILIZATION_HIGH) return "high";
+  return value >= API_EVENT_LOOP_UTILIZATION_WATCH ? "watch" : "normal";
+}
+
 // A full pool (active>=max) with a SINGLE transient waiter is a momentary blip at
 // normal fan-out, not sustained saturation - escalating it to "high" fires every
 // back-pressure gate (admission shed, diagnostics-persist skip, backfill skip,
@@ -404,6 +429,9 @@ function buildSnapshot(
   const eventLoopLevel = eventLoopDelayLevel(
     inputs.eventLoopDelayP95Ms ?? null,
   );
+  const eventLoopUtilizationLevelValue = eventLoopUtilizationLevel(
+    inputs.eventLoopUtilization ?? null,
+  );
   const poolLevel = dbPoolLevel({
     active: inputs.dbPoolActive,
     waiting: inputs.dbPoolWaiting,
@@ -415,11 +443,21 @@ function buildSnapshot(
   const cacheLevel = capLevel(rawCacheLevel, "watch");
   const automationCount = inputs.automationActiveLongScanCount ?? 0;
   const automationLevel = automationCount > 0 ? "high" : "normal";
+  // Request latency is EXCLUDED from `level`: a slow external (broker/shadow)
+  // route is external I/O, not server saturation, and a single slow sample
+  // lingered in the 5-min latency window long enough to latch a misleading
+  // `watch`. Latency stays visible via the `api-latency` driver below and the
+  // independent API-latency severity; trading/admission/scan gates already key on
+  // resourceLevel/hardResourceLevel (also latency-excluded).
+  // Event-loop UTILIZATION is INCLUDED in `level` (display/telemetry only) so the
+  // headline stops reading "normal" while the single loop is CPU-saturated — the
+  // freeze signature that event-loop DELAY under-reports. It is deliberately NOT
+  // added to resourceLevel/hardResourceLevel below, so shedding/gating is unchanged.
   const level = maxLevel(
     rssLevel,
     heapLevel,
     poolLevel,
-    slowRouteLevel,
+    eventLoopUtilizationLevelValue,
     clientLevel,
     cacheLevel,
   );
@@ -486,6 +524,19 @@ function buildSnapshot(
           ? null
           : `${Math.round(inputs.eventLoopDelayP95Ms)} ms`,
       score: inputs.eventLoopDelayP95Ms,
+    }),
+    driver({
+      kind: "api-event-loop-utilization",
+      label: "API event-loop utilization",
+      level: eventLoopUtilizationLevelValue,
+      detail:
+        inputs.eventLoopUtilization == null
+          ? null
+          : `${Math.round(inputs.eventLoopUtilization * 100)}%`,
+      score:
+        inputs.eventLoopUtilization == null
+          ? null
+          : Math.round(inputs.eventLoopUtilization * 1000) / 1000,
     }),
     driver({
       kind: "db-pool",
@@ -568,6 +619,7 @@ export function updateApiResourcePressure(
           key === "apiP95LatencyMs" ||
           key === "dominantSlowRouteP95Ms" ||
           key === "eventLoopDelayP95Ms" ||
+          key === "eventLoopUtilization" ||
           key === "dbPoolActive" ||
           key === "dbPoolWaiting" ||
           key === "dbPoolMax" ||

@@ -7,7 +7,7 @@ import {
   updateApiResourcePressure,
 } from "./resource-pressure";
 
-test("route latency between one and ten seconds is watch pressure", () => {
+test("route latency surfaces an api-latency driver but does not raise the saturation level", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -15,11 +15,13 @@ test("route latency between one and ten seconds is watch pressure", () => {
     dominantSlowRouteP95Ms: 6_000,
   });
 
-  assert.equal(snapshot.level, "watch");
+  // Request latency is external I/O, not server saturation: it no longer drives
+  // the headline level, but it stays visible as the api-latency driver.
+  assert.equal(snapshot.level, "normal");
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-latency")?.level, "watch");
 });
 
-test("request latency raises overall level but does not freeze trading", () => {
+test("request latency does not raise overall level and does not freeze trading", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -27,14 +29,70 @@ test("request latency raises overall level but does not freeze trading", () => {
     dominantSlowRouteP95Ms: 10_000,
   });
 
-  // Request latency still raises the overall level (general shedding/display)...
-  assert.equal(snapshot.level, "high");
+  // Request latency no longer raises the headline level (it is external I/O, not
+  // server saturation); it is surfaced as the api-latency driver instead...
+  assert.equal(snapshot.level, "normal");
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-latency")?.level, "high");
-  // ...but it is external I/O, not server saturation, so trading is not frozen.
+  // ...and it never saturates the server, so trading is not frozen.
   assert.equal(snapshot.resourceLevel, "normal");
   assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
   assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("event-loop utilization saturation raises the headline level but leaves gating untouched", () => {
+  __resetApiResourcePressureForTests();
+
+  // A loop pegged at ~95% CPU with only modest delay — the freeze signature the
+  // delay metric under-reports. Utilization must surface honestly on the headline.
+  const snapshot = updateApiResourcePressure({
+    eventLoopUtilization: 0.95,
+    // Below the 150ms delay watch line: isolates utilization as the only saturation
+    // signal, so resourceLevel staying "normal" proves ELU did not leak into gating.
+    eventLoopDelayP95Ms: 120,
+  });
+
+  assert.equal(snapshot.level, "high");
+  const eluDriver = snapshot.drivers.find(
+    (driver) => driver.kind === "api-event-loop-utilization",
+  );
+  assert.equal(eluDriver?.level, "high");
+  assert.equal(eluDriver?.detail, "95%");
+  // Gating is explicitly NOT affected: utilization feeds the display level only.
+  assert.equal(snapshot.resourceLevel, "normal");
+  assert.equal(snapshot.hardResourceLevel, "normal");
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
+  assert.equal(isApiResourcePressureHardBlock(snapshot), false);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("event-loop utilization watch band reads watch on the headline, normal stays clear", () => {
+  __resetApiResourcePressureForTests();
+
+  const watch = updateApiResourcePressure({ eventLoopUtilization: 0.8 });
+  assert.equal(watch.level, "watch");
+  assert.equal(
+    watch.drivers.find((driver) => driver.kind === "api-event-loop-utilization")
+      ?.level,
+    "watch",
+  );
+  assert.equal(watch.resourceLevel, "normal");
+
+  __resetApiResourcePressureForTests();
+
+  const normal = updateApiResourcePressure({ eventLoopUtilization: 0.5 });
+  assert.equal(normal.level, "normal");
+  // driver() drops normal-level drivers, so there is nothing to surface.
+  assert.equal(
+    normal.drivers.find(
+      (driver) => driver.kind === "api-event-loop-utilization",
+    ),
+    undefined,
+  );
 
   __resetApiResourcePressureForTests();
 });
@@ -59,7 +117,7 @@ test("rss pressure can still force high pressure without blocking signal refresh
   __resetApiResourcePressureForTests();
 });
 
-test("request latency watch does not defer signal-options action work", () => {
+test("request latency does not defer signal-options action work", () => {
   __resetApiResourcePressureForTests();
 
   const snapshot = updateApiResourcePressure({
@@ -69,7 +127,7 @@ test("request latency watch does not defer signal-options action work", () => {
 
   // A slow external/broker route inflates latency but does not saturate the
   // server, so signal/action work keeps running.
-  assert.equal(snapshot.level, "watch");
+  assert.equal(snapshot.level, "normal");
   assert.equal(snapshot.resourceLevel, "normal");
   assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
   assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);

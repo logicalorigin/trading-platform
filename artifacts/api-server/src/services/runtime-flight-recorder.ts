@@ -1,4 +1,5 @@
 import {
+  appendFile,
   appendFileSync,
   mkdirSync,
   readdirSync,
@@ -89,19 +90,124 @@ function dateKey(iso = nowIso()): string {
   return flightRecorderDateKey(iso);
 }
 
+const ensuredDirs = new Set<string>();
 function ensureDir(dirPath: string): void {
+  if (ensuredDirs.has(dirPath)) return;
   mkdirSync(dirPath, { recursive: true });
+  ensuredDirs.add(dirPath);
+}
+
+// JSONL appends are buffered in memory and flushed ASYNCHRONOUSLY so the hot
+// diagnostic path (api-db-query-slow / api-db-pool-acquire-slow — up to ~1,100
+// events/sec under DB pressure) never blocks the event loop on a synchronous
+// fs write. A synchronous appendFileSync per event was a self-amplifying
+// contributor to event-loop stalls: slow DB -> diagnostic event -> blocking
+// write -> more stall -> more slow events. Buffered lines flush every
+// FLUSH_INTERVAL_MS and synchronously on process exit/crash. Trade-off: a hard
+// kill (SIGKILL) can lose up to one flush interval of buffered diagnostic lines
+// — acceptable for the high-volume firehose; the 5s heartbeat (api-current.json,
+// atomicWrite below) stays synchronous and captures pre-crash state.
+const FLUSH_INTERVAL_MS = (() => {
+  const raw = Number.parseInt(
+    process.env["PYRUS_API_FLIGHT_RECORDER_FLUSH_MS"] ?? "1000",
+    10,
+  );
+  return Number.isFinite(raw) && raw > 0 ? raw : 1000;
+})();
+// Memory backstop: if the disk stalls and a file's buffer grows past this, drop
+// the oldest lines (counted) rather than grow unbounded.
+const MAX_BUFFERED_LINES_PER_FILE = 100_000;
+const jsonlBuffers = new Map<string, string[]>();
+const flushInFlight = new Set<string>();
+let flushTimer: NodeJS.Timeout | null = null;
+let droppedJsonLineCount = 0;
+
+function ensureFlushTimer(): void {
+  if (flushTimer) return;
+  flushTimer = setInterval(() => {
+    flushRuntimeFlightRecorderBuffers();
+  }, FLUSH_INTERVAL_MS);
+  flushTimer.unref?.();
 }
 
 export function appendFlightRecorderJsonLine(
   filePath: string,
   value: JsonRecord,
 ): void {
-  ensureDir(path.dirname(filePath));
-  appendFileSync(filePath, `${JSON.stringify(value)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  let buffer = jsonlBuffers.get(filePath);
+  if (!buffer) {
+    buffer = [];
+    jsonlBuffers.set(filePath, buffer);
+  }
+  buffer.push(`${JSON.stringify(value)}\n`);
+  if (buffer.length > MAX_BUFFERED_LINES_PER_FILE) {
+    const overflow = buffer.length - MAX_BUFFERED_LINES_PER_FILE;
+    buffer.splice(0, overflow);
+    droppedJsonLineCount += overflow;
+  }
+  ensureFlushTimer();
+}
+
+// Timer-driven async flush: one appendFile per file with all pending lines. A
+// per-file in-flight guard prevents concurrent ASYNC writes to the same file
+// from interleaving. On a transient write error the failed batch is re-queued
+// oldest-first as INDIVIDUAL line elements (not one joined string) so the
+// per-line cap still bounds memory — a single joined element would make the
+// element-count cap ineffective and let a persistent disk error grow the buffer
+// unbounded.
+export function flushRuntimeFlightRecorderBuffers(): void {
+  for (const [filePath, buffer] of jsonlBuffers) {
+    if (buffer.length === 0 || flushInFlight.has(filePath)) continue;
+    const lines = buffer.splice(0, buffer.length);
+    flushInFlight.add(filePath);
+    try {
+      ensureDir(path.dirname(filePath));
+    } catch {
+      // appendFile below will surface any directory error.
+    }
+    appendFile(
+      filePath,
+      lines.join(""),
+      { encoding: "utf8", mode: 0o600 },
+      (error) => {
+        flushInFlight.delete(filePath);
+        if (!error) return;
+        // The dir may have been removed at runtime; drop it from the memoized
+        // set so the next flush recreates it (restores the pre-memoization
+        // self-healing).
+        ensuredDirs.delete(path.dirname(filePath));
+        // Re-queue failed lines ahead of any newly-buffered ones, then re-apply
+        // the per-line cap so a persistent write failure can't grow unbounded.
+        const current = jsonlBuffers.get(filePath) ?? [];
+        const merged = lines.concat(current);
+        if (merged.length > MAX_BUFFERED_LINES_PER_FILE) {
+          const overflow = merged.length - MAX_BUFFERED_LINES_PER_FILE;
+          merged.splice(0, overflow);
+          droppedJsonLineCount += overflow;
+        }
+        jsonlBuffers.set(filePath, merged);
+      },
+    );
+  }
+}
+
+// Best-effort synchronous flush for process exit / crash handlers. Never throws.
+// Note: this does NOT consult flushInFlight, so on a crash an async flush already
+// dispatched for the same file may still be pending on the libuv threadpool; both
+// use O_APPEND (no truncation/corruption), but their relative on-disk order isn't
+// guaranteed and a not-yet-run async batch can be lost. Acceptable for a crash
+// best-effort path — every line carries a timestamp for post-mortem reordering.
+export function flushRuntimeFlightRecorderBuffersSync(): void {
+  for (const [filePath, buffer] of jsonlBuffers) {
+    if (buffer.length === 0) continue;
+    const payload = buffer.splice(0, buffer.length).join("");
+    try {
+      ensureDir(path.dirname(filePath));
+      appendFileSync(filePath, payload, { encoding: "utf8", mode: 0o600 });
+    } catch {
+      // Exit-path best-effort: nothing actionable if the final write fails.
+    }
+  }
 }
 
 function appendJsonLine(filePath: string, value: JsonRecord): void {
@@ -591,9 +697,14 @@ export function installRuntimeFlightRecorderProcessHandlers(): void {
       message: error.message,
       stack: error.stack?.split("\n").slice(0, 8).join("\n") ?? null,
     });
+    // Persist the buffered diagnostics synchronously before the process dies.
+    flushRuntimeFlightRecorderBuffersSync();
   });
   process.once("exit", (code) => {
     appendRuntimeFlightRecorderEvent("api-process-exit", { code });
+    // "exit" runs only synchronous work — flush the JSONL buffer here so a
+    // graceful shutdown never loses the tail of the diagnostic stream.
+    flushRuntimeFlightRecorderBuffersSync();
   });
 }
 
@@ -695,6 +806,7 @@ export function getRuntimeFlightRecorderDiagnostics(): {
   return {
     metrics: {
       recorderDir: dir,
+      flightRecorderDroppedJsonLineCount: droppedJsonLineCount,
       supervisorUpdatedAt,
       apiUpdatedAt,
       incidentCount: incidents.length,
