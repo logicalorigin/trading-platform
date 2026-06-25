@@ -152,3 +152,140 @@ test("runtime quote snapshots advance same-timestamp live prices", () => {
 
   delete TRADE_TICKER_INFO.EQUAL_TS_TEST;
 });
+
+test("runtime quote snapshots reject older numeric latency tie-breakers", () => {
+  delete TRADE_TICKER_INFO.NUMERIC_LATENCY_TEST;
+
+  const timestamp = "2026-06-09T18:45:00.000Z";
+  assert.equal(
+    applyRuntimeQuoteSnapshots([
+      {
+        symbol: "NUMERIC_LATENCY_TEST",
+        price: 100.25,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+        latency: {
+          apiServerReceivedAt: 1_780_000_001_000,
+        },
+      },
+    ]),
+    1,
+  );
+  assert.equal(TRADE_TICKER_INFO.NUMERIC_LATENCY_TEST.price, 100.25);
+
+  assert.equal(
+    applyRuntimeQuoteSnapshots([
+      {
+        symbol: "NUMERIC_LATENCY_TEST",
+        price: 100.31,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+        latency: {
+          apiServerReceivedAt: 1_780_000_000_000,
+        },
+      },
+    ]),
+    0,
+  );
+  assert.equal(TRADE_TICKER_INFO.NUMERIC_LATENCY_TEST.price, 100.25);
+
+  delete TRADE_TICKER_INFO.NUMERIC_LATENCY_TEST;
+});
+
+test("runtime quote snapshots reject future-dated incoming quote timestamps", () => {
+  delete TRADE_TICKER_INFO.FUTURE_INCOMING_TEST;
+
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse("2026-06-25T18:00:00.000Z");
+  try {
+    assert.equal(
+      applyRuntimeQuoteSnapshots([
+        {
+          symbol: "FUTURE_INCOMING_TEST",
+          price: 699.05,
+          updatedAt: "2026-06-25T19:00:00.000Z",
+          dataUpdatedAt: "2026-06-25T19:00:00.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:00.000Z",
+          },
+        },
+      ]),
+      0,
+    );
+    assert.equal(TRADE_TICKER_INFO.FUTURE_INCOMING_TEST.price, null);
+
+    assert.equal(
+      applyRuntimeQuoteSnapshots([
+        {
+          symbol: "FUTURE_INCOMING_TEST",
+          price: 733.2,
+          updatedAt: "2026-06-25T18:00:30.000Z",
+          dataUpdatedAt: "2026-06-25T18:00:30.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:30.000Z",
+          },
+        },
+      ]),
+      1,
+    );
+    assert.equal(TRADE_TICKER_INFO.FUTURE_INCOMING_TEST.price, 733.2);
+  } finally {
+    Date.now = realDateNow;
+    delete TRADE_TICKER_INFO.FUTURE_INCOMING_TEST;
+  }
+});
+
+test("runtime quote snapshots recover from a future-dated stored timestamp", () => {
+  delete TRADE_TICKER_INFO.FUTURE_STORED_TEST;
+
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse("2026-06-25T18:01:00.000Z");
+  try {
+    TRADE_TICKER_INFO.FUTURE_STORED_TEST = {
+      name: "FUTURE_STORED_TEST",
+      price: 733.8,
+      updatedAt: "2026-06-25T19:00:00.000Z",
+      dataUpdatedAt: "2026-06-25T19:00:00.000Z",
+      source: "massive",
+      transport: "massive_websocket",
+      latency: {
+        apiServerReceivedAt: "2026-06-25T18:00:00.000Z",
+      },
+      spark: [],
+      sparkBars: [],
+    };
+
+    assert.equal(
+      applyRuntimeQuoteSnapshots([
+        {
+          symbol: "FUTURE_STORED_TEST",
+          price: 733.2,
+          updatedAt: "2026-06-25T18:00:30.000Z",
+          dataUpdatedAt: "2026-06-25T18:00:30.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:30.000Z",
+          },
+        },
+      ]),
+      1,
+    );
+    assert.equal(TRADE_TICKER_INFO.FUTURE_STORED_TEST.price, 733.2);
+    assert.equal(
+      TRADE_TICKER_INFO.FUTURE_STORED_TEST.dataUpdatedAt,
+      "2026-06-25T18:00:30.000Z",
+    );
+  } finally {
+    Date.now = realDateNow;
+    delete TRADE_TICKER_INFO.FUTURE_STORED_TEST;
+  }
+});

@@ -50,6 +50,142 @@ test("quote stream accepts equal-timestamp live price changes", () => {
   );
 });
 
+test("quote stream accepts numeric latency tie-breakers", () => {
+  const timestamp = "2026-06-09T18:45:00.000Z";
+
+  assert.equal(
+    isQuoteSnapshotAtLeastAsFresh(
+      {
+        symbol: "AAPL",
+        price: 205.12,
+        bid: 205.11,
+        ask: 205.13,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+        latency: {
+          apiServerReceivedAt: 1_780_000_001_000,
+        },
+      },
+      {
+        symbol: "AAPL",
+        price: 205.08,
+        bid: 205.07,
+        ask: 205.09,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+        latency: {
+          apiServerReceivedAt: 1_780_000_000_000,
+        },
+      },
+    ),
+    true,
+  );
+});
+
+test("quote stream live websocket quote can unstick cached REST snapshot", () => {
+  assert.equal(
+    isQuoteSnapshotAtLeastAsFresh(
+      {
+        symbol: "SPY",
+        price: 733.2,
+        bid: 733.19,
+        ask: 733.21,
+        updatedAt: "2026-06-25T18:00:00.000Z",
+        dataUpdatedAt: "2026-06-25T18:00:00.000Z",
+        source: "massive",
+        transport: "massive_websocket",
+        freshness: "live",
+        marketDataMode: "live",
+      },
+      {
+        symbol: "SPY",
+        price: 733.8,
+        bid: 733.79,
+        ask: 733.81,
+        updatedAt: "2026-06-25T18:00:10.000Z",
+        dataUpdatedAt: "2026-06-25T18:00:10.000Z",
+        source: "massive",
+        transport: "massive_rest",
+        freshness: "stale",
+        marketDataMode: "stale",
+      },
+    ),
+    true,
+  );
+});
+
+test("quote stream rejects future-dated incoming snapshots", () => {
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse("2026-06-25T18:00:00.000Z");
+  try {
+    assert.equal(
+      isQuoteSnapshotAtLeastAsFresh(
+        {
+          symbol: "SPY",
+          price: 699.05,
+          updatedAt: "2026-06-25T19:00:00.000Z",
+          dataUpdatedAt: "2026-06-25T19:00:00.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          freshness: "live",
+          marketDataMode: "live",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:00.000Z",
+          },
+        },
+        undefined,
+      ),
+      false,
+    );
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
+test("quote stream recovers from a future-dated cached snapshot", () => {
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse("2026-06-25T18:01:00.000Z");
+  try {
+    assert.equal(
+      isQuoteSnapshotAtLeastAsFresh(
+        {
+          symbol: "SPY",
+          price: 733.2,
+          updatedAt: "2026-06-25T18:00:30.000Z",
+          dataUpdatedAt: "2026-06-25T18:00:30.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          freshness: "live",
+          marketDataMode: "live",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:30.000Z",
+          },
+        },
+        {
+          symbol: "SPY",
+          price: 733.8,
+          updatedAt: "2026-06-25T19:00:00.000Z",
+          dataUpdatedAt: "2026-06-25T19:00:00.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          freshness: "live",
+          marketDataMode: "live",
+          latency: {
+            apiServerReceivedAt: "2026-06-25T18:00:00.000Z",
+          },
+        },
+      ),
+      true,
+    );
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
 test("algo cockpit stream keeps known deployments when fallback is unavailable", () => {
   const current = {
     deployments: [

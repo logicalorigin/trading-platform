@@ -2200,13 +2200,44 @@ const readSymbolsParam = (queryKey: unknown): string[] => {
   return normalizeSymbols(rawSymbols.split(","));
 };
 
+const QUOTE_STREAM_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+const maxFiniteTimestampMs = (...values: Array<number | null>): number | null => {
+  let max: number | null = null;
+  values.forEach((value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return;
+    }
+    if (max == null) {
+      max = value;
+      return;
+    }
+    max = Math.max(max, value);
+  });
+  return max;
+};
+
 const readQuoteTimestampMs = (value: unknown): number | null => {
   if (value instanceof Date) {
     const timestamp = value.getTime();
     return Number.isFinite(timestamp) ? timestamp : null;
   }
 
-  if (typeof value === "string" || typeof value === "number") {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const abs = Math.abs(value);
+    if (abs >= 1e11) {
+      return value;
+    }
+    if (abs >= 1e9) {
+      return value * 1_000;
+    }
+    return value;
+  }
+
+  if (typeof value === "string") {
     const timestamp = Date.parse(String(value));
     return Number.isFinite(timestamp) ? timestamp : null;
   }
@@ -2223,20 +2254,61 @@ const readQuoteReceivedAtMs = (quote: QuoteSnapshot | undefined): number | null 
   );
 };
 
+const isQuoteTimestampTooFarAhead = (
+  timestampMs: number | null,
+  referenceMs: number | null,
+): boolean =>
+  timestampMs !== null &&
+  referenceMs !== null &&
+  timestampMs - referenceMs > QUOTE_STREAM_FUTURE_TOLERANCE_MS;
+
+const isLiveWebsocketQuote = (quote: QuoteSnapshot | undefined): boolean => {
+  const transport = String(quote?.transport ?? "").toLowerCase();
+  const freshness = String(quote?.freshness ?? "").toLowerCase();
+  const mode = String(quote?.marketDataMode ?? "").toLowerCase();
+  return (
+    transport.includes("websocket") &&
+    freshness !== "stale" &&
+    freshness !== "frozen" &&
+    mode !== "stale" &&
+    mode !== "frozen"
+  );
+};
+
 export const isQuoteSnapshotAtLeastAsFresh = (
   incoming: QuoteSnapshot,
   current: QuoteSnapshot | undefined,
 ): boolean => {
+  const nowMs = Date.now();
+  const timestampReferenceMs = maxFiniteTimestampMs(
+    Number.isFinite(nowMs) ? nowMs : null,
+    readQuoteReceivedAtMs(current),
+    readQuoteReceivedAtMs(incoming),
+  );
+  const rawIncomingUpdatedAt =
+    readQuoteTimestampMs(incoming.dataUpdatedAt) ??
+    readQuoteTimestampMs(incoming.updatedAt);
+  if (isQuoteTimestampTooFarAhead(rawIncomingUpdatedAt, timestampReferenceMs)) {
+    return false;
+  }
+
   if (!current) {
     return true;
   }
 
-  const incomingUpdatedAt =
-    readQuoteTimestampMs(incoming.dataUpdatedAt) ??
-    readQuoteTimestampMs(incoming.updatedAt);
-  const currentUpdatedAt =
+  const rawCurrentUpdatedAt =
     readQuoteTimestampMs(current.dataUpdatedAt) ??
     readQuoteTimestampMs(current.updatedAt);
+  if (isQuoteTimestampTooFarAhead(rawCurrentUpdatedAt, timestampReferenceMs)) {
+    return true;
+  }
+
+  if (isLiveWebsocketQuote(incoming) && !isLiveWebsocketQuote(current)) {
+    return true;
+  }
+
+  const incomingUpdatedAt = rawIncomingUpdatedAt;
+  const currentUpdatedAt = rawCurrentUpdatedAt;
 
   if (incomingUpdatedAt !== null && currentUpdatedAt !== null) {
     if (incomingUpdatedAt > currentUpdatedAt) {

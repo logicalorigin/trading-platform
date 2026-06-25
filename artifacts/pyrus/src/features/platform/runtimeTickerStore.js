@@ -185,6 +185,9 @@ const RUNTIME_QUOTE_FIELDS = new Set([
   "high",
   "low",
   "prevClose",
+  "extendedBaselinePrice",
+  "extendedBaselineAt",
+  "extendedBaselineSource",
   "volume",
   "updatedAt",
   "dataUpdatedAt",
@@ -207,8 +210,28 @@ const normalizeRuntimeTickerSymbols = (symbols) => (
 );
 
 const RUNTIME_TICKER_NOTIFY_DEBOUNCE_MS = 100;
+const RUNTIME_QUOTE_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 const pendingRuntimeTickerSnapshotSymbols = new Set();
 let runtimeTickerSnapshotFlushTimer = null;
+
+const maxFiniteNumber = (...values) => {
+  let max = null;
+  values.forEach((value) => {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    max = max == null ? value : Math.max(max, value);
+  });
+  return max;
+};
+
+const readRuntimeNowMs = () => {
+  if (typeof Date.now !== "function") {
+    return null;
+  }
+  const timestamp = Date.now();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
 
 const flushRuntimeTickerSnapshotNotifications = () => {
   if (runtimeTickerSnapshotFlushTimer != null) {
@@ -259,20 +282,10 @@ const areDateValuesEqual = (left, right) => {
     return true;
   }
 
-  const leftMs =
-    left instanceof Date
-      ? left.getTime()
-      : typeof left === "string" || typeof left === "number"
-        ? Date.parse(String(left))
-        : Number.NaN;
-  const rightMs =
-    right instanceof Date
-      ? right.getTime()
-      : typeof right === "string" || typeof right === "number"
-        ? Date.parse(String(right))
-        : Number.NaN;
+  const leftMs = readRuntimeQuoteTimestampMs(left);
+  const rightMs = readRuntimeQuoteTimestampMs(right);
 
-  if (Number.isNaN(leftMs) || Number.isNaN(rightMs)) {
+  if (leftMs === null || rightMs === null) {
     return left == null && right == null;
   }
 
@@ -285,7 +298,21 @@ const readRuntimeQuoteTimestampMs = (value) => {
     return Number.isFinite(timestamp) ? timestamp : null;
   }
 
-  if (typeof value === "string" || typeof value === "number") {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const abs = Math.abs(value);
+    if (abs >= 1e11) {
+      return value;
+    }
+    if (abs >= 1e9) {
+      return value * 1_000;
+    }
+    return value;
+  }
+
+  if (typeof value === "string") {
     const timestamp = Date.parse(String(value));
     return Number.isFinite(timestamp) ? timestamp : null;
   }
@@ -308,6 +335,11 @@ const readRuntimeReceivedAtMs = (value) => {
       : null,
   );
 };
+
+const isRuntimeQuoteTimestampTooFarAhead = (timestampMs, referenceMs) =>
+  timestampMs !== null &&
+  referenceMs !== null &&
+  timestampMs - referenceMs > RUNTIME_QUOTE_FUTURE_TOLERANCE_MS;
 
 const areSparkPointsEqual = (left, right) => {
   if (left === right) {
@@ -403,13 +435,36 @@ export const applyRuntimeTickerInfoPatch = (symbol, fallbackName, patch) => {
   const hasQuoteFields = Object.keys(patch || {}).some((field) =>
     RUNTIME_QUOTE_FIELDS.has(field),
   );
-  const currentQuoteTimestampMs = readRuntimeSnapshotTimestampMs(tradeInfo);
-  const incomingQuoteTimestampMs = readRuntimeSnapshotTimestampMs(patch);
+  const nowMs = readRuntimeNowMs();
+  const currentReceivedAtMs = readRuntimeReceivedAtMs(tradeInfo);
+  const incomingReceivedAtMs = readRuntimeReceivedAtMs(patch);
+  const timestampReferenceMs = maxFiniteNumber(
+    nowMs,
+    currentReceivedAtMs,
+    incomingReceivedAtMs,
+  );
+  const rawCurrentQuoteTimestampMs = readRuntimeSnapshotTimestampMs(tradeInfo);
+  const rawIncomingQuoteTimestampMs = readRuntimeSnapshotTimestampMs(patch);
+  const currentQuoteTimestampIsFuture = isRuntimeQuoteTimestampTooFarAhead(
+    rawCurrentQuoteTimestampMs,
+    timestampReferenceMs,
+  );
+  const incomingQuoteTimestampIsFuture = isRuntimeQuoteTimestampTooFarAhead(
+    rawIncomingQuoteTimestampMs,
+    timestampReferenceMs,
+  );
+  const currentQuoteTimestampMs = currentQuoteTimestampIsFuture
+    ? null
+    : rawCurrentQuoteTimestampMs;
+  const incomingQuoteTimestampMs = incomingQuoteTimestampIsFuture
+    ? null
+    : rawIncomingQuoteTimestampMs;
   let quotePatchIsOlder =
     hasQuoteFields &&
-    currentQuoteTimestampMs !== null &&
-    (incomingQuoteTimestampMs === null ||
-      incomingQuoteTimestampMs < currentQuoteTimestampMs);
+    (incomingQuoteTimestampIsFuture ||
+      (currentQuoteTimestampMs !== null &&
+        (incomingQuoteTimestampMs === null ||
+          incomingQuoteTimestampMs < currentQuoteTimestampMs)));
   let quotePatchHasSameTimestamp =
     hasQuoteFields &&
     currentQuoteTimestampMs !== null &&
