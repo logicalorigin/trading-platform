@@ -76,7 +76,10 @@ import {
   preloadAlgoLivePageModules,
 } from "./algo/AlgoLivePage";
 import { CreateDeploymentModal } from "./algo/CreateDeploymentModal.jsx";
-import { saveAllAlgoAdjustments } from "./algo/saveAllAlgoAdjustments";
+import {
+  planAlgoAdjustmentsSaveReconciliation,
+  saveAllAlgoAdjustments,
+} from "./algo/saveAllAlgoAdjustments";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog.jsx";
 import { buildCockpitGateSummary as buildCockpitGateSummaryImpl } from "./algoCockpitDiagnosticsModel";
 import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
@@ -1560,6 +1563,14 @@ export const AlgoScreen = ({
       return;
     }
     const deploymentId = focusedDeployment?.id;
+    // Only fire the signal-options Profile PATCH for deployments that ACTUALLY
+    // have a signal-options profile. Overnight/spot deployments still render an
+    // (editable, default-seeded) Profile section, but the backend rejects that
+    // PATCH with 400 "not a signal-options deployment". The same gate drives the
+    // post-save reconciliation so a skipped Profile leg is never marked clean or
+    // reported as saved (which silently dropped the edits while claiming success).
+    const shouldSaveProfile =
+      profileDirty && deploymentSignalOptionsBaselineAvailable;
     saveAllInFlightRef.current = true;
     setSaveAllPending(true);
     const releaseConnectionPause = beginCriticalApiMutationPause();
@@ -1574,13 +1585,7 @@ export const AlgoScreen = ({
         deploymentId,
         profileDraft,
         strategySettingsDraft,
-        // Only fire the signal-options Profile PATCH for deployments that ACTUALLY
-        // have a signal-options profile. Overnight/spot deployments still render an
-        // (editable, default-seeded) Profile section, but the backend rejects that
-        // PATCH with 400 "not a signal-options deployment" while the Signal PATCH
-        // succeeds — the perpetual "Save partially failed". Gating here skips the
-        // doomed call; the result.ok success path below still clears the dirty.
-        profileDirty: profileDirty && deploymentSignalOptionsBaselineAvailable,
+        profileDirty: shouldSaveProfile,
         strategyDirty,
         updateProfileMutation,
         updateStrategySettingsMutation,
@@ -1601,12 +1606,17 @@ export const AlgoScreen = ({
       });
 
       if (result.ok) {
-        if (profileDirty) {
+        const reconciliation = planAlgoAdjustmentsSaveReconciliation({
+          profileDirty,
+          strategyDirty,
+          profileSaved: shouldSaveProfile,
+        });
+        if (reconciliation.markProfileClean) {
           profileDraftState.markClean(
             result.profileResult?.profile || profileDraft,
           );
         }
-        if (strategyDirty) {
+        if (reconciliation.markStrategyClean) {
           strategySettingsDraftState.markClean(
             resolveStrategySignalSettings(
               result.strategyResult?.deployment || focusedDeployment,
@@ -1615,11 +1625,19 @@ export const AlgoScreen = ({
             ),
           );
         }
-        toast.push({
-          kind: "success",
-          title: "Algo settings saved",
-          body: "Signal and profile adjustments were updated.",
-        });
+        if (reconciliation.savedSections.length) {
+          toast.push({
+            kind: "success",
+            title: "Algo settings saved",
+            body: `${reconciliation.savedSections.join(" and ")} adjustments were updated.`,
+          });
+        } else if (reconciliation.profileSkipped) {
+          toast.push({
+            kind: "info",
+            title: "Profile changes not saved",
+            body: "This deployment has no signal-options profile, so those profile adjustments were not applied.",
+          });
+        }
       }
     } catch (error) {
       toast.push({

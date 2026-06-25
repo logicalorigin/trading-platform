@@ -97,12 +97,25 @@ test("Algo settings all-save reconciles drafts from mutation payloads", () => {
     allSaveBlock,
     /strategySettingsDraftState\.markClean\(\s*resolveStrategySignalSettings\(/,
   );
+  // Regression guard: the Profile leg must only be cleaned/reported when it was
+  // actually saved (gated), never on the raw profileDirty flag. Otherwise a
+  // skipped Profile PATCH silently drops the edits while claiming success.
+  assert.match(
+    allSaveBlock,
+    /planAlgoAdjustmentsSaveReconciliation\(\{\s*profileDirty,\s*strategyDirty,\s*profileSaved: shouldSaveProfile,/,
+  );
+  assert.match(allSaveBlock, /if \(reconciliation\.markProfileClean\)/);
+  assert.match(allSaveBlock, /if \(reconciliation\.markStrategyClean\)/);
+  assert.doesNotMatch(
+    allSaveBlock,
+    /Signal and profile adjustments were updated\./,
+  );
 });
 
 test("Algo settings save helper is not lazy-loaded at click time", () => {
   assert.match(
     source,
-    /import \{ saveAllAlgoAdjustments \} from "\.\/algo\/saveAllAlgoAdjustments";/,
+    /import \{[\s\S]*?\bsaveAllAlgoAdjustments\b[\s\S]*?\} from "\.\/algo\/saveAllAlgoAdjustments";/,
   );
   assert.doesNotMatch(
     source,

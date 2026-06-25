@@ -108,3 +108,27 @@ export const saveAllAlgoAdjustments = async ({
 
   return { ok: true, ...results };
 };
+
+// Decide which draft sections may be marked clean and reported as saved after a
+// successful all-adjustments save. The Profile PATCH is only sent for deployments
+// that actually own a signal-options profile (profileSaved); for every other
+// deployment it is skipped server-side, so its dirty edits must NOT be marked
+// clean or reported as saved -- doing so silently dropped the edits while the UI
+// claimed success. profileSkipped lets the caller give honest feedback instead.
+export const planAlgoAdjustmentsSaveReconciliation = ({
+  profileDirty,
+  strategyDirty,
+  profileSaved,
+}) => {
+  const markProfileClean = Boolean(profileSaved);
+  const markStrategyClean = Boolean(strategyDirty);
+  const savedSections = [];
+  if (markStrategyClean) savedSections.push("Signal");
+  if (markProfileClean) savedSections.push("Profile");
+  return {
+    markProfileClean,
+    markStrategyClean,
+    savedSections,
+    profileSkipped: Boolean(profileDirty) && !markProfileClean,
+  };
+};
