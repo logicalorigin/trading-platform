@@ -452,6 +452,91 @@ test("stream deltas latch direction across directionless re-evaluations", () => 
   });
 });
 
+test("stream deltas do not regress a latched signal to an older recompute", () => {
+  withSignalMonitorBarEvaluationEnabled(() => {
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+    const scope =
+      __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+        environment: "shadow",
+        symbols: ["AAPL"],
+        timeframes: ["5m"],
+      });
+    const events: { event: string; states?: Record<string, unknown>[] }[] = [];
+    const subscription =
+      __signalMonitorInternalsForTests.createSignalMonitorMatrixStreamSubscriptionForTests(
+        {
+          scope,
+          profile: profile(),
+          prime: false,
+          onEvent(event) {
+            events.push(event as never);
+          },
+        },
+      );
+
+    // Latch the canonical signal: buy @ 14:55.
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe);
+      },
+    });
+    assert.equal(events[0]?.states?.[0]?.["currentSignalDirection"], "buy");
+
+    // An under-warmed stream recompute rediscovers an OLDER, opposite crossover
+    // (sell @ 06-01). A genuine new signal only moves signalAt forward, so this
+    // is a regression and must NOT overwrite the newer latched buy (the STA
+    // freeze / bad-sort / weeks-old-survives-refresh bug). Bar metadata still
+    // advances so the cell is not frozen.
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe, {
+          currentSignalDirection: "sell",
+          currentSignalAt: new Date("2026-06-01T14:55:00.000Z"),
+          currentSignalPrice: 90,
+          barsSinceSignal: 200,
+          fresh: false,
+          latestBarAt: new Date("2026-06-09T15:10:00.000Z"),
+        });
+      },
+    });
+    const regressed = events.at(-1)?.states?.[0];
+    assert.equal(regressed?.["currentSignalDirection"], "buy");
+    assert.equal(
+      (regressed?.["currentSignalAt"] as Date).toISOString(),
+      "2026-06-09T14:55:00.000Z",
+    );
+
+    // A genuinely NEWER crossover (sell @ 15:05) is a real flip and MUST win.
+    __signalMonitorInternalsForTests.emitSignalMonitorMatrixStreamAggregateDelta({
+      message: { symbol: "AAPL" },
+      evaluatedAt,
+      evaluateState(input) {
+        return directionalStreamState(input.symbol, input.timeframe, {
+          currentSignalDirection: "sell",
+          currentSignalAt: new Date("2026-06-09T15:05:00.000Z"),
+          currentSignalPrice: 99,
+          barsSinceSignal: 1,
+          fresh: true,
+          latestBarAt: new Date("2026-06-09T15:10:00.000Z"),
+        });
+      },
+    });
+    const advanced = events.at(-1)?.states?.[0];
+    assert.equal(advanced?.["currentSignalDirection"], "sell");
+    assert.equal(
+      (advanced?.["currentSignalAt"] as Date).toISOString(),
+      "2026-06-09T15:05:00.000Z",
+    );
+
+    subscription.unsubscribe();
+    __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  });
+});
+
 test("stale evaluations keep signal identity and report data_stale", () => {
   withSignalMonitorBarEvaluationEnabled(() => {
     __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();

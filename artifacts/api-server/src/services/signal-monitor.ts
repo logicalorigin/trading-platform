@@ -1067,8 +1067,6 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
       state.currentSignalDirection === "sell")
       ? state.currentSignalDirection
       : null;
-  const displayDirection =
-    storedDirection ?? trendDirectionToSignalDirection(state.trendDirection);
   const hasStoredSignal = Boolean(storedDirection && state.currentSignalAt);
   // Backend-authored actionability on REST, mirroring the SSE matrix stream,
   // so every transport carries the same verdict. freshWindowBars only feeds
@@ -1087,7 +1085,13 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     profileId: state.profileId,
     symbol: state.symbol,
     timeframe: resolveSignalMonitorTimeframe(state.timeframe),
-    currentSignalDirection: displayDirection,
+    // Only surface a directional SIGNAL when a real crossover is stored (a
+    // direction AND a currentSignalAt). Trend bias is carried separately in
+    // `trendDirection`; folding it into currentSignalDirection (or latching a
+    // direction whose signalAt was cleared) made trend-only lanes render as a
+    // signal with no bars-since, because currentSignalAt/barsSinceSignal below
+    // stay null unless hasStoredSignal. Keep all three consistent.
+    currentSignalDirection: hasStoredSignal ? storedDirection : null,
     currentSignalAt: hasStoredSignal ? (state.currentSignalAt ?? null) : null,
     currentSignalPrice: hasStoredSignal
       ? numericValueOrNull(state.currentSignalPrice)
@@ -3897,8 +3901,22 @@ const SIGNAL_MONITOR_BACKFILL_REFRESH_MS: Record<
 // Dedicated, intentionally small concurrency budget for the refresher's
 // loadSignalMonitorCompletedBars calls. Kept independent of (and far below)
 // SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT so the off-path backfill cannot
-// crowd out evaluation / chart-serving bar loads.
-const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = 3;
+// crowd out evaluation / chart-serving bar loads. Still bounded overall by the
+// shared SIGNAL_MONITOR_BACKGROUND_DB_CONCURRENCY gate (default 6), so this only
+// governs how much of that combined background budget backfill may claim.
+//
+// Default nudged 3 -> 4 (override via SIGNAL_MONITOR_BACKFILL_CONCURRENCY): the
+// per-cell durable read was the dominant event-loop cost via full-row
+// deserialization, now ~halved by projecting only the 6 consumed bar_cache
+// columns (loadStoredMarketBars). Cheaper/faster gated ops free their slot
+// sooner, so a modest bump improves pre-market history coverage (today's 1m gap
+// that 2m synthesis needs) without re-introducing the documented pool
+// saturation. Kept <= gate-1 so the persist fan-out always retains headroom;
+// raise further only with pool metrics (dbPool active/waiting) in view.
+const SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT = (() => {
+  const parsed = Number(process.env.SIGNAL_MONITOR_BACKFILL_CONCURRENCY);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 4;
+})();
 // Cap warmed-cell refreshes per invocation so steady-state upkeep does not fire
 // a repeating whole-universe refresh. Cold cells are not coverage-capped: every
 // never-warmed cell must be selected on startup so all six frames become
@@ -6862,6 +6880,21 @@ export function isSignalMonitorBarEvaluationEnabled(
   );
 }
 
+// Minimal-read-set reconcile rewrite. Default ON now that legacy/minimal
+// behaviour-equality is proven (signal-monitor-reconcile-minimal-readset.test.ts:
+// identical pass counts + written values, incl. the multi-source trust case).
+// Kill-switch: set PYRUS_SIGNAL_MONITOR_RECONCILE_MINIMAL_READSET to a falsey
+// value ("0"/"false") to fall back to the legacy full-history build.
+export function isSignalMonitorReconcileMinimalReadSetEnabled(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): boolean {
+  const raw =
+    env["PYRUS_SIGNAL_MONITOR_RECONCILE_MINIMAL_READSET"] ??
+    env["SIGNAL_MONITOR_RECONCILE_MINIMAL_READSET"];
+  if (raw === undefined || raw === "") return true;
+  return truthySignalMonitorEnv(raw);
+}
+
 function readSignalMonitorPositiveInteger(
   value: string | undefined,
   fallback: number,
@@ -7898,25 +7931,14 @@ function withSignalMonitorMatrixStreamActionability<
   } as T;
 }
 
-// Wire-side variant of applyStoredSignalDirectionLatch for stream emission
-// (evaluation-result shape, number prices). Same semantics: a directionless
-// re-evaluation must not erase a latched buy/sell on the stream any more than
-// it may in the DB.
-function latchSignalMonitorMatrixStreamState(
+// Keep the EXISTING latched signal identity (direction, signalAt, prices,
+// filter) and adopt only the candidate's fresher bar metadata + fresh flag.
+// Shared by the directionless-erase guard and the regression guard below.
+function mergeLatchedSignalMonitorMatrixStreamSignal(
   existing: SignalMonitorMatrixStreamState | null,
   state: SignalMonitorMatrixStateResult,
+  existingDirection: SignalMonitorDirection,
 ): SignalMonitorMatrixStateResult {
-  if (state.currentSignalDirection) {
-    return state;
-  }
-  const existingDirection =
-    existing?.currentSignalDirection === "buy" ||
-    existing?.currentSignalDirection === "sell"
-      ? existing.currentSignalDirection
-      : null;
-  if (!existingDirection) {
-    return state;
-  }
   const currentSignalAt = existing?.currentSignalAt ?? state.currentSignalAt;
   return {
     ...state,
@@ -7948,6 +7970,60 @@ function latchSignalMonitorMatrixStreamState(
     // The eval-result union has no branch for "latched identity on a
     // directionless evaluation"; the merged shape is structurally valid.
   } as SignalMonitorMatrixStateResult;
+}
+
+// Wire-side variant of applyStoredSignalDirectionLatch for stream emission
+// (evaluation-result shape, number prices). Two guards:
+//  1. A directionless re-evaluation must not erase a latched buy/sell.
+//  2. A directional recompute must not REGRESS the latched signal to an OLDER
+//     crossover (or flip direction at an equal/older timestamp). The live stream
+//     recompute runs off a shorter, under-warmed bar series than the canonical
+//     producer (loadSignalMonitorStreamCompletedBars caps history and returns []
+//     for 1d), so it can rediscover a stale/opposite crossover and would
+//     otherwise overwrite — and PERSIST (see emit-delta persist) — that stale
+//     signal over the correct one. That is the root of the STA "freeze", the bad
+//     5m sort, and weeks-old signals surviving a refresh. A genuine new signal
+//     only moves currentSignalAt forward, so older / equal-but-flipped = a
+//     regression: keep the existing identity, adopt only the candidate's bars.
+function latchSignalMonitorMatrixStreamState(
+  existing: SignalMonitorMatrixStreamState | null,
+  state: SignalMonitorMatrixStateResult,
+): SignalMonitorMatrixStateResult {
+  const existingDirection =
+    existing?.currentSignalDirection === "buy" ||
+    existing?.currentSignalDirection === "sell"
+      ? existing.currentSignalDirection
+      : null;
+
+  if (state.currentSignalDirection) {
+    if (existingDirection) {
+      const existingMs = dateOrNull(existing?.currentSignalAt)?.getTime() ?? null;
+      const candidateMs = dateOrNull(state.currentSignalAt)?.getTime() ?? null;
+      const regresses =
+        existingMs != null &&
+        candidateMs != null &&
+        (candidateMs < existingMs ||
+          (candidateMs === existingMs &&
+            state.currentSignalDirection !== existingDirection));
+      if (regresses) {
+        return mergeLatchedSignalMonitorMatrixStreamSignal(
+          existing,
+          state,
+          existingDirection,
+        );
+      }
+    }
+    return state;
+  }
+
+  if (!existingDirection) {
+    return state;
+  }
+  return mergeLatchedSignalMonitorMatrixStreamSignal(
+    existing,
+    state,
+    existingDirection,
+  );
 }
 
 function recordSignalMonitorMatrixStreamSnapshot(
@@ -8724,6 +8800,18 @@ const SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL = sql`(
   'ibkr-websocket-derived'
 )`;
 
+// Source-preference rank for the trusted bar_cache LATERAL (lower = preferred).
+// Factored out so the minimal-read-set reconcile build evaluates trust and the
+// close-override against the SAME single best-source bar the legacy build uses.
+const SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCE_RANK_SQL = sql`
+  CASE bar_cache.source
+    WHEN 'massive-history' THEN 0
+    WHEN 'massive-websocket' THEN 1
+    WHEN 'ibkr-websocket-derived' THEN 2
+    WHEN 'massive-delayed-websocket' THEN 3
+    ELSE 9
+  END`;
+
 const SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL = sql`
   COALESCE(
     NULLIF(signal_monitor_events.payload->>'signalBarAt', '')::timestamptz,
@@ -8788,16 +8876,49 @@ function trustedSignalMonitorCanonicalEventsSql(profileId: string) {
     )`;
 }
 
+type SignalMonitorReconcileTx = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
+
 async function reconcileSignalMonitorSymbolStatesForProfile(
   profile: DbSignalMonitorProfile,
   dryRun: boolean,
 ): Promise<SignalMonitorStateReconciliationCounts> {
+  return db.transaction((tx) =>
+    reconcileSignalMonitorSymbolStatesForProfileInTx(tx, profile, dryRun),
+  );
+}
+
+export async function reconcileSignalMonitorSymbolStatesForProfileInTx(
+  tx: SignalMonitorReconcileTx,
+  profile: DbSignalMonitorProfile,
+  dryRun: boolean,
+): Promise<SignalMonitorStateReconciliationCounts> {
   const countOf = async (query: ReturnType<typeof sql>): Promise<number> => {
-    const result = await db.execute(query);
+    const result = await tx.execute(query);
     return Number(result.rows?.[0]?.["count"] ?? 0);
   };
 
-  const trustedEvents = trustedSignalMonitorCanonicalEventsSql(profile.id);
+  // The trusted-canonical-events subquery runs a per-event LATERAL into the
+  // multi-GB bar_cache; it was previously inlined into ~6 separate count/update
+  // statements, each re-running it and getting cancelled at the 6s statement
+  // timeout (saturating the pool at startup). Materialize it ONCE into an indexed
+  // temp table and reuse it across every pass — identical rows, computed once.
+  // statement_timeout is raised transaction-locally so this single startup-only
+  // build can finish; the temp table drops on commit.
+  await tx.execute(sql`SET LOCAL statement_timeout = '120s'`);
+  await tx.execute(sql`
+    CREATE TEMP TABLE tmp_trusted_events ON COMMIT DROP AS
+    SELECT id, symbol, timeframe, direction, signal_at, signal_price, filter_state, close
+    FROM ${trustedSignalMonitorCanonicalEventsSql(profile.id)} AS trusted_signal_monitor_events
+  `);
+  await tx.execute(
+    sql`CREATE INDEX ON tmp_trusted_events (symbol, timeframe, signal_at DESC, id DESC)`,
+  );
+  await tx.execute(
+    sql`CREATE INDEX ON tmp_trusted_events (symbol, timeframe, direction, signal_at)`,
+  );
+  const trustedEvents = sql`tmp_trusted_events`;
   const identityLagJoin = sql`
     (
       SELECT DISTINCT ON (symbol, timeframe)
@@ -8836,7 +8957,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${identityLagJoin}`,
   );
   if (!dryRun && identityAdopted > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET current_signal_direction = e.direction,
           current_signal_at = e.signal_at,
@@ -8870,7 +8991,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${signalCloseBackfillJoin}`,
   );
   if (!dryRun && signalCloseBackfilled > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET current_signal_close = e.close,
           current_signal_mfe_percent = NULL,
@@ -8900,7 +9021,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${filterStateBackfillJoin}`,
   );
   if (!dryRun && filterStateBackfilled > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET filter_state = e.filter_state,
           updated_at = now()
@@ -8927,7 +9048,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${latestCloseBackfillJoin}`,
   );
   if (!dryRun && latestCloseBackfilled > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET latest_bar_close = trusted_latest.close,
           fresh = false,
@@ -9002,7 +9123,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM ${latestBarAdvanceCandidates}`,
   );
   if (!dryRun && latestBarAdvanced > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET latest_bar_at = latest_bar_candidates.starts_at,
           latest_bar_close = latest_bar_candidates.close,
@@ -9046,7 +9167,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${untrustedIdentityWhere}`,
   );
   if (!dryRun && untrustedIdentityCleared > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET current_signal_direction = NULL,
           current_signal_at = NULL,
@@ -9081,7 +9202,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${barsUndercountWhere}`,
   );
   if (!dryRun && barsRecomputed > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET bars_since_signal =
             GREATEST(COALESCE(s.bars_since_signal, 0), ${elapsedBars}),
@@ -9100,7 +9221,7 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
     sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${freshClearWhere}`,
   );
   if (!dryRun && freshCleared > 0) {
-    await db.execute(sql`
+    await tx.execute(sql`
       UPDATE signal_monitor_symbol_states AS s
       SET fresh = false, updated_at = now()
       ${freshClearWhere}
@@ -9120,6 +9241,461 @@ async function reconcileSignalMonitorSymbolStatesForProfile(
   };
 }
 
+// Minimal-read-set reconcile (gated by isSignalMonitorReconcileMinimalReadSetEnabled).
+// Behaviour-identical to the legacy single-table build, but probes bar_cache only
+// for the ~one latest trusted event per (symbol,timeframe) instead of every event.
+// See docs/plans/signal-monitor-reconcile-minimal-read-set.md.
+async function reconcileSignalMonitorSymbolStatesForProfileMinimal(
+  profile: DbSignalMonitorProfile,
+  dryRun: boolean,
+): Promise<SignalMonitorStateReconciliationCounts> {
+  return db.transaction((tx) =>
+    reconcileSignalMonitorSymbolStatesForProfileMinimalInTx(tx, profile, dryRun),
+  );
+}
+
+export async function reconcileSignalMonitorSymbolStatesForProfileMinimalInTx(
+  tx: SignalMonitorReconcileTx,
+  profile: DbSignalMonitorProfile,
+  dryRun: boolean,
+): Promise<SignalMonitorStateReconciliationCounts> {
+    const countOf = async (query: ReturnType<typeof sql>): Promise<number> => {
+      const result = await tx.execute(query);
+      return Number(result.rows?.[0]?.["count"] ?? 0);
+    };
+
+    // Keep the raised timeout until the new end-to-end runtime is measured
+    // (dev cold worst-case ~18s; lower to a measured value in a later step).
+    await tx.execute(sql`SET LOCAL statement_timeout = '120s'`);
+
+    // (A) Membership: ALL trusted events, NO close-override probe. Trust = the
+    // three cheap JSONB branches OR a gated source-ranked LIMIT-1 bar_cache check
+    // (branch 4) evaluated ONLY for events failing all three cheap branches (the
+    // OR short-circuits the SubPlan, so today this scans signal_monitor_events
+    // with ~0 bar_cache probes). signal_bar_at is computed once so every probe
+    // keys off the identical bar anchor.
+    await tx.execute(sql`
+      CREATE TEMP TABLE tmp_trusted_membership ON COMMIT DROP AS
+      SELECT
+        signal_monitor_events.id,
+        signal_monitor_events.symbol,
+        signal_monitor_events.timeframe,
+        signal_monitor_events.direction,
+        signal_monitor_events.signal_at,
+        signal_monitor_events.signal_price,
+        signal_monitor_events.payload->'filterState' AS filter_state,
+        signal_monitor_events.close AS event_close,
+        ${SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL} AS signal_bar_at
+      FROM signal_monitor_events
+      WHERE signal_monitor_events.profile_id = ${profile.id}
+        AND signal_monitor_events.direction IN ('buy', 'sell')
+        AND signal_monitor_events.close IS NOT NULL
+        AND (
+          signal_monitor_events.payload->'sourceIntegrity'->>'trusted' = 'true'
+          OR signal_monitor_events.payload->'sourceIntegrity' IS NULL
+          OR jsonb_typeof(signal_monitor_events.payload->'sourceIntegrity') = 'null'
+          OR (
+            signal_monitor_events.payload->'sourceIntegrity' IS NOT NULL
+            AND signal_monitor_events.payload->'sourceIntegrity'->>'trusted' IS DISTINCT FROM 'true'
+            AND jsonb_typeof(signal_monitor_events.payload->'sourceIntegrity') <> 'null'
+            AND EXISTS (
+              SELECT 1
+              FROM (
+                SELECT bar_cache.close
+                FROM bar_cache
+                WHERE bar_cache.symbol = signal_monitor_events.symbol
+                  AND bar_cache.timeframe = signal_monitor_events.timeframe
+                  AND bar_cache.source IN ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}
+                  AND bar_cache.starts_at = ${SIGNAL_MONITOR_EVENT_SIGNAL_BAR_AT_SQL}
+                  AND bar_cache.close IS NOT NULL
+                ORDER BY ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCE_RANK_SQL}
+                LIMIT 1
+              ) AS best
+              WHERE best.close IS NOT NULL
+                AND ABS(
+                  (signal_monitor_events.close::numeric - best.close::numeric) /
+                  NULLIF(best.close::numeric, 0)
+                ) <= ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}
+            )
+          )
+        )
+    `);
+    await tx.execute(
+      sql`CREATE INDEX ON tmp_trusted_membership (symbol, timeframe, direction, signal_at)`,
+    );
+    await tx.execute(
+      sql`CREATE INDEX ON tmp_trusted_membership (symbol, timeframe, signal_at DESC, id DESC)`,
+    );
+
+    // (B) Latest trusted event per (symbol,timeframe), WITH the source-ranked
+    // LIMIT-1 close-override probe (~one per symbol). LEFT join + COALESCE fallback
+    // to the event's own close, same source preference + signal_bar_at key as the
+    // legacy build, so the consumed close is identical.
+    await tx.execute(sql`
+      CREATE TEMP TABLE tmp_latest_trusted ON COMMIT DROP AS
+      SELECT
+        m.id,
+        m.symbol,
+        m.timeframe,
+        m.direction,
+        m.signal_at,
+        m.signal_price,
+        m.filter_state,
+        COALESCE(b.close, m.event_close) AS close
+      FROM (
+        SELECT DISTINCT ON (symbol, timeframe)
+          id, symbol, timeframe, direction, signal_at, signal_price,
+          filter_state, event_close, signal_bar_at
+        FROM tmp_trusted_membership
+        ORDER BY symbol, timeframe, signal_at DESC, id DESC
+      ) AS m
+      LEFT JOIN LATERAL (
+        SELECT bar_cache.close
+        FROM bar_cache
+        WHERE bar_cache.symbol = m.symbol
+          AND bar_cache.timeframe = m.timeframe
+          AND bar_cache.source IN ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}
+          AND bar_cache.starts_at = m.signal_bar_at
+          AND bar_cache.close IS NOT NULL
+        ORDER BY ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCE_RANK_SQL}
+        LIMIT 1
+      ) AS b ON true
+    `);
+    await tx.execute(sql`CREATE INDEX ON tmp_latest_trusted (symbol, timeframe)`);
+
+    // (C) Latest trusted event per (symbol,timeframe) that HAS a filter_state
+    // (predicate applied before the DISTINCT ON, so a different row than (B) when
+    // the latest-overall event's filter_state is null). No close needed by pass 3.
+    await tx.execute(sql`
+      CREATE TEMP TABLE tmp_latest_filterstate ON COMMIT DROP AS
+      SELECT DISTINCT ON (symbol, timeframe)
+        symbol, timeframe, direction, signal_at, filter_state
+      FROM tmp_trusted_membership
+      WHERE filter_state IS NOT NULL
+      ORDER BY symbol, timeframe, signal_at DESC, id DESC
+    `);
+    await tx.execute(
+      sql`CREATE INDEX ON tmp_latest_filterstate (symbol, timeframe)`,
+    );
+
+    const membership = sql`tmp_trusted_membership`;
+    const latestTrusted = sql`tmp_latest_trusted`;
+    const latestFilterState = sql`tmp_latest_filterstate`;
+
+    // Pass 1 — identity adoption (latest from B; membership for the stale-identity check).
+    const identityLagJoin = sql`
+      ${latestTrusted} AS e
+      WHERE s.profile_id = ${profile.id}
+        AND s.symbol = e.symbol
+        AND s.timeframe = e.timeframe
+        AND s.active = true
+        AND (s.current_signal_at IS NULL
+          OR s.current_signal_direction IS NULL
+          OR s.current_signal_direction = ''
+          OR e.signal_at > s.current_signal_at
+          OR (
+            EXISTS (
+              SELECT 1
+              FROM signal_monitor_events AS raw_event
+              WHERE raw_event.profile_id = s.profile_id
+                AND raw_event.symbol = s.symbol
+                AND raw_event.timeframe = s.timeframe
+                AND raw_event.direction = s.current_signal_direction
+                AND raw_event.signal_at = s.current_signal_at
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM ${membership} AS current_event
+              WHERE current_event.symbol = s.symbol
+                AND current_event.timeframe = s.timeframe
+                AND current_event.direction = s.current_signal_direction
+                AND current_event.signal_at = s.current_signal_at
+            )
+          ))`;
+    const identityAdopted = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${identityLagJoin}`,
+    );
+    if (!dryRun && identityAdopted > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET current_signal_direction = e.direction,
+            current_signal_at = e.signal_at,
+            current_signal_price = e.signal_price,
+            current_signal_close = e.close,
+            current_signal_mfe_percent = NULL,
+            current_signal_mae_percent = NULL,
+            filter_state = e.filter_state,
+            bars_since_signal = NULL,
+            fresh = false,
+            updated_at = now()
+        FROM ${identityLagJoin}
+      `);
+    }
+
+    // Pass 2 — backfill current_signal_close/filter_state from the latest (B).
+    const signalCloseBackfillJoin = sql`
+      ${latestTrusted} AS e
+      WHERE s.profile_id = ${profile.id}
+        AND s.symbol = e.symbol
+        AND s.timeframe = e.timeframe
+        AND s.active = true
+        AND s.current_signal_direction = e.direction
+        AND s.current_signal_at = e.signal_at
+        AND s.current_signal_close IS DISTINCT FROM e.close`;
+    const signalCloseBackfilled = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${signalCloseBackfillJoin}`,
+    );
+    if (!dryRun && signalCloseBackfilled > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET current_signal_close = e.close,
+            current_signal_mfe_percent = NULL,
+            current_signal_mae_percent = NULL,
+            filter_state = e.filter_state,
+            updated_at = now()
+        FROM ${signalCloseBackfillJoin}
+      `);
+    }
+
+    // Pass 3 — backfill filter_state from the latest event WITH a filter_state (C).
+    const filterStateBackfillJoin = sql`
+      ${latestFilterState} AS e
+      WHERE s.profile_id = ${profile.id}
+        AND s.symbol = e.symbol
+        AND s.timeframe = e.timeframe
+        AND s.active = true
+        AND s.current_signal_direction = e.direction
+        AND s.current_signal_at = e.signal_at
+        AND s.filter_state IS DISTINCT FROM e.filter_state`;
+    const filterStateBackfilled = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${filterStateBackfillJoin}`,
+    );
+    if (!dryRun && filterStateBackfilled > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET filter_state = e.filter_state,
+            updated_at = now()
+        FROM ${filterStateBackfillJoin}
+      `);
+    }
+
+    // Pass 4 — latest_bar_close correction vs bar_cache (bar_cache direct; unchanged).
+    const latestCloseBackfillJoin = sql`
+      bar_cache AS trusted_latest
+      WHERE s.profile_id = ${profile.id}
+        AND s.active = true
+        AND s.latest_bar_at IS NOT NULL
+        AND s.latest_bar_close IS NOT NULL
+        AND trusted_latest.symbol = s.symbol
+        AND trusted_latest.timeframe = s.timeframe
+        AND trusted_latest.source IN ${SIGNAL_MONITOR_TRUSTED_BAR_CACHE_SOURCES_SQL}
+        AND trusted_latest.starts_at = s.latest_bar_at
+        AND trusted_latest.close IS NOT NULL
+        AND ABS(
+          (s.latest_bar_close::numeric - trusted_latest.close::numeric) /
+          NULLIF(trusted_latest.close::numeric, 0)
+        ) > ${SIGNAL_MONITOR_TRUSTED_EVENT_CLOSE_TOLERANCE}`;
+    const latestCloseBackfilled = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s, ${latestCloseBackfillJoin}`,
+    );
+    if (!dryRun && latestCloseBackfilled > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET latest_bar_close = trusted_latest.close,
+            fresh = false,
+            updated_at = now()
+        FROM ${latestCloseBackfillJoin}
+      `);
+    }
+
+    // Pass 5 — advance latest_bar (bar_cache direct; unchanged).
+    const latestBarAdvanceCandidates = sql`
+      (
+        SELECT
+          s.id,
+          trusted_latest.starts_at,
+          trusted_latest.close
+        FROM signal_monitor_symbol_states AS s
+        JOIN LATERAL (
+          SELECT starts_at, close
+          FROM (
+            (
+              SELECT starts_at, close, 0 AS source_rank
+              FROM bar_cache
+              WHERE bar_cache.symbol = s.symbol
+                AND bar_cache.timeframe = s.timeframe
+                AND bar_cache.source = 'massive-history'
+                AND bar_cache.close IS NOT NULL
+              ORDER BY bar_cache.starts_at DESC
+              LIMIT 1
+            )
+            UNION ALL
+            (
+              SELECT starts_at, close, 1 AS source_rank
+              FROM bar_cache
+              WHERE bar_cache.symbol = s.symbol
+                AND bar_cache.timeframe = s.timeframe
+                AND bar_cache.source = 'massive-websocket'
+                AND bar_cache.close IS NOT NULL
+              ORDER BY bar_cache.starts_at DESC
+              LIMIT 1
+            )
+            UNION ALL
+            (
+              SELECT starts_at, close, 2 AS source_rank
+              FROM bar_cache
+              WHERE bar_cache.symbol = s.symbol
+                AND bar_cache.timeframe = s.timeframe
+                AND bar_cache.source = 'ibkr-websocket-derived'
+                AND bar_cache.close IS NOT NULL
+              ORDER BY bar_cache.starts_at DESC
+              LIMIT 1
+            )
+            UNION ALL
+            (
+              SELECT starts_at, close, 3 AS source_rank
+              FROM bar_cache
+              WHERE bar_cache.symbol = s.symbol
+                AND bar_cache.timeframe = s.timeframe
+                AND bar_cache.source = 'massive-delayed-websocket'
+                AND bar_cache.close IS NOT NULL
+              ORDER BY bar_cache.starts_at DESC
+              LIMIT 1
+            )
+          ) AS latest_by_source
+          ORDER BY starts_at DESC, source_rank ASC
+          LIMIT 1
+        ) AS trusted_latest ON true
+        WHERE s.profile_id = ${profile.id}
+          AND s.active = true
+          AND s.timeframe IN ('1m', '2m', '5m', '15m', '1h', '1d')
+          AND (s.latest_bar_at IS NULL OR trusted_latest.starts_at > s.latest_bar_at)
+      ) AS latest_bar_candidates`;
+    const latestBarAdvanced = await countOf(
+      sql`SELECT count(*) AS count FROM ${latestBarAdvanceCandidates}`,
+    );
+    if (!dryRun && latestBarAdvanced > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET latest_bar_at = latest_bar_candidates.starts_at,
+            latest_bar_close = latest_bar_candidates.close,
+            status = CASE WHEN s.status = 'stale' THEN 'ok' ELSE s.status END,
+            fresh = false,
+            updated_at = now()
+        FROM ${latestBarAdvanceCandidates}
+        WHERE s.id = latest_bar_candidates.id
+      `);
+    }
+
+    // Pass 6 — clear untrusted identities (membership for full-history existence).
+    const untrustedIdentityWhere = sql`
+      WHERE s.profile_id = ${profile.id}
+        AND s.active = true
+        AND s.current_signal_direction IN ('buy', 'sell')
+        AND s.current_signal_at IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${membership} AS current_event
+          WHERE current_event.symbol = s.symbol
+            AND current_event.timeframe = s.timeframe
+            AND current_event.direction = s.current_signal_direction
+            AND current_event.signal_at = s.current_signal_at
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM signal_monitor_events AS raw_event
+          WHERE raw_event.profile_id = s.profile_id
+            AND raw_event.symbol = s.symbol
+            AND raw_event.timeframe = s.timeframe
+            AND raw_event.direction = s.current_signal_direction
+            AND raw_event.signal_at = s.current_signal_at
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${membership} AS replacement_event
+          WHERE replacement_event.symbol = s.symbol
+            AND replacement_event.timeframe = s.timeframe
+        )`;
+    const untrustedIdentityCleared = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${untrustedIdentityWhere}`,
+    );
+    if (!dryRun && untrustedIdentityCleared > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET current_signal_direction = NULL,
+            current_signal_at = NULL,
+            current_signal_price = NULL,
+            current_signal_close = NULL,
+            current_signal_mfe_percent = NULL,
+            current_signal_mae_percent = NULL,
+            filter_state = NULL,
+            bars_since_signal = NULL,
+            fresh = false,
+            updated_at = now()
+        ${untrustedIdentityWhere}
+      `);
+    }
+
+    // Pass 7 — recompute bars_since_signal undercounts (card columns; unchanged).
+    const elapsedBars = sql`
+      ROUND(
+        EXTRACT(EPOCH FROM (s.latest_bar_at - s.current_signal_at)) /
+          ${SIGNAL_MONITOR_INTRADAY_BAR_SECONDS_SQL}
+      )::int`;
+    const barsUndercountWhere = sql`
+      WHERE s.profile_id = ${profile.id}
+        AND s.active = true
+        AND s.timeframe IN ('1m', '2m', '5m', '15m', '1h')
+        AND s.current_signal_direction IN ('buy', 'sell')
+        AND s.current_signal_at IS NOT NULL
+        AND s.latest_bar_at IS NOT NULL
+        AND s.latest_bar_at > s.current_signal_at
+        AND GREATEST(COALESCE(s.bars_since_signal, 0), ${elapsedBars})
+          IS DISTINCT FROM s.bars_since_signal`;
+    const barsRecomputed = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${barsUndercountWhere}`,
+    );
+    if (!dryRun && barsRecomputed > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET bars_since_signal =
+              GREATEST(COALESCE(s.bars_since_signal, 0), ${elapsedBars}),
+            updated_at = now()
+        ${barsUndercountWhere}
+      `);
+    }
+
+    // Pass 8 — clear stale fresh flags (card columns; unchanged).
+    const freshClearWhere = sql`
+      WHERE s.profile_id = ${profile.id}
+        AND s.fresh = true
+        AND (s.status <> 'ok'
+          OR s.bars_since_signal IS NULL
+          OR s.bars_since_signal > ${profile.freshWindowBars})`;
+    const freshCleared = await countOf(
+      sql`SELECT count(*) AS count FROM signal_monitor_symbol_states AS s ${freshClearWhere}`,
+    );
+    if (!dryRun && freshCleared > 0) {
+      await tx.execute(sql`
+        UPDATE signal_monitor_symbol_states AS s
+        SET fresh = false, updated_at = now()
+        ${freshClearWhere}
+      `);
+    }
+
+    return {
+      profileId: profile.id,
+      identityAdopted,
+      signalCloseBackfilled,
+      filterStateBackfilled,
+      latestCloseBackfilled,
+      latestBarAdvanced,
+      untrustedIdentityCleared,
+      barsRecomputed,
+      freshCleared,
+    };
+}
+
 export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents(
   input: { dryRun?: boolean } = {},
 ): Promise<SignalMonitorStateReconciliationCounts[]> {
@@ -9135,11 +9711,12 @@ export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents(
     return [];
   }
   const results: SignalMonitorStateReconciliationCounts[] = [];
+  const reconcileProfile = isSignalMonitorReconcileMinimalReadSetEnabled()
+    ? reconcileSignalMonitorSymbolStatesForProfileMinimal
+    : reconcileSignalMonitorSymbolStatesForProfile;
   for (const profile of profiles) {
     try {
-      results.push(
-        await reconcileSignalMonitorSymbolStatesForProfile(profile, dryRun),
-      );
+      results.push(await reconcileProfile(profile, dryRun));
     } catch (error) {
       logger.warn(
         { err: error, profileId: profile.id },
@@ -10974,6 +11551,7 @@ export const __signalMonitorInternalsForTests = {
   selectSignalMonitorSignalEvent,
   selectStableSignalMonitorSignalEvent,
   applyStoredSignalDirectionLatch,
+  latchSignalMonitorMatrixStreamState,
   signalMonitorMatrixStateFromPython,
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
