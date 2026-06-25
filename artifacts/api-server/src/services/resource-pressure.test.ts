@@ -290,3 +290,84 @@ test("a real queue (>=2 waiters) against a full pool enters high after two sampl
 
   __resetApiResourcePressureForTests();
 });
+
+test("sustained event-loop saturation raises resourceLevel but NOT hardResourceLevel", () => {
+  __resetApiResourcePressureForTests();
+
+  // Two sustained event-loop spikes with rss/heap/pool normal: resourceLevel
+  // enters "high" (telemetry/display + scan gate), but hardResourceLevel — the
+  // level the price/quote route-admission shed gates on — stays "normal", so
+  // prices and sparklines are NOT 429-shed on an event-loop symptom.
+  updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+  const sustained = updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+
+  assert.equal(sustained.resourceLevel, "high");
+  assert.equal(sustained.hardResourceLevel, "normal");
+
+  __resetApiResourcePressureForTests();
+});
+
+test("rss saturation trips hardResourceLevel (real exhaustion still sheds prices)", () => {
+  __resetApiResourcePressureForTests();
+
+  // RSS is a finite resource and an instant hard-block, so it trips BOTH levels
+  // immediately: real memory exhaustion still sheds cheap price reads.
+  const snapshot = updateApiResourcePressure({ rssMb: 9_000 });
+
+  assert.equal(snapshot.resourceLevel, "high");
+  assert.equal(snapshot.hardResourceLevel, "high");
+
+  __resetApiResourcePressureForTests();
+});
+
+test("saturated db pool trips hardResourceLevel after two samples (finite resource)", () => {
+  __resetApiResourcePressureForTests();
+
+  // The db pool is a finite resource: hardResourceLevel follows the same
+  // 2-sample hysteresis as resourceLevel and both reach "high" together.
+  const first = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+  assert.equal(first.hardResourceLevel, "watch");
+
+  const second = updateApiResourcePressure({
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+  assert.equal(second.hardResourceLevel, "high");
+
+  __resetApiResourcePressureForTests();
+});
+
+test("event-loop and finite-resource hysteresis trackers stay independent", () => {
+  __resetApiResourcePressureForTests();
+
+  // resourceLevel rides the event loop up; hardResourceLevel only moves when a
+  // finite resource does. Proves the two hysteresis trackers do not
+  // cross-contaminate.
+  updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+  const loopHigh = updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+  assert.equal(loopHigh.resourceLevel, "high");
+  assert.equal(loopHigh.hardResourceLevel, "normal");
+
+  // Now add real pool saturation on top: hard climbs on its own schedule.
+  const poolFirst = updateApiResourcePressure({
+    eventLoopDelayP95Ms: 1_500,
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+  assert.equal(poolFirst.hardResourceLevel, "watch");
+  const poolSecond = updateApiResourcePressure({
+    eventLoopDelayP95Ms: 1_500,
+    dbPoolActive: 12,
+    dbPoolWaiting: 4,
+    dbPoolMax: 12,
+  });
+  assert.equal(poolSecond.hardResourceLevel, "high");
+
+  __resetApiResourcePressureForTests();
+});

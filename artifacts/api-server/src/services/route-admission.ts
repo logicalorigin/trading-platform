@@ -451,21 +451,27 @@ export function apiRouteAdmissionMiddleware(
       path: req.originalUrl || req.url || req.path,
       ...readApiRouteRequestContext(req),
     }),
-    // Shed deferred-analytics (sparklines, chart bars, quote snapshots) on TRUE
-    // server saturation (resourceLevel = rss + heap + event-loop), NOT on `level`,
-    // which folds in request-latency p95. A slow EXTERNAL broker route (IBKR
-    // /positions, equity-history at 9-16s) inflates that p95 to "high" while the
-    // server is idle, so gating on `level` errantly 429-sheds the sparklines and
-    // move-column quotes. Trading caps already gate on resourceLevel for the same
-    // reason; the route admission now matches.
-    pressureLevel: pressure.resourceLevel,
+    // Shed deferred-analytics (sparklines, chart bars, quote snapshots) on
+    // FINITE-resource saturation (hardResourceLevel = rss + heap + db pool),
+    // NOT on `level` (which folds in request-latency p95) and NOT on
+    // `resourceLevel` (which folds in event-loop delay). A slow EXTERNAL broker
+    // route inflates latency, and a busy event loop inflates resourceLevel — but
+    // 429-shedding cheap price reads relieves neither, so gating on them just
+    // freezes prices without freeing the server. Gate only on the finite
+    // resources where shedding genuinely relieves the constraint; rss/heap/pool
+    // exhaustion still sheds. See docs/plans/event-loop-pressure-decouple-price-path.md.
+    pressureLevel: pressure.hardResourceLevel,
     qaMode,
   });
 
   res.locals["apiRouteAdmission"] = admission;
   res.setHeader("X-Pyrus-Route-Class", admission.routeClass);
+  // Pressure-Level = the level that governed admission (hardResourceLevel).
   res.setHeader("X-Pyrus-Pressure-Level", admission.pressureLevel);
-  res.setHeader("X-Pyrus-Resource-Level", admission.pressureLevel);
+  // Resource-Level stays the full resourceLevel (incl. event loop) for
+  // display/telemetry — the UI still sees true server pressure even though
+  // admission no longer sheds on the event-loop component.
+  res.setHeader("X-Pyrus-Resource-Level", pressure.resourceLevel);
   res.setHeader("X-Pyrus-Admission-Action", admission.action);
   if (admission.qaMode) {
     res.setHeader("X-Pyrus-QA-Mode", admission.qaMode);

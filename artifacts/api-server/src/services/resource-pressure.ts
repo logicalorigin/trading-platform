@@ -29,6 +29,14 @@ export type ApiResourcePressureSnapshot = {
   // server, and must not freeze signal/action work. `level` (which includes
   // request latency) still drives general shedding and display.
   resourceLevel: ApiResourcePressureLevel;
+  // Finite-resource saturation only: max(rss, heap, db pool) — EXCLUDES
+  // event-loop delay (and request latency). Consequential user-facing sheds
+  // (price/quote reads via route admission, and — Stage 2 — trading-scan pauses)
+  // gate on this: a busy event loop is a SYMPTOM, not a finite resource, and
+  // shedding cheap reads does not return loop time, so it must not freeze prices.
+  // rss/heap/pool exhaustion (where shedding genuinely relieves the constraint)
+  // still trips it. See docs/plans/event-loop-pressure-decouple-price-path.md.
+  hardResourceLevel: ApiResourcePressureLevel;
   observedAt: string;
   drivers: ApiResourcePressureDriver[];
   scannerPressure: {
@@ -97,9 +105,24 @@ const RESOURCE_HIGH_ENTER_SAMPLE_COUNT = 2;
 const RESOURCE_HIGH_EXIT_SAMPLE_COUNT = 2;
 
 let currentInputs: ApiResourcePressureSnapshot["inputs"] = { ...NORMAL_INPUTS };
-let stableResourceLevel: ApiResourcePressureLevel = "normal";
-let consecutiveResourceHighSamples = 0;
-let consecutiveResourceClearSamples = 0;
+
+type ResourceLevelHysteresisState = {
+  stable: ApiResourcePressureLevel;
+  consecutiveHigh: number;
+  consecutiveClear: number;
+};
+
+const newResourceLevelHysteresisState = (): ResourceLevelHysteresisState => ({
+  stable: "normal",
+  consecutiveHigh: 0,
+  consecutiveClear: 0,
+});
+
+// resourceLevel includes event-loop delay; hardResourceLevel does not. The two
+// enter/exit "high" on different sample sequences, so each keeps its own
+// independent hysteresis state (sharing would cross-contaminate both levels).
+const resourceLevelHysteresis = newResourceLevelHysteresisState();
+const hardResourceLevelHysteresis = newResourceLevelHysteresisState();
 
 const normalizeNumber = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -146,42 +169,45 @@ function levelFromThresholds(
   return "normal";
 }
 
-function applyResourceLevelHysteresis(input: {
-  rawLevel: ApiResourcePressureLevel;
-  immediateHigh: boolean;
-}): ApiResourcePressureLevel {
+function applyResourceLevelHysteresis(
+  state: ResourceLevelHysteresisState,
+  input: {
+    rawLevel: ApiResourcePressureLevel;
+    immediateHigh: boolean;
+  },
+): ApiResourcePressureLevel {
   if (input.immediateHigh) {
-    stableResourceLevel = "high";
-    consecutiveResourceHighSamples = RESOURCE_HIGH_ENTER_SAMPLE_COUNT;
-    consecutiveResourceClearSamples = 0;
-    return stableResourceLevel;
+    state.stable = "high";
+    state.consecutiveHigh = RESOURCE_HIGH_ENTER_SAMPLE_COUNT;
+    state.consecutiveClear = 0;
+    return state.stable;
   }
 
   if (input.rawLevel === "high") {
-    consecutiveResourceHighSamples += 1;
-    consecutiveResourceClearSamples = 0;
+    state.consecutiveHigh += 1;
+    state.consecutiveClear = 0;
     if (
-      stableResourceLevel === "high" ||
-      consecutiveResourceHighSamples >= RESOURCE_HIGH_ENTER_SAMPLE_COUNT
+      state.stable === "high" ||
+      state.consecutiveHigh >= RESOURCE_HIGH_ENTER_SAMPLE_COUNT
     ) {
-      stableResourceLevel = "high";
-      return stableResourceLevel;
+      state.stable = "high";
+      return state.stable;
     }
-    stableResourceLevel = maxLevel(stableResourceLevel, "watch");
-    return stableResourceLevel;
+    state.stable = maxLevel(state.stable, "watch");
+    return state.stable;
   }
 
-  consecutiveResourceHighSamples = 0;
-  if (stableResourceLevel === "high") {
-    consecutiveResourceClearSamples += 1;
-    if (consecutiveResourceClearSamples < RESOURCE_HIGH_EXIT_SAMPLE_COUNT) {
-      return stableResourceLevel;
+  state.consecutiveHigh = 0;
+  if (state.stable === "high") {
+    state.consecutiveClear += 1;
+    if (state.consecutiveClear < RESOURCE_HIGH_EXIT_SAMPLE_COUNT) {
+      return state.stable;
     }
   }
 
-  consecutiveResourceClearSamples = 0;
-  stableResourceLevel = input.rawLevel;
-  return stableResourceLevel;
+  state.consecutiveClear = 0;
+  state.stable = input.rawLevel;
+  return state.stable;
 }
 
 function readPositiveNumberEnv(name: string): number | null {
@@ -409,10 +435,22 @@ function buildSnapshot(
   // without weakening the genuine-stress response.
   const immediateResourceLevel = rssLevel;
   const rawResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel, eventLoopLevel);
-  const resourceLevel = applyResourceLevelHysteresis({
+  const resourceLevel = applyResourceLevelHysteresis(resourceLevelHysteresis, {
     rawLevel: rawResourceLevel,
     immediateHigh: immediateResourceLevel === "high",
   });
+  // Finite-resource saturation only (no event-loop delay): drives the
+  // consequential user-facing sheds so a busy event loop — a symptom, not a
+  // finite resource — can't 429-freeze prices. immediateHigh stays tied to rss
+  // (the only instant hard-block); heap/pool keep the 2-sample hysteresis.
+  const rawHardResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel);
+  const hardResourceLevel = applyResourceLevelHysteresis(
+    hardResourceLevelHysteresis,
+    {
+      rawLevel: rawHardResourceLevel,
+      immediateHigh: immediateResourceLevel === "high",
+    },
+  );
 
   const drivers = [
     driver({
@@ -489,6 +527,7 @@ function buildSnapshot(
   return {
     level,
     resourceLevel,
+    hardResourceLevel,
     observedAt: new Date().toISOString(),
     drivers,
     scannerPressure: {
@@ -558,6 +597,12 @@ export function getApiResourcePressureSnapshot(): ApiResourcePressureSnapshot {
   return currentSnapshot;
 }
 
+// NOTE: this intentionally gates on `resourceLevel` (event-loop INCLUSIVE), NOT
+// the new `hardResourceLevel` field — despite the similar name. The scan-pause
+// decouple is Stage 2, gated behind a CPU x-ray confirming scans aren't the loop
+// blocker; until then background scans still pause on event-loop pressure. Only
+// the user-facing price/quote route-admission shed moved to hardResourceLevel in
+// Stage 1. See docs/plans/event-loop-pressure-decouple-price-path.md.
 export function isApiResourcePressureHardBlock(
   snapshot: ApiResourcePressureSnapshot = currentSnapshot,
 ): boolean {
@@ -569,8 +614,7 @@ export function isApiResourcePressureHardBlock(
 
 export function __resetApiResourcePressureForTests(): void {
   currentInputs = { ...NORMAL_INPUTS };
-  stableResourceLevel = "normal";
-  consecutiveResourceHighSamples = 0;
-  consecutiveResourceClearSamples = 0;
+  Object.assign(resourceLevelHysteresis, newResourceLevelHysteresisState());
+  Object.assign(hardResourceLevelHysteresis, newResourceLevelHysteresisState());
   currentSnapshot = buildSnapshot(currentInputs);
 }
