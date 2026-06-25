@@ -12,6 +12,7 @@ pub struct WorkerConfig {
     pub quote_retention_days: i64,
     pub option_chain_retention_days: i64,
     pub bar_retention_days: i64,
+    pub bar_coarse_retention_days: i64,
     pub gex_retention_days: i64,
     pub provider_log_retention_days: i64,
     pub retention_interval_secs: u64,
@@ -46,7 +47,17 @@ impl WorkerConfig {
             option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
             quote_retention_days: read_i64_env("MARKET_DATA_QUOTE_RETENTION_DAYS", 7),
             option_chain_retention_days: read_i64_env("MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS", 7),
+            // bar_cache mixes intraday (short read window) and coarse/daily
+            // (deep read window) series. MARKET_DATA_BAR_RETENTION_DAYS now scopes
+            // the INTRADAY frames only (~90d). Coarse frames keep far longer so the
+            // 6h sweep stops deleting 1d/12h/1w/1month history that consumers read
+            // up to ~240 daily bars deep — a flat cut forced a wasteful universe-wide
+            // provider re-fetch + re-persist on the next refresh.
             bar_retention_days: read_i64_env("MARKET_DATA_BAR_RETENTION_DAYS", 90),
+            bar_coarse_retention_days: read_i64_env(
+                "MARKET_DATA_BAR_COARSE_RETENTION_DAYS",
+                730,
+            ),
             gex_retention_days: read_i64_env("MARKET_DATA_GEX_RETENTION_DAYS", 30),
             provider_log_retention_days: read_i64_env(
                 "MARKET_DATA_PROVIDER_LOG_RETENTION_DAYS",
