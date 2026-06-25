@@ -333,6 +333,18 @@ export const shadowPositionMarksTable = pgTable(
     index("shadow_position_marks_account_idx").on(table.accountId),
     index("shadow_position_marks_position_idx").on(table.positionId),
     index("shadow_position_marks_as_of_idx").on(table.asOf),
+    // Latest-mark-per-position lookups (readLatestShadowPositionBaselineMarks,
+    // GET /accounts/shadow/positions, and the as_of-bounded mark reads): filter
+    // position_id + as_of <= cutoff, ORDER BY as_of DESC, created_at DESC LIMIT 1.
+    // Without this composite the planner scans the as_of index and discards other
+    // positions' marks (~15s on the 563k-row, no-retention log). A backward index
+    // scan serves the range + order directly. Subsumes the single-column
+    // shadow_position_marks_position_idx (kept for now; drop in a later cleanup).
+    index("shadow_position_marks_position_as_of_idx").on(
+      table.positionId,
+      table.asOf,
+      table.createdAt,
+    ),
   ],
 );
 
