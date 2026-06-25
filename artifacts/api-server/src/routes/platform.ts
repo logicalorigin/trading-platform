@@ -208,6 +208,10 @@ import {
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
 const STOCK_AGGREGATE_STREAM_SNAPSHOT_HISTORY_LIMIT = 24;
+// Yield to the event loop every N snapshot writes so a large multi-symbol
+// stream-open burst doesn't monopolize the single loop (see
+// writeSnapshotAggregates). Mirrors the signal-monitor eval-yield idiom.
+const SSE_SNAPSHOT_YIELD_EVERY = 16;
 type ParsedGexDashboardResponse = ReturnType<typeof GetGexDashboardResponse.parse>;
 const parsedGexDashboardResponses = new WeakMap<object, ParsedGexDashboardResponse>();
 
@@ -388,10 +392,15 @@ const SSE_MAX_BUFFERED_CHUNKS = Math.max(
   Number.parseInt(process.env["IBKR_SSE_MAX_BUFFERED_CHUNKS"] ?? "256", 10) ||
     256,
 );
+// 15s (was 5s): under the event-loop saturation that freezes SSE delivery for
+// 30-90s, a 5s drain window server-CLOSED otherwise-healthy price streams the
+// instant the loop unblocked and found the client mid-catch-up, forcing a
+// reconnect flap. A longer window lets a transient stall drain instead of
+// dropping the connection. Override via IBKR_SSE_DRAIN_TIMEOUT_MS.
 const SSE_DRAIN_TIMEOUT_MS = Math.max(
   1_000,
-  Number.parseInt(process.env["IBKR_SSE_DRAIN_TIMEOUT_MS"] ?? "5000", 10) ||
-    5_000,
+  Number.parseInt(process.env["IBKR_SSE_DRAIN_TIMEOUT_MS"] ?? "15000", 10) ||
+    15_000,
 );
 const OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS = Math.max(
   1_000,
@@ -978,17 +987,18 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
-// Per-symbol short-TTL cache for sparkline seeding. The ~500-670 symbol signal
-// universe is reseeded on every Signals/Algo mount, tab switch, and universe
-// symbol-set change, across every open client -- each a full cold pass over
-// bar_cache (seed p95 ~13s, the dominant API-pressure driver, which in turn
-// trips the signal-matrix pressure backoff). Caching the per-symbol bars
-// (pre-compaction) collapses those repeated reads; keyed by symbol|timeframe|
-// limit so it is reused regardless of how a request chunks the universe. Bars
-// are downsampled to pointLimit by the caller, so the cache holds raw bars.
+// Per-symbol cache for sparkline seeding. The ~500-670 symbol signal universe is
+// reseeded on every Signals/Algo mount, tab switch, and universe symbol-set
+// change, across every open client -- each a full cold pass over bar_cache (the
+// dominant API-pressure driver, which in turn trips the signal-matrix pressure
+// backoff). Caching the per-symbol bars collapses those repeated reads; keyed by
+// symbol|timeframe|limit so it is reused regardless of how a request chunks the
+// universe. TTL is generous (5 min) because the cached bars are HISTORY: the live
+// edge is re-merged client-side from the live aggregate stream, so a longer cache
+// only delays backfilled pre-market history, not the current price action.
 const SPARKLINE_SEED_CACHE_TTL_MS = Math.max(
   0,
-  Number(process.env["SPARKLINE_SEED_CACHE_TTL_MS"]) || 60_000,
+  Number(process.env["SPARKLINE_SEED_CACHE_TTL_MS"]) || 300_000,
 );
 const SPARKLINE_SEED_CACHE_MAX_ENTRIES = 16_000;
 type SparklineSeedBarsBySymbol = Awaited<
@@ -1004,6 +1014,30 @@ const sparklineSeedCacheKey = (
   timeframe: string,
   limit: number,
 ) => `${normalizeSymbol(symbol)}|${timeframe}|${limit}`;
+
+// The watchlist sparkline must reflect the CURRENT session's price action so its
+// signal-timeline coloring aligns with the exec-timeframe signal. Reading
+// `massive-history` alone is stale for any symbol whose today pre-market history
+// has not been backfilled yet (its newest history bar is the prior session), so
+// the sparkline window predates today's signal and the colorer paints the
+// inverted pre-signal stance (a fresh SELL renders blue). Merge the live
+// `massive-websocket` bars (today, authoritative for recent minutes) over the
+// `massive-history` deep backfill so the window always includes the live edge.
+function mergeSparklineSeedBars(
+  history: SparklineSeedBars,
+  live: SparklineSeedBars,
+  limit: number,
+): SparklineSeedBars {
+  if (!live.length) return history;
+  if (!history.length) return live;
+  const byMs = new Map<number, SparklineSeedBars[number]>();
+  for (const bar of history) byMs.set(bar.timestamp.getTime(), bar);
+  // Live wins on a same-minute collision: it is the freshest write for the edge.
+  for (const bar of live) byMs.set(bar.timestamp.getTime(), bar);
+  return Array.from(byMs.values())
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+    .slice(-Math.max(1, limit));
+}
 
 async function loadSparklineSeedBarsBySymbol(
   body: ReturnType<typeof parseSparklineSeedBody>,
@@ -1041,16 +1075,51 @@ async function loadSparklineSeedBarsBySymbol(
     const chunkResults = await mapWithConcurrency(
       chunks,
       SPARKLINE_SEED_DB_CONCURRENCY,
-      (symbols) =>
-        loadStoredMarketBarsBySymbol({
+      async (symbols) => {
+        const shared = {
           symbols,
           timeframe: body.timeframe as Parameters<
             typeof loadStoredMarketBarsBySymbol
           >[0]["timeframe"],
           limit: body.limit,
-          sourceName: "massive-history",
           outsideRth: true,
-        }),
+        };
+        // Read the LIVE (today's) bars first — they carry the current session the
+        // sparkline color needs. Only symbols SHORT on live bars need the deep
+        // massive-history fill, so we skip the second universe-wide bar_cache read
+        // for the common (active) case. The unconditional dual read doubled this
+        // route's DB cost, and /sparklines/seed is a top DB-pool/event-loop
+        // offender (it pegs the 12-conn pool and stalls live SSE delivery).
+        const live = await loadStoredMarketBarsBySymbol({
+          ...shared,
+          sourceName: "massive-websocket",
+        });
+        const minPoints = Math.max(1, body.pointLimit);
+        const gapSymbols = symbols.filter((symbol) => {
+          const normalized = normalizeSymbol(symbol);
+          return Boolean(normalized) && (live[normalized]?.length ?? 0) < minPoints;
+        });
+        const history = gapSymbols.length
+          ? await loadStoredMarketBarsBySymbol({
+              ...shared,
+              symbols: gapSymbols,
+              sourceName: "massive-history",
+            })
+          : ({} as Awaited<ReturnType<typeof loadStoredMarketBarsBySymbol>>);
+        const merged: Record<string, SparklineSeedBars> = {};
+        for (const symbol of symbols) {
+          const normalized = normalizeSymbol(symbol);
+          if (!normalized) {
+            continue;
+          }
+          merged[normalized] = mergeSparklineSeedBars(
+            history[normalized] ?? [],
+            live[normalized] ?? [],
+            body.limit,
+          );
+        }
+        return merged;
+      },
     );
     const loaded: Record<string, SparklineSeedBars> = Object.assign(
       {},
@@ -1426,6 +1495,7 @@ async function startSse(
   streamName: string,
   setup: (controls: {
     writeEvent: (event: string, payload: unknown) => Promise<void>;
+    writeSerializedEvent: (event: string, data: string) => Promise<void>;
     writeComment: (comment: string) => Promise<void>;
     lastEventId: string | null;
   }) => Promise<() => void> | (() => void),
@@ -1530,6 +1600,21 @@ async function startSse(
     );
   };
 
+  // Like writeEvent, but takes an already-serialized `data` line so a fan-out
+  // caller can JSON.stringify a payload ONCE and reuse the bytes across many
+  // subscribers (serialize-once). The per-connection `id` stays per-write.
+  const writeSerializedEvent = (
+    event: string,
+    data: string,
+  ): Promise<void> => {
+    const eventId = String(nextEventId);
+    nextEventId += 1;
+
+    return enqueueChunk(
+      `id: ${eventId}\n` + `event: ${event}\n` + `data: ${data}\n\n`,
+    );
+  };
+
   await enqueueChunk("retry: 5000\n\n");
 
   heartbeat = setInterval(() => {
@@ -1549,6 +1634,7 @@ async function startSse(
     const setupUnsubscribe =
       (await setup({
         writeEvent,
+        writeSerializedEvent,
         writeComment,
         lastEventId,
       })) ?? (() => {});
@@ -2951,14 +3037,20 @@ router.get("/streams/quotes", async (req, res) => {
     return;
   }
 
-  await startSse(req, res, "quotes", async ({ writeEvent }) => {
+  await startSse(req, res, "quotes", async ({ writeEvent, writeSerializedEvent }) => {
     await writeEvent("ready", {
       symbols,
       source: resolveQuoteStreamSource(),
     });
 
     let active = true;
-    const unsubscribe = subscribeQuoteSnapshots(symbols, (payload) => {
+    const unsubscribe = subscribeQuoteSnapshots(symbols, (payload, serializeEvent) => {
+      // Live fan-out supplies a shared serialize-once thunk: stringify the
+      // payload a single time per matched subset and reuse it across subscribers.
+      if (serializeEvent) {
+        void writeSerializedEvent("quotes", serializeEvent());
+        return;
+      }
       void writeEvent("quotes", payload);
     });
 
@@ -3743,7 +3835,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     return;
   }
 
-  await startSse(req, res, "stock-aggregates", async ({ writeEvent }) => {
+  await startSse(req, res, "stock-aggregates", async ({ writeEvent, writeSerializedEvent }) => {
     const writeSnapshotAggregates = async (nextSymbols: string[]) => {
       const snapshotBySymbolMinute = new Map<
         string,
@@ -3771,6 +3863,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
           String(left.symbol).localeCompare(String(right.symbol)) ||
           Number(left.startMs) - Number(right.startMs),
       );
+      let snapshotWritesSinceYield = 0;
       for (const aggregate of snapshotAggregates) {
         await writeEvent("aggregate", {
           ...aggregate,
@@ -3779,6 +3872,14 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
             apiServerEmittedAt: new Date(),
           },
         });
+        // A multi-symbol subscribe front-loads up to symbols x (history + current)
+        // aggregates (~24/symbol => thousands of synchronous writes). Writing them
+        // in one burst monopolizes the event loop and queues every other request
+        // behind it during the market-open subscribe storm. Yield periodically so
+        // requests interleave instead of stalling.
+        if (++snapshotWritesSinceYield % SSE_SNAPSHOT_YIELD_EVERY === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
       }
     };
 
@@ -3805,15 +3906,25 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     }, 5_000);
     statusTimer.unref?.();
 
-    const aggregateSubscription = subscribeMutableStockMinuteAggregates(symbols, (message) => {
-      writeEvent("aggregate", {
-        ...message,
-        latency: {
-          ...(message.latency ?? {}),
-          apiServerEmittedAt: new Date(),
-        },
-      });
-    });
+    const aggregateSubscription = subscribeMutableStockMinuteAggregates(
+      symbols,
+      (message, serializeEvent) => {
+        // Live fan-out hands a shared serialize-once thunk: stringify the payload
+        // a single time per broadcast and reuse the bytes across every subscriber.
+        if (serializeEvent) {
+          void writeSerializedEvent("aggregate", serializeEvent());
+          return;
+        }
+        // Defensive fallback (no thunk supplied): serialize locally.
+        void writeEvent("aggregate", {
+          ...message,
+          latency: {
+            ...(message.latency ?? {}),
+            apiServerEmittedAt: new Date(),
+          },
+        });
+      },
+    );
 
     if (sessionId) {
       stockAggregateStreamSessions.set(sessionId, {

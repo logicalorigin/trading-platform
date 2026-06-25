@@ -390,15 +390,29 @@ export async function loadStoredMarketBars(
 
     const desiredLimit = Math.max(1, input.limit ?? 500);
     const limit = expandStoredRowsLimit(desiredLimit, input.timeframe);
+    // Project ONLY the columns the snapshot mapping below consumes. The full-row
+    // `.select()` pulled all 13 columns (incl. two uuids, three varchars and two
+    // extra timestamptz that are never read), and deserializing those rows in
+    // Node (pg `_parseRowAsArray` + drizzle per-column `mapFromDriverValue`) is
+    // the dominant event-loop cost under the universe-wide read fan-out — the
+    // Postgres query itself is ~13ms. Six columns ≈ halves the parse/GC cost.
+    const barColumns = {
+      startsAt: barCacheTable.startsAt,
+      open: barCacheTable.open,
+      high: barCacheTable.high,
+      low: barCacheTable.low,
+      close: barCacheTable.close,
+      volume: barCacheTable.volume,
+    };
     const rows = window.from
       ? await db
-          .select()
+          .select(barColumns)
           .from(barCacheTable)
           .where(and(...conditions))
           .orderBy(asc(barCacheTable.startsAt))
           .limit(limit)
       : await db
-          .select()
+          .select(barColumns)
           .from(barCacheTable)
           .where(and(...conditions))
           .orderBy(desc(barCacheTable.startsAt))
@@ -452,7 +466,11 @@ export async function loadStoredMarketBarsBySymbol(input: {
   to?: Date;
   sourceName: string;
   outsideRth?: boolean;
-}): Promise<Record<string, BrokerBarSnapshot[]>> {
+  // Sparkline-only reader: callers render only the close line, so this returns
+  // lean {timestamp, close} bars and the query selects only those columns —
+  // deserializing the unused OHLV columns across the universe-wide read was the
+  // dominant event-loop cost (the SQL itself is ~13ms).
+}): Promise<Record<string, Array<{ timestamp: Date; close: number }>>> {
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -475,19 +493,15 @@ export async function loadStoredMarketBarsBySymbol(input: {
   type BulkBarCacheRow = {
     symbol: string;
     starts_at: Date | string;
-    open: string | number;
-    high: string | number;
-    low: string | number;
     close: string | number;
-    volume: string | number;
   };
 
   try {
     const result = await db.execute(sql<BulkBarCacheRow>`
-      select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+      select b.symbol, b.starts_at, b.close
       from unnest(array[${symbolValues}]::text[]) as s(symbol)
       cross join lateral (
-        select symbol, starts_at, open, high, low, close, volume
+        select symbol, starts_at, close
         from bar_cache
         where symbol = s.symbol
           and timeframe = ${input.timeframe}
@@ -515,53 +529,33 @@ export async function loadStoredMarketBarsBySymbol(input: {
       rowsBySymbol.set(symbol, current);
     });
 
-    const normalizedSourceName = input.sourceName.toLowerCase();
-    const delayed =
-      normalizedSourceName.includes("delayed") ||
-      (normalizedSourceName.includes("massive") &&
-        !isMassiveStocksRealtimeConfigured());
-    const transport = normalizedSourceName.includes("websocket")
-      ? "massive_websocket"
-      : "massive_rest";
-    const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
-
     return Object.fromEntries(
       symbols
         .map((symbol) => {
           const symbolRows = rowsBySymbol.get(symbol) || [];
-          const bars = normalizeBarsToStoreTimeframe(
-            symbolRows
-              .map((row): BrokerBarSnapshot => {
-                const timestamp =
-                  row.starts_at instanceof Date
-                    ? row.starts_at
-                    : new Date(row.starts_at);
-                return {
-                  timestamp,
-                  open: numberFromDb(row.open),
-                  high: numberFromDb(row.high),
-                  low: numberFromDb(row.low),
-                  close: numberFromDb(row.close),
-                  volume: numberFromDb(row.volume),
-                  source: input.sourceName,
-                  providerContractId: null,
-                  outsideRth: input.outsideRth !== false,
-                  partial: false,
-                  transport,
-                  delayed,
-                  freshness,
-                  dataUpdatedAt: timestamp,
-                };
-              })
-              .sort(
-                (left, right) =>
-                  left.timestamp.getTime() - right.timestamp.getTime(),
-              ),
-            input.timeframe,
-          ).slice(-desiredLimit);
+          // Rows already come from bar_cache AT input.timeframe, so the per-bar
+          // normalize/bucket step is an identity here — skip it and build the lean
+          // {timestamp, close} points the sparkline renders, oldest-first. (Any
+          // duplicate timestamps are collapsed downstream by mergeSparklineSeedBars.)
+          const bars = symbolRows
+            .map((row) => ({
+              timestamp:
+                row.starts_at instanceof Date
+                  ? row.starts_at
+                  : new Date(row.starts_at),
+              close: numberFromDb(row.close),
+            }))
+            .sort(
+              (left, right) =>
+                left.timestamp.getTime() - right.timestamp.getTime(),
+            )
+            .slice(-desiredLimit);
           return bars.length ? [symbol, bars] : null;
         })
-        .filter((entry): entry is [string, BrokerBarSnapshot[]] => entry !== null),
+        .filter(
+          (entry): entry is [string, Array<{ timestamp: Date; close: number }>] =>
+            entry !== null,
+        ),
     );
   } catch (error) {
     logger.warn({ error }, "bulk durable market data sparkline seed failed");
