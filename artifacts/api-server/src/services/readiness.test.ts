@@ -32,6 +32,7 @@ const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
     apiP95LatencyMs: null,
     dominantSlowRouteP95Ms: null,
     eventLoopDelayP95Ms: null,
+    eventLoopUtilization: null,
     dbPoolActive: null,
     dbPoolWaiting: null,
     dbPoolMax: null,
