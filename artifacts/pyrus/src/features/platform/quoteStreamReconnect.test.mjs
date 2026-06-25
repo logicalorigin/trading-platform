@@ -28,17 +28,16 @@ test("reconnect backoff clamps non-positive/NaN attempts to base", () => {
 });
 
 test("stall window doubles each quiet cycle then caps", () => {
-  // base -> 2x -> 4x ... clamped at max (45s -> 90 -> 180 -> 300 cap)
-  assert.equal(nextQuoteStreamStallMs(QUOTE_STREAM_STALL_BASE_MS), 90_000);
-  assert.equal(nextQuoteStreamStallMs(90_000), 180_000);
+  // base -> 2x -> ... clamped at max (90s -> 180 -> 300 cap)
+  assert.equal(nextQuoteStreamStallMs(QUOTE_STREAM_STALL_BASE_MS), 180_000);
   assert.equal(nextQuoteStreamStallMs(180_000), QUOTE_STREAM_STALL_MAX_MS);
   assert.equal(nextQuoteStreamStallMs(QUOTE_STREAM_STALL_MAX_MS), QUOTE_STREAM_STALL_MAX_MS);
 });
 
 test("stall window never drops below a full base window", () => {
   // A stalled-out value below base (or 0) still escalates from at least base.
-  assert.equal(nextQuoteStreamStallMs(0), 90_000);
-  assert.equal(nextQuoteStreamStallMs(1_000), 90_000);
+  assert.equal(nextQuoteStreamStallMs(0), 180_000);
+  assert.equal(nextQuoteStreamStallMs(1_000), 180_000);
 });
 
 // Regression guard: the live stream effect must actually wire the self-heal.

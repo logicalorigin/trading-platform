@@ -32,7 +32,7 @@ test("Algo STA row universe follows the Signal Matrix universe before deployment
 });
 
 test("Algo settings save mutations fail fast instead of spinning indefinitely", () => {
-  assert.match(source, /const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 8_000;/);
+  assert.match(source, /const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 25_000;/);
   assert.match(source, /const ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS = 300;/);
   assert.match(source, /const ALGO_SETTINGS_SAVE_API_BASE_URL = normalizeAlgoSettingsSaveApiBaseUrl\(/);
   assert.match(source, /import\.meta\.env\?\.VITE_PROXY_API_TARGET/);

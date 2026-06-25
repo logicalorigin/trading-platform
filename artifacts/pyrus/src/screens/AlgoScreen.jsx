@@ -134,7 +134,15 @@ export const preloadScreenModules = () =>
   );
 
 const ALGO_PRIMARY_FALLBACK_DELAY_MS = 0;
-const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 8_000;
+// 25s, not 8s: a save round-trip is ~0.8s when the API event loop is healthy,
+// but under the heavy-DB-fan-out freeze the loop stalls 12-90s and the PATCH
+// queues behind it. An 8s budget timed out mid-freeze -> the Signal/Profile task
+// threw -> the perpetual "Save partially failed" even though the write would have
+// succeeded. The pre-save connection pause (beginCriticalApiMutationPause) sheds
+// SSE load so the loop unblocks faster during the save; 25s then rides out a
+// typical freeze with headroom. (The real cure is the DB-fan-out fix; this stops
+// the save from being collateral damage until then.)
+const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 25_000;
 const ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS = 300;
 const normalizeAlgoSettingsSaveApiBaseUrl = (value) => {
   if (typeof value !== "string" || !value.trim()) {
@@ -1566,7 +1574,13 @@ export const AlgoScreen = ({
         deploymentId,
         profileDraft,
         strategySettingsDraft,
-        profileDirty,
+        // Only fire the signal-options Profile PATCH for deployments that ACTUALLY
+        // have a signal-options profile. Overnight/spot deployments still render an
+        // (editable, default-seeded) Profile section, but the backend rejects that
+        // PATCH with 400 "not a signal-options deployment" while the Signal PATCH
+        // succeeds — the perpetual "Save partially failed". Gating here skips the
+        // doomed call; the result.ok success path below still clears the dirty.
+        profileDirty: profileDirty && deploymentSignalOptionsBaselineAvailable,
         strategyDirty,
         updateProfileMutation,
         updateStrategySettingsMutation,

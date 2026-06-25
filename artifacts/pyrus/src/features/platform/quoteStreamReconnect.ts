@@ -7,7 +7,7 @@
 // Terminal closes reconnect with capped exponential backoff. A stall watchdog
 // covers the silent case (socket open but no data): its window grows
 // exponentially while quiet and resets the instant any quotes frame arrives, so a
-// real mid-session stall recovers in ~45s while a legitimately quiet market backs
+// real mid-session stall recovers in ~90s while a legitimately quiet market backs
 // off toward one reconnect / 5 min instead of hammering the already-strained API.
 //
 // These helpers are kept dependency-free so they can be unit-tested in isolation
@@ -15,7 +15,13 @@
 
 export const QUOTE_STREAM_RECONNECT_BASE_MS = 1_000;
 export const QUOTE_STREAM_RECONNECT_MAX_MS = 30_000;
-export const QUOTE_STREAM_STALL_BASE_MS = 45_000;
+// 90s, not 45s: the API event loop saturates under heavy DB-fan-out reads and
+// freezes SSE delivery for 30-90s at a time (then bursts to catch up). A 45s base
+// tripped this watchdog DURING those transient server freezes — force-reconnecting
+// an otherwise-healthy stream, which the user sees as prices flapping off/on. 90s
+// rides out the freeze (the stream resumes when the loop unblocks) while still
+// recovering a genuinely dead stream within ~90s.
+export const QUOTE_STREAM_STALL_BASE_MS = 90_000;
 export const QUOTE_STREAM_STALL_MAX_MS = 300_000;
 export const QUOTE_STREAM_STALL_CHECK_MS = 15_000;
 
@@ -28,7 +34,7 @@ export const nextQuoteStreamReconnectDelayMs = (attempt: number): number =>
   );
 
 // Grow the stall window after a stall-triggered reconnect so a persistently quiet
-// market backs off (45s -> 90s -> 180s -> 300s cap) instead of reconnecting on a
+// market backs off (90s -> 180s -> 300s cap) instead of reconnecting on a
 // fixed cadence. Resets to base (via the caller) the moment a quotes frame lands.
 export const nextQuoteStreamStallMs = (currentStallMs: number): number =>
   Math.min(

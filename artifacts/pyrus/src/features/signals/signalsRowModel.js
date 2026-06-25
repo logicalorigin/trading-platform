@@ -1259,9 +1259,16 @@ export const sortSignalsRows = (
       const computedDelta = rightComputed - leftComputed;
       return (
         computedDelta ||
+        // Rank by signal-fire recency (currentSignalAt), NOT stateActivityMs:
+        // every live lane ticks lastEvaluatedAt/latestBarAt to ~now, so
+        // stateActivityMs lets a constantly-updating but STALE-signal lane (e.g.
+        // FENC, 34 bars old) outrank a freshly-fired one (e.g. FCPT/TSM). A
+        // timeframe-column sort must order by when that timeframe's signal
+        // actually fired — see the stateSignalMs note above. No-signal cells get
+        // signalMs=0 and fall to the bottom.
         compareNumberDesc(
-          stateActivityMs(leftState),
-          stateActivityMs(rightState),
+          stateSignalMs(leftState),
+          stateSignalMs(rightState),
           multiplier,
         ) ||
         compareNumberAsc(

@@ -10,6 +10,7 @@ import {
 import {
   Suspense,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -48,6 +49,7 @@ import {
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { resolveExtendedHoursQuoteDisplay } from "./extendedHoursQuote";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
+import { useAlgoStaExecutionTimeframe } from "./algoStaExecutionTimeframeStore";
 import { MarketIdentityMark } from "./marketIdentity";
 import {
   TABLE_SPARKLINE_COMPACT_HEIGHT,
@@ -183,6 +185,26 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
   WATCHLIST_SORT_MODE.PERCENT,
   WATCHLIST_SORT_MODE.ALPHA,
 ]);
+
+// Sort modes whose ROW ORDER depends on live quote snapshots (watchlistModel sorts
+// on .pct / .volume). Only in these does the parent watchlist need to subscribe to
+// every symbol's quote stream. In MANUAL/SIGNAL/ALPHA the order is fixed regardless of
+// price, so subscribing the whole list here would re-render the entire watchlist on
+// every ~100ms quote-tick flush for nothing — starving the main-thread SMIL status wave
+// (the diagnostic canary). Individual rows keep their own per-symbol subscription, so
+// prices still update live in every mode; only the wasteful parent-level subscription
+// is gated.
+const WATCHLIST_SNAPSHOT_SORTS = new Set([
+  WATCHLIST_SORT_MODE.PERCENT,
+  WATCHLIST_SORT_MODE.VOLUME,
+]);
+// Stable empty-symbols reference so the gated-off subscription keeps a constant input
+// (a fresh [] each render would churn useRuntimeTickerSnapshots' internal memo).
+const EMPTY_WATCHLIST_SYMBOLS = [];
+
+// Hoisted so the row sparkline's fill style is a stable reference — an inline object
+// literal here defeats MicroSparkline's memo and rebuilds its SVG on every row render.
+const SPARKLINE_FILL_STYLE = { width: "100%", height: "100%" };
 
 const isWatchlistSignalDirection = isSignalSparklineDirection;
 
@@ -615,7 +637,7 @@ const WatchlistRow = memo(
                 pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_COMPACT_WIDTH}
                 height={TABLE_SPARKLINE_COMPACT_HEIGHT}
-                style={{ width: "100%", height: "100%" }}
+                style={SPARKLINE_FILL_STYLE}
               />
             </span>
             <span
@@ -786,7 +808,7 @@ const WatchlistRow = memo(
                 pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_WIDTH}
                 height={TABLE_SPARKLINE_HEIGHT}
-                style={{ width: "100%", height: "100%" }}
+                style={SPARKLINE_FILL_STYLE}
               />
             </span>
             <span
@@ -898,6 +920,11 @@ export const Watchlist = ({
   const [sortDirection, setSortDirection] = useState("desc");
   const [draggedItemId, setDraggedItemId] = useState(null);
   const [dragOverItemId, setDragOverItemId] = useState(null);
+  // Mirror of draggedItemId so the drag callbacks below can read the live value without
+  // listing draggedItemId as a dependency — that would hand WatchlistRow a fresh callback
+  // reference on every drag tick and defeat its memo(), reintroducing full-list reconciles.
+  const draggedItemIdRef = useRef(null);
+  draggedItemIdRef.current = draggedItemId;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState(() => new Set());
   const effectiveSignalEvents =
@@ -934,15 +961,25 @@ export const Watchlist = ({
     () => buildSignalEventsBySymbol(effectiveSignalEvents),
     [effectiveSignalEvents],
   );
-  const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
+  // Only subscribe the parent to every symbol's quotes when the active sort actually
+  // orders by a live snapshot field. Otherwise this would re-render the whole watchlist
+  // ~10x/sec and starve the status-wave canary (see WATCHLIST_SNAPSHOT_SORTS).
+  const snapshotsBySymbol = useRuntimeTickerSnapshots(
+    WATCHLIST_SNAPSHOT_SORTS.has(sortMode) ? itemSymbols : EMPTY_WATCHLIST_SYMBOLS,
+  );
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates),
     [signalMatrixStates],
   );
-  // The traded (execution) timeframe from the active signal monitor profile;
-  // sparklines color by this signal so the watchlist matches the STA table.
+  // The traded (execution) timeframe: prefer the Algo Control Panel's PUBLISHED
+  // exec selection so the watchlist sparkline recolors when the user changes it,
+  // falling back to the active signal monitor profile's timeframe when nothing is
+  // published. Sparklines color by THIS timeframe's signal so the watchlist
+  // matches the STA table / exec selection.
+  const publishedExecutionTimeframe = useAlgoStaExecutionTimeframe();
   const watchlistExecutionTimeframe =
-    String(signalProfile?.timeframe || "").trim() || null;
+    String(publishedExecutionTimeframe || signalProfile?.timeframe || "").trim() ||
+    null;
   const filtered = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     if (!normalizedSearch) return items;
@@ -1044,20 +1081,23 @@ export const Watchlist = ({
     }
     startSelectionMode();
   };
-  const toggleItemSelection = (itemId) => {
-    if (!removableItemIds.has(itemId)) {
-      return;
-    }
-    setSelectedItemIds((current) => {
-      const next = new Set(current);
-      if (next.has(itemId)) {
-        next.delete(itemId);
-      } else {
-        next.add(itemId);
+  const toggleItemSelection = useCallback(
+    (itemId) => {
+      if (!removableItemIds.has(itemId)) {
+        return;
       }
-      return next;
-    });
-  };
+      setSelectedItemIds((current) => {
+        const next = new Set(current);
+        if (next.has(itemId)) {
+          next.delete(itemId);
+        } else {
+          next.add(itemId);
+        }
+        return next;
+      });
+    },
+    [removableItemIds],
+  );
   const handleRemoveSelected = () => {
     if (!selectedRemovableItems.length || busy) {
       return;
@@ -1167,19 +1207,32 @@ export const Watchlist = ({
     setDragOverItemId(null);
   };
 
-  const clearDragState = () => {
+  const clearDragState = useCallback(() => {
     setDraggedItemId(null);
     setDragOverItemId(null);
-  };
+  }, []);
 
-  const handleDrop = (targetItemId) => {
-    if (!draggedItemId || draggedItemId === targetItemId) {
+  const handleDrop = useCallback(
+    (targetItemId) => {
+      const dragged = draggedItemIdRef.current;
+      if (!dragged || dragged === targetItemId) {
+        clearDragState();
+        return;
+      }
+      onReorderSymbol?.(dragged, targetItemId);
       clearDragState();
-      return;
+    },
+    [clearDragState, onReorderSymbol],
+  );
+
+  // Stable drag-over handler (replaces a per-render inline arrow at the row site) so
+  // WatchlistRow's memo() can bail out; reads the dragged id from the mirror ref.
+  const handleDragOver = useCallback((itemId) => {
+    const dragged = draggedItemIdRef.current;
+    if (dragged && dragged !== itemId) {
+      setDragOverItemId(itemId);
     }
-    onReorderSymbol?.(draggedItemId, targetItemId);
-    clearDragState();
-  };
+  }, []);
 
   return (
     <div
@@ -1636,11 +1689,7 @@ export const Watchlist = ({
               dragging={Boolean(item.id && item.id === draggedItemId)}
               dragOver={Boolean(item.id && item.id === dragOverItemId)}
               onDragStart={setDraggedItemId}
-              onDragOver={(itemId) => {
-                if (draggedItemId && draggedItemId !== itemId) {
-                  setDragOverItemId(itemId);
-                }
-              }}
+              onDragOver={handleDragOver}
               onDrop={handleDrop}
               onDragEnd={clearDragState}
               onSelect={onSelect}
