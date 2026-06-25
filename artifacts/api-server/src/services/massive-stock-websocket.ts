@@ -35,6 +35,11 @@ const CHANNELS: MassiveStockWebSocketChannel[] = ["AM", "Q", "T"];
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const REFRESH_DEBOUNCE_MS = 150;
+// Safety net: while consumers are subscribed the stream must never sit wedged
+// with no socket and nothing scheduled to bring one back (a latched failure, a
+// cleared timer). The watchdog force-recovers such a state so a freeze can
+// never become permanent regardless of how it was reached.
+const STREAM_RECOVERY_WATCHDOG_MS = 20_000;
 
 const subscribers = new Map<number, Subscriber>();
 const activeSubscriptionParams = new Set<string>();
@@ -50,6 +55,7 @@ let socketUrl: string | null = null;
 let webSocketFactory: WebSocketFactory = (url) => new WebSocket(url);
 let refreshTimer: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let recoveryWatchdogTimer: NodeJS.Timeout | null = null;
 let reconnectAttempt = 0;
 let reconnectCount = 0;
 let authState: "idle" | "authenticating" | "authenticated" | "failed" =
@@ -246,6 +252,35 @@ function scheduleReconnect(): void {
   reconnectTimer.unref?.();
 }
 
+function clearRecoveryWatchdog(): void {
+  if (recoveryWatchdogTimer) {
+    clearInterval(recoveryWatchdogTimer);
+    recoveryWatchdogTimer = null;
+  }
+}
+
+function ensureRecoveryWatchdog(): void {
+  if (recoveryWatchdogTimer) {
+    return;
+  }
+  recoveryWatchdogTimer = setInterval(() => {
+    if (subscribers.size === 0) {
+      clearRecoveryWatchdog();
+      return;
+    }
+    // Consumers want data but the stream is wedged off with no socket and
+    // nothing scheduled to bring one back. Clear any latched failure and
+    // reconnect so a freeze can never become permanent.
+    if (!socket && !reconnectTimer && !refreshTimer) {
+      if (authState === "failed") {
+        authState = "idle";
+      }
+      scheduleReconnect();
+    }
+  }, STREAM_RECOVERY_WATCHDOG_MS);
+  recoveryWatchdogTimer.unref?.();
+}
+
 function scheduleRefresh(): void {
   clearRefreshTimer();
   refreshTimer = setTimeout(() => {
@@ -291,7 +326,17 @@ function handleProviderStatus(record: Record<string, unknown>): boolean {
   }
 
   if (status === "auth_failed") {
+    // Recover instead of latching the stream off forever. Under event-loop
+    // saturation the auth handshake can starve / arrive past the provider's
+    // window and come back as `auth_failed` exactly like a bad key — and
+    // parking permanently in "failed" (the close handler at scheduleReconnect's
+    // call site skips reconnecting while authState === "failed") froze live
+    // prices until a page reload churned the subscription ("flips off after
+    // load, never recovers"). Re-arm a capped-backoff reconnect: a genuinely
+    // bad key just retries at <= RECONNECT_MAX_MS, a transient failure recovers
+    // the moment the loop frees.
     closeSocket("failed");
+    scheduleReconnect();
   }
 
   return true;
@@ -423,6 +468,7 @@ export function subscribeMassiveStockWebSocket(input: {
     onMessage: input.onMessage,
   });
   scheduleRefresh();
+  ensureRecoveryWatchdog();
 
   return () => {
     subscribers.delete(subscriberId);
@@ -520,6 +566,7 @@ function resetMassiveStockWebSocketForTests(): void {
   closeSocket();
   clearRefreshTimer();
   clearReconnectTimer();
+  clearRecoveryWatchdog();
   subscribers.clear();
   activeSubscriptionParams.clear();
   eventCountByChannel.clear();
@@ -550,5 +597,11 @@ export const __massiveStockWebSocketInternalsForTests = {
   },
   setWebSocketFactory(factory: WebSocketFactory): void {
     webSocketFactory = factory;
+  },
+  handleProviderStatus(record: Record<string, unknown>): boolean {
+    return handleProviderStatus(record);
+  },
+  hasReconnectScheduled(): boolean {
+    return reconnectTimer !== null;
   },
 };
