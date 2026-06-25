@@ -71,7 +71,10 @@ bar_cache: (symbol, timeframe, source, starts_at)
 - [x] **T5** — Typecheck `lib/db` + `scripts` (exit 0).
 - [x] **T6** — Applied bar_cache index to live DB (CONCURRENTLY, valid).
 - [x] **T7** — Verified: `EXPLAIN ANALYZE` `/bars` 6s→36ms via the composite; no invalid indexes.
-- [HELD] **T8 — NOT authorized.** Migration 2 (redundant-index drops) is deferred pending its own index-usage audit + explicit approval (user ruling 2026-06-17, AGENT_CHAT_MESSAGES.jsonl seq51; codex-db-pool seq48). Do not apply `20260617_covering_indexes_drop_redundant.sql`. KEEP ruling holds the live state at the current +1 bar_cache index.
+- [HELD→RECONCILED] **T8.** Migration 2 (redundant-index drops) was originally deferred pending its own index-usage audit + explicit approval (user ruling 2026-06-17, AGENT_CHAT_MESSAGES.jsonl seq51; codex-db-pool seq48 — "KEEP" held live at +1 bar_cache index).
+  **DRIFT FOUND 2026-06-24:** a live `pg_indexes` check shows the two bar_cache drops ARE applied (`bar_cache_instrument_idx` and `bar_cache_symbol_timeframe_idx` are absent), i.e. the KEEP ruling was superseded at some point after 06-17. `signal_monitor_symbol_states_profile_idx` is still PRESENT, so migration 2 is only PARTIALLY applied (bar_cache portion done, signal-monitor portion not).
+  **ACTION 2026-06-24 (ratify to live reality):** removed the two dropped bar_cache index declarations from the Drizzle schema (`market-data.ts`) and the expected-index list (`market-data-schema-audit.ts`) — exactly the "WHEN THIS LANDS" cleanup the migration header prescribes. Left the signal-monitor index in schema/audit since it still exists. Did NOT touch the live DB. Reversible via git if the original KEEP ruling should stand instead (in which case the two bar_cache indexes must be re-created CONCURRENTLY on the live DB).
+- [x] **Layer 2 (partial) — bar_cache autovacuum tuning.** Per-table reloptions (vacuum/analyze scale_factor=0.02, threshold=1000, cost_limit=2000) applied live 2026-06-24 (dead tuples 6.4% → <1%, autovacuum now self-firing). Ratified as `migrations/20260624_bar_cache_autovacuum_tuning.sql` + guarded by `market-data-schema-audit.ts` (new reloptions check; `pnpm db:market-data:audit` fails if dropped).
 - [ ] **Layer 2** — execution_events index + retention/projection; bar_cache retention; cache sizing re-measure.
 
 ## Parallelization

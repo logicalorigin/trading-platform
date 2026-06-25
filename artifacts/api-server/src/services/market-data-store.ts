@@ -137,6 +137,53 @@ const bucketStartForTimeframe = (
   return new Date(Math.floor(timestamp.getTime() / stepMs) * stepMs);
 };
 
+// Largest timeframe step for which we drop the still-forming bar. Its epoch-grid
+// bucket boundary must coincide with actual (wall-clock) bar closure — true for
+// intraday steps (<=1h). See the gate in filterClosedBarsForStore.
+const FORMING_BAR_FILTER_MAX_STEP_MS = 60 * 60_000; // 1h
+
+// Persist CLOSED buckets only — drop the still-forming (open) bar. The forming bar
+// is a hot row that concurrent /bars fetches re-upsert on every tick; it is served
+// from the in-memory chart cache + the WS forming-bar overlay until it closes, then
+// persisted on the next fetch after the bucket boundary. Mirrors the signal-monitor
+// writer's closed-only invariant. A bar is closed once its bucket's END (start +
+// step) has passed; the boundary is inclusive (a bar whose bucket ends exactly at
+// `now` is closed).
+//
+// Applies to INTRADAY timeframes only (step <= 1h). Two reasons to leave coarse
+// timeframes (4h/12h/1d/1w/1month/1year) untouched and persist all of their bars:
+//   1. Correctness: bucketStartForTimeframe floors on the UTC epoch grid, so a coarse
+//      bucket "closes" at 00:00 UTC, NOT at session end. A US-session daily bar
+//      (final ~20:00-21:00 UTC) would be mis-classified as still-forming and withheld
+//      from durable storage for hours until UTC rollover — visible to recentWindow=0
+//      readers (e.g. watchlist backtest, 1d).
+//   2. Leverage: coarse timeframes are fetched far less often, so their open bucket is
+//      not a churn hotspot; the skip-guard still de-dupes their no-op re-upserts.
+// Unknown timeframe -> no bucket math, also persist all.
+//
+// Durability note (intraday): a symbol that stops being fetched right after its last
+// bar closes won't have that bar written by this path — it self-heals on the next
+// chart fetch (provider re-fetch persists it as closed), monitored symbols are covered
+// by the signal-monitor closed-only writer, and recentWindow=0 readers re-fetch via
+// getBars in-memory on a store miss. (The "store declines the <60m edge" masking only
+// applies to the 60m chart read, not to recentWindow=0 callers.)
+export function filterClosedBarsForStore(
+  bars: MarketDataStoreBarInput[],
+  timeframe: MarketDataStoreTimeframe,
+  now: Date = new Date(),
+): MarketDataStoreBarInput[] {
+  const stepMs = TIMEFRAME_STEP_MS[timeframe];
+  if (!stepMs || stepMs > FORMING_BAR_FILTER_MAX_STEP_MS) {
+    return bars;
+  }
+  const nowMs = now.getTime();
+  return bars.filter(
+    (bar) =>
+      bucketStartForTimeframe(bar.timestamp, timeframe).getTime() + stepMs <=
+      nowMs,
+  );
+}
+
 const expandStoredRowsLimit = (
   limit: number,
   timeframe: MarketDataStoreTimeframe,
@@ -662,6 +709,21 @@ export async function loadStoredMarketBarsForSymbols(
   }
 }
 
+// Skip-guard for the bar_cache upserts: only DO UPDATE when an actual OHLCV value
+// changed. Re-fetching the same already-stored closed bars is the common case (every
+// /bars cache-miss re-upserts ~200 unchanged rows), so without this WHERE the upsert
+// rewrites excluded.* + updatedAt on rows that did not change — driving n_tup_upd
+// 3.62M vs n_tup_ins 831K (4.4:1), dead tuples, and index write-amp on a 5GB table.
+// All five columns are NOT NULL numerics, so plain IS DISTINCT FROM is exact (no
+// NULL-handling needed). Shared by both writers below so they stay behavior-identical.
+const barCacheRowChangedPredicate = sql`
+  ${barCacheTable.open} IS DISTINCT FROM excluded.open
+  OR ${barCacheTable.high} IS DISTINCT FROM excluded.high
+  OR ${barCacheTable.low} IS DISTINCT FROM excluded.low
+  OR ${barCacheTable.close} IS DISTINCT FROM excluded.close
+  OR ${barCacheTable.volume} IS DISTINCT FROM excluded.volume
+`;
+
 export async function persistMarketDataBars(input: {
   request: MarketDataStoreRequest;
   sourceName: string;
@@ -722,6 +784,7 @@ export async function persistMarketDataBars(input: {
               volume: sql`excluded.volume`,
               updatedAt: now,
             },
+            setWhere: barCacheRowChangedPredicate,
           });
       }
     }
@@ -838,6 +901,7 @@ export async function persistMarketDataBarsForSymbols(input: {
             volume: sql`excluded.volume`,
             updatedAt: now,
           },
+          setWhere: barCacheRowChangedPredicate,
         });
     }
     marketDataStoreBackoff.clear();

@@ -65,15 +65,16 @@ export const barCacheTable = pgTable(
       table.source,
       table.startsAt,
     ),
-    index("bar_cache_instrument_idx").on(table.instrumentId),
-    index("bar_cache_symbol_timeframe_idx").on(table.symbol, table.timeframe),
     // Covering index for the hot read path (loadStoredMarketBars,
     // market-data-store.ts): filters (symbol, timeframe, source) + a starts_at
     // range, ORDER BY starts_at. Without it the planner uses (symbol, timeframe)
     // then heap-filters source + starts_at and SORTS the full match set — the
     // over-fetch that hit the 6s statement_timeout on high-volume symbols and
-    // drained the 12-slot pool. Subsumes bar_cache_symbol_timeframe_idx, which
-    // is dropped in the follow-up migration once this is verified in prod.
+    // drained the 12-slot pool. This subsumes the former single-column
+    // bar_cache_symbol_timeframe_idx; the former bar_cache_instrument_idx is
+    // subsumed by the unique index above. Both were dropped in prod to cut
+    // write-amplification on this hot append table (confirmed absent via
+    // pg_indexes 2026-06-24); see docs/plans/db-pool-saturation-index-fix.md.
     index("bar_cache_symbol_timeframe_source_starts_at_idx").on(
       table.symbol,
       table.timeframe,

@@ -158,6 +158,7 @@ import {
 } from "./bridge-order-read-state";
 import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
 import {
+  filterClosedBarsForStore,
   loadStoredMarketBars,
   normalizeBarsToStoreTimeframe,
   persistMarketDataBars,
@@ -10864,11 +10865,22 @@ async function getBaseBarsImpl(
       };
       // This request's response already includes these bars; durable storage is
       // catching up and must not evict the fresh in-memory chart cache entry.
-      void persistMarketDataBars({
-        request: persistRequest,
-        sourceName: historicalStoreSource,
-        bars: massiveBars,
-      });
+      // Persist CLOSED buckets only — the still-forming bar is a hot row that
+      // concurrent /bars fetches re-upsert every tick. It stays in the in-memory
+      // chart cache + the WS forming-bar overlay below until it closes, then gets
+      // persisted on the next fetch past the bucket boundary. Matches the
+      // signal-monitor writer's closed-only invariant.
+      const persistableBars = filterClosedBarsForStore(
+        massiveBars,
+        input.timeframe,
+      );
+      if (persistableBars.length) {
+        void persistMarketDataBars({
+          request: persistRequest,
+          sourceName: historicalStoreSource,
+          bars: persistableBars,
+        });
+      }
     }
     const mergeableMassiveBars = restrictHistoricalSynthesisToBrokerBackfill(
       input,

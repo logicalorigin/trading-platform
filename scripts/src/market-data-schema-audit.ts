@@ -7,6 +7,10 @@ type TableSpec = {
   name: string;
   columns: string[];
   indexes: string[];
+  // Expected per-table storage parameters, each as a `name=value` string
+  // matching the exact form pg_class.reloptions returns. Optional: only tables
+  // with intentional autovacuum/storage overrides declare them.
+  reloptions?: string[];
 };
 
 const TABLES: TableSpec[] = [
@@ -47,15 +51,25 @@ const TABLES: TableSpec[] = [
     ],
     indexes: [
       "bar_cache_instrument_timeframe_source_starts_at_idx",
-      "bar_cache_instrument_idx",
-      "bar_cache_symbol_timeframe_idx",
       // Covering index for the hot loadStoredMarketBars read; see
       // db-pool-saturation-index-fix.md. Regression guard: if this is ever
-      // dropped, /bars falls back to the 6s-timeout plan. (instrument_idx +
-      // symbol_timeframe_idx are removed from this list when the follow-up
-      // drop-redundant migration lands.)
+      // dropped, /bars falls back to the 6s-timeout plan. The single-column
+      // bar_cache_instrument_idx (subsumed by the unique index) and
+      // bar_cache_symbol_timeframe_idx (subsumed by this covering index) were
+      // dropped in prod to cut write-amplification on this hot append table;
+      // confirmed absent via pg_indexes 2026-06-24.
       "bar_cache_symbol_timeframe_source_starts_at_idx",
       "bar_cache_starts_at_idx",
+    ],
+    // Per-table autovacuum tuning; see 20260624_bar_cache_autovacuum_tuning.sql.
+    // Regression guard: if these are dropped, bar_cache reverts to the global
+    // scale_factor=0.2 and re-bloats the working set on the fixed shared DB.
+    reloptions: [
+      "autovacuum_vacuum_scale_factor=0.02",
+      "autovacuum_vacuum_threshold=1000",
+      "autovacuum_analyze_scale_factor=0.02",
+      "autovacuum_analyze_threshold=1000",
+      "autovacuum_vacuum_cost_limit=2000",
     ],
   },
   {
@@ -184,6 +198,7 @@ type AuditRow = {
   exists: boolean;
   missingColumns: string[];
   missingIndexes: string[];
+  missingReloptions: string[];
 };
 
 async function loadExistingTables(): Promise<Set<string>> {
@@ -226,21 +241,44 @@ async function loadExistingIndexes(): Promise<Map<string, Set<string>>> {
   return byTable;
 }
 
+async function loadExistingReloptions(): Promise<Map<string, Set<string>>> {
+  const result = await pool.query<{ table_name: string; reloption: string }>(
+    `select c.relname as table_name, unnest(c.reloptions) as reloption
+       from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public'
+        and c.relkind = 'r'`,
+  );
+  const byTable = new Map<string, Set<string>>();
+  for (const row of result.rows) {
+    const reloptions = byTable.get(row.table_name) ?? new Set<string>();
+    reloptions.add(row.reloption);
+    byTable.set(row.table_name, reloptions);
+  }
+  return byTable;
+}
+
 async function audit(): Promise<AuditRow[]> {
-  const [tables, columnsByTable, indexesByTable] = await Promise.all([
-    loadExistingTables(),
-    loadExistingColumns(),
-    loadExistingIndexes(),
-  ]);
+  const [tables, columnsByTable, indexesByTable, reloptionsByTable] =
+    await Promise.all([
+      loadExistingTables(),
+      loadExistingColumns(),
+      loadExistingIndexes(),
+      loadExistingReloptions(),
+    ]);
 
   return TABLES.map((spec) => {
     const columns = columnsByTable.get(spec.name) ?? new Set<string>();
     const indexes = indexesByTable.get(spec.name) ?? new Set<string>();
+    const reloptions = reloptionsByTable.get(spec.name) ?? new Set<string>();
     return {
       table: spec.name,
       exists: tables.has(spec.name),
       missingColumns: spec.columns.filter((column) => !columns.has(column)),
       missingIndexes: spec.indexes.filter((index) => !indexes.has(index)),
+      missingReloptions: (spec.reloptions ?? []).filter(
+        (reloption) => !reloptions.has(reloption),
+      ),
     };
   });
 }
@@ -259,6 +297,9 @@ function auditMigrationFile(): string[] {
     .map((file) => fs.readFileSync(path.join(migrationsDir, file), "utf8"))
     .join("\n")
     .toLowerCase();
+  // reloptions are written `key = value` in migrations but returned `key=value`
+  // by pg_class; compare with whitespace stripped so either form satisfies.
+  const sqlNoSpace = sql.replace(/\s+/g, "");
   const failures: string[] = [];
   for (const spec of TABLES) {
     if (!sql.includes(`create table if not exists ${spec.name}`)) {
@@ -267,6 +308,18 @@ function auditMigrationFile(): string[] {
     for (const indexName of spec.indexes) {
       if (!sql.includes(`if not exists ${indexName}`)) {
         failures.push(`migration missing index ${indexName}`);
+      }
+    }
+    if (spec.reloptions && spec.reloptions.length > 0) {
+      if (!sqlNoSpace.includes(`altertable${spec.name}set(`)) {
+        failures.push(`migration missing reloptions ALTER for ${spec.name}`);
+      }
+      for (const reloption of spec.reloptions) {
+        if (!sqlNoSpace.includes(reloption.replace(/\s+/g, ""))) {
+          failures.push(
+            `migration missing reloption ${reloption} on ${spec.name}`,
+          );
+        }
       }
     }
   }
@@ -282,6 +335,7 @@ async function main(): Promise<void> {
       exists: row.exists,
       missingColumns: row.missingColumns.join(", ") || "-",
       missingIndexes: row.missingIndexes.join(", ") || "-",
+      missingReloptions: row.missingReloptions.join(", ") || "-",
     })),
   );
 
@@ -289,7 +343,8 @@ async function main(): Promise<void> {
     (row) =>
       !row.exists ||
       row.missingColumns.length > 0 ||
-      row.missingIndexes.length > 0,
+      row.missingIndexes.length > 0 ||
+      row.missingReloptions.length > 0,
   );
   if (failures.length > 0) {
     process.exitCode = 1;
