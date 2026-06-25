@@ -13,6 +13,7 @@ import {
   subscribeMassiveStockWebSocket,
 } from "./massive-stock-websocket";
 import { enrichStockQuoteWithDayChangeContext } from "./stock-quote-day-change-context";
+import { serializeSseEventData } from "./sse-stream-diagnostics";
 
 type MassiveStockQuote = QuoteSnapshot & { source: "massive" };
 type QuoteSnapshotPayload = {
@@ -21,7 +22,14 @@ type QuoteSnapshotPayload = {
 type Subscriber = {
   id: number;
   symbols: Set<string>;
-  onSnapshot: (payload: QuoteSnapshotPayload) => void;
+  // serializeEvent is a per-flush memoized thunk: it returns the SSE `data` JSON
+  // for this subscriber's matched-symbol subset, serialized at most once and
+  // shared across every subscriber with the same subset this flush. Non-SSE
+  // consumers ignore it and pay no serialization cost.
+  onSnapshot: (
+    payload: QuoteSnapshotPayload,
+    serializeEvent?: () => string,
+  ) => void;
 };
 type QuoteState = {
   symbol: string;
@@ -174,15 +182,44 @@ function flushSnapshotNotifications(): void {
     return;
   }
 
+  // Within one flush every subscriber filters the SAME `symbols` array in the
+  // same order, so two subscribers with the same matched subset produce a
+  // byte-identical payload. Build + serialize each distinct subset at most once
+  // and share it across those subscribers (was one getCurrentPayload +
+  // JSON.stringify per subscriber on the hottest fan-out path). The key is the
+  // matched-symbol list (already canonical for this flush); subscribers sharing a
+  // key only receive symbols they each subscribe to, so no symbol leaks across
+  // clients. Serialization is lazy via the thunk, so a non-SSE consumer pays
+  // nothing.
+  const payloadByKey = new Map<string, QuoteSnapshotPayload>();
+  const thunkByKey = new Map<string, () => string>();
   subscribers.forEach((subscriber) => {
     const matchedSymbols = symbols.filter((symbol) => subscriber.symbols.has(symbol));
     if (!matchedSymbols.length) {
       return;
     }
-    const payload = getCurrentPayload(matchedSymbols);
-    if (payload.quotes.length) {
-      subscriber.onSnapshot(payload);
+    const key = matchedSymbols.join(",");
+    let payload = payloadByKey.get(key);
+    if (payload === undefined) {
+      payload = getCurrentPayload(matchedSymbols);
+      payloadByKey.set(key, payload);
     }
+    if (!payload.quotes.length) {
+      return;
+    }
+    let serializeEvent = thunkByKey.get(key);
+    if (serializeEvent === undefined) {
+      const sharedPayload = payload;
+      let serialized: string | undefined;
+      serializeEvent = (): string => {
+        if (serialized === undefined) {
+          serialized = serializeSseEventData(sharedPayload);
+        }
+        return serialized;
+      };
+      thunkByKey.set(key, serializeEvent);
+    }
+    subscriber.onSnapshot(payload, serializeEvent);
   });
 }
 
@@ -297,7 +334,10 @@ function scheduleRefresh(): void {
 
 export function subscribeMassiveStockQuoteSnapshots(
   symbols: string[],
-  onSnapshot: (payload: QuoteSnapshotPayload) => void,
+  onSnapshot: (
+    payload: QuoteSnapshotPayload,
+    serializeEvent?: () => string,
+  ) => void,
 ): () => void {
   const normalizedSymbols = new Set(
     symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),

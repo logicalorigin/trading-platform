@@ -906,7 +906,10 @@ export async function fetchMarketDepthSnapshotPayload(input: {
 
 export function subscribeQuoteSnapshots(
   symbols: string[],
-  onSnapshot: (payload: QuoteStreamPayload) => void,
+  onSnapshot: (
+    payload: QuoteStreamPayload,
+    serializeEvent?: () => string,
+  ) => void,
 ): Unsubscribe {
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),

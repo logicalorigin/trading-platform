@@ -13,6 +13,7 @@ import {
   type MassiveDelayedStockAggregate,
 } from "./massive-stock-aggregate-stream";
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
+import { serializeSseEventData } from "./sse-stream-diagnostics";
 
 export type StockMinuteAggregateSource =
   | "ibkr-websocket-derived"
@@ -42,7 +43,14 @@ export type StockMinuteAggregateMessage = {
 type Subscriber = {
   id: number;
   symbols: Set<string>;
-  onAggregate: (message: StockMinuteAggregateMessage) => void;
+  // serializeEvent is a per-broadcast memoized thunk: calling it returns the SSE
+  // `data` JSON, serialized at most once and shared across all subscribers of the
+  // same broadcast. Non-SSE subscribers (e.g. signal-monitor evaluation) ignore
+  // it and pay no serialization cost.
+  onAggregate: (
+    message: StockMinuteAggregateMessage,
+    serializeEvent?: () => string,
+  ) => void;
 };
 export type StockMinuteAggregateSubscription = {
   setSymbols(symbols: string[]): void;
@@ -260,12 +268,31 @@ function recordAggregateHistory(message: StockMinuteAggregateMessage): void {
 }
 
 function broadcastAggregate(message: StockMinuteAggregateMessage) {
+  // Serialize the per-symbol aggregate at most ONCE per broadcast and share the
+  // bytes across every matching SSE subscriber — previously each subscriber ran
+  // its own JSON.stringify of the same payload (O(subscribers) per event). The
+  // thunk is lazy: a broadcast with only non-SSE subscribers never serializes.
+  // apiServerEmittedAt is stamped once per broadcast (shared) instead of once per
+  // delivery; deliveries are microseconds apart.
+  let serialized: string | undefined;
+  const serializeEvent = (): string => {
+    if (serialized === undefined) {
+      serialized = serializeSseEventData({
+        ...message,
+        latency: {
+          ...(message.latency ?? {}),
+          apiServerEmittedAt: new Date(),
+        },
+      });
+    }
+    return serialized;
+  };
   subscribers.forEach((subscriber) => {
     if (!subscriber.symbols.has(message.symbol)) {
       return;
     }
 
-    subscriber.onAggregate(message);
+    subscriber.onAggregate(message, serializeEvent);
   });
 }
 
@@ -603,7 +630,10 @@ function refreshQuoteSubscription() {
     if (provider === "massive-websocket") {
       massiveQuoteUnsubscribe = subscribeMassiveStockQuoteSnapshots(
         symbols,
-        handleMassiveQuoteSnapshot,
+        // Ignore the serialize-once thunk (2nd arg) — this is a non-SSE consumer
+        // that feeds the aggregate accumulator; observedAt stays Date.now() as
+        // before (the provider never passed it positionally).
+        (payload) => handleMassiveQuoteSnapshot(payload),
       );
       ensureHeartbeatTimer();
     }
@@ -754,7 +784,10 @@ export function subscribeStockMinuteAggregates(
 
 export function subscribeMutableStockMinuteAggregates(
   symbols: string[],
-  onAggregate: (message: StockMinuteAggregateMessage) => void,
+  onAggregate: (
+    message: StockMinuteAggregateMessage,
+    serializeEvent?: () => string,
+  ) => void,
 ): StockMinuteAggregateSubscription {
   const normalizedSymbols = new Set(
     symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),

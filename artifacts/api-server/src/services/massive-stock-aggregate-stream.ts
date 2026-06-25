@@ -53,6 +53,21 @@ const TRADE_FLUSH_INTERVAL_MS = 5_000;
 const TRADE_FINALIZE_GRACE_MS = 12_000;
 const AM_MINUTE_RETENTION = 6;
 
+// The trade firehose includes odd-lot / Sale-Condition-excluded prints that the
+// AM aggregate channel filters out, so a thin pre-market minute can finalize at a
+// price ~20-30% off the real one (observed: AGM 141 vs ~192). Those bars are
+// already rejected downstream by the signal-monitor integrity gate (flooding
+// "rejected untrusted live-edge bars"), but they still enter the live ring. Drop
+// a trade bar whose close deviates beyond this band from the last trusted close
+// (the band matches the downstream gate). A short reject streak then force-accepts,
+// so a genuine sustained gap (earnings) is not suppressed until the AM channel
+// re-anchors at the open. Tunable via env for ops.
+const TRADE_BAR_MAX_REFERENCE_DEVIATION =
+  Number(process.env.MASSIVE_TRADE_BAR_MAX_REFERENCE_DEVIATION) || 0.15;
+const TRADE_BAR_MAX_REJECT_STREAK =
+  Number(process.env.MASSIVE_TRADE_BAR_MAX_REJECT_STREAK) || 3;
+const tradeBarRejectStreakBySymbol = new Map<string, number>();
+
 const tradeAggregator = new TradeBarAggregator();
 // Per-symbol set of minute-start timestamps the AM channel has covered, used to
 // suppress duplicate trade-derived bars. Pruned to the most recent minutes.
@@ -252,6 +267,25 @@ function maybeBroadcastTradeBar(bar: TradeMinuteBar): void {
   if (amMinutesBySymbol.get(bar.symbol)?.has(bar.startMs)) {
     return;
   }
+  // Reject erroneous extended-hours prints (see note at TRADE_BAR_* above). The
+  // reference is the last broadcast aggregate close — AM bars (authoritative) and
+  // previously-accepted trade bars only; rejected bars never update it, so a bad
+  // run can't poison the band.
+  const reference = aggregateCache.get(bar.symbol)?.close;
+  if (
+    reference != null &&
+    reference > 0 &&
+    Number.isFinite(bar.close) &&
+    Math.abs(bar.close - reference) / reference > TRADE_BAR_MAX_REFERENCE_DEVIATION
+  ) {
+    const streak = (tradeBarRejectStreakBySymbol.get(bar.symbol) ?? 0) + 1;
+    if (streak < TRADE_BAR_MAX_REJECT_STREAK) {
+      tradeBarRejectStreakBySymbol.set(bar.symbol, streak);
+      return;
+    }
+    // Streak exceeded: treat as a real sustained move and let it through.
+  }
+  tradeBarRejectStreakBySymbol.delete(bar.symbol);
   tradeBarCount += 1;
   broadcast(tradeBarToAggregate(bar));
 }
@@ -283,6 +317,7 @@ function stopTradeFlushTimer(): void {
 function clearTradeState(): void {
   tradeAggregator.reset();
   amMinutesBySymbol.clear();
+  tradeBarRejectStreakBySymbol.clear();
 }
 
 function clearRefreshTimer(): void {
@@ -435,5 +470,6 @@ export function __resetMassiveDelayedWebSocketForTests(): void {
   tradeBarCount = 0;
   tradeAggregator.reset();
   amMinutesBySymbol.clear();
+  tradeBarRejectStreakBySymbol.clear();
   __massiveStockWebSocketInternalsForTests.reset();
 }
