@@ -4903,6 +4903,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable(),
+  "trendDirection": zod.union([zod.enum(['bullish', 'bearish']),zod.null()]),
   "actionEligible": zod.boolean().optional(),
   "actionBlocker": zod.string().nullish()
 })),
@@ -4986,6 +4987,7 @@ export const GetSignalMonitorStateResponse = zod.object({
   "active": zod.boolean(),
   "lastEvaluatedAt": zod.coerce.date().nullable(),
   "lastError": zod.string().nullable(),
+  "trendDirection": zod.union([zod.enum(['bullish', 'bearish']),zod.null()]),
   "actionEligible": zod.boolean().optional(),
   "actionBlocker": zod.string().nullish()
 })),

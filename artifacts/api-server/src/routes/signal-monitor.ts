@@ -27,6 +27,7 @@ import {
   subscribeSignalMonitorMatrixStream,
   updateSignalMonitorProfile,
 } from "../services/signal-monitor";
+import { RawJson } from "../lib/raw-json";
 
 const router: IRouter = Router();
 
@@ -208,17 +209,12 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
 // cannot affect trading. Still served via res.json so the (gzip) response and
 // every header are byte-for-byte unchanged.
 const SIGNAL_MONITOR_STATE_CACHE_MS = 15_000;
-type SignalMonitorStateData = ReturnType<
-  typeof GetSignalMonitorStateResponse.parse
->;
-const signalMonitorStateCache = new Map<
-  string,
-  { data: SignalMonitorStateData; at: number }
->();
-const signalMonitorStateInFlight = new Map<
-  string,
-  Promise<SignalMonitorStateData>
->();
+// Cache the SERIALIZED payload, not the object: the ~2.4 MB response is otherwise
+// re-stringified synchronously on every cache hit (and for every concurrent waiter),
+// blocking the single event loop. Serializing once per miss and sending the string
+// via RawJson keeps the bytes identical while skipping the repeat stringify.
+const signalMonitorStateCache = new Map<string, { json: string; at: number }>();
+const signalMonitorStateInFlight = new Map<string, Promise<string>>();
 
 router.get("/signal-monitor/state", async (req, res) => {
   // Validate the request shape, but the request's own environment is overridden
@@ -229,18 +225,20 @@ router.get("/signal-monitor/state", async (req, res) => {
 
   const cached = signalMonitorStateCache.get(environment);
   if (cached && Date.now() - cached.at < SIGNAL_MONITOR_STATE_CACHE_MS) {
-    res.json(cached.data);
+    res.json(new RawJson(cached.json));
     return;
   }
 
   let pending = signalMonitorStateInFlight.get(environment);
   if (!pending) {
     const compute = (async () => {
-      const data = GetSignalMonitorStateResponse.parse(
-        await getSignalMonitorState({ environment }),
+      const json = JSON.stringify(
+        GetSignalMonitorStateResponse.parse(
+          await getSignalMonitorState({ environment }),
+        ),
       );
-      signalMonitorStateCache.set(environment, { data, at: Date.now() });
-      return data;
+      signalMonitorStateCache.set(environment, { json, at: Date.now() });
+      return json;
     })();
     pending = compute;
     signalMonitorStateInFlight.set(environment, compute);
@@ -257,7 +255,7 @@ router.get("/signal-monitor/state", async (req, res) => {
       .catch(() => {});
   }
 
-  res.json(await pending);
+  res.json(new RawJson(await pending));
 });
 
 router.get("/signal-monitor/breadth-history", async (req, res) => {

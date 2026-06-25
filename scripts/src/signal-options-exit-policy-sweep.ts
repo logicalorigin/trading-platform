@@ -922,6 +922,11 @@ export function buildVariantBackfillInput(input: {
     pyrusSignalsSettingsPatch: buildPyrusSignalsSettingsPatch(input.config),
     profilePatch: input.variant.profilePatch,
     progress: true,
+    // Backtest replay: gate entries on bar-derived MTF directions from each
+    // candidate's historical filterState rather than the live signal-matrix,
+    // which has no coverage for historical windows. Without this every replayed
+    // entry is rejected as mtf_not_aligned. See runSignalOptionsShadowBackfill.
+    useBarDerivedMtf: true,
   };
 }
 

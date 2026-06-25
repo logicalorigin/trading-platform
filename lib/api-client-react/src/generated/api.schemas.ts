@@ -5185,6 +5185,7 @@ export interface SignalMonitorSymbolState {
   lastEvaluatedAt: string | null;
   /** @nullable */
   lastError: string | null;
+  trendDirection: SignalMonitorIndicatorDirection | null;
   actionEligible?: boolean;
   /** @nullable */
   actionBlocker?: string | null;
@@ -5267,6 +5268,7 @@ export interface SignalMonitorMatrixState {
   /** @nullable */
   lastError: string | null;
   indicatorSnapshot: SignalMonitorIndicatorSnapshot | null;
+  trendDirection: SignalMonitorIndicatorDirection | null;
   actionEligible?: boolean;
   /** @nullable */
   actionBlocker?: string | null;

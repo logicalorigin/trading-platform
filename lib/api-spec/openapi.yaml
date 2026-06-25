@@ -12678,6 +12678,10 @@ components:
           format: date-time
         lastError:
           type: [string, "null"]
+        trendDirection:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorDirection"
+            - type: "null"
         actionEligible:
           type: boolean
         actionBlocker:
@@ -12702,6 +12706,7 @@ components:
         - active
         - lastEvaluatedAt
         - lastError
+        - trendDirection
 
     SignalMonitorIndicatorDirection:
       type: string
@@ -12825,6 +12830,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SignalMonitorIndicatorSnapshot"
             - type: "null"
+        trendDirection:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorDirection"
+            - type: "null"
         actionEligible:
           type: boolean
         actionBlocker:
@@ -12850,6 +12859,7 @@ components:
         - lastEvaluatedAt
         - lastError
         - indicatorSnapshot
+        - trendDirection
 
     SignalMonitorEvent:
       type: object

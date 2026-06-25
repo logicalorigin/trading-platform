@@ -8,6 +8,7 @@ import {
   isStaleSignalState,
   normalizeSignalDirection,
   normalizeSignalStatus,
+  normalizeTrendSignalDirection,
 } from "./signalStateFreshness.js";
 import { preferSignalMatrixCellState } from "./signalMatrixStateMerge.js";
 
@@ -432,6 +433,7 @@ const preferPrimaryMatrixFallback = (currentState, primaryState) => {
 export const signalPrimaryStateForMatrix = (signal) => ({
   symbol: signal?.symbol,
   timeframe: signal?.timeframe,
+  trendDirection: signal?.trendDirection ?? null,
   currentSignalDirection: signal?.currentSignalDirection || signal?.direction,
   currentSignalAt: signal?.currentSignalAt || signal?.signalAt,
   currentSignalPrice: signal?.currentSignalPrice ?? signal?.price ?? null,
@@ -515,15 +517,25 @@ const buildSignalMatrixVerdictLabel = ({
 
 const getMtfGateSignalDirection = (state) => {
   if (!state || state.active === false) return "";
-  return normalizeSignalDirection(state.currentSignalDirection);
+  // Gate on the cell's CURRENT trend (bullish/bearish), mirroring the backend
+  // entry gate. The backend re-evaluates trendDirection every bar and trades on
+  // it (getTrendDirectionsForSymbol -> evaluateSignalOptionsEntryGate), whereas
+  // currentSignalDirection is a sparse crossover that latches stale values. The
+  // top-level trendDirection is authored on both transports (REST symbol state
+  // and the matrix stream's wire boundary); fall back to the indicator snapshot
+  // for stream cells that predate the top-level field.
+  return normalizeTrendSignalDirection(
+    state.trendDirection ?? state.indicatorSnapshot?.trendDirection,
+  );
 };
 
 // Frontend mirror of the backend signal-options MTF entry gate
 // (signal-options-automation.ts evaluateSignalOptionsEntryGate). For the
-// CONFIGURED MTF timeframes, count how many agree with the signal direction
-// using the same currentSignalDirection source as the backend matrix-sourced
-// MTF gate. Trend-only display fallbacks are neutral and cannot satisfy the
-// selected-frame confluence contract. Aligned when matches >= requiredCount,
+// CONFIGURED MTF timeframes, count how many frames' CURRENT trend agrees with
+// the signal direction, using the same trendDirection source the backend entry
+// gate trades on. A frame with no current trend is neutral and cannot satisfy
+// the selected-frame confluence contract (consistent with the backend's
+// trendDirectionToSignalDirection(null)). Aligned when matches >= requiredCount,
 // matching the gate that actually decides entries.
 export const resolveConfiguredMtfAlignment = ({
   matrixStatesByTimeframe = {},

@@ -78,11 +78,17 @@ const signalMatrixStateRank = (state) => {
   return 1;
 };
 
+const trendDirectionOf = (state) =>
+  String(state?.trendDirection ?? state?.indicatorSnapshot?.trendDirection ?? "")
+    .trim()
+    .toLowerCase();
+
 const equivalentSignalMatrixCellState = (current, candidate) =>
   signalMatrixStateKey(current) === signalMatrixStateKey(candidate) &&
   normalizeSignalStatus(current) === normalizeSignalStatus(candidate) &&
   normalizeSignalDirection(current?.currentSignalDirection) ===
     normalizeSignalDirection(candidate?.currentSignalDirection) &&
+  trendDirectionOf(current) === trendDirectionOf(candidate) &&
   timestampMs(current?.currentSignalAt) === timestampMs(candidate?.currentSignalAt) &&
   timestampMs(current?.latestBarAt) === timestampMs(candidate?.latestBarAt) &&
   timestampMs(current?.lastEvaluatedAt) === timestampMs(candidate?.lastEvaluatedAt) &&

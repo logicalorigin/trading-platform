@@ -24,7 +24,6 @@ import {
   instrumentsTable,
   positionLotsTable,
   pool,
-  tickerReferenceCacheTable,
 } from "@workspace/db";
 import {
   calculateTransferAdjustedReturnSummary,
@@ -105,7 +104,6 @@ import {
   type AccountEquityHistorySeedPoint,
 } from "./account-equity-history-model";
 import {
-  isEtfSymbol,
   normalizeAssetClassLabel,
   normalizeOrderTab,
   normalizeTradeAssetClassLabel,
@@ -4896,8 +4894,6 @@ async function getAccountAllocationUncached(input: {
   const marketHydration = await hydratePositionMarkets(positions);
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
 
-  await upsertTickerReferenceCache(positions);
-
   const assetBuckets = new Map<string, number>();
   const sectorBuckets = new Map<string, number>();
   positions.forEach((position) => {
@@ -4931,37 +4927,6 @@ async function getAccountAllocationUncached(input: {
     ),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
-}
-
-async function upsertTickerReferenceCache(
-  positions: BrokerPositionSnapshot[],
-): Promise<void> {
-  const symbols = Array.from(
-    new Set(positions.map((position) => positionReferenceSymbol(position))),
-  );
-  if (!symbols.length) {
-    return;
-  }
-
-  await withOptionalAccountSchemaFallback({
-    tables: ["ticker_reference_cache"],
-    fallback: () => undefined,
-    run: async () => {
-      for (const symbol of symbols) {
-        await db
-          .insert(tickerReferenceCacheTable)
-          .values({
-            symbol,
-            name: symbol,
-            assetClass: isEtfSymbol(symbol) ? "ETF" : "Stock",
-            sector: sectorForSymbol(symbol),
-            beta: String(betaForSymbol(symbol)),
-            raw: { source: "static-fallback" },
-          })
-          .onConflictDoNothing();
-      }
-    },
-  });
 }
 
 function rawString(source: Record<string, unknown> | null | undefined, keys: string[]) {

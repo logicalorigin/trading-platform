@@ -132,6 +132,12 @@ export const buildCockpitGateSummary = (cockpit) => {
       notFresh: diagnosticsHasFreshness
         ? finiteNumber(signalFreshness.notFresh)
         : fallbackNotFresh,
+      // Neutral / directionless signals are a binary-system violation, not a
+      // benign "aged" state. The backend already counts them; surface the count
+      // so the UI can alarm on it instead of folding it into notFresh.
+      withoutDirection: diagnosticsHasFreshness
+        ? finiteNumber(signalFreshness.withoutDirection)
+        : 0,
     },
     tradePath: {
       blockedCandidates: diagnosticsHasTradePath

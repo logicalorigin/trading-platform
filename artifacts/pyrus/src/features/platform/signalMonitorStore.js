@@ -60,6 +60,11 @@ const areSignalStatesEquivalent = (left, right) => {
     left.symbol === right.symbol &&
     left.timeframe === right.timeframe &&
     left.currentSignalDirection === right.currentSignalDirection &&
+    // Tape items render trend-first, so a pure trendDirection flip must notify
+    // subscribers (mirrors trendDirectionOf in signalMatrixStateMerge.js).
+    left.trendDirection === right.trendDirection &&
+    (left.indicatorSnapshot?.trendDirection ?? null) ===
+      (right.indicatorSnapshot?.trendDirection ?? null) &&
     String(left.currentSignalAt || "") === String(right.currentSignalAt || "") &&
     left.currentSignalPrice === right.currentSignalPrice &&
     left.currentSignalClose === right.currentSignalClose &&

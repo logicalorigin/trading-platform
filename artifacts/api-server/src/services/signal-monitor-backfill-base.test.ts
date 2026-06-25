@@ -30,7 +30,6 @@ const {
   shouldSkipSignalMonitorBackfillForPressure,
   traceSignalMonitorLaneCurrentness,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
-  SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
 } = __signalMonitorInternalsForTests;
 
@@ -119,27 +118,6 @@ test("due-cell selection caps per cycle and refreshes the most-overdue first", (
     selected.map((cell) => cell.symbol),
     ["AAA", "BBB"],
   );
-});
-
-test("never-refreshed cells are maximally overdue but still cap-bounded (no thundering herd)", () => {
-  const nowMs = Date.parse("2026-06-12T15:00:00.000Z");
-  // Cold start: simulate the whole universe with no prior base (refreshedAt null),
-  // far more than the cap. Only the cap is refreshed this cycle; the rest are
-  // picked up on later cycles.
-  const candidates = Array.from({ length: 500 }, (_unused, index) => ({
-    symbol: `S${index}`,
-    timeframe: "1m" as const,
-    refreshedAt: null,
-  }));
-
-  const selected = selectSignalMonitorBackfillDueCells({
-    candidates,
-    nowMs,
-    maxCells: SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE,
-  });
-
-  assert.equal(selected.length, SIGNAL_MONITOR_BACKFILL_MAX_CELLS_PER_CYCLE);
-  assert.ok(selected.length < candidates.length);
 });
 
 test("pressure-high skips the backfill cycle; watch/normal keep running", () => {

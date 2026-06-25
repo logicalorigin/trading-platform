@@ -55,6 +55,7 @@ import {
   evaluateSignalMonitorProfileSymbols,
   getSignalMonitorProfileRow,
   getSignalDirectionsForSymbolAsOf,
+  getTrendDirectionsForSymbol,
   getSignalMonitorState,
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
@@ -780,6 +781,19 @@ function signalOptionsTradeEventHasActionableOptionSession(
   event: ExecutionEvent,
 ) {
   const payload = asRecord(event.payload);
+  // Expiration/maintenance exits close a position whose option already expired,
+  // so there is no live trading session to fall through to — admit them up front
+  // so deriveActivePositions honors the close instead of leaving the position
+  // phantom-open and blocking re-entry. These exits carry no `pnl`, so admitting
+  // them does not feed the daily-loss aggregator (computeSignalOptionsDailyRealizedPnl
+  // sums payload.pnl). Entry events never set these flags, so entry gating is
+  // unchanged.
+  if (
+    payload.maintenance === true ||
+    compactString(payload.exitReason) === "expiration"
+  ) {
+    return true;
+  }
   const position = asRecord(payload.position);
   const payloadContract = asRecord(payload.selectedContract);
   const selectedContract = Object.keys(payloadContract).length
@@ -3987,6 +4001,122 @@ export function buildSignalOptionsShadowOrderPlan(
 }
 
 /**
+ * SHADOW-ONLY fallback liquidity resolver. Used only when the LIVE two-sided
+ * quote settle loop produced nothing usable. Unlike resolveSignalOptionsLiquidity
+ * (the live path), this tolerates a DELAYED/FROZEN market-data mode and stale
+ * freshness so a delayed bid/ask — or, failing that, a last-trade/mark — can
+ * still source a fill. It does NOT fabricate: if no positive price of any kind
+ * is available it returns ok:false. The returned shape carries `fillQuoteSource`
+ * ("delayed" | "mark") so the fill's true provenance is recorded.
+ */
+function resolveSignalOptionsShadowFallbackLiquidity(
+  quote: SignalOptionsOptionQuote,
+) {
+  const bid = finiteNumber(quote.bid);
+  const ask = finiteNumber(quote.ask);
+  const last = finiteNumber(quote.last);
+  const mark = finiteNumber(quote.mark);
+  const hasDelayedBidAsk =
+    bid != null && ask != null && bid > 0 && ask > 0 && ask >= bid;
+  // Prefer a two-sided delayed mid; otherwise fall back to a positive mark/last.
+  const delayedMid = hasDelayedBidAsk ? (bid + ask) / 2 : null;
+  const markPrice =
+    mark != null && mark > 0 ? mark : last != null && last > 0 ? last : null;
+  const mid = delayedMid ?? markPrice;
+  const fillQuoteSource: "delayed" | "mark" | null =
+    delayedMid != null ? "delayed" : markPrice != null ? "mark" : null;
+  const spread = hasDelayedBidAsk ? Math.max(0, ask - bid) : null;
+  const spreadPctOfMid =
+    spread != null && mid != null && mid > 0 ? (spread / mid) * 100 : null;
+  // Sub-penny guard: a mid below one cent rounds to $0.00 at the exit's
+  // Number(mid.toFixed(2)) step, which would bank a full-premium (100%) loss and
+  // hand the mirror sell a 0 fill price it rejects — a silent no-op on a breached
+  // stop. Reject it so the caller defers to the maintenance force-close instead.
+  if (mid == null || mid < 0.01 || fillQuoteSource == null) {
+    return {
+      ok: false as const,
+      reasons: [mid != null && mid > 0 ? "mid_below_min_tick" : "missing_mark"],
+      fillQuoteSource: null,
+      bid,
+      ask,
+      last,
+      mark,
+      mid: null,
+      spread,
+      spreadPctOfMid,
+      quoteFreshness: quote.quoteFreshness ?? null,
+      marketDataMode: quote.marketDataMode ?? null,
+    };
+  }
+  return {
+    ok: true as const,
+    reasons: [] as string[],
+    fillQuoteSource,
+    bid,
+    ask,
+    last,
+    mark,
+    mid,
+    spread,
+    spreadPctOfMid,
+    // Tag the resulting fill with its TRUE provenance — never "live".
+    quoteFreshness: fillQuoteSource,
+    marketDataMode: quote.marketDataMode ?? fillQuoteSource,
+  };
+}
+
+/**
+ * SHADOW-ONLY fallback order plan. Mirrors buildSignalOptionsShadowOrderPlan's
+ * sizing, but sources its mid from the delayed/mark fallback resolver so a
+ * candidate that has no usable LIVE two-sided quote can still fill — tagged
+ * non-live via `fillQuoteSource`. Never used by the live trading path.
+ */
+function buildSignalOptionsShadowFallbackOrderPlan(
+  quote: SignalOptionsOptionQuote,
+  profile: SignalOptionsExecutionProfile,
+) {
+  const liquidity = resolveSignalOptionsShadowFallbackLiquidity(quote);
+  if (!liquidity.ok || liquidity.mid == null) {
+    return {
+      ok: false as const,
+      reason: liquidity.reasons[0] ?? "missing_mark",
+      liquidity,
+      fillQuoteSource: liquidity.fillQuoteSource,
+    };
+  }
+  const lastStep = profile.fillPolicy.chaseSteps.at(-1) ?? 0.9;
+  const ask = liquidity.ask != null && liquidity.ask > 0 ? liquidity.ask : liquidity.mid;
+  const simulatedFillPrice = Number(
+    Math.min(ask, liquidity.mid + (ask - liquidity.mid) * lastStep).toFixed(2),
+  );
+  const premiumQuantityCap =
+    profile.riskHaltControls.premiumBudgetEnabled === false
+      ? profile.riskCaps.maxContracts
+      : Math.floor(
+          profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100),
+        );
+  const quantity = Math.min(profile.riskCaps.maxContracts, premiumQuantityCap);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return {
+      ok: false as const,
+      reason: "premium_budget_too_small",
+      liquidity,
+      fillQuoteSource: liquidity.fillQuoteSource,
+    };
+  }
+  return {
+    ok: true as const,
+    entryLimitPrice: Number(liquidity.mid.toFixed(2)),
+    simulatedFillPrice,
+    quantity,
+    premiumAtRisk: Number((simulatedFillPrice * 100 * quantity).toFixed(2)),
+    fillPolicy: profile.fillPolicy,
+    liquidity,
+    fillQuoteSource: liquidity.fillQuoteSource,
+  };
+}
+
+/**
  * Apply a deployment's remaining trading-allowance budget to a resolved order
  * plan, sizing the entry down to whatever the budget can afford (1-contract
  * minimum). Returns the granted quantity/premium plus flags the caller uses to
@@ -4428,54 +4558,24 @@ function evaluateSignalOptionsEntryGate(input: {
     reasons.push("inverse_put_blocked");
   }
 
-  const gate = input.profile.entryGate.bearishRegime;
-  const fullyBullishMtf =
-    mtfDirections.length > 0 &&
-    mtfDirections.every((direction) => direction > 0);
-  const bearishMtfCount = mtfDirections.filter(
-    (direction) => direction < 0,
-  ).length;
-  const effectiveMinAdx =
-    bearishMtfCount >= 2 ? Math.min(gate.minAdx, 22) : gate.minAdx;
-
-  if (
-    entryControls.bearishRegimeEnabled !== false &&
-    gate.enabled &&
-    input.candidate.optionRight === "put"
-  ) {
-    if (adx == null || adx < effectiveMinAdx) {
-      reasons.push("adx_below_minimum");
-    }
-    if (gate.rejectFullyBullishMtf && fullyBullishMtf) {
-      reasons.push("mtf_fully_bullish");
-    }
-  }
-
   const reason = reasons.includes("inverse_put_blocked")
     ? "inverse_put_blocked"
     : reasons.includes("mtf_unavailable")
       ? "mtf_unavailable"
       : reasons.includes("mtf_not_aligned")
       ? "mtf_not_aligned"
-      : reasons.length
-        ? "bear_regime_gate_failed"
-        : null;
+      : (reasons[0] ?? null);
 
   return {
     ok: reasons.length === 0,
     reason,
     reasons,
     adx,
-    minAdx: gate.minAdx,
-    effectiveMinAdx,
     mtfDirections,
     mtfTimeframes: mtfSelection.mtfTimeframes,
     missingMtfTimeframes: mtfSelection.missingTimeframes,
     requiredMtfCount,
     mtfMatches,
-    bearishMtfCount,
-    fullyBullishMtf,
-    rejectFullyBullishMtf: gate.rejectFullyBullishMtf,
   };
 }
 
@@ -6169,9 +6269,18 @@ function computeSignalOptionsDailyPnl(
   );
 }
 
+type SignalOptionsShadowCashState = {
+  status: string | null;
+  quantity: number | null;
+};
+
 type SignalOptionsShadowIndex = {
   byEventId: Map<string, SignalOptionsShadowLink>;
   byCandidateId: Map<string, SignalOptionsShadowLink>;
+  // Window-INDEPENDENT cash-ledger truth keyed by shadowPositionKey: loaded from
+  // every shadow_positions row (any status), so a position whose entry event aged
+  // out of the event window is still recognized as closed. The cash ledger wins.
+  cashByPositionKey: Map<string, SignalOptionsShadowCashState>;
 };
 
 function shadowLinkFromParts(input: {
@@ -6244,11 +6353,26 @@ async function buildSignalOptionsShadowIndex(
   const eventIds = events.map((event) => event.id);
   const byEventId = new Map<string, SignalOptionsShadowLink>();
   const byCandidateId = new Map<string, SignalOptionsShadowLink>();
-  if (!eventIds.length) {
-    return { byEventId, byCandidateId };
+  const cashByPositionKey = new Map<string, SignalOptionsShadowCashState>();
+
+  // Cash-ledger truth is loaded independent of the event window so a closed
+  // position whose entry event aged out of the window is still recognized.
+  const shadowPositions = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.accountId, "shadow"));
+  for (const position of shadowPositions) {
+    cashByPositionKey.set(position.positionKey, {
+      status: compactString(position.status),
+      quantity: finiteNumber(position.quantity),
+    });
   }
 
-  const [orders, fills, openPositions] = await Promise.all([
+  if (!eventIds.length) {
+    return { byEventId, byCandidateId, cashByPositionKey };
+  }
+
+  const [orders, fills] = await Promise.all([
     db
       .select()
       .from(shadowOrdersTable)
@@ -6259,10 +6383,6 @@ async function buildSignalOptionsShadowIndex(
       .from(shadowFillsTable)
       .where(inArray(shadowFillsTable.sourceEventId, eventIds))
       .orderBy(desc(shadowFillsTable.occurredAt)),
-    db
-      .select()
-      .from(shadowPositionsTable)
-      .where(eq(shadowPositionsTable.accountId, "shadow")),
   ]);
 
   const fillsByEventId = new Map(
@@ -6271,7 +6391,7 @@ async function buildSignalOptionsShadowIndex(
       .map((fill) => [String(fill.sourceEventId), fill]),
   );
   const positionsByKey = new Map(
-    openPositions.map((position) => [position.positionKey, position]),
+    shadowPositions.map((position) => [position.positionKey, position]),
   );
 
   for (const order of orders) {
@@ -6305,7 +6425,19 @@ async function buildSignalOptionsShadowIndex(
     }
   }
 
-  return { byEventId, byCandidateId };
+  return { byEventId, byCandidateId, cashByPositionKey };
+}
+
+function shadowCashStateClosesPosition(
+  cashState: SignalOptionsShadowCashState | null | undefined,
+) {
+  if (!cashState) {
+    return false;
+  }
+  const quantity = cashState.quantity;
+  return (
+    cashState.status === "closed" || (quantity != null && quantity <= 0)
+  );
 }
 
 function shadowLinkClosesPosition(
@@ -6329,6 +6461,18 @@ function reconcileActivePositionsWithShadowLinks(
   shadowIndex: SignalOptionsShadowIndex,
 ) {
   return positions.filter((position) => {
+    // Cash-ledger truth wins and is window-independent: if shadow_positions shows
+    // this position CLOSED (status closed / quantity<=0), drop it regardless of a
+    // missing/aged-out entry event so it can never re-block as same_direction_open.
+    const cashState = shadowIndex.cashByPositionKey.get(
+      shadowPositionKey({
+        symbol: position.symbol,
+        selectedContract: position.selectedContract,
+      }),
+    );
+    if (shadowCashStateClosesPosition(cashState)) {
+      return false;
+    }
     const candidateId = compactString(position.candidateId);
     if (!candidateId) {
       return positionOpenedInActionableOptionSession(position);
@@ -6399,11 +6543,12 @@ const EXECUTION_BLOCKER_SKIP_REASONS = new Set([
 ]);
 
 const ENTRY_GATE_SKIP_REASONS = new Set([
+  // legacy reasons, bearish-regime gate removed
   "adx_below_minimum",
   "bear_regime_gate_failed",
+  "mtf_fully_bullish",
   "entry_gate_failed",
   "inverse_put_blocked",
-  "mtf_fully_bullish",
   "mtf_not_aligned",
   "mtf_unavailable",
 ]);
@@ -6904,11 +7049,6 @@ function mergeProfilePatch(
         ...current.entryGate.mtfAlignment,
         ...asRecord(asRecord(patch.entryGate).mtfAlignment),
         ...asRecord(patch.mtfAlignment),
-      },
-      bearishRegime: {
-        ...current.entryGate.bearishRegime,
-        ...asRecord(asRecord(patch.entryGate).bearishRegime),
-        ...asRecord(patch.bearishRegime),
       },
     },
     liquidityGate: {
@@ -8150,6 +8290,7 @@ function classifySignalOptionsSkipReason(reason: string) {
   }
   if (
     [
+      // legacy reason, bearish-regime gate removed
       "bear_regime_gate_failed",
       "mtf_not_aligned",
       "inverse_put_blocked",
@@ -8795,17 +8936,6 @@ function eventDte(event: ExecutionEvent) {
   );
 }
 
-function eventEntryGateWouldPass(
-  event: ExecutionEvent,
-  profile: SignalOptionsExecutionProfile,
-) {
-  const candidate = candidateFromEvent(event);
-  if (!candidate) {
-    return true;
-  }
-  return evaluateSignalOptionsEntryGate({ candidate, profile }).ok;
-}
-
 function counterArray(counter: Record<string, number>) {
   return Object.entries(sortedDiagnosticCounter(counter)).map(
     ([reason, count]) => ({
@@ -9024,9 +9154,6 @@ function buildRuleAdherence(input: {
     skipCount("missing_mark") +
     skipCount("liquidity_gate_failed") +
     skipCount("premium_budget_too_small");
-  const bearishPutGateViolations = entryEvents.filter(
-    (event) => !eventEntryGateWouldPass(event, input.profile),
-  ).length;
   const openSymbols =
     finiteNumber(input.risk.openSymbols) ?? input.activePositions.length;
   const unmarkedPositions = input.activePositions.filter(
@@ -9114,20 +9241,6 @@ function buildRuleAdherence(input: {
       detail: liquidityBlocks
         ? `${liquidityBlocks} candidates were blocked by liquidity or quote rules.`
         : "No liquidity-gate breaches on filled entries.",
-    }),
-    rule({
-      id: "bearish_put_gate",
-      label: "Bearish put gate",
-      status: bearishPutGateViolations
-        ? "fail"
-        : skipCount("bear_regime_gate_failed")
-          ? "warning"
-          : "pass",
-      observations: entryEvents.length + skipCount("bear_regime_gate_failed"),
-      violations: bearishPutGateViolations,
-      detail: skipCount("bear_regime_gate_failed")
-        ? `${skipCount("bear_regime_gate_failed")} put candidates were blocked by regime filters.`
-        : "Filled put entries satisfied the configured regime filter.",
     }),
     rule({
       id: "max_open_symbols",
@@ -11063,12 +11176,16 @@ async function refreshActivePosition(input: {
         })
       : null;
   const exitReason = stop.exitReason ?? overnight?.exitReason ?? null;
-  const exitPrice =
+  let exitPrice =
     liquidity.bid != null && liquidity.mid != null
       ? Number(
           (liquidity.mid - (liquidity.mid - liquidity.bid) * 0.9).toFixed(2),
         )
       : Number(markPrice.toFixed(2));
+  // Provenance of the exit fill price. "live" when the live-eligibility gate
+  // admits; rewritten to "delayed"/"mark" only when the SHADOW exit fallback
+  // (below) supplies the price. Never tagged "live" for a fallback fill.
+  let exitFillQuoteSource: "live" | "delayed" | "mark" = "live";
   const positionPatch = {
     ...input.position,
     peakPrice,
@@ -11106,27 +11223,49 @@ async function refreshActivePosition(input: {
         usedShadowMarkFallback,
       });
     if (!exitQuoteEligible) {
-      return await emitPositionMarkSkip({
-        summary: `${input.position.symbol} shadow exit skipped: live option quote unavailable`,
-        message:
-          "The open shadow position crossed an exit threshold, but the mark came from a fallback or non-live option quote.",
-        quote,
-        liquidity,
-        reason: "position_exit_quote_unavailable",
-        detail: {
-          exitReason,
-          markPrice,
-          markSource,
-          usedShadowMarkFallback,
-          fallbackMarkAgeMs: shadowMarkFallback
-            ? markAt.getTime() - shadowMarkFallback.latestAsOf.getTime()
-            : null,
-          position: positionPatch,
-          stop: stopPayload,
-          overnight,
-          shadowPositionMarkFallback: shadowMarkFallback,
-        },
-      });
+      // SHADOW-ONLY in-scan exit fallback. The live exit-quote gate failed, but a
+      // breached stop on a shadow position should still close in-scan when a
+      // delayed two-sided mid (or last/mark) is available — mirroring the SHADOW
+      // ENTRY fill fallback. If no usable fallback price exists we fall through to
+      // the existing skip and let the maintenance SWEEP force-close it. The live
+      // trading path never reaches this branch (gated on SHADOW_PROVIDER_ACCOUNT_ID).
+      const shadowExitFallback =
+        input.deployment.providerAccountId === SHADOW_PROVIDER_ACCOUNT_ID
+          ? resolveSignalOptionsShadowFallbackLiquidity(quote)
+          : null;
+      if (
+        !shadowExitFallback ||
+        !shadowExitFallback.ok ||
+        shadowExitFallback.mid == null ||
+        shadowExitFallback.fillQuoteSource == null
+      ) {
+        return await emitPositionMarkSkip({
+          summary: `${input.position.symbol} shadow exit skipped: live option quote unavailable`,
+          message:
+            "The open shadow position crossed an exit threshold, but the mark came from a fallback or non-live option quote.",
+          quote,
+          liquidity,
+          reason: "position_exit_quote_unavailable",
+          detail: {
+            exitReason,
+            markPrice,
+            markSource,
+            usedShadowMarkFallback,
+            fallbackMarkAgeMs: shadowMarkFallback
+              ? markAt.getTime() - shadowMarkFallback.latestAsOf.getTime()
+              : null,
+            position: positionPatch,
+            stop: stopPayload,
+            overnight,
+            shadowPositionMarkFallback: shadowMarkFallback,
+          },
+        });
+      }
+      // Usable fallback exit price found: drive the NORMAL exit below using the
+      // delayed/mark mid, tagged with its true (non-live) provenance. Closing on a
+      // settling sell mirrors the entry fallback's mid-based fill.
+      exitPrice = Number(shadowExitFallback.mid.toFixed(2));
+      exitFillQuoteSource = shadowExitFallback.fillQuoteSource;
     }
     // Dedup guard: if a concurrent evaluation (worker scan vs. tick manager)
     // already claimed this position's exit, skip emitting a second exit event so
@@ -11151,6 +11290,10 @@ async function refreshActivePosition(input: {
           reason: exitReason,
           exitPrice,
           markPrice,
+          // Provenance of the exit fill price — "delayed"/"mark" when the SHADOW
+          // exit fallback supplied it, else "live". Never "live" for a fallback.
+          fillQuoteSource: exitFillQuoteSource,
+          quoteFreshness: exitFillQuoteSource,
           pnl: signalOptionsRealizedPnl(
             exitPrice,
             input.position.entryPrice,
@@ -11440,6 +11583,9 @@ async function hydrateSignalOptionsGreekSelectorCandidateQuotes(input: {
     ttlMs: liveQuoteTtlMs,
     fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
     requiresGreeks,
+    // Cap selection-stage quote hydration at the settle budget too, so a stalled
+    // bridge can't block contract selection for the 30s default floor.
+    timeoutMs: SIGNAL_OPTIONS_SELECTED_LIVE_QUOTE_SETTLE_MS,
     releaseLeasesOnComplete: false,
     releaseLeasesOnAbort: false,
     signal: input.signal,
@@ -11565,6 +11711,13 @@ async function resolveSignalOptionsCandidateContract(input: {
   retryDegradedExpirations?: boolean;
   greekSelectorRuntimeMode?: SignalOptionsGreekSelectorRuntimeMode;
   liveQuoteDemand?: SignalOptionsLiveQuoteDemandConfig | null;
+  // SHADOW-ONLY: when set, after contract selection the order plan is rebuilt
+  // from a delayed/mark fallback (delayed mid → last/mark) and greeks are
+  // synthesized from the fill price if real greeks are missing. The live path
+  // never sets this; callers must also pass allowDelayedSnapshotHydration:true
+  // and liveQuoteDemand:null so the chain returns delayed quotes and the live
+  // settle loop is skipped.
+  shadowFillFallback?: boolean;
   onMetadataSelected?: (selection: {
     selectedExpiration: Record<string, unknown> | null;
     selectedContract: Record<string, unknown>;
@@ -11812,6 +11965,15 @@ async function resolveSignalOptionsCandidateContract(input: {
     while (true) {
       throwIfSignalOptionsScanAborted(input.signal);
       hydrationAttempts += 1;
+      // Bound each /options/quotes request by the remaining settle budget. The
+      // bridge default is a 30s floor, which otherwise blocks the first iteration
+      // for the full 30s before the SETTLE_MS budget below is ever consulted —
+      // stalling the scan tick and dropping the candidate on missing_bid_ask.
+      const requestTimeoutMs = Math.max(
+        1,
+        SIGNAL_OPTIONS_SELECTED_LIVE_QUOTE_SETTLE_MS -
+          (Date.now() - hydrationStartedAt),
+      );
       const snapshotPayload = await fetchBridgeOptionQuoteSnapshots({
         underlying: input.candidate.symbol,
         providerContractIds: [providerContractId],
@@ -11820,6 +11982,7 @@ async function resolveSignalOptionsCandidateContract(input: {
         ttlMs: liveQuoteTtlMs,
         fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
         requiresGreeks,
+        timeoutMs: requestTimeoutMs,
         releaseLeasesOnComplete: false,
         releaseLeasesOnAbort: false,
         signal: input.signal,
@@ -11892,8 +12055,63 @@ async function resolveSignalOptionsCandidateContract(input: {
       );
     }
   }
+  // SHADOW-ONLY fallback: when no usable LIVE two-sided quote was found, rebuild
+  // the order plan from a delayed mid (or last/mark) so the candidate can still
+  // fill — tagged non-live. The fill PRICE comes from the delayed/mark mid; if
+  // real greeks are absent we synthesize them from that price (so a lack of live
+  // greeks can't re-block the fill). If even the fallback has no positive price,
+  // we leave the (failing) live order plan untouched and the caller still skips.
+  let fillQuoteSource: "live" | "delayed" | "mark" = "live";
+  let entryGreeks = greekSnapshotFromQuote(selectedQuote);
+  if (input.shadowFillFallback && !orderPlan?.ok && selectedQuote) {
+    const fallbackPlan = buildSignalOptionsShadowFallbackOrderPlan(
+      selectedQuote,
+      input.profile,
+    );
+    if (fallbackPlan.ok && fallbackPlan.fillQuoteSource) {
+      fillQuoteSource = fallbackPlan.fillQuoteSource;
+      // Stamp the quote's true provenance (delayed/mark — never "live") so the
+      // entry event and downstream PnL analysis can separate fallback fills.
+      selectedQuote = {
+        ...selectedQuote,
+        quoteFreshness: fallbackPlan.liquidity.quoteFreshness,
+        marketDataMode: fallbackPlan.liquidity.marketDataMode,
+        mark: fallbackPlan.liquidity.mid,
+      };
+      selectedContract = contractToPayload(selectedQuote);
+      orderPlan = fallbackPlan;
+      // Greeks-from-price: keep the fill PRICE from the delayed/mark mid, but if
+      // the delayed/mark quote lacks real greeks, synthesize them from that price
+      // so requiresGreeks consumers aren't re-blocked.
+      const providerGreeks = greekSnapshotFromQuote(selectedQuote);
+      const strike = finiteNumber(asRecord(selectedContract).strike);
+      const spot = finiteNumber(input.candidate.signalPrice);
+      const expirationDate = dateOrNull(
+        asRecord(selectedContract).expirationDate,
+      );
+      if (
+        providerGreeks ||
+        strike == null ||
+        spot == null ||
+        expirationDate == null
+      ) {
+        entryGreeks = providerGreeks;
+      } else {
+        entryGreeks =
+          computeOptionGreeksFromPrice({
+            spot,
+            strike,
+            optionPrice: fallbackPlan.simulatedFillPrice,
+            right: input.candidate.optionRight,
+            at: new Date(),
+            expirationDate,
+            riskFreeRate: 0.05,
+            dividendYield: 0,
+          }) ?? null;
+      }
+    }
+  }
   const quote = quoteToPayload(selectedQuote);
-  const entryGreeks = greekSnapshotFromQuote(selectedQuote);
   return {
     selectedExpiration,
     selectedQuote,
@@ -11902,6 +12120,7 @@ async function resolveSignalOptionsCandidateContract(input: {
     orderPlan,
     liquidity: orderPlan?.liquidity ?? null,
     entryGreeks,
+    fillQuoteSource,
     contractSelection,
     contractSelectionPayload,
     chainDebug: chain.debug,
@@ -12210,11 +12429,15 @@ async function processEntryCandidate(input: {
     profile: input.profile,
     deployment: input.deployment,
   });
-  const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
+  // Live MTF alignment reads the matrix's per-timeframe *trend* ("stage")
+  // direction from signal_monitor_symbol_states — the same continuously
+  // re-evaluated state the algo-control panel renders — so live entries align
+  // with what the Signal Matrix shows. (The backfill replay below keeps the
+  // point-in-time signal-event source, asOf = historical signal time.)
+  const mtfTimeframeDirections = await getTrendDirectionsForSymbol({
     environment: resolveSignalSourceEnvironment(),
     symbol: input.candidate.symbol,
     timeframes: mtfTimeframes,
-    asOf: new Date(),
   });
   const entryGate = evaluateSignalOptionsEntryGate({
     candidate: input.candidate,
@@ -12425,17 +12648,62 @@ async function processEntryCandidate(input: {
       return false;
     }
 
-    const orderPlan = contractResolution.orderPlan;
-    const selectedContract = contractResolution.selectedContract;
-    const quote = contractResolution.quote;
-    const entryGreeks = contractResolution.entryGreeks;
-    const contractSelectionPayload =
-      contractResolution.contractSelectionPayload;
+    let orderPlan = contractResolution.orderPlan;
+    let selectedContract = contractResolution.selectedContract;
+    let quote = contractResolution.quote;
+    let entryGreeks = contractResolution.entryGreeks;
+    let fillQuoteSource: "live" | "delayed" | "mark" = "live";
+    let contractSelectionPayload = contractResolution.contractSelectionPayload;
     const selectedExpirationPayload =
       signalOptionsSelectedExpirationPayload(selectedExpiration);
-    const chainDebug = contractResolution.chainDebug;
-    const chainAttempts = contractResolution.chainAttempts;
+    let chainDebug = contractResolution.chainDebug;
+    let chainAttempts = contractResolution.chainAttempts;
     const entryNow = new Date();
+
+    // SHADOW-ONLY fill fallback (Option B). The LIVE settle loop above is the
+    // realistic path and is left unchanged; only ~7% of gate-passing shadow
+    // candidates get a two-sided live quote, so when the live order plan fails
+    // on a quote-missing reason we re-resolve with delayed snapshot hydration so
+    // a delayed mid (or last/mark) can still source a NON-LIVE fill. Gated on
+    // shadow/paper mode (providerAccountId === "shadow"); the live trading path
+    // never enters this branch.
+    const isShadowDeployment =
+      input.deployment.providerAccountId === SHADOW_PROVIDER_ACCOUNT_ID;
+    const liveOrderPlanQuoteMiss =
+      !orderPlan?.ok &&
+      ["missing_bid_ask", "missing_mark", "quote_not_fresh", "spread_too_wide"].includes(
+        String(orderPlan?.reason ?? ""),
+      );
+    let entrySnapshotQuote = selectedQuote;
+    if (isShadowDeployment && liveOrderPlanQuoteMiss) {
+      const fallbackResolution = await resolveSignalOptionsCandidateContract({
+        candidate: input.candidate,
+        profile: input.profile,
+        bypassBridgeBackoff: true,
+        retryDegradedExpirations: true,
+        quoteHydration: "snapshot",
+        allowDelayedSnapshotHydration: true,
+        greekSelectorRuntimeMode: "shadow",
+        liveQuoteDemand: null,
+        shadowFillFallback: true,
+        signal: input.signal,
+      });
+      if (
+        fallbackResolution.orderPlan?.ok &&
+        fallbackResolution.fillQuoteSource &&
+        fallbackResolution.fillQuoteSource !== "live"
+      ) {
+        orderPlan = fallbackResolution.orderPlan;
+        selectedContract = fallbackResolution.selectedContract;
+        quote = fallbackResolution.quote;
+        entrySnapshotQuote = fallbackResolution.selectedQuote ?? entrySnapshotQuote;
+        entryGreeks = fallbackResolution.entryGreeks;
+        fillQuoteSource = fallbackResolution.fillQuoteSource;
+        contractSelectionPayload = fallbackResolution.contractSelectionPayload;
+        chainDebug = fallbackResolution.chainDebug;
+        chainAttempts = fallbackResolution.chainAttempts;
+      }
+    }
     if (!orderPlan?.ok) {
       const reason = String(orderPlan?.reason || "liquidity_gate_failed");
       await emitSkippedCandidate({
@@ -12623,11 +12891,14 @@ async function processEntryCandidate(input: {
       signalQuality,
       entryGreeks,
       greekBaselineSource: entryGreeks ? "entry" : null,
+      // Records whether this fill came from a LIVE two-sided quote or a
+      // SHADOW-ONLY delayed/mark fallback, so PnL/research can separate them.
+      fillQuoteSource,
     };
 
     await persistSignalOptionsQuoteSnapshot({
       contract: selectedContract,
-      quote: selectedQuote,
+      quote: entrySnapshotQuote,
       source: "signal-options:entry",
     }).catch((error: unknown) => {
       logger.debug?.(
@@ -12659,6 +12930,7 @@ async function processEntryCandidate(input: {
         quote,
         orderPlan,
         liquidity: orderPlan.liquidity,
+        fillQuoteSource,
         position,
         chainDebug,
         contractSelection: contractSelectionPayload,
@@ -15983,6 +16255,12 @@ export async function runSignalOptionsShadowBackfill(input: {
   replay?: SignalOptionsReplayMetadata | boolean | null;
   replaceReplayRows?: boolean;
   progress?: boolean;
+  // Historical replay/validation flag. When true, the entry gate uses the
+  // bar-derived mtfDirections already baked into each candidate's filterState
+  // (buildHistoricalSignalOptionsMtfFilterState) instead of the live
+  // signal-matrix, which has no coverage for past windows. Live entry
+  // (processEntryCandidate) never sets this and is unaffected.
+  useBarDerivedMtf?: boolean;
 }) {
   if (!isSignalMonitorBarEvaluationEnabled()) {
     throw new HttpError(
@@ -16268,12 +16546,22 @@ export async function runSignalOptionsShadowBackfill(input: {
         deployment,
         signalTimeframe: timeframe,
       });
-      const mtfTimeframeDirections = await getSignalDirectionsForSymbolAsOf({
-        environment: resolveSignalSourceEnvironment(),
-        symbol: candidate.symbol,
-        timeframes: mtfTimeframes,
-        asOf: historicalSignal.signalAt,
-      });
+      // Historical replay/validation: skip the live signal-matrix lookup.
+      // signal_monitor_events has no coverage for past windows, so the matrix
+      // path would reject every entry as mtf_not_aligned. The candidate's
+      // filterState already carries bar-derived mtfDirections
+      // (buildHistoricalSignalOptionsMtfFilterState); omitting the directions
+      // routes evaluateSignalOptionsEntryGate through that filterState fallback
+      // (the pre-3513c57 behavior). Live entry (processEntryCandidate) keeps the
+      // matrix path with asOf=now and is unaffected.
+      const mtfTimeframeDirections = input.useBarDerivedMtf
+        ? undefined
+        : await getSignalDirectionsForSymbolAsOf({
+            environment: resolveSignalSourceEnvironment(),
+            symbol: candidate.symbol,
+            timeframes: mtfTimeframes,
+            asOf: historicalSignal.signalAt,
+          });
       const entryGate = evaluateSignalOptionsEntryGate({
         candidate,
         profile,

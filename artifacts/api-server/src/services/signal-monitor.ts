@@ -46,6 +46,7 @@ import {
 } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
+  isStatementTimeoutError,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
@@ -95,8 +96,10 @@ import {
 } from "./stock-aggregate-stream";
 import {
   loadSignalMonitorLocalBarCache,
+  mapWithConcurrency,
   primeSignalMonitorLocalBarCache,
   runWithSignalMonitorStoredBarsPrefetch,
+  storeSourceNames,
 } from "./signal-monitor-local-bar-cache";
 
 export type SignalMonitorTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
@@ -207,6 +210,12 @@ export type SignalMonitorMatrixStreamState = {
   lastError: string | null;
   filterState?: unknown;
   indicatorSnapshot?: unknown;
+  // Always-defined current trend (bullish/bearish), mirrored from the
+  // indicator snapshot at the wire boundary so the matrix stream carries the
+  // same trend source the REST SignalMonitorSymbolState exposes (and that the
+  // backend entry gate trades on). Optional so internal eval results can omit
+  // it, but every emitted stream state carries it.
+  trendDirection?: SignalMonitorIndicatorDirection | null;
   // Authored at the wire boundary (delta emit / stored bootstrap) by
   // buildSignalMonitorActionability — optional so internal eval results can
   // omit them, but every emitted stream state carries them.
@@ -389,6 +398,10 @@ const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
   "all_watchlists_plus_universe";
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT = 10;
+// The price-trace diagnostic issues ~3 serial db reads per row; bound the per-row
+// fan-out so a single GET (default 20, operator-settable to 100 rows) can never
+// demand more than this many of the 12 shared pool connections at once.
+const PRICE_TRACE_ROW_CONCURRENCY = 4;
 const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
 const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
@@ -1705,6 +1718,9 @@ export async function recordSignalMonitorBreadthSnapshot(now: Date = new Date())
     )
     .where(
       and(
+        // Only enabled profiles contribute breadth. A disabled/orphaned profile would
+        // otherwise replay its frozen-stale states as phantom env rows every cycle.
+        eq(signalMonitorProfilesTable.enabled, true),
         eq(signalMonitorSymbolStatesTable.active, true),
         inArray(signalMonitorSymbolStatesTable.currentSignalDirection, ["buy", "sell"]),
       ),
@@ -1724,7 +1740,8 @@ export async function recordSignalMonitorBreadthSnapshot(now: Date = new Date())
         s.current_signal_direction AS direction
       FROM signal_monitor_symbol_states s
       JOIN signal_monitor_profiles p ON s.profile_id = p.id
-      WHERE s.active = true
+      WHERE p.enabled = true
+        AND s.active = true
         AND s.current_signal_direction IN ('buy', 'sell')
       ORDER BY p.environment, s.symbol, s.current_signal_at DESC NULLS LAST
     ) latest
@@ -4462,6 +4479,14 @@ const normalizedIndicatorDirection = (
   return null;
 };
 
+// String-form (already-resolved) indicator direction, e.g. as carried on a
+// serialized indicatorSnapshot. Unlike normalizedIndicatorDirection this does
+// not reinterpret numeric codes.
+const signalMonitorIndicatorDirectionOrNull = (
+  value: unknown,
+): SignalMonitorIndicatorDirection | null =>
+  value === "bullish" || value === "bearish" ? value : null;
+
 const normalizedIndicatorDirectionNumber = (value: unknown): 1 | -1 | null => {
   const numeric = Number(value);
   if (numeric === 1) return 1;
@@ -5273,6 +5298,10 @@ function mergeFreshBarMetadataOntoPreservedSignalRow(
 // statement; per-symbol callers still write individually via `upsertSymbolState`.
 async function resolveSignalMonitorSymbolStateUpsert(
   input: SignalMonitorSymbolStateUpsertInput,
+  // When the caller has already batch-fetched the stored row (persist hot path),
+  // it passes it here so we skip the per-cell read. Semantics are identical: the
+  // same `existing` row drives the latch/preserve rules below.
+  prefetched?: { existing: DbSignalMonitorSymbolState | null },
 ): Promise<
   | { effectiveValues: typeof signalMonitorSymbolStatesTable.$inferInsert }
   | { preserved: DbSignalMonitorSymbolState }
@@ -5300,11 +5329,13 @@ async function resolveSignalMonitorSymbolStateUpsert(
     trendDirection: input.trendDirection ?? null,
     updatedAt: input.evaluatedAt,
   };
-  const existing = await readStoredSignalMonitorSymbolState({
-    profileId: input.profileId,
-    symbol: input.symbol,
-    timeframe: input.timeframe,
-  });
+  const existing = prefetched
+    ? prefetched.existing
+    : await readStoredSignalMonitorSymbolState({
+        profileId: input.profileId,
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+      });
   const effectiveValues = applyStoredSignalDirectionLatch({
     existing: input.allowStoredSignalLatch === false ? null : existing,
     values,
@@ -5398,6 +5429,50 @@ async function readStoredSignalMonitorSymbolState(input: {
     )
     .limit(1);
   return state ?? null;
+}
+
+// Batched sibling of readStoredSignalMonitorSymbolState: fetch the stored rows for
+// many (symbol, timeframe) cells in ONE query, keyed identically to the per-row
+// read's filter (normalizeSymbol(symbol) + timeframe + active=true). The persist
+// hot path uses this to resolve the latch in memory instead of issuing one gated
+// read per cell (~symbols x timeframes round-trips collapsed to a single query),
+// which is what let 1m persistence fall minutes behind under pool saturation.
+function signalMonitorSymbolStateKey(symbol: string, timeframe: string): string {
+  return `${normalizeSymbol(symbol)}:${timeframe}`;
+}
+
+async function readStoredSignalMonitorSymbolStateMap(input: {
+  profileId: string;
+  cells: Array<{ symbol: string; timeframe: SignalMonitorMatrixTimeframe }>;
+}): Promise<Map<string, DbSignalMonitorSymbolState>> {
+  const map = new Map<string, DbSignalMonitorSymbolState>();
+  if (!isSignalMonitorUuidLike(input.profileId) || input.cells.length === 0) {
+    return map;
+  }
+  const symbols = Array.from(
+    new Set(input.cells.map((cell) => normalizeSymbol(cell.symbol))),
+  );
+  const timeframes = Array.from(
+    new Set(input.cells.map((cell) => cell.timeframe)),
+  );
+  if (!symbols.length || !timeframes.length) {
+    return map;
+  }
+  const rows = await db
+    .select()
+    .from(signalMonitorSymbolStatesTable)
+    .where(
+      and(
+        eq(signalMonitorSymbolStatesTable.profileId, input.profileId),
+        inArray(signalMonitorSymbolStatesTable.symbol, symbols),
+        inArray(signalMonitorSymbolStatesTable.timeframe, timeframes),
+        eq(signalMonitorSymbolStatesTable.active, true),
+      ),
+    );
+  for (const row of rows) {
+    map.set(signalMonitorSymbolStateKey(row.symbol, row.timeframe), row);
+  }
+  return map;
 }
 
 async function resolveStoredSignalMonitorSignalAt(input: {
@@ -6413,6 +6488,67 @@ const signalMonitorMatrixHeavyEvaluationCache = new Map<
 let signalMonitorMatrixHeavyEvaluationCacheHits = 0;
 let signalMonitorMatrixHeavyEvaluationCacheMisses = 0;
 
+// #2 upstream dirty-track. The heavy-eval memo above only guards the downstream
+// indicator math, AFTER the per-(symbol,timeframe) bar aggregation+merge has
+// already run every flush. That aggregation is the dominant hot-path cost, yet
+// its output (the merged completedBars) is a pure function of just three inputs:
+//   1. the completed-bucket boundary for the timeframe (clock-driven; advances
+//      once per minute for 1m, every 5m for 5m, etc. — see signalMonitorCompletedBarsQueryTo),
+//   2. the async backfilled base for the cell (signalMonitorBackfilledBaseByCell.refreshedAt),
+//   3. any out-of-order aggregate that corrects an already-completed minute (revision below).
+// When none changed since the last evaluation, the merged bars cannot have
+// changed, so we reuse them and skip load/filter/merge. We still run the
+// downstream eval every cycle, so the time-dependent staleness/age fields keep
+// recomputing from the live evaluatedAt (a cache hit can never freeze staleness).
+// The cache is keyed by cell (not subscriber) — the merged bars are
+// subscriber-independent, so this also collapses the per-subscriber duplication.
+const SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX = 8_000;
+const signalMonitorStreamCompletedBarsCache = new Map<
+  string,
+  { key: string; bars: SignalMonitorBarSnapshot[] }
+>();
+let signalMonitorStreamCompletedBarsCacheHits = 0;
+let signalMonitorStreamCompletedBarsCacheMisses = 0;
+
+// Per-symbol revision that bumps ONLY when an aggregate arrives out-of-order
+// (startMs older than the newest seen for the symbol) — i.e. a correction to an
+// already-completed minute. Forward minute advances are captured by the completed
+// boundary, and forming-minute updates never change completed bars, so neither
+// bumps this. Maintained from queueSignalMonitorMatrixStreamAggregate.
+const signalMonitorAggregateRevisionBySymbol = new Map<
+  string,
+  { maxStartMs: number; revision: number }
+>();
+function recordSignalMonitorAggregateRevision(
+  symbol: string,
+  startMs: number,
+): void {
+  if (!Number.isFinite(startMs)) {
+    return;
+  }
+  const entry = signalMonitorAggregateRevisionBySymbol.get(symbol);
+  if (!entry) {
+    signalMonitorAggregateRevisionBySymbol.set(symbol, {
+      maxStartMs: startMs,
+      revision: 0,
+    });
+  } else if (startMs > entry.maxStartMs) {
+    entry.maxStartMs = startMs;
+  } else if (startMs < entry.maxStartMs) {
+    entry.revision += 1;
+  }
+}
+function getSignalMonitorAggregateRevision(symbol: string): number {
+  return signalMonitorAggregateRevisionBySymbol.get(symbol)?.revision ?? 0;
+}
+function getSignalMonitorStreamCompletedBarsCacheStats() {
+  return {
+    size: signalMonitorStreamCompletedBarsCache.size,
+    hits: signalMonitorStreamCompletedBarsCacheHits,
+    misses: signalMonitorStreamCompletedBarsCacheMisses,
+  };
+}
+
 function signalMonitorPyrusSettingsSignature(
   settings: ReturnType<typeof resolvePyrusSignalsSignalSettings>,
 ): string {
@@ -6501,6 +6637,10 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorMatrixHeavyEvaluationCache.clear();
   signalMonitorMatrixHeavyEvaluationCacheHits = 0;
   signalMonitorMatrixHeavyEvaluationCacheMisses = 0;
+  signalMonitorStreamCompletedBarsCache.clear();
+  signalMonitorStreamCompletedBarsCacheHits = 0;
+  signalMonitorStreamCompletedBarsCacheMisses = 0;
+  signalMonitorAggregateRevisionBySymbol.clear();
 }
 
 export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
@@ -7313,6 +7453,16 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       string,
       typeof signalMonitorSymbolStatesTable.$inferInsert
     >();
+    // Batch-fetch every cell's stored row in ONE query up front, so the latch
+    // below resolves in memory instead of one gated per-cell read. This is the
+    // fix for 1m persistence falling minutes behind under pool saturation.
+    const existingStateByKey = await readStoredSignalMonitorSymbolStateMap({
+      profileId: input.profile.id,
+      cells: states.map((state) => ({
+        symbol: normalizeSymbol(state.symbol).toUpperCase(),
+        timeframe: state.timeframe,
+      })),
+    });
     for (let index = 0; index < states.length; index += concurrency) {
       const batch = states.slice(index, index + concurrency);
       await Promise.all(
@@ -7377,6 +7527,14 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
             // a buy/sell direction on load; rides with the crossover, not actionable.
             trendDirection: state.indicatorSnapshot?.trendDirection ?? null,
             allowStoredSignalLatch: signalIdentityTrusted,
+          }, {
+            existing:
+              existingStateByKey.get(
+                signalMonitorSymbolStateKey(
+                  normalizeSymbol(state.symbol).toUpperCase(),
+                  state.timeframe,
+                ),
+              ) ?? null,
           });
           if ("effectiveValues" in resolved) {
             // Last write wins on a duplicate (symbol, timeframe), matching the
@@ -7540,34 +7698,66 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
 }): SignalMonitorMatrixStateResult | null {
-  const streamBars = loadSignalMonitorStreamCompletedBars({
-    symbol: input.symbol,
+  // #2 upstream dirty-track (see signalMonitorStreamCompletedBarsCache above):
+  // the merged completedBars are a pure function of the completed-bucket boundary,
+  // the backfilled base refresh, and any out-of-order completed-minute correction.
+  // Skip the load/filter/merge when none changed; ALWAYS run the downstream eval
+  // so staleness/age recompute from the live evaluatedAt.
+  const cellKey = signalMonitorBackfillCellKey(input.symbol, input.timeframe);
+  const baseEntry = signalMonitorBackfilledBaseByCell.get(cellKey);
+  const dirtyKey = `${signalMonitorCompletedBarsQueryTo({
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
-    limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-  });
-  // The live stream ring is only a few minutes deep — too short for the pyrus
-  // indicator to warm up on the aggregated frames. Merge the asynchronously
-  // backfilled base (deep stored/provider history) under the live edge so the
-  // indicator evaluates a full current series. mergeCompletedBars lets the live
-  // edge win on same-timestamp collisions; an empty base preserves the prior
-  // live-only behavior. This is also what lets 1d evaluate on this path, since
-  // loadSignalMonitorStreamCompletedBars returns [] for 1d.
-  const baseBars = getSignalMonitorBackfilledBaseBars(
+  }).getTime()}:${baseEntry?.refreshedAt ?? 0}:${getSignalMonitorAggregateRevision(
     input.symbol,
-    input.timeframe,
-  );
-  const trustedStreamBars = baseBars.length
-    ? filterSignalMonitorLiveEdgeBarsForTrustedMove({
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        baseBars,
-        liveEdgeBars: streamBars,
-      })
-    : streamBars;
-  const completedBars = baseBars.length
-    ? mergeCompletedBars(baseBars, trustedStreamBars, SIGNAL_MONITOR_MATRIX_BARS_LIMIT)
-    : trustedStreamBars;
+  )}`;
+  let completedBars: SignalMonitorBarSnapshot[];
+  const cachedCell = signalMonitorStreamCompletedBarsCache.get(cellKey);
+  if (cachedCell && cachedCell.key === dirtyKey) {
+    signalMonitorStreamCompletedBarsCacheHits += 1;
+    completedBars = cachedCell.bars;
+  } else {
+    signalMonitorStreamCompletedBarsCacheMisses += 1;
+    const streamBars = loadSignalMonitorStreamCompletedBars({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+      limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+    });
+    // The live stream ring is only a few minutes deep — too short for the pyrus
+    // indicator to warm up on the aggregated frames. Merge the asynchronously
+    // backfilled base (deep stored/provider history) under the live edge so the
+    // indicator evaluates a full current series. mergeCompletedBars lets the live
+    // edge win on same-timestamp collisions; an empty base preserves the prior
+    // live-only behavior. This is also what lets 1d evaluate on this path, since
+    // loadSignalMonitorStreamCompletedBars returns [] for 1d.
+    const baseBars = baseEntry?.bars ?? [];
+    const trustedStreamBars = baseBars.length
+      ? filterSignalMonitorLiveEdgeBarsForTrustedMove({
+          symbol: input.symbol,
+          timeframe: input.timeframe,
+          baseBars,
+          liveEdgeBars: streamBars,
+        })
+      : streamBars;
+    const mergedBars = baseBars.length
+      ? mergeCompletedBars(baseBars, trustedStreamBars, SIGNAL_MONITOR_MATRIX_BARS_LIMIT)
+      : trustedStreamBars;
+    // Single slice (mergeCompletedBars already applies the limit, but the
+    // empty-base branch does not) so the cached array is the exact series the
+    // eval consumes — also removes the prior double-slice on the hot path.
+    completedBars = mergedBars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT);
+    if (
+      signalMonitorStreamCompletedBarsCache.size >=
+      SIGNAL_MONITOR_STREAM_COMPLETED_BARS_CACHE_MAX
+    ) {
+      signalMonitorStreamCompletedBarsCache.clear();
+    }
+    signalMonitorStreamCompletedBarsCache.set(cellKey, {
+      key: dirtyKey,
+      bars: completedBars,
+    });
+  }
   if (!completedBars.length) {
     return null;
   }
@@ -7576,7 +7766,7 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
     symbol: input.symbol,
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
-    completedBars: completedBars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
+    completedBars,
   });
 }
 
@@ -7698,6 +7888,11 @@ function withSignalMonitorMatrixStreamActionability<
   // deliberately not fresh even when its bar age is inside the fresh window.
   return {
     ...state,
+    trendDirection:
+      state.trendDirection ??
+      signalMonitorIndicatorDirectionOrNull(
+        asRecord(state.indicatorSnapshot).trendDirection,
+      ),
     actionEligible: actionability.actionEligible,
     actionBlocker: actionability.actionBlocker,
   } as T;
@@ -8201,6 +8396,10 @@ function queueSignalMonitorMatrixStreamAggregate(
 
   signalMonitorMatrixStreamAggregateEventCount += 1;
   signalMonitorMatrixStreamLastAggregateAt = new Date();
+  // Feed the #2 dirty-track: only out-of-order corrections to already-completed
+  // minutes bump the revision (forward minute advances are caught by the completed
+  // boundary; forming-minute updates never change completed bars).
+  recordSignalMonitorAggregateRevision(symbol, Number(message.startMs));
   for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
     if (
       subscriber.scope.symbols.includes(symbol) &&
@@ -10783,6 +10982,9 @@ export const __signalMonitorInternalsForTests = {
   emitSignalMonitorMatrixStreamAggregateDelta,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
   getSignalMonitorMatrixHeavyEvaluationCacheStats,
+  getSignalMonitorStreamCompletedBarsCacheStats,
+  recordSignalMonitorAggregateRevision,
+  getSignalMonitorAggregateRevision,
   resetSignalMonitorMatrixHeavyEvaluationCache,
   createSignalMonitorMatrixStreamSubscriptionForTests,
   buildSignalMonitorServerOwnedProducerScope,
@@ -10930,28 +11132,32 @@ async function readSignalMonitorPassiveStoredStateFresh(input: {
   const universeStates = states.filter((state) =>
     universeSymbolSet.has(normalizeSymbol(state.symbol).toUpperCase()),
   );
-  const currentStates = universeStates.filter((state) => {
-    const symbol = normalizeSymbol(state.symbol).toUpperCase();
-    const timeframe = String(
-      state.timeframe || "",
-    ) as SignalMonitorMatrixTimeframe;
-    return (
-      universeSymbolSet.has(symbol) &&
-      isSignalMonitorStateCurrentForLane({
-        state,
-        timeframe,
-        evaluatedAt,
-        streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
-          symbol: state.symbol,
-          timeframe,
-          evaluatedAt,
-        }),
-      })
-    );
-  });
+  // Only the non-current-excluding path consumes the per-lane currentness verdict,
+  // and that per-cell check calls the in-memory aggregate ring — the dominant CPU on
+  // this hot route. When includeNonCurrent is set (the served /signal-monitor/state
+  // poll), every universe state is returned regardless, so computing — then discarding
+  // — that ~3000-cell ring pass is pure waste. Compute it lazily, only when it filters.
   const visibleStates = input.includeNonCurrent
     ? universeStates
-    : currentStates;
+    : universeStates.filter((state) => {
+        const symbol = normalizeSymbol(state.symbol).toUpperCase();
+        const timeframe = String(
+          state.timeframe || "",
+        ) as SignalMonitorMatrixTimeframe;
+        return (
+          universeSymbolSet.has(symbol) &&
+          isSignalMonitorStateCurrentForLane({
+            state,
+            timeframe,
+            evaluatedAt,
+            streamLatestBarAt: signalMonitorStreamLaneLatestCompletedBarAt({
+              symbol: state.symbol,
+              timeframe,
+              evaluatedAt,
+            }),
+          })
+        );
+      });
   const responseStates = visibleStates.map((state) =>
     stateToResponseForSnapshot(state, {
       timeframe: String(
@@ -11100,7 +11306,7 @@ async function readSignalMonitorStateFresh(input: {
       stateSource: "database" as const,
     };
   } catch (error) {
-    if (isTransientPostgresError(error)) {
+    if (isTransientPostgresError(error) || isStatementTimeoutError(error)) {
       warnSignalMonitorDbUnavailable(error, {
         operation: "read_signal_monitor_state",
         environment,
@@ -11245,6 +11451,12 @@ export async function traceSignalMonitorPriceFreshness(
   input: SignalMonitorPriceTraceInput = {},
 ) {
   const evaluatedAt = input.evaluatedAt ?? new Date();
+  // Restrict the persisted-bars read to the sources the signal-monitor actually
+  // reads (the websocket stream + massive-history). This makes the per-symbol query
+  // a fast index seek on (symbol, timeframe, source, starts_at) instead of scanning a
+  // symbol's full multi-source history — which trips the 15s statement_timeout — and
+  // it is also the semantically correct scope for a signal-monitor freshness trace.
+  const persistedBarSources = storeSourceNames();
   const environment = resolveEnvironment(
     input.environment ?? resolveSignalSourceEnvironment(),
   );
@@ -11299,26 +11511,43 @@ export async function traceSignalMonitorPriceFreshness(
     .sort(sortSignalMonitorPriceTraceRows)
     .slice(0, limit);
 
-  const traced = await Promise.all(
-    selected.map(async ({ state, response, currentness }) => {
+  const traced = await mapWithConcurrency(
+    selected,
+    PRICE_TRACE_ROW_CONCURRENCY,
+    async ({ state, response, currentness }) => {
       const symbol = normalizeSymbol(state.symbol).toUpperCase();
       const timeframe = response.timeframe;
-      const persistedBars = await db
-        .select({
-          source: barCacheTable.source,
-          startsAt: barCacheTable.startsAt,
-          close: barCacheTable.close,
-          updatedAt: barCacheTable.updatedAt,
-        })
-        .from(barCacheTable)
-        .where(
-          and(
-            eq(barCacheTable.symbol, symbol),
-            eq(barCacheTable.timeframe, timeframe),
-          ),
-        )
-        .orderBy(desc(barCacheTable.startsAt))
-        .limit(3);
+      let persistedBars: Array<{
+        source: string;
+        startsAt: Date;
+        close: string;
+        updatedAt: Date;
+      }> = [];
+      let persistedBarsError: "timeout" | "error" | null = null;
+      try {
+        persistedBars = await db
+          .select({
+            source: barCacheTable.source,
+            startsAt: barCacheTable.startsAt,
+            close: barCacheTable.close,
+            updatedAt: barCacheTable.updatedAt,
+          })
+          .from(barCacheTable)
+          .where(
+            and(
+              eq(barCacheTable.symbol, symbol),
+              eq(barCacheTable.timeframe, timeframe),
+              inArray(barCacheTable.source, persistedBarSources),
+            ),
+          )
+          .orderBy(desc(barCacheTable.startsAt))
+          .limit(3);
+      } catch (error) {
+        // One symbol's slow/timed-out bar_cache read must not fail the whole
+        // diagnostic (the fan-out rejects on first error) — surface it per-row
+        // and keep tracing the rest.
+        persistedBarsError = isStatementTimeoutError(error) ? "timeout" : "error";
+      }
       const providerRequests = await db
         .select({
           endpointFamily: providerRequestLogTable.endpointFamily,
@@ -11391,6 +11620,7 @@ export async function traceSignalMonitorPriceFreshness(
         currentness,
         persistedBars: {
           countSampled: persistedBars.length,
+          traceError: persistedBarsError,
           latest:
             persistedBars[0] == null
               ? null
@@ -11434,7 +11664,7 @@ export async function traceSignalMonitorPriceFreshness(
           lastError: job.lastError,
         })),
       };
-    }),
+    },
   );
 
   const counts = rows.reduce(
@@ -11531,6 +11761,56 @@ export async function getSignalDirectionsForSymbolAsOf(input: {
   );
   for (const [timeframe, direction] of resolved) {
     directions[timeframe] = direction;
+  }
+  return directions;
+}
+
+// Live MTF-alignment source: the per-timeframe *trend* ("stage") direction from
+// signal_monitor_symbol_states — the continuously re-evaluated matrix state the
+// algo-control panel renders. Unlike getSignalDirectionsForSymbolAsOf (which
+// reads the sparse, event-driven signal log that goes stale between discrete
+// signals), this reflects each timeframe's standing trend, so the live entry
+// gate aligns with what the Signal Matrix shows. bullish->buy, bearish->sell,
+// otherwise null (treated as a missing frame by the gate).
+export async function getTrendDirectionsForSymbol(input: {
+  environment?: RuntimeMode;
+  symbol: string;
+  timeframes: readonly string[];
+}): Promise<Record<string, SignalMonitorDirection | null>> {
+  const directions: Record<string, SignalMonitorDirection | null> = {};
+  const timeframes = input.timeframes.filter(
+    (timeframe): timeframe is SignalMonitorTimeframe =>
+      SIGNAL_MONITOR_TIMEFRAMES.includes(timeframe as SignalMonitorTimeframe),
+  );
+  for (const timeframe of timeframes) {
+    directions[timeframe] = null;
+  }
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  if (!symbol || !timeframes.length) {
+    return directions;
+  }
+  const environment = resolveEnvironment(input.environment);
+  const profile = await getOrCreateProfile(environment);
+  const rows = await db
+    .select({
+      timeframe: signalMonitorSymbolStatesTable.timeframe,
+      trendDirection: signalMonitorSymbolStatesTable.trendDirection,
+    })
+    .from(signalMonitorSymbolStatesTable)
+    .where(
+      and(
+        eq(signalMonitorSymbolStatesTable.profileId, profile.id),
+        eq(signalMonitorSymbolStatesTable.symbol, symbol),
+        eq(signalMonitorSymbolStatesTable.active, true),
+        inArray(signalMonitorSymbolStatesTable.timeframe, timeframes),
+      ),
+    );
+  for (const row of rows) {
+    if (Object.hasOwn(directions, row.timeframe)) {
+      directions[row.timeframe] = trendDirectionToSignalDirection(
+        row.trendDirection,
+      );
+    }
   }
   return directions;
 }
@@ -11781,7 +12061,7 @@ export async function listSignalMonitorEvents(input: {
     signalMonitorEventsReadDbBackoff.clear();
     return response;
   } catch (error) {
-    if (!isTransientPostgresError(error)) {
+    if (!isTransientPostgresError(error) && !isStatementTimeoutError(error)) {
       throw error;
     }
     markSignalMonitorEventsReadFallback({

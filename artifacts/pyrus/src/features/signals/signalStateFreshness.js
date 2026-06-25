@@ -33,10 +33,16 @@ export const isSignalStateCurrent = (state) => {
 };
 
 export const getCurrentSignalDirection = (state) => {
+  // The matrix reflects each cell's LIVE trend (the continuously re-evaluated
+  // stage direction the backend entry gate trades on via getTrendDirectionsForSymbol),
+  // not the sparse, stale-latching last crossover. currentSignalDirection latches
+  // the last discrete crossover (applyStoredSignalDirectionLatch) and can oppose
+  // the live trend for long stretches, so it is only a fallback when no trend is
+  // present. "Tradeable right now" stays distinguished by fresh/actionEligible.
   const direction =
-    normalizeSignalDirection(state?.currentSignalDirection) ||
     normalizeTrendSignalDirection(state?.trendDirection) ||
-    normalizeTrendSignalDirection(state?.indicatorSnapshot?.trendDirection);
+    normalizeTrendSignalDirection(state?.indicatorSnapshot?.trendDirection) ||
+    normalizeSignalDirection(state?.currentSignalDirection);
   if (!direction || !state || state.active === false) return "";
   return SIGNAL_DIRECTION_DISPLAY_STATUSES.has(normalizeSignalStatus(state))
     ? direction

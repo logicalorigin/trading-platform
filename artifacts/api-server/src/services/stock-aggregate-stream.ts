@@ -802,6 +802,11 @@ export const __stockAggregateStreamTestInternals = {
   handleMassiveQuoteSnapshot,
   emitAggregateHeartbeats,
   flushAggregateFanout,
+  // Push a finalized minute aggregate straight into the in-memory history ring so
+  // tests can drive the signal-monitor stream-bar path without a live feed.
+  ingestAggregateForTests(message: StockMinuteAggregateMessage) {
+    recordAggregateHistory(message);
+  },
   reset() {
     subscribers.clear();
     accumulators.clear();

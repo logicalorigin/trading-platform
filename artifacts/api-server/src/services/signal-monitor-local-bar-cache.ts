@@ -62,7 +62,7 @@ const DEFAULT_PERSIST_FLUSH_MS = 1_000;
 // this window keeps it O(recent window) instead of O(72h retained history).
 const ROLLUP_RECENT_WINDOW_MS = TIMEFRAME_MS["1h"] * 3 + TIMEFRAME_MS["1h"];
 const DEFAULT_PERSIST_FLUSH_CONCURRENCY = 5;
-function storeSourceNames(): string[] {
+export function storeSourceNames(): string[] {
   const streamSourceName = isMassiveStocksRealtimeConfigured()
     ? "massive-websocket"
     : "massive-delayed-websocket";
@@ -151,7 +151,7 @@ function persistFlushConcurrency(): number {
 // invocations in flight at once, preserving per-item results by index. Errors
 // from a worker reject the returned promise (after in-flight work settles), so
 // callers can fall back to per-item handling instead.
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   worker: (item: T, index: number) => Promise<R>,

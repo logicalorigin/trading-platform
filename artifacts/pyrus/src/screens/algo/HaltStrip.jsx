@@ -1,7 +1,6 @@
 import {
   Activity,
   BadgeDollarSign,
-  Ban,
   CircleDollarSign,
   Clock,
   CopyX,
@@ -66,7 +65,6 @@ const HALT_CONTROL_ICONS = {
   tradingAllowance: Wallet,
   mtfAlignment: Activity,
   inversePutBlocklist: CopyX,
-  bearishRegime: Ban,
   bidAskRequired: CircleDollarSign,
   freshQuoteRequired: Clock,
   spreadGate: Gauge,
@@ -86,7 +84,6 @@ const HALT_CONTROL_SHORT_LABELS = {
   tradingAllowance: "Allowance",
   mtfAlignment: "MTF",
   inversePutBlocklist: "Inv puts",
-  bearishRegime: "Bear",
   bidAskRequired: "Bid/ask",
   freshQuoteRequired: "Fresh",
   spreadGate: "Spread",

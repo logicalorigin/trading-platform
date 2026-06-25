@@ -545,8 +545,12 @@ test("STA row sparklines do not use DB-backed bars batch hydration", () => {
 });
 
 // A per-timeframe matrix cell as it lives in signalMatrixBySymbol[symbol].
-// getCurrentSignalDirection requires currentSignalDirection, active, and a
-// display-eligible status, matching how the row reads its bubbles.
+// The MTF gate now reads the cell's current trend (mirroring the backend entry
+// gate), so trendDirection defaults to mirror the cell's direction; pass a
+// trendDirection override to model a crossover/trend divergence.
+const cellTrend = (direction) =>
+  direction === "buy" ? "bullish" : direction === "sell" ? "bearish" : null;
+
 const matrixCell = (timeframe, direction, overrides = {}) => ({
   symbol: "MU",
   timeframe,
@@ -554,6 +558,7 @@ const matrixCell = (timeframe, direction, overrides = {}) => ({
   active: true,
   fresh: true,
   currentSignalDirection: direction,
+  trendDirection: cellTrend(direction),
   currentSignalAt: "2026-06-08T19:00:00.000Z",
   latestBarAt: "2026-06-08T19:10:00.000Z",
   ...overrides,
@@ -636,12 +641,17 @@ test("STA MTF alignment filter rejects stale partial required counts", () => {
   );
 });
 
-test("STA MTF alignment filter requires actual selected-frame signal directions", () => {
+test("STA MTF alignment counts an in-trend selected frame without a fresh crossover (mirrors backend entry gate)", () => {
   const config = {
     enabled: true,
     timeframes: ["1m", "2m", "5m", "15m"],
     requiredCount: 4,
   };
+  // The 2m frame is in a bullish trend but has no fresh crossover
+  // (currentSignalDirection null, currentSignalAt null). The gate reads the live
+  // trendDirection — the same source the backend entry gate trades on
+  // (getTrendDirectionsForSymbol) — so this frame counts as a buy match and all
+  // four configured frames align.
   const matrix = {
     MU: {
       "1m": matrixCell("1m", "buy"),
@@ -656,7 +666,7 @@ test("STA MTF alignment filter requires actual selected-frame signal directions"
 
   assert.equal(
     staRowPassesMtfAlignment(buyRow("MU", "5m"), matrix, config),
-    false,
+    true,
   );
 });
 
@@ -666,6 +676,10 @@ test("all-selected MTF keeps 2m and 5m execution rows on the same aligned symbol
     timeframes: ["1m", "2m", "5m", "15m"],
     requiredCount: 4,
   };
+  // MSFT's 2m frame is in a bullish trend with no fresh crossover. Because the
+  // gate reads the live trendDirection (mirroring the backend entry gate), that
+  // frame counts, so MSFT aligns on all four frames — and does so regardless of
+  // which execution timeframe the row is on.
   const matrix = {
     AAPL: {
       "1m": matrixCell("1m", "buy"),
@@ -686,17 +700,17 @@ test("all-selected MTF keeps 2m and 5m execution rows on the same aligned symbol
   const fiveMinuteRows = [buyRow("AAPL", "5m"), buyRow("MSFT", "5m")].filter(
     (row) => staRowPassesMtfAlignment(row, matrix, config),
   );
-  const twoMinuteRows = [buyRow("AAPL", "2m")].filter((row) =>
-    staRowPassesMtfAlignment(row, matrix, config),
+  const twoMinuteRows = [buyRow("AAPL", "2m"), buyRow("MSFT", "2m")].filter(
+    (row) => staRowPassesMtfAlignment(row, matrix, config),
   );
 
   assert.deepEqual(
     fiveMinuteRows.map((row) => row.signal.symbol),
-    ["AAPL"],
+    ["AAPL", "MSFT"],
   );
   assert.deepEqual(
     twoMinuteRows.map((row) => row.signal.symbol),
-    ["AAPL"],
+    ["AAPL", "MSFT"],
   );
 });
 

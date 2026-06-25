@@ -33,13 +33,28 @@ import {
   type PatternResultRow,
 } from "./pattern-discovery";
 
-const SYMBOLS = ["SPY", "QQQ"];
-const TIMEFRAME_SET = ["1m", "2m", "5m", "15m"];
+const SYMBOLS = (process.env.PYRUS_SWEEP_SYMBOLS ?? "SPY,QQQ")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const TIMEFRAME_SET = ["1m", "2m", "5m", "15m", "1h"];
 const BASE_TF = "1m";
 const HORIZONS = [3, 6, 12, 24];
-const LOAD_FROM = new Date("2026-04-16T00:00:00Z");
-const STUDY_FROM = new Date("2026-04-24T00:00:00Z");
+const LOAD_FROM = new Date(process.env.PYRUS_SWEEP_LOAD_FROM ?? "2026-04-16T00:00:00Z");
+const STUDY_FROM = new Date(process.env.PYRUS_SWEEP_STUDY_FROM ?? "2026-04-24T00:00:00Z");
 const MIN_SAMPLE = 1;
+
+// Live charts/signals baseline (DEFAULT_PYRUS_SIGNALS_SETTINGS in the UI pine adapter):
+// timeHorizon 8, BOS wicks, CHoCH buffer 0 — uniform across every interval. This is the
+// real product default, distinct from the per-timeframe research map below and from the
+// core constant (timeHorizon 10). Gated by PYRUS_SWEEP_BASELINE=live-ui.
+const USE_LIVE_UI_BASE = process.env.PYRUS_SWEEP_BASELINE === "live-ui";
+const LIVE_UI_BASE: Partial<PyrusSignalsSignalSettings> = {
+  timeHorizon: 8,
+  bosConfirmation: "wicks",
+  chochAtrBuffer: 0,
+};
+const HORIZON_GRID = [4, 6, 8, 10, 12, 16, 20];
 
 type SettingsPatch = Record<string, Partial<PyrusSignalsSignalSettings>>;
 
@@ -99,6 +114,8 @@ const ONE_FACTOR_HORIZON_PROFILES = [
   { timeframe: "5m", id: "slow", label: "5m slow only", timeHorizon: 12 },
   { timeframe: "15m", id: "tight", label: "15m tight only", timeHorizon: 6 },
   { timeframe: "15m", id: "slow", label: "15m slow only", timeHorizon: 12 },
+  { timeframe: "1h", id: "tight", label: "1h tight only", timeHorizon: 4 },
+  { timeframe: "1h", id: "slow", label: "1h slow only", timeHorizon: 10 },
 ] as const;
 
 const NUMERIC_SETTING_SWEEPS: Array<{
@@ -158,21 +175,56 @@ function activeSweepKind(): SweepKind {
 }
 
 const SWEEP_KIND = activeSweepKind();
-const SWEEP_ID =
-  SWEEP_KIND === "settings"
+const SWEEP_ID = USE_LIVE_UI_BASE
+  ? "pattern-discovery-liveui-horizon"
+  : SWEEP_KIND === "settings"
     ? "pattern-discovery-settings-v2"
     : "pattern-discovery-time-horizon-v3";
 
 const round2 = (value: number): number => Number(value.toFixed(2));
 
+// Per-interval base settings. With PYRUS_SWEEP_BASELINE=live-ui this is the uniform live
+// charts/signals default; otherwise it is the per-timeframe research calibration map.
+function timeframeBase(timeframe: string): PyrusSignalsSignalSettings {
+  return USE_LIVE_UI_BASE
+    ? { ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS, ...LIVE_UI_BASE }
+    : {
+        ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+        ...(DEFAULT_SIGNAL_SETTINGS_BY_TIMEFRAME[timeframe] ?? {}),
+      };
+}
+
 function baseSetting<K extends keyof PyrusSignalsSignalSettings>(
   timeframe: string,
   key: K,
 ): PyrusSignalsSignalSettings[K] {
-  return {
-    ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
-    ...(DEFAULT_SIGNAL_SETTINGS_BY_TIMEFRAME[timeframe] ?? {}),
-  }[key];
+  return timeframeBase(timeframe)[key];
+}
+
+// Live-UI horizon grid: baseline = H8 uniform; one-factor variants step each interval's
+// timeHorizon across HORIZON_GRID while every other interval stays at the H8 base.
+function buildLiveUiHorizonVariants(): SweepVariant[] {
+  const variants: SweepVariant[] = [
+    {
+      id: "baseline-live-ui-h8",
+      label: "Baseline live-UI (H=8 all)",
+      description:
+        "Live charts/signals defaults: timeHorizon 8, BOS wicks, CHoCH 0, uniform across all intervals.",
+      signalSettingsByTimeframe: {},
+    },
+  ];
+  for (const timeframe of TIMEFRAME_SET) {
+    for (const h of HORIZON_GRID) {
+      if (h === 8) continue;
+      variants.push({
+        id: `liveui-${timeframe}-h${h}`,
+        label: `${timeframe} H=${h}`,
+        description: `One-factor timeHorizon: ${timeframe}=${h}; all other intervals stay at the H=8 live-UI base.`,
+        signalSettingsByTimeframe: { [timeframe]: { timeHorizon: h } },
+      });
+    }
+  }
+  return variants;
 }
 
 function buildTimeHorizonVariants(): SweepVariant[] {
@@ -298,8 +350,9 @@ function buildSettingsVariants(): SweepVariant[] {
   return variants;
 }
 
-const VARIANTS: SweepVariant[] =
-  SWEEP_KIND === "settings"
+const VARIANTS: SweepVariant[] = USE_LIVE_UI_BASE
+  ? buildLiveUiHorizonVariants()
+  : SWEEP_KIND === "settings"
     ? buildSettingsVariants()
     : buildTimeHorizonVariants();
 const POSSIBLE_PATTERN_COUNT = 3 ** TIMEFRAME_SET.length;
@@ -388,6 +441,8 @@ function timeframeMinutes(timeframe: string): number {
       return 5;
     case "15m":
       return 15;
+    case "1h":
+      return 60;
     default:
       throw new Error(`Unsupported sweep timeframe ${timeframe}`);
   }
@@ -398,8 +453,7 @@ function resolveSettings(
   variant: SweepVariant,
 ): PyrusSignalsSignalSettings {
   return {
-    ...DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
-    ...(DEFAULT_SIGNAL_SETTINGS_BY_TIMEFRAME[timeframe] ?? {}),
+    ...timeframeBase(timeframe),
     ...(variant.signalSettingsByTimeframe[timeframe] ?? {}),
   };
 }

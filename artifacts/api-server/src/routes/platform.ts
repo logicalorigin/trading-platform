@@ -978,26 +978,110 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
+// Per-symbol short-TTL cache for sparkline seeding. The ~500-670 symbol signal
+// universe is reseeded on every Signals/Algo mount, tab switch, and universe
+// symbol-set change, across every open client -- each a full cold pass over
+// bar_cache (seed p95 ~13s, the dominant API-pressure driver, which in turn
+// trips the signal-matrix pressure backoff). Caching the per-symbol bars
+// (pre-compaction) collapses those repeated reads; keyed by symbol|timeframe|
+// limit so it is reused regardless of how a request chunks the universe. Bars
+// are downsampled to pointLimit by the caller, so the cache holds raw bars.
+const SPARKLINE_SEED_CACHE_TTL_MS = Math.max(
+  0,
+  Number(process.env["SPARKLINE_SEED_CACHE_TTL_MS"]) || 60_000,
+);
+const SPARKLINE_SEED_CACHE_MAX_ENTRIES = 16_000;
+type SparklineSeedBarsBySymbol = Awaited<
+  ReturnType<typeof loadStoredMarketBarsBySymbol>
+>;
+type SparklineSeedBars = SparklineSeedBarsBySymbol[string];
+const sparklineSeedBarsCache = new Map<
+  string,
+  { bars: SparklineSeedBars; expiresAt: number }
+>();
+const sparklineSeedCacheKey = (
+  symbol: string,
+  timeframe: string,
+  limit: number,
+) => `${normalizeSymbol(symbol)}|${timeframe}|${limit}`;
+
 async function loadSparklineSeedBarsBySymbol(
   body: ReturnType<typeof parseSparklineSeedBody>,
 ) {
-  const chunks = chunkArray(body.symbols, SPARKLINE_SEED_DB_BATCH_SIZE);
-  const chunkResults = await mapWithConcurrency(
-    chunks,
-    SPARKLINE_SEED_DB_CONCURRENCY,
-    (symbols) =>
-      loadStoredMarketBarsBySymbol({
-        symbols,
-        timeframe: body.timeframe as Parameters<
-          typeof loadStoredMarketBarsBySymbol
-        >[0]["timeframe"],
-        limit: body.limit,
-        sourceName: "massive-history",
-        outsideRth: true,
-      }),
-  );
+  const now = Date.now();
+  const cacheEnabled = SPARKLINE_SEED_CACHE_TTL_MS > 0;
+  const result: Record<string, SparklineSeedBars> = {};
+  const misses: string[] = [];
+  const seenMiss = new Set<string>();
 
-  return Object.assign({}, ...chunkResults);
+  for (const symbol of body.symbols) {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) {
+      continue;
+    }
+    if (cacheEnabled) {
+      const cached = sparklineSeedBarsCache.get(
+        sparklineSeedCacheKey(symbol, body.timeframe, body.limit),
+      );
+      if (cached && cached.expiresAt > now) {
+        if (cached.bars.length) {
+          result[normalized] = cached.bars;
+        }
+        continue;
+      }
+    }
+    if (!seenMiss.has(normalized)) {
+      seenMiss.add(normalized);
+      misses.push(symbol);
+    }
+  }
+
+  if (misses.length) {
+    const chunks = chunkArray(misses, SPARKLINE_SEED_DB_BATCH_SIZE);
+    const chunkResults = await mapWithConcurrency(
+      chunks,
+      SPARKLINE_SEED_DB_CONCURRENCY,
+      (symbols) =>
+        loadStoredMarketBarsBySymbol({
+          symbols,
+          timeframe: body.timeframe as Parameters<
+            typeof loadStoredMarketBarsBySymbol
+          >[0]["timeframe"],
+          limit: body.limit,
+          sourceName: "massive-history",
+          outsideRth: true,
+        }),
+    );
+    const loaded: Record<string, SparklineSeedBars> = Object.assign(
+      {},
+      ...chunkResults,
+    );
+    if (cacheEnabled && sparklineSeedBarsCache.size > SPARKLINE_SEED_CACHE_MAX_ENTRIES) {
+      for (const [key, entry] of sparklineSeedBarsCache) {
+        if (entry.expiresAt <= now) {
+          sparklineSeedBarsCache.delete(key);
+        }
+      }
+    }
+    const expiresAt = now + SPARKLINE_SEED_CACHE_TTL_MS;
+    for (const symbol of misses) {
+      const normalized = normalizeSymbol(symbol);
+      const bars = loaded[normalized] || [];
+      // Cache negatives (empty bars) too: the universe has many symbols with no
+      // stored history; without this they re-hit the DB on every seed.
+      if (cacheEnabled) {
+        sparklineSeedBarsCache.set(
+          sparklineSeedCacheKey(symbol, body.timeframe, body.limit),
+          { bars, expiresAt },
+        );
+      }
+      if (bars.length) {
+        result[normalized] = bars;
+      }
+    }
+  }
+
+  return result;
 }
 
 function readBatchBarCloseValue(bar: unknown): number | null {

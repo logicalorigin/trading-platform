@@ -1,8 +1,7 @@
 import { eq } from "drizzle-orm";
 import {
-  attachPostgresClientErrorHandler,
   db,
-  pool,
+  sharedAdvisoryLockHolder,
   signalMonitorProfilesTable,
   type SignalMonitorSymbolState,
 } from "@workspace/db";
@@ -171,68 +170,16 @@ async function updateProfileLastError(
     .where(eq(signalMonitorProfilesTable.id, profileId));
 }
 
+// Acquire the cross-process single-runner guard on the shared out-of-pool lock
+// holder (a dedicated pg.Client outside the 12-slot pool). Previously this took a
+// pg_try_advisory_xact_lock on a POOLED connection and held that connection open,
+// idle-in-transaction, for the entire tick — pinning 1 of the 12 shared slots while
+// the tick's real work competed for the other 11. The session-scoped holder frees
+// that slot entirely. Distinct keys per worker (signal-monitor _021, signal-options
+// _022, overnight-spot _023) coexist on the one holder connection without colliding.
+// Mirrors overnight-spot-worker.ts / signal-options-worker.ts.
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
-  const client = await pool.connect();
-  let clientError: Error | null = null;
-  let transactionOpen = false;
-  const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
-    context: "signal-monitor-worker-advisory-lock",
-    onError: (error) => {
-      clientError = error;
-    },
-  });
-  const releaseClient = (releaseError?: unknown) => {
-    detachClientErrorHandler();
-    const error =
-      clientError ?? (releaseError instanceof Error ? releaseError : undefined);
-    if (error) {
-      client.release(error);
-      return;
-    }
-    client.release();
-  };
-  let locked = false;
-
-  try {
-    await client.query("begin");
-    transactionOpen = true;
-    const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_xact_lock($1) as locked",
-      [ADVISORY_LOCK_KEY],
-    );
-    locked = result.rows[0]?.locked === true;
-
-    if (!locked) {
-      await client.query("rollback");
-      transactionOpen = false;
-      releaseClient();
-      return null;
-    }
-
-    return async () => {
-      let releaseError: unknown;
-      try {
-        if (!clientError && transactionOpen) {
-          await client.query("commit");
-          transactionOpen = false;
-        }
-      } catch (error) {
-        releaseError = error;
-      } finally {
-        if (transactionOpen) {
-          await client.query("rollback").catch(() => {});
-          transactionOpen = false;
-        }
-        releaseClient(releaseError);
-      }
-    };
-  } catch (error) {
-    if (transactionOpen) {
-      await client.query("rollback").catch(() => {});
-    }
-    releaseClient(error);
-    throw error;
-  }
+  return sharedAdvisoryLockHolder.acquire(ADVISORY_LOCK_KEY);
 }
 
 function defaultDependencies(

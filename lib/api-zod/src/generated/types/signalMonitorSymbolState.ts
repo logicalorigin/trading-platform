@@ -7,6 +7,7 @@
  */
 import type { JsonObject } from './jsonObject';
 import type { SignalMonitorDirection } from './signalMonitorDirection';
+import type { SignalMonitorIndicatorDirection } from './signalMonitorIndicatorDirection';
 import type { SignalMonitorSymbolStatus } from './signalMonitorSymbolStatus';
 import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
 
@@ -40,6 +41,7 @@ export interface SignalMonitorSymbolState {
   lastEvaluatedAt: Date | null;
   /** @nullable */
   lastError: string | null;
+  trendDirection: SignalMonitorIndicatorDirection | null;
   actionEligible?: boolean;
   /** @nullable */
   actionBlocker?: string | null;

@@ -99,6 +99,37 @@ export function isPoolContentionError(error: unknown, depth = 0): boolean {
   return isPoolContentionError(asRecord(error)["cause"], depth + 1);
 }
 
+// Server-side statement_timeout cancellations (SQLSTATE 57014, message
+// "canceling statement due to statement timeout"). Under the 12-connection pool
+// cap, a read that trips the 15s statement_timeout means "this query exceeded
+// its server-side budget because the DB is under local load" — the same
+// transient-load condition as a pool-acquire timeout, NOT a query/data defect.
+// Kept SEPARATE from isTransientPostgresError (deliberately NOT folded into it)
+// so only callers that can safely serve degraded/last-known coverage opt in;
+// financial read/write paths must keep treating a timeout as a hard error rather
+// than silently returning empty/stale data.
+const STATEMENT_TIMEOUT_MESSAGE_PATTERN =
+  /canceling statement due to statement timeout/i;
+
+export function isStatementTimeoutError(error: unknown, depth = 0): boolean {
+  if (!error || depth > 6) {
+    return false;
+  }
+
+  const record = asRecord(error);
+  const code = record["code"] ?? record["errno"];
+  if (code === "57014") {
+    return true;
+  }
+
+  const text = textFromError(error);
+  if (text && STATEMENT_TIMEOUT_MESSAGE_PATTERN.test(text)) {
+    return true;
+  }
+
+  return isStatementTimeoutError(record["cause"], depth + 1);
+}
+
 export function summarizeTransientPostgresError(
   error: unknown,
   depth = 0,

@@ -698,11 +698,11 @@ const normalizeDteValues = ({ minValue, targetValue, maxValue, next = {} }) => {
   const minSource = next.minValue ?? minValue;
   const targetSource = next.targetValue ?? targetValue;
   const maxSource = next.maxValue ?? maxValue;
-  const min = clampNumber(Math.round(finiteSettingNumber(minSource)), 0, 90);
+  const min = clampNumber(Math.round(finiteSettingNumber(minSource)), 0, 730);
   const max = clampNumber(
     Math.round(finiteSettingNumber(maxSource, Math.max(min, 1))),
     min,
-    90,
+    730,
   );
   const target = clampNumber(
     Math.round(finiteSettingNumber(targetSource, min)),
@@ -716,7 +716,7 @@ const dteTimelineDomain = ({ min, target, max, zeroDte }) => {
   const activeSpan = Math.max(2, max - min);
   const pad = Math.max(1, Math.ceil(activeSpan * 0.75));
   const domainMin = zeroDte || min <= 1 ? 0 : Math.max(0, min - pad);
-  const domainMax = Math.min(90, Math.max(max + pad, target + pad, 6));
+  const domainMax = Math.min(730, Math.max(max + pad, target + pad, 6));
   return {
     domainMin,
     domainMax: Math.max(domainMin + 1, domainMax),
@@ -1050,7 +1050,7 @@ const DteTimelineEditor = ({
             role="slider"
             aria-label={`${marker.label} DTE`}
             aria-valuemin={marker.key === "min" ? 0 : dte.min}
-            aria-valuemax={marker.key === "max" ? 90 : dte.max}
+            aria-valuemax={marker.key === "max" ? 730 : dte.max}
             aria-valuenow={marker.value}
             data-testid={`algo-contract-dte-handle-${marker.key}`}
             disabled={disabled}
@@ -1136,7 +1136,7 @@ const DteTimelineEditor = ({
           label="Max"
           value={dte.max}
           min={dte.min}
-          max={90}
+          max={730}
           dirty={maxDirty}
           disabled={disabled}
           testId="algo-contract-max-dte"

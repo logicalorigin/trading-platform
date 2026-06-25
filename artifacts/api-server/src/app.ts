@@ -15,6 +15,7 @@ import {
   readApiRouteRequestContext,
 } from "./services/route-admission";
 import { recordIbkrRemoteDesktopRawRequestAttempt } from "./services/ibkr-bridge-runtime";
+import { isRawJson } from "./lib/raw-json";
 
 const app: Express = express();
 
@@ -74,24 +75,9 @@ function gzipJsonResponses(
   const acceptsGzip = /\bgzip\b/i.test(
     String(req.headers["accept-encoding"] ?? ""),
   );
-  if (!acceptsGzip || req.method === "HEAD") {
-    next();
-    return;
-  }
+  const isHead = req.method === "HEAD";
   const originalJson = res.json.bind(res);
-  res.json = (body?: unknown): express.Response => {
-    if (res.headersSent || res.getHeader("Content-Encoding")) {
-      return originalJson(body);
-    }
-    let payload: string;
-    try {
-      payload = JSON.stringify(body);
-    } catch {
-      return originalJson(body);
-    }
-    if (Buffer.byteLength(payload) < GZIP_JSON_MIN_BYTES) {
-      return originalJson(body);
-    }
+  const gzipSend = (payload: string): express.Response => {
     res.setHeader("Vary", "Accept-Encoding");
     zlib.gzip(payload, { level: 5 }, (error, compressed) => {
       if (res.headersSent) {
@@ -108,6 +94,38 @@ function gzipJsonResponses(
       res.end(compressed);
     });
     return res;
+  };
+  res.json = (body?: unknown): express.Response => {
+    if (res.headersSent || res.getHeader("Content-Encoding")) {
+      return originalJson(body);
+    }
+    // Pre-serialized payloads (the cached /signal-monitor/state poll) skip a second
+    // JSON.stringify of a multi-MB body — express can't serialize the wrapper, so it
+    // must be sent here for both gzip and non-gzip clients.
+    if (isRawJson(body)) {
+      const payload = body.value;
+      if (!isHead && acceptsGzip && Buffer.byteLength(payload) >= GZIP_JSON_MIN_BYTES) {
+        return gzipSend(payload);
+      }
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(isHead ? undefined : payload);
+      return res;
+    }
+    // Normal bodies keep express's exact behavior; only large bodies on gzip-capable
+    // (non-HEAD) clients are intercepted to compress.
+    if (!acceptsGzip || isHead) {
+      return originalJson(body);
+    }
+    let payload: string;
+    try {
+      payload = JSON.stringify(body);
+    } catch {
+      return originalJson(body);
+    }
+    if (Buffer.byteLength(payload) < GZIP_JSON_MIN_BYTES) {
+      return originalJson(body);
+    }
+    return gzipSend(payload);
   };
   next();
 }

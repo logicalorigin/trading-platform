@@ -130,13 +130,16 @@ export const AlgoDiagnosticsTab = ({
         {[
           ["Fresh", cockpitSignalFreshness.fresh ?? 0, CSS_COLOR.green],
           ["Aged", cockpitSignalFreshness.notFresh ?? 0, CSS_COLOR.amber],
+          ["No-dir", cockpitSignalFreshness.withoutDirection ?? 0, CSS_COLOR.red],
           ["Blocked", cockpitTradePath.blockedCandidates ?? 0, CSS_COLOR.red],
           ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, CSS_COLOR.green],
           ["Marks", cockpitTradePath.markEvents ?? 0, CSS_COLOR.cyan],
           ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, CSS_COLOR.amber],
         ].map(([label, value, color]) => {
+          // No-dir = directionless/neutral signals: a binary-system violation,
+          // so alarm on any nonzero count (not a benign "aged" state).
           const isAlarm =
-            (label === "Blocked" || label === "Gateway") &&
+            (label === "Blocked" || label === "Gateway" || label === "No-dir") &&
             Number(value) > 0;
           return (
             <div key={label} style={{ minWidth: 0 }}>

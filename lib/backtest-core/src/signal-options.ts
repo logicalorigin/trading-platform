@@ -92,11 +92,6 @@ export type SignalOptionsExecutionProfile = {
       pattern: Record<string, "buy" | "sell" | "any">;
     };
     blockedPutSymbols: string[];
-    bearishRegime: {
-      enabled: boolean;
-      minAdx: number;
-      rejectFullyBullishMtf: boolean;
-    };
   };
   liquidityGate: {
     maxSpreadPctOfMid: number;
@@ -144,7 +139,6 @@ export type SignalOptionsExecutionProfile = {
   entryHaltControls: {
     mtfAlignmentEnabled: boolean;
     inversePutBlocklistEnabled: boolean;
-    bearishRegimeEnabled: boolean;
   };
   liquidityHaltControls: {
     bidAskRequiredEnabled: boolean;
@@ -260,11 +254,6 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
         "SDOW",
         "TZA",
       ],
-      bearishRegime: {
-        enabled: true,
-        minAdx: 25,
-        rejectFullyBullishMtf: true,
-      },
     },
     liquidityGate: {
       maxSpreadPctOfMid: 35,
@@ -326,7 +315,6 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
     entryHaltControls: {
       mtfAlignmentEnabled: true,
       inversePutBlocklistEnabled: true,
-      bearishRegimeEnabled: true,
     },
     liquidityHaltControls: {
       bidAskRequiredEnabled: true,
@@ -721,9 +709,6 @@ export function resolveSignalOptionsExecutionProfile(
     mtfAlignment.timeframes ?? root.mtfTimeframes,
     defaults.entryGate.mtfAlignment.timeframes,
   );
-  const bearishRegime = asRecord(
-    entryGate.bearishRegime ?? root.bearishRegime,
-  );
   const liquidityGate = asRecord(root.liquidityGate);
   const fillPolicy = asRecord(root.fillPolicy);
   const exitPolicy = asRecord(root.exitPolicy);
@@ -736,13 +721,13 @@ export function resolveSignalOptionsExecutionProfile(
     optionSelection.minDte ?? root.minDte,
     defaults.optionSelection.minDte,
     0,
-    45,
+    730,
   );
   const maxDte = finiteInteger(
     optionSelection.maxDte ?? root.maxDte,
     Math.max(minDte, defaults.optionSelection.maxDte),
     minDte,
-    90,
+    730,
   );
   const callStrikeSlots = strikeSlots(
     optionSelection.callStrikeSlots ?? root.callStrikeSlots,
@@ -847,23 +832,6 @@ export function resolveSignalOptionsExecutionProfile(
         entryGate.blockedPutSymbols ?? root.blockedPutSymbols,
         defaults.entryGate.blockedPutSymbols,
       ),
-      bearishRegime: {
-        enabled: booleanValue(
-          bearishRegime.enabled ?? root.bearishRegimeEnabled,
-          defaults.entryGate.bearishRegime.enabled,
-        ),
-        minAdx: finiteNumber(
-          bearishRegime.minAdx ?? root.bearishRegimeMinAdx,
-          defaults.entryGate.bearishRegime.minAdx,
-          0,
-          200,
-        ),
-        rejectFullyBullishMtf: booleanValue(
-          bearishRegime.rejectFullyBullishMtf ??
-            root.bearishRegimeRejectFullyBullishMtf,
-          defaults.entryGate.bearishRegime.rejectFullyBullishMtf,
-        ),
-      },
     },
     liquidityGate: {
       maxSpreadPctOfMid: finiteNumber(
@@ -1069,10 +1037,6 @@ export function resolveSignalOptionsExecutionProfile(
         entryHaltControls.inversePutBlocklistEnabled ??
           root.inversePutBlocklistEnabled,
         defaults.entryHaltControls.inversePutBlocklistEnabled,
-      ),
-      bearishRegimeEnabled: booleanValue(
-        entryHaltControls.bearishRegimeEnabled ?? root.bearishRegimeEnabled,
-        defaults.entryHaltControls.bearishRegimeEnabled,
       ),
     },
     liquidityHaltControls: {

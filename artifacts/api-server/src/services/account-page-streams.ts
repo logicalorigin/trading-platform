@@ -34,7 +34,7 @@ export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
 export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 0;
 export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 0;
 export const ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS = 5 * 60_000;
-export const ACCOUNT_PAGE_SHADOW_PRIMARY_CACHE_TTL_MS = 2_000;
+export const ACCOUNT_PAGE_PRIMARY_CACHE_TTL_MS = 2_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
@@ -165,7 +165,7 @@ const accountPageBenchmarkEquityCache = new Map<
     expiresAt: number;
   }
 >();
-const accountPageShadowPrimaryCache = new Map<
+const accountPagePrimaryCache = new Map<
   string,
   { value: AccountPagePrimaryPayload; expiresAt: number }
 >();
@@ -338,7 +338,7 @@ function cacheKeyForInput(input: AccountPageSnapshotInput): string {
 export function clearAccountPageSnapshotCache() {
   accountPageDerivedCache.clear();
   accountPageBenchmarkEquityCache.clear();
-  accountPageShadowPrimaryCache.clear();
+  accountPagePrimaryCache.clear();
   accountPageSnapshotInflight.clear();
   accountPagePrimaryInflight.clear();
   accountPageLiveInflight.clear();
@@ -557,16 +557,14 @@ export async function fetchAccountPagePrimaryPayload(
     assetClass: normalized.assetClass,
   });
   const now = Date.now();
-  if (isShadow) {
-    const cached = accountPageShadowPrimaryCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      recordAccountPageCache("primaryHit", true);
-      recordAccountPageTiming("primaryMs", now);
-      return cached.value;
-    }
-    if (cached) {
-      accountPageShadowPrimaryCache.delete(cacheKey);
-    }
+  const cached = accountPagePrimaryCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    recordAccountPageCache("primaryHit", true);
+    recordAccountPageTiming("primaryMs", now);
+    return cached.value;
+  }
+  if (cached) {
+    accountPagePrimaryCache.delete(cacheKey);
   }
   recordAccountPageCache("primaryHit", false);
 
@@ -643,10 +641,10 @@ export async function fetchAccountPagePrimaryPayload(
         orders,
         risk,
       };
-      if (isShadow && version === accountPageSnapshotCacheVersion) {
-        accountPageShadowPrimaryCache.set(cacheKey, {
+      if (version === accountPageSnapshotCacheVersion) {
+        accountPagePrimaryCache.set(cacheKey, {
           value,
-          expiresAt: Date.now() + ACCOUNT_PAGE_SHADOW_PRIMARY_CACHE_TTL_MS,
+          expiresAt: Date.now() + ACCOUNT_PAGE_PRIMARY_CACHE_TTL_MS,
         });
       }
       return value;

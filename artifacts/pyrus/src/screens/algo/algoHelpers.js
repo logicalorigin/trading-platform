@@ -12,6 +12,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { normalizeTrendSignalDirection } from "../../features/signals/signalStateFreshness.js";
 
 // Classifies an algo deployment by its control surface so the UI can route
 // overnight/equity deployments to their own panel instead of the signal-options
@@ -160,11 +161,6 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
       "SDOW",
       "TZA",
     ],
-    bearishRegime: {
-      enabled: true,
-      minAdx: 25,
-      rejectFullyBullishMtf: true,
-    },
   },
   fillPolicy: {
     chaseMode: "aggressive",
@@ -217,7 +213,6 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   entryHaltControls: {
     mtfAlignmentEnabled: true,
     inversePutBlocklistEnabled: true,
-    bearishRegimeEnabled: true,
   },
   liquidityHaltControls: {
     bidAskRequiredEnabled: true,
@@ -732,13 +727,26 @@ export const buildStaSignalMatrixRows = ({
       ) {
         return null;
       }
-      const direction = staSignalDirectionOrNull(
-        stateRecord.currentSignalDirection || stateRecord.direction,
-      );
+      // Trend-first, mirroring the shared resolver (getCurrentSignalDirection)
+      // and the backend entry gate (getTrendDirectionsForSymbol). The cell's
+      // LIVE trend is the direction the bot trades on; the sparse crossover
+      // (currentSignalDirection) only fills in when no trend is authored. A
+      // binary-active cell that is in-trend but has no recorded crossover used
+      // to be dropped here (the inverse of the canonical resolver), which hid
+      // real rows. We keep it shown; "tradeable right now" stays gated by
+      // fresh/actionEligible below (which still require a crossover signalAt).
+      const direction =
+        normalizeTrendSignalDirection(stateRecord.trendDirection) ||
+        normalizeTrendSignalDirection(
+          asRecord(stateRecord.indicatorSnapshot).trendDirection,
+        ) ||
+        staSignalDirectionOrNull(
+          stateRecord.currentSignalDirection || stateRecord.direction,
+        );
       const signalAt =
         staIsoStringOrNull(stateRecord.currentSignalAt) ??
         staIsoStringOrNull(stateRecord.signalAt);
-      if (!direction || !signalAt) {
+      if (!direction) {
         return null;
       }
 
@@ -827,8 +835,10 @@ export const buildStaSignalMatrixRows = ({
     })
     .filter(Boolean)
     .sort((left, right) => {
-      const leftTime = Date.parse(left.signalAt || "") || 0;
-      const rightTime = Date.parse(right.signalAt || "") || 0;
+      // Crossover rows order by signal time; trend-only rows (no crossover, so
+      // no signalAt) fall back to bar recency so they don't all collapse to 0.
+      const leftTime = Date.parse(left.signalAt || left.latestBarAt || "") || 0;
+      const rightTime = Date.parse(right.signalAt || right.latestBarAt || "") || 0;
       return rightTime - leftTime;
     });
 };
@@ -1208,8 +1218,10 @@ export const signalFreshnessLabel = (signal) => {
   const signalRecord = asRecord(signal);
   if (isMarketIdleSignalRecord(signalRecord)) return "IDLE";
   const actionBlocker = normalizeMatchKey(signalRecord.actionBlocker).toLowerCase();
+  // Prefer the row's already-resolved (trend-first) direction so a trending
+  // cell with no fresh crossover is not mislabeled "NO SIGNAL".
   const direction = staSignalDirectionOrNull(
-    signalRecord.currentSignalDirection || signalRecord.direction,
+    signalRecord.direction || signalRecord.currentSignalDirection,
   );
   if (actionBlocker === "no_signal" && !direction) return "NO SIGNAL";
   if (signalRecord.fresh === true) return "FRESH";
@@ -1956,10 +1968,6 @@ export const mergeSignalOptionsProfile = (source) => {
       mtfAlignment: {
         ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment,
         ...asRecord(asRecord(rawProfile.entryGate).mtfAlignment),
-      },
-      bearishRegime: {
-        ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime,
-        ...asRecord(asRecord(rawProfile.entryGate).bearishRegime),
       },
     },
     fillPolicy: {
@@ -3138,19 +3146,6 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
         title:
           "Blocks put entries on inverse ETF symbols in the configured blocklist.",
         reasons: ["inverse_put_blocked"],
-      },
-      {
-        id: "bearishRegime",
-        section: "entryHaltControls",
-        key: "bearishRegimeEnabled",
-        label: "Bear regime",
-        title:
-          "Blocks put entries that fail the configured bearish-regime filter.",
-        reasons: [
-          "bear_regime_gate_failed",
-          "adx_below_minimum",
-          "mtf_fully_bullish",
-        ],
       },
     ],
   },

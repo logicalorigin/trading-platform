@@ -142,7 +142,12 @@ export const buildHeaderSignalTapeItems = (
     ].join("|");
 
     upsertByKey(itemsByKey, {
-      id: `signal-state-${key}`,
+      // Stable React identity: there is exactly one state per (symbol, timeframe).
+      // Keeping the id independent of timeMs stops the header tape from
+      // remounting/flashing on every re-evaluation — a trend-only signal has no
+      // latched currentSignalAt, so timeMs otherwise falls back to the per-tick
+      // lastEvaluatedAt and the id would change each tick.
+      id: `signal-state-${symbol}|${timeframe}`,
       key,
       kind: "signal",
       source: "state",
@@ -153,6 +158,9 @@ export const buildHeaderSignalTapeItems = (
       price: state?.currentSignalPrice ?? null,
       time,
       timeMs,
+      // Order by the discrete crossover time, not the per-tick evaluation time, so
+      // re-evaluations do not reshuffle the tape (0 when no crossover has latched).
+      sortMs: parseTimeMs(state?.currentSignalAt),
       fresh: Boolean(state?.fresh),
       raw: state,
     });
@@ -187,6 +195,8 @@ export const buildHeaderSignalTapeItems = (
       price: event?.signalPrice ?? event?.close ?? null,
       time,
       timeMs,
+      // Events carry a real, stable signal time; use it for ordering directly.
+      sortMs: timeMs,
       fresh: false,
       raw: event,
     });
@@ -195,7 +205,10 @@ export const buildHeaderSignalTapeItems = (
   return Array.from(itemsByKey.values())
     .map((item) => withSignalIntervalStates(item, intervalStatesBySymbol))
     .sort((left, right) => {
-      if (left.timeMs !== right.timeMs) return right.timeMs - left.timeMs;
+      // Stable ordering: discrete signal time (sortMs), not the per-tick evaluation
+      // time, so re-evaluations keep the tape order steady. Ties break on fresh then
+      // symbol — both stable across ticks.
+      if (left.sortMs !== right.sortMs) return right.sortMs - left.sortMs;
       if (left.fresh !== right.fresh) return left.fresh ? -1 : 1;
       return left.symbol.localeCompare(right.symbol);
     })

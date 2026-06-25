@@ -187,6 +187,12 @@ const headerPillTextStyle = ({
 
 const headerSignalIntervalStateEqual = (left, right) =>
   left?.currentSignalDirection === right?.currentSignalDirection &&
+  // Direction renders trend-first (getCurrentSignalDirection prefers
+  // trendDirection), so a pure trend flip must bust the memo or the dot keeps
+  // showing the stale trend.
+  left?.trendDirection === right?.trendDirection &&
+  left?.indicatorSnapshot?.trendDirection ===
+    right?.indicatorSnapshot?.trendDirection &&
   left?.currentSignalAt === right?.currentSignalAt &&
   left?.fresh === right?.fresh &&
   left?.barsSinceSignal === right?.barsSinceSignal &&
@@ -1197,6 +1203,11 @@ const buildHeaderFlowTapeFilters = (filters) => ({
   symbol: null,
 });
 
+// Keys only the fields that change a pill's rendered WIDTH, so the scroll
+// animation is not torn down and restarted on every re-evaluation. Volatile,
+// non-layout fields (time, fresh) are intentionally excluded — they recolor or
+// relabel in place, and the ResizeObserver still re-measures on any real size
+// change, so the marquee no longer jumps back to the start each tick.
 const buildHeaderBroadcastLaneMeasureKey = (items = []) =>
   (items || [])
     .map((item) =>
@@ -1210,9 +1221,7 @@ const buildHeaderBroadcastLaneMeasureKey = (items = []) =>
         item?.premium,
         item?.score,
         item?.price,
-        item?.time,
         item?.ageLabel,
-        item?.fresh,
         item?.timeframe,
         ...(item?.contextIcons || []).map(
           (context) =>

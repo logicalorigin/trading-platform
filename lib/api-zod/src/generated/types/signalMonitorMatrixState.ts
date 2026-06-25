@@ -7,6 +7,7 @@
  */
 import type { JsonObject } from './jsonObject';
 import type { SignalMonitorDirection } from './signalMonitorDirection';
+import type { SignalMonitorIndicatorDirection } from './signalMonitorIndicatorDirection';
 import type { SignalMonitorIndicatorSnapshot } from './signalMonitorIndicatorSnapshot';
 import type { SignalMonitorMatrixTimeframe } from './signalMonitorMatrixTimeframe';
 import type { SignalMonitorSymbolStatus } from './signalMonitorSymbolStatus';
@@ -42,6 +43,7 @@ export interface SignalMonitorMatrixState {
   /** @nullable */
   lastError: string | null;
   indicatorSnapshot: SignalMonitorIndicatorSnapshot | null;
+  trendDirection: SignalMonitorIndicatorDirection | null;
   actionEligible?: boolean;
   /** @nullable */
   actionBlocker?: string | null;

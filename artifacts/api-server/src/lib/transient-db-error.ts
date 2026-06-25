@@ -1,6 +1,7 @@
 export {
   createTransientPostgresBackoff,
   isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
   summarizeTransientPostgresError,
   TRANSIENT_POSTGRES_BACKOFF_MS,

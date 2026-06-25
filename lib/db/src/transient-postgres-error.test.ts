@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
 } from "./transient-postgres-error";
 
@@ -50,4 +51,34 @@ test("genuine connectivity failures are not pool contention", () => {
   });
   assert.equal(isPoolContentionError(codeError), false);
   assert.equal(isTransientPostgresError(codeError), true);
+});
+
+test("classifies statement_timeout by message and SQLSTATE 57014", () => {
+  assert.equal(
+    isStatementTimeoutError(
+      new Error("canceling statement due to statement timeout"),
+    ),
+    true,
+  );
+  const codeError = Object.assign(new Error("canceling statement"), {
+    code: "57014",
+  });
+  assert.equal(isStatementTimeoutError(codeError), true);
+});
+
+test("statement_timeout follows nested causes", () => {
+  const error = new Error("read failed");
+  (error as { cause?: unknown }).cause = new Error(
+    "canceling statement due to statement timeout",
+  );
+  assert.equal(isStatementTimeoutError(error), true);
+});
+
+test("statement_timeout is NOT folded into the generic transient classifier", () => {
+  // Kept separate so financial read/write paths keep treating a timeout as a
+  // hard error; only callers that explicitly opt in (signal-monitor reads)
+  // degrade gracefully on it.
+  const timeout = new Error("canceling statement due to statement timeout");
+  assert.equal(isTransientPostgresError(timeout), false);
+  assert.equal(isPoolContentionError(timeout), false);
 });

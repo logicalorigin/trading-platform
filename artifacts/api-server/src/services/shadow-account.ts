@@ -223,6 +223,10 @@ export type ShadowOptionMaintenanceSummary = {
   closedCount: number;
   skippedCount: number;
   orphanCount: number;
+  // Fix B(i): lingering breached-stop positions force-closed at best-available price.
+  forceClosedCount: number;
+  // Fix B(ii): closed-without-exit rows healed with a missing ledger-sync exit event.
+  reconciledCount: number;
   errors: Array<{
     positionId: string;
     symbol: string;
@@ -4932,6 +4936,111 @@ function resolveHistoricalBackfillExpirationExitPrice(input: {
   return { price: 0, source: "historical_backfill_unpriced_zero" };
 }
 
+// Fix B(i): a "hard breach" that should have already closed the position but
+// lingered (typically because the in-scan mark-stop path requires an actionable
+// option_quote — `computeSignalOptionsShadowMarkExitDecision` returns
+// `mark_not_actionable` when no live quote exists — so a position whose recorded
+// mark is already through its stop never got force-closed). We re-derive the stop
+// from the position's recorded mark (entry=averageCost, peak=recorded peak mark)
+// using the same `computeSignalOptionsPositionStop` as the live path, so the
+// breach predicate is identical to enforcement; the only difference is we admit it
+// without requiring a fresh quote. We treat as a breach: a premium stop
+// (hard_stop / runner_trail_stop), a wire structure break, or a large markReturn
+// drawdown floor (defense for stops that didn't latch). Greek/wire context is
+// unavailable here, so the structure-break leg is best-effort; the hard_stop and
+// drawdown legs are the load-bearing backstops.
+const SHADOW_FORCE_CLOSE_MARK_DRAWDOWN_PCT = -90;
+
+type ShadowMaintenanceBreach = {
+  exitReason:
+    | "hard_stop"
+    | "runner_trail_stop"
+    | "wire_structure_break"
+    | "mark_drawdown";
+  markReturnPct: number;
+};
+
+async function detectShadowMaintenanceBreach(input: {
+  contract: ShadowOptionContract;
+  position: ShadowPositionRow;
+  context: SignalOptionsShadowMarkExitContext;
+}): Promise<ShadowMaintenanceBreach | null> {
+  const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  const markPrice = toNumber(input.position.mark);
+  if (entryPrice <= 0 || markPrice == null || markPrice < 0) {
+    return null;
+  }
+  // Peak is read from the live path's source of truth (shadow_position_marks),
+  // floored at entry and at the current mark — so a position that peaked high then
+  // fell back to its trail-stop level is still detected (don't understate the peak).
+  const recordedPeak = await readShadowPositionPeakMarkPrice(input.position);
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice,
+    peakPrice: Math.max(recordedPeak, markPrice),
+    markPrice,
+    profile: input.context.profile,
+    signalQuality: input.context.signalQuality ?? null,
+  });
+  if (
+    stop.exitReason === "hard_stop" ||
+    stop.exitReason === "runner_trail_stop" ||
+    stop.exitReason === "wire_structure_break"
+  ) {
+    return { exitReason: stop.exitReason, markReturnPct: stop.markReturnPct };
+  }
+  if (stop.markReturnPct <= SHADOW_FORCE_CLOSE_MARK_DRAWDOWN_PCT) {
+    return { exitReason: "mark_drawdown", markReturnPct: stop.markReturnPct };
+  }
+  return null;
+}
+
+// Fix B(i): "force at any price" close-price ladder — the backstop for the
+// no-quote case the user routed here. Recorded mark -> intrinsic (from underlying)
+// -> a 0.01 floor (never 0, so the settling sell still books a defined exit).
+async function resolveShadowForceCloseExitPrice(input: {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+}): Promise<{ price: number; source: "force" }> {
+  const rowMark = toNumber(input.position.mark);
+  if (rowMark != null && rowMark > 0) {
+    return { price: cents(rowMark), source: "force" };
+  }
+  const underlying = await resolveEquityMark(input.contract.underlying).catch(
+    () => null,
+  );
+  const underlyingPrice = toNumber(underlying?.price);
+  if (underlyingPrice != null && underlyingPrice > 0) {
+    const intrinsic =
+      input.contract.right === "call"
+        ? Math.max(0, underlyingPrice - input.contract.strike)
+        : Math.max(0, input.contract.strike - underlyingPrice);
+    if (intrinsic > 0) {
+      return { price: cents(intrinsic), source: "force" };
+    }
+  }
+  return { price: 0.01, source: "force" };
+}
+
+// Fix B(i)/B(ii): robustly recover the `<deploymentId>:<SYMBOL>` ledger position
+// id and deploymentId even when the source entry event has aged out. The DB row
+// id is a random uuid and positionKey carries no deployment, so the only place the
+// deployment is encoded on the position is the entry event's `deployment_id`
+// column or a previously-written ledger position id of the form `<uuid>:<SYMBOL>`.
+function recoverDeploymentIdFromLedgerPositionId(
+  value: unknown,
+): string | null {
+  const text = readString(value);
+  if (!text) {
+    return null;
+  }
+  const separator = text.lastIndexOf(":");
+  if (separator <= 0) {
+    return null;
+  }
+  const candidate = text.slice(0, separator);
+  return /^[0-9a-f-]{36}$/i.test(candidate) ? candidate : null;
+}
+
 export async function runShadowOptionMaintenance(input: {
   source?: "worker";
   now?: Date;
@@ -4958,6 +5067,8 @@ export async function runShadowOptionMaintenance(input: {
     closedCount: 0,
     skippedCount: 0,
     orphanCount: 0,
+    forceClosedCount: 0,
+    reconciledCount: 0,
     errors: [],
   };
 
@@ -4979,13 +5090,18 @@ export async function runShadowOptionMaintenance(input: {
       continue;
     }
     const deploymentId = sourceDeploymentIdFromShadowOrder(sourceOrder);
+    const sourceEntryEvent =
+      sourceOrder.sourceEventId != null
+        ? (await db
+            .select()
+            .from(executionEventsTable)
+            .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
+            .limit(1))[0]
+        : undefined;
     const sourceEventMissing =
-      sourceOrder.sourceEventId != null &&
-      !(await db
-        .select({ id: executionEventsTable.id })
-        .from(executionEventsTable)
-        .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
-        .limit(1))[0];
+      sourceOrder.sourceEventId != null && !sourceEntryEvent;
+    const orphanedDeployment =
+      sourceEventMissing || (deploymentId ? !deploymentIds.has(deploymentId) : false);
     if ((deploymentId && !deploymentIds.has(deploymentId)) || sourceEventMissing) {
       summary.orphanCount += 1;
     }
@@ -5033,8 +5149,7 @@ export async function runShadowOptionMaintenance(input: {
           sourceEventId: sourceOrder.sourceEventId,
           sourceEventMissing,
           sourceDeploymentId: deploymentId,
-          orphanedDeployment:
-            sourceEventMissing || (deploymentId ? !deploymentIds.has(deploymentId) : false),
+          orphanedDeployment,
           positionId: position.id,
           positionKey: position.positionKey,
           previousMark: toNumber(position.mark),
@@ -5043,6 +5158,62 @@ export async function runShadowOptionMaintenance(input: {
         placedAt: now,
       });
       summary.closedCount += 1;
+
+      // Sync the expiration close into the execution-events ledger so the entry
+      // gate's active-position view (deriveActivePositions) stops treating the
+      // expired position as phantom-open and unblocks same-direction re-entry.
+      // Only real deployment positions get a ledger exit: backfill expirations
+      // already emit their own exit elsewhere, and orphaned/missing-source
+      // positions have no entry event to reconcile against. The maintenance sell
+      // above already realized P&L in the shadow_positions/cash ledger, so this
+      // event carries NO `pnl` and we do NOT mirror it back through
+      // recordShadowAutomationEvent — it is ledger-sync-only and must not re-bank
+      // realized P&L into the daily-loss halt or place a second sell.
+      const isRealDeploymentExit =
+        !isBackfillOrder &&
+        !orphanedDeployment &&
+        !sourceEventMissing &&
+        deploymentId != null &&
+        deploymentIds.has(deploymentId);
+      if (isRealDeploymentExit) {
+        const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
+        const entryPosition = readRecord(entryPayload.position) ?? {};
+        const entryCandidate = readRecord(entryPayload.candidate) ?? {};
+        const candidateId =
+          readString(entryCandidate.id) ??
+          readString(entryPosition.candidateId) ??
+          null;
+        const ledgerPositionId =
+          readString(entryPosition.id) ?? position.id;
+        await db.insert(executionEventsTable).values({
+          deploymentId,
+          providerAccountId: sourceEntryEvent?.providerAccountId ?? null,
+          symbol: normalizeSymbol(position.symbol).toUpperCase(),
+          eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+          summary: `${position.symbol} shadow exit expiration at ${exit.price.toFixed(2)}`,
+          payload: {
+            reason: "expiration",
+            exitReason: "expiration",
+            maintenance: true,
+            exitPrice: exit.price,
+            occurredAt: now.toISOString(),
+            sourceOrderId: sourceOrder.id,
+            sourceEventId: sourceOrder.sourceEventId,
+            candidateId,
+            candidate: candidateId ? { id: candidateId } : null,
+            position: {
+              id: ledgerPositionId,
+              candidateId,
+              symbol: position.symbol,
+            },
+          },
+          occurredAt: now,
+        });
+        notifyAlgoCockpitChanged({
+          deploymentId,
+          reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        });
+      }
     } catch (error) {
       summary.skippedCount += 1;
       summary.errors.push({
@@ -5053,7 +5224,353 @@ export async function runShadowOptionMaintenance(input: {
     }
   }
 
+  // Fix B(i): force-close lingering breached-stop positions. Re-scan the open
+  // option positions that survived the expiration pass above; any whose recorded
+  // mark is already through its stop (and that didn't expire) is force-closed at
+  // the best available price. Real-deployment-only: the breach context is resolved
+  // via resolveSignalOptionsShadowMarkExitContext (rejects non-automation/disabled
+  // rows) and we additionally skip backfill/historical rows explicitly below.
+  // DAILY-LOSS HALT: the settling sell realizes P&L in shadow_positions/cash (the
+  // trading-allowance budget); the ledger-sync exit event below ALSO carries the
+  // realized `pnl` so the loss feeds the events-ledger daily-loss halt
+  // (computeSignalOptionsDailyRealizedPnl) — without it a deep-loss force-close
+  // would vanish from the halt entirely (counted as neither realized nor
+  // unrealized). A dedup guard (one shadow_exit per deployment+symbol since
+  // openedAt) ensures the close is banked into the halt exactly once.
+  for (const position of openPositions) {
+    const contract = asOptionContract(position.optionContract);
+    if (!contract) {
+      continue;
+    }
+    // Skip rows the expiration pass already settled (its sell flips status to
+    // closed); re-read status so we never double-sell.
+    const [currentStatus] = await db
+      .select({ status: shadowPositionsTable.status })
+      .from(shadowPositionsTable)
+      .where(eq(shadowPositionsTable.id, position.id))
+      .limit(1);
+    if (currentStatus?.status !== "open") {
+      continue;
+    }
+    const quantity = toNumber(position.quantity) ?? 0;
+    if (quantity <= 0) {
+      continue;
+    }
+    try {
+      const context = await resolveSignalOptionsShadowMarkExitContext(position);
+      if (!context) {
+        continue;
+      }
+      // Never force-close backfill/historical positions: a force sell would mutate
+      // research/backfill data and inject a live-tagged exit that
+      // deriveActivePositions honors by symbol. The context resolver only rejects
+      // non-automation/disabled rows (backfill orders carry source:"automation"),
+      // so guard explicitly here — matching the expiration and reconcile passes.
+      if (
+        isHistoricalSignalOptionsShadowOrder(context.entryOrder) ||
+        isSignalOptionsBackfillShadowOrder(context.entryOrder)
+      ) {
+        continue;
+      }
+      const breach = await detectShadowMaintenanceBreach({ contract, position, context });
+      if (!breach) {
+        continue;
+      }
+
+      const deploymentId = context.deployment.id;
+      if (!deploymentIds.has(deploymentId)) {
+        summary.orphanCount += 1;
+        continue;
+      }
+
+      // Dedup guard: never bank a force-close realized loss into the daily-loss
+      // halt twice. If a shadow_exit already exists for this deployment+symbol
+      // since the position opened, it was already exited and counted — skip the
+      // sell and the second pnl-bearing exit. Bounded to THIS position's lifecycle
+      // (>= openedAt) so a prior entry->exit cycle's exit can't suppress it.
+      const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
+      const [existingForceExit] = await db
+        .select({ id: executionEventsTable.id })
+        .from(executionEventsTable)
+        .where(
+          and(
+            eq(executionEventsTable.deploymentId, deploymentId),
+            eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
+            eq(executionEventsTable.symbol, normalizedSymbol),
+            gte(executionEventsTable.occurredAt, position.openedAt),
+          ),
+        )
+        .limit(1);
+      if (existingForceExit) {
+        continue;
+      }
+
+      const exit = await resolveShadowForceCloseExitPrice({ position, contract });
+      const dateKey = marketDateParts(now).key;
+      await placeShadowOrder({
+        accountId: SHADOW_ACCOUNT_ID,
+        mode: "shadow",
+        symbol: position.symbol,
+        assetClass: "option",
+        side: "sell",
+        type: "limit",
+        quantity,
+        limitPrice: exit.price,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: contract,
+        source: "automation",
+        clientOrderId: `shadow-force-stop-maintenance-${position.id}-${dateKey}`,
+        positionKey: position.positionKey,
+        requestedFillPrice: exit.price > 0 ? exit.price : null,
+        payload: {
+          maintenance: true,
+          maintenanceReason: "force_stop",
+          exitReason: breach.exitReason,
+          priceSource: exit.source,
+          fillQuoteSource: exit.source,
+          markReturnPct: breach.markReturnPct,
+          sourceDeploymentId: deploymentId,
+          positionId: position.id,
+          positionKey: position.positionKey,
+          previousMark: toNumber(position.mark),
+          optionContract: optionPayload(contract),
+        },
+        placedAt: now,
+      });
+      summary.forceClosedCount += 1;
+
+      // Realized loss for the daily-loss halt, computed exactly as the live exit
+      // path does (signalOptionsRealizedPnl): (exit - entry) * qty * multiplier,
+      // multiplier basis = contract.multiplier ?? 100 to stay consistent with the
+      // halt's unrealized term (signalOptionsContractMultiplier).
+      const forceCloseRealizedPnl = Number(
+        (
+          (exit.price - (toNumber(position.averageCost) ?? 0)) *
+          quantity *
+          (toNumber(contract.multiplier) ?? 100)
+        ).toFixed(2),
+      );
+
+      // Ledger-sync exit per the PAYLOAD CONTRACT: reason/exitReason = the breach
+      // reason, maintenance:true, fillQuoteSource:"force", exitPrice = the close
+      // price, NO selectedContract (admits via maintenance:true + the no-contract
+      // branch), and `pnl` = the realized loss so it feeds the daily-loss halt
+      // (dedup-guarded above so it is banked once). Resolve the ledger position id
+      // / candidateId from the source entry event when present, else fall back to
+      // the live path's `${deploymentId}:${symbol}` synthetic id.
+      const entryPayload = readRecord(context.entryEvent?.payload) ?? {};
+      const entryPosition = readRecord(entryPayload.position) ?? {};
+      const entryCandidate = readRecord(entryPayload.candidate) ?? {};
+      const ledgerPositionId =
+        readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
+      const candidateId =
+        readString(entryCandidate.id) ??
+        readString(entryPosition.candidateId) ??
+        null;
+      await db.insert(executionEventsTable).values({
+        deploymentId,
+        providerAccountId:
+          context.entryEvent?.providerAccountId ??
+          context.deployment.providerAccountId ??
+          null,
+        symbol: normalizedSymbol,
+        eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        summary: `${position.symbol} shadow exit ${breach.exitReason} (force) at ${exit.price.toFixed(2)}`,
+        payload: {
+          reason: breach.exitReason,
+          exitReason: breach.exitReason,
+          maintenance: true,
+          exitPrice: exit.price,
+          pnl: forceCloseRealizedPnl,
+          occurredAt: now.toISOString(),
+          fillQuoteSource: "force",
+          candidateId,
+          candidate: candidateId ? { id: candidateId } : null,
+          position: {
+            id: ledgerPositionId,
+            candidateId,
+            symbol: position.symbol,
+          },
+        },
+        occurredAt: now,
+      });
+      notifyAlgoCockpitChanged({
+        deploymentId,
+        reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+      });
+    } catch (error) {
+      summary.skippedCount += 1;
+      summary.errors.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Fix B(ii): reconcile closed-without-exit drift. Scan recently status='closed'
+  // shadow OPTION rows whose deployment lacks a corresponding
+  // signal_options_shadow_exit event for that symbol, and emit the missing
+  // ledger-sync exit so the entry gate's active-position view (which closes by
+  // SYMBOL) stops treating the position as phantom-open. NO DOUBLE-COUNT: the cash
+  // was already realized when the row closed; the event omits `pnl`. Idempotent:
+  // we only emit for closed rows that have NO matching exit event, so re-running
+  // never double-emits, and this pass never touches open rows (the force-close
+  // pass above owns those).
+  try {
+    await reconcileShadowOptionClosedWithoutExit({
+      now,
+      deploymentIds,
+      summary,
+    });
+  } catch (error) {
+    summary.errors.push({
+      positionId: "reconcile",
+      symbol: "*",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return summary;
+}
+
+const SHADOW_RECONCILE_LOOKBACK_DAYS = 30;
+
+async function reconcileShadowOptionClosedWithoutExit(input: {
+  now: Date;
+  deploymentIds: Set<string>;
+  summary: ShadowOptionMaintenanceSummary;
+}): Promise<void> {
+  const since = new Date(
+    input.now.getTime() - SHADOW_RECONCILE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const closedRows = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(
+      and(
+        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.assetClass, "option"),
+        eq(shadowPositionsTable.status, "closed"),
+        gte(shadowPositionsTable.closedAt, since),
+      ),
+    )
+    .orderBy(desc(shadowPositionsTable.closedAt));
+
+  for (const position of closedRows) {
+    const contract = asOptionContract(position.optionContract);
+    if (!contract) {
+      continue;
+    }
+    try {
+      // Resolve the source entry order/event to recover the real deployment.
+      // Backfill/historical/orphaned rows are skipped (no real deployment to
+      // reconcile against), mirroring the expiration pass guards.
+      const sourceOrder = await findSignalOptionsEntryOrderForPosition(position);
+      if (!sourceOrder) {
+        continue;
+      }
+      // Skip replay/historical AND backfill rows. The original `&& !isBackfill`
+      // let backfill orders through, which then received a live-tagged
+      // ledger_reconcile exit; deriveActivePositions closes by symbol and would
+      // phantom-delete a genuinely-open live position for the same
+      // deployment+symbol. Only real automation positions are reconciled.
+      if (
+        isHistoricalSignalOptionsShadowOrder(sourceOrder) ||
+        isSignalOptionsBackfillShadowOrder(sourceOrder)
+      ) {
+        continue;
+      }
+      const sourceEntryEvent =
+        sourceOrder.sourceEventId != null
+          ? (
+              await db
+                .select()
+                .from(executionEventsTable)
+                .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
+                .limit(1)
+            )[0]
+          : undefined;
+      const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
+      const entryPosition = readRecord(entryPayload.position) ?? {};
+      const entryCandidate = readRecord(entryPayload.candidate) ?? {};
+      const deploymentId =
+        (sourceEntryEvent?.deploymentId
+          ? String(sourceEntryEvent.deploymentId)
+          : null) ??
+        sourceDeploymentIdFromShadowOrder(sourceOrder) ??
+        recoverDeploymentIdFromLedgerPositionId(entryPosition.id);
+      if (!deploymentId || !input.deploymentIds.has(deploymentId)) {
+        continue;
+      }
+
+      // Idempotency guard: skip if ANY exit event already exists for this
+      // deployment + symbol (deriveActivePositions closes by symbol, so a single
+      // matching exit already heals this position). Never double-emit.
+      const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
+      const [existingExit] = await db
+        .select({ id: executionEventsTable.id })
+        .from(executionEventsTable)
+        .where(
+          and(
+            eq(executionEventsTable.deploymentId, deploymentId),
+            eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
+            eq(executionEventsTable.symbol, normalizedSymbol),
+            // Bound to THIS position's lifecycle so a prior entry->exit cycle's
+            // exit event can't suppress healing a later close-without-exit.
+            gte(executionEventsTable.occurredAt, position.openedAt),
+          ),
+        )
+        .limit(1);
+      if (existingExit) {
+        continue;
+      }
+
+      const ledgerPositionId =
+        readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
+      const candidateId =
+        readString(entryCandidate.id) ??
+        readString(entryPosition.candidateId) ??
+        null;
+      const occurredAt = position.closedAt ?? input.now;
+      await db.insert(executionEventsTable).values({
+        deploymentId,
+        providerAccountId:
+          sourceEntryEvent?.providerAccountId ?? null,
+        symbol: normalizedSymbol,
+        eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        summary: `${position.symbol} shadow exit ledger_reconcile`,
+        payload: {
+          reason: "ledger_reconcile",
+          exitReason: "ledger_reconcile",
+          maintenance: true,
+          exitPrice: toNumber(position.mark) ?? 0,
+          occurredAt: occurredAt.toISOString(),
+          fillQuoteSource: "reconcile",
+          candidateId,
+          candidate: candidateId ? { id: candidateId } : null,
+          position: {
+            id: ledgerPositionId,
+            candidateId,
+            symbol: position.symbol,
+          },
+        },
+        occurredAt,
+      });
+      input.summary.reconciledCount += 1;
+      notifyAlgoCockpitChanged({
+        deploymentId,
+        reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+      });
+    } catch (error) {
+      input.summary.errors.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 async function upsertPositionForFill(

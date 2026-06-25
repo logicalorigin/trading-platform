@@ -474,7 +474,29 @@ async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
   if (!Array.isArray(deployment.symbolUniverse) || deployment.symbolUniverse.length === 0) {
     throw new Error(`Deployment ${deployment.id} has an empty symbol universe.`);
   }
-  return deployment;
+  // Optional research subset (env-gated; default = full deployment universe). Lets a sweep
+  // skip the illiquid tail of a large universe — which still loads + evaluates bars but
+  // yields ~no tradeable option entries — WITHOUT mutating the live deployment row.
+  //   PYRUS_SIGNALS_SWEEP_SYMBOLS=SPY,NVDA,...  explicit list (intersected w/ universe, universe order)
+  //   PYRUS_SIGNALS_SWEEP_SYMBOL_LIMIT=90        first-N of the deployment universe
+  const fullUniverse = deployment.symbolUniverse as string[];
+  const explicit = (process.env["PYRUS_SIGNALS_SWEEP_SYMBOLS"] ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const limit = readIntegerEnv("PYRUS_SIGNALS_SWEEP_SYMBOL_LIMIT", 0);
+  let universe = fullUniverse;
+  if (explicit.length) {
+    const wanted = new Set(explicit);
+    const kept = fullUniverse.filter((s) => wanted.has(s));
+    universe = kept.length ? kept : explicit;
+  } else if (limit > 0 && limit < fullUniverse.length) {
+    universe = fullUniverse.slice(0, limit);
+  }
+  if (universe.length !== fullUniverse.length) {
+    console.log(JSON.stringify({
+      symbolSubset: { from: fullUniverse.length, to: universe.length, first: universe[0], last: universe[universe.length - 1] },
+    }));
+  }
+  return { ...deployment, symbolUniverse: universe };
 }
 
 async function tryAcquireSignalOptionsWorkerLock() {
