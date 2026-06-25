@@ -819,13 +819,17 @@ function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
   ) {
     return false;
   }
-  // A sustained health-circuit outage does NOT mean the bridge is dead while the
-  // Windows desktop agent is still online — that's positive proof the helper (and
-  // Gateway) are alive and the health probes are merely failing/timing out (e.g.
-  // sidecar slowness). Abandoning here would wrongly flip configured.ibkr to false
-  // (UI shows "disconnected"/not-configured for a LIVE connection) and delete the
-  // persisted override so it can't recover. Only abandon when the agent is gone too.
-  if (desktopAgentOnlineProvider()) {
+  // A sustained health-circuit outage does NOT necessarily mean the bridge is dead while
+  // the Windows desktop agent is online: an online agent is normally positive proof the
+  // helper (and Gateway) are alive and the health probes are merely failing/timing out
+  // (e.g. sidecar slowness), so abandoning would wrongly flip a LIVE connection to
+  // disconnected and delete the persisted override. BUT that reprieve only holds if the
+  // bridge has actually completed a health probe at least once (lastSuccessAt set). When it
+  // has NEVER succeeded across this entire continuous outage, the helper is up but its
+  // tunnel to the Gateway is dead — not slow — and holding the override strands the UI on
+  // "waiting for Gateway health proof" instead of offering Reconnect. So the agent-online
+  // reprieve requires a prior success; a never-connected dead tunnel is abandoned anyway.
+  if (desktopAgentOnlineProvider() && health.lastSuccessAt !== null) {
     return false;
   }
   clearIbkrBridgeRuntimeOverride();

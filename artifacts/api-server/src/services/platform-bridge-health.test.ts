@@ -18,6 +18,7 @@ import {
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
+  recordBridgeWorkSuccess,
 } from "./bridge-governor";
 import {
   __platformBridgeHealthInternalsForTests,
@@ -819,23 +820,14 @@ test("dead bridge override is abandoned via firstOpenedAt, which survives backof
     assert.equal(maybeAbandonDeadBridgeOverride(firstOpenedAt + 1_000), false);
     assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
 
-    // While the desktop agent is ONLINE, a sustained health outage must NOT abandon
-    // the override: an online agent is proof the helper/Gateway is alive and the
-    // health probes are merely failing (e.g. sidecar slowness). Abandoning here
-    // would falsely flip the UI to disconnected for a live connection.
+    // The desktop agent is ONLINE but the bridge has NEVER completed a health probe
+    // (lastSuccessAt is null — only failures recorded) across a sustained continuous
+    // outage: a dead tunnel (online helper, dead Gateway link). The override MUST be
+    // abandoned so the UI can offer Reconnect instead of stranding on "waiting for
+    // Gateway health proof" — and this abandon only works because firstOpenedAt (not the
+    // backoff-wiped openedAt) is the clock.
     setDesktopAgentOnlineProvider(() => true);
-    assert.equal(
-      maybeAbandonDeadBridgeOverride(
-        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
-      ),
-      false,
-    );
-    assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
-
-    // Agent offline + sustained continuous outage past the window: the dead
-    // override is abandoned — and this only works because firstOpenedAt (not
-    // openedAt) is the clock.
-    setDesktopAgentOnlineProvider(() => false);
+    assert.equal(getBridgeGovernorSnapshot().health.lastSuccessAt, null);
     assert.equal(
       maybeAbandonDeadBridgeOverride(
         firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
@@ -845,6 +837,60 @@ test("dead bridge override is abandoned via firstOpenedAt, which survives backof
     assert.equal(getIbkrBridgeRuntimeOverride(), null);
   } finally {
     Date.now = realNow;
+    setDesktopAgentOnlineProvider(() => false);
+    __resetBridgeGovernorForTests();
+  }
+});
+
+// The agent-online reprieve (an online helper holds a dead-looking override, since the
+// probes may just be slow) must apply ONLY to a bridge that has connected at least once.
+// A never-connected sustained outage is a dead tunnel and must abandon even with the agent
+// online — otherwise the UI strands on "waiting for Gateway health proof" forever.
+test("dead bridge override: agent-online reprieve requires a prior health success", () => {
+  __resetBridgeGovernorForTests();
+  const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+    __platformBridgeHealthInternalsForTests;
+  const transient = new HttpError(504, "timeout", {
+    code: "ibkr_bridge_health_timeout",
+  });
+  const openHealthCircuit = (): number => {
+    recordBridgeWorkFailure("health", transient);
+    recordBridgeWorkFailure("health", transient);
+    const firstOpenedAt = getBridgeGovernorSnapshot().health.firstOpenedAt;
+    if (firstOpenedAt === null) {
+      throw new Error("expected the health circuit to be open");
+    }
+    return firstOpenedAt;
+  };
+
+  try {
+    // Agent ONLINE + the bridge HAS connected before (lastSuccessAt set) then dropped into
+    // a sustained outage: a previously-live bridge whose probes are now failing. The online
+    // agent is positive proof it is probably transient, so the override is HELD — a
+    // live-but-slow connection must never be falsely flipped to disconnected.
+    setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://slow.bridge" });
+    setDesktopAgentOnlineProvider(() => true);
+    recordBridgeWorkSuccess("health");
+    assert.notEqual(getBridgeGovernorSnapshot().health.lastSuccessAt, null);
+    const firstOpenedAt = openHealthCircuit();
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      false,
+    );
+    assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
+
+    // Same sustained outage, agent now OFFLINE: abandon regardless of the prior success.
+    setDesktopAgentOnlineProvider(() => false);
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      true,
+    );
+    assert.equal(getIbkrBridgeRuntimeOverride(), null);
+  } finally {
     setDesktopAgentOnlineProvider(() => false);
     __resetBridgeGovernorForTests();
   }
