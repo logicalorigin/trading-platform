@@ -18,6 +18,8 @@
     "db:storage:cleanup": "tsx ./src/db-storage.ts cleanup",
     "db:market-data:audit": "tsx ./src/market-data-schema-audit.ts",
     "db:phase0:audit": "tsx ./src/db-phase0-audit.ts",
+    "db:snapshot-retention:audit": "tsx ./src/db-snapshot-retention.ts audit",
+    "db:snapshot-retention": "tsx ./src/db-snapshot-retention.ts retention",
     "db:accounts:recover": "tsx ./src/account-data-recovery.ts",
     "shadow:massive-options-audit": "tsx ./src/shadow-massive-options-audit.ts",
     "shadow:management-review": "tsx ./src/shadow-options-management-review.ts",

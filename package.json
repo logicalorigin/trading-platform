@@ -27,6 +27,8 @@
     "replit:scribe:artifacts": "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
     "db:market-data:audit": "pnpm --filter @workspace/scripts run db:market-data:audit",
     "db:phase0:audit": "pnpm --filter @workspace/scripts run db:phase0:audit",
+    "db:snapshot-retention:audit": "pnpm --filter @workspace/scripts run db:snapshot-retention:audit",
+    "db:snapshot-retention": "pnpm --filter @workspace/scripts run db:snapshot-retention",
     "fmt:market-data-worker": "node scripts/run-market-data-worker.mjs fmt --check -p market-data-worker",
     "market-data-worker:doctor": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- doctor",
     "market-data-worker:run": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- run",

@@ -11,9 +11,9 @@
 
 ## Decision
 
-- Retention windows (also the standing defaults): `balance_snapshots` 180d, `shadow_position_marks` (closed positions) 180d, `signal_monitor_breadth_snapshots` 90d.
+- Retention windows (also the standing defaults): `balance_snapshots` 180d, `shadow_balance_snapshots` 180d, `shadow_position_marks` (closed positions) 180d, `signal_monitor_breadth_snapshots` 90d.
 - User chose conservative, forward-looking windows. At these windows **0 rows are currently eligible** in every table (the DB's oldest rows are newer than the cutoffs), so retention was implemented and dry-run verified but **no live deletes were executed**.
-- `shadow_balance_snapshots`: **deferred with documented design** (source-aware replay/backtest coupling — see Deferral).
+- `shadow_balance_snapshots`: implemented with source-aware retention that excludes replay/backtest sources and preserves newest row per `(account_id, source)`.
 - `diagnostic_snapshots`: already self-prunes to 24h via the diagnostics collector (`artifacts/api-server/src/services/diagnostics.ts:4345-4366`) and is in the `pruneDiagnosticStorage` allow-list; no new work needed.
 
 ## Source Maps
@@ -34,20 +34,23 @@ Reader requirements preserved by the new retention:
 
 ## Code Change
 
-- `lib/db/src/retention.ts` (new) — `pruneSignalMonitorBreadthSnapshots`, `pruneBalanceSnapshots`, `pruneClosedShadowPositionMarks`. Dry-run by default; bounded-batch deletes (`DEFAULT_RETENTION_BATCH_SIZE = 5000`); `now` injectable for deterministic tests; runs against the shared `db` proxy so the PGlite harness exercises the real SQL. Exported via `lib/db/src/index.ts`.
+- `lib/db/src/retention.ts` (new) — `pruneSignalMonitorBreadthSnapshots`, `pruneBalanceSnapshots`, `pruneShadowBalanceSnapshots`, `pruneClosedShadowPositionMarks`. Dry-run by default; bounded-batch deletes (`DEFAULT_RETENTION_BATCH_SIZE = 5000`); `now` injectable for deterministic tests; runs against the shared `db` proxy so the PGlite harness exercises the real SQL. Exported via `lib/db/src/index.ts`.
 - `lib/db/src/retention.test.ts` (new) — PGlite tests (see Tests).
 - `scripts/src/db-snapshot-retention.ts` (new) — CLI mirroring `db-storage.ts`: `audit` (read-only counts + candidates) and `retention` (dry-run unless `--execute`), env-configurable windows, `vacuum (analyze)` + drained-set re-check after execute.
 - `package.json` / `scripts/package.json` — `db:snapshot-retention:audit` and `db:snapshot-retention` scripts.
 
-Env vars (defaults): `BALANCE_SNAPSHOT_RETENTION_DAYS=180`, `SHADOW_POSITION_MARK_RETENTION_DAYS=180`, `SIGNAL_BREADTH_SNAPSHOT_RETENTION_DAYS=90`, `SNAPSHOT_RETENTION_BATCH_SIZE=5000`.
+Env vars (defaults): `BALANCE_SNAPSHOT_RETENTION_DAYS=180`, `SHADOW_BALANCE_SNAPSHOT_RETENTION_DAYS=180`, `SHADOW_POSITION_MARK_RETENTION_DAYS=180`, `SIGNAL_BREADTH_SNAPSHOT_RETENTION_DAYS=90`, `SNAPSHOT_RETENTION_BATCH_SIZE=5000`.
 
 ## Tests
 
-`pnpm --filter @workspace/db exec tsx --test --test-force-exit src/retention.test.ts` — 4/4 pass:
+`pnpm --filter @workspace/db exec tsx --test --test-force-exit src/retention.test.ts` — 7/7 pass:
 
 - `balance_snapshots`: prunes old non-latest rows, always keeps newest per account (including an account whose newest row is older than the cutoff).
 - `shadow_position_marks`: keeps full history for an OPEN position, prunes a long-closed position to its latest mark, leaves a recently-closed position untouched.
 - `signal_monitor_breadth_snapshots`: flat age delete keeps recent rows.
+- `shadow_balance_snapshots`: prunes old live rows per source while preserving replay/backtest simulation rows.
+- `resolveSnapshotRetentionConfig`: applies defaults and env overrides.
+- `runAllSnapshotRetention`: runs all configured sweeps in dry-run mode by default.
 - batched delete converges across multiple iterations (batchSize forced small).
 
 ## Dry-Run / Audit Evidence

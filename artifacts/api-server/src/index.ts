@@ -33,6 +33,7 @@ import {
   startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
+import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { listAlgoDeployments } from "./services/automation";
 import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-usage";
@@ -290,6 +291,7 @@ server.listen(port, () => {
     startSignalOptionsPositionTickManager,
     startOvernightSpotWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
+    startSnapshotRetentionScheduler,
     startRuntimeFlightRecorder,
     () => {
       void importRuntimeFlightRecorderIncidents(

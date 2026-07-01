@@ -465,3 +465,4 @@ export {
 } from "./advisory-lock";
 export * from "./runtime";
 export * from "./schema";
+export * from "./retention";
