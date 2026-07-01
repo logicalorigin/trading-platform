@@ -26,17 +26,27 @@ struct RetentionResult {
 }
 
 pub async fn run_retention(pool: &PgPool, config: &WorkerConfig, execute: bool) -> Result<()> {
-    let targets = [
+    let targets = build_retention_targets(config);
+    for result in apply_targets(pool, &targets, execute, config.retention_batch_size).await? {
+        info!(
+            table = result.table,
+            scope = result.scope.unwrap_or("all"),
+            retention_days = result.retention_days,
+            cutoff = %result.cutoff,
+            affected_rows = result.affected_rows,
+            dry_run = !execute,
+            "market-data retention target evaluated"
+        );
+    }
+    Ok(())
+}
+
+fn build_retention_targets(config: &WorkerConfig) -> Vec<RetentionTarget> {
+    vec![
         RetentionTarget {
             table: "quote_cache",
             column: "as_of",
             retention_days: config.quote_retention_days,
-            extra_where: None,
-        },
-        RetentionTarget {
-            table: "option_chain_snapshots",
-            column: "as_of",
-            retention_days: config.option_chain_retention_days,
             extra_where: None,
         },
         // bar_cache holds both intraday (short read window) and coarse/daily
@@ -58,6 +68,12 @@ pub async fn run_retention(pool: &PgPool, config: &WorkerConfig, execute: bool) 
             extra_where: Some("timeframe not in ('1m','2m','5m','15m','1h','5s')"),
         },
         RetentionTarget {
+            table: "market_data_ingest_jobs",
+            column: "updated_at",
+            retention_days: config.job_retention_days,
+            extra_where: Some(MARKET_DATA_JOB_RETENTION_PREDICATE),
+        },
+        RetentionTarget {
             table: "gex_snapshots",
             column: "computed_at",
             retention_days: config.gex_retention_days,
@@ -69,21 +85,15 @@ pub async fn run_retention(pool: &PgPool, config: &WorkerConfig, execute: bool) 
             retention_days: config.provider_log_retention_days,
             extra_where: None,
         },
-    ];
-
-    for result in apply_targets(pool, &targets, execute, config.retention_batch_size).await? {
-        info!(
-            table = result.table,
-            scope = result.scope.unwrap_or("all"),
-            retention_days = result.retention_days,
-            cutoff = %result.cutoff,
-            affected_rows = result.affected_rows,
-            dry_run = !execute,
-            "market-data retention target evaluated"
-        );
-    }
-    Ok(())
+    ]
 }
+
+const MARKET_DATA_JOB_RETENTION_PREDICATE: &str = "status in ('completed','failed','cancelled') \
+and not (kind = 'option_chain_snapshot' and exists (select 1 \
+from market_data_ingest_jobs gex where gex.kind = 'gex_snapshot' \
+and gex.status in ('queued','running') and gex.symbol = market_data_ingest_jobs.symbol \
+and coalesce(gex.payload->>'dedupeBucket', '') <> '' \
+and coalesce(gex.payload->>'dedupeBucket', '') = coalesce(market_data_ingest_jobs.payload->>'dedupeBucket', '')))";
 
 async fn apply_targets(
     pool: &PgPool,
@@ -147,4 +157,46 @@ async fn apply_targets(
 
 fn retention_cutoff(now: chrono::DateTime<Utc>, retention_days: i64) -> chrono::DateTime<Utc> {
     now - Duration::days(retention_days)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retention_targets_include_safe_terminal_job_cleanup() {
+        let config = WorkerConfig {
+            database_url: "postgres://example".into(),
+            worker_id: "test-worker".into(),
+            db_pool_max_connections: 2,
+            db_acquire_timeout_ms: 5_000,
+            poll_interval_ms: 3_000,
+            job_lease_ms: 60_000,
+            option_chain_max_pages: 80,
+            quote_retention_days: 7,
+            bar_retention_days: 90,
+            bar_coarse_retention_days: 730,
+            job_retention_days: 14,
+            gex_retention_days: 30,
+            provider_log_retention_days: 14,
+            retention_interval_secs: 21_600,
+            retention_batch_size: 20_000,
+            market_data_provider: None,
+        };
+
+        let targets = build_retention_targets(&config);
+        let target = targets
+            .iter()
+            .find(|target| target.table == "market_data_ingest_jobs")
+            .expect("market_data_ingest_jobs retention target");
+
+        assert_eq!(target.column, "updated_at");
+        assert_eq!(target.retention_days, 14);
+        let predicate = target.extra_where.expect("job retention predicate");
+        assert!(predicate.contains("status in ('completed','failed','cancelled')"));
+        assert!(predicate.contains("kind = 'option_chain_snapshot'"));
+        assert!(predicate.contains("gex.kind = 'gex_snapshot'"));
+        assert!(predicate.contains("gex.status in ('queued','running')"));
+        assert!(predicate.contains("dedupeBucket"));
+    }
 }

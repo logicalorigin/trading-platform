@@ -22,7 +22,7 @@ Historical bars, option-flow events, flow summaries, and backfills are reserved 
 
 The persisted GEX path reads the latest stock quote from `quote_cache` and the latest full-chain provider option row per contract from `option_chain_latest`.
 GEX compute intentionally limits option rows to worker-owned full-chain provider rows (`source='massive'`) so partial API-side IBKR metadata probes cannot collapse the expiration universe.
-The API durable option metadata cache also writes latest rows to `option_chain_latest`; its pruning is source-scoped to obsolete signal-options decision sources and must not delete worker full-chain provider rows. Historical `option_chain_snapshots` retention remains worker-owned until the old table is decommissioned.
+The API durable option metadata cache also writes latest rows to `option_chain_latest`; its pruning is source-scoped to obsolete signal-options decision sources and must not delete worker full-chain provider rows. The old append-only `option_chain_snapshots` table is retired from active retention and diagnostics paths.
 
 ```text
 GEX page
@@ -50,7 +50,8 @@ Persisted GEX payloads include `source.expirationCoverage` so the API and GEX pa
 - Queue diagnostics expose two different failure modes:
   - blocked GEX jobs are waiting on missing or failed same-bucket stock/option-chain prerequisites.
   - inactive-worker jobs are claimable now, but no `market-data-worker` process is draining them.
-- Retention is dry-run by default. Use `market-data-worker:retention -- --execute` only after reviewing the reported cutoff and eligible row counts.
+- Retention is dry-run by default. Use `pnpm run market-data-worker:retention --execute` only after reviewing the reported cutoff and eligible row counts.
+- Terminal ingest-job rows are retained for 14 days by default with `MARKET_DATA_JOB_RETENTION_DAYS`; queued/running jobs and stock/option prerequisite rows for active bucketed GEX jobs are preserved.
 - Replit dev startup starts this worker after the API becomes healthy when database config and a Massive provider key are present. Missing config emits a `worker-skipped` lifecycle event so the web app can still start. Production deployments still need the deployment process that owns background workers to run `market-data-worker:run`.
 
 Before investigating stale or missing GEX, verify the worker can reach the queue:

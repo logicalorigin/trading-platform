@@ -10,9 +10,9 @@ pub struct WorkerConfig {
     pub job_lease_ms: i64,
     pub option_chain_max_pages: usize,
     pub quote_retention_days: i64,
-    pub option_chain_retention_days: i64,
     pub bar_retention_days: i64,
     pub bar_coarse_retention_days: i64,
+    pub job_retention_days: i64,
     pub gex_retention_days: i64,
     pub provider_log_retention_days: i64,
     pub retention_interval_secs: u64,
@@ -46,7 +46,6 @@ impl WorkerConfig {
             job_lease_ms: read_i64_env("MARKET_DATA_JOB_LEASE_MS", 60_000),
             option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
             quote_retention_days: read_i64_env("MARKET_DATA_QUOTE_RETENTION_DAYS", 7),
-            option_chain_retention_days: read_i64_env("MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS", 7),
             // bar_cache mixes intraday (short read window) and coarse/daily
             // (deep read window) series. MARKET_DATA_BAR_RETENTION_DAYS now scopes
             // the INTRADAY frames only (~90d). Coarse frames keep far longer so the
@@ -54,19 +53,18 @@ impl WorkerConfig {
             // up to ~240 daily bars deep — a flat cut forced a wasteful universe-wide
             // provider re-fetch + re-persist on the next refresh.
             bar_retention_days: read_i64_env("MARKET_DATA_BAR_RETENTION_DAYS", 90),
-            bar_coarse_retention_days: read_i64_env(
-                "MARKET_DATA_BAR_COARSE_RETENTION_DAYS",
-                730,
-            ),
+            bar_coarse_retention_days: read_i64_env("MARKET_DATA_BAR_COARSE_RETENTION_DAYS", 730),
+            job_retention_days: read_i64_env("MARKET_DATA_JOB_RETENTION_DAYS", 14),
             gex_retention_days: read_i64_env("MARKET_DATA_GEX_RETENTION_DAYS", 30),
             provider_log_retention_days: read_i64_env(
                 "MARKET_DATA_PROVIDER_LOG_RETENTION_DAYS",
                 14,
             ),
             // Background retention sweep cadence + chunk size. 6h keeps each sweep's
-            // backlog small; 20k-row batches keep locks/WAL bounded on the hot tables.
+            // backlog small; 1k-row batches keep locks/WAL bounded without creating
+            // long hot-table scans that compete with foreground chart hydration.
             retention_interval_secs: read_u64_env("MARKET_DATA_RETENTION_INTERVAL_SECS", 21_600),
-            retention_batch_size: read_i64_env("MARKET_DATA_RETENTION_BATCH_SIZE", 20_000),
+            retention_batch_size: read_i64_env("MARKET_DATA_RETENTION_BATCH_SIZE", 1_000),
             market_data_provider: read_market_data_provider_config(),
         })
     }
