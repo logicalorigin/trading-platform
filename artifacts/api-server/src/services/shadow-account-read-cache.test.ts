@@ -76,6 +76,157 @@ test("shadow read cache serves stale values immediately while refresh continues"
   }
 });
 
+test("background mark refresh keeps order and history caches hot", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+    staleTtlMs: 60_000,
+    staleWaitMs: 250,
+  });
+
+  let ordersReads = 0;
+  let fillsReads = 0;
+  let historyReads = 0;
+  let summaryReads = 0;
+  const readOrders = async () => ({ reads: ++ordersReads });
+  const readFills = async () => ({ reads: ++fillsReads });
+  const readHistory = async () => ({ reads: ++historyReads });
+  const readSummary = async () => ({ reads: ++summaryReads });
+
+  try {
+    await internals.withShadowReadCache("orders:history:all", readOrders);
+    await internals.withShadowReadCache("dashboard:fills-with-orders", readFills);
+    await internals.withShadowReadCache("equity-history:ALL::all", readHistory);
+    await internals.withShadowReadCache("summary:all", readSummary);
+
+    internals.invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+
+    const orders = await internals.withShadowReadCache(
+      "orders:history:all",
+      readOrders,
+    );
+    const fills = await internals.withShadowReadCache(
+      "dashboard:fills-with-orders",
+      readFills,
+    );
+    const history = await internals.withShadowReadCache(
+      "equity-history:ALL::all",
+      readHistory,
+    );
+    const summary = await internals.withShadowReadCache("summary:all", readSummary);
+
+    assert.deepEqual(orders, { reads: 1 });
+    assert.deepEqual(fills, { reads: 1 });
+    assert.deepEqual(history, { reads: 1 });
+    assert.deepEqual(summary, { reads: 2 });
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+  }
+});
+
+test("mark refresh during an in-flight non-mark-affected compute keeps the cached store", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+    staleTtlMs: 60_000,
+    staleWaitMs: 250,
+  });
+
+  let historyReads = 0;
+  let releaseHistory: () => void = () => {};
+  const historyGate = new Promise<void>((resolve) => {
+    releaseHistory = resolve;
+  });
+
+  try {
+    // equity-history is deliberately NOT in SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES,
+    // so a mark tick landing mid-compute must not discard its result. Before the
+    // per-key version split this recomputed on every read (the ELU churn cure).
+    const inflight = internals.withShadowReadCache(
+      "equity-history:1D::all",
+      async () => {
+        historyReads += 1;
+        await historyGate;
+        return { reads: historyReads };
+      },
+    );
+
+    // A background mark refresh fires while the compute is still in flight.
+    internals.invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+
+    releaseHistory();
+    const first = await inflight;
+    assert.deepEqual(first, { reads: 1 });
+
+    // Subsequent read must be a cache HIT (no recompute) despite the mid-flight tick.
+    const second = await internals.withShadowReadCache(
+      "equity-history:1D::all",
+      async () => {
+        historyReads += 1;
+        return { reads: historyReads };
+      },
+    );
+    assert.deepEqual(second, { reads: 1 });
+    assert.equal(historyReads, 1);
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+  }
+});
+
+test("mark refresh during an in-flight mark-affected compute still discards its store", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+    staleTtlMs: 60_000,
+    staleWaitMs: 250,
+  });
+
+  let summaryReads = 0;
+  let releaseSummary: () => void = () => {};
+  const summaryGate = new Promise<void>((resolve) => {
+    releaseSummary = resolve;
+  });
+
+  try {
+    // summary: IS mark-affected, so an in-flight compute racing a mark tick must be
+    // discarded (its valuation is now stale) and recomputed on the next read.
+    const inflight = internals.withShadowReadCache("summary:all", async () => {
+      summaryReads += 1;
+      await summaryGate;
+      return { reads: summaryReads };
+    });
+
+    internals.invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+
+    releaseSummary();
+    await inflight;
+
+    const second = await internals.withShadowReadCache("summary:all", async () => {
+      summaryReads += 1;
+      return { reads: summaryReads };
+    });
+    assert.deepEqual(second, { reads: 2 });
+    assert.equal(summaryReads, 2);
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+  }
+});
+
 test("shadow option quote cache keeps stale display quotes during live refresh gaps", async () => {
   const providerContractId = `twsopt:test-${Date.now()}-${Math.random()}`;
   const positions = [

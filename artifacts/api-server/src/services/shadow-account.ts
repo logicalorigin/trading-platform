@@ -504,11 +504,29 @@ const shadowReadCache = new Map<
 >();
 const shadowReadInFlight = new Map<string, Promise<unknown>>();
 let shadowReadCacheVersion = 0;
+// Mark refreshes only invalidate the SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES keys
+// (open-position valuation/totals). A separate counter lets an in-flight compute
+// for a NON-mark-affected key (e.g. equity-history, dashboard) still be stored
+// when a mark tick lands mid-flight, instead of being discarded by the coarse
+// global version guard and re-missing on every subsequent read.
+let shadowReadMarkRefreshVersion = 0;
 let shadowReadCacheTtlMsForTests: number | null = null;
 let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
 let shadowOptionQuoteCacheTtlMsForTests: number | null = null;
 let shadowOptionQuoteCacheStaleTtlMsForTests: number | null = null;
+// Mark refresh mutates open-position valuation and account totals. It does not
+// mutate orders/fills, and equity-history has its own 10s TTL; expiring those on
+// every mark tick made the marketing stream rebuild expensive DB reads every 5s.
+const SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES = [
+  "allocation:",
+  "ledger-bundle:",
+  "open-positions:",
+  "positions:",
+  "positions-fast:",
+  "risk:",
+  "summary:",
+] as const;
 
 function shadowOptionQuoteCacheTtlMs() {
   return shadowOptionQuoteCacheTtlMsForTests ?? SHADOW_OPTION_QUOTE_CACHE_TTL_MS;
@@ -609,10 +627,19 @@ function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
   shadowFreshStateCache = null;
   shadowFreshStateCacheVersion += 1;
   const now = Date.now();
-  for (const entry of shadowReadCache.values()) {
+  for (const [key, entry] of shadowReadCache) {
+    if (!isShadowReadCacheKeyExpiredByMarkRefresh(key)) {
+      continue;
+    }
     entry.expiresAt = Math.min(entry.expiresAt, now);
   }
-  shadowReadCacheVersion += 1;
+  shadowReadMarkRefreshVersion += 1;
+}
+
+function isShadowReadCacheKeyExpiredByMarkRefresh(key: string): boolean {
+  return SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES.some((prefix) =>
+    key.startsWith(prefix),
+  );
 }
 
 function shadowReadDiagnosticRoute(key: string): string {
@@ -807,6 +834,8 @@ async function withShadowReadCache<T>(
     }
   }
   const version = shadowReadCacheVersion;
+  const markRefreshVersion = shadowReadMarkRefreshVersion;
+  const markRefreshAffected = isShadowReadCacheKeyExpiredByMarkRefresh(key);
   const startedAt = Date.now();
   const request = factory()
     .then((value) => {
@@ -822,7 +851,11 @@ async function withShadowReadCache<T>(
           now: Date.now(),
         });
       }
-      if (version === shadowReadCacheVersion) {
+      if (
+        version === shadowReadCacheVersion &&
+        (!markRefreshAffected ||
+          markRefreshVersion === shadowReadMarkRefreshVersion)
+      ) {
         const cachedAt = Date.now();
         shadowReadCache.set(key, {
           value,
@@ -14179,6 +14212,7 @@ async function insertWatchlistBacktestFills(input: {
 
 export const __shadowWatchlistBacktestInternalsForTests = {
   invalidateShadowFreshStateCache,
+  invalidateShadowReadCachesAfterBackgroundMarkRefresh,
   setShadowReadCacheWindowsForTests(input: {
     ttlMs?: number | null;
     staleTtlMs?: number | null;
