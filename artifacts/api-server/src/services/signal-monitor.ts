@@ -381,7 +381,13 @@ const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
 const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
   "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
-const SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS = 150;
+// The Signal-Matrix live-edge stream is a UI display (the signal-options trade
+// engine never reads it). Re-evaluating the whole universe every 150ms (~6.7x/s)
+// far exceeds perceptible smoothness and is pure excess CPU on the shared event
+// loop. 300ms (~3.3x/s) is still smooth for a live grid and roughly halves the
+// continuous matrix-eval cost. This is a permanent baseline reduction of excess
+// work — NOT a pressure-reactive backoff.
+const SIGNAL_MONITOR_MATRIX_STREAM_FLUSH_MS = 300;
 const SIGNAL_MONITOR_LOCAL_BAR_CACHE_REFRESH_MS = 60_000;
 const SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
