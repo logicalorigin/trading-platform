@@ -6368,30 +6368,93 @@ async function buildSignalOptionsShadowIndex(
     });
   }
 
-  if (!eventIds.length) {
+  const openPositions = shadowPositions.filter(
+    (position) =>
+      compactString(position.status) !== "closed" &&
+      (finiteNumber(position.quantity) ?? 0) !== 0,
+  );
+  const openPositionKeys = new Set(
+    openPositions.map((position) => position.positionKey),
+  );
+  const openPositionSymbols = Array.from(
+    new Set(openPositions.map((position) => position.symbol)),
+  );
+
+  if (!eventIds.length && !openPositionSymbols.length) {
     return { byEventId, byCandidateId, cashByPositionKey };
   }
 
-  const [orders, fills] = await Promise.all([
-    db
-      .select()
-      .from(shadowOrdersTable)
-      .where(inArray(shadowOrdersTable.sourceEventId, eventIds))
-      .orderBy(desc(shadowOrdersTable.placedAt)),
-    db
-      .select()
-      .from(shadowFillsTable)
-      .where(inArray(shadowFillsTable.sourceEventId, eventIds))
-      .orderBy(desc(shadowFillsTable.occurredAt)),
+  const positionsByKey = new Map(
+    shadowPositions.map((position) => [position.positionKey, position]),
+  );
+
+  // Orders/fills are normally loaded by the event window, but a live position's
+  // entry order can age out of that window — especially the 100-event summary
+  // view — once high-frequency mark/skip events accumulate. That drops the shadow
+  // link and surfaces as a spurious "shadow link pending" for a filled, open
+  // position. Mirror the window-independent cash-ledger load: always resolve the
+  // link for currently-open positions regardless of the event window.
+  const [windowOrders, openPositionOrders] = await Promise.all([
+    eventIds.length
+      ? db
+          .select()
+          .from(shadowOrdersTable)
+          .where(inArray(shadowOrdersTable.sourceEventId, eventIds))
+          .orderBy(desc(shadowOrdersTable.placedAt))
+      : Promise.resolve([] as (typeof shadowOrdersTable.$inferSelect)[]),
+    openPositionSymbols.length
+      ? db
+          .select()
+          .from(shadowOrdersTable)
+          .where(
+            and(
+              eq(shadowOrdersTable.accountId, "shadow"),
+              inArray(shadowOrdersTable.symbol, openPositionSymbols),
+            ),
+          )
+          .orderBy(desc(shadowOrdersTable.placedAt))
+      : Promise.resolve([] as (typeof shadowOrdersTable.$inferSelect)[]),
   ]);
+
+  const ordersById = new Map<string, typeof shadowOrdersTable.$inferSelect>();
+  for (const order of windowOrders) {
+    ordersById.set(order.id, order);
+  }
+  for (const order of openPositionOrders) {
+    // Only adopt out-of-window orders that map to an actually-open position key,
+    // so unrelated historical orders for the same symbol are never resurrected.
+    const key = shadowPositionKey({
+      symbol: order.symbol,
+      selectedContract: order.optionContract,
+    });
+    if (openPositionKeys.has(key)) {
+      ordersById.set(order.id, order);
+    }
+  }
+  const orders = Array.from(ordersById.values());
+
+  const fillSourceEventIds = Array.from(
+    new Set(
+      [
+        ...eventIds,
+        ...orders
+          .map((order) => order.sourceEventId)
+          .filter((value): value is string => Boolean(value)),
+      ].map((value) => String(value)),
+    ),
+  );
+  const fills = fillSourceEventIds.length
+    ? await db
+        .select()
+        .from(shadowFillsTable)
+        .where(inArray(shadowFillsTable.sourceEventId, fillSourceEventIds))
+        .orderBy(desc(shadowFillsTable.occurredAt))
+    : [];
 
   const fillsByEventId = new Map(
     fills
       .filter((fill) => fill.sourceEventId)
       .map((fill) => [String(fill.sourceEventId), fill]),
-  );
-  const positionsByKey = new Map(
-    shadowPositions.map((position) => [position.positionKey, position]),
   );
 
   for (const order of orders) {
@@ -7191,6 +7254,11 @@ function deriveCandidateActionStatus(input: {
   const hasShadowFill = Boolean(
     input.shadowLink?.fillId || input.shadowLink?.orderId,
   );
+  // A resolved shadow link (order/fill/position) is definitive proof the entry
+  // happened, even when the entry EVENT has aged out of a bounded view window
+  // (e.g. the 100-event summary view). Treat it as entry evidence so an open,
+  // filled position is not mislabeled "candidate" in the windowed view.
+  const hasEntryOrFill = hasEntry || hasShadowFill;
   const plannedQuantity = finiteNumber(
     asRecord(input.candidate.orderPlan).quantity,
   );
@@ -7206,7 +7274,7 @@ function deriveCandidateActionStatus(input: {
     };
   }
   if (
-    hasEntry &&
+    hasEntryOrFill &&
     hasShadowFill &&
     positionQuantity != null &&
     positionQuantity <= 0
@@ -7217,7 +7285,7 @@ function deriveCandidateActionStatus(input: {
     return { actionStatus: "mismatch", syncStatus: "event_only" };
   }
   if (
-    hasEntry &&
+    hasEntryOrFill &&
     plannedQuantity != null &&
     positionQuantity != null &&
     positionQuantity > 0 &&
@@ -7231,7 +7299,7 @@ function deriveCandidateActionStatus(input: {
       syncStatus: hasShadowFill ? "synced" : "event_only",
     };
   }
-  if (hasEntry && hasShadowFill) {
+  if (hasEntryOrFill && hasShadowFill) {
     return { actionStatus: "shadow_filled", syncStatus: "synced" };
   }
   if (hasSkip) {

@@ -722,3 +722,49 @@ test("a position's exit can only be claimed once (duplicate-exit race guard)", (
     true,
   );
 });
+
+test("deriveCandidateActionStatus: a resolved shadow link marks an open position shadow_filled even when its entry event aged out of the view window", () => {
+  const { deriveCandidateActionStatus } =
+    __signalOptionsAutomationInternalsForTests;
+
+  const shadowLink = {
+    orderId: "order-1",
+    fillId: "fill-1",
+    positionId: "position-1",
+    sourceEventId: "entry-1",
+    quantity: 2,
+    filledQuantity: 2,
+    positionQuantity: 2,
+    sourceType: "automation",
+    strategyLabel: "Signal Options",
+    attributionStatus: "attributed",
+  };
+
+  // Entry event is intentionally absent from `events` — it has aged out of the
+  // bounded view window (the 100-event summary view). Before the fix this
+  // returned actionStatus "candidate" because hasEntry was false; the resolved
+  // shadow link must now drive the filled status so an open, filled position is
+  // not mislabeled "candidate" / "shadow link pending".
+  const filled = deriveCandidateActionStatus({
+    candidate: { status: "candidate", orderPlan: {} },
+    events: [],
+    shadowLink,
+  } as never);
+  assert.equal(filled.actionStatus, "shadow_filled");
+  assert.equal(filled.syncStatus, "synced");
+
+  // A partial fill (positionQuantity < planned) stays partial_shadow.
+  const partial = deriveCandidateActionStatus({
+    candidate: { status: "candidate", orderPlan: { quantity: 3 } },
+    events: [],
+    shadowLink: { ...shadowLink, positionQuantity: 1 },
+  } as never);
+  assert.equal(partial.actionStatus, "partial_shadow");
+
+  // Without a resolved link and no entry event, it remains a plain candidate.
+  const pending = deriveCandidateActionStatus({
+    candidate: { status: "candidate", orderPlan: {} },
+    events: [],
+  } as never);
+  assert.equal(pending.actionStatus, "candidate");
+});
