@@ -281,9 +281,15 @@ function handleWebSocketMessage(message: unknown): void {
     return;
   }
   if (eventType === "T") {
+    const tradePrice = readNumber(record, ["p", "price"]);
+    if (tradePrice == null || !Number.isFinite(tradePrice) || tradePrice <= 0) {
+      // A corrupt non-positive trade tick must not clobber the last good price;
+      // ignore it so quoteFromState can fall back to the live bid/ask midpoint.
+      return;
+    }
     mergeQuoteState({
       symbol,
-      last: readNumber(record, ["p", "price"]),
+      last: tradePrice,
       updatedAt,
     });
   }
