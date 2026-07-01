@@ -26,6 +26,7 @@
     "replit:config:status": "node scripts/protect-replit-config.mjs status",
     "replit:scribe:artifacts": "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
     "db:market-data:audit": "pnpm --filter @workspace/scripts run db:market-data:audit",
+    "db:phase0:audit": "pnpm --filter @workspace/scripts run db:phase0:audit",
     "fmt:market-data-worker": "node scripts/run-market-data-worker.mjs fmt --check -p market-data-worker",
     "market-data-worker:doctor": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- doctor",
     "market-data-worker:run": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- run",
