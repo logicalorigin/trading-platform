@@ -36,12 +36,48 @@ test("shows after-hours move against same-day regular close baseline", () => {
   assert.equal(display?.delayed, true);
 });
 
-test("hides during regular, overnight, closed, or unverified baseline states", () => {
+test("shows overnight move against most recent regular close baseline", () => {
+  const display = resolveExtendedHoursQuoteDisplay({
+    quote: {
+      price: 101,
+      extendedBaselinePrice: 100,
+      extendedBaselineSource: "regular_close",
+      // 2026-06-10T01:00Z = Tue 2026-06-09 21:00 ET, inside the 20:00–03:50 ET
+      // overnight session.
+      dataUpdatedAt: "2026-06-10T01:00:00.000Z",
+    },
+  });
+
+  assert.equal(display?.sessionLabel, "Overnight");
+  assert.equal(display?.axisLabel, "OVN");
+  assert.equal(display?.change, 1);
+  assert.equal(display?.tone, "positive");
+});
+
+test("labels by wall-clock session when a now is supplied", () => {
+  const display = resolveExtendedHoursQuoteDisplay({
+    quote: {
+      price: 101,
+      extendedBaselinePrice: 100,
+      extendedBaselineSource: "regular_close",
+      // Frozen after-hours tick (Tue 17:00 ET)...
+      dataUpdatedAt: "2026-06-09T21:00:00.000Z",
+    },
+    // ...viewed during overnight (Tue 21:00 ET) is labeled Overnight, not After.
+    now: "2026-06-10T01:00:00.000Z",
+  });
+
+  assert.equal(display?.sessionLabel, "Overnight");
+  assert.equal(display?.axisLabel, "OVN");
+});
+
+test("hides during regular, closed, or unverified baseline states", () => {
   assert.equal(
     resolveExtendedHoursQuoteDisplay({
       quote: {
         price: 101,
         extendedBaselinePrice: 100,
+        extendedBaselineSource: "regular_close",
         dataUpdatedAt: "2026-06-09T14:00:00.000Z",
       },
     }),
@@ -52,7 +88,9 @@ test("hides during regular, overnight, closed, or unverified baseline states", (
       quote: {
         price: 101,
         extendedBaselinePrice: 100,
-        dataUpdatedAt: "2026-06-10T01:00:00.000Z",
+        extendedBaselineSource: "regular_close",
+        // 2026-06-13T16:00Z = Sat 12:00 ET, market closed (weekend).
+        dataUpdatedAt: "2026-06-13T16:00:00.000Z",
       },
     }),
     null,

@@ -294,7 +294,10 @@ const WatchlistRow = memo(
         : null;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
-    const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({ quote: snapshot });
+    const extendedHoursDisplay = resolveExtendedHoursQuoteDisplay({
+      quote: snapshot,
+      now: Date.now(),
+    });
     // Visible extended-hours line (pre/after-market): a third line under the price
     // showing session label + extended-hours price + move, tone-colored and dimmed
     // when delayed/stale. (Restores the styling 5b68e05 had moved to hover-only.)

@@ -1,7 +1,7 @@
 import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
 
-type ExtendedHoursSessionLabel = "Pre" | "After";
-type ExtendedHoursAxisLabel = "PRE" | "AFT";
+type ExtendedHoursSessionLabel = "Pre" | "After" | "Overnight";
+type ExtendedHoursAxisLabel = "PRE" | "AFT" | "OVN";
 type ExtendedHoursTone = "positive" | "negative" | "neutral";
 
 export type ExtendedHoursQuoteInput = {
@@ -18,7 +18,7 @@ export type ExtendedHoursQuoteInput = {
 
 export type ExtendedHoursQuoteDisplay = {
   visible: boolean;
-  sessionKey: "pre" | "after";
+  sessionKey: "pre" | "after" | "overnight";
   sessionLabel: ExtendedHoursSessionLabel;
   axisLabel: ExtendedHoursAxisLabel;
   price: number;
@@ -51,16 +51,27 @@ export const resolveExtendedHoursQuoteDisplay = ({
 }): ExtendedHoursQuoteDisplay | null => {
   if (!quote) return null;
 
-  const timestamp =
-    dateValue(quote.dataUpdatedAt) ||
-    dateValue(quote.updatedAt) ||
-    dateValue(now);
-  if (!timestamp) {
+  const tickTimestamp =
+    dateValue(quote.dataUpdatedAt) || dateValue(quote.updatedAt);
+  const nowTimestamp = dateValue(now);
+  // The price shown is the latest tick, but the session we LABEL is a function of
+  // the wall clock when a caller supplies one: a frozen tick carried over from an
+  // earlier session (e.g. an after-hours print still on screen during overnight)
+  // is labeled by the session we are actually in, not the one it was stamped in.
+  // Callers that pass no clock (e.g. historical chart legends) fall back to the
+  // tick's own session.
+  const sessionAnchor = nowTimestamp || tickTimestamp;
+  const timestamp = tickTimestamp || nowTimestamp;
+  if (!timestamp || !sessionAnchor) {
     return null;
   }
 
-  const session = resolveUsEquityMarketSession(timestamp);
-  if (session.key !== "pre" && session.key !== "after") {
+  const session = resolveUsEquityMarketSession(sessionAnchor);
+  if (
+    session.key !== "pre" &&
+    session.key !== "after" &&
+    session.key !== "overnight"
+  ) {
     return null;
   }
 
@@ -81,8 +92,14 @@ export const resolveExtendedHoursQuoteDisplay = ({
   return {
     visible: true,
     sessionKey: session.key,
-    sessionLabel: session.key === "pre" ? "Pre" : "After",
-    axisLabel: session.key === "pre" ? "PRE" : "AFT",
+    sessionLabel:
+      session.key === "pre"
+        ? "Pre"
+        : session.key === "after"
+          ? "After"
+          : "Overnight",
+    axisLabel:
+      session.key === "pre" ? "PRE" : session.key === "after" ? "AFT" : "OVN",
     price,
     baselinePrice,
     baselineAt: dateValue(quote.extendedBaselineAt),
