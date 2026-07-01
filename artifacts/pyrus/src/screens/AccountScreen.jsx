@@ -13,8 +13,8 @@ import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   getGetAccountAllocationQueryOptions,
   getGetAccountClosedTradesQueryOptions,
-  getGetAccountOrdersQueryOptions,
   getGetAccountEquityHistoryQueryOptions,
+  getGetAccountOrdersQueryOptions,
   getGetAccountPositionsQueryOptions,
   getGetAccountRiskQueryOptions,
   getGetAccountSummaryQueryOptions,
@@ -996,7 +996,7 @@ const AccountScreenInner = ({
   brokerConfigured,
   brokerAuthenticated,
   gatewayTradingReady = false,
-  gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  gatewayTradingMessage = "IBKR Client Portal must be connected before trading.",
   safeQaMode = false,
   isVisible = false,
   onJumpToTrade,
@@ -1661,11 +1661,11 @@ const AccountScreenInner = ({
     priority: 6,
   });
 
-  // Flex health is the diagnostic that explains WHY the bridge is detached, and
+  // Flex health is the diagnostic that explains why the broker session is disconnected, and
   // GET /accounts/flex/health is a plain server route that responds regardless of
-  // bridge state. Gate it only on the Account screen being visible (not on the
-  // bridge being attached via accountQueriesEnabled, nor on the Setup & Health
-  // accordion being expanded) so a detached bridge can still be diagnosed and
+  // broker state. Gate it only on the Account screen being visible (not on the
+  // broker being connected via accountQueriesEnabled, nor on the Setup & Health
+  // accordion being expanded) so a disconnected broker can still be diagnosed and
   // reconnected instead of the diagnostic being gated behind the very state it
   // would explain.
   const healthQuery = useGetFlexHealth({
@@ -1927,32 +1927,6 @@ const AccountScreenInner = ({
       },
     },
   );
-  useEffect(() => {
-    if (!ordersPanelQueriesEnabled || !accountRequestId) {
-      return;
-    }
-    void queryClient.prefetchQuery(
-      getGetAccountOrdersQueryOptions(
-        accountRequestId,
-        {
-          ...accountDataParams,
-          tab: effectiveOrderTab,
-        },
-        {
-          query: {
-            ...QUERY_OPTIONS.query,
-            staleTime: 0,
-          },
-        },
-      ),
-    );
-  }, [
-    accountDataParams,
-    accountRequestId,
-    effectiveOrderTab,
-    ordersPanelQueriesEnabled,
-    queryClient,
-  ]);
   const riskQuery = useGetAccountRisk(accountRequestId, riskParams, {
       query: {
         ...QUERY_OPTIONS.query,
