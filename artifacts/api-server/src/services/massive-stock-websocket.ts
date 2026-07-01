@@ -40,6 +40,7 @@ const REFRESH_DEBOUNCE_MS = 150;
 // cleared timer). The watchdog force-recovers such a state so a freeze can
 // never become permanent regardless of how it was reached.
 const STREAM_RECOVERY_WATCHDOG_MS = 20_000;
+const DEFAULT_STALE_SOCKET_RECONNECT_MS = 60_000;
 
 const subscribers = new Map<number, Subscriber>();
 const activeSubscriptionParams = new Set<string>();
@@ -259,6 +260,55 @@ function clearRecoveryWatchdog(): void {
   }
 }
 
+function staleSocketReconnectMs(): number {
+  const configured = Number(process.env.PYRUS_MASSIVE_STOCK_WS_STALE_RECONNECT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.max(5_000, configured)
+    : DEFAULT_STALE_SOCKET_RECONNECT_MS;
+}
+
+function recoverWedgedSocketIfNeeded(nowMs = Date.now()): boolean {
+  if (subscribers.size === 0 || reconnectTimer || refreshTimer) {
+    return false;
+  }
+  // Consumers want data but the stream is wedged off with no socket and nothing
+  // scheduled to bring one back. Clear any latched failure and reconnect so a
+  // freeze can never become permanent.
+  if (!socket) {
+    if (authState === "failed") {
+      authState = "idle";
+    }
+    scheduleReconnect();
+    return reconnectTimer !== null;
+  }
+  if (socket.readyState !== WebSocket.OPEN || authState !== "authenticated") {
+    return false;
+  }
+
+  const staleAfterMs = staleSocketReconnectMs();
+  const referenceMs =
+    lastSocketMessageAt?.getTime() ?? lastOpenAt?.getTime() ?? nowMs;
+  const ageMs = Math.max(0, nowMs - referenceMs);
+  if (ageMs < staleAfterMs) {
+    return false;
+  }
+
+  lastError = `Massive stock WebSocket received no messages for ${ageMs}ms; reconnecting`;
+  lastErrorAt = new Date(nowMs);
+  logger.warn(
+    {
+      ageMs,
+      staleAfterMs,
+      activeConsumerCount: subscribers.size,
+      activeSubscriptionCount: activeSubscriptionParams.size,
+    },
+    "Massive stock WebSocket is stale while subscribed; forcing reconnect",
+  );
+  closeSocket("idle");
+  scheduleReconnect();
+  return reconnectTimer !== null;
+}
+
 function ensureRecoveryWatchdog(): void {
   if (recoveryWatchdogTimer) {
     return;
@@ -268,15 +318,7 @@ function ensureRecoveryWatchdog(): void {
       clearRecoveryWatchdog();
       return;
     }
-    // Consumers want data but the stream is wedged off with no socket and
-    // nothing scheduled to bring one back. Clear any latched failure and
-    // reconnect so a freeze can never become permanent.
-    if (!socket && !reconnectTimer && !refreshTimer) {
-      if (authState === "failed") {
-        authState = "idle";
-      }
-      scheduleReconnect();
-    }
+    recoverWedgedSocketIfNeeded();
   }, STREAM_RECOVERY_WATCHDOG_MS);
   recoveryWatchdogTimer.unref?.();
 }
@@ -601,7 +643,13 @@ export const __massiveStockWebSocketInternalsForTests = {
   handleProviderStatus(record: Record<string, unknown>): boolean {
     return handleProviderStatus(record);
   },
+  handleRawMessage(raw: unknown): void {
+    handleRawMessage(raw);
+  },
   hasReconnectScheduled(): boolean {
     return reconnectTimer !== null;
+  },
+  recoverWedgedSocketIfNeeded(nowMs?: number): boolean {
+    return recoverWedgedSocketIfNeeded(nowMs);
   },
 };

@@ -12,9 +12,16 @@ function makeMockSocket() {
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   const sock = {
     readyState: 0,
-    send() {},
-    close() {},
-    terminate() {},
+    sent: [] as string[],
+    send(payload: string) {
+      sock.sent.push(payload);
+    },
+    close() {
+      sock.readyState = 3;
+    },
+    terminate() {
+      sock.readyState = 3;
+    },
     removeAllListeners() {
       listeners.clear();
     },
@@ -23,6 +30,11 @@ function makeMockSocket() {
       existing.push(fn);
       listeners.set(event, existing);
       return sock;
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const fn of listeners.get(event) ?? []) {
+        fn(...args);
+      }
     },
   };
   return sock;
@@ -51,6 +63,42 @@ test("auth_failed re-arms a reconnect instead of latching the stream off (price-
     internals.hasReconnectScheduled(),
     true,
     "auth_failed must schedule a recovery reconnect while subscribers are present, not latch the stream off forever",
+  );
+
+  unsubscribe();
+  internals.reset();
+});
+
+test("subscribed open socket reconnects when Massive stops sending messages", () => {
+  internals.reset();
+  const socket = makeMockSocket();
+  internals.setWebSocketFactory(() => socket as never);
+
+  const unsubscribe = subscribeMassiveStockWebSocket({
+    channels: ["Q", "T"],
+    symbols: ["SPY", "NVDA"],
+    onMessage() {},
+  });
+
+  internals.refreshNow();
+  socket.readyState = 1;
+  socket.emit("open");
+  internals.handleRawMessage(JSON.stringify({ status: "auth_success" }));
+  assert.equal(
+    socket.sent.some((payload) => payload.includes("Q.SPY")),
+    true,
+    "test setup should authenticate and subscribe before staleness recovery",
+  );
+
+  assert.equal(
+    internals.recoverWedgedSocketIfNeeded(Date.now() + 61_000),
+    true,
+    "a connected/authenticated but silent socket must be forced through reconnect",
+  );
+  assert.equal(
+    internals.hasReconnectScheduled(),
+    true,
+    "stale open socket recovery should schedule a reconnect",
   );
 
   unsubscribe();
