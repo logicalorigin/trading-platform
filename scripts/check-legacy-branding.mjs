@@ -5,6 +5,7 @@ import path from "node:path";
 const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
 
 const ignoredDirs = new Set([
+  ".agents",
   ".cache",
   ".claude",
   ".config",
@@ -70,10 +71,6 @@ const allowed = [
   {
     path: "artifacts/pyrus/src/screens/algo/algoBranding.js",
     line: /./,
-  },
-  {
-    path: "scripts/windows/pyrus-ibkr-helper.ps1",
-    line: /\$PreviousStateDir = Join-Path \$env:LOCALAPPDATA \('Ray' \+ 'Algo\\ibkr-bridge'\)/,
   },
   {
     path: "artifacts/api-server/src/services/user-preferences-model.ts",

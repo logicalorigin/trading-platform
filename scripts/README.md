@@ -99,7 +99,8 @@ directory to define separate Replit app runners.
 
 ## IBKR Utilities
 
-- `package-ibkr-bridge-bundle.mjs` packages the Windows-side IBKR bridge bundle.
+- The legacy Windows-side IBKR bridge bundle has been retired; do not add bridge
+  packaging or helper-launch scripts back to startup.
 - `start-local-postgres.sh`, `wait-for-local-postgres.sh`, and
   `run-local-postgres.sh` support manual workspace-local Postgres fallback
   diagnosis. They are not part of normal Replit app bring-up.

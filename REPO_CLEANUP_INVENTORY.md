@@ -10,7 +10,7 @@ This inventory records the evidence used for the May 6 cleanup pass.
   and account-position-row tests all import active modules or assert intentional
   source-level contracts.
 - Dependency catalog cleanup was completed for shared HTTP/logging/build
-  dependencies used by the API server, IBKR bridge, and backtest worker.
+  dependencies used by the API server and backtest worker.
 - Production type-escape cleanup was completed for
   `artifacts/api-server/src/services/platform.ts` and
   `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx`; targeted
@@ -42,7 +42,7 @@ This inventory records the evidence used for the May 6 cleanup pass.
 - `.vendor/ubuntu-glib/**`: removed from Git and ignored. No runtime or build code referenced it; it was local environment/debug payload.
 - Session handoffs: kept `SESSION_HANDOFF_MASTER.md` plus current May 6 recovery handoffs. Removed April/legacy handoffs, stale live notes, and May 1-May 5 handoff bodies from the repo root; Git history is the archive for older bodies.
 - Generated API clients/types: kept. They are owned by `lib/api-spec/openapi.yaml` and Orval codegen.
-- `artifacts/ibgateway-bridge-windows-current.tar.gz`: externalized. The API route still serves a local copy when present, but otherwise redirects to `IBKR_BRIDGE_BUNDLE_URL` or `PYRUS_IBKR_BRIDGE_BUNDLE_URL`. The removed tracked bundle was 1,542,958 bytes with SHA-256 `29a82d80c27f476c462f0d8de11d54084e5eaa851bbf47b8f734b752d8698a91`.
+- Legacy IBKR desktop bridge bundle archive: retired. The API no longer serves a live bridge bundle; old bundle/download endpoints are compatibility tombstones for stale helper cleanup.
 - Pine script data under `artifacts/api-server/data/**`: kept. It is loaded by the Pine script service at runtime.
 - Chart hydration cleanup: preserved a recovered low-risk lifecycle fix that clears chart hydration scope state on unmount, plus a unit test and richer memory-soak diagnostics.
 - Unit test commands: replaced long inline package scripts with package-local manifests (`artifacts/api-server/scripts/unit validation runner.mjs` and `artifacts/pyrus/scripts/unit validation runner.mjs`) that preserve the same test files.
