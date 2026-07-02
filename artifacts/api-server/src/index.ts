@@ -33,6 +33,7 @@ import {
   startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
+import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-evaluation-worker";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { listAlgoDeployments } from "./services/automation";
@@ -290,6 +291,7 @@ server.listen(port, () => {
     startSignalOptionsWorker,
     startSignalOptionsPositionTickManager,
     startOvernightSpotWorker,
+    startSignalMonitorEvaluationWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
     startRuntimeFlightRecorder,
