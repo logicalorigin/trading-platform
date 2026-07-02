@@ -10,6 +10,10 @@
 // stale-while-recompute. No persistence table and no job queue (v1).
 import { createHash } from "node:crypto";
 import { algoDeploymentsTable, db } from "@workspace/db";
+import {
+  resolvePreviousUsEquitySessionClose,
+  resolveUsEquityMarketStatus,
+} from "@workspace/market-calendar";
 import { eq, sql } from "drizzle-orm";
 import {
   resolvePyrusSignalsSignalSettings,
@@ -37,15 +41,24 @@ const BAR_CACHE_SOURCE = "massive-history";
 // always reported back.
 const ROLLING_WINDOW_DAYS = 90;
 const MAX_BARS_PER_SYMBOL = 720;
-// Inline-budget guardrails. The universe can be 500+ symbols; computing KPIs
-// over all of them inline is infeasible, so we cap the symbol slice (head of the
-// curated universe) and report the cap in metadata.
-const MAX_SYMBOLS = 30;
+// Match the active signal-matrix universe cap (SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT, now 2000).
+// Calibration covers the full deployment universe; the cold-sweep budget below is scaled
+// to match so the 0.98 coverage gate can still be met at 2000 symbols.
+const MAX_SYMBOLS = 2000;
+// Load bars in set-based lateral chunks instead of one DB round-trip per symbol.
+// The KPI compute itself is still globally serialized below.
+const BAR_FETCH_CHUNK_SIZE = 20;
 const BAR_FETCH_CONCURRENCY = 3;
+// Bound cold full-universe sweeps. Scaled ~4x with MAX_SYMBOLS (500 -> 2000) so the 0.98
+// coverage gate stays reachable; chunks not started inside this budget time out and block
+// recommendations. A cold 2000-symbol calibration can take up to this long.
+const BAR_FETCH_HARD_BUDGET_MS = 480_000;
 // Distinct draft settings produce distinct cache keys. Serialize cold recomputes
-// so slider previews and the sidebar cannot make several 30-symbol bar_cache
+// so slider previews and the sidebar cannot make several 500-symbol bar_cache
 // fanouts run at once.
 const KPI_COMPUTE_CONCURRENCY = 1;
+const MIN_CALIBRATION_SYMBOL_COVERAGE_RATIO = 0.98;
+const MAX_CALIBRATION_SYMBOL_TIMEOUT_RATIO = 0.01;
 
 const CACHE_TTL_MS = 60_000;
 // Recompute kicked off in the background may serve slightly older data for this
@@ -71,6 +84,14 @@ const TIMEFRAME_FALLBACK_ORDER: readonly StrategySignalTimeframe[] = [
   "1d",
 ];
 const PYRUS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
+const TIMEFRAME_MS: Record<StrategySignalTimeframe, number> = {
+  "1m": 60_000,
+  "2m": 2 * 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
 const DEFAULT_STRATEGY_SIGNAL_SETTINGS = {
   signalTimeframe: "5m" as StrategySignalTimeframe,
   timeHorizon: 8,
@@ -112,6 +133,7 @@ function timeframeFromValue(
 export type SignalQualityDraftOverride = {
   signalTimeframe?: unknown;
   timeHorizon?: unknown;
+  outcomeHorizonBars?: unknown;
   bosConfirmation?: unknown;
   chochAtrBuffer?: unknown;
   chochBodyExpansionAtr?: unknown;
@@ -121,6 +143,9 @@ export type SignalQualityDraftOverride = {
 export type ResolvedStrategySignalSettings = {
   signalTimeframe: StrategySignalTimeframe;
   timeHorizon: number;
+  // Outcome-measurement window (bars forward) used only for signal-quality
+  // KPIs. Independent of timeHorizon (the engine swing-pivot lookback).
+  outcomeHorizonBars: number;
   bosConfirmation: (typeof PYRUS_BOS_CONFIRMATIONS)[number];
   chochAtrBuffer: number;
   chochBodyExpansionAtr: number;
@@ -182,22 +207,44 @@ export function resolveDeploymentSignalSettings(input: {
     ? (rawBos as (typeof PYRUS_BOS_CONFIRMATIONS)[number])
     : DEFAULT_STRATEGY_SIGNAL_SETTINGS.bosConfirmation;
 
+  const timeHorizon = Math.round(
+    boundedNumber(
+      pick(
+        draft.timeHorizon,
+        configMarketStructure.timeHorizon,
+        parameters.timeHorizon,
+        profileMarketStructure.timeHorizon,
+        pyrusSignalsSettings.timeHorizon,
+      ),
+      DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
+      2,
+      50,
+    ),
+  );
+
+  // Outcome-measurement horizon: how many bars forward the signal-quality KPIs
+  // realize each signal's outcome. Independent of timeHorizon (the swing-pivot
+  // lookback the engine uses for structure detection). Defaults to timeHorizon
+  // so deployments with no explicit outcomeHorizonBars see byte-identical KPIs.
+  const outcomeHorizonBars = Math.round(
+    boundedNumber(
+      pick(
+        draft.outcomeHorizonBars,
+        configMarketStructure.outcomeHorizonBars,
+        parameters.outcomeHorizonBars,
+        profileMarketStructure.outcomeHorizonBars,
+        pyrusSignalsSettings.outcomeHorizonBars,
+      ),
+      timeHorizon,
+      1,
+      120,
+    ),
+  );
+
   return {
     signalTimeframe,
-    timeHorizon: Math.round(
-      boundedNumber(
-        pick(
-          draft.timeHorizon,
-          configMarketStructure.timeHorizon,
-          parameters.timeHorizon,
-          profileMarketStructure.timeHorizon,
-          pyrusSignalsSettings.timeHorizon,
-        ),
-        DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
-        2,
-        50,
-      ),
-    ),
+    timeHorizon,
+    outcomeHorizonBars,
     bosConfirmation,
     chochAtrBuffer: boundedNumber(
       pick(
@@ -238,6 +285,27 @@ export function resolveDeploymentSignalSettings(input: {
   };
 }
 
+function normalizeSignalQualityUniverse(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const symbols: string[] = [];
+  for (const item of value) {
+    const symbol = String(item ?? "").trim().toUpperCase();
+    if (!symbol || seen.has(symbol)) {
+      continue;
+    }
+    seen.add(symbol);
+    symbols.push(symbol);
+  }
+  return symbols;
+}
+
+function selectSignalQualitySymbols(universe: readonly string[]): string[] {
+  return universe.slice(0, MAX_SYMBOLS);
+}
+
 // Maps the resolved strategy settings into the full PyrusSignalsSignalSettings
 // the evaluator consumes (resolvePyrusSignalsSignalSettings fills the rest with
 // defaults). MTF filters are left disabled inside the engine because alignment
@@ -259,33 +327,134 @@ function previewTimeframeFor(
   return signalTimeframe === "1m" ? "5m" : signalTimeframe;
 }
 
+function utcDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function signalQualityLatestBarStaleWindowMs(
+  timeframe: StrategySignalTimeframe,
+): number {
+  const timeframeMs = TIMEFRAME_MS[timeframe];
+  const minimumWindowMs =
+    timeframe === "1d" ? 4 * TIMEFRAME_MS["1d"] : 15 * 60_000;
+  return Math.max(timeframeMs * 4, minimumWindowMs);
+}
+
+function expectedSignalQualityLatestBarAt(input: {
+  timeframe: StrategySignalTimeframe;
+  now: Date;
+}): Date | null {
+  if (input.timeframe === "1d") {
+    return resolvePreviousUsEquitySessionClose(input.now);
+  }
+  const status = resolveUsEquityMarketStatus(input.now);
+  const quiet = status.session.key === "closed" || !status.calendarDay?.tradingDay;
+  if (quiet) {
+    return resolvePreviousUsEquitySessionClose(input.now);
+  }
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  return new Date(Math.floor(input.now.getTime() / timeframeMs) * timeframeMs);
+}
+
+function isSignalQualityQuietMarketSession(now: Date): boolean {
+  const status = resolveUsEquityMarketStatus(now);
+  return status.session.key === "closed" || !status.calendarDay?.tradingDay;
+}
+
+function signalQualityBarWindowFresh(input: {
+  timeframe: StrategySignalTimeframe;
+  latestBarAt: Date | null;
+  now: Date;
+}): boolean {
+  if (!input.latestBarAt || Number.isNaN(input.latestBarAt.getTime())) {
+    return false;
+  }
+  const expectedLatestBarAt = expectedSignalQualityLatestBarAt(input);
+  if (!expectedLatestBarAt) {
+    return false;
+  }
+  if (input.timeframe === "1d") {
+    return utcDateKey(input.latestBarAt) >= utcDateKey(expectedLatestBarAt);
+  }
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  if (
+    input.latestBarAt.getTime() >=
+    expectedLatestBarAt.getTime() - timeframeMs
+  ) {
+    return true;
+  }
+  if (!isSignalQualityQuietMarketSession(input.now)) {
+    return false;
+  }
+  const staleWindowMs = signalQualityLatestBarStaleWindowMs(input.timeframe);
+  return expectedLatestBarAt.getTime() - input.latestBarAt.getTime() <= staleWindowMs;
+}
+
+function latestBarAtForLoadedBars(loaded: readonly SymbolBars[]): Date | null {
+  let latestMs: number | null = null;
+  for (const entry of loaded) {
+    const last = entry.bars.at(-1);
+    if (!last) {
+      continue;
+    }
+    const barMs = last.time * 1000;
+    if (!Number.isFinite(barMs)) {
+      continue;
+    }
+    latestMs = latestMs == null ? barMs : Math.max(latestMs, barMs);
+  }
+  return latestMs == null ? null : new Date(latestMs);
+}
+
 type SymbolBars = {
   symbol: string;
   bars: PyrusSignalsBar[];
   timedOut: boolean;
 };
 
-// One indexed read per symbol: latest MAX_BARS_PER_SYMBOL bars at-or-after the
-// window start. No upper bound -- the rolling window always ends at "now", and
-// adding `starts_at <= now` defeats the index and times out (de-risk finding).
-async function loadSymbolBars(
-  symbol: string,
+function chunkArray<T>(values: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  const chunkSize = Math.max(1, Math.floor(size));
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+// One indexed lateral read per symbol inside a bounded multi-symbol chunk:
+// latest MAX_BARS_PER_SYMBOL bars at-or-after the window start. No upper bound
+// -- the rolling window always ends at "now", and adding `starts_at <= now`
+// defeats the index and times out (de-risk finding).
+async function loadSymbolBarsChunk(
+  symbols: string[],
   timeframe: StrategySignalTimeframe,
   from: Date,
   limit: number,
-): Promise<SymbolBars> {
+): Promise<SymbolBars[]> {
+  if (!symbols.length) {
+    return [];
+  }
+  const symbolValues = sql.join(
+    symbols.map((symbol) => sql`${symbol}`),
+    sql`, `,
+  );
   try {
     const result = await db.execute(sql`
-      select starts_at, open, high, low, close, volume
-      from bar_cache
-      where symbol = ${symbol}
-        and timeframe = ${timeframe}
-        and source = ${BAR_CACHE_SOURCE}
-        and starts_at >= ${from}
-      order by starts_at desc
-      limit ${limit}
+      select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+      from unnest(array[${symbolValues}]::text[]) as s(symbol)
+      cross join lateral (
+        select symbol, starts_at, open, high, low, close, volume
+        from bar_cache
+        where symbol = s.symbol
+          and timeframe = ${timeframe}
+          and source = ${BAR_CACHE_SOURCE}
+          and starts_at >= ${from}
+        order by starts_at desc
+        limit ${limit}
+      ) b
     `);
     type BarRow = {
+      symbol: string;
       starts_at: Date | string;
       open: string | number;
       high: string | number;
@@ -294,32 +463,45 @@ async function loadSymbolBars(
       volume: string | number;
     };
     const rows = result.rows as BarRow[];
-    // Ascending for the evaluator; rows arrive newest-first.
-    const bars: PyrusSignalsBar[] = rows
-      .map((row) => {
-        const timestamp =
-          row.starts_at instanceof Date ? row.starts_at : new Date(row.starts_at);
-        const time = Math.floor(timestamp.getTime() / 1000);
-        return {
-          time,
-          ts: timestamp.toISOString(),
-          o: Number(row.open),
-          h: Number(row.high),
-          l: Number(row.low),
-          c: Number(row.close),
-          v: Number(row.volume),
-        };
-      })
-      .sort((left, right) => left.time - right.time);
-    return { symbol, bars, timedOut: false };
-  } catch (error) {
-    // A statement timeout for a single symbol must not fail the whole request;
-    // record it in coverage metadata and continue with the rest.
-    logger.warn(
-      { error, symbol, timeframe },
-      "signal-quality KPI bar load failed for symbol",
+    const barsBySymbol = new Map<string, PyrusSignalsBar[]>(
+      symbols.map((symbol) => [symbol, []]),
     );
-    return { symbol, bars: [], timedOut: true };
+    for (const row of rows) {
+      const symbol = String(row.symbol ?? "").trim().toUpperCase();
+      const bars = barsBySymbol.get(symbol);
+      if (!bars) {
+        continue;
+      }
+      const timestamp =
+        row.starts_at instanceof Date ? row.starts_at : new Date(row.starts_at);
+      const time = Math.floor(timestamp.getTime() / 1000);
+      bars.push({
+        time,
+        ts: timestamp.toISOString(),
+        o: Number(row.open),
+        h: Number(row.high),
+        l: Number(row.low),
+        c: Number(row.close),
+        v: Number(row.volume),
+      });
+    }
+    // Keep the SQL on the indexed per-symbol desc-scan path; the cross-symbol
+    // result order is irrelevant because each symbol is sorted locally here.
+    return symbols.map((symbol) => ({
+      symbol,
+      bars: (barsBySymbol.get(symbol) ?? []).sort(
+        (left, right) => left.time - right.time,
+      ),
+      timedOut: false,
+    }));
+  } catch (error) {
+    // A statement timeout for a chunk must not fail the whole request; record
+    // it in coverage metadata and continue with the rest.
+    logger.warn(
+      { error, symbolCount: symbols.length, timeframe },
+      "signal-quality KPI bar load failed for symbol chunk",
+    );
+    return symbols.map((symbol) => ({ symbol, bars: [], timedOut: true }));
   }
 }
 
@@ -327,15 +509,23 @@ async function loadBarsForSymbols(
   symbols: string[],
   timeframe: StrategySignalTimeframe,
   from: Date,
+  deadlineMs: number,
 ): Promise<SymbolBars[]> {
-  const results: SymbolBars[] = [];
+  const chunks = chunkArray(symbols, BAR_FETCH_CHUNK_SIZE);
+  const chunkResults: SymbolBars[][] = [];
   let cursor = 0;
+  const timedOutChunk = (chunk: readonly string[]): SymbolBars[] =>
+    chunk.map((symbol) => ({ symbol, bars: [], timedOut: true }));
   async function worker() {
-    while (cursor < symbols.length) {
+    while (cursor < chunks.length) {
       const index = cursor;
       cursor += 1;
-      results[index] = await loadSymbolBars(
-        symbols[index],
+      if (Date.now() >= deadlineMs) {
+        chunkResults[index] = timedOutChunk(chunks[index]);
+        continue;
+      }
+      chunkResults[index] = await loadSymbolBarsChunk(
+        chunks[index],
         timeframe,
         from,
         MAX_BARS_PER_SYMBOL,
@@ -343,9 +533,15 @@ async function loadBarsForSymbols(
     }
   }
   await Promise.all(
-    Array.from({ length: Math.min(BAR_FETCH_CONCURRENCY, symbols.length) }, worker),
+    Array.from({ length: Math.min(BAR_FETCH_CONCURRENCY, chunks.length) }, worker),
   );
-  return results;
+  const bySymbol = new Map<string, SymbolBars>();
+  chunkResults.flat().forEach((entry) => {
+    bySymbol.set(entry.symbol, entry);
+  });
+  return symbols.map(
+    (symbol) => bySymbol.get(symbol) ?? { symbol, bars: [], timedOut: false },
+  );
 }
 
 export type SignalQualityCoverage = {
@@ -363,6 +559,94 @@ export type SignalQualityCoverage = {
   truncatedSymbolUniverse: boolean;
   usedTimeframeFallback: boolean;
 };
+
+type SignalScoreCalibrationReason =
+  SignalQualityKpiResult["scoreModelComparisons"]["calibration"]["reasons"][number];
+type SignalQualityCalibrationCoverageGate = {
+  supported: boolean;
+  reasons: SignalScoreCalibrationReason[];
+  symbolCoverageRatio: number;
+  timeoutRatio: number;
+};
+type SignalQualityCalibrationCoverageGateInput = Pick<
+  SignalQualityCoverage,
+  "evaluatedSymbolCount" | "symbolsWithBars" | "symbolsTimedOut"
+>;
+
+const COVERAGE_DEGRADED_REASON: SignalScoreCalibrationReason =
+  "coverage_degraded";
+
+function nonNegativeCount(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+}
+
+function signalQualityCalibrationCoverageGate(
+  input: SignalQualityCalibrationCoverageGateInput,
+): SignalQualityCalibrationCoverageGate {
+  const evaluatedSymbolCount = nonNegativeCount(input.evaluatedSymbolCount);
+  if (evaluatedSymbolCount === 0) {
+    return {
+      supported: false,
+      reasons: [COVERAGE_DEGRADED_REASON],
+      symbolCoverageRatio: 0,
+      timeoutRatio: 1,
+    };
+  }
+
+  const symbolsWithBars = Math.min(
+    evaluatedSymbolCount,
+    nonNegativeCount(input.symbolsWithBars),
+  );
+  const symbolsTimedOut = Math.min(
+    evaluatedSymbolCount,
+    nonNegativeCount(input.symbolsTimedOut),
+  );
+  const symbolCoverageRatio = symbolsWithBars / evaluatedSymbolCount;
+  const timeoutRatio = symbolsTimedOut / evaluatedSymbolCount;
+  const supported =
+    symbolCoverageRatio >= MIN_CALIBRATION_SYMBOL_COVERAGE_RATIO &&
+    timeoutRatio <= MAX_CALIBRATION_SYMBOL_TIMEOUT_RATIO;
+
+  return {
+    supported,
+    reasons: supported ? [] : [COVERAGE_DEGRADED_REASON],
+    symbolCoverageRatio,
+    timeoutRatio,
+  };
+}
+
+function applySignalQualityCalibrationCoverageGate(
+  kpis: SignalQualityKpiResult,
+  gate: SignalQualityCalibrationCoverageGate,
+): SignalQualityKpiResult {
+  if (gate.supported) {
+    return kpis;
+  }
+
+  const comparisons = kpis.scoreModelComparisons;
+  const reasons = Array.from(
+    new Set([
+      ...gate.reasons,
+      ...comparisons.calibration.reasons,
+    ]),
+  );
+  return {
+    ...kpis,
+    scoreModelComparisons: {
+      ...comparisons,
+      recommendedModelKey: null,
+      calibration: {
+        ...comparisons.calibration,
+        state:
+          comparisons.observationCount > 0 ? "uncalibrated" : "needs_more_data",
+        recommendedModelKey: null,
+        supportedModelCount: 0,
+        reasons,
+      },
+    },
+  };
+}
 
 export type SignalQualityKpiResponse = {
   deploymentId: string;
@@ -445,17 +729,14 @@ async function computeResponse(
   });
   const mtf = resolveMtfConfig(deployment.config);
 
-  const universe = Array.isArray(deployment.symbolUniverse)
-    ? deployment.symbolUniverse
-        .map((value) => String(value ?? "").trim().toUpperCase())
-        .filter(Boolean)
-    : [];
-  const symbols = universe.slice(0, MAX_SYMBOLS);
+  const universe = normalizeSignalQualityUniverse(deployment.symbolUniverse);
+  const symbols = selectSignalQualitySymbols(universe);
   const truncatedSymbolUniverse = universe.length > symbols.length;
 
   const requestedTimeframe = settings.signalTimeframe;
   const previewTimeframe = previewTimeframeFor(requestedTimeframe);
   const from = new Date(now.getTime() - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const barFetchDeadlineMs = Date.now() + BAR_FETCH_HARD_BUDGET_MS;
 
   // Try the preview timeframe, then coarser fallbacks until at least one symbol
   // returns bars (coverage exists for the universe; this guards thin tickers and
@@ -473,10 +754,25 @@ async function computeResponse(
   let loaded: SymbolBars[] = [];
   for (const timeframe of fallbackChain) {
     resolvedTimeframe = timeframe;
-    loaded = symbols.length ? await loadBarsForSymbols(symbols, timeframe, from) : [];
-    if (loaded.some((entry) => entry.bars.length > 0)) {
+    loaded = symbols.length
+      ? await loadBarsForSymbols(symbols, timeframe, from, barFetchDeadlineMs)
+      : [];
+    const latestBarAt = latestBarAtForLoadedBars(loaded);
+    if (
+      loaded.some((entry) => entry.bars.length > 0) &&
+      signalQualityBarWindowFresh({ timeframe, latestBarAt, now })
+    ) {
       break;
     }
+    if (Date.now() >= barFetchDeadlineMs) {
+      loaded = symbols.map((symbol) => ({
+        symbol,
+        bars: [],
+        timedOut: true,
+      }));
+      break;
+    }
+    loaded = [];
   }
 
   const barsBySymbol: Record<string, PyrusSignalsBar[]> = {};
@@ -501,15 +797,35 @@ async function computeResponse(
     windowEndMs = windowEndMs == null ? last : Math.max(windowEndMs, last);
   }
 
-  const kpis = computeSignalQualityKpis({
+  const coverage: SignalQualityCoverage = {
+    requestedTimeframe,
+    resolvedTimeframe,
+    requestedWindowDays: ROLLING_WINDOW_DAYS,
+    windowStart:
+      windowStartMs == null ? null : new Date(windowStartMs).toISOString(),
+    windowEnd: windowEndMs == null ? null : new Date(windowEndMs).toISOString(),
+    requestedSymbolCount: universe.length,
+    evaluatedSymbolCount: symbols.length,
+    symbolsWithBars,
+    symbolsTimedOut,
+    barsPerSymbolCap: MAX_BARS_PER_SYMBOL,
+    totalBars,
+    truncatedSymbolUniverse,
+    usedTimeframeFallback: resolvedTimeframe !== previewTimeframe,
+  };
+  const rawKpis = computeSignalQualityKpis({
     settings: toPyrusSettings(settings),
     barsBySymbol,
-    horizonBars: settings.timeHorizon,
+    horizonBars: settings.outcomeHorizonBars,
     mtf,
     sourceStrategy: deployment.strategyId,
     sourceProfile: deployment.mode,
     sourceTimeframe: resolvedTimeframe,
   });
+  const kpis = applySignalQualityCalibrationCoverageGate(
+    rawKpis,
+    signalQualityCalibrationCoverageGate(coverage),
+  );
 
   return {
     deploymentId,
@@ -517,21 +833,7 @@ async function computeResponse(
     settings,
     mtf,
     kpis,
-    coverage: {
-      requestedTimeframe,
-      resolvedTimeframe,
-      requestedWindowDays: ROLLING_WINDOW_DAYS,
-      windowStart: windowStartMs == null ? null : new Date(windowStartMs).toISOString(),
-      windowEnd: windowEndMs == null ? null : new Date(windowEndMs).toISOString(),
-      requestedSymbolCount: universe.length,
-      evaluatedSymbolCount: symbols.length,
-      symbolsWithBars,
-      symbolsTimedOut,
-      barsPerSymbolCap: MAX_BARS_PER_SYMBOL,
-      totalBars,
-      truncatedSymbolUniverse,
-      usedTimeframeFallback: resolvedTimeframe !== previewTimeframe,
-    },
+    coverage,
     generatedAt: now.toISOString(),
   };
 }
@@ -605,12 +907,9 @@ export async function getDeploymentSignalQualityKpis(input: {
     draft: input.draft,
   });
   const mtf = resolveMtfConfig(deployment.config);
-  const universe = Array.isArray(deployment.symbolUniverse)
-    ? deployment.symbolUniverse
-        .map((value) => String(value ?? "").trim().toUpperCase())
-        .filter(Boolean)
-        .slice(0, MAX_SYMBOLS)
-    : [];
+  const universe = selectSignalQualitySymbols(
+    normalizeSignalQualityUniverse(deployment.symbolUniverse),
+  );
   const key = cacheKey(
     deploymentId,
     settingsHash(settings, mtf, universe),
@@ -659,11 +958,17 @@ export const __signalQualityKpisServiceInternalsForTests = {
   resolveDeploymentSignalSettings,
   resolveMtfConfig,
   previewTimeframeFor,
+  signalQualityBarWindowFresh,
+  expectedSignalQualityLatestBarAt,
+  signalQualityCalibrationCoverageGate,
+  applySignalQualityCalibrationCoverageGate,
+  selectSignalQualitySymbols,
   runQueuedKpiCompute,
   getKpiComputeQueueSnapshot: () => ({
     active: activeKpiComputes,
     queued: kpiComputeQueue.length,
     concurrency: KPI_COMPUTE_CONCURRENCY,
     barFetchConcurrency: BAR_FETCH_CONCURRENCY,
+    barFetchHardBudgetMs: BAR_FETCH_HARD_BUDGET_MS,
   }),
 };
