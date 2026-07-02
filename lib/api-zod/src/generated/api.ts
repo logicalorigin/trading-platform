@@ -4936,6 +4936,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
 export const StreamSignalMonitorMatrixQueryParams = zod.object({
   "environment": zod.enum(['shadow', 'live']).optional(),
   "symbols": zod.coerce.string().optional().describe('Comma-separated ticker symbols to stream when exact cells are not supplied.'),
+  "universe": zod.enum(['profile']).optional().describe('Server-resolved symbol universe to stream when exact cells and explicit symbols are not supplied.'),
   "timeframes": zod.coerce.string().optional().describe('Comma-separated Signal Matrix timeframes to stream.'),
   "cells": zod.coerce.string().optional().describe('Comma-separated exact cells in SYMBOL:timeframe form. When non-empty, cells are authoritative over symbols\/timeframes.'),
   "clientRole": zod.enum(['leader', 'follower', 'manual', 'test']).optional(),

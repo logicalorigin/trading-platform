@@ -230,6 +230,13 @@ export type StockGroupedDailyAggregate = {
   volume: number;
   vwap: number | null;
   transactions: number | null;
+  // Session OHLC: the whole-market grouped-daily row carries it, and the
+  // signal-universe ranking derives intraday volatility ((h-l)/c) from it —
+  // one call per session instead of a per-symbol snapshot fan-out.
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
   timestamp: Date | null;
   otc: boolean;
 };
@@ -1225,6 +1232,10 @@ function mapGroupedDailyAggregate(result: unknown): StockGroupedDailyAggregate |
     volume,
     vwap: asNumber(record["vw"] ?? record["vwap"]),
     transactions: asNumber(record["n"] ?? record["transactions"]),
+    open: asNumber(record["o"] ?? record["open"]),
+    high: asNumber(record["h"] ?? record["high"]),
+    low: asNumber(record["l"] ?? record["low"]),
+    close: asNumber(record["c"] ?? record["close"]),
     timestamp: toDate(record["t"] ?? record["timestamp"]),
     otc: Boolean(record["otc"]),
   };

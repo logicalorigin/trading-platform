@@ -3191,6 +3191,13 @@ paths:
           description: Comma-separated ticker symbols to stream when exact cells are not supplied.
           schema:
             type: string
+        - name: universe
+          in: query
+          required: false
+          description: Server-resolved symbol universe to stream when exact cells and explicit symbols are not supplied.
+          schema:
+            type: string
+            enum: [profile]
         - name: timeframes
           in: query
           required: false
