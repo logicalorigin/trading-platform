@@ -3,16 +3,16 @@
 ## Session Metadata
 
 - Session ID: `493fa3df-d2d1-47c7-a5c3-8f010db2ebfb`
-- Saved At (MT): `2026-06-25 13:14:56 MDT`
-- Saved At (UTC): `2026-06-25T19:14:56.814Z`
-- Summary: 2026-06-25 13:14:56 MDT | 493fa3df-d2d1-47c7-a5c3-8f010db2ebfb | please audit each column of the sta table, starting with matrix. i think there are errors and parts have not been…
+- Saved At (MT): `2026-06-25 17:22:11 MDT`
+- Saved At (UTC): `2026-06-25T23:22:11.386Z`
+- Summary: 2026-06-25 17:22:11 MDT | 493fa3df-d2d1-47c7-a5c3-8f010db2ebfb | please audit each column of the sta table, starting with matrix. i think there are errors and parts have not been…
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.jsonl`
 - Branch: `main`
-- HEAD: `96f05e566e67f7a33536835b3c7da79d73fed7d1`
-- Latest Commit: `perf(shadow): composite index for latest-mark-per-position lookup`
+- HEAD: `86ae9bc04a6ef100908f91447e7ca9c6d5e1d844`
+- Latest Commit: `fix(quotes): clamp future-dated ticks so a corrupt tick can't freeze prices`
 - Latest Commit Session ID: `unknown`
 - Title: please audit each column of the sta table, starting with matrix. i think there are errors and parts have not been updat…
 - Model: `claude-opus-4-8`
@@ -25,7 +25,9 @@ please audit each column of the sta table, starting with matrix. i think there a
 
 ## Prior Handoffs
 
+- `SESSION_HANDOFF_2026-06-25_c9ae66b9-4d27-4a84-862c-a4ca3d240f88.md`
 - `SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md`
+- `SESSION_HANDOFF_2026-06-25_88228786-ac4c-4805-adc1-f68ff8eb3d99.md`
 - `SESSION_HANDOFF_2026-06-25_7d65016c-f0d1-4efc-83f6-52c77658f56a.md`
 - `SESSION_HANDOFF_2026-06-25_5fc72f15-c497-4e0a-a45a-7071c0f3860b.md`
 - `SESSION_HANDOFF_2026-06-25_5bfe0fbb-11a8-45ea-adf5-d0437d7604da.md`
@@ -406,8 +408,18 @@ please audit each column of the sta table, starting with matrix. i think there a
 
 ## Recent User Messages
 
-- `2026-06-25 12:58:14 MDT` please audit each column of the sta table, starting with matrix. i think there are errors and parts have not been updates to our recent changes in this area
-- `2026-06-25 13:12:48 MDT` short/simple/laymans of each of these please. this should also help you explain how the system was able to take the DIA trade that is in the shadow account/edged currently (it was way out of the money).
+- `2026-06-25 16:03:39 MDT` brother. i want you to be able to control the prview. so that when you rebuild/restart the app, we are looking at the same thing. me the preview, you the live runtime/api
+- `2026-06-25 16:15:58 MDT` [Request interrupted by user for tool use]
+- `2026-06-25 16:15:58 MDT` <task-notification> <task-id>b9p1b4fay</task-id> <tool-use-id>toolu_01BRK1Ys2iky4sxWaVfXpsqw</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/493fa3df-d2d1-47c7-a5c3-8f010db2ebfb/tasks/b9p1b4fay.output</output-file> <status>failed</status> <summary>Background command "One restart to load the new supervisor" failed with exit code 143</summary> </task-notification>
+- `2026-06-25 16:16:01 MDT` [Request interrupted by user]
+- `2026-06-25 16:16:01 MDT` i think you need to go become an expert on replits port and netowrking system
+- `2026-06-25 16:16:57 MDT` Run the "deep-research" workflow. Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. When the user wants a deep, multi-source, fact-checked research report on any topic. BEFORE invoking, check if the question is specific enough to research directly — if underspecified (e.g., "what car to buy" without budget/use-case/region), ask 2-3 clarifying questions to narrow scope. Then pass the refined question as args, weaving the answers in. Phases: - Scope: Decompose question (from args) into 5 search angles - Search: 5 parallel WebSearch agents, one per angle - Fetch: URL-dedup, fetch top 15 sources, extract falsifiable claims - Verify: 3-vote adversarial verification per claim (need 2/3 refutes to kill) - Synthesize: Merge semant…
+- `2026-06-25 16:18:21 MDT` <task-notification> <task-id>w7yftnrb3</task-id> <tool-use-id>toolu_01XsCdfFjGGgH3PBAxMkcoRR</tool-use-id> <output-file>/tmp/claude-1000/-home-runner-workspace/493fa3df-d2d1-47c7-a5c3-8f010db2ebfb/tasks/w7yftnrb3.output</output-file> <status>failed</status> <summary>Dynamic workflow "Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report." failed: TelemetrySafeError: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output at &lt;anonymous&gt; (/$bunfs/root/src/entrypoints/cli.js:4078:2552) at processTicksAndRejections (native:7:39)</summary> <recovery>Agent transcripts: /home/runner/.claude/projects/-home-runner-workspace/493fa3df-d2d1-47c7-a5c3-8f010db2ebfb/subagents/workflows/wf_e01dc4b5-…
+- `2026-06-25 16:23:23 MDT` yes do i need to run it?
+- `2026-06-25 16:26:49 MDT` you should be able to refresh the preview tab yourself my friend
+- `2026-06-25 16:28:54 MDT` i ran the rebuild. is that what you wanted
+- `2026-06-25 16:32:01 MDT` i refreshed. can you operate it now? whats Up
+- `2026-06-25 17:18:29 MDT` lets prepare this closing down/handoff
 
 ## Session Activity Summary
 
@@ -417,124 +429,105 @@ please audit each column of the sta table, starting with matrix. i think there a
 - `2026-06-25 12:58:23 MDT` Tool: Bash rg -li "matrix" artifacts/pyrus/src/features/signals/ artifacts/pyrus/src/screens/ -l | head -50
 - `2026-06-25 12:58:31 MDT` Agent: The user wants an audit of "the sta table" columns. Let me identify exactly which table has a "matrix" column. Let me look at the signals table structures.
 - `2026-06-25 12:58:33 MDT` Tool: Bash cd /home/runner/workspace; rg -in "matrix" artifacts/pyrus/src/screens/SignalsScreen.jsx | head -40; echo "---COLUMNS---"; rg -in "column|header|<th|label:|key…
-- … 36 lower-signal transcript events omitted …
-- `2026-06-25 13:10:21 MDT` Tool: Read /home/runner/workspace/artifacts/pyrus/src/features/signals/signalStateFreshness.js
-- `2026-06-25 13:11:11 MDT` Agent: I've completed the audit across all columns, verifying the key claims against source. Here's the column-by-column report, starting with **matrix** as you asked. ## STA table colum…
-- `2026-06-25 13:12:48 MDT` User: short/simple/laymans of each of these please. this should also help you explain how the system was able to take the DIA trade that is in the shadow account/edged currently (it was…
-- `2026-06-25 13:13:23 MDT` Agent: Good — let me connect these to the DIA trade properly rather than guess. First the plain-English version of each finding, but let me verify the actual selection mechanism behind a…
-- `2026-06-25 13:13:25 MDT` Tool: Bash cd /home/runner/workspace; rg -in "targetDelta|deltaTarget|moneyness|otm|in_the_money|strikeOffset|strikeSelection|selectStrike|dteWindow|minDte|maxDte|dte.?wi…
-- `2026-06-25 13:13:31 MDT` Tool: Bash cd /home/runner/workspace; rg -in "strike|delta" artifacts/api-server/src/services/signal-options-automation.ts | rg -in "target|select|nearest|atm|offset|dist…
-- `2026-06-25 13:13:37 MDT` Tool: Read /home/runner/workspace/artifacts/api-server/src/services/signal-options-automation.ts
-- `2026-06-25 13:14:07 MDT` Agent: Strike selection is **slot-based** (a couple strikes either side of at-the-money by *index* — `signalOptionsStrikeSlotsForRight` + the slot→index map at `:3104`), **not** delta-ba…
-- `2026-06-25 13:14:10 MDT` Tool: Bash cd /home/runner/workspace; rg -n "maxDte|minDte|targetDte|callStrikeSlot|putStrikeSlot|allowZeroDte" artifacts/pyrus/src/screens/algo/algoHelpers.js | head; ec…
-- `2026-06-25 13:14:55 MDT` Agent: Here's the plain-English version of each, then what it does (and doesn't) explain about the DIA trade. ## Each finding, in plain English 1. **Matrix — two counters disagree.** The…
+- … 466 lower-signal transcript events omitted …
+- `2026-06-25 17:20:34 MDT` Tool: Edit /home/runner/workspace/SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md
+- `2026-06-25 17:20:44 MDT` Agent: Handoff sections written. Let me confirm the pointer/master are current and capture the final repo state:
+- `2026-06-25 17:20:48 MDT` Tool: Bash cd /home/runner/workspace; echo "=== CURRENT pointer (should point to this session) ==="; head -20 SESSION_HANDOFF_CURRENT.md 2>/dev/null | grep -iE "493fa3df|…
+- `2026-06-25 17:21:25 MDT` Agent: Handoff is captured. Two notes: the `CURRENT` pointer now points to a **different, newer session** (`1bca609a` — "live price data frozen"), so there's another active Claude sessio…
+- `2026-06-25 17:21:29 MDT` Tool: Edit /home/runner/workspace/SESSION_HANDOFF_MASTER.md
+- `2026-06-25 17:21:29 MDT` Tool failed: Edit /home/runner/workspace/SESSION_HANDOFF_MASTER.md
+- `2026-06-25 17:21:35 MDT` Tool: Bash cd /home/runner/workspace; grep -n "493fa3df-d2d1-47c7-a5c3-8f010db2ebfb" SESSION_HANDOFF_MASTER.md | head -1
+- `2026-06-25 17:21:45 MDT` Tool: Read /home/runner/workspace/SESSION_HANDOFF_MASTER.md
+- `2026-06-25 17:21:52 MDT` Tool: Edit /home/runner/workspace/SESSION_HANDOFF_MASTER.md
+- `2026-06-25 17:22:10 MDT` Agent: Handoff is saved and the session is wrapped. Here's the closing summary: ## Handoff saved - **`SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md`** — full What Ch…
 
 ## High-Signal Changed Files
 
+- `AGENTS.md`
+- `CLAUDE.md`
+- `SESSION_HANDOFF_2026-06-25_1bca609a-a203-4890-a615-863fdd34035d.md`
+- `SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md`
+- `SESSION_HANDOFF_2026-06-25_5fc72f15-c497-4e0a-a45a-7071c0f3860b.md`
+- `SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/routes/platform.ts`
-- `artifacts/api-server/src/services/bridge-streams.ts`
+- `artifacts/api-server/src/lib/runtime.ts`
+- `artifacts/api-server/src/services/algo-branding.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
 - `artifacts/api-server/src/services/market-data-store.ts`
-- `artifacts/api-server/src/services/massive-stock-aggregate-stream.ts`
-- `artifacts/api-server/src/services/massive-stock-quote-stream.ts`
 - `artifacts/api-server/src/services/platform-bridge-health.test.ts`
 - `artifacts/api-server/src/services/platform-bridge-health.ts`
 - `artifacts/api-server/src/services/platform.ts`
-- `artifacts/api-server/src/services/resource-pressure.test.ts`
-- `artifacts/api-server/src/services/resource-pressure.ts`
-- `artifacts/api-server/src/services/runtime-flight-recorder.test.ts`
-- `artifacts/api-server/src/services/runtime-flight-recorder.ts`
-- `artifacts/api-server/src/services/signal-monitor-stream.test.ts`
+- `artifacts/api-server/src/services/shadow-account.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts`
+- `artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts`
 - `artifacts/api-server/src/services/signal-monitor.ts`
-- `artifacts/api-server/src/services/stock-aggregate-stream.ts`
-- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
-- `artifacts/pyrus/src/features/platform/quoteStreamReconnect.test.mjs`
-- `artifacts/pyrus/src/features/platform/quoteStreamReconnect.ts`
+- `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- `artifacts/api-server/src/services/signal-options-automation.ts`
+- `artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.spec.ts`
+- `artifacts/pyrus/package.json`
+- `artifacts/pyrus/scripts/runDevApp.mjs`
+- `artifacts/pyrus/src/app/qa-mode.ts`
+- `artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx`
+- `artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx`
+- `artifacts/pyrus/src/features/platform/algoTuningImpactModel.js`
 - `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `artifacts/pyrus/src/screens/AlgoScreen.jsx`
-- `artifacts/pyrus/src/screens/AlgoScreen.test.mjs`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 1]
+## main...origin/main [ahead 5]
+ M AGENTS.md
+ M CLAUDE.md
+ M SESSION_HANDOFF_2026-06-25_1bca609a-a203-4890-a615-863fdd34035d.md
+ M SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md
+ M SESSION_HANDOFF_2026-06-25_5fc72f15-c497-4e0a-a45a-7071c0f3860b.md
+ M SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/routes/platform.ts
- M artifacts/api-server/src/services/bridge-streams.ts
+ M artifacts/api-server/src/lib/runtime.ts
+ M artifacts/api-server/src/services/algo-branding.ts
  M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/api-server/src/services/ibkr-bridge-runtime.ts
  M artifacts/api-server/src/services/market-data-store.ts
- M artifacts/api-server/src/services/massive-stock-aggregate-stream.ts
- M artifacts/api-server/src/services/massive-stock-quote-stream.ts
  M artifacts/api-server/src/services/platform-bridge-health.test.ts
  M artifacts/api-server/src/services/platform-bridge-health.ts
  M artifacts/api-server/src/services/platform.ts
- M artifacts/api-server/src/services/resource-pressure.test.ts
- M artifacts/api-server/src/services/resource-pressure.ts
- M artifacts/api-server/src/services/runtime-flight-recorder.test.ts
- M artifacts/api-server/src/services/runtime-flight-recorder.ts
- M artifacts/api-server/src/services/signal-monitor-stream.test.ts
+ M artifacts/api-server/src/services/shadow-account.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
  M artifacts/api-server/src/services/signal-monitor.ts
- M artifacts/api-server/src/services/stock-aggregate-stream.ts
- M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
- M artifacts/pyrus/src/features/platform/quoteStreamReconnect.test.mjs
- M artifacts/pyrus/src/features/platform/quoteStreamReconnect.ts
+ M artifacts/api-server/src/services/signal-options-automation.test.ts
+ M artifacts/api-server/src/services/signal-options-automation.ts
+ M artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.spec.ts
+ M artifacts/pyrus/package.json
+ M artifacts/pyrus/scripts/runDevApp.mjs
+ M artifacts/pyrus/src/app/qa-mode.ts
+ M artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx
+ M artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx
+ M artifacts/pyrus/src/features/platform/algoTuningImpactModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
- M artifacts/pyrus/src/screens/AlgoScreen.jsx
- M artifacts/pyrus/src/screens/AlgoScreen.test.mjs
+ M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
+ M artifacts/pyrus/src/lib/formatters.js
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx
+ M artifacts/pyrus/src/screens/algo/algoHelpers.js
+ M lib/backtest-core/src/option-greek-selector.ts
+ M lib/db/src/index.ts
+ M lib/pyrus-signals-core/src/index.test.ts
+ M lib/pyrus-signals-core/src/index.ts
+ M replit.md
+ M scripts/check-replit-startup-guards.mjs
+?? AGENT_CHAT_LIVE.jsonl
 ?? CPU.20260624.214020.159497.0.001.cpuprofile
 ?? CPU.20260624.214034.160044.0.001.cpuprofile
-?? SESSION_HANDOFF_2026-06-23_5f144b8b-52f6-4e24-8df7-41c319edd8c9.md
-?? SESSION_HANDOFF_2026-06-23_795f54cf-b4a9-4b90-be05-34685d1e6bf7.md
-?? SESSION_HANDOFF_2026-06-23_814cd7d1-248f-4aa1-af32-0822e2eea172.md
-?? SESSION_HANDOFF_2026-06-23_aa49154d-281d-463e-9748-e63c0339a5d8.md
-?? SESSION_HANDOFF_2026-06-23_ad2c1ec9-018e-4418-8357-4c5217ceebf8.md
-?? SESSION_HANDOFF_2026-06-23_b5448660-3995-41ab-bdc4-8df7ff363fdd.md
-?? SESSION_HANDOFF_2026-06-23_c98143ad-7484-4138-951d-c4aadb57b845.md
-?? SESSION_HANDOFF_2026-06-23_cb142b88-068e-4221-a323-6a73348da00c.md
-?? SESSION_HANDOFF_2026-06-23_cb55120c-b34f-46fd-bc0c-ef846fa3b953.md
-?? SESSION_HANDOFF_2026-06-23_cdebf1e2-5ab0-40f1-893b-996e8a370189.md
-?? SESSION_HANDOFF_2026-06-23_e79189d1-3824-4914-a57c-919f65945b74.md
-?? SESSION_HANDOFF_2026-06-23_fdda163b-340a-4186-9cd4-95b9889dd24f.md
-?? SESSION_HANDOFF_2026-06-24_0517e7c7-1aea-46d4-a4d5-ea2b61706a09.md
-?? SESSION_HANDOFF_2026-06-24_09354622-6973-47ac-b26c-87aa9cc3cd3a.md
-?? SESSION_HANDOFF_2026-06-24_20bb5370-0a47-420a-b044-5d1a867c1d47.md
-?? SESSION_HANDOFF_2026-06-24_2a00c80d-78e2-4ae1-ae91-637310132abc.md
-?? SESSION_HANDOFF_2026-06-24_2a0b5c1d-7822-4f75-bc5d-802b5b7eda8c.md
-?? SESSION_HANDOFF_2026-06-24_2b159e0e-058f-4907-9064-a7c2492330b3.md
-?? SESSION_HANDOFF_2026-06-24_2bf14ca3-2b6a-4907-bc6c-4257797f1353.md
-?? SESSION_HANDOFF_2026-06-24_2f4cba1e-0dbd-4e9e-b384-f2d84ce39386.md
-?? SESSION_HANDOFF_2026-06-24_3cbe648a-1926-4235-b976-6a612b0d90f6.md
-?? SESSION_HANDOFF_2026-06-24_4e987574-1ab0-4915-993b-88d4f5504cf8.md
-?? SESSION_HANDOFF_2026-06-24_54d65e0d-062c-4be7-a48a-147fd78b0fd7.md
-?? SESSION_HANDOFF_2026-06-24_5f8eba5b-55a8-440b-bc66-12eaa6fe2239.md
-?? SESSION_HANDOFF_2026-06-24_5fdc1840-7811-4c99-b036-838a7e1735e8.md
-?? SESSION_HANDOFF_2026-06-24_7104d4da-c4a3-4fbd-b71c-5226632d3672.md
-?? SESSION_HANDOFF_2026-06-24_7f625e0d-8171-48d9-bf0f-4d76e5270f3a.md
-?? SESSION_HANDOFF_2026-06-24_891dd266-fc67-47c9-854d-bbeeb260348e.md
-?? SESSION_HANDOFF_2026-06-24_9548c16c-3307-4888-8fff-77be0e718f52.md
-?? SESSION_HANDOFF_2026-06-24_a934e0c0-6411-4309-ad1b-6c0a051a4d0c.md
-?? SESSION_HANDOFF_2026-06-24_ab1b004e-16ca-401b-808f-3c3629db3643.md
-?? SESSION_HANDOFF_2026-06-24_e8791701-5b85-4413-bcd8-927ffece432f.md
-?? SESSION_HANDOFF_2026-06-24_ed7fd84d-151c-4f33-8f54-aafc744e62b8.md
-?? SESSION_HANDOFF_2026-06-24_f086e8f7-3fec-4ee5-b0a6-c576f65e83b9.md
-?? SESSION_HANDOFF_2026-06-24_f16c4cc3-195f-4511-b0f6-e17b6fe92c4f.md
-?? SESSION_HANDOFF_2026-06-24_fd9ebe4c-e27b-401b-84af-72122d3a2e7d.md
-?? SESSION_HANDOFF_2026-06-25_1bca609a-a203-4890-a615-863fdd34035d.md
-?? SESSION_HANDOFF_2026-06-25_34be963c-c67e-4033-81e3-67fa7d2dff72.md
-?? SESSION_HANDOFF_2026-06-25_452b77f0-cb5f-4575-adf2-d467d4d54ef6.md
-?? SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md
-?? SESSION_HANDOFF_2026-06-25_5bfe0fbb-11a8-45ea-adf5-d0437d7604da.md
-?? SESSION_HANDOFF_2026-06-25_5fc72f15-c497-4e0a-a45a-7071c0f3860b.md
-?? SESSION_HANDOFF_2026-06-25_7d65016c-f0d1-4efc-83f6-52c77658f56a.md
-?? SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md
+?? SESSION_HANDOFF_2026-06-25_88228786-ac4c-4805-adc1-f68ff8eb3d99.md
+?? SESSION_HANDOFF_2026-06-25_c9ae66b9-4d27-4a84-862c-a4ca3d240f88.md
 ?? artifacts/api-server/kpi-mtf-sweep.ts
-?? artifacts/api-server/src/routes/stock-aggregate-stream-route.test.ts
-?? artifacts/api-server/src/services/massive-stock-quote-stream-serialize-once.test.ts
-?? artifacts/api-server/src/services/signal-monitor-reconcile-minimal-readset.test.ts
-?? artifacts/api-server/src/services/stock-aggregate-stream-serialize-once.test.ts
+?? artifacts/api-server/src/lib/runtime-bridge-override-intent.test.ts
+?? artifacts/api-server/src/services/ibkr-bridge-self-heal.test.ts
+?? artifacts/api-server/src/services/market-data-store-invalidation.test.ts
+?? artifacts/api-server/src/services/signal-options-strike-moneyness.test.ts
 ?? artifacts/backtest-worker/fetch-bars.ts
 ?? artifacts/backtest-worker/horizon-50tickers.ts
 ?? artifacts/backtest-worker/horizon-90d-probe.ts
@@ -543,52 +536,94 @@ please audit each column of the sta table, starting with matrix. i think there a
 ?? artifacts/backtest-worker/horizon-shard.ts
 ?? artifacts/backtest-worker/mtf-kpi-result-optH.md
 ?? artifacts/backtest-worker/mtf-kpi-result.md
-?? docs/plans/signal-monitor-reconcile-minimal-read-set.md
+?? docs/audits/unchecked-assumptions-2026-06-25.md
+?? docs/plans/db-audit-report-2026-06-25.md
+?? docs/plans/db-consolidation-plan-2026-06-25.md
+?? docs/plans/lever-2-event-loop-offload-2026-06-25.md
+?? lib/backtest-core/src/option-greek-selector.test.ts
+?? scripts/agent-chat.mjs
 ```
 
 ## Diff Summary
 
 ```text
- ..._HANDOFF_CURRENT.md |  26 +-
- ...N_HANDOFF_MASTER.md |  46 +-
- .../routes/platform.ts | 165 +-
- .../bridge-streams.ts  |   5 +-
- .../diagnostics.ts     |   2 +
- ...arket-data-store.ts |  94 +-
- ...aggregate-stream.ts |  36 +
- ...ock-quote-stream.ts |  50 +-
- ...idge-health.test.ts |  62 +-
- ...rm-bridge-health.ts |  18 +-
- .../platform.ts        |  17 +-
- ...ce-pressure.test.ts |  72 +-
- ...esource-pressure.ts |  58 +-
- ...ht-recorder.test.ts |  40 +
- ...-flight-recorder.ts | 122 +-
- ...itor-stream.test.ts |  85 +
- .../signal-monitor.ts  | 646 +++++-
- ...aggregate-stream.ts |  41 +-
- ...atformWatchlist.jsx | 113 +-
- ...mReconnect.test.mjs |   9 +-
- ...eStreamReconnect.ts |  12 +-
- .../signalsRowModel.js |  11 +-
- .../AlgoScreen.jsx     |  18 +-
- ...AlgoScreen.test.mjs |   2 +-
- 24 files changed, 1534 insertions(+), 216 deletions(-)
+ AGENTS.md       |   2 +-
+ CLAUDE.md       |  50 +-
+ ...fdd34035d.md | 391 +++-
+ ...10db2ebfb.md | 284 +--
+ ...1c0f3860b.md | 257 +-
+ ...cb87c94eb.md | 365 ++-
+ ...F_CURRENT.md |  21 +-
+ ...FF_MASTER.md |  10 +-
+ .../runtime.ts  |  44 +-
+ ...-branding.ts |  36 +-
+ ...agnostics.ts |   2 +
+ ...e-runtime.ts | 222 +-
+ ...ata-store.ts | 303 ++-
+ ...alth.test.ts | 185 +-
+ ...ge-health.ts |  86 +-
+ .../platform.ts |  17 +-
+ ...w-account.ts |  86 +-
+ ...etch.test.ts | 203 +-
+ ...bar-cache.ts | 430 +++-
+ ...l-monitor.ts | 646 +-----
+ ...tion.test.ts |  43 +
+ ...utomation.ts | 205 +-
+ ...tion.spec.ts |  69 +-
+ ...package.json |   4 +-
+ ...unDevApp.mjs |  92 +-
+ .../qa-mode.ts  |  14 +-
+ ...eadGauge.jsx |  34 +-
+ ...ictGlyph.jsx |  12 +
+ ...pactModel.js |   1 -
+ ...sRowModel.js |   8 +-
+ ...del.test.mjs |  10 +-
+ ...ormatters.js |  10 +-
+ ...ignalRow.jsx |  22 +-
+ ...goHelpers.js |  20 +-
+ ...-selector.ts |  16 +-
+ .../index.ts    |  46 +-
+ ...ndex.test.ts |  31 +
+ .../index.ts    |  11 +-
+ replit.md       |   2 +-
+ ...p-guards.mjs |   4 +-
+ 40 files changed, 2897 insertions(+), 1397 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- None detected in this session transcript.
+- `2026-06-25 13:30:08 MDT` cd /home/runner/workspace; rg -l "formatExpirationLabel|REGIME_BLOCKS|bear_regime_gate_failed|lifecycle.*closed|resolveSignalVerdict" artifacts/pyrus/src --glo… (ok)
+- `2026-06-25 14:18:20 MDT` cd /home/runner/workspace/artifacts/api-server; echo "=== typecheck (tsc) ==="; timeout 480 npx tsc -p tsconfig.json --noEmit 2>&1 | grep -iE "signal-options-a… (ok)
+- `2026-06-25 15:24:36 MDT` cd /home/runner/workspace/artifacts/api-server; timeout 480 npx tsc -p tsconfig.json --noEmit 2>&1 | grep -iE "shadow-account|error TS" | head -20; echo "EXIT:… (ok)
+- `2026-06-25 15:33:21 MDT` cd /home/runner/workspace/lib/backtest-core; timeout 120 node --import tsx --test src/option-greek-selector.test.ts 2>&1 | tail -10; echo "=== typecheck backte… (ok)
+- `2026-06-25 16:11:01 MDT` cd /home/runner/workspace; echo "=== node --check ==="; node --check artifacts/pyrus/scripts/runDevApp.mjs && echo "SYNTAX OK"; echo "=== currentFlightHeartbea… (ok)
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+**1. DIA deep-OTM root cause + money-path fixes (api-server / backtest-core).**
+- Root cause (from live DB, not inferred): the open DIA 471P shadow position was opened off a STALE durable option chain — `chainDebug.stale=true`, cache hit, only 5 strikes (467–471) centered on an old price — while the live signal spot was 521.8. The greek selector failed liquidity (`greek_selector_liquidity_failed`) and the legacy slot-4 fallback clamped to the deepest available (471, delta ≈ 0). NOT a deployment-binding problem: the executor correctly binds deployment `7e2e4e6f` ("Pyrus Signals Options Shadow"); write/read use the same `config.signalOptions` path.
+- Entry guards (`artifacts/api-server/src/services/signal-options-automation.ts`): `signalOptionsStrikeWithinMoneyness` + `signalOptionsStrikeStepSize` (exported) + a stale-chain reject and moneyness bound at the final-selection chokepoint in `resolveSignalOptionsCandidateContract` (~line 11920; new reasons `option_chain_stale`, `option_strike_off_money`). Test: `signal-options-strike-moneyness.test.ts` (5, pass).
+- **H4** greek scorer (`lib/backtest-core/src/option-greek-selector.ts`): hard `MIN_TRADEABLE_ABS_DELTA = 0.15` floor → disqualifies near-zero-delta contracts by construction (the "better function over guard" the user asked for). Test: `option-greek-selector.test.ts` (2, pass).
+- **H1** daily-loss halt (`artifacts/api-server/src/services/shadow-account.ts`): the expiration and reconcile exit events now emit `pnl` (like force-close already did), so a realized loss can't vanish from the halt at close-time (cap could previously un-trip).
+- **H3** stale-quote valuation gate (`shadow-account.ts`): `SHADOW_OPTION_QUOTE_MAX_AGE_MS = 300_000` + `shadowOptionQuoteRealAgeMs`; a "live"-labeled but minutes-old option quote is no longer trusted as a mark/stop input.
+- Cleared the errant **DIA 471P** position via the sanctioned automation force-close path (`placeShadowOrder` source=automation + ledger-sync `signal_options_shadow_exit`). Verified `status=closed`, qty 0, 0 open DIA option positions.
+- Reduced-scope decisions: M1 (chain centering) judged already-covered by the guards (not changed); H2 frozen-stale-mark auto-close NOT added (using intrinsic for breach detection would cause catastrophic false exits — H3 + expiration settlement is the safe mitigation).
+
+**2. STA table UI fixes (pyrus).** Matrix verdict now uses the gate resolver `getMtfGateSignalDirection` (`signalsRowModel.js:616,631`); removed dead `bear_regime_gate_failed` mapping (`algoHelpers.js`, `algoTuningImpactModel.js`); contract label shows year for non-current-year/LEAP expirations (`lib/formatters.js`); DTE-aware spread tone bands (`SpreadGauge.jsx` + `resolveDteDays` + `OperationsSignalRow.jsx`); closed positions show "Closed" not "Wait" (`statusPillMeta` + `VerdictGlyph.jsx`).
+
+**3. Supervisor in-place reload — the preview fix (`artifacts/pyrus/scripts/runDevApp.mjs`).** Added a `SIGUSR2` handler `reloadApiInPlace` that rebuilds + restarts ONLY the API child in place; the supervisor never exits, so the Replit preview (anchored to the **pid2-spawned** supervisor) stays attached and just shows the new backend. Replaced the die-on-any-child-exit race with a self-healing `watchFatalExit` (API reloadable; web/worker still fatal). Updated `scripts/check-replit-startup-guards.mjs` to the new pattern; documented the procedure in `CLAUDE.md` ("Reloading code" section) and `replit.md`. Researched Replit's port/Port-Authority/pid2 model to get this right.
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- **App healthy** under the pid2-owned supervisor: local `api=200 web=200`; public preview URL `https://$REPLIT_DEV_DOMAIN/` serves `<title>PYRUS Platform</title>` (`api/healthz=200`). User ran Run and refreshed the preview — confirmed.
+- **SIGUSR2 in-place reload PROVEN** on the pid2-owned supervisor: supervisor PID held, only the API child swapped, web port held at 200, API came back healthy.
+- **Trading bot idle:** 0 open option positions, no signal-options events in the last 2h, deployment is ON (likely after-hours / IBKR bridge not connected).
+- **Validations run this session:** `tsc --noEmit` clean for api-server and backtest-core; `pnpm run audit:replit-startup` ok; node --test green — STA/signals (116), signal-options-automation + mtf-alignment + new moneyness (32), greek-selector (2), algoHelpers (50). `node --check runDevApp.mjs` ok.
+- **BLOCKER / important:** nothing is committed — ALL of this session's work is uncommitted in the working tree (branch ahead 4; many pre-existing `M` files plus this session's edits).
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. **Commit this session's work** (currently all uncommitted). Suggested groups: (a) money-path — `signal-options-automation.ts`, `shadow-account.ts`, `option-greek-selector.ts` + the 2 new tests + `check-replit-startup-guards.mjs`; (b) STA UI — the pyrus files; (c) supervisor reload — `runDevApp.mjs` + `CLAUDE.md`/`replit.md` docs.
+2. **Reload rule going forward:** backend code → `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"` (preview stays attached). Frontend → Vite hot-reloads. NEVER shell-launch `REPLIT_MODE=workflow ... dev:replit` to reload — it detaches the preview. See `CLAUDE.md` "Reloading code".
+3. **Open follow-up (needs user call):** M2 — the frontend `SIGNAL_OPTIONS_DEFAULT_PROFILE` (`algoHelpers.js`) hardcodes the *tuned* defaults, which diverge from backend bare defaults (`lib/backtest-core/src/signal-options.ts`), so a partial/legacy config could show a different stop/cap in the panel than the executor runs. Display-only; needs a decision on canonical default values.
+4. **Verify fixes in live trading** when the market reopens / bridge connects (bot currently idle) — confirm stale-chain reject, moneyness/delta guards, and halt pnl behave on real scans.

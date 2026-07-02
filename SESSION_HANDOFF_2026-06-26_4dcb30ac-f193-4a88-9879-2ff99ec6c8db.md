@@ -1,38 +1,52 @@
-# Session Handoff — 2026-06-25
+# Session Handoff — 2026-06-26
 
 ## Session Metadata
 
-- Session ID: `5fc72f15-c497-4e0a-a45a-7071c0f3860b`
-- Saved At (MT): `2026-06-25 16:45:08 MDT`
-- Saved At (UTC): `2026-06-25T22:45:08.909Z`
-- Summary: 2026-06-25 16:45:08 MDT | 5fc72f15-c497-4e0a-a45a-7071c0f3860b | please audit the broker/bridge launch process/sequenece. i hit connect over 60 seconds ago with not powershell/bri…
+- Session ID: `4dcb30ac-f193-4a88-9879-2ff99ec6c8db`
+- Saved At (MT): `2026-06-26 09:32:26 MDT`
+- Saved At (UTC): `2026-06-26T15:32:26.989Z`
+- Summary: 2026-06-26 09:32:26 MDT | 4dcb30ac-f193-4a88-9879-2ff99ec6c8db | please watch our app for 5 minutes and make a report of any bugs or errant behavior yuo osee
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
-- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/5fc72f15-c497-4e0a-a45a-7071c0f3860b.jsonl`
+- Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/4dcb30ac-f193-4a88-9879-2ff99ec6c8db.jsonl`
 - Branch: `main`
 - HEAD: `86ae9bc04a6ef100908f91447e7ca9c6d5e1d844`
 - Latest Commit: `fix(quotes): clamp future-dated ticks so a corrupt tick can't freeze prices`
 - Latest Commit Session ID: `unknown`
-- Title: please audit the broker/bridge launch process/sequenece. i hit connect over 60 seconds ago with not powershell/bridge r…
+- Title: please watch our app for 5 minutes and make a report of any bugs or errant behavior yuo osee
 - Model: `claude-opus-4-8`
 - Reasoning Effort: `unknown`
 - Tokens Used: `unknown`
 
 ## Current User Request
 
-please audit the broker/bridge launch process/sequenece. i hit connect over 60 seconds ago with not powershell/bridge response
+please watch our app for 5 minutes and make a report of any bugs or errant behavior yuo osee
 
 ## Prior Handoffs
 
+- `SESSION_HANDOFF_2026-06-26_2ecd7059-f557-4a36-9e4a-e14655db9766.md`
+- `SESSION_HANDOFF_2026-06-26_019f0177-3b94-77c1-b346-89f6a9759c50.md`
+- `SESSION_HANDOFF_2026-06-26_019f0169-7787-79b3-bbd5-d43faf269e08.md`
+- `SESSION_HANDOFF_2026-06-25_c9ae66b9-4d27-4a84-862c-a4ca3d240f88.md`
 - `SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md`
+- `SESSION_HANDOFF_2026-06-25_9dcf60a9-3010-49c5-9816-86da6f33d0e4.md`
 - `SESSION_HANDOFF_2026-06-25_88228786-ac4c-4805-adc1-f68ff8eb3d99.md`
 - `SESSION_HANDOFF_2026-06-25_7d65016c-f0d1-4efc-83f6-52c77658f56a.md`
+- `SESSION_HANDOFF_2026-06-25_5fc72f15-c497-4e0a-a45a-7071c0f3860b.md`
 - `SESSION_HANDOFF_2026-06-25_5bfe0fbb-11a8-45ea-adf5-d0437d7604da.md`
 - `SESSION_HANDOFF_2026-06-25_493fa3df-d2d1-47c7-a5c3-8f010db2ebfb.md`
 - `SESSION_HANDOFF_2026-06-25_452b77f0-cb5f-4575-adf2-d467d4d54ef6.md`
+- `SESSION_HANDOFF_2026-06-25_3e74af56-6bcb-4e0a-a018-4730f154180a.md`
 - `SESSION_HANDOFF_2026-06-25_34be963c-c67e-4033-81e3-67fa7d2dff72.md`
 - `SESSION_HANDOFF_2026-06-25_1bca609a-a203-4890-a615-863fdd34035d.md`
+- `SESSION_HANDOFF_2026-06-25_13bb9e6f-cb61-45e7-a5e4-6df20bb03ab9.md`
+- `SESSION_HANDOFF_2026-06-25_019f0123-d58e-7be3-9c04-a1f835e5960c.md`
+- `SESSION_HANDOFF_2026-06-25_019f010e-1381-7d13-9e9d-667cf403ba47.md`
+- `SESSION_HANDOFF_2026-06-25_019f00f5-171b-7c70-b942-7cc6d4d2338e.md`
+- `SESSION_HANDOFF_2026-06-25_019f00ef-6e2f-7bf2-9d2c-ff78151b5876.md`
+- `SESSION_HANDOFF_2026-06-25_019f00ed-9005-7910-8fc5-05d745eef87b.md`
+- `SESSION_HANDOFF_2026-06-25_019f00dc-a0b4-7821-8197-eb6d2bdf872d.md`
 - `SESSION_HANDOFF_2026-06-24_fd9ebe4c-e27b-401b-84af-72122d3a2e7d.md`
 - `SESSION_HANDOFF_2026-06-24_f16c4cc3-195f-4511-b0f6-e17b6fe92c4f.md`
 - `SESSION_HANDOFF_2026-06-24_f086e8f7-3fec-4ee5-b0a6-c576f65e83b9.md`
@@ -407,38 +421,33 @@ please audit the broker/bridge launch process/sequenece. i hit connect over 60 s
 
 ## Recent User Messages
 
-- `2026-06-25 15:44:34 MDT` you should "fake" a disconnection to test it once i get the bridge back up. watch me get it up to look for issues/bugs as well to fix
-- `2026-06-25 15:45:52 MDT` for instance im once again seeing a fucking delay/wait between hitting launch and the windows computer/powershell/bridge ackbowledge. I AM SO FUCKING TIRED OF THIS WHAT IS YOUR FUCKINR PROBLEM. BE BETTER IN YOUR WORK. NO MISTAKES. STOP. ALLOWING. REGRESSIONS / TESTS/ ASSERTS TO FUCKING RUIN OUR APP! I HAVE SPENT SO MUCH TIME ON THIS, WAYU TOO MUCH FOR YOUR LAZY FUCKING WORK
-- `2026-06-25 15:45:52 MDT` [Request interrupted by user]
-- `2026-06-25 15:47:06 MDT` [Request interrupted by user]
-- `2026-06-25 15:47:06 MDT` figure it the fuck out i am so sick of you
-- `2026-06-25 15:47:24 MDT` [Request interrupted by user]
-- `2026-06-25 15:47:24 MDT` its been running in the live app/runtime. if you dont see, FUCKING LOOK HARDFER
-- `2026-06-25 16:33:53 MDT` i just did
-- `2026-06-25 16:34:20 MDT` [Request interrupted by user for tool use]
-- `2026-06-25 16:34:20 MDT` not seeing anything. i want the ui to call the bridge within 2 seconds
-- `2026-06-25 16:41:54 MDT` [Request interrupted by user]
-- `2026-06-25 16:41:55 MDT` you are chasing you tail. comapct and start fresh.
+- `2026-06-26 07:56:26 MDT` please watch our app for 5 minutes and make a report of any bugs or errant behavior yuo osee
+- `2026-06-26 08:05:34 MDT` can you write your findings into a 6-26 bug report .md
+- `2026-06-26 08:46:38 MDT` is the lack of % move shown in the watchlist sidebar included in this?
+- `2026-06-26 08:53:29 MDT` can you watch for another 5 to see waht other bugs/issues you can find and add them to the report?
+- `2026-06-26 09:03:05 MDT` make sure the .md is updated with any confirmations/new findings
+- `2026-06-26 09:16:14 MDT` i think you're stopping short. why is the sta table showing stale data, and not the sta matrix? what is it pointed at currently? please look at the live runtime
+- `2026-06-26 09:23:44 MDT` yes please add to the report
 
 ## Session Activity Summary
 
-- `2026-06-25 12:53:10 MDT` User: please audit the broker/bridge launch process/sequenece. i hit connect over 60 seconds ago with not powershell/bridge response
-- `2026-06-25 12:53:21 MDT` Agent: I'll audit the broker/bridge launch sequence. Since you have a live hang right now (60+ seconds, no response), let me first scout the architecture and capture live runtime state i…
-- `2026-06-25 12:53:23 MDT` Tool: Bash echo "=== Bridge/broker source files ===" && rg -l -i "bridge|broker|powershell" --type ts --type js -g '!node_modules' -g '!dist' artifacts/ | head -50
-- `2026-06-25 12:53:25 MDT` Tool: Bash echo "=== Flight recorder state ===" && ls -la .pyrus-runtime/flight-recorder/ 2>/dev/null; echo "=== Bridge-related runtime dirs ===" && find .pyrus-runtime -…
-- `2026-06-25 12:53:26 MDT` Tool: Bash echo "=== Live node/powershell/bridge processes ===" && ps aux 2>/dev/null | grep -iE "node|powershell|pwsh|bridge|broker" | grep -v grep | head -40
-- `2026-06-25 12:53:34 MDT` Agent: The API process (pid 459) is pinned at **85.6% CPU** with 3:41 of CPU time after only ~4 min uptime — that's a strong signal of an event-loop spin that could be starving the bridg…
-- … 467 lower-signal transcript events omitted …
-- `2026-06-25 16:38:57 MDT` Agent: The "waiting for Gateway health proof" fires when `activeBridgeContext` is true but health isn't fresh and nothing's actually connected (line 909-925) — i.e., the agent-online-but…
-- `2026-06-25 16:39:00 MDT` Tool: Bash cd /home/runner/workspace echo "=== what sets activeBridgeContext? ===" grep -nE "activeBridgeContext" artifacts/pyrus/src/features/platform/IbkrConnectionStat…
-- `2026-06-25 16:39:09 MDT` Tool: Read /home/runner/workspace/artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx
-- `2026-06-25 16:39:40 MDT` Agent: The gate is `bridgeLaunchInFlight` (3017): with `activeCount=0`, the only way it's true is **`bridgeLaunchInFlightUntil > Date.now()`** — a timer from a *previous* attempt. That m…
-- `2026-06-25 16:39:44 MDT` Tool: Bash cd /home/runner/workspace echo "=== bridgeLaunchInFlightUntil: init + where set + duration ===" sed -n '2762,2774p' artifacts/pyrus/src/features/platform/Heade…
-- `2026-06-25 16:40:47 MDT` Agent: **Root cause of the swallowed launch — it's a stale frontend lock, and it's in session storage so it survives refresh.** Two things combine: 1. **`activeBridgeContext = desktopAge…
-- `2026-06-25 16:40:52 MDT` Tool: Bash cd /home/runner/workspace echo "=== IBKR_BRIDGE_SESSION_KEYS (storage keys) + storage prefix ===" grep -rnE "IBKR_BRIDGE_SESSION_KEYS\s*=|launchInFlightUntil:|…
-- `2026-06-25 16:41:54 MDT` User: [Request interrupted by user]
-- `2026-06-25 16:41:55 MDT` User: you are chasing you tail. comapct and start fresh.
-- `2026-06-25 16:42:30 MDT` Agent: You're right — I was chasing my tail. Stopping. Here's the compact state of things so we can restart clean: ## What's actually done and confirmed - **Self-heal**: built, 63 tests…
+- `2026-06-26 07:56:26 MDT` User: please watch our app for 5 minutes and make a report of any bugs or errant behavior yuo osee
+- `2026-06-26 07:56:35 MDT` Agent: I'll watch the live app for ~5 minutes and report what I observe. Let me first confirm it's running and find the observation sources (logs, flight recorder, health endpoints).
+- `2026-06-26 07:56:37 MDT` Tool: Bash echo "=== healthz ===" ; curl -s -m 5 http://127.0.0.1:8080/api/healthz ; echo ; echo "=== supervisor ===" ; pgrep -af 'node ./scripts/runDevApp.mjs' ; echo "=…
+- `2026-06-26 07:56:52 MDT` Agent: App is alive (API pid 535, supervisor pid 452). Let me capture a baseline and find the log streams to tail over the 5-minute window.
+- `2026-06-26 07:56:53 MDT` Tool: Bash echo "=== api-current.json ===" ; cat .pyrus-runtime/flight-recorder/api-current.json ; echo ; echo "=== today events tail ===" ; ls -la .pyrus-runtime/flight-…
+- `2026-06-26 07:57:20 MDT` Agent: Baseline already shows serious signals: **API pressure HIGH** (event loop 100% utilization, 1513ms delay, p95 latency 7.8s), **DB pool saturated** (12/12 active, 8 waiting), a slo…
+- … 192 lower-signal transcript events omitted …
+- `2026-06-26 09:20:38 MDT` Tool: Bash cd /home/runner/workspace echo "=== now=$(date -u +%H:%M:%S)Z — newest persisted event (has it advanced past 15:03:54?) ===" curl -s -m10 "http://127.0.0.1:808…
+- `2026-06-26 09:21:30 MDT` Agent: I dug into the live runtime and — importantly — found I'd partly confounded my own measurement. Here's the honest, evidence-backed picture. ## What the STA table is pointed at (vs…
+- `2026-06-26 09:23:44 MDT` User: yes please add to the report
+- `2026-06-26 09:23:54 MDT` Agent: Let me grab a current (warm, un-confounded) emit-lag sample to put accurate steady-state numbers in the report, then add Bug 11.
+- `2026-06-26 09:23:58 MDT` Tool: Bash cd /home/runner/workspace echo "now=$(date -u +%H:%M:%S)Z" curl -s -m10 "http://127.0.0.1:8080/api/signal-monitor/events?limit=6" | python3 -c " import sys,jso…
+- `2026-06-26 09:24:27 MDT` Agent: Now at 15:24 the picture is even clearer: newest 1m event is still GEV **15:15** (nothing new persisted in ~9 min despite fresh bars), and a 15m signal for the **15:00** bar only…
+- `2026-06-26 09:24:47 MDT` Tool: Edit /home/runner/workspace/BUG_REPORT_2026-06-26.md
+- `2026-06-26 09:24:58 MDT` Agent: Let me fold Bug 11 into the recommendation's DB-throughput cluster so the report stays coherent.
+- `2026-06-26 09:25:02 MDT` Tool: Edit /home/runner/workspace/BUG_REPORT_2026-06-26.md
+- `2026-06-26 09:25:14 MDT` Agent: Added **Bug 11** to the report and folded it into the recommendation's DB-throughput cluster. The Bug 11 entry captures: - **What it's pointed at** — the STA table reads the persi…
 
 ## High-Signal Changed Files
 
@@ -450,33 +459,33 @@ please audit the broker/bridge launch process/sequenece. i hit connect over 60 s
 - `SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/index.ts`
+- `artifacts/api-server/src/lib/runtime-provider-config.test.ts`
 - `artifacts/api-server/src/lib/runtime.ts`
+- `artifacts/api-server/src/providers/ibkr/client.ts`
+- `artifacts/api-server/src/providers/massive/market-data.ts`
+- `artifacts/api-server/src/routes/platform.ts`
+- `artifacts/api-server/src/routes/stock-aggregate-stream-route.test.ts`
+- `artifacts/api-server/src/services/account-position-open-date.test.ts`
+- `artifacts/api-server/src/services/account.ts`
 - `artifacts/api-server/src/services/algo-branding.ts`
+- `artifacts/api-server/src/services/algo-gateway.test.ts`
+- `artifacts/api-server/src/services/algo-gateway.ts`
+- `artifacts/api-server/src/services/bridge-option-quote-stream.test.ts`
+- `artifacts/api-server/src/services/bridge-option-quote-stream.ts`
+- `artifacts/api-server/src/services/bridge-streams.test.ts`
+- `artifacts/api-server/src/services/bridge-streams.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/market-data-store.ts`
-- `artifacts/api-server/src/services/platform-bridge-health.test.ts`
-- `artifacts/api-server/src/services/platform-bridge-health.ts`
-- `artifacts/api-server/src/services/platform.ts`
-- `artifacts/api-server/src/services/shadow-account.ts`
-- `artifacts/api-server/src/services/signal-monitor.ts`
-- `artifacts/api-server/src/services/signal-options-automation.ts`
-- `artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.spec.ts`
-- `artifacts/pyrus/package.json`
-- `artifacts/pyrus/scripts/runDevApp.mjs`
-- `artifacts/pyrus/src/app/qa-mode.ts`
-- `artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx`
-- `artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx`
-- `artifacts/pyrus/src/features/platform/algoTuningImpactModel.js`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs`
-- `artifacts/pyrus/src/lib/formatters.js`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`
+- `artifacts/api-server/src/services/flow-events-model.ts`
+- `artifacts/api-server/src/services/flow-universe-optionability-verifier.ts`
+- `artifacts/api-server/src/services/flow-universe.ts`
+- `artifacts/api-server/src/services/gex-universe-refresh-bulk-enqueue.test.ts`
+- `artifacts/api-server/src/services/gex-universe-refresh.ts`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 5]
+## main...origin/main
  M AGENTS.md
  M CLAUDE.md
  M SESSION_HANDOFF_2026-06-25_1bca609a-a203-4890-a615-863fdd34035d.md
@@ -485,44 +494,187 @@ please audit the broker/bridge launch process/sequenece. i hit connect over 60 s
  M SESSION_HANDOFF_2026-06-25_a794627c-b789-48e0-a09f-1aacb87c94eb.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/index.ts
+ M artifacts/api-server/src/lib/runtime-provider-config.test.ts
  M artifacts/api-server/src/lib/runtime.ts
+ M artifacts/api-server/src/providers/ibkr/client.ts
+ M artifacts/api-server/src/providers/massive/market-data.ts
+ M artifacts/api-server/src/routes/platform.ts
+ M artifacts/api-server/src/routes/stock-aggregate-stream-route.test.ts
+ M artifacts/api-server/src/services/account-position-open-date.test.ts
+ M artifacts/api-server/src/services/account.ts
  M artifacts/api-server/src/services/algo-branding.ts
+ M artifacts/api-server/src/services/algo-gateway.test.ts
+ M artifacts/api-server/src/services/algo-gateway.ts
+ M artifacts/api-server/src/services/bridge-option-quote-stream.test.ts
+ M artifacts/api-server/src/services/bridge-option-quote-stream.ts
+ M artifacts/api-server/src/services/bridge-streams.test.ts
+ M artifacts/api-server/src/services/bridge-streams.ts
  M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/api-server/src/services/flow-events-model.ts
+ M artifacts/api-server/src/services/flow-universe-optionability-verifier.ts
+ M artifacts/api-server/src/services/flow-universe.ts
+ M artifacts/api-server/src/services/gex-universe-refresh-bulk-enqueue.test.ts
+ M artifacts/api-server/src/services/gex-universe-refresh.ts
+ M artifacts/api-server/src/services/gex.ts
  M artifacts/api-server/src/services/ibkr-bridge-runtime.ts
+ M artifacts/api-server/src/services/ibkr-live-demand-coordinator.ts
+ M artifacts/api-server/src/services/market-data-admission.test.ts
+ M artifacts/api-server/src/services/market-data-admission.ts
+ M artifacts/api-server/src/services/market-data-ingest.ts
  M artifacts/api-server/src/services/market-data-store.ts
+ M artifacts/api-server/src/services/market-data-work-planner.ts
+ M artifacts/api-server/src/services/massive-stock-quote-stream-serialize-once.test.ts
+ M artifacts/api-server/src/services/massive-stock-websocket-recovery.test.ts
+ M artifacts/api-server/src/services/massive-stock-websocket.ts
+ M artifacts/api-server/src/services/option-chain-latest-cutover.test.ts
+ M artifacts/api-server/src/services/option-chain-policy.test.ts
+ M artifacts/api-server/src/services/option-metadata-store.ts
+ M artifacts/api-server/src/services/options-flow-scanner-metadata-timeout.test.ts
+ M artifacts/api-server/src/services/options-flow-scanner-pressure.test.ts
+ M artifacts/api-server/src/services/options-flow-scanner.ts
  M artifacts/api-server/src/services/platform-bridge-health.test.ts
  M artifacts/api-server/src/services/platform-bridge-health.ts
+ M artifacts/api-server/src/services/platform-option-degraded-reasons.test.ts
  M artifacts/api-server/src/services/platform.ts
+ M artifacts/api-server/src/services/route-admission.test.ts
+ M artifacts/api-server/src/services/route-admission.ts
+ M artifacts/api-server/src/services/shadow-account-read-cache.test.ts
  M artifacts/api-server/src/services/shadow-account.ts
+ M artifacts/api-server/src/services/signal-monitor-backfill-base.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-persist.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
+ M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
+ M artifacts/api-server/src/services/signal-monitor-reconcile-minimal-readset.test.ts
  M artifacts/api-server/src/services/signal-monitor.ts
+ M artifacts/api-server/src/services/signal-options-automation.test.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
+ M artifacts/api-server/src/services/signal-options-position-tick-manager.ts
+ M artifacts/pyrus/docs/architecture/market-data-ingest-worker.md
  M artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.spec.ts
  M artifacts/pyrus/package.json
  M artifacts/pyrus/scripts/runDevApp.mjs
  M artifacts/pyrus/src/app/qa-mode.ts
  M artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx
  M artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx
+ M artifacts/pyrus/src/features/charting/chartApiBars.js
+ M artifacts/pyrus/src/features/charting/useChartPositionOverlays.ts
+ M artifacts/pyrus/src/features/charting/useMassiveStreamedStockBars.ts
+ M artifacts/pyrus/src/features/charting/useOptionChartBars.js
+ M artifacts/pyrus/src/features/flow/ContractDetailInline.jsx
+ M artifacts/pyrus/src/features/market/MarketActivityPanel.jsx
+ M artifacts/pyrus/src/features/market/MarketChartPremiumFlowIndicator.jsx
+ M artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx
+ M artifacts/pyrus/src/features/platform/MarketDataSubscriptionProvider.jsx
+ M artifacts/pyrus/src/features/platform/MarketDataSubscriptionProvider.test.mjs
+ M artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx
+ M artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.test.mjs
+ M artifacts/pyrus/src/features/platform/PlatformApp.jsx
+ M artifacts/pyrus/src/features/platform/PlatformProviders.jsx
+ M artifacts/pyrus/src/features/platform/PlatformRuntimeLayer.jsx
+ M artifacts/pyrus/src/features/platform/PlatformScreenRouter.jsx
+ M artifacts/pyrus/src/features/platform/PlatformShell.jsx
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.test.mjs
  M artifacts/pyrus/src/features/platform/algoTuningImpactModel.js
+ M artifacts/pyrus/src/features/platform/extendedHoursQuote.test.mjs
+ M artifacts/pyrus/src/features/platform/extendedHoursQuote.ts
+ M artifacts/pyrus/src/features/platform/ibkrPopoverModel.js
+ M artifacts/pyrus/src/features/platform/live-streams.test.mjs
+ M artifacts/pyrus/src/features/platform/live-streams.ts
+ M artifacts/pyrus/src/features/platform/platformContexts.d.ts
+ M artifacts/pyrus/src/features/platform/platformContexts.jsx
+ M artifacts/pyrus/src/features/platform/quoteStreamReconnect.test.mjs
+ M artifacts/pyrus/src/features/platform/quoteStreamReconnect.ts
+ M artifacts/pyrus/src/features/platform/runtimeControlModel.js
+ M artifacts/pyrus/src/features/platform/runtimeMarketDataModel.js
+ M artifacts/pyrus/src/features/platform/runtimeMarketDataModel.test.mjs
+ M artifacts/pyrus/src/features/platform/useLiveMarketFlow.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.js
  M artifacts/pyrus/src/features/signals/signalsRowModel.test.mjs
+ M artifacts/pyrus/src/features/trade/TradeL2Panel.jsx
  M artifacts/pyrus/src/lib/formatters.js
+ M artifacts/pyrus/src/screens/AlgoScreen.jsx
+ M artifacts/pyrus/src/screens/AlgoScreen.test.mjs
+ M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
+ M artifacts/pyrus/src/screens/FlowScreen.jsx
+ M artifacts/pyrus/src/screens/GexScreen.jsx
+ M artifacts/pyrus/src/screens/TradeScreen.jsx
+ M artifacts/pyrus/src/screens/TradeScreen.tradeTickerSearch.test.mjs
+ M artifacts/pyrus/src/screens/account/PositionOptionQuoteStreams.jsx
+ M artifacts/pyrus/src/screens/account/PositionOptionQuoteStreams.test.mjs
+ M artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx
+ M artifacts/pyrus/src/screens/algo/AlgoLivePage.test.mjs
  M artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalTable.test.mjs
  M artifacts/pyrus/src/screens/algo/algoHelpers.js
+ M artifacts/pyrus/src/screens/algo/algoHelpers.test.mjs
+ M artifacts/pyrus/src/screens/diagnostics/MachineStateDiagram.jsx
+ M artifacts/pyrus/src/screens/diagnostics/machineStateDiagramModel.js
+ M artifacts/pyrus/src/screens/gex/GexCharts.jsx
+ M crates/market-data-worker/src/config.rs
+ M crates/market-data-worker/src/ingest.rs
+ M crates/market-data-worker/src/jobs.rs
+ M crates/market-data-worker/src/main.rs
+ M crates/market-data-worker/src/providers/massive.rs
+ M crates/market-data-worker/src/retention.rs
+ M lib/api-client-react/src/generated/api.schemas.ts
+ M lib/api-client-react/src/generated/api.ts
+ M lib/api-spec/openapi.yaml
+ M lib/api-zod/src/generated/api.ts
+ M lib/api-zod/src/generated/types/flowEvent.ts
+ M lib/api-zod/src/generated/types/getBarsParams.ts
+ M lib/api-zod/src/generated/types/getMarketDepthParams.ts
+ M lib/api-zod/src/generated/types/getOptionExpirationsParams.ts
+ M lib/api-zod/src/generated/types/listFlowEventsParams.ts
+ M lib/api-zod/src/generated/types/optionChainQuote.ts
+ M lib/api-zod/src/generated/types/optionChartBarsDataSource.ts
+ M lib/api-zod/src/generated/types/optionContract.ts
+ M lib/api-zod/src/generated/types/positionOpenedAtSource.ts
+ M lib/api-zod/src/generated/types/streamMarketDepthParams.ts
  M lib/backtest-core/src/option-greek-selector.ts
  M lib/db/src/index.ts
+ M lib/db/src/schema/instruments.ts
+ M lib/db/src/schema/market-data.ts
+ M lib/ibkr-contracts/src/client.ts
  M lib/pyrus-signals-core/src/index.test.ts
  M lib/pyrus-signals-core/src/index.ts
+ M package.json
  M replit.md
  M scripts/check-replit-startup-guards.mjs
+ M scripts/package.json
+ M scripts/src/market-data-schema-audit.ts
 ?? AGENT_CHAT_LIVE.jsonl
+?? BUG_REPORT_2026-06-26.md
 ?? CPU.20260624.214020.159497.0.001.cpuprofile
 ?? CPU.20260624.214034.160044.0.001.cpuprofile
+?? SESSION_HANDOFF_2026-06-25_019f00dc-a0b4-7821-8197-eb6d2bdf872d.md
+?? SESSION_HANDOFF_2026-06-25_019f00ed-9005-7910-8fc5-05d745eef87b.md
+?? SESSION_HANDOFF_2026-06-25_019f00ef-6e2f-7bf2-9d2c-ff78151b5876.md
+?? SESSION_HANDOFF_2026-06-25_019f00f5-171b-7c70-b942-7cc6d4d2338e.md
+?? SESSION_HANDOFF_2026-06-25_019f010e-1381-7d13-9e9d-667cf403ba47.md
+?? SESSION_HANDOFF_2026-06-25_019f0123-d58e-7be3-9c04-a1f835e5960c.md
+?? SESSION_HANDOFF_2026-06-25_13bb9e6f-cb61-45e7-a5e4-6df20bb03ab9.md
+?? SESSION_HANDOFF_2026-06-25_3e74af56-6bcb-4e0a-a018-4730f154180a.md
 ?? SESSION_HANDOFF_2026-06-25_88228786-ac4c-4805-adc1-f68ff8eb3d99.md
+?? SESSION_HANDOFF_2026-06-25_9dcf60a9-3010-49c5-9816-86da6f33d0e4.md
+?? SESSION_HANDOFF_2026-06-25_c9ae66b9-4d27-4a84-862c-a4ca3d240f88.md
+?? SESSION_HANDOFF_2026-06-26_019f0169-7787-79b3-bbd5-d43faf269e08.md
+?? SESSION_HANDOFF_2026-06-26_019f0177-3b94-77c1-b346-89f6a9759c50.md
+?? SESSION_HANDOFF_2026-06-26_2ecd7059-f557-4a36-9e4a-e14655db9766.md
+?? SESSION_HANDOFF_2026-06-26_4dcb30ac-f193-4a88-9879-2ff99ec6c8db.md
+?? SESSION_HANDOFF_LIVE_2026-06-26_massive-options-completion-check.md
 ?? artifacts/api-server/kpi-mtf-sweep.ts
 ?? artifacts/api-server/src/lib/runtime-bridge-override-intent.test.ts
+?? artifacts/api-server/src/services/flow-events-model.test.ts
 ?? artifacts/api-server/src/services/ibkr-bridge-self-heal.test.ts
+?? artifacts/api-server/src/services/ibkr-bridge-status-longpoll.test.ts
 ?? artifacts/api-server/src/services/market-data-store-invalidation.test.ts
+?? artifacts/api-server/src/services/market-data-work-planner.test.ts
+?? artifacts/api-server/src/services/platform-quote-snapshot-freshness.test.ts
 ?? artifacts/api-server/src/services/signal-options-strike-moneyness.test.ts
+?? artifacts/api-server/src/services/snapshot-retention-scheduler.ts
 ?? artifacts/backtest-worker/fetch-bars.ts
 ?? artifacts/backtest-worker/horizon-50tickers.ts
 ?? artifacts/backtest-worker/horizon-90d-probe.ts
@@ -531,72 +683,217 @@ please audit the broker/bridge launch process/sequenece. i hit connect over 60 s
 ?? artifacts/backtest-worker/horizon-shard.ts
 ?? artifacts/backtest-worker/mtf-kpi-result-optH.md
 ?? artifacts/backtest-worker/mtf-kpi-result.md
+?? artifacts/pyrus/src/features/charting/useChartPositionOverlays.test.mjs
+?? artifacts/pyrus/src/features/charting/useOptionChartBars.test.mjs
 ?? docs/audits/unchecked-assumptions-2026-06-25.md
+?? docs/plans/db-audit-report-2026-06-25.md
+?? docs/plans/db-consolidation-plan-2026-06-25.md
+?? docs/plans/db-maintenance-phase0-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-phase1-checkpoint-b-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-phase1-task3-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-phase2-task6-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-phase2-task7-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-phase2-task8-evidence-2026-06-25.md
+?? docs/plans/db-maintenance-roadmap-2026-06-25.md
 ?? docs/plans/lever-2-event-loop-offload-2026-06-25.md
 ?? lib/backtest-core/src/option-greek-selector.test.ts
+?? lib/db/migrations/20260626_option_contract_broker_contract_id.sql
+?? lib/db/migrations/20260626_reclaim_empty_option_chain_snapshots.sql
+?? lib/db/src/retention.test.ts
+?? lib/db/src/retention.ts
+?? memory.md
 ?? scripts/agent-chat.mjs
+?? scripts/src/db-phase0-audit.ts
+?? scripts/src/db-snapshot-retention.ts
 ```
 
 ## Diff Summary
 
 ```text
- AGENTS.md              |   2 +-
- CLAUDE.md              |  50 +-
- ...615-863fdd34035d.md | 259 ++-
- ...5c3-8f010db2ebfb.md | 259 ++-
- ...45a-7071c0f3860b.md | 257 +-
- ...09f-1aacb87c94eb.md | 250 +-
- ..._HANDOFF_CURRENT.md |  16 +-
- ...N_HANDOFF_MASTER.md |   9 +-
- .../src/lib/runtime.ts |  44 +-
- .../algo-branding.ts   |  36 +-
- .../diagnostics.ts     |   2 +
- ...r-bridge-runtime.ts | 222 +-
- ...arket-data-store.ts |  82 +-
- ...idge-health.test.ts | 185 +-
- ...rm-bridge-health.ts |  86 +-
- .../platform.ts        |  17 +-
- .../shadow-account.ts  |  86 +-
- .../signal-monitor.ts  | 646 +-----
- ...tions-automation.ts |  93 +-
- ...-validation.spec.ts |  69 +-
- .../pyrus/package.json |   4 +-
- .../runDevApp.mjs      |  92 +-
- .../src/app/qa-mode.ts |  14 +-
- .../SpreadGauge.jsx    |  34 +-
- .../VerdictGlyph.jsx   |  12 +
- ...uningImpactModel.js |   1 -
- .../signalsRowModel.js |   8 +-
- ...lsRowModel.test.mjs |  10 +-
- .../lib/formatters.js  |  10 +-
- ...ationsSignalRow.jsx |  22 +-
- .../algoHelpers.js     |  20 +-
- ...n-greek-selector.ts |  16 +-
- lib/db/src/index.ts    |  46 +-
- .../src/index.test.ts  |  31 +
- .../src/index.ts       |  11 +-
- replit.md              |   2 +-
- ...-startup-guards.mjs |   4 +-
- 37 files changed, 1722 insertions(+), 1285 deletions(-)
+ AGENTS.md        |    2 +-
+ CLAUDE.md        |   50 +-
+ ...3fdd34035d.md |  391 +-
+ ...010db2ebfb.md |  291 +-
+ ...71c0f3860b.md |  257 +-
+ ...acb87c94eb.md |  524 ++-
+ ...FF_CURRENT.md |   22 +-
+ ...OFF_MASTER.md |   22 +-
+ .../src/index.ts |    2 +
+ ...onfig.test.ts |   17 +
+ .../runtime.ts   |   69 +-
+ .../client.ts    |    2 +
+ ...arket-data.ts |   40 +-
+ .../platform.ts  |  100 +-
+ ...route.test.ts |   30 +
+ ...-date.test.ts |    4 +-
+ .../account.ts   |  103 +-
+ ...o-branding.ts |   36 +-
+ ...teway.test.ts |    9 +
+ ...go-gateway.ts |   12 -
+ ...tream.test.ts |   97 +-
+ ...ote-stream.ts |  469 +-
+ ...reams.test.ts |   31 +-
+ ...ge-streams.ts |   85 +-
+ ...iagnostics.ts |    6 +-
+ ...ents-model.ts |    4 +-
+ ...y-verifier.ts |    4 +-
+ ...w-universe.ts |    6 +-
+ ...queue.test.ts |   13 +-
+ ...se-refresh.ts |   17 +-
+ .../gex.ts       |   24 +-
+ ...ge-runtime.ts |  285 +-
+ ...oordinator.ts |   10 +-
+ ...ssion.test.ts |   54 +-
+ ...-admission.ts |   20 +-
+ ...ata-ingest.ts |   53 +-
+ ...data-store.ts |  303 +-
+ ...rk-planner.ts |   51 +-
+ ...-once.test.ts |   20 +
+ ...overy.test.ts |   54 +-
+ ...-websocket.ts |   66 +-
+ ...tover.test.ts |   16 +
+ ...olicy.test.ts |   44 +
+ ...data-store.ts |   49 +-
+ ...meout.test.ts |   70 +-
+ ...ssure.test.ts |   48 +-
+ ...ow-scanner.ts |   14 +-
+ ...ealth.test.ts |  185 +-
+ ...dge-health.ts |   86 +-
+ ...asons.test.ts |    9 +-
+ .../platform.ts  | 1281 ++----
+ ...ssion.test.ts |   50 +
+ ...-admission.ts |   31 +-
+ ...cache.test.ts |   13 +
+ ...ow-account.ts |  166 +-
+ ...-base.test.ts |   46 +
+ ...rsist.test.ts |   49 +-
+ ...fetch.test.ts |  277 +-
+ ...-bar-cache.ts |  486 +-
+ ...adset.test.ts |   91 +-
+ ...al-monitor.ts |  862 +---
+ ...ation.test.ts |   43 +
+ ...automation.ts |  209 +-
+ ...ck-manager.ts |   10 +-
+ ...est-worker.md |    5 +-
+ ...ation.spec.ts |   69 +-
+ .../package.json |    4 +-
+ ...runDevApp.mjs |   92 +-
+ .../qa-mode.ts   |   14 +-
+ ...readGauge.jsx |   34 +-
+ ...dictGlyph.jsx |   12 +
+ ...artApiBars.js |   14 +-
+ ...onOverlays.ts |   20 +-
+ ...dStockBars.ts |   86 +-
+ ...nChartBars.js |   10 +-
+ ...ailInline.jsx |   10 +-
+ ...vityPanel.jsx |    4 +-
+ ...Indicator.jsx |    4 +-
+ ...usCluster.jsx |  110 +-
+ ...nProvider.jsx |   93 +-
+ ...ider.test.mjs |   16 +-
+ ...orSidebar.jsx |   66 +-
+ ...ebar.test.mjs |   86 +
+ ...atformApp.jsx |   40 +-
+ ...Providers.jsx |   22 +-
+ ...timeLayer.jsx |    4 +
+ ...eenRouter.jsx |    4 +
+ ...formShell.jsx |    7 +-
+ ...Watchlist.jsx |    5 +-
+ ...list.test.mjs |    2 +-
+ ...mpactModel.js |    1 -
+ ...uote.test.mjs |   42 +-
+ ...HoursQuote.ts |   41 +-
+ ...poverModel.js |    6 +-
+ ...eams.test.mjs |    2 +-
+ ...ve-streams.ts |   64 +-
+ ...Contexts.d.ts |    8 +
+ ...mContexts.jsx |    7 +
+ ...nect.test.mjs |    3 +
+ ...mReconnect.ts |    8 +-
+ ...ntrolModel.js |   13 +-
+ ...tDataModel.js |   61 +-
+ ...odel.test.mjs |   53 +
+ ...MarketFlow.js |   10 +-
+ ...lsRowModel.js |    8 +-
+ ...odel.test.mjs |   10 +-
+ ...deL2Panel.jsx |  298 +-
+ ...formatters.js |   10 +-
+ ...lgoScreen.jsx |   30 +-
+ ...reen.test.mjs |   12 +-
+ ...icsScreen.jsx |   23 +-
+ ...lowScreen.jsx |   32 +-
+ ...GexScreen.jsx |   14 +-
+ ...adeScreen.jsx |   51 +-
+ ...arch.test.mjs |   19 +
+ ...teStreams.jsx |   37 +-
+ ...eams.test.mjs |   12 +-
+ ...oLivePage.jsx |   48 +-
+ ...Page.test.mjs |   17 +
+ ...SignalRow.jsx |   22 +-
+ ...gnalTable.jsx |  121 +-
+ ...able.test.mjs |  138 +-
+ ...lgoHelpers.js |   66 +-
+ ...pers.test.mjs |   36 +
+ ...teDiagram.jsx |   20 +-
+ ...agramModel.js |    9 +-
+ ...GexCharts.jsx |    2 +-
+ .../config.rs    |    9 +-
+ .../ingest.rs    |   86 +-
+ .../src/jobs.rs  |   11 +-
+ .../src/main.rs  |  126 +-
+ .../massive.rs   |  222 -
+ .../retention.rs |   94 +-
+ ...pi.schemas.ts |   52 +-
+ .../api.ts       |   16 +-
+ .../openapi.yaml |   41 +-
+ .../api.ts       |  109 +-
+ .../flowEvent.ts |    2 +-
+ ...BarsParams.ts |    6 +-
+ ...epthParams.ts |    3 +
+ ...ionsParams.ts |    2 +-
+ ...entsParams.ts |    8 +-
+ ...ChainQuote.ts |    8 +
+ ...DataSource.ts |    2 -
+ ...onContract.ts |    1 +
+ ...edAtSource.ts |    1 -
+ ...epthParams.ts |    3 +
+ ...k-selector.ts |   16 +-
+ .../src/index.ts |   47 +-
+ ...nstruments.ts |    4 +
+ ...arket-data.ts |   37 -
+ .../client.ts    |    5 +
+ ...index.test.ts |   31 +
+ .../src/index.ts |   11 +-
+ package.json     |    3 +
+ replit.md        |    2 +-
+ ...up-guards.mjs |    4 +-
+ .../package.json |    3 +
+ ...hema-audit.ts |   24 -
+ 159 files changed, 6587 insertions(+), 4379 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
-- `2026-06-25 14:36:09 MDT` cd /home/runner/workspace echo "=== existing runtime test files? ===" ls artifacts/api-server/src/lib/runtime*.test.ts 2>/dev/null || echo "(none — will create… (ok)
-- `2026-06-25 14:39:19 MDT` cd /home/runner/workspace echo "=== typecheck ===" cd artifacts/api-server && timeout 300 pnpm run typecheck 2>&1 | tail -3; echo "typecheck exit: ${PIPESTATUS… (ok)
-- `2026-06-25 15:30:12 MDT` cd /home/runner/workspace/artifacts/api-server timeout 300 pnpm run typecheck 2>&1 | tail -12; echo "typecheck exit: ${PIPESTATUS[0]}" (ok)
-- `2026-06-25 15:36:57 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" timeout 300 pnpm run typecheck 2>&1 | tail -4; echo "typecheck exit: ${PIPESTATUS[0]}"… (ok)
-- `2026-06-25 15:40:44 MDT` cd /home/runner/workspace/artifacts/api-server echo "=== typecheck ===" timeout 300 pnpm run typecheck 2>&1 | tail -3; echo "exit: ${PIPESTATUS[0]}" echo "" ec… (ok)
+- `2026-06-26 09:10:03 MDT` cd /home/runner/workspace/artifacts/api-server && timeout 240 pnpm exec tsc --noEmit -p tsconfig.json 2>&1 | head -30; echo "EXIT=${PIPESTATUS[0]}" (ok)
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+- Diagnosed the Algo control panel Save failure through source-confirmed route/UI paths and browser reproduction.
+- Observed direct no-op strategy/profile saves succeed but take 5.7-6.9s under high resource pressure and DB pool saturation.
+- Reproduced the UI failure: the real Save button sent `signalTimeframe: "2m"` but remained dirty when the write starved/timed out behind active app work.
+- Patched `artifacts/pyrus/src/screens/AlgoScreen.jsx` so the critical save pause TTL exceeds the 25s request timeout and the save handler cancels known competing Algo/shadow fallback queries before draining.
+- Patched `artifacts/pyrus/src/features/platform/PlatformShell.jsx` so the global Algo Monitor sidebar does not keep its own data path active during critical saves.
+- Updated focused source tests in `AlgoScreen.test.mjs`, `PlatformAlgoMonitorSidebar.test.mjs`, and `PlatformWatchlist.test.mjs`.
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- Fix is implemented and runtime validated.
+- No database/schema changes were needed for correctness; the failure was client-side workload contention around a valid API write path.
+- Resource pressure remains high in this dev runtime, so save latency can still be slow, but the validated Save path now completes and clears dirty state.
+- Startup/Replit config was not touched; `audit:replit-startup` is not required for this change.
+- Follow-up pressure investigation started at `2026-06-26T14:43:46.886Z`; fresh diagnostics pending.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. If Save latency remains near the timeout in repeated use, investigate the separate DB pool pressure source shown by diagnostics (`equity-history`, `allocation`, and open-position reads).
+2. Consider a follow-up server-side write-priority/admission path only if contention persists across tabs or other clients.
