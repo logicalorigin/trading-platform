@@ -157,3 +157,27 @@ Key routing rules:
 - Save progress -> invoke /context-save
 - Resume context -> invoke /context-restore
 - Author a backlog-ready spec/issue -> invoke /spec
+
+## Dynamic workflow orchestration (Workflow tool)
+
+When authoring `Workflow` scripts, tier model + effort per stage — do NOT default every `agent()`
+to Fable. Omitting `model` inherits the session model (Opus); that is the default.
+
+| Stage archetype | model | effort |
+|---|---|---|
+| Discover / grep / list / scan | `haiku` (or `agentType: 'Explore'`) | `low` |
+| Read + map subsystem / transform / review | omit → Opus | med–high |
+| Final synthesis / adversarial verify / hard judgment | `fable` (reserve here ONLY) | high/xhigh |
+
+Fable is allowed only on the single hardest terminal stage (a miss is expensive); keep that stage
+on the strong model even when finders are cheap — cheap finders + one strong verifier is optimal.
+
+Highest-leverage token rules (bigger savings than the model swap; they stack):
+- One sharp deliverable per subagent with explicit inputs (paths/symbols) + a `schema`; prompt
+  agents to "return data, do not echo file contents".
+- Scout-then-fan-out: a cheap step builds the work-list; workers take narrow slices.
+- Prefer `pipeline()` over a `parallel()` barrier; dedup before verify; `.filter(Boolean)`.
+- Resume via `resumeFromRunId` after edits; avoid `worktree` isolation unless mutating in parallel.
+- Scale fan-out + vote-count to the ask; `log()` any truncation; `budget`-scale depth.
+
+Detail: memory `workflow-model-effort-tiering` and `workflow-decomposition-token-savers`.
