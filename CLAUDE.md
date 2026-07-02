@@ -7,29 +7,56 @@ Source: https://github.com/multica-ai/andrej-karpathy-skills
 
 ## Project Run Rules
 
-The agent may manage the dev app lifecycle directly — stop, rebuild, and restart it to load code
-changes and verify work at runtime. (The earlier guidance reserving app bring-up to the Replit Run
-button and telling the agent not to restart has been retired.)
+The agent OWNS the dev app lifecycle — stop, rebuild, and restart it directly to load code changes
+and verify work at runtime. Do the running yourself. Do NOT defer running/restarting to the user,
+do NOT tell them to click the Replit Run button, and do NOT claim you can't — you can and you must.
+(The earlier guidance reserving app bring-up to the Run button has been retired and must stay
+retired.)
 
-**Restarting the app (agent-driven).** The API runs a built bundle (`node dist/index.mjs`), not
-watch mode, so changes need a rebuild + restart; the supervisor (`artifacts/pyrus/scripts/runDevApp.mjs`,
-started by Replit's pid2 manager) does not hot-restart its children.
-- Sanctioned restart = launch a supervisor with `REPLIT_MODE=workflow`:
-  `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` in the background.
-  `REPLIT_MODE=workflow` is the only restart authority that may replace a live supervisor (see
-  `replit.md`). If a supervisor is already live it performs a controlled handoff (SIGTERM the old
-  supervisor + children); if none is live (app stopped) it starts fresh. Either way the `dev` script
-  rebuilds the bundle and runs it.
-- Do NOT just `kill` the supervisor expecting pid2 (Replit's manager) to restart it: a clean
-  supervisor shutdown is read as intentional, so pid2 will NOT bring it back and the app stays down.
-  (An abrupt kill *sometimes* triggers a pid2 restart that then cascades against a shell-launched
-  supervisor — exit 143.) Always (re)launch via the `REPLIT_MODE=workflow` command above, and never
-  run two competing supervisors at once.
+**Reloading code to load changes (agent-driven, preview-safe).** The API runs a built bundle
+(`node dist/index.mjs`), not watch mode, so BACKEND changes need a rebuild + restart of the API
+process. The web (Vite) hot-reloads FRONTEND changes on its own — no action needed.
+
+WHY THIS MATTERS (learned the hard way): the user's Replit **preview is anchored to the supervisor
+that pid2 spawned** (Port Authority routes the webview to the port, but the workspace "running/
+crashed" + "ports opened/did not open" status is pid2's tracking of the workflow IT spawned). A
+shell-launched supervisor — even `REPLIT_MODE=workflow ...` — is NOT spawned by pid2, so pid2 never
+tracks it: the preview shows "crashed / ports did not open" while the app runs on a scope the preview
+can't see. There is no public in-container hook to make pid2 spawn the tracked workflow.
+
+- **Backend reload = SIGUSR2 to the LIVE pid2-owned supervisor. This is the default; use it.**
+  `kill -USR2 "$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1)"` rebuilds + restarts ONLY the
+  API child IN PLACE (handler in `runDevApp.mjs`: `reloadApiInPlace`). The supervisor never exits, so
+  the preview stays attached and the web port never drops — the user sees the new backend with no
+  crash flash and nothing to click. Confirm the reload: poll `http://127.0.0.1:8080/api/healthz` → 200.
+- Verify the supervisor is the pid2-owned one (its parent chain reaches `pid2`):
+  `pgrep -f 'node ./scripts/runDevApp.mjs'` then walk `/proc/<pid>/stat` field 4 up to pid2. If the
+  app is fully stopped (no supervisor), the user must hit Run once to let pid2 spawn it (the one
+  bootstrap only pid2 can do); then drive everything via SIGUSR2.
+- Do NOT shell-launch `REPLIT_MODE=workflow pnpm ... dev:replit` to reload code — that spawns a
+  supervisor pid2 doesn't track, detaching the user's preview (the `Exit status 143` churn). Avoid it.
+- Confirm what the user actually sees by hitting the PUBLIC preview URL from the container:
+  `https://$REPLIT_DEV_DOMAIN/` (web) and `.../api/healthz` (API) — 200 + `<title>PYRUS Platform</title>`
+  means the preview will render the live app on refresh.
 - Canonical ports: API `8080` (external 80), web/preview `18747` (external 3000); `pyrus_compute`
   binds 18768/18770 (expected, not duplicates). Confirm a restart loaded your code by grepping the
   live `artifacts/api-server/dist/index.mjs` or reading `.pyrus-runtime/flight-recorder/api-current.json`.
 - Targeted `pnpm` test/typecheck/build commands remain the fast path for logic validation; restart
   only when you need runtime/preview verification.
+
+**Headless browser (visual verification + screenshots) — repo-native, no setup.** To actually SEE a
+rendered page (catch blank screens, crashes, console errors, network patterns), use the committed
+helper instead of any external/ephemeral browser daemon:
+`pnpm shot "https://$REPLIT_DEV_DOMAIN/?screen=market-demo" --out /tmp/x.png --full --json`
+(`scripts/headless-shot.mjs`; flags: `--wait-for <css>`, `--wait <ms>`, `--match <substr>` to count
+network calls, `--viewport WxH`, `--fail-on-console`). It drives the already-installed
+`@playwright/test` pointed at Replit's Nix-provided Chromium via
+`REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE`; the shared libs are declared in `replit.nix`, so there is NO
+`playwright install` step and it survives container rebuilds. The same wiring is in
+`artifacts/pyrus/playwright.config.ts`, so the e2e specs (`pnpm --filter @workspace/pyrus run
+browser:waterfall`) run in-container too. The app holds open SSE streams, so `networkidle` never
+fires — use `--wait`/`--wait-for`, not idle waits. Then Read the PNG to view it. Off Replit, run
+`pnpm exec playwright install chromium` once (the env var is unset and Playwright uses its own browser).
 
 **Startup contract (keeps the Replit workflow working — not an agent-permission guard).**
 - `artifacts/*/.replit-artifact/artifact.toml` is the source of truth for dev startup;
@@ -50,6 +77,7 @@ started by Replit's pid2 manager) does not hot-restart its children.
 - Stay inside the user's stated scope. Do not broaden from diagnosis to fixes, from scoped validation to full-app QA, or from source-confirmed probes to exploratory endpoint guessing without saying why and getting confirmation when scope is uncertain.
 - Do not use speculative probes as discovery. Use `rg`, generated clients, route files, tests, or docs to find the correct command/URL/schema first; then run the probe.
 - When evidence disproves the current theory, update the theory explicitly instead of forcing the data to fit the original plan.
+- Trace every "because." Any causal claim — "the stream stalled because the connection died", "it's slow because of pressure" — is a HYPOTHESIS, not a finding, until the cause is verified from source or runtime. The instant you write "because", STOP: the clause after "because" is the actual deliverable and must be investigated, not asserted. A symptom is not a cause ("the connection died" is a symptom; WHY it died is the answer); chase the chain down to a verified root, not the first plausible-sounding link. Never present an unverified cause as the answer. If the root isn't proven yet, label it "cause unverified" and state the single check that would confirm it — then run that check before concluding.
 
 ## 1. Think Before Coding
 
