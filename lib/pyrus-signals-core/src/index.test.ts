@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  aggregatePyrusSignalsBarsForTimeframe,
+  buildPyrusSignalsDirectionalFeatures,
   evaluatePyrusSignalsSignals,
   resolvePyrusSignalsSignalSettings,
   resolvePyrusSignalsTrendDirection,
@@ -94,6 +96,43 @@ test("default includeProvisionalSignals ignores waitForBarClose — call sites m
   assert.ok(evaluation.signalEvents.some((s) => s.barIndex === last));
 });
 
+test("lastBarClosed=true emits the final-bar signal at its own close under waitForBarClose", () => {
+  // Completed-series callers (the signal monitor) prove the final bar closed;
+  // waitForBarClose's forming-bar guard must not cost them a full extra bar.
+  const bars = buildForminBarBreakoutSeries();
+  const last = bars.length - 1;
+  const settings = resolvePyrusSignalsSignalSettings({ waitForBarClose: true });
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: bars,
+    settings,
+    includeProvisionalSignals: !settings.waitForBarClose,
+    lastBarClosed: true,
+  });
+  assert.ok(
+    evaluation.signalEvents.some(
+      (s) => s.barIndex === last && s.direction === "long" && s.actionable,
+    ),
+    "a provably-closed final bar's signal should fire at its own close",
+  );
+});
+
+test("lastBarClosed=false preserves the forming-bar suppression", () => {
+  const bars = buildForminBarBreakoutSeries();
+  const last = bars.length - 1;
+  const settings = resolvePyrusSignalsSignalSettings({ waitForBarClose: true });
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: bars,
+    settings,
+    includeProvisionalSignals: !settings.waitForBarClose,
+    lastBarClosed: false,
+  });
+  assert.equal(
+    evaluation.signalEvents.some((s) => s.barIndex === last),
+    false,
+    "an unproven final bar keeps the conservative one-bar wait",
+  );
+});
+
 const BASIS_LENGTH = 80;
 
 // A monotonically rising/falling close series of `count` bars. Direction is
@@ -145,4 +184,102 @@ test("a neutral (0) MTF frame never satisfies a required ±1 direction gate", ()
     // never counts toward a required bullish OR bearish gate.
     assert.equal(neutral === requiredSign, false);
   }
+});
+
+test("buildPyrusSignalsDirectionalFeatures signs momentum and range by signal direction", () => {
+  const bars = Array.from({ length: 90 }, (_, index) => {
+    const c = 100 + index;
+    return mkBar(index, c - 0.2, c + 1, c - 1, c);
+  });
+
+  const long = buildPyrusSignalsDirectionalFeatures({
+    chartBars: bars,
+    index: 89,
+    direction: 1,
+    mtfDirections: [1, -1, 1],
+    adx: 30,
+    volatilityScore: 6,
+    atr: 2,
+  });
+  const short = buildPyrusSignalsDirectionalFeatures({
+    chartBars: bars,
+    index: 89,
+    direction: -1,
+    mtfDirections: [1, -1, 1],
+    adx: 30,
+    volatilityScore: 6,
+    atr: 2,
+  });
+
+  assert.equal(long.version, "directional-features-v1");
+  assert.ok(long.shortMomentumPct > 0);
+  assert.ok(long.mediumMomentumPct > long.shortMomentumPct);
+  assert.ok(long.longMomentumPct > long.mediumMomentumPct);
+  assert.ok(short.shortMomentumPct < 0);
+  assert.ok(short.rangePosition20 < long.rangePosition20);
+  assert.equal(long.volumeRatio20, 1);
+  assert.equal(long.mtfAlignment, 1.5);
+  assert.equal(short.mtfAlignment, 0);
+  assert.ok(long.riskAdjustedMomentum > 0);
+});
+
+test("buildPyrusSignalsDirectionalFeatures does not read future bars", () => {
+  const bars = Array.from({ length: 90 }, (_, index) => {
+    const c = 100 + index;
+    return mkBar(index, c - 0.2, c + 1, c - 1, c);
+  });
+  const base = buildPyrusSignalsDirectionalFeatures({
+    chartBars: bars,
+    index: 80,
+    direction: 1,
+    mtfDirections: [1, 1, 1],
+    adx: 24,
+    volatilityScore: 5,
+    atr: 1.5,
+  });
+  const withFutureSpike = buildPyrusSignalsDirectionalFeatures({
+    chartBars: [
+      ...bars.slice(0, 81),
+      mkBar(81, 10_000, 10_100, 9_900, 10_050),
+      ...bars.slice(82),
+    ],
+    index: 80,
+    direction: 1,
+    mtfDirections: [1, 1, 1],
+    adx: 24,
+    volatilityScore: 5,
+    atr: 1.5,
+  });
+
+  assert.deepEqual(withFutureSpike, base);
+});
+
+test("aggregatePyrusSignalsBarsForTimeframe: date is the first 10 chars of ts, OHLCV merges per bucket", () => {
+  const day = 1_700_000_000; // 2023-11-14T22:13:20Z
+  const bars: PyrusSignalsBar[] = [
+    { time: day, o: 10, h: 12, l: 9, c: 11, v: 100 },
+    { time: day + 60, o: 11, h: 15, l: 8, c: 13, v: 50 }, // same UTC day -> merges
+    { time: day + 86_400, o: 20, h: 22, l: 19, c: 21, v: 200 }, // next UTC day
+  ];
+
+  const agg = aggregatePyrusSignalsBarsForTimeframe(bars, "D");
+
+  assert.equal(agg.length, 2);
+  // The perf change derives `date` from the single `ts` string instead of a second
+  // Date+toISOString. This invariant must hold for every emitted bucket.
+  for (const bar of agg) {
+    assert.ok(bar.ts);
+    assert.equal(bar.date, bar.ts.slice(0, 10));
+  }
+  assert.equal(agg[0].ts, "2023-11-14T00:00:00.000Z");
+  assert.equal(agg[0].date, "2023-11-14");
+  // bucket 1 merged the two same-day bars: open kept, max high, min low, last
+  // close, summed volume.
+  assert.deepEqual(
+    { o: agg[0].o, h: agg[0].h, l: agg[0].l, c: agg[0].c, v: agg[0].v },
+    { o: 10, h: 15, l: 8, c: 13, v: 150 },
+  );
+  // bucket 2 is the untouched next-day bar.
+  assert.equal(agg[1].c, 21);
+  assert.equal(agg[1].v, 200);
 });

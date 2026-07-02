@@ -228,6 +228,80 @@ test("signal matrix stream scope treats exact cells as authoritative", () => {
   ]);
 });
 
+test("signal matrix stream scope resolves profile universe when no explicit symbols are supplied", async () => {
+  const scope =
+    await __signalMonitorInternalsForTests.resolveSignalMonitorMatrixStreamScope({
+      environment: "shadow",
+      timeframes: ["1m", "5m"],
+      universe: "profile",
+      resolveProfileUniverseSymbols: async () => ["tsla", "NVDA", "TSLA", " "],
+    });
+
+  assert.equal(scope.exactCells, false);
+  assert.deepEqual(scope.symbols, ["NVDA", "TSLA"]);
+  assert.deepEqual(scope.timeframes, ["1m", "5m"]);
+  assert.equal(scope.requestedSymbolCount, 2);
+  assert.equal(scope.truncated, false);
+});
+
+test("signal matrix stream profile scope uses the capped active profile universe only", () => {
+  const symbols =
+    __signalMonitorInternalsForTests.signalMonitorMatrixStreamProfileSymbols({
+      symbols: ["SPY", "NVDA", "AAPL"],
+      watchlistSymbols: ["SPY", "TSLA"],
+      skippedSymbols: ["SQQQ"],
+    } as never);
+
+  assert.deepEqual(symbols, ["SPY", "NVDA", "AAPL"]);
+});
+
+test("signal monitor active universe excludes overflow watchlist/skipped symbols", () => {
+  const symbols =
+    __signalMonitorInternalsForTests.resolveSignalMonitorActiveUniverseSymbols({
+      symbols: ["spy", "NVDA", "SPY"],
+      watchlistSymbols: ["SPY", "TSLA"],
+      skippedSymbols: ["SQQQ"],
+    } as never);
+
+  assert.deepEqual(symbols, ["SPY", "NVDA"]);
+});
+
+test("signal matrix profile streams use stored-state universe in passive mode", () => {
+  const resolverStart = serviceSource.indexOf(
+    "async function resolveSignalMonitorMatrixStreamProfileUniverseSymbols",
+  );
+  const resolverEnd = serviceSource.indexOf(
+    "function signalMonitorEvaluationRotationKey",
+    resolverStart,
+  );
+  assert.notEqual(resolverStart, -1);
+  assert.notEqual(resolverEnd, -1);
+  const resolverBlock = serviceSource.slice(resolverStart, resolverEnd);
+
+  assert.match(resolverBlock, /!isSignalMonitorBarEvaluationEnabled\(\)/);
+  assert.match(resolverBlock, /await getSignalMonitorStoredState/);
+  assert.match(resolverBlock, /symbols: snapshot\.universeSymbols/);
+});
+
+test("signal matrix stream scope keeps explicit symbols ahead of profile universe", async () => {
+  let resolvedProfile = false;
+  const scope =
+    await __signalMonitorInternalsForTests.resolveSignalMonitorMatrixStreamScope({
+      environment: "shadow",
+      symbols: ["aapl"],
+      timeframes: ["1m"],
+      universe: "profile",
+      resolveProfileUniverseSymbols: async () => {
+        resolvedProfile = true;
+        return ["TSLA"];
+      },
+    });
+
+  assert.equal(resolvedProfile, false);
+  assert.deepEqual(scope.symbols, ["AAPL"]);
+  assert.deepEqual(scope.timeframes, ["1m"]);
+});
+
 test("signal matrix stream aggregate evaluation only touches the aggregate symbol", () => {
   withSignalMonitorBarEvaluationEnabled(() => {
     const scope =
@@ -431,7 +505,7 @@ test("stream deltas latch direction across directionless re-evaluations", () => 
           currentSignalPrice: null,
           barsSinceSignal: null,
           fresh: false,
-          latestBarAt: new Date("2026-06-09T15:10:00.000Z"),
+          latestBarAt: new Date("2026-06-09T15:40:00.000Z"),
         });
       },
     });
@@ -442,7 +516,7 @@ test("stream deltas latch direction across directionless re-evaluations", () => 
       (latched?.["currentSignalAt"] as Date).toISOString(),
       "2026-06-09T14:55:00.000Z",
     );
-    assert.equal(latched?.["barsSinceSignal"], 3);
+    assert.equal(latched?.["barsSinceSignal"], 9);
     assert.equal(latched?.["fresh"], false);
     assert.equal(latched?.["actionEligible"], false);
     assert.equal(latched?.["actionBlocker"], "signal_too_old");
@@ -772,6 +846,69 @@ test("signal matrix stream bootstrap hydrates from stored canonical state", () =
   // Bootstrap states carry backend-authored actionability for the STA table.
   assert.equal(event.states[0]?.actionEligible, true);
   assert.equal(event.states[0]?.actionBlocker, null);
+});
+
+test("signal matrix stream bootstrap keeps stored unavailable cells as row placeholders", () => {
+  __signalMonitorInternalsForTests.resetSignalMonitorMatrixStreamForTests();
+  const scope =
+    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+      environment: "shadow",
+      symbols: ["INN", "IPAY"],
+      timeframes: ["5m"],
+      clientRole: "leader",
+      requestOrigin: "startup",
+    });
+  const event =
+    __signalMonitorInternalsForTests.buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
+      {
+        profile: { id: "profile-test", freshWindowBars: 3 },
+        evaluatedAt,
+        states: [
+          {
+            id: "profile-test:INN:5m:unavailable",
+            profileId: "profile-test",
+            symbol: "INN",
+            timeframe: "5m",
+            currentSignalDirection: null,
+            currentSignalAt: null,
+            currentSignalPrice: null,
+            latestBarAt: null,
+            barsSinceSignal: null,
+            fresh: false,
+            status: "unavailable",
+            active: true,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: "No signal monitor state is available for this symbol/timeframe.",
+          },
+          {
+            id: "profile-test:IPAY:5m",
+            profileId: "profile-test",
+            symbol: "IPAY",
+            timeframe: "5m",
+            currentSignalDirection: "sell",
+            currentSignalAt: new Date("2026-06-09T14:55:00.000Z"),
+            currentSignalPrice: 12.34,
+            latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+            barsSinceSignal: 1,
+            fresh: true,
+            status: "ok",
+            active: true,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: null,
+          },
+        ],
+      } as never,
+      scope,
+    );
+
+  assert.equal(event.event, "bootstrap");
+  assert.deepEqual(
+    event.states.map((state) => `${state.symbol}:${state.timeframe}:${state.status}`),
+    ["INN:5m:unavailable", "IPAY:5m:ok"],
+  );
+  assert.equal(event.coverage.stateCount, 2);
+  assert.equal(event.states[0]?.actionEligible, false);
+  assert.equal(event.states[0]?.actionBlocker, "no_signal");
 });
 
 test("signal matrix stream bootstrap does not publish runtime fallback state as matrix truth", () => {

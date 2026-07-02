@@ -16,6 +16,58 @@ const merge =
   __signalMonitorInternalsForTests.mergeFreshBarMetadataOntoPreservedSignalRow;
 const shouldPreserve =
   __signalMonitorInternalsForTests.shouldPreserveExistingSignalMonitorSymbolState;
+const barsSinceSignal =
+  __signalMonitorInternalsForTests.signalMonitorBarsSinceSignal;
+
+test("1d barsSinceSignal ages by trading days even when the persisted count is frozen at 0/1", () => {
+  // A weeks-old daily signal whose latch froze barsSinceSignal at 0 must now age
+  // out of the actionable window (barsSinceSignal <= 1). 2026-06-03 (Wed) ->
+  // 2026-06-30 (Tue) spans 19 trading weekdays.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "1d",
+      signalAt: new Date("2026-06-03T00:00:00.000Z"),
+      latestBarAt: new Date("2026-06-30T00:00:00.000Z"),
+      presentBarsSinceSignal: 0,
+    }),
+    19,
+  );
+
+  // A genuinely recent daily signal stays inside the actionable window: a signal
+  // on the prior trading day (Mon -> Tue) is 1 bar old.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "1d",
+      signalAt: new Date("2026-06-29T00:00:00.000Z"),
+      latestBarAt: new Date("2026-06-30T00:00:00.000Z"),
+      presentBarsSinceSignal: 1,
+    }),
+    1,
+  );
+
+  // Weekends are not counted as elapsed daily bars: a Friday signal viewed the
+  // following Monday is 1 trading day old, not 3.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "1d",
+      signalAt: new Date("2026-06-26T00:00:00.000Z"),
+      latestBarAt: new Date("2026-06-29T00:00:00.000Z"),
+      presentBarsSinceSignal: 0,
+    }),
+    1,
+  );
+
+  // A signal on the latest daily bar is 0 bars old.
+  assert.equal(
+    barsSinceSignal({
+      timeframe: "1d",
+      signalAt: new Date("2026-06-30T00:00:00.000Z"),
+      latestBarAt: new Date("2026-06-30T00:00:00.000Z"),
+      presentBarsSinceSignal: 0,
+    }),
+    0,
+  );
+});
 
 function existingRow(
   overrides: Record<string, unknown> = {},

@@ -1394,14 +1394,22 @@ test("signal monitor reconciliation trusts event integrity and websocket-backed 
     "const latestBarAdvanceCandidates",
     reconcileStart,
   );
+  const latestTrustedBarsStart = source.indexOf(
+    "async function listLatestTrustedSignalMonitorBarsForCells",
+    reconcileStart,
+  );
   const latestEnd = source.indexOf("const latestBarAdvanced", latestStart);
   assert.notEqual(latestStart, -1);
+  assert.notEqual(latestTrustedBarsStart, -1);
   assert.notEqual(latestEnd, -1);
   assert.doesNotMatch(
-    source.slice(reconcileStart, latestStart),
+    source.slice(reconcileStart, latestTrustedBarsStart),
     /JOIN bar_cache AS (current_event_bar|replacement_event_bar)/,
   );
-  assert.doesNotMatch(source.slice(reconcileStart, latestStart), /source = 'massive-history'/);
+  assert.doesNotMatch(
+    source.slice(reconcileStart, latestTrustedBarsStart),
+    /source = 'massive-history'/,
+  );
 
   const latestBlock = source.slice(latestStart, latestEnd);
   assert.match(latestBlock, /source = 'massive-history'/);

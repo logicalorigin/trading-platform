@@ -420,7 +420,7 @@ test("Signal Options snapshot blocks non-ok signal states regardless of bar age"
   assert.equal(snapshot.actionBlocker, "data_stale");
 });
 
-test("Signal Options still rejects signals outside the one-bar execution window", () => {
+test("Signal Options still rejects signals aged outside the actionable execution window", () => {
   const {
     candidateFromSignalSnapshot,
     isSignalOptionsActionableSignalState,
@@ -431,7 +431,7 @@ test("Signal Options still rejects signals outside the one-bar execution window"
       string,
       unknown
     >),
-    barsSinceSignal: 6,
+    barsSinceSignal: 9,
     fresh: true,
   } as never;
 
@@ -449,8 +449,8 @@ test("Signal Options still rejects signals outside the one-bar execution window"
         direction: "sell",
         signalAt: "2026-06-11T15:05:00.000Z",
         signalPrice: 100,
-        latestBarAt: "2026-06-11T15:35:00.000Z",
-        barsSinceSignal: 6,
+        latestBarAt: "2026-06-11T15:50:00.000Z",
+        barsSinceSignal: 9,
         freshWindowBars: 8,
         fresh: true,
         actionEligible: false,
@@ -474,8 +474,8 @@ test("Signal Options still rejects signals outside the one-bar execution window"
         direction: "sell",
         signalAt: "2026-06-11T15:05:00.000Z",
         signalPrice: 100,
-        latestBarAt: "2026-06-11T15:35:00.000Z",
-        barsSinceSignal: 6,
+        latestBarAt: "2026-06-11T15:50:00.000Z",
+        barsSinceSignal: 9,
         freshWindowBars: 8,
         fresh: true,
         actionEligible: false,

@@ -105,12 +105,29 @@ export type PyrusSignalsFilterState = {
   mtfDirections: [number, number, number];
   adx: number;
   volatilityScore: number;
+  directionalFeatures: PyrusSignalsDirectionalFeatures;
   sessionKey: PyrusSignalsSessionOption | null;
   mtfPass: [boolean, boolean, boolean];
   adxPass: boolean;
   volatilityPass: boolean;
   sessionPass: boolean;
   passes: boolean;
+};
+
+export type PyrusSignalsDirectionalFeatures = {
+  version: "directional-features-v1";
+  shortMomentumPct: number;
+  mediumMomentumPct: number;
+  longMomentumPct: number;
+  riskAdjustedMomentum: number;
+  rangePosition20: number;
+  rangeComponent: number;
+  volumeRatio20: number;
+  volumeExpansion: number;
+  adxComponent: number;
+  volatilityComponent: number;
+  mtfAlignment: number;
+  atrPct: number;
 };
 
 export type PyrusSignalsEvaluation = {
@@ -731,11 +748,18 @@ export const aggregatePyrusSignalsBarsForTimeframe = (
     const bucketTime = Math.floor(bucketStartMs / 1000);
     const lastBar = aggregatedBars[aggregatedBars.length - 1];
     if (!lastBar || lastBar.time !== bucketTime) {
+      // One Date + one toISOString per bucket boundary, not two. `date` is just
+      // the first 10 chars of the same ISO string, so the second
+      // `new Date(...).toISOString()` was pure duplicated work — and on the
+      // universe-wide signal fan-out this aggregation is a top event-loop cost
+      // (V8 Date formatting), so halving it directly relieves the loop. Output is
+      // byte-identical.
+      const bucketIso = new Date(bucketStartMs).toISOString();
       aggregatedBars.push({
         ...bar,
         time: bucketTime,
-        ts: new Date(bucketStartMs).toISOString(),
-        date: new Date(bucketStartMs).toISOString().slice(0, 10),
+        ts: bucketIso,
+        date: bucketIso.slice(0, 10),
       });
       return;
     }
@@ -904,6 +928,134 @@ const hasHardBarTimeGap = (
   return chartBars[index].time - chartBars[index - 1].time > medianInterval * 2;
 };
 
+const clampNumber = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const roundFeature = (value: number): number =>
+  Number.isFinite(value) ? Number(value.toFixed(6)) : 0;
+
+const averageFinite = (values: number[]): number => {
+  const finite = values.filter(Number.isFinite);
+  return finite.length
+    ? finite.reduce((sum, value) => sum + value, 0) / finite.length
+    : 0;
+};
+
+const directionalPercentChange = (
+  chartBars: PyrusSignalsBar[],
+  index: number,
+  lookback: number,
+  direction: number,
+): number => {
+  const current = chartBars[index];
+  const previous = chartBars[index - lookback];
+  if (!current || !previous || !Number.isFinite(previous.c) || previous.c <= 0) {
+    return 0;
+  }
+  return ((current.c - previous.c) / previous.c) * 100 * direction;
+};
+
+export function buildPyrusSignalsDirectionalFeatures(input: {
+  chartBars: PyrusSignalsBar[];
+  index: number;
+  direction: number;
+  mtfDirections: readonly number[];
+  adx: number;
+  volatilityScore: number;
+  atr: number;
+}): PyrusSignalsDirectionalFeatures {
+  const current = input.chartBars[input.index];
+  const direction = input.direction >= 0 ? 1 : -1;
+  if (!current) {
+    return {
+      version: "directional-features-v1",
+      shortMomentumPct: 0,
+      mediumMomentumPct: 0,
+      longMomentumPct: 0,
+      riskAdjustedMomentum: 0,
+      rangePosition20: 0.5,
+      rangeComponent: 0,
+      volumeRatio20: 1,
+      volumeExpansion: 0,
+      adxComponent: -1,
+      volatilityComponent: 0,
+      mtfAlignment: 0,
+      atrPct: 0,
+    };
+  }
+
+  const shortMomentumPct = directionalPercentChange(
+    input.chartBars,
+    input.index,
+    6,
+    direction,
+  );
+  const mediumMomentumPct = directionalPercentChange(
+    input.chartBars,
+    input.index,
+    20,
+    direction,
+  );
+  const longMomentumPct = directionalPercentChange(
+    input.chartBars,
+    input.index,
+    78,
+    direction,
+  );
+
+  const rangeBars = input.chartBars.slice(Math.max(0, input.index - 19), input.index + 1);
+  const rangeHigh = Math.max(...rangeBars.map((bar) => bar.h));
+  const rangeLow = Math.min(...rangeBars.map((bar) => bar.l));
+  const rangePosition =
+    Number.isFinite(rangeHigh) &&
+    Number.isFinite(rangeLow) &&
+    rangeHigh > rangeLow
+      ? direction === 1
+        ? (current.c - rangeLow) / (rangeHigh - rangeLow)
+        : (rangeHigh - current.c) / (rangeHigh - rangeLow)
+      : 0.5;
+
+  const priorVolumeAverage = averageFinite(
+    input.chartBars
+      .slice(Math.max(0, input.index - 20), input.index)
+      .map((bar) => bar.v),
+  );
+  const volumeRatio =
+    priorVolumeAverage > 0 && current.v > 0 ? current.v / priorVolumeAverage : 1;
+
+  const adx = Number.isFinite(input.adx) ? input.adx : 0;
+  const volatilityScore = Number.isFinite(input.volatilityScore)
+    ? input.volatilityScore
+    : 0;
+  const mtfAlignment =
+    input.mtfDirections.filter((value) => value === direction).length -
+    input.mtfDirections.filter((value) => value === -direction).length * 0.5;
+  const atrPct =
+    Number.isFinite(input.atr) && input.atr > 0 && current.c > 0
+      ? (input.atr / current.c) * 100
+      : 0;
+  const riskAdjustedMomentum =
+    mediumMomentumPct / Math.max(0.25, atrPct || 0.25);
+
+  return {
+    version: "directional-features-v1",
+    shortMomentumPct: roundFeature(shortMomentumPct),
+    mediumMomentumPct: roundFeature(mediumMomentumPct),
+    longMomentumPct: roundFeature(longMomentumPct),
+    riskAdjustedMomentum: roundFeature(riskAdjustedMomentum),
+    rangePosition20: roundFeature(clampNumber(rangePosition, 0, 1)),
+    rangeComponent: roundFeature((clampNumber(rangePosition, 0, 1) - 0.5) * 4),
+    volumeRatio20: roundFeature(volumeRatio),
+    volumeExpansion: roundFeature(clampNumber(volumeRatio - 1, -1, 2)),
+    adxComponent: roundFeature(clampNumber((adx - 18) / 12, -1, 2.5)),
+    volatilityComponent: roundFeature(
+      clampNumber(1 - Math.abs(volatilityScore - 6) / 6, -0.5, 1),
+    ),
+    mtfAlignment: roundFeature(mtfAlignment),
+    atrPct: roundFeature(atrPct),
+  };
+}
+
 const buildFilterState = (
   chartBars: PyrusSignalsBar[],
   index: number,
@@ -911,6 +1063,7 @@ const buildFilterState = (
   settings: PyrusSignalsSignalSettings,
   adx: number[],
   volatilityScore: number[],
+  atrSmoothed: number[],
 ): PyrusSignalsFilterState => {
   const mtfDirections = [settings.mtf1, settings.mtf2, settings.mtf3].map(
     (mtfTimeframe) =>
@@ -924,6 +1077,15 @@ const buildFilterState = (
   ) as [number, number, number];
   const currentAdx = adx[index];
   const currentVolatilityScore = volatilityScore[index];
+  const directionalFeatures = buildPyrusSignalsDirectionalFeatures({
+    chartBars,
+    index,
+    direction,
+    mtfDirections,
+    adx: currentAdx,
+    volatilityScore: currentVolatilityScore,
+    atr: atrSmoothed[index],
+  });
   const currentSessionKey = resolvePyrusSignalsSessionKey(chartBars[index]);
   const mtfPass: [boolean, boolean, boolean] = [
     !settings.requireMtf1 || mtfDirections[0] === direction,
@@ -951,6 +1113,7 @@ const buildFilterState = (
     mtfDirections,
     adx: currentAdx,
     volatilityScore: currentVolatilityScore,
+    directionalFeatures,
     sessionKey: currentSessionKey,
     mtfPass,
     adxPass,
@@ -964,9 +1127,17 @@ export function evaluatePyrusSignalsSignals(input: {
   chartBars: PyrusSignalsBar[];
   settings: PyrusSignalsSignalSettings;
   includeProvisionalSignals?: boolean;
+  // waitForBarClose treats the FINAL series bar as possibly still forming
+  // (TradingView semantics: the last chart bar is the live bar) and suppresses
+  // its signal until a newer bar exists. Callers that feed a completed-bars-only
+  // series (the signal monitor) set this true when the final bar provably
+  // closed, so the signal fires at its own bar close instead of one full bar
+  // later. Default false preserves forming-bar suppression for chart callers.
+  lastBarClosed?: boolean;
 }): PyrusSignalsEvaluation {
   const { chartBars, settings } = input;
   const includeProvisionalSignals = input.includeProvisionalSignals !== false;
+  const lastBarClosed = input.lastBarClosed === true;
   const closes = chartBars.map((bar) => bar.c);
   const basis = computePyrusSignalsWma(closes, settings.basisLength);
   const atrRaw = computePyrusSignalsAtr(chartBars, settings.atrLength);
@@ -1179,6 +1350,7 @@ export function evaluatePyrusSignalsSignals(input: {
     const actionable =
       includeProvisionalSignals ||
       !settings.waitForBarClose ||
+      lastBarClosed ||
       index < chartBars.length - 1;
 
     const pushStructure = (
@@ -1215,6 +1387,7 @@ export function evaluatePyrusSignalsSignals(input: {
         settings,
         adx,
         volatilityScore,
+        atrSmoothed,
       );
       pushStructure(
         bullishChoch ? "bullish_choch" : "bearish_choch",

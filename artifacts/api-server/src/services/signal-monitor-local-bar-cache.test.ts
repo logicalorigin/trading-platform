@@ -19,7 +19,11 @@ test("signal monitor local bar cache rolls up sparse completed hourly buckets", 
   const internals = __signalMonitorLocalBarCacheInternalsForTests;
   internals.reset();
   try {
-    const bucketStartMs = Date.parse("2026-06-22T18:00:00.000Z");
+    // Anchor to a recent completed hour so the ingested bars stay inside the
+    // 72h memory-retention window (storeMinuteBar prunes older-than-now-72h);
+    // a fixed past date rots into a false failure once it ages out.
+    const bucketStartMs =
+      Math.floor((Date.now() - 2 * 60 * 60_000) / (60 * 60_000)) * (60 * 60_000);
     const aggregate = (
       minute: number,
       values: Pick<
@@ -54,12 +58,15 @@ test("signal monitor local bar cache rolls up sparse completed hourly buckets", 
     const bars = internals.readMemoryBars({
       symbol: "AGZ",
       timeframe: "1h",
-      evaluatedAt: new Date("2026-06-22T19:05:00.000Z"),
+      evaluatedAt: new Date(bucketStartMs + 65 * 60_000),
       limit: 5,
     });
 
     assert.equal(bars.length, 1);
-    assert.equal(bars[0]?.timestamp.toISOString(), "2026-06-22T18:00:00.000Z");
+    assert.equal(
+      bars[0]?.timestamp.toISOString(),
+      new Date(bucketStartMs).toISOString(),
+    );
     assert.equal(bars[0]?.open, 100);
     assert.equal(bars[0]?.high, 103);
     assert.equal(bars[0]?.low, 98);

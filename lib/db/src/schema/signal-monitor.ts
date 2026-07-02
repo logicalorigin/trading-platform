@@ -130,6 +130,16 @@ export const signalMonitorEventsTable = pgTable(
     index("signal_monitor_events_profile_idx").on(table.profileId),
     index("signal_monitor_events_symbol_idx").on(table.symbol),
     index("signal_monitor_events_signal_at_idx").on(table.signalAt),
+    // Serves the latest-trusted-event DISTINCT ON (symbol, timeframe) ORDER BY
+    // symbol, timeframe, signal_at DESC per profile (listLatestTrustedSignalMonitorEvents).
+    // With only profile_idx (one profile/env) the planner scanned+sorted the whole table;
+    // at a 2000-symbol universe that ~4x-larger scan risks the statement timeout.
+    index("signal_monitor_events_profile_symbol_tf_signal_at_idx").on(
+      table.profileId,
+      table.symbol,
+      table.timeframe,
+      table.signalAt.desc(),
+    ),
   ],
 );
 
@@ -159,6 +169,33 @@ export const signalMonitorBreadthSnapshotsTable = pgTable(
       table.timeframe,
       table.capturedAt,
     ),
+  ],
+);
+
+// Stored curated order for the signal-monitor expansion universe: one row per
+// optionable catalog symbol, refreshed once per completed session by
+// signal-universe-ranking.ts. `member` is the hysteresis-stable top-set flag
+// the expansion query orders by first (so borderline rank flips cannot thrash
+// the set); `excluded_reason` keeps every curation drop auditable.
+export const signalUniverseRankingsTable = pgTable(
+  "signal_universe_rankings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    symbol: varchar("symbol", { length: 64 }).notNull(),
+    score: numeric("score", { precision: 20, scale: 6 }).notNull().default("0"),
+    rank: integer("rank"),
+    dollarVolume: numeric("dollar_volume", { precision: 24, scale: 2 }),
+    volatility: numeric("volatility", { precision: 18, scale: 6 }),
+    optionable: boolean("optionable").notNull().default(false),
+    excludedReason: varchar("excluded_reason", { length: 160 }),
+    member: boolean("member").notNull().default(false),
+    rankedAt: timestamp("ranked_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("signal_universe_rankings_symbol_idx").on(table.symbol),
+    index("signal_universe_rankings_rank_idx").on(table.rank),
+    index("signal_universe_rankings_member_idx").on(table.member),
   ],
 );
 

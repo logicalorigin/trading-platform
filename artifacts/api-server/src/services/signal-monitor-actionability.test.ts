@@ -21,7 +21,9 @@ test("signal age blocker matches the signal-options execution window", () => {
   assert.equal(signalMonitorSignalAgeBlocker(null), "signal_age_unavailable");
   assert.equal(signalMonitorSignalAgeBlocker(0), null);
   assert.equal(signalMonitorSignalAgeBlocker(1), null);
-  assert.equal(signalMonitorSignalAgeBlocker(2), "signal_too_old");
+  // Window widened to 8 bars to survive signal emission latency (~2.7-bar median).
+  assert.equal(signalMonitorSignalAgeBlocker(8), null);
+  assert.equal(signalMonitorSignalAgeBlocker(9), "signal_too_old");
 });
 
 test("fresh requires a bar age inside the profile window and current data", () => {
@@ -77,7 +79,7 @@ test("actionability requires a directional signal, current data, and young age",
     "market_idle",
   );
   assert.equal(
-    buildSignalMonitorActionability({ ...base, barsSinceSignal: 5 })
+    buildSignalMonitorActionability({ ...base, barsSinceSignal: 9 })
       .actionBlocker,
     "signal_too_old",
   );

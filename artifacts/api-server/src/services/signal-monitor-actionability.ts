@@ -5,7 +5,16 @@
 // signal-options-automation, and in the STA frontend, with the max-age
 // constant defined twice. Any policy change must land here and nowhere else.
 
-export const SIGNAL_MONITOR_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 1;
+// Actionable age window, in bars. A signal is "act now" while its
+// barsSinceSignal is within this window. This was 1, but a replay of a live
+// session showed signal EMISSION latency (crossover bar close -> event emitted
+// and available to the automation) has a median of ~2.7 bars and p90 ~7.6 bars,
+// so with a 1-bar window ~59% of signals were already "signal_too_old" the
+// instant they became available — dead on arrival, never actionable. Widening to
+// the profile fresh window (8 bars) recovers ~99% of emitted signals: if a signal
+// is still "fresh", automation may act on it. (Root cause of the emission latency
+// is a separate follow-up; this window makes actionability robust to it.)
+export const SIGNAL_MONITOR_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 8;
 
 export type SignalMonitorActionability = {
   fresh: boolean;

@@ -28,6 +28,7 @@ const {
   mergeCompletedBars,
   selectSignalMonitorBackfillDueCells,
   shouldSkipSignalMonitorBackfillForPressure,
+  shouldSkipSignalMonitorBackfillForQuietProducer,
   traceSignalMonitorLaneCurrentness,
   SIGNAL_MONITOR_BACKFILL_REFRESH_MS,
   SIGNAL_MONITOR_BACKFILL_CONCURRENCY_LIMIT,
@@ -124,6 +125,51 @@ test("pressure-high skips the backfill cycle; watch/normal keep running", () => 
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("high"), true);
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("watch"), false);
   assert.equal(shouldSkipSignalMonitorBackfillForPressure("normal"), false);
+});
+
+test("idle-session producer backfill skips when no aggregate can consume it", () => {
+  const evaluatedAt = new Date("2026-06-26T01:00:00.000Z");
+  const graceMs = 5 * 60_000;
+
+  assert.equal(
+    shouldSkipSignalMonitorBackfillForQuietProducer({
+      evaluatedAt,
+      eventCount: 0,
+      lastAggregateAt: null,
+      recentAggregateGraceMs: graceMs,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldSkipSignalMonitorBackfillForQuietProducer({
+      evaluatedAt,
+      eventCount: 1,
+      lastAggregateAt: new Date("2026-06-26T00:58:00.000Z"),
+      recentAggregateGraceMs: graceMs,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldSkipSignalMonitorBackfillForQuietProducer({
+      evaluatedAt,
+      eventCount: 1,
+      lastAggregateAt: new Date("2026-06-26T00:50:00.000Z"),
+      recentAggregateGraceMs: graceMs,
+    }),
+    true,
+  );
+});
+
+test("active-market producer backfill stays enabled before first aggregate", () => {
+  assert.equal(
+    shouldSkipSignalMonitorBackfillForQuietProducer({
+      evaluatedAt: new Date("2026-06-25T15:00:00.000Z"),
+      eventCount: 0,
+      lastAggregateAt: null,
+      recentAggregateGraceMs: 5 * 60_000,
+    }),
+    false,
+  );
 });
 
 test("price trace explains daily rows marked stale by the policy window", () => {
