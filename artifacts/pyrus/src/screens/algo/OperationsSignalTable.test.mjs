@@ -5,6 +5,7 @@ import test from "node:test";
 import { extractSparklinePoints } from "../../components/platform/primitives.jsx";
 import {
   buildSignalIndicatorMetrics,
+  staRowPassesMtfAlignment,
 } from "./algoHelpers.js";
 import {
   buildStaSignalStatusSummary,
@@ -14,7 +15,6 @@ import {
   resolveRowTickerSnapshot,
   sortRows,
   splitStaRowsBySignalMatrixHydration,
-  staRowPassesMtfAlignment,
 } from "./OperationsSignalTable.jsx";
 
 const source = readFileSync(new URL("./OperationsSignalTable.jsx", import.meta.url), "utf8");
