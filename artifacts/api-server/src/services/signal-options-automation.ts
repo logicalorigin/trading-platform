@@ -4244,6 +4244,9 @@ function signalOptionsExecutionBlocker(input: {
   }
   if (
     input.profile.riskHaltControls.openSymbolCapEnabled !== false &&
+    // A non-finite cap (null/undefined/NaN) would coerce to 0 in the >= compare
+    // and silently halt ALL entries; require a real number before it can block.
+    Number.isFinite(input.profile.riskCaps.maxOpenSymbols) &&
     input.openSymbols >= input.profile.riskCaps.maxOpenSymbols
   ) {
     return {
@@ -4260,9 +4263,20 @@ function signalOptionsExecutionBlocker(input: {
 function signalOptionsGatewayExecutionBlocker(
   readiness: AlgoGatewayReadiness,
   profile?: SignalOptionsExecutionProfile,
+  options?: { isShadow?: boolean },
 ): SignalOptionsExecutionBlocker | null {
   if (
     profile?.infrastructureHaltControls.gatewayReadinessBlockEnabled === false
+  ) {
+    return null;
+  }
+  // Shadow (paper) deployments simulate fills from Massive-backed option quotes and
+  // never route orders to IBKR, so broker gateway connectivity is irrelevant to them.
+  // Bypass every broker-connectivity gateway reason for shadow, but keep the
+  // time-based RTH execution gate (market_session_quiet) intact.
+  if (
+    options?.isShadow === true &&
+    readiness.reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON
   ) {
     return null;
   }
@@ -6897,6 +6911,7 @@ function isRetryableSignalOptionsSkip(
     forceRetryMarketData?: boolean;
     gatewayReady?: boolean;
     gatewayReadinessBlockEnabled?: boolean;
+    isShadow?: boolean;
     contractResolutionBackoffEnabled?: boolean;
     profileUpdatedAt?: Date | null;
     now?: Date;
@@ -6937,7 +6952,11 @@ function isRetryableSignalOptionsSkip(
     payload.preflight === true &&
     GATEWAY_READINESS_SKIP_REASONS.has(reason)
   ) {
+    const shadowBypass =
+      options?.isShadow === true &&
+      reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON;
     return (
+      shadowBypass ||
       options?.gatewayReadinessBlockEnabled === false ||
       options?.gatewayReady === true
     );
@@ -6959,7 +6978,11 @@ function isRetryableSignalOptionsSkip(
   }
 
   if (GATEWAY_READINESS_SKIP_REASONS.has(reason)) {
+    const shadowBypass =
+      options?.isShadow === true &&
+      reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON;
     return (
+      shadowBypass ||
       options?.gatewayReadinessBlockEnabled === false ||
       options?.gatewayReady === true ||
       !skipPayloadHasSelectedContract(payload)
@@ -7062,6 +7085,7 @@ function seenSignalKeys(
     forceRetryMarketData?: boolean;
     gatewayReady?: boolean;
     gatewayReadinessBlockEnabled?: boolean;
+    isShadow?: boolean;
     contractResolutionBackoffEnabled?: boolean;
     profileUpdatedAt?: Date | null;
     now?: Date;
@@ -16684,6 +16708,8 @@ export async function runSignalOptionsShadowBackfill(input: {
 
       if (
         profile.riskHaltControls.openSymbolCapEnabled !== false &&
+        // See finite guard above: a non-finite cap must not coerce to 0 and halt.
+        Number.isFinite(profile.riskCaps.maxOpenSymbols) &&
         positionsBySymbol.size >= profile.riskCaps.maxOpenSymbols
       ) {
         await emitBackfillSkippedCandidate({
@@ -16951,6 +16977,54 @@ export async function runSignalOptionsShadowScan(input: {
   }
 }
 
+type SameScanEntryAction =
+  | { kind: "defer_opened_this_scan" }
+  | { kind: "block_same_direction"; position: SignalOptionsPosition }
+  | { kind: "flip_disabled"; position: SignalOptionsPosition }
+  | { kind: "flip"; position: SignalOptionsPosition }
+  | { kind: "proceed" };
+
+// Decide what to do with an entry candidate given the snapshot position for its
+// symbol AND the set of symbols already opened earlier in THIS scan.
+//
+// The `openedThisScan` guard is the fix for the stale-snapshot double-entry: the
+// entry loop snapshots active positions once (activePositionsBySymbol) and never
+// re-inserts the positions it opens — only `openSymbols` is bumped. Without this
+// guard, a second actionable signal for the SAME symbol later in one scan reads an
+// empty snapshot slot, skips the same-direction/flip dedup, and opens a DUPLICATE
+// (or an opposing leg the symbol-keyed close tracking never reconciles). The loop
+// defers such a candidate WITHOUT emitting a terminal event, so `seenSignalKeys`
+// does not record it and the next scan re-evaluates it against the now-materialized
+// position. Pure + exported for tests; the loop executes the returned action.
+function resolveSameScanEntryAction(input: {
+  symbol: string;
+  candidateDirection: SignalDirection;
+  currentPosition: SignalOptionsPosition | undefined;
+  openedThisScan: ReadonlySet<string>;
+  sameDirectionBlockEnabled: boolean;
+  flipOnOppositeSignal: boolean;
+  oppositeFlipBlockEnabled: boolean;
+}): SameScanEntryAction {
+  if (input.openedThisScan.has(input.symbol)) {
+    return { kind: "defer_opened_this_scan" };
+  }
+  const position = input.currentPosition;
+  if (
+    position &&
+    position.direction === input.candidateDirection &&
+    input.sameDirectionBlockEnabled
+  ) {
+    return { kind: "block_same_direction", position };
+  }
+  if (position && position.direction !== input.candidateDirection) {
+    if (!input.flipOnOppositeSignal && input.oppositeFlipBlockEnabled) {
+      return { kind: "flip_disabled", position };
+    }
+    return { kind: "flip", position };
+  }
+  return { kind: "proceed" };
+}
+
 async function runSignalOptionsShadowScanUnlocked(input: {
   deploymentId: string;
   forceEvaluate?: boolean;
@@ -16975,11 +17049,19 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   );
   const profile = resolveDeploymentProfile(deployment);
   const readiness = await getAlgoGatewayReadiness();
+  // Shadow (paper) deployments never route orders to IBKR, so broker gateway
+  // connectivity does not gate their execution (only the RTH session does).
+  const isShadowDeployment =
+    deployment.providerAccountId === SHADOW_PROVIDER_ACCOUNT_ID;
   const returnSummary =
     source === "worker" || input.responseMode === "summary";
   if (
     !readiness.ready &&
     !(source === "worker" && readiness.reason === SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON) &&
+    !(
+      isShadowDeployment &&
+      readiness.reason !== SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON
+    ) &&
     profile.infrastructureHaltControls.gatewayReadinessBlockEnabled !== false
   ) {
     await recordSignalOptionsGatewayBlocked({ deployment, readiness, source });
@@ -17128,6 +17210,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     premiumBudgetEnabled: profile.riskHaltControls.premiumBudgetEnabled,
     forceRetryMarketData: input.forceEvaluate === true,
     gatewayReady: readiness.ready,
+    isShadow: isShadowDeployment,
     gatewayReadinessBlockEnabled:
       profile.infrastructureHaltControls.gatewayReadinessBlockEnabled,
     contractResolutionBackoffEnabled:
@@ -17370,6 +17453,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       tradingAllowanceBudget?.available ?? null,
     forceRetryMarketData: input.forceEvaluate === true,
     gatewayReady: readiness.ready,
+    isShadow: isShadowDeployment,
     gatewayReadinessBlockEnabled:
       profile.infrastructureHaltControls.gatewayReadinessBlockEnabled,
     contractResolutionBackoffEnabled:
@@ -17394,6 +17478,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   );
   let lastSignalAt: Date | null = signalLastSignalAt;
   let openSymbols = activePositionsBySymbol.size;
+  // Symbols whose position was opened/flipped earlier in THIS scan. activePositionsBySymbol
+  // is snapshotted once above and is NOT updated as entries open below, so this set is what
+  // the same-scan dedup consults to avoid a duplicate entry on a second same-symbol signal.
+  const openedSymbolsThisScan = new Set<string>();
   let candidateCount = 0;
   let blockedCandidateCount = 0;
   const degradedPositionSymbols = resolveSignalOptionsDegradedPositionSymbols({
@@ -17456,42 +17544,56 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     candidateCount += 1;
     recordSignalOptionsActionWorkItem(signalActionWorkBudget);
     const currentPosition = activePositionsBySymbol.get(symbol);
+    const sameScanAction = resolveSameScanEntryAction({
+      symbol,
+      candidateDirection: candidate.direction,
+      currentPosition,
+      openedThisScan: openedSymbolsThisScan,
+      sameDirectionBlockEnabled:
+        profile.positionHaltControls.sameDirectionPositionBlockEnabled !== false,
+      flipOnOppositeSignal: profile.exitPolicy.flipOnOppositeSignal === true,
+      oppositeFlipBlockEnabled:
+        profile.positionHaltControls.oppositeSignalFlipBlockEnabled !== false,
+    });
 
-    if (
-      currentPosition &&
-      currentPosition.direction === candidate.direction &&
-      profile.positionHaltControls.sameDirectionPositionBlockEnabled !== false
-    ) {
+    if (sameScanAction.kind === "defer_opened_this_scan") {
+      // A position was opened/flipped for this symbol earlier in this scan; it is not
+      // yet in the activePositionsBySymbol snapshot. Defer WITHOUT a terminal event so
+      // seenSignalKeys does not record it; the next scan re-evaluates it against the
+      // materialized position (mirrors the cursor-safe same-direction `continue`).
+      blockedCandidateCount += 1;
+      continue;
+    }
+
+    if (sameScanAction.kind === "block_same_direction") {
       blockedCandidateCount += 1;
       await emitSkippedCandidate({
         deployment,
         candidate,
         signalKey,
         reason: "same_direction_position_open",
-        detail: { position: currentPosition },
+        detail: { position: sameScanAction.position },
       });
       continue;
     }
 
-    if (currentPosition && currentPosition.direction !== candidate.direction) {
-      if (
-        !profile.exitPolicy.flipOnOppositeSignal &&
-        profile.positionHaltControls.oppositeSignalFlipBlockEnabled !== false
-      ) {
-        blockedCandidateCount += 1;
-        await emitSkippedCandidate({
-          deployment,
-          candidate,
-          signalKey,
-          reason: "opposite_signal_flip_disabled",
-          detail: { position: currentPosition },
-        });
-        continue;
-      }
+    if (sameScanAction.kind === "flip_disabled") {
+      blockedCandidateCount += 1;
+      await emitSkippedCandidate({
+        deployment,
+        candidate,
+        signalKey,
+        reason: "opposite_signal_flip_disabled",
+        detail: { position: sameScanAction.position },
+      });
+      continue;
+    }
+
+    if (sameScanAction.kind === "flip") {
       const closed = await closePositionForOppositeSignal({
         deployment,
         profile,
-        position: currentPosition,
+        position: sameScanAction.position,
         signalKey,
         candidate,
       });
@@ -17512,7 +17614,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         openSymbols,
         positionMarkHaltActive,
         degradedPositionSymbols,
-      }) ?? signalOptionsGatewayExecutionBlocker(readiness, profile);
+      }) ??
+      signalOptionsGatewayExecutionBlocker(readiness, profile, {
+        isShadow: isShadowDeployment,
+      });
 
     const opened = await processEntryCandidate({
       deployment,
@@ -17559,6 +17664,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
 
     if (opened) {
       openSymbols += 1;
+      openedSymbolsThisScan.add(symbol);
     } else {
       blockedCandidateCount += 1;
     }
@@ -17686,6 +17792,7 @@ export async function promoteMtfPatternToDeployment(input: {
 }
 
 export const __signalOptionsAutomationInternalsForTests = {
+  resolveSameScanEntryAction,
   signalOptionsContractMultiplier,
   signalOptionsRealizedPnl,
   tryClaimSignalOptionsPositionExit,

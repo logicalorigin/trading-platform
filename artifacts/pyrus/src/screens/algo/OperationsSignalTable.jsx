@@ -65,10 +65,7 @@ import {
 } from "../../features/platform/runtimeTickerStore";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalEventsBySymbol } from "../../features/signals/signalSparklineModel.js";
-import {
-  SIGNALS_TABLE_TIMEFRAMES,
-  resolveConfiguredMtfAlignment,
-} from "../../features/signals/signalsRowModel.js";
+import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
 import { readSignalMatrixStateActivityMs } from "../../features/signals/signalMatrixStateMerge.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
@@ -77,6 +74,7 @@ import {
   optionProviderContractId,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
+  staRowPassesMtfAlignment,
 } from "./algoHelpers";
 import {
   buildSignalAuditProgressions,
@@ -86,7 +84,6 @@ import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_COLUMN_ORDER,
   DEFAULT_SIGNAL_VISIBLE_COLUMNS,
-  directionMeta,
   OperationsSignalRow,
   OperationsSignalTableHeader,
   SIGNAL_COLUMN_BY_KEY,
@@ -340,7 +337,6 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
   scoreBreakdown,
   tfMatrix,
   timeframes,
-  mtfAlignmentConfig = null,
   executionTimeframe = null,
   signalEvents = [],
   alt,
@@ -365,7 +361,6 @@ const OperationsSignalRuntimeRow = memo(function OperationsSignalRuntimeRow({
       scoreBreakdown={scoreBreakdown}
       tfMatrix={tfMatrix}
       timeframes={timeframes}
-      mtfAlignmentConfig={mtfAlignmentConfig}
       executionTimeframe={executionTimeframe}
       signalEvents={signalEvents}
       tickerSnapshot={tickerSnapshot}
@@ -907,29 +902,6 @@ export const splitStaRowsBySignalMatrixHydration = ({
     hydratedRows,
     pendingRows,
   };
-};
-
-// When the deployment's MTF alignment gate is enabled, the STA table hides rows
-// that do not pass it (divergent frames, or required frames unconfirmed). This
-// mirrors how each row evaluates its own readout (OperationsSignalRow:2263): the
-// raw matrix for the row symbol and the displayed signal direction feed
-// resolveConfiguredMtfAlignment. A row is hidden when the gate applies and the
-// row is not aligned (matches < requiredCount).
-export const staRowPassesMtfAlignment = (row, signalMatrixBySymbol, mtfAlignmentConfig) => {
-  const symbolUpper = String(asRecord(row?.signal).symbol || "").toUpperCase();
-  const timeframes = Array.isArray(mtfAlignmentConfig?.timeframes)
-    ? mtfAlignmentConfig.timeframes
-        .map((timeframe) => String(timeframe || "").trim())
-        .filter(Boolean)
-    : [];
-  const result = resolveConfiguredMtfAlignment({
-    matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
-    signalDirection: directionMeta(asRecord(row?.signal).direction).primitive,
-    timeframes,
-    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
-    enabled: mtfAlignmentConfig?.enabled !== false,
-  });
-  return !(result.applicable && !result.aligned);
 };
 
 export const sortRows = (
@@ -2156,7 +2128,6 @@ export const OperationsSignalTable = ({
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={displaySignalTimeframes}
-                    mtfAlignmentConfig={mtfAlignmentConfig}
                     executionTimeframe={executionTimeframe}
                     signalEvents={
                       signalEventsBySymbol.get(String(symbol || "").toUpperCase()) || []

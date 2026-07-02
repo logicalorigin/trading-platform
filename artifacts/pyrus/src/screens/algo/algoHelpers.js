@@ -12,6 +12,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { resolveConfiguredMtfAlignment } from "../../features/signals/signalsRowModel.js";
 import { normalizeTrendSignalDirection } from "../../features/signals/signalStateFreshness.js";
 
 // Classifies an algo deployment by its control surface so the UI can route
@@ -622,6 +623,56 @@ const signalRowSignalTimestampMs = (signal) => {
   return Math.max(
     Date.parse(signalRecord.signalAt || "") || 0,
     Date.parse(signalRecord.currentSignalAt || "") || 0,
+  );
+};
+
+const normalizeStaRowSignalDirection = (direction) => {
+  const value = String(direction || "").trim().toLowerCase();
+  if (value === "buy" || value === "long" || value === "bullish") return "buy";
+  if (value === "sell" || value === "short" || value === "bearish") return "sell";
+  return null;
+};
+
+// Shared STA row gate: the table and algo monitor sidebar must agree on which
+// matrix rows are actionable enough to show after the deployment's MTF filter.
+export const staRowPassesMtfAlignment = (
+  row,
+  signalMatrixBySymbol,
+  mtfAlignmentConfig,
+) => {
+  const signalRecord = asRecord(row?.signal ?? row);
+  const symbolUpper = String(signalRecord.symbol || "").trim().toUpperCase();
+  const timeframes = Array.isArray(mtfAlignmentConfig?.timeframes)
+    ? mtfAlignmentConfig.timeframes
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter(Boolean)
+    : [];
+  const rowTimeframe = String(signalRecord.timeframe || "").trim();
+  if (
+    mtfAlignmentConfig?.enabled !== false &&
+    timeframes.length === 1 &&
+    timeframes[0] === rowTimeframe &&
+    normalizeStaRowSignalDirection(signalRecord.direction)
+  ) {
+    return true;
+  }
+  const result = resolveConfiguredMtfAlignment({
+    matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
+    signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
+    timeframes,
+    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
+    enabled: mtfAlignmentConfig?.enabled !== false,
+  });
+  return !(result.applicable && !result.aligned);
+};
+
+const signalRowActivityTimestampMs = (signal) => {
+  const signalRecord = asRecord(signal);
+  return Math.max(
+    signalRowSignalTimestampMs(signalRecord),
+    Date.parse(signalRecord.latestBarAt || "") || 0,
+    Date.parse(signalRecord.updatedAt || "") || 0,
+    Date.parse(signalRecord.lastEvaluatedAt || "") || 0,
   );
 };
 

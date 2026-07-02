@@ -106,6 +106,10 @@ test("matrix MTF: every configured frame must align", () => {
     } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
   });
 
+  // requiredCount is a stored mirror of the frame count across the whole stack
+  // (frontend normalizeAlgoMtfRequiredCount + backend resolveSignalOptionsExecutionProfile
+  // both force it to the number of configured frames), so full alignment is
+  // required by design: 2-of-3 aligned still blocks.
   const gate = evaluateSignalOptionsEntryGate({
     candidate,
     profile: threeFrameProfile,

@@ -314,17 +314,6 @@ test("STA table snapshot signature changes when KPI move inputs hydrate", () => 
   assert.equal(hydratedSnapshot.signalRows[0].currentSignalMfePercent, 12);
 });
 
-test("STA row component receives the same MTF config as the table filter", () => {
-  assert.match(
-    source,
-    /function OperationsSignalRuntimeRow\(\{[\s\S]*?mtfAlignmentConfig = null,/,
-  );
-  assert.match(
-    source,
-    /<OperationsSignalRow[\s\S]*?mtfAlignmentConfig=\{mtfAlignmentConfig\}/,
-  );
-});
-
 test("STA signal rows do not wait for companion timeframe bubbles", () => {
   const rows = [
     {

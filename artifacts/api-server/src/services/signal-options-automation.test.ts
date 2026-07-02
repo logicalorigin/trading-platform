@@ -6,7 +6,50 @@ import {
   __signalOptionsAutomationInternalsForTests,
   evaluateMtfPatternGate,
   runSignalOptionsShadowBackfill,
+  type SignalOptionsPosition,
 } from "./signal-options-automation";
+
+test("resolveSameScanEntryAction: a symbol opened earlier this scan defers (no duplicate entry); block/flip/proceed preserved", () => {
+  const { resolveSameScanEntryAction } = __signalOptionsAutomationInternalsForTests;
+  const pos = (direction: "buy" | "sell") =>
+    ({ symbol: "AAPL", direction }) as unknown as SignalOptionsPosition;
+  const call = (o: {
+    candidateDirection: "buy" | "sell";
+    currentPosition: SignalOptionsPosition | undefined;
+    openedThisScan: ReadonlySet<string>;
+    sameDirectionBlockEnabled?: boolean;
+    flipOnOppositeSignal?: boolean;
+    oppositeFlipBlockEnabled?: boolean;
+  }) =>
+    resolveSameScanEntryAction({
+      symbol: "AAPL",
+      sameDirectionBlockEnabled: true,
+      flipOnOppositeSignal: false,
+      oppositeFlipBlockEnabled: true,
+      ...o,
+    }).kind;
+
+  const empty = new Set<string>();
+  // THE FIX: a symbol already opened earlier this scan defers, even though the
+  // snapshot still shows no position for it (that is exactly the stale-snapshot
+  // double-entry the loop used to allow)...
+  assert.equal(
+    call({ candidateDirection: "buy", currentPosition: undefined, openedThisScan: new Set(["AAPL"]) }),
+    "defer_opened_this_scan",
+  );
+  // ...and defer wins even if a same-direction snapshot position exists.
+  assert.equal(
+    call({ candidateDirection: "buy", currentPosition: pos("buy"), openedThisScan: new Set(["AAPL"]) }),
+    "defer_opened_this_scan",
+  );
+  // Regression guard — existing branches unchanged when nothing opened this scan:
+  assert.equal(call({ candidateDirection: "buy", currentPosition: pos("buy"), openedThisScan: empty }), "block_same_direction");
+  assert.equal(call({ candidateDirection: "buy", currentPosition: pos("buy"), openedThisScan: empty, sameDirectionBlockEnabled: false }), "proceed");
+  assert.equal(call({ candidateDirection: "sell", currentPosition: pos("buy"), openedThisScan: empty }), "flip_disabled");
+  assert.equal(call({ candidateDirection: "sell", currentPosition: pos("buy"), openedThisScan: empty, flipOnOppositeSignal: true }), "flip");
+  assert.equal(call({ candidateDirection: "sell", currentPosition: pos("buy"), openedThisScan: empty, oppositeFlipBlockEnabled: false }), "flip");
+  assert.equal(call({ candidateDirection: "buy", currentPosition: undefined, openedThisScan: empty }), "proceed");
+});
 
 test("evaluateMtfPatternGate requires an EXACT per-timeframe match (divergence-aware)", () => {
   type Pat = Record<string, "buy" | "sell" | "any">;
@@ -223,6 +266,60 @@ test("Signal Options cockpit keeps real gateway failures as warnings", () => {
   assert.equal(items[0].severity, "warning");
 });
 
+test("Signal Options gateway blocker: shadow deployments bypass broker readiness but keep the RTH gate", () => {
+  const { signalOptionsGatewayExecutionBlocker } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = {
+    infrastructureHaltControls: { gatewayReadinessBlockEnabled: true },
+  } as never;
+  const readiness = (reason: string | null) =>
+    ({
+      ready: reason === null,
+      reason,
+      message: "",
+      diagnostics: {},
+    }) as never;
+
+  // Shadow + broker-not-configured -> NOT blocked (shadow fills never touch IBKR).
+  assert.equal(
+    signalOptionsGatewayExecutionBlocker(
+      readiness("ibkr_not_configured"),
+      profile,
+      { isShadow: true },
+    ),
+    null,
+  );
+  // Shadow + outside RTH -> STILL blocked (time-based session gate is preserved).
+  assert.equal(
+    signalOptionsGatewayExecutionBlocker(
+      readiness("market_session_quiet"),
+      profile,
+      { isShadow: true },
+    )?.reason,
+    "market_session_quiet",
+  );
+  // Live (non-shadow) + broker-not-configured -> blocked, unchanged behavior.
+  assert.equal(
+    signalOptionsGatewayExecutionBlocker(
+      readiness("ibkr_not_configured"),
+      profile,
+      { isShadow: false },
+    )?.reason,
+    "ibkr_not_configured",
+  );
+  // Explicit operator override still wins for any deployment.
+  assert.equal(
+    signalOptionsGatewayExecutionBlocker(
+      readiness("ibkr_not_configured"),
+      {
+        infrastructureHaltControls: { gatewayReadinessBlockEnabled: false },
+      } as never,
+      { isShadow: false },
+    ),
+    null,
+  );
+});
+
 test("Signal Options action states stay on configured execution timeframe", () => {
   const states = [
     {
@@ -420,7 +517,7 @@ test("Signal Options snapshot blocks non-ok signal states regardless of bar age"
   assert.equal(snapshot.actionBlocker, "data_stale");
 });
 
-test("Signal Options still rejects signals aged outside the actionable execution window", () => {
+test("Signal Options still rejects signals outside the actionable execution window", () => {
   const {
     candidateFromSignalSnapshot,
     isSignalOptionsActionableSignalState,
