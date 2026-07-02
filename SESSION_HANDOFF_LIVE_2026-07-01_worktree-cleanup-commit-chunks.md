@@ -110,3 +110,43 @@
 ## Exclusions By Default
 
 - Session handoffs, agent chat/task-board files, CPU profiles, scratch reports, Replit startup/control-plane config unless explicitly approved and audited, and active/in-flight WIP called out by recent handoffs/chat.
+
+## 2026-07-02 cleanup pass (session 44ffc443, post-push)
+
+Landed 6 chunks (619 -> 488 status entries), all validated before commit:
+
+- `e9e5df3` chore(gitignore): .env secrets guard, root test output, `.agents/skills/` (1.3 GB vendored packs)
+- `6b8e645` chore(handoff): 77 new handoffs + 6 LIVE notes + master/current (secret scan clean)
+- `2307ae4` docs: CLAUDE.md run-rules doctrine, AGENTS.md QA line, .env.example refresh, 4 design plans
+- `ccf6701` chore(cleanup): legacy Windows IBKR bridge tree retired (28 files, -14.4k lines; branding guard fixed for .agents and passing; no source references — sidecar lane's helper regex matches remote process names only)
+- `212aed7` chore(workspace): .mcp.json tracked, 2 workstream records, *.cpuprofile + AGENT_CHAT_LIVE.jsonl ignored, stray profiles deleted
+
+Remaining 488 entries are IN-FLIGHT lanes, deliberately untouched:
+- pyrus/src (~144): sparkline startup bug session 1159b0c5 ACTIVE in these files + density UI + exit-policy leftovers
+- api-server/src (~136): IBKR async-sidecar refactor (runtime.ts + deleted test), ELU lane, SnapTrade lane (2c909428 ACTIVE), flow/gex
+- lib/api-zod (110) + lib/api-spec: generated client regen tied to in-flight endpoint work — audit:api-codegen owns drift
+- lib/db (29): postgres diagnostics context (ELU), retention, snaptrade schema
+- workspace config (root package.json, pnpm-workspace.yaml, pnpm-lock.yaml, knip.json): bridge-removal hunks ENTANGLED with in-flight dep additions (pyrus three.js) — lockfile cannot split; land with those lanes
+- python compute (3), crates/market-data-worker (5), scripts worker/compute/parity files: open lanes with LIVE notes
+- docs: ADR-002 + broker matrix + snaptrade plans (SnapTrade session), replit.md
+- handoffs re-dirty immediately via autosave (perpetual churn; sweep periodically)
+
+Cleanup commits are LOCAL — not yet pushed.
+
+## 2026-07-02 cleanup batch 2 (session 44ffc443)
+
+- `2bed89b` feat(mcp): pyrus MCP diagnostics server sources (17 files, 891 lines) — was
+  fully untracked while running in production use; tsc clean + 9/9 tests.
+- BLOCKED, with evidence:
+  - lib/api-spec/openapi.yaml + lib/api-zod (110 entries): drift checker PASSES (pair is
+    coherent) but the spec diff contains the ACTIVE SnapTrade lane's endpoints
+    (/broker-execution/snaptrade/readiness). Generated clients cannot split — land with
+    the SnapTrade lane (2c909428).
+  - replit.md: documents the build:pyrus-app change living in the entangled workspace
+    trio (root package.json + pnpm-workspace.yaml + pnpm-lock.yaml + knip.json) — land
+    together with the trio once the dep-adding lanes (pyrus three.js) commit.
+  - python compute (jobs.py etc.): thread formally handed to Session 2 / ELU lane per
+    SESSION_HANDOFF_LIVE_2026-07-01_f4ebf37d note — theirs to land.
+  - crates/market-data-worker, scripts/run-market-data-worker.mjs: worker lane (3 failed
+    ingest jobs flagged for operator review — lane not settled).
+  - docs/decisions/ADR-002 + broker matrix: SnapTrade session active in these.

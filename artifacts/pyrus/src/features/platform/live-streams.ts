@@ -6446,21 +6446,26 @@ type SignalMatrixStreamPayload = {
   stream?: string;
   event?: string;
   states?: SignalMatrixStreamState[];
+  coverage?: Record<string, unknown> | null;
+  skippedSymbols?: string[];
+  truncated?: boolean;
 };
 
 export const getSignalMonitorMatrixStreamUrl = ({
   environment,
   symbols,
   timeframes,
+  profileUniverse = false,
 }: {
   environment?: string | null;
   symbols?: readonly string[];
   timeframes?: readonly string[];
+  profileUniverse?: boolean;
 }): string | null => {
   const normalizedSymbols = (symbols ?? [])
     .map((symbol) => String(symbol || "").trim())
     .filter(Boolean);
-  if (!normalizedSymbols.length) {
+  if (!normalizedSymbols.length && !profileUniverse) {
     return null;
   }
   const normalizedTimeframes = (timeframes ?? [])
@@ -6472,7 +6477,8 @@ export const getSignalMonitorMatrixStreamUrl = ({
   // with a 400, and "signal-matrix-stream" is not in its enum — so omit it.
   return buildStreamUrl("/api/signal-monitor/matrix/stream", {
     environment: environment ?? undefined,
-    symbols: normalizedSymbols.join(","),
+    symbols: normalizedSymbols.length ? normalizedSymbols.join(",") : undefined,
+    universe: profileUniverse ? "profile" : undefined,
     timeframes: normalizedTimeframes.length
       ? normalizedTimeframes.join(",")
       : undefined,
@@ -6488,16 +6494,21 @@ export const useSignalMonitorMatrixStream = ({
   environment,
   symbols,
   timeframes,
+  profileUniverse = false,
+  profileUniverseKey = "",
   enabled = true,
   onStates,
 }: {
   environment?: string | null;
   symbols?: readonly string[];
   timeframes?: readonly string[];
+  profileUniverse?: boolean;
+  profileUniverseKey?: string;
   enabled?: boolean;
   onStates: (
     states: SignalMatrixStreamState[],
     kind: "bootstrap" | "state-delta",
+    payload: SignalMatrixStreamPayload,
   ) => void;
 }): void => {
   const onStatesRef = useRef(onStates);
@@ -6508,10 +6519,16 @@ export const useSignalMonitorMatrixStream = ({
   const symbolsKey = (symbols ?? []).join(",");
   const timeframesKey = (timeframes ?? []).join(",");
   const streamUrl = useMemo(
-    () => getSignalMonitorMatrixStreamUrl({ environment, symbols, timeframes }),
+    () =>
+      getSignalMonitorMatrixStreamUrl({
+        environment,
+        symbols,
+        timeframes,
+        profileUniverse,
+      }),
     // symbols/timeframes are arrays; the joined keys are the stable identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [environment, symbolsKey, timeframesKey],
+    [environment, profileUniverse, profileUniverseKey, symbolsKey, timeframesKey],
   );
 
   useEffect(() => {
@@ -6523,7 +6540,11 @@ export const useSignalMonitorMatrixStream = ({
     ) {
       return undefined;
     }
-    const source = new EventSource(streamUrl);
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let teardown = false;
+
     const handleStates =
       (kind: "bootstrap" | "state-delta") =>
       (event: MessageEvent<string>) => {
@@ -6535,18 +6556,77 @@ export const useSignalMonitorMatrixStream = ({
         ) {
           return;
         }
-        onStatesRef.current(payload.states, kind);
+        // A delivered frame proves the connection is healthy again.
+        reconnectAttempt = 0;
+        onStatesRef.current(payload.states, kind, payload);
       };
     const handleBootstrap = handleStates("bootstrap");
     const handleDelta = handleStates("state-delta");
-    source.addEventListener("bootstrap", handleBootstrap as EventListener);
-    source.addEventListener("state-delta", handleDelta as EventListener);
-    return () => {
-      source.removeEventListener("bootstrap", handleBootstrap as EventListener);
-      source.removeEventListener("state-delta", handleDelta as EventListener);
-      source.close();
+
+    const closeSource = () => {
+      if (source) {
+        source.removeEventListener(
+          "bootstrap",
+          handleBootstrap as EventListener,
+        );
+        source.removeEventListener(
+          "state-delta",
+          handleDelta as EventListener,
+        );
+        source.onerror = null;
+        source.close();
+        source = null;
+      }
     };
-  }, [enabled, streamUrl]);
+
+    const connect = () => {
+      if (teardown) {
+        return;
+      }
+      if (reconnectTimer != null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      closeSource();
+      const next = new EventSource(streamUrl);
+      next.addEventListener("bootstrap", handleBootstrap as EventListener);
+      next.addEventListener("state-delta", handleDelta as EventListener);
+      next.onerror = () => {
+        // CONNECTING (0) means the browser is already auto-retrying; only a
+        // terminal CLOSED (2) needs us to rebuild the EventSource. Terminal
+        // closes happen in practice: during boot the bootstrap query can trip
+        // the DB statement timeout and the route answers 500, which puts the
+        // EventSource in CLOSED — without this redial the matrix stays dead
+        // until an unrelated stream re-key. Same self-heal policy as the
+        // quote stream (capped exponential backoff, quoteStreamReconnect.ts).
+        if (teardown || next.readyState !== EventSource.CLOSED) {
+          return;
+        }
+        closeSource();
+        if (reconnectTimer != null) {
+          return;
+        }
+        const delay = nextQuoteStreamReconnectDelayMs(reconnectAttempt);
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, delay);
+      };
+      source = next;
+    };
+
+    connect();
+
+    return () => {
+      teardown = true;
+      if (reconnectTimer != null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      closeSource();
+    };
+  }, [enabled, profileUniverseKey, streamUrl]);
 };
 
 export const applyAlgoCockpitPayloadToCache = (

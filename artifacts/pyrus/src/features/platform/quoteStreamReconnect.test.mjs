@@ -51,3 +51,26 @@ test("live-streams wires onerror reconnect + stall watchdog", async () => {
   assert.match(source, /setInterval\(/);
   assert.match(source, /nextQuoteStreamStallMs\(stallMs\)/);
 });
+
+// Regression guard: the signal matrix SSE hook must carry the same terminal-
+// close self-heal as the quote stream. Without it, a boot-window 500 (the
+// bootstrap query tripping the DB statement timeout under pool saturation)
+// leaves the EventSource CLOSED and the signal matrix dead — sparklines and
+// STA rows never hydrate until an unrelated stream re-key recreates the hook.
+test("signal matrix stream wires terminal-close reconnect with backoff", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const hookStart = source.indexOf("export const useSignalMonitorMatrixStream");
+  assert.notEqual(hookStart, -1);
+  const nextExport = source.indexOf("\nexport ", hookStart + 1);
+  const hook = source.slice(hookStart, nextExport === -1 ? undefined : nextExport);
+  // Terminal-close detection + capped exponential redial.
+  assert.match(hook, /next\.onerror = \(\) => \{/);
+  assert.match(hook, /readyState !== EventSource\.CLOSED/);
+  assert.match(hook, /nextQuoteStreamReconnectDelayMs\(reconnectAttempt\)/);
+  // A delivered frame must reset the backoff.
+  assert.match(hook, /reconnectAttempt = 0/);
+  // Teardown must cancel any pending redial so unmount can't leak a timer.
+  assert.match(hook, /teardown = true/);
+  assert.match(hook, /clearTimeout\(reconnectTimer\)/);
+});

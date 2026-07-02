@@ -2,32 +2,52 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-07-02 10:47:21 MDT`
-- Last Updated (UTC): `2026-07-02T16:47:21.747Z`
-- Session ID: `f6f727e3-0b38-4e28-980b-24be02f5aa75`
-- Summary: 2026-07-02 10:47:21 MDT | f6f727e3-0b38-4e28-980b-24be02f5aa75 | please find and resume the session I killed thatw as working on the sta table audit (just moments ago)
-- Handoff: `SESSION_HANDOFF_2026-07-02_f6f727e3-0b38-4e28-980b-24be02f5aa75.md`
+- Last Updated (MT): `2026-07-02 11:06:41 MDT`
+- Last Updated (UTC): `2026-07-02T17:06:41.802Z`
+- Session ID: `2c909428-371a-458b-b035-0e87b2fe1642`
+- Summary: 2026-07-02 11:06:41 MDT | 2c909428-371a-458b-b035-0e87b2fe1642 | can you please find the most recent session that was working on moving us over to snaptrade? it was a codex session
+- Handoff: `SESSION_HANDOFF_2026-07-02_2c909428-371a-458b-b035-0e87b2fe1642.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Working-tree validations (pre-commit): engine 14/14, signal-monitor family 156/156, automation 26/26, ranking service 4/4, api-server typecheck + typecheck:libs clean, python 5/5.
-- Committed-state verification via scratch worktree (symlink-farm pattern reused from 44ffc443), all at final commit 846d0bc: typecheck:libs EXIT=0, api-server typecheck EXIT=0, automation suite 23/23, signal-universe-ranking 4/4, OperationsSignalTable + algoHelpers frontend tests 75/75. Worktree removed after verification.
-- signal-quality-kpis-service.ts (+ its new test) intentionally NOT committed: its test hung >4 min on the loaded 2-core box; unverifiable in this window. Ships separately once its test is proven.
-- Remaining dirty tree = other lanes (June-26 parity/reconcile residue is now committed via d40afa4; still dirty: wire-trail, pressure-fallback, strike-moneyness, massive-migration/flow-scanner, settings-density UI, python-calibration scoring, snaptrade/broker/auth lib-db schema, index.ts startup wiring incl. startSignalUniverseRankingScheduler).
-- Emission-latency steady-state RTH measurement (<15s 1m median target) still pending a quiet window — see d40afa4 message.
+1. User creates the first admin account in-app (First-time setup), then I
+   re-run admin-state browser QA: Settings → Data & Broker shows
+   'App credentials: configured' and an enabled 'Register & Connect'; header
+   shows 'Activate'.
+2. Run the in-app IBKR Connection Portal proof (trade-if-available) and fill
+   in `docs/plans/snaptrade-capability-proof-2026-07-02.md`; first live order
+   = unfillable limit ≤ $10 then cancel.
+3. Lock the `/algo/*` automation subsystem behind admin (+ frontend CSRF)
+   before any automated live trading or public exposure.
+4. Commit the SnapTrade + auth work in coordination with the worktree-cleanup
+   commit-chunks workstream (chunk excludes remain in effect).
 
 ## Next Recommended Steps
 
-1. Commit signal-quality-kpis-service.ts + signal-quality-kpis-service.test.ts once its test suite is verified (investigate why it hangs under load — likely DB-bound or open-handle keepalive).
-2. Re-run the KPI calibration warm (bars cache primed by this run) in a quiet window to clear coverage_degraded (needs >=98% symbol coverage, <=1% timeouts) and get a model recommendation (candidate: balanced-sot-v2). Deferred Phase-1 activations: cost-hurdle wiring + real spread units; mtfFilteredOutCount tooltip copy (798 filtered this run).
-3. Investigate why the python signal_matrix offload never fires under always-on evaluation (batch path idle) — the C1 ELU-offload benefit is currently unrealized.
-4. Post-warm quiet-window runtime measurement: steady ELU vs 0.75 gate, scanner un-throttle, 1m emission latency median (<15s target per aface59a).
-5. index.ts startup wiring (startSignalUniverseRankingScheduler import) lands with the index.ts lane owner; ranking sweeps do not run until then unless invoked manually.
-6. Remaining uncommitted lanes need owners: wire-trail (f67aed96), strike-moneyness (493fa3df), pressure-fallback, massive-migration files, settings-density UI, python-calibration (7690f9ca).
+1. User creates the first admin account in-app (First-time setup), then I
+   re-run admin-state browser QA: Settings → Data & Broker shows
+   'App credentials: configured' and an enabled 'Register & Connect'; header
+   shows 'Activate'.
+2. Run the in-app IBKR Connection Portal proof (trade-if-available) and fill
+   in `docs/plans/snaptrade-capability-proof-2026-07-02.md`; first live order
+   = unfillable limit ≤ $10 then cancel.
+3. Lock the `/algo/*` automation subsystem behind admin (+ frontend CSRF)
+   before any automated live trading or public exposure.
+4. Commit the SnapTrade + auth work in coordination with the worktree-cleanup
+   commit-chunks workstream (chunk excludes remain in effect).
 
 ## Validation Snapshot
 
-- `2026-07-02 09:11:06 MDT` WT=/tmp/claude-1000/-home-runner-workspace/f6f727e3-0b38-4e28-980b-24be02f5aa75/scratchpad/verify-wt; cd $WT && { echo "=== [0d6c58b] typecheck:libs ==="; pnpm… (ok)
-- `2026-07-02 09:16:18 MDT` WT=/tmp/claude-1000/-home-runner-workspace/f6f727e3-0b38-4e28-980b-24be02f5aa75/scratchpad/verify-wt; cd $WT/artifacts/api-server && npx tsc -p tsconfig.json -… (ok)
-- `2026-07-02 09:18:09 MDT` WT=/tmp/claude-1000/-home-runner-workspace/f6f727e3-0b38-4e28-980b-24be02f5aa75/scratchpad/verify-wt; git -C $WT checkout --detach 846d0bc 2>&1 | tail -1; cd $… (ok)
+- `2026-07-02 08:27:13 MDT` pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header account control" --reporter=list 2>&1 | tail -6 (ok)
+- `2026-07-02 08:28:33 MDT` sed -n '1,60p' /home/runner/workspace/artifacts/pyrus/test-results/artifacts-pyrus-e2e-snaptr-381af-ign-in-and-first-time-setup/error-context.md 2>/dev/null; p… (ok)
+- `2026-07-02 08:31:19 MDT` pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header account control" --reporter=list 2>&1 | tail -4 (ok)
+- `2026-07-02 08:32:45 MDT` pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header account control" --reporter=list 2>&1 | grep -B8 "at /home/runner" | hea… (ok)
+- `2026-07-02 08:39:17 MDT` pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts --reporter=list 2>&1 | grep -E "✓|✘|passed|failed" | head -10 (ok)
+- `2026-07-02 08:40:51 MDT` rm /home/runner/workspace/artifacts/pyrus/e2e/.qa-probe.mjs; pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header broker cont… (ok)
+- `2026-07-02 08:41:02 MDT` pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header broker control" --reporter=list --screenshot=only-on-failure 2>&1 | tail… (ok)
+- `2026-07-02 08:42:08 MDT` cd /home/runner/workspace/artifacts/pyrus && pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header broker control" --reporter=… (ok)
+- `2026-07-02 08:43:21 MDT` sleep 20 && pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header account control" --reporter=list 2>&1 | tail -4 (ok)
+- `2026-07-02 08:44:21 MDT` sleep 15 && pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts -g "header account control" --reporter=list 2>&1 | tail -4 (ok)
+- `2026-07-02 08:45:37 MDT` curl -s -o /dev/null -w "web:%{http_code} " -I http://127.0.0.1:18747/; curl -s -o /dev/null -w "api:%{http_code}\n" http://127.0.0.1:8080/api/healthz; sleep 3… (ok)
+- `2026-07-02 10:40:09 MDT` cd /home/runner/workspace/artifacts/pyrus && pnpm exec playwright test e2e/snaptrade-surfaces.browser-validation.spec.ts --reporter=list 2>&1 | grep -E "✓|✘|pa… (ok)

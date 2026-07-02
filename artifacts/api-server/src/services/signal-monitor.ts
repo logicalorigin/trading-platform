@@ -9367,13 +9367,92 @@ export function buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
   );
 }
 
+// SSE bootstrap snapshot single-flight. Every matrix stream subscriber needs
+// the same environment-wide stored-state snapshot (scope filtering happens in
+// memory in buildSignalMonitorMatrixStreamBootstrapEventFromStoredState), but
+// each connection used to run its own full-universe read (~12k rows at the
+// 2000-symbol cap). At boot, connections arrive back-to-back — the initial
+// connect plus the timeframe-widen re-key, multiplied by tabs — so duplicate
+// reads queued on the saturated 12-connection pool and could trip the 15s DB
+// statement timeout (observed as a 500 on the stream). Sharing one read per
+// environment for a short TTL collapses that. Staleness is safe: the client
+// merges per cell by authority/freshness (preferSignalMatrixCellState), so a
+// snapshot up to TTL old can never displace fresher stream deltas.
+//
+// 30s, not 15s: the widen re-key fires 1.5s after the client finishes
+// receiving bootstrap frames, and under boot congestion frame delivery alone
+// takes ~20s+ (measured snapshot-build -> re-key gap: 23-27s). A 15s TTL
+// expired right before the re-key and the reopen re-ran the full read at the
+// congestion peak; 30s covers the measured gap with margin.
+export const SIGNAL_MONITOR_MATRIX_BOOTSTRAP_SNAPSHOT_TTL_MS = 30_000;
+
+type SignalMonitorStreamBootstrapSnapshot = Awaited<
+  ReturnType<typeof getSignalMonitorStoredState>
+>;
+
+export const createSignalMonitorStreamBootstrapSnapshotReader = ({
+  read,
+  ttlMs = SIGNAL_MONITOR_MATRIX_BOOTSTRAP_SNAPSHOT_TTL_MS,
+  now = () => Date.now(),
+}: {
+  read: (
+    environment?: RuntimeMode,
+  ) => Promise<SignalMonitorStreamBootstrapSnapshot>;
+  ttlMs?: number;
+  now?: () => number;
+}) => {
+  const cache = new Map<
+    string,
+    { snapshot: SignalMonitorStreamBootstrapSnapshot; expiresAtMs: number }
+  >();
+  const inFlight = new Map<
+    string,
+    Promise<SignalMonitorStreamBootstrapSnapshot>
+  >();
+  return async (environment?: RuntimeMode) => {
+    const key = resolveEnvironment(environment);
+    const cached = cache.get(key);
+    if (cached && cached.expiresAtMs > now()) {
+      return cached.snapshot;
+    }
+    const pending = inFlight.get(key);
+    if (pending) {
+      return pending;
+    }
+    const compute = read(environment)
+      .then((snapshot) => {
+        // Never cache degraded fallback snapshots: a transient DB blip must
+        // not pin empty bootstraps on every reconnect for a full TTL.
+        if (snapshot.stateSource !== "runtime-fallback") {
+          cache.set(key, { snapshot, expiresAtMs: now() + ttlMs });
+        }
+        return snapshot;
+      })
+      .finally(() => {
+        if (inFlight.get(key) === compute) {
+          inFlight.delete(key);
+        }
+      });
+    inFlight.set(key, compute);
+    return compute;
+  };
+};
+
+const readSignalMonitorStreamBootstrapSnapshot =
+  createSignalMonitorStreamBootstrapSnapshotReader({
+    read: (environment) =>
+      getSignalMonitorStoredState({
+        environment,
+        markNonCurrentStale: true,
+      }),
+  });
+
 export async function buildSignalMonitorMatrixStreamStoredBootstrapEvent(
   scope: SignalMonitorMatrixStreamScope,
 ): Promise<SignalMonitorMatrixStreamBootstrapEvent> {
-  const snapshot = await getSignalMonitorStoredState({
-    environment: scope.environment,
-    markNonCurrentStale: true,
-  });
+  const snapshot = await readSignalMonitorStreamBootstrapSnapshot(
+    scope.environment,
+  );
   return buildSignalMonitorMatrixStreamBootstrapEventFromStoredState(
     snapshot,
     scope,
