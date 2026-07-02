@@ -186,7 +186,12 @@ const activeSignalOptionsRunMetadata = new Map<
   SignalOptionsRunMetadata
 >();
 
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 500;
+// Per-poll trade-evaluation batch cap. Raised 500 -> 2000 so the trade engine re-checks
+// every name each ~60s poll instead of rotating the 2000 universe over ~4 cycles. This is
+// ~4x more per-poll DB work on the 12-conn pool; MONITOR_CONCURRENCY (6) still gates
+// parallelism. Watch pool contention / 57014 rate under load; lower toward ~1000 if the
+// pool saturates.
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 2000;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6;
 const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
@@ -16297,9 +16302,13 @@ async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
       "",
   ).trim();
 
-  if (profile.maxSymbols !== DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS) {
-    patch.maxSymbols = DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS;
-  }
+  // maxSymbols on the shared canonical shadow profile is OWNED by the signal-monitor
+  // default (now the 2000 signal universe). Do NOT force it back to the options batch cap
+  // here: signal-monitor rewrites it to 2000 on every profile read, so writing 500 here
+  // creates a write-war (redundant DB writes + updatedAt churn + a transient universe
+  // resize each automation toggle). Trade coverage cadence is bounded separately by the
+  // per-poll batch (DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS), which rotates over the
+  // full universe — see resolveSignalOptionsMonitorBatch.
   if (
     profile.evaluationConcurrency !== DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY
   ) {

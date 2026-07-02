@@ -22,8 +22,8 @@ import {
   getSignalMonitorMatrixStreamStatus,
   listSignalMonitorBreadthHistory,
   listSignalMonitorEvents,
-  normalizeSignalMonitorMatrixStreamScope,
   resolveSignalSourceEnvironment,
+  resolveSignalMonitorMatrixStreamScope,
   subscribeSignalMonitorMatrixStream,
   updateSignalMonitorProfile,
 } from "../services/signal-monitor";
@@ -67,7 +67,22 @@ async function startSignalMonitorMatrixSse(
     if (cleanedUp || res.destroyed || res.writableEnded) {
       return;
     }
-    res.write(chunk);
+    // Respect socket backpressure: a full-universe bootstrap is multiple MB,
+    // and ignoring res.write()'s false return queues the whole payload in the
+    // socket buffer per subscriber (memory balloons with every extra tab).
+    // Await drain — or close, so a subscriber that disconnects mid-write can
+    // never strand this promise.
+    if (!res.write(chunk)) {
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          res.off("drain", done);
+          res.off("close", done);
+          resolve();
+        };
+        res.once("drain", done);
+        res.once("close", done);
+      });
+    }
   };
   const writeEvent = (event: string, payload: unknown) => {
     const eventId = String(nextEventId);
@@ -155,7 +170,7 @@ router.post("/signal-monitor/evaluate", async (req, res) => {
 
 router.get("/signal-monitor/matrix/stream", async (req, res) => {
   const query = StreamSignalMonitorMatrixQueryParams.parse(req.query);
-  const scope = normalizeSignalMonitorMatrixStreamScope({
+  const scope = await resolveSignalMonitorMatrixStreamScope({
     // Canonical signal source: stream one feed regardless of any env param.
     environment: resolveSignalSourceEnvironment(),
     symbols: splitSignalMonitorMatrixStreamList(query.symbols),
@@ -163,6 +178,7 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
     cells: parseSignalMonitorMatrixStreamCells(query.cells) as never,
     clientRole: query.clientRole,
     requestOrigin: query.requestOrigin,
+    universe: query.universe,
   });
 
   if (!scope.symbols.length) {
@@ -178,7 +194,28 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
     const bootstrap = await buildSignalMonitorMatrixStreamStoredBootstrapEvent(
       subscription.scope,
     );
-    await writeEvent(bootstrap.event, bootstrap);
+    // Page the bootstrap into bounded frames instead of one ~10 MB write: a
+    // single frame means one giant synchronous JSON.stringify (event-loop
+    // stall on every subscriber connect) and one giant socket enqueue. The
+    // frontend merge is per-cell for bootstrap and delta alike
+    // (mergeSignalMatrixStreamSnapshot), and its bootstrap-received gate is a
+    // boolean, so multiple bootstrap frames — each carrying the full coverage
+    // metadata — hydrate progressively with no client change. Yield between
+    // frames so back-to-back stringifies cannot monopolize the loop.
+    for (
+      let offset = 0;
+      offset === 0 || offset < bootstrap.states.length;
+      offset += SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES
+    ) {
+      await writeEvent(bootstrap.event, {
+        ...bootstrap,
+        states: bootstrap.states.slice(
+          offset,
+          offset + SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES,
+        ),
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     subscription.recordSnapshot(bootstrap.states);
     await writeEvent(
       "stream-status",
@@ -199,9 +236,15 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
   });
 });
 
+// Bootstrap frames are sliced to this many states (~1-2 MB of JSON per frame
+// at typical state width) so no single stringify/write scales with the whole
+// universe (12k states at the 2000-symbol cap).
+const SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES = 2_000;
+
 // Short-TTL, in-flight-deduped cache for the heavy /signal-monitor/state poll.
-// The matrix display polls this ~every 60s per tab; each miss runs a ~3000-row
-// states read plus a zod parse of a ~1.4 MB payload. Multiple tabs / overlapping
+// The matrix display polls this ~every 60s per tab; each miss runs a
+// full-universe states read (symbols x timeframes — ~12k rows at the 2000-symbol
+// cap) plus a zod parse of a multi-MB payload. Multiple tabs / overlapping
 // polls would each pay the DB read. A 15s cache (fresher than the 60s poll) plus
 // in-flight dedup collapses concurrent/near-in-time polls into a single read,
 // relieving the scarce DB pool. Display-only and read-through (server-side
@@ -209,10 +252,11 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
 // cannot affect trading. Still served via res.json so the (gzip) response and
 // every header are byte-for-byte unchanged.
 const SIGNAL_MONITOR_STATE_CACHE_MS = 15_000;
-// Cache the SERIALIZED payload, not the object: the ~2.4 MB response is otherwise
-// re-stringified synchronously on every cache hit (and for every concurrent waiter),
-// blocking the single event loop. Serializing once per miss and sending the string
-// via RawJson keeps the bytes identical while skipping the repeat stringify.
+// Cache the SERIALIZED payload, not the object: the multi-MB response (~10 MB
+// at the 2000-symbol cap) is otherwise re-stringified synchronously on every
+// cache hit (and for every concurrent waiter), blocking the single event loop.
+// Serializing once per miss and sending the string via RawJson keeps the bytes
+// identical while skipping the repeat stringify.
 const signalMonitorStateCache = new Map<string, { json: string; at: number }>();
 const signalMonitorStateInFlight = new Map<string, Promise<string>>();
 

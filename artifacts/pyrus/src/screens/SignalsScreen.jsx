@@ -165,7 +165,9 @@ const toHydrationCount = (value) => {
   return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0;
 };
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "2m", "5m", "15m", "1h", "1d"];
-const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
+// Mirror of the backend + PlatformApp SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT; caps the "Limit"
+// NumberField max. Raised 500 -> 2000 in lockstep with the backend cap.
+const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 2000;
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
   { value: "selected_watchlist", label: "Selected Source" },
