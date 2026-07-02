@@ -45,6 +45,7 @@ import {
   buildSignalSparklinePointColors,
   defaultSignalSparklineColorForDirection,
   isSignalSparklineDirection,
+  resolveSignalSparklineFallbackColor,
 } from "../signals/signalSparklineModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { resolveExtendedHoursQuoteDisplay } from "./extendedHoursQuote";
@@ -353,12 +354,33 @@ const WatchlistRow = memo(
       [executionTimeframe, signalEvents, sparklineRow, sparklinePoints],
     );
     const sparklineUsesSignalTimeline = Array.isArray(sparklinePointColors);
-    const sparklineColor = sparklineUsesSignalTimeline ? null : sparklineSignalColor;
+    // Per-row signal hydration: the signal engine has demonstrably evaluated
+    // THIS symbol (an event, or a matrix state carrying evaluation timing).
+    // App-level evidence isn't enough — during boot the matrix streams in
+    // symbol by symbol, and a row must not flash MicroSparkline's financial
+    // green/red default (the launch "old green style") while its own signal
+    // state is still unknown.
+    const rowSignalStateHydrated =
+      signalEvents.length > 0 ||
+      Object.values(signalStatesByTimeframe || {}).some((state) =>
+        Boolean(
+          state &&
+            (state.latestBarAt || state.currentSignalAt || state.lastEvaluatedAt),
+        ),
+      );
+    const sparklineColor = sparklineUsesSignalTimeline
+      ? null
+      : resolveSignalSparklineFallbackColor({
+          signalColor: sparklineSignalColor,
+          signalStateHydrated: rowSignalStateHydrated,
+        });
     const sparklineSignalMode = sparklineUsesSignalTimeline
       ? "timeline"
-      : sparklineColor
+      : sparklineSignalColor
         ? "current"
-        : "price";
+        : rowSignalStateHydrated
+          ? "price"
+          : "pending";
     const handleRowClick = () => {
       if (selectionMode) {
         if (rowSelectable) {

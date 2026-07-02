@@ -116,6 +116,7 @@ import {
   buildSignalSparklinePointColors,
   defaultSignalSparklineColorForDirection,
   isSignalSparklineDirection,
+  resolveSignalSparklineFallbackColor,
 } from "../features/signals/signalSparklineModel.js";
 import {
   getCurrentSignalDirection,
@@ -1751,14 +1752,22 @@ function CompactIntervalCell({
   const sparklineSignalColor = defaultSignalSparklineColorForDirection(
     sparklineFallbackDirection,
   );
+  // Until this cell's matrix state hydrates, hold the sparkline on the muted
+  // pending stroke instead of MicroSparkline's financial green/red default —
+  // signal cells must never fabricate a green/red trend reading.
   const sparklineColor = sparklineUsesSignalTimeline
     ? null
-    : sparklineSignalColor;
+    : resolveSignalSparklineFallbackColor({
+        signalColor: sparklineSignalColor,
+        signalStateHydrated: hydrated,
+      });
   const sparklineSignalMode = sparklineUsesSignalTimeline
     ? "timeline"
     : direction
       ? "current"
-      : "fallback";
+      : sparklineSignalColor || hydrated
+        ? "fallback"
+        : "pending";
   const issues = collectDataIssuesFromRecord(
     {
       status: problem

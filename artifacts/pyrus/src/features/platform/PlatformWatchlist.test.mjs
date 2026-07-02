@@ -422,3 +422,27 @@ test("platform signal matrix subscription narrowing does not prune published row
   );
   assert.doesNotMatch(source, /knownSymbols:\s*signalMatrixUniverseSymbols/);
 });
+
+test("watchlist sparklines hold the muted pending stroke until the row's signal state hydrates", () => {
+  // Launch regression: runtime snapshots (price/spark bars) hydrate seconds
+  // before the signal matrix/events. Rows fell through to MicroSparkline's
+  // financial green/red trend default and flashed the old green style before
+  // flipping to the signal-mapped blue/red. The gate must be PER ROW — the
+  // matrix streams in symbol by symbol, so app-level "matrix delivered
+  // something" evidence still let un-evaluated rows flash green mid-boot.
+  const source = readLocalSource("./PlatformWatchlist.jsx");
+  assert.match(source, /resolveSignalSparklineFallbackColor\(\{/);
+  assert.match(source, /signalStateHydrated: rowSignalStateHydrated,/);
+  // Row hydration evidence: a signal event for the symbol, or a matrix state
+  // carrying evaluation timing for the symbol.
+  assert.match(
+    source,
+    /const rowSignalStateHydrated =\s*signalEvents\.length > 0 \|\|\s*Object\.values\(signalStatesByTimeframe \|\| \{\}\)\.some\(/,
+  );
+  assert.match(
+    source,
+    /state\.latestBarAt \|\| state\.currentSignalAt \|\| state\.lastEvaluatedAt/,
+  );
+  // Pre-hydration rows report mode "pending", never "price".
+  assert.match(source, /: rowSignalStateHydrated\s*\?\s*"price"\s*:\s*"pending"/);
+});

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  SIGNAL_SPARKLINE_PENDING_COLOR,
   buildSignalEventsBySymbol,
   buildSignalSparklinePointColors,
   defaultSignalSparklineColorForDirection,
+  resolveSignalSparklineFallbackColor,
 } from "./signalSparklineModel.js";
 
 const BLUE = "var(--ra-blue-500)";
@@ -143,4 +145,47 @@ test("before a buy shows the opposite stance (sell), then flips to buy — never
   });
   // Points before the 2000 buy are sell (red); points at/after turn buy (blue).
   assert.deepEqual(colors, [RED, RED, BLUE, BLUE]);
+});
+
+test("fallback color stays muted until signal state hydrates (no launch green flash)", () => {
+  // Launch regression: quotes/spark bars hydrate seconds before the signal
+  // matrix/events. With no signal color and no hydration evidence, the
+  // sparkline must NOT fall through to MicroSparkline's financial green/red
+  // trend default (the "old green style") — it holds the muted pending stroke.
+  assert.equal(
+    resolveSignalSparklineFallbackColor({
+      signalColor: null,
+      signalStateHydrated: false,
+    }),
+    SIGNAL_SPARKLINE_PENDING_COLOR,
+  );
+});
+
+test("fallback color defers to the caller once signal state is hydrated", () => {
+  // Hydrated with no signal -> null, so surfaces that legitimately show a
+  // financial trend (price mode) keep their existing behavior.
+  assert.equal(
+    resolveSignalSparklineFallbackColor({
+      signalColor: null,
+      signalStateHydrated: true,
+    }),
+    null,
+  );
+});
+
+test("fallback color passes a resolved signal color through unchanged", () => {
+  assert.equal(
+    resolveSignalSparklineFallbackColor({
+      signalColor: BLUE,
+      signalStateHydrated: false,
+    }),
+    BLUE,
+  );
+  assert.equal(
+    resolveSignalSparklineFallbackColor({
+      signalColor: RED,
+      signalStateHydrated: true,
+    }),
+    RED,
+  );
 });

@@ -95,3 +95,17 @@ test("Signals table sparklines use runtime snapshots instead of DB-backed bars b
   assert.doesNotMatch(screenSource, /SIGNAL_SPARKLINE_PENDING/);
   assert.doesNotMatch(screenSource, /SIGNAL_SPARKLINE_FAILED/);
 });
+
+test("Signals interval sparklines hold the muted pending stroke until the cell hydrates", () => {
+  // Launch regression: bars can render before the cell's matrix state
+  // hydrates; with no signal direction the sparkline fell through to
+  // MicroSparkline's financial green/red default (old green style). The cell
+  // must gate the fallback color on its own hydration state.
+  const screenSource = source();
+  assert.match(screenSource, /resolveSignalSparklineFallbackColor\(\{/);
+  assert.match(screenSource, /signalStateHydrated: hydrated,/);
+  assert.match(
+    screenSource,
+    /: sparklineSignalColor \|\| hydrated\s*\?\s*"fallback"\s*:\s*"pending"/,
+  );
+});
