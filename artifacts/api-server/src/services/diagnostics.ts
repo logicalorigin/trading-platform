@@ -2849,7 +2849,6 @@ const MONITORED_STORAGE_TABLES = [
   { table: "flow_event_hydration_sessions", column: "window_to" },
   { table: "bar_cache", column: "starts_at" },
   { table: "quote_cache", column: "as_of" },
-  { table: "option_chain_snapshots", column: "as_of" },
   { table: "diagnostic_snapshots", column: "observed_at" },
   { table: "diagnostic_events", column: "last_seen_at" },
   { table: "ticker_reference_cache", column: "fetched_at" },
@@ -4643,7 +4642,6 @@ const PRUNABLE_CACHE_TABLES: Record<string, { table: string; column: string }> =
   },
   bar_cache: { table: "bar_cache", column: "starts_at" },
   quote_cache: { table: "quote_cache", column: "as_of" },
-  option_chain_snapshots: { table: "option_chain_snapshots", column: "as_of" },
   diagnostic_snapshots: { table: "diagnostic_snapshots", column: "observed_at" },
   diagnostic_events: { table: "diagnostic_events", column: "last_seen_at" },
   ticker_reference_cache: { table: "ticker_reference_cache", column: "fetched_at" },
@@ -4661,7 +4659,7 @@ export async function pruneDiagnosticStorage(input: {
   const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
   const requested = input.tables?.length
     ? input.tables
-    : ["bar_cache", "quote_cache", "option_chain_snapshots"];
+    : ["bar_cache", "quote_cache"];
   const tables = requested.filter((table) => PRUNABLE_CACHE_TABLES[table]);
   const dryRun = input.dryRun !== false;
   const results = [];

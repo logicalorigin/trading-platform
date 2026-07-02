@@ -10,8 +10,17 @@ const workerIngestSource = readFileSync(
   new URL("../../../../crates/market-data-worker/src/ingest.rs", import.meta.url),
   "utf8",
 );
+const workerRetentionSource = readFileSync(
+  new URL("../../../../crates/market-data-worker/src/retention.rs", import.meta.url),
+  "utf8",
+);
 const gexSource = readFileSync(
   new URL("../../../../crates/market-data-worker/src/compute/gex.rs", import.meta.url),
+  "utf8",
+);
+const diagnosticsSource = readFileSync(new URL("./diagnostics.ts", import.meta.url), "utf8");
+const marketDataSchemaSource = readFileSync(
+  new URL("../../../../lib/db/src/schema/market-data.ts", import.meta.url),
   "utf8",
 );
 
@@ -35,4 +44,11 @@ test("GEX hydration reads Massive rows from option_chain_latest", () => {
   assert.match(gexSource, /from option_chain_latest snap/);
   assert.match(gexSource, /snap\.source = 'massive'/);
   assert.doesNotMatch(gexSource, /from option_chain_snapshots/);
+});
+
+test("legacy option_chain_snapshots table is not retained, monitored, or modeled", () => {
+  assert.doesNotMatch(workerRetentionSource, /option_chain_snapshots/);
+  assert.doesNotMatch(diagnosticsSource, /option_chain_snapshots/);
+  assert.doesNotMatch(marketDataSchemaSource, /optionChainSnapshotsTable/);
+  assert.doesNotMatch(marketDataSchemaSource, /pgTable\(\s*["']option_chain_snapshots["']/);
 });

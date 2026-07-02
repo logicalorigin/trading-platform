@@ -85,43 +85,6 @@ export const barCacheTable = pgTable(
   ],
 );
 
-export const optionChainSnapshotsTable = pgTable(
-  "option_chain_snapshots",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    underlyingInstrumentId: uuid("underlying_instrument_id")
-      .notNull()
-      .references(() => instrumentsTable.id),
-    optionContractId: uuid("option_contract_id")
-      .notNull()
-      .references(() => optionContractsTable.id),
-    bid: numeric("bid", { precision: 18, scale: 6 }),
-    ask: numeric("ask", { precision: 18, scale: 6 }),
-    last: numeric("last", { precision: 18, scale: 6 }),
-    mark: numeric("mark", { precision: 18, scale: 6 }),
-    impliedVolatility: numeric("implied_volatility", { precision: 18, scale: 6 }),
-    delta: numeric("delta", { precision: 18, scale: 6 }),
-    gamma: numeric("gamma", { precision: 18, scale: 6 }),
-    theta: numeric("theta", { precision: 18, scale: 6 }),
-    vega: numeric("vega", { precision: 18, scale: 6 }),
-    openInterest: integer("open_interest"),
-    volume: integer("volume"),
-    source: text("source").notNull().default("massive"),
-    asOf: timestamp("as_of", { withTimezone: true }).notNull(),
-    ...timestamps,
-  },
-  (table) => [
-    index("option_chain_snapshots_underlying_idx").on(table.underlyingInstrumentId),
-    index("option_chain_snapshots_contract_idx").on(table.optionContractId),
-    index("option_chain_snapshots_as_of_idx").on(table.asOf),
-    index("option_chain_snapshots_underlying_contract_as_of_idx").on(
-      table.underlyingInstrumentId,
-      table.optionContractId,
-      table.asOf.desc(),
-    ),
-  ],
-);
-
 // Upsert "latest" table: one row per (option_contract_id, source), updated in
 // place — replaces the append-only option_chain_snapshots firehose. NO FK
 // references (derived cache; integrity maintained by ingest order; avoids a

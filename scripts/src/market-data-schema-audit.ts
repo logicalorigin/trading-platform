@@ -73,30 +73,6 @@ const TABLES: TableSpec[] = [
     ],
   },
   {
-    name: "option_chain_snapshots",
-    columns: [
-      "id",
-      "underlying_instrument_id",
-      "option_contract_id",
-      "bid",
-      "ask",
-      "mark",
-      "implied_volatility",
-      "delta",
-      "gamma",
-      "open_interest",
-      "volume",
-      "source",
-      "as_of",
-    ],
-    indexes: [
-      "option_chain_snapshots_underlying_idx",
-      "option_chain_snapshots_contract_idx",
-      "option_chain_snapshots_as_of_idx",
-      "option_chain_snapshots_underlying_contract_as_of_idx",
-    ],
-  },
-  {
     name: "market_data_ingest_jobs",
     columns: [
       "id",
