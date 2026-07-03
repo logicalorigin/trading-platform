@@ -11659,17 +11659,33 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
   );
 }
 
+// Building an Intl.DateTimeFormat loads ICU locale/timezone data and is one of
+// the most expensive operations in V8. This runs per-call across shadow
+// mark/equity paths and showed as 6.1% of main-thread self-time in a live CPU
+// profile (event-loop-starvation workstream). The formatter is stateless and
+// reusable, so cache one per timeZone. Behavior-preserving.
+const timeZonePartsFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function timeZonePartsFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = timeZonePartsFormatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    timeZonePartsFormatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function timeZoneParts(date: Date, timeZone = WATCHLIST_BACKTEST_TIME_ZONE) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
+  const formatter = timeZonePartsFormatter(timeZone);
   const parts = Object.fromEntries(
     formatter.formatToParts(date).map((part) => [part.type, part.value]),
   );
