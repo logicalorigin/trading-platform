@@ -1237,7 +1237,6 @@ test("signal monitor event pagination reports source status", () => {
           close: 100,
           emittedAt: new Date("2026-06-09T16:40:01.000Z"),
           source: "pyrus-signals",
-          payload: {},
         },
       ],
       100,
@@ -1295,7 +1294,7 @@ test("signal monitor events read checks fallback latch before retrying the datab
   assert.notEqual(listEnd, -1);
   const listBlock = source.slice(listStart, listEnd);
   const latchCheck = listBlock.indexOf("shouldServeSignalMonitorEventsRuntimeFallback");
-  const dbRead = listBlock.indexOf(".select()");
+  const dbRead = listBlock.indexOf(".select(");
   const markFailure = listBlock.indexOf("markSignalMonitorEventsReadFallback");
 
   assert.notEqual(latchCheck, -1);

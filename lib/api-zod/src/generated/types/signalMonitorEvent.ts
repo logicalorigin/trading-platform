@@ -6,7 +6,6 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
-import type { JsonObject } from './jsonObject';
 import type { SignalMonitorDirection } from './signalMonitorDirection';
 import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
 
@@ -24,5 +23,4 @@ export interface SignalMonitorEvent {
   close: number | null;
   emittedAt: Date;
   source: string;
-  payload: JsonObject;
 }

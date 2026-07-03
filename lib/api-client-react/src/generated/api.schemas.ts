@@ -5288,7 +5288,6 @@ export interface SignalMonitorEvent {
   close: number | null;
   emittedAt: string;
   source: string;
-  payload: JsonObject;
 }
 
 export type SignalMonitorBreadthHistoryRange = typeof SignalMonitorBreadthHistoryRange[keyof typeof SignalMonitorBreadthHistoryRange];

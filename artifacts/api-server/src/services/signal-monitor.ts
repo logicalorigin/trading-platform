@@ -51,10 +51,7 @@ import {
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
-import {
-  normalizeLegacyAlgoBranding,
-  normalizeLegacyAlgoBrandText,
-} from "./algo-branding";
+import { normalizeLegacyAlgoBrandText } from "./algo-branding";
 import {
   getBars,
   getBarsWithDebug,
@@ -1422,7 +1419,22 @@ function completeSignalMonitorStateSnapshotCoverage<
   };
 }
 
-function eventToResponse(event: DbSignalMonitorEvent) {
+function eventToResponse(
+  event: Pick<
+    DbSignalMonitorEvent,
+    | "id"
+    | "profileId"
+    | "environment"
+    | "symbol"
+    | "timeframe"
+    | "direction"
+    | "signalAt"
+    | "signalPrice"
+    | "close"
+    | "emittedAt"
+    | "source"
+  >,
+) {
   return {
     id: event.id,
     profileId: event.profileId,
@@ -1435,7 +1447,6 @@ function eventToResponse(event: DbSignalMonitorEvent) {
     close: numericValueOrNull(event.close),
     emittedAt: event.emittedAt,
     source: normalizeLegacyAlgoBrandText(event.source),
-    payload: normalizeLegacyAlgoBranding(asRecord(event.payload)),
   };
 }
 
@@ -14082,7 +14093,19 @@ export async function listSignalMonitorEvents(input: {
 
   try {
     const events = await db
-      .select()
+      .select({
+        id: signalMonitorEventsTable.id,
+        profileId: signalMonitorEventsTable.profileId,
+        environment: signalMonitorEventsTable.environment,
+        symbol: signalMonitorEventsTable.symbol,
+        timeframe: signalMonitorEventsTable.timeframe,
+        direction: signalMonitorEventsTable.direction,
+        signalAt: signalMonitorEventsTable.signalAt,
+        signalPrice: signalMonitorEventsTable.signalPrice,
+        close: signalMonitorEventsTable.close,
+        emittedAt: signalMonitorEventsTable.emittedAt,
+        source: signalMonitorEventsTable.source,
+      })
       .from(signalMonitorEventsTable)
       .where(and(...conditions))
       .orderBy(

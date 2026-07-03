@@ -5077,8 +5077,7 @@ export const ListSignalMonitorEventsResponse = zod.object({
   "signalPrice": zod.number().nullable(),
   "close": zod.number().nullable(),
   "emittedAt": zod.coerce.date(),
-  "source": zod.string(),
-  "payload": zod.record(zod.string(), zod.unknown())
+  "source": zod.string()
 })),
   "nextCursor": zod.string().nullable().describe('Opaque cursor for the next page, or null when the page is complete.'),
   "hasMore": zod.boolean().describe('True when another page is available for the same filter set.'),

@@ -12895,8 +12895,6 @@ components:
           format: date-time
         source:
           type: string
-        payload:
-          $ref: "#/components/schemas/JsonObject"
       required:
         - id
         - profileId
@@ -12909,7 +12907,6 @@ components:
         - close
         - emittedAt
         - source
-        - payload
 
     SignalMonitorBreadthHistoryRange:
       type: string
