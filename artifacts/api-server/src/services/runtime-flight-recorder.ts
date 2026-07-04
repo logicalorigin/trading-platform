@@ -546,6 +546,70 @@ export function appendRuntimeFlightRecorderEvent(
   }
 }
 
+// Periodic memory/ELU samples go to the APPEND-ONLY events JSONL, not just
+// api-current.json: the current-state file is overwritten by the next boot, so
+// after the 2026-07-03 container replacement no pre-crash memory trajectory
+// survived. Samples capture SYSTEM memory (all processes) as well — that
+// incident never tripped the per-process api-memory-pressure threshold; the
+// box ran out in aggregate.
+const MEMORY_SAMPLE_INTERVAL_MS = (() => {
+  const raw = Number.parseInt(
+    process.env["PYRUS_API_FLIGHT_RECORDER_MEMORY_SAMPLE_MS"] ?? "30000",
+    10,
+  );
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+})();
+let lastMemorySampleAt = 0;
+
+function systemMemorySnapshotMb(): JsonRecord | null {
+  try {
+    const meminfo = readFileSync("/proc/meminfo", "utf8");
+    const readKb = (key: string): number | null => {
+      const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+) kB`, "m"));
+      return match ? Math.round(Number(match[1]) / 1024) : null;
+    };
+    return {
+      totalMb: readKb("MemTotal"),
+      availableMb: readKb("MemAvailable"),
+      freeMb: readKb("MemFree"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
+  try {
+    const now = Date.now();
+    if (now - lastMemorySampleAt < MEMORY_SAMPLE_INTERVAL_MS) return;
+    lastMemorySampleAt = now;
+    const pressureInputs = (heartbeat["apiPressure"] as JsonRecord | undefined)?.[
+      "inputs"
+    ] as JsonRecord | undefined;
+    const dbPool = heartbeat["dbPool"] as JsonRecord | undefined;
+    appendRuntimeFlightRecorderEvent("api-memory-sample", {
+      memoryMb: heartbeat["memoryMb"] ?? null,
+      system: systemMemorySnapshotMb(),
+      eventLoopDelayP95Ms: pressureInputs?.["eventLoopDelayP95Ms"] ?? null,
+      eventLoopUtilization: pressureInputs?.["eventLoopUtilization"] ?? null,
+      dbPool: dbPool
+        ? {
+            active: dbPool["active"] ?? null,
+            waiting: dbPool["waiting"] ?? null,
+            max: dbPool["max"] ?? null,
+          }
+        : null,
+    });
+  } catch {
+    // Recorder writes must not affect runtime behavior.
+  }
+}
+
+export function __recordMemorySampleForTests(heartbeat: JsonRecord): void {
+  lastMemorySampleAt = 0;
+  recordMemorySampleIfDue(heartbeat);
+}
+
 const RSS_PRESSURE_REARM_RATIO = 0.9;
 const RSS_PRESSURE_MIN_REWARN_MS = 60_000;
 let memoryPressureActive = false;
@@ -642,6 +706,7 @@ export function writeRuntimeFlightRecorderHeartbeat(): JsonRecord | null {
   try {
     const heartbeat = buildApiHeartbeat();
     atomicWriteJson(path.join(recorderDir(), "api-current.json"), heartbeat);
+    recordMemorySampleIfDue(heartbeat);
     recordMemoryPressureIfNeeded();
     recordDbPoolPressureIfNeeded();
     return heartbeat;

@@ -129,7 +129,43 @@ function currentChildrenSnapshot() {
   return [...children].map((child) => ({
     pid: child.pid || null,
     killed: Boolean(child.killed),
+    rssMb: processRssMb(child.pid),
   }));
+}
+
+const PROC_PAGE_SIZE_BYTES = 4096;
+
+function processRssMb(pid) {
+  if (!pid) return null;
+  try {
+    const statm = readFileSync(`/proc/${pid}/statm`, "utf8").split(" ");
+    const rssPages = Number(statm[1]);
+    if (!Number.isFinite(rssPages)) return null;
+    return Math.round((rssPages * PROC_PAGE_SIZE_BYTES) / 1024 / 1024);
+  } catch {
+    return null;
+  }
+}
+
+// System-wide memory (all processes, not just ours) so a container replacement
+// under memory pressure is attributable from the heartbeat trail: per-process
+// RSS alone missed the 2026-07-03 incident because no single process crossed
+// its own threshold while the box as a whole ran out.
+function systemMemorySnapshotMb() {
+  try {
+    const meminfo = readFileSync("/proc/meminfo", "utf8");
+    const readKb = (key) => {
+      const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+) kB`, "m"));
+      return match ? Math.round(Number(match[1]) / 1024) : null;
+    };
+    return {
+      totalMb: readKb("MemTotal"),
+      availableMb: readKb("MemAvailable"),
+      freeMb: readKb("MemFree"),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function currentFlightHeartbeat(extra = {}) {
@@ -140,6 +176,8 @@ function currentFlightHeartbeat(extra = {}) {
     webPid: webChild?.pid ?? null,
     workerPid: workerChild?.pid ?? null,
     children: currentChildrenSnapshot(),
+    supervisorRssMb: processRssMb(process.pid),
+    systemMemoryMb: systemMemorySnapshotMb(),
     ...extra,
   };
 }

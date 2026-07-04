@@ -9,6 +9,7 @@ import {
   recordApiRequest,
 } from "./request-metrics";
 import {
+  __recordMemorySampleForTests,
   appendFlightRecorderJsonLine,
   flushRuntimeFlightRecorderBuffersSync,
   rssPressureThresholdBytes,
@@ -173,6 +174,49 @@ test("appendFlightRecorderJsonLine buffers and does not block the loop with a sy
     const contents = readFileSync(file, "utf8");
     assert.match(contents, /"marker":"buffered-write-test"/);
     assert.match(contents, /\n$/);
+  } finally {
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("memory sample event captures process, system, and event-loop state in the append-only log", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+
+  try {
+    __recordMemorySampleForTests({
+      memoryMb: { rss: 1800.5, heapUsed: 400.2 },
+      apiPressure: {
+        inputs: { eventLoopDelayP95Ms: 12.5, eventLoopUtilization: 0.42 },
+      },
+      dbPool: { max: 12, total: 12, idle: 0, active: 12, waiting: 3 },
+    });
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const file = path.join(
+      recorderDir,
+      `api-events-${new Date().toISOString().slice(0, 10)}.jsonl`,
+    );
+    const line = readFileSync(file, "utf8").trim().split("\n")[0];
+    const event = JSON.parse(line);
+
+    assert.equal(event.event, "api-memory-sample");
+    assert.deepEqual(event.memoryMb, { rss: 1800.5, heapUsed: 400.2 });
+    assert.equal(event.eventLoopDelayP95Ms, 12.5);
+    assert.equal(event.eventLoopUtilization, 0.42);
+    assert.deepEqual(event.dbPool, { active: 12, waiting: 3, max: 12 });
+    // System memory comes from /proc/meminfo — real values on Linux, null
+    // (not a crash) where /proc is unavailable.
+    if (event.system !== null) {
+      assert.equal(typeof event.system.totalMb, "number");
+      assert.equal(typeof event.system.availableMb, "number");
+    }
   } finally {
     if (previousRecorderDir === undefined) {
       delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
