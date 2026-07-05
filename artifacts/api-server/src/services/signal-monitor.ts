@@ -6655,6 +6655,13 @@ function signalMonitorSymbolStateKey(symbol: string, timeframe: string): string 
   return `${normalizeSymbol(symbol)}:${timeframe}`;
 }
 
+// NOTE (P3 event-loop review, corrected 2026-07-05): this table's ONLY jsonb is
+// `filter_state` — there is NO `payload` column here (that lives on
+// signal_monitor_events). filter_state IS load-bearing: the latch reads
+// `existing.filterState` (resolveSignalMonitorSymbolStateUpsert) and
+// mergeFreshBarMetadataOntoPreservedSignalRow carries it onto the {preserved}
+// row, so the full projection must stay. There is no unused jsonb to reclaim on
+// this read — do not treat it as an event-loop win.
 async function readStoredSignalMonitorSymbolStateMap(input: {
   profileId: string;
   cells: Array<{ symbol: string; timeframe: SignalMonitorMatrixTimeframe }>;
