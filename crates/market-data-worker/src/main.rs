@@ -22,16 +22,13 @@ use crate::compute::gex::compute_and_persist_gex_snapshot;
 use crate::config::WorkerConfig;
 use crate::db::connect_pool;
 use crate::ingest::{
-    persist_option_chain_snapshots, persist_provider_request_log, persist_stock_snapshot,
-    ProviderRequestLogInput,
+    persist_option_chain_snapshots, persist_provider_request_log, ProviderRequestLogInput,
 };
 use crate::jobs::{
     claim_next_job, complete_job, fail_gex_jobs_with_failed_prerequisites, fail_job, heartbeat_job,
     IngestJob,
 };
-use crate::providers::massive::{
-    fetch_option_chain_snapshots, fetch_stock_snapshot, OptionChainFetchResult,
-};
+use crate::providers::massive::{fetch_option_chain_snapshots, OptionChainFetchResult};
 
 #[derive(Debug, Parser)]
 #[command(name = "market-data-worker")]
@@ -95,58 +92,6 @@ fn build_http_client() -> Result<reqwest::Client> {
 async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> {
     let pool = connect_pool(&config).await?;
     match kind {
-        "stock_snapshot" => {
-            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
-            })?;
-            let client = build_http_client()?;
-            let started_at = Instant::now();
-            let snapshot = match fetch_stock_snapshot(&client, provider, symbol).await {
-                Ok(fetch) => {
-                    log_provider_request(
-                        &pool,
-                        &provider.provider,
-                        "stock_snapshot",
-                        symbol,
-                        started_at,
-                        "ok",
-                        fetch.metadata.http_status,
-                        Some(1),
-                        Some(1),
-                        fetch.metadata.rate_limit_reset_at,
-                        None,
-                    )
-                    .await?;
-                    fetch.snapshot
-                }
-                Err(error) => {
-                    log_provider_request(
-                        &pool,
-                        &provider.provider,
-                        "stock_snapshot",
-                        symbol,
-                        started_at,
-                        "error",
-                        http_status_from_error(&error),
-                        None,
-                        Some(1),
-                        None,
-                        Some(error.to_string()),
-                    )
-                    .await?;
-                    return Err(error);
-                }
-            };
-            persist_stock_snapshot(&pool, symbol, &provider.provider, &snapshot).await?;
-            info!(
-                symbol = snapshot.symbol,
-                provider = provider.provider,
-                last = snapshot.last,
-                as_of = %snapshot.as_of,
-                "persisted stock snapshot"
-            );
-            Ok(())
-        }
         "option_chain_snapshot" => {
             let provider = config.market_data_provider.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
@@ -232,16 +177,17 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
         "market-data worker started"
     );
 
-    // Background retention sweep: keeps cache tables (bar_cache, option_chain_snapshots,
-    // quote_cache, gex_snapshots, provider_request_log) bounded so they don't bloat and
-    // stall queries / starve the API event loop (which otherwise gets the dev workflow
-    // killed and restarted by Replit). Runs concurrently with job processing and deletes
-    // in small batches. Only in the long-running worker, not the bounded drain mode.
+    // Background retention sweep: keeps cache tables (bar_cache, quote_cache,
+    // gex_snapshots, provider_request_log) bounded so they don't bloat and stall
+    // queries / starve the API event loop (which otherwise gets the dev workflow
+    // killed and restarted by Replit). Runs concurrently with job processing and
+    // deletes in small batches. Only in the long-running worker, not the bounded
+    // drain mode.
     if max_jobs.is_none() {
         let pool = pool.clone();
         let config = config.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(120)).await;
+            tokio::time::sleep(Duration::from_secs(config.retention_interval_secs)).await;
             loop {
                 match retention::run_retention(&pool, &config, true).await {
                     Ok(()) => info!("scheduled retention sweep complete"),
@@ -326,61 +272,6 @@ async fn run_loop(config: WorkerConfig, max_jobs: Option<usize>) -> Result<()> {
 
 async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob) -> Result<()> {
     match job.kind.as_str() {
-        "stock_snapshot" => {
-            let provider = config.market_data_provider.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
-            })?;
-            let client = build_http_client()?;
-            with_job_heartbeat(pool, config, job, async {
-                let started_at = Instant::now();
-                let snapshot = match fetch_stock_snapshot(&client, provider, &job.symbol).await {
-                    Ok(fetch) => {
-                        log_provider_request(
-                            pool,
-                            &provider.provider,
-                            "stock_snapshot",
-                            &job.symbol,
-                            started_at,
-                            "ok",
-                            fetch.metadata.http_status,
-                            Some(1),
-                            Some(1),
-                            fetch.metadata.rate_limit_reset_at,
-                            None,
-                        )
-                        .await?;
-                        fetch.snapshot
-                    }
-                    Err(error) => {
-                        log_provider_request(
-                            pool,
-                            &provider.provider,
-                            "stock_snapshot",
-                            &job.symbol,
-                            started_at,
-                            "error",
-                            http_status_from_error(&error),
-                            None,
-                            Some(1),
-                            None,
-                            Some(error.to_string()),
-                        )
-                        .await?;
-                        return Err(error);
-                    }
-                };
-                persist_stock_snapshot(pool, &job.symbol, &provider.provider, &snapshot).await?;
-                info!(
-                    symbol = snapshot.symbol,
-                    provider = provider.provider,
-                    last = snapshot.last,
-                    as_of = %snapshot.as_of,
-                    "persisted stock snapshot"
-                );
-                Ok(())
-            })
-            .await
-        }
         "gex_snapshot" => {
             with_job_heartbeat(pool, config, job, async {
                 compute_and_persist_gex_snapshot(pool, &job.symbol).await?;
@@ -584,7 +475,6 @@ fn is_transient_job_error(error: &anyhow::Error) -> bool {
         || message.contains("unsupported once job kind")
         || message.contains("symbol is required")
         || message.contains("MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY must be set")
-        || message.contains("provider returned no usable stock snapshot")
         || message.contains("provider returned no option-chain snapshots")
         || message.contains("option-chain snapshot truncated")
         // DB constraint violations (e.g. unique/foreign-key/check) won't fix themselves on retry.

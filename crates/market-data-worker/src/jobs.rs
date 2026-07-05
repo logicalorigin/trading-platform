@@ -42,15 +42,6 @@ pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Opti
                   select 1
                   from market_data_ingest_jobs prerequisite
                   where prerequisite.symbol = candidate.symbol
-                    and prerequisite.kind = 'stock_snapshot'
-                    and prerequisite.status = 'completed'
-                    and coalesce(prerequisite.payload->>'dedupeBucket', '') =
-                      coalesce(candidate.payload->>'dedupeBucket', '')
-                )
-                and exists (
-                  select 1
-                  from market_data_ingest_jobs prerequisite
-                  where prerequisite.symbol = candidate.symbol
                     and prerequisite.kind = 'option_chain_snapshot'
                     and prerequisite.status = 'completed'
                     and coalesce(prerequisite.payload->>'dedupeBucket', '') =
@@ -198,7 +189,7 @@ pub async fn fail_gex_jobs_with_failed_prerequisites(pool: &PgPool) -> Result<u6
           from market_data_ingest_jobs candidate
           join market_data_ingest_jobs prerequisite
             on prerequisite.symbol = candidate.symbol
-           and prerequisite.kind in ('stock_snapshot', 'option_chain_snapshot')
+           and prerequisite.kind = 'option_chain_snapshot'
            and prerequisite.status = 'failed'
            and coalesce(prerequisite.payload->>'dedupeBucket', '') =
              coalesce(candidate.payload->>'dedupeBucket', '')
