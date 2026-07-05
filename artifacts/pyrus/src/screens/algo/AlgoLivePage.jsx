@@ -55,6 +55,7 @@ import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 import { AlgoDeploymentTabs } from "./AlgoDeploymentTabs.jsx";
+import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
 import {
   canonicalizeStreamState,
   streamStateTokenVar,
@@ -1180,17 +1181,14 @@ export const AlgoLivePage = ({
                           : "help",
                     }}
                   >
-                    <span
-                      aria-hidden="true"
-                      data-testid="algo-operations-header-wave"
-                      style={{
-                        width: algoIsPhone ? 7 : 8,
-                        height: algoIsPhone ? 7 : 8,
-                        borderRadius: "50%",
-                        background: headerScanWave.color,
-                        display: "inline-block",
-                        flex: "0 0 auto",
-                      }}
+                    <IbkrStatusWave
+                      status={headerScanWave.status}
+                      wave={headerScanWave.wave}
+                      color={headerScanWave.color}
+                      width={algoIsPhone ? 22 : 24}
+                      height={12}
+                      decorative
+                      dataTestId="algo-operations-header-wave"
                     />
                     <span>{headerScanWave.badgeLabel}</span>
                   </span>

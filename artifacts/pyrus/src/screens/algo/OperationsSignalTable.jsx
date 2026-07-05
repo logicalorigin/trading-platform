@@ -59,6 +59,7 @@ import {
 } from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
+import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
 import {
   useRuntimeTickerSnapshot,
   useRuntimeTickerSnapshots,
@@ -1901,18 +1902,15 @@ export const OperationsSignalTable = ({
                 minWidth: 0,
               }}
             >
-              <span
-                role="img"
-                aria-label="Signal scan activity"
-                data-testid="algo-signal-scan-wave"
-                style={{
-                  width: algoIsPhone ? 7 : 8,
-                  height: algoIsPhone ? 7 : 8,
-                  borderRadius: "50%",
-                  background: signalScanWave.color,
-                  display: "inline-block",
-                  flex: "0 0 auto",
-                }}
+              <IbkrStatusWave
+                status={signalScanWave.status}
+                wave={signalScanWave.wave}
+                color={signalScanWave.color}
+                width={algoIsPhone ? 22 : 28}
+                height={12}
+                decorative={false}
+                ariaLabel="Signal scan activity"
+                dataTestId="algo-signal-scan-wave"
               />
               <span
                 style={{
