@@ -2814,7 +2814,6 @@ function buildResourcePressureMetrics(
       textValue(browserMemory["confidence"]),
     dominantDrivers,
     apiResourcePressure: resourcePressure,
-    pressureCaps: resourcePressure.caps,
     browserObservedAt: latest?.observedAt ?? null,
     latestClientAt: latest?.observedAt ?? null,
     activeDiagnosticsClients: subscribers.size,

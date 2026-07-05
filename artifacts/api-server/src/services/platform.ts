@@ -13676,7 +13676,6 @@ export function getOptionsFlowScannerDiagnostics() {
       level: resourcePressure.level,
       drivers: resourcePressure.drivers,
       inputs: resourcePressure.inputs,
-      caps: resourcePressure.caps,
     },
     scannerPressure,
     scannerMode: "direct-rotation",
