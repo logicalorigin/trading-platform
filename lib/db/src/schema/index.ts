@@ -1,5 +1,6 @@
 export * from "./charting";
 export * from "./automation";
+export * from "./auth";
 export * from "./backtesting";
 export * from "./broker";
 export * from "./common";
@@ -10,7 +11,10 @@ export * from "./instruments";
 export * from "./market-data";
 export * from "./pattern-discovery";
 export * from "./preferences";
+export * from "./robinhood";
+export * from "./schwab";
 export * from "./signal-monitor";
+export * from "./snaptrade";
 export * from "./trading";
 export * from "./universe";
 export * from "./watchlists";

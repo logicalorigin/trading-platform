@@ -46,6 +46,43 @@ export const buildStrategySettingsPayload = (strategySettingsDraft = {}) => {
   };
 };
 
+const TRANSIENT_SAVE_RETRY_DELAYS_MS = [350, 900, 1600];
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const isTransientSaveTransportError = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    error instanceof TypeError ||
+    message.includes("failed to fetch") ||
+    message.includes("networkerror") ||
+    message.includes("load failed")
+  );
+};
+
+const runSaveTaskWithTransportRetry = async (run) => {
+  let lastError;
+  for (
+    let attempt = 0;
+    attempt <= TRANSIENT_SAVE_RETRY_DELAYS_MS.length;
+    attempt += 1
+  ) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      const shouldRetry =
+        attempt < TRANSIENT_SAVE_RETRY_DELAYS_MS.length &&
+        isTransientSaveTransportError(error);
+      if (!shouldRetry) {
+        throw error;
+      }
+      await wait(TRANSIENT_SAVE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastError;
+};
+
 export const saveAllAlgoAdjustments = async ({
   deploymentId,
   profileDraft,
@@ -95,7 +132,7 @@ export const saveAllAlgoAdjustments = async ({
   const results = {};
   for (const task of tasks) {
     try {
-      results[task.key] = await task.run();
+      results[task.key] = await runSaveTaskWithTransportRetry(task.run);
     } catch (error) {
       failures.push({ section: task.section, error });
     }

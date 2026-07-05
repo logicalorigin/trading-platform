@@ -4,13 +4,16 @@ import {
   desc,
   eq,
   gte,
+  inArray,
   lte,
   sql,
 } from "drizzle-orm";
 import {
   barCacheTable,
   db,
+  getPostgresDiagnosticContext,
   instrumentsTable,
+  runWithPostgresDiagnosticContext,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
@@ -68,7 +71,11 @@ export type MarketDataStoreBarInput = {
 };
 
 const DEFAULT_RECENT_WINDOW_MINUTES = 60;
-const STORE_BATCH_SIZE = 500;
+// Chunk bar_cache upserts to the Postgres bind-parameter ceiling: each row binds
+// 11 params, so 65535 / 11 ≈ 5957 rows/statement — 5000 leaves margin while letting
+// one persist flush (≤5000 rolled-up bars) land as a SINGLE INSERT..ON CONFLICT
+// instead of one statement per (timeframe, source) group.
+const BAR_CACHE_WRITE_BATCH_SIZE = 5000;
 // The durable store self-heals instead of disabling permanently. A pool-acquire
 // timeout (e.g. the cold-start read burst) does NOT back off — the next call
 // retries immediately; any other DB error opens a short, time-boxed backoff that
@@ -77,6 +84,25 @@ const marketDataStoreBackoff = createTransientPostgresBackoff({
   backoffMs: 15_000,
   warningCooldownMs: 60_000,
 });
+
+function runWithMarketDataStoreContext<T>(
+  workloadFamily: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (getPostgresDiagnosticContext()) {
+    return fn();
+  }
+  // Await `fn()` INSIDE the diagnostic scope. `fn` returns a lazy drizzle
+  // thenable; passing it straight to `als.run` builds the query synchronously
+  // but fires `pool.query()` from the caller's later `await` — after the scope
+  // has already restored the previous (null) store — so every background
+  // bar_cache op was landing as null-context. The `async` wrapper keeps the
+  // context active when the query actually executes.
+  return runWithPostgresDiagnosticContext(
+    { routeClass: "background", workloadFamily },
+    async () => fn(),
+  );
+}
 
 export function __resetMarketDataStoreBackoffForTests(): void {
   marketDataStoreBackoff.resetForTest();
@@ -101,6 +127,53 @@ const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
   "1month": 30 * 24 * 60 * 60_000,
   "1year": 365 * 24 * 60 * 60_000,
 };
+
+// Historical corruption left some intraday bar_cache rows stored under a coarse
+// timeframe with lower-timeframe timestamps (for example SPY 15m rows at :09/:13).
+// Current writers bucket before upsert. Keep the indexed SQL read simple and reject
+// old dirty rows in Node; a modulo predicate in SQL timed out on hot 5m ranges.
+const STORED_BAR_ALIGNMENT_MAX_STEP_MS = 4 * 60 * 60_000;
+
+const storedBarAlignmentSecondsForTimeframe = (
+  timeframe: MarketDataStoreTimeframe,
+): number | null => {
+  const stepMs = TIMEFRAME_STEP_MS[timeframe];
+  if (
+    !stepMs ||
+    stepMs <= 1_000 ||
+    stepMs > STORED_BAR_ALIGNMENT_MAX_STEP_MS
+  ) {
+    return null;
+  }
+  const seconds = stepMs / 1_000;
+  return Number.isInteger(seconds) ? seconds : null;
+};
+
+const storedBarTimestampAlignedToTimeframe = (
+  timestamp: Date | string,
+  timeframe: MarketDataStoreTimeframe,
+): boolean => {
+  const seconds = storedBarAlignmentSecondsForTimeframe(timeframe);
+  if (!seconds) {
+    return true;
+  }
+  const timestampMs =
+    timestamp instanceof Date ? timestamp.getTime() : new Date(timestamp).getTime();
+  if (!Number.isFinite(timestampMs)) {
+    return false;
+  }
+  return Math.floor(timestampMs / 1_000) % seconds === 0;
+};
+
+function alignedStoredBarRows<T>(
+  rows: T[],
+  timeframe: MarketDataStoreTimeframe,
+  startsAt: (row: T) => Date | string,
+): T[] {
+  return rows.filter((row) =>
+    storedBarTimestampAlignedToTimeframe(startsAt(row), timeframe),
+  );
+}
 
 const numberFromDb = (value: unknown): number => {
   if (typeof value === "number") {
@@ -188,6 +261,9 @@ const expandStoredRowsLimit = (
   limit: number,
   timeframe: MarketDataStoreTimeframe,
 ): number => {
+  if (storedBarAlignmentSecondsForTimeframe(timeframe)) {
+    return limit;
+  }
   const stepMs = TIMEFRAME_STEP_MS[timeframe];
   if (
     !stepMs ||
@@ -205,6 +281,12 @@ export function __expandStoredRowsLimitForTests(
   timeframe: MarketDataStoreTimeframe,
 ): number {
   return expandStoredRowsLimit(limit, timeframe);
+}
+
+export function __storedBarAlignmentSecondsForTests(
+  timeframe: MarketDataStoreTimeframe,
+): number | null {
+  return storedBarAlignmentSecondsForTimeframe(timeframe);
 }
 
 export function normalizeBarsToStoreTimeframe<T extends MarketDataStoreBarInput>(
@@ -300,6 +382,75 @@ export function __resetStoreInstrumentCacheForTests(): void {
   storeInstrumentIdCache.clear();
 }
 
+async function ensureStoreInstruments(inputs: Array<{
+  symbol: string;
+  assetClass?: "equity" | "option";
+}>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const missingBySymbol = new Map<
+    string,
+    { symbol: string; assetClass?: "equity" | "option" }
+  >();
+  for (const input of inputs) {
+    const symbol = normalizeSymbol(input.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const cached = storeInstrumentIdCache.get(symbol);
+    if (cached) {
+      out.set(symbol, cached);
+      continue;
+    }
+    if (!missingBySymbol.has(symbol)) {
+      missingBySymbol.set(symbol, { ...input, symbol });
+    }
+  }
+
+  const missing = Array.from(missingBySymbol.values());
+  if (!missing.length) {
+    return out;
+  }
+
+  await runWithMarketDataStoreContext("bar-cache-instrument", () =>
+    db
+      .insert(instrumentsTable)
+      .values(
+        missing.map((input) => ({
+          symbol: input.symbol,
+          assetClass: input.assetClass ?? "equity",
+          name: input.symbol,
+          currency: "USD",
+          isActive: true,
+        })),
+      )
+      .onConflictDoNothing({ target: instrumentsTable.symbol }),
+  );
+
+  const rows = await runWithMarketDataStoreContext(
+    "bar-cache-instrument",
+    () =>
+      db
+        .select({ id: instrumentsTable.id, symbol: instrumentsTable.symbol })
+        .from(instrumentsTable)
+        .where(
+          inArray(
+            instrumentsTable.symbol,
+            missing.map((input) => input.symbol),
+          ),
+        ),
+  );
+
+  for (const row of rows) {
+    const symbol = normalizeSymbol(row.symbol);
+    if (!symbol) {
+      continue;
+    }
+    storeInstrumentIdCache.set(symbol, row.id);
+    out.set(symbol, row.id);
+  }
+  return out;
+}
+
 async function ensureStoreInstrument(input: {
   symbol: string;
   assetClass?: "equity" | "option";
@@ -308,43 +459,7 @@ async function ensureStoreInstrument(input: {
   if (!symbol) {
     return null;
   }
-
-  const cached = storeInstrumentIdCache.get(symbol);
-  if (cached) {
-    return cached;
-  }
-
-  const [existing] = await db
-    .select({ id: instrumentsTable.id })
-    .from(instrumentsTable)
-    .where(eq(instrumentsTable.symbol, symbol))
-    .limit(1);
-  if (existing?.id) {
-    storeInstrumentIdCache.set(symbol, existing.id);
-    return existing.id;
-  }
-
-  await db
-    .insert(instrumentsTable)
-    .values({
-      symbol,
-      assetClass: input.assetClass ?? "equity",
-      name: symbol,
-      currency: "USD",
-      isActive: true,
-    })
-    .onConflictDoNothing({ target: instrumentsTable.symbol });
-
-  const [created] = await db
-    .select({ id: instrumentsTable.id })
-    .from(instrumentsTable)
-    .where(eq(instrumentsTable.symbol, symbol))
-    .limit(1);
-
-  if (created?.id) {
-    storeInstrumentIdCache.set(symbol, created.id);
-  }
-  return created?.id ?? null;
+  return (await ensureStoreInstruments([input])).get(symbol) ?? null;
 }
 
 const handleStoreError = (error: unknown, operation: string): void => {
@@ -387,7 +502,6 @@ export async function loadStoredMarketBars(
     if (window.from) {
       conditions.push(gte(barCacheTable.startsAt, window.from));
     }
-
     const desiredLimit = Math.max(1, input.limit ?? 500);
     const limit = expandStoredRowsLimit(desiredLimit, input.timeframe);
     // Project ONLY the columns the snapshot mapping below consumes. The full-row
@@ -404,19 +518,28 @@ export async function loadStoredMarketBars(
       close: barCacheTable.close,
       volume: barCacheTable.volume,
     };
-    const rows = window.from
-      ? await db
-          .select(barColumns)
-          .from(barCacheTable)
-          .where(and(...conditions))
-          .orderBy(asc(barCacheTable.startsAt))
-          .limit(limit)
-      : await db
-          .select(barColumns)
-          .from(barCacheTable)
-          .where(and(...conditions))
-          .orderBy(desc(barCacheTable.startsAt))
-          .limit(limit);
+    const readRows = (rowLimit: number) =>
+      runWithMarketDataStoreContext("bar-cache-read", () =>
+        window.from
+          ? db
+              .select(barColumns)
+              .from(barCacheTable)
+              .where(and(...conditions))
+              .orderBy(asc(barCacheTable.startsAt))
+              .limit(rowLimit)
+          : db
+              .select(barColumns)
+              .from(barCacheTable)
+              .where(and(...conditions))
+              .orderBy(desc(barCacheTable.startsAt))
+              .limit(rowLimit),
+      );
+    const rows = await readRows(limit);
+    const alignedRows = alignedStoredBarRows(
+      rows,
+      input.timeframe,
+      (row) => row.startsAt,
+    );
 
     // A successful read proves the store is healthy again — clear any backoff.
     marketDataStoreBackoff.clear();
@@ -432,7 +555,7 @@ export async function loadStoredMarketBars(
     const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
 
     return normalizeBarsToStoreTimeframe(
-      rows
+      alignedRows
         .map((row): BrokerBarSnapshot => ({
           timestamp: row.startsAt,
           open: numberFromDb(row.open),
@@ -479,7 +602,7 @@ export async function loadStoredMarketBarsBySymbol(input: {
   }
 
   const desiredLimit = Math.max(1, Math.min(720, Math.floor(input.limit ?? 120)));
-  const expandedLimit = expandStoredRowsLimit(desiredLimit, input.timeframe);
+  const rowLimit = expandStoredRowsLimit(desiredLimit, input.timeframe);
   const symbolValues = sql.join(
     symbols.map((symbol) => sql`${symbol}`),
     sql`, `,
@@ -497,23 +620,28 @@ export async function loadStoredMarketBarsBySymbol(input: {
   };
 
   try {
-    const result = await db.execute(sql<BulkBarCacheRow>`
-      select b.symbol, b.starts_at, b.close
-      from unnest(array[${symbolValues}]::text[]) as s(symbol)
-      cross join lateral (
-        select symbol, starts_at, close
-        from bar_cache
-        where symbol = s.symbol
-          and timeframe = ${input.timeframe}
-          and source = ${input.sourceName}
-          ${fromCondition}
-          ${toCondition}
-        order by starts_at desc
-        limit ${expandedLimit}
-      ) b
-      order by b.symbol, b.starts_at
-    `);
-    const rows = result.rows as BulkBarCacheRow[];
+    const readRows = async (limit: number) => {
+      const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
+        db.execute(sql<BulkBarCacheRow>`
+          select b.symbol, b.starts_at, b.close
+          from unnest(array[${symbolValues}]::text[]) as s(symbol)
+          cross join lateral (
+            select symbol, starts_at, close
+            from bar_cache
+            where symbol = s.symbol
+              and timeframe = ${input.timeframe}
+              and source = ${input.sourceName}
+              ${fromCondition}
+              ${toCondition}
+            order by starts_at desc
+            limit ${limit}
+          ) b
+          order by b.symbol, b.starts_at
+        `),
+      );
+      return result.rows as BulkBarCacheRow[];
+    };
+    const rows = await readRows(rowLimit);
 
     const rowsBySymbol = new Map<string, BulkBarCacheRow[]>();
     rows.forEach((row) => {
@@ -521,10 +649,12 @@ export async function loadStoredMarketBarsBySymbol(input: {
       if (!symbol) {
         return;
       }
-      const current = rowsBySymbol.get(symbol) || [];
-      if (current.length >= expandedLimit) {
+      if (
+        !storedBarTimestampAlignedToTimeframe(row.starts_at, input.timeframe)
+      ) {
         return;
       }
+      const current = rowsBySymbol.get(symbol) || [];
       current.push(row);
       rowsBySymbol.set(symbol, current);
     });
@@ -561,6 +691,88 @@ export async function loadStoredMarketBarsBySymbol(input: {
     logger.warn({ error }, "bulk durable market data sparkline seed failed");
     throw error;
   }
+}
+
+type StoredBarsBySymbolRow = {
+  symbol: string;
+  starts_at: Date | string;
+  open: string | number;
+  high: string | number;
+  low: string | number;
+  close: string | number;
+  volume: string | number;
+};
+
+function storedBarRowsToSnapshotsBySymbol(input: {
+  symbols: string[];
+  sourceName: string;
+  outsideRth?: boolean;
+  timeframe: MarketDataStoreTimeframe;
+  desiredLimit: number;
+  rows: StoredBarsBySymbolRow[];
+}): Map<string, BrokerBarSnapshot[]> {
+  const out = new Map<string, BrokerBarSnapshot[]>();
+  const rowsBySymbol = new Map<string, StoredBarsBySymbolRow[]>();
+  for (const row of input.rows) {
+    const symbol = normalizeSymbol(row.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const current = rowsBySymbol.get(symbol);
+    if (current) {
+      current.push(row);
+    } else {
+      rowsBySymbol.set(symbol, [row]);
+    }
+  }
+
+  const normalizedSourceName = input.sourceName.toLowerCase();
+  const delayed =
+    normalizedSourceName.includes("delayed") ||
+    (normalizedSourceName.includes("massive") &&
+      !isMassiveStocksRealtimeConfigured());
+  const transport = normalizedSourceName.includes("websocket")
+    ? "massive_websocket"
+    : "massive_rest";
+  const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
+
+  for (const symbol of input.symbols) {
+    const symbolRows = rowsBySymbol.get(symbol) ?? [];
+    const bars = normalizeBarsToStoreTimeframe(
+      symbolRows
+        .filter((row) =>
+          storedBarTimestampAlignedToTimeframe(row.starts_at, input.timeframe),
+        )
+        .map((row): BrokerBarSnapshot => {
+          const timestamp =
+            row.starts_at instanceof Date
+              ? row.starts_at
+              : new Date(row.starts_at);
+          return {
+            timestamp,
+            open: numberFromDb(row.open),
+            high: numberFromDb(row.high),
+            low: numberFromDb(row.low),
+            close: numberFromDb(row.close),
+            volume: numberFromDb(row.volume),
+            source: input.sourceName,
+            providerContractId: null,
+            outsideRth: input.outsideRth !== false,
+            partial: false,
+            transport,
+            delayed,
+            freshness,
+            dataUpdatedAt: timestamp,
+          };
+        })
+        .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime()),
+      input.timeframe,
+    ).slice(-input.desiredLimit);
+    if (bars.length) {
+      out.set(symbol, bars);
+    }
+  }
+  return out;
 }
 
 // Batched, behavior-equal mirror of loadStoredMarketBars across many symbols that
@@ -610,95 +822,111 @@ export async function loadStoredMarketBarsForSymbols(
     const orderBy = window.from
       ? sql`order by starts_at asc`
       : sql`order by starts_at desc`;
-    type BarCacheRow = {
-      symbol: string;
-      starts_at: Date | string;
-      open: string | number;
-      high: string | number;
-      low: string | number;
-      close: string | number;
-      volume: string | number;
+    const readRows = async (limit: number) => {
+      const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
+        db.execute(sql<StoredBarsBySymbolRow>`
+          select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+          from unnest(array[${symbolValues}]::text[]) as s(symbol)
+          cross join lateral (
+            select symbol, starts_at, open, high, low, close, volume
+            from bar_cache
+            where symbol = s.symbol
+              and timeframe = ${input.timeframe}
+              and source = ${input.sourceName}
+              and starts_at <= ${window.to}
+              ${fromCondition}
+            ${orderBy}
+            limit ${limit}
+          ) b
+        `),
+      );
+      return result.rows as StoredBarsBySymbolRow[];
     };
-    const result = await db.execute(sql<BarCacheRow>`
-      select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
-      from unnest(array[${symbolValues}]::text[]) as s(symbol)
-      cross join lateral (
-        select symbol, starts_at, open, high, low, close, volume
-        from bar_cache
-        where symbol = s.symbol
-          and timeframe = ${input.timeframe}
-          and source = ${input.sourceName}
-          and starts_at <= ${window.to}
-          ${fromCondition}
-        ${orderBy}
-        limit ${rowLimit}
-      ) b
-    `);
+    const rows = await readRows(rowLimit);
     // A successful read proves the store is healthy again — clear any backoff.
     marketDataStoreBackoff.clear();
 
-    const rowsBySymbol = new Map<string, BarCacheRow[]>();
-    for (const row of result.rows as BarCacheRow[]) {
-      const symbol = normalizeSymbol(row.symbol);
-      if (!symbol) {
-        continue;
-      }
-      const current = rowsBySymbol.get(symbol);
-      if (current) {
-        current.push(row);
-      } else {
-        rowsBySymbol.set(symbol, [row]);
-      }
-    }
-
-    const normalizedSourceName = input.sourceName.toLowerCase();
-    const delayed =
-      normalizedSourceName.includes("delayed") ||
-      (normalizedSourceName.includes("massive") &&
-        !isMassiveStocksRealtimeConfigured());
-    const transport = normalizedSourceName.includes("websocket")
-      ? "massive_websocket"
-      : "massive_rest";
-    const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
-
-    for (const symbol of symbols) {
-      const symbolRows = rowsBySymbol.get(symbol) ?? [];
-      const bars = normalizeBarsToStoreTimeframe(
-        symbolRows
-          .map((row): BrokerBarSnapshot => {
-            const timestamp =
-              row.starts_at instanceof Date
-                ? row.starts_at
-                : new Date(row.starts_at);
-            return {
-              timestamp,
-              open: numberFromDb(row.open),
-              high: numberFromDb(row.high),
-              low: numberFromDb(row.low),
-              close: numberFromDb(row.close),
-              volume: numberFromDb(row.volume),
-              source: input.sourceName,
-              providerContractId: null,
-              outsideRth: input.outsideRth !== false,
-              partial: false,
-              transport,
-              delayed,
-              freshness,
-              dataUpdatedAt: timestamp,
-            };
-          })
-          .sort(
-            (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
-          ),
-        input.timeframe,
-      ).slice(-desiredLimit);
-      if (bars.length) {
-        out.set(symbol, bars);
-      }
-    }
-    return out;
+    return storedBarRowsToSnapshotsBySymbol({
+      symbols,
+      sourceName: input.sourceName,
+      outsideRth: input.outsideRth,
+      timeframe: input.timeframe,
+      desiredLimit,
+      rows,
+    });
   } catch (error) {
     handleStoreError(error, "loadStoredMarketBarsForSymbols");
+    return out;
+  }
+}
+
+// Delta sibling for the signal-monitor cross-cycle stored-bar cache. The cold
+// path above loads the full latest window once; subsequent evaluation cycles only
+// need rows after a cached cell's high-water timestamp. This keeps the query
+// set-based but stops repeatedly deserializing the same 240 closed bars per
+// (symbol, timeframe, source) on every cycle.
+export async function loadStoredMarketBarsForSymbolsSince(
+  input: Omit<MarketDataStoreRequest, "symbol"> & {
+    symbols: string[];
+    sourceName: string;
+    after: Date;
+  },
+): Promise<Map<string, BrokerBarSnapshot[]>> {
+  const out = new Map<string, BrokerBarSnapshot[]>();
+  const symbols = Array.from(
+    new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  if (!symbols.length) {
+    return out;
+  }
+  const window = resolveDurableHistoryWindow({ ...input, symbol: symbols[0] });
+  if (!window || input.after.getTime() >= window.to.getTime()) {
+    return out;
+  }
+
+  try {
+    const desiredLimit = Math.max(1, input.limit ?? 500);
+    const rowLimit = expandStoredRowsLimit(desiredLimit, input.timeframe);
+    const symbolValues = sql.join(
+      symbols.map((symbol) => sql`${symbol}`),
+      sql`, `,
+    );
+    const fromCondition = window.from
+      ? sql`and starts_at >= ${window.from}`
+      : sql``;
+    const readRows = async (limit: number) => {
+      const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
+        db.execute(sql<StoredBarsBySymbolRow>`
+          select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+          from unnest(array[${symbolValues}]::text[]) as s(symbol)
+          cross join lateral (
+            select symbol, starts_at, open, high, low, close, volume
+            from bar_cache
+            where symbol = s.symbol
+              and timeframe = ${input.timeframe}
+              and source = ${input.sourceName}
+              and starts_at > ${input.after}
+              and starts_at <= ${window.to}
+              ${fromCondition}
+            order by starts_at asc
+            limit ${limit}
+          ) b
+        `),
+      );
+      return result.rows as StoredBarsBySymbolRow[];
+    };
+    const rows = await readRows(rowLimit);
+    marketDataStoreBackoff.clear();
+    return storedBarRowsToSnapshotsBySymbol({
+      symbols,
+      sourceName: input.sourceName,
+      outsideRth: input.outsideRth,
+      timeframe: input.timeframe,
+      desiredLimit,
+      rows,
+    });
+  } catch (error) {
+    handleStoreError(error, "loadStoredMarketBarsForSymbolsSince");
     return out;
   }
 }
@@ -717,6 +945,54 @@ const barCacheRowChangedPredicate = sql`
   OR ${barCacheTable.close} IS DISTINCT FROM excluded.close
   OR ${barCacheTable.volume} IS DISTINCT FROM excluded.volume
 `;
+
+// Cross-cycle bar-cache invalidation hook (Lever-2 Option E). The signal-monitor
+// cross-cycle history cache assumes closed bars are immutable; that holds ~99.6% of
+// the time, but a genuinely-changed row — a provider correction/restatement, a
+// massive-history backfill gap-fill, or a trade-bar-filter force-accept — DOES
+// rewrite bar_cache below the cache's high-water, where a delta-only refetch would
+// miss it. Both writers below add RETURNING(symbol, timeframe, starts_at): because
+// the upsert's setWhere skips no-op re-upserts, Postgres returns ONLY rows actually
+// inserted/updated, so this fires exactly on real changes (~1 row/flush in steady
+// state). The cache subscribes and invalidates a cell only when a changed startsAt
+// is <= its high-water; above-water appends are ignored (the delta-fetch handles
+// them). In-process and complete: the API is the sole bar_cache writer (the Rust
+// worker only runs retention DELETEs), so this catches 100% of relevant changes
+// with no IPC.
+export type BarCacheChange = {
+  symbol: string;
+  timeframe: string;
+  sourceName: string;
+  startsAtMs: number;
+};
+type BarCacheChangeListener = (changes: BarCacheChange[]) => void;
+const barCacheChangeListeners = new Set<BarCacheChangeListener>();
+
+export function onBarCacheRowsChanged(
+  listener: BarCacheChangeListener,
+): () => void {
+  barCacheChangeListeners.add(listener);
+  return () => {
+    barCacheChangeListeners.delete(listener);
+  };
+}
+
+function startsAtToMs(value: Date | string): number {
+  return value instanceof Date ? value.getTime() : new Date(value).getTime();
+}
+
+function dispatchBarCacheChanges(changes: BarCacheChange[]): void {
+  if (!changes.length || !barCacheChangeListeners.size) {
+    return;
+  }
+  for (const listener of barCacheChangeListeners) {
+    try {
+      listener(changes);
+    } catch {
+      // Invalidation must never break persistence.
+    }
+  }
+}
 
 export async function persistMarketDataBars(input: {
   request: MarketDataStoreRequest;
@@ -741,8 +1017,16 @@ export async function persistMarketDataBars(input: {
       input.bars,
       input.request.timeframe,
     );
-    for (let offset = 0; offset < normalizedBars.length; offset += STORE_BATCH_SIZE) {
-      const batch = normalizedBars.slice(offset, offset + STORE_BATCH_SIZE);
+    const changedBarKeys: BarCacheChange[] = [];
+    for (
+      let offset = 0;
+      offset < normalizedBars.length;
+      offset += BAR_CACHE_WRITE_BATCH_SIZE
+    ) {
+      const batch = normalizedBars.slice(
+        offset,
+        offset + BAR_CACHE_WRITE_BATCH_SIZE,
+      );
       const now = new Date();
       const values = batch.map((bar) => ({
         instrumentId,
@@ -759,29 +1043,47 @@ export async function persistMarketDataBars(input: {
       }));
 
       if (values.length) {
-        await db
-          .insert(barCacheTable)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [
-              barCacheTable.instrumentId,
-              barCacheTable.timeframe,
-              barCacheTable.source,
-              barCacheTable.startsAt,
-            ],
-            set: {
-              symbol,
-              open: sql`excluded.open`,
-              high: sql`excluded.high`,
-              low: sql`excluded.low`,
-              close: sql`excluded.close`,
-              volume: sql`excluded.volume`,
-              updatedAt: now,
-            },
-            setWhere: barCacheRowChangedPredicate,
+        const changedRows = await runWithMarketDataStoreContext(
+          "bar-cache-write",
+          () =>
+            db
+              .insert(barCacheTable)
+              .values(values)
+              .onConflictDoUpdate({
+                target: [
+                  barCacheTable.instrumentId,
+                  barCacheTable.timeframe,
+                  barCacheTable.source,
+                  barCacheTable.startsAt,
+                ],
+                set: {
+                  symbol,
+                  open: sql`excluded.open`,
+                  high: sql`excluded.high`,
+                  low: sql`excluded.low`,
+                  close: sql`excluded.close`,
+                  volume: sql`excluded.volume`,
+                  updatedAt: now,
+                },
+                setWhere: barCacheRowChangedPredicate,
+              })
+              .returning({
+                symbol: barCacheTable.symbol,
+                timeframe: barCacheTable.timeframe,
+                startsAt: barCacheTable.startsAt,
+              }),
+        );
+        for (const row of changedRows) {
+          changedBarKeys.push({
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            sourceName: input.sourceName,
+            startsAtMs: startsAtToMs(row.startsAt),
           });
+        }
       }
     }
+    dispatchBarCacheChanges(changedBarKeys);
     // A successful write proves the store is healthy again — clear any backoff.
     marketDataStoreBackoff.clear();
     return true;
@@ -841,16 +1143,19 @@ export async function persistMarketDataBarsForSymbols(input: {
       volume: string;
       source: string;
     };
-    const rows: BarCacheInsertRow[] = [];
-    for (const group of groups) {
-      const instrumentId = await ensureStoreInstrument({
+    const instrumentIds = await ensureStoreInstruments(
+      groups.map((group) => ({
         symbol: group.symbol,
         assetClass: input.assetClass,
-      });
+      })),
+    );
+    const rows: BarCacheInsertRow[] = [];
+    for (const group of groups) {
+      const symbol = normalizeSymbol(group.symbol);
+      const instrumentId = instrumentIds.get(symbol);
       if (!instrumentId) {
         continue;
       }
-      const symbol = normalizeSymbol(group.symbol);
       const normalizedBars = normalizeBarsToStoreTimeframe(
         group.bars,
         input.timeframe,
@@ -873,35 +1178,263 @@ export async function persistMarketDataBarsForSymbols(input: {
     if (!rows.length) {
       return false;
     }
-    for (let offset = 0; offset < rows.length; offset += STORE_BATCH_SIZE) {
-      const batch = rows.slice(offset, offset + STORE_BATCH_SIZE);
+    const changedBarKeys: BarCacheChange[] = [];
+    for (
+      let offset = 0;
+      offset < rows.length;
+      offset += BAR_CACHE_WRITE_BATCH_SIZE
+    ) {
+      const batch = rows.slice(offset, offset + BAR_CACHE_WRITE_BATCH_SIZE);
       const now = new Date();
-      await db
-        .insert(barCacheTable)
-        .values(batch.map((row) => ({ ...row, updatedAt: now })))
-        .onConflictDoUpdate({
-          target: [
-            barCacheTable.instrumentId,
-            barCacheTable.timeframe,
-            barCacheTable.source,
-            barCacheTable.startsAt,
-          ],
-          set: {
-            symbol: sql`excluded.symbol`,
-            open: sql`excluded.open`,
-            high: sql`excluded.high`,
-            low: sql`excluded.low`,
-            close: sql`excluded.close`,
-            volume: sql`excluded.volume`,
-            updatedAt: now,
-          },
-          setWhere: barCacheRowChangedPredicate,
+      const changedRows = await runWithMarketDataStoreContext(
+        "bar-cache-write",
+        () =>
+          db
+            .insert(barCacheTable)
+            .values(batch.map((row) => ({ ...row, updatedAt: now })))
+            .onConflictDoUpdate({
+              target: [
+                barCacheTable.instrumentId,
+                barCacheTable.timeframe,
+                barCacheTable.source,
+                barCacheTable.startsAt,
+              ],
+              set: {
+                symbol: sql`excluded.symbol`,
+                open: sql`excluded.open`,
+                high: sql`excluded.high`,
+                low: sql`excluded.low`,
+                close: sql`excluded.close`,
+                volume: sql`excluded.volume`,
+                updatedAt: now,
+              },
+              setWhere: barCacheRowChangedPredicate,
+            })
+            .returning({
+              symbol: barCacheTable.symbol,
+              timeframe: barCacheTable.timeframe,
+              startsAt: barCacheTable.startsAt,
+            }),
+      );
+      for (const row of changedRows) {
+        changedBarKeys.push({
+          symbol: row.symbol,
+          timeframe: row.timeframe,
+          sourceName: input.sourceName,
+          startsAtMs: startsAtToMs(row.startsAt),
         });
+      }
     }
+    dispatchBarCacheChanges(changedBarKeys);
     marketDataStoreBackoff.clear();
     return true;
   } catch (error) {
     handleStoreError(error, "persistMarketDataBarsForSymbols");
     return false;
+  }
+}
+
+export type PersistMarketDataBarsMixedEntry = {
+  symbol: string;
+  timeframe: MarketDataStoreTimeframe;
+  sourceName: string;
+  bars: MarketDataStoreBarInput[];
+};
+
+export type PersistMarketDataBarsMixedResult = {
+  // Parallel to input.entries: entry i persisted (or had nothing to persist) iff
+  // okByIndex[i]. Chunking is all-or-nothing per chunk, so an entry with a row in
+  // a failed chunk is not-ok and the caller requeues exactly its bars.
+  okByIndex: boolean[];
+  // The last DB error a chunk (or instrument resolution) hit, else null. Callers
+  // surface it for diagnostics; the writer itself never throws for a DB error.
+  error: unknown;
+};
+
+// Mixed-tuple sibling of persistMarketDataBarsForSymbols. The signal-monitor persist
+// flush drains pending bars spanning MANY (symbol, timeframe, source) tuples at once;
+// the bar_cache conflict target already carries timeframe + source, so ONE chunked
+// INSERT..ON CONFLICT can legally upsert rows across mixed timeframes AND sources.
+// This collapses the flush from one INSERT-set per (timeframe, source) group to ~one
+// statement per BAR_CACHE_WRITE_BATCH_SIZE-row chunk (a ≤5000-row flush = one write,
+// plus the instruments resolution it already needs). Each row's bar_cache result is
+// IDENTICAL to persistMarketDataBarsForSymbols (same instrumentId resolution, per-entry
+// normalizeBarsToStoreTimeframe, composite conflict target, excluded.* set + the
+// row-changed setWhere). Returns a per-entry-index ok flag plus the last DB error;
+// never throws for a DB error — matching the swallow-and-report contract of the other
+// writers (it reports the error in the result instead).
+export async function persistMarketDataBarsMixed(input: {
+  assetClass?: MarketDataStoreRequest["assetClass"];
+  outsideRth?: boolean;
+  source?: MarketDataStoreRequest["source"];
+  recentWindowMinutes?: number | null;
+  entries: PersistMarketDataBarsMixedEntry[];
+}): Promise<PersistMarketDataBarsMixedResult> {
+  const okByIndex = input.entries.map(() => false);
+  const activeEntries = input.entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.bars.length > 0);
+  if (!activeEntries.length) {
+    return { okByIndex, error: null };
+  }
+  // Eligibility is symbol-independent for these params (gates on assetClass/source/
+  // backoff + symbol PRESENCE), so check once with a representative symbol — matching
+  // what each per-symbol persist would resolve.
+  if (
+    !shouldUseDurableMarketDataStore({
+      symbol: activeEntries[0]!.entry.symbol,
+      timeframe: activeEntries[0]!.entry.timeframe,
+      assetClass: input.assetClass,
+      outsideRth: input.outsideRth,
+      source: input.source,
+      recentWindowMinutes: input.recentWindowMinutes,
+    })
+  ) {
+    return { okByIndex, error: null };
+  }
+
+  try {
+    type BarCacheInsertRow = {
+      entryIndex: number;
+      instrumentId: string;
+      symbol: string;
+      timeframe: MarketDataStoreTimeframe;
+      startsAt: Date;
+      open: string;
+      high: string;
+      low: string;
+      close: string;
+      volume: string;
+      source: string;
+    };
+    const instrumentIds = await ensureStoreInstruments(
+      activeEntries.map(({ entry }) => ({
+        symbol: entry.symbol,
+        assetClass: input.assetClass,
+      })),
+    );
+    const rows: BarCacheInsertRow[] = [];
+    for (const { entry, index } of activeEntries) {
+      const symbol = normalizeSymbol(entry.symbol);
+      const instrumentId = instrumentIds.get(symbol);
+      if (!instrumentId) {
+        continue;
+      }
+      const normalizedBars = normalizeBarsToStoreTimeframe(
+        entry.bars,
+        entry.timeframe,
+      );
+      for (const bar of normalizedBars) {
+        rows.push({
+          entryIndex: index,
+          instrumentId,
+          symbol,
+          timeframe: entry.timeframe,
+          startsAt: bar.timestamp,
+          open: String(bar.open),
+          high: String(bar.high),
+          low: String(bar.low),
+          close: String(bar.close),
+          volume: String(bar.volume),
+          source: entry.sourceName,
+        });
+      }
+    }
+    // Provisionally mark every active entry ok. An entry that resolved no instrument
+    // (produced no rows) has nothing to persist and nothing to requeue, so it stays
+    // ok (dropped) — matching persistMarketDataBarsForSymbols, which skips such
+    // symbols yet still reports success. A failed chunk below revokes ok for the
+    // entries whose rows it carried.
+    for (const { index } of activeEntries) {
+      okByIndex[index] = true;
+    }
+    if (!rows.length) {
+      marketDataStoreBackoff.clear();
+      return { okByIndex, error: null };
+    }
+
+    const changedBarKeys: BarCacheChange[] = [];
+    let lastChunkError: unknown = null;
+    let anyChunkSucceeded = false;
+    for (
+      let offset = 0;
+      offset < rows.length;
+      offset += BAR_CACHE_WRITE_BATCH_SIZE
+    ) {
+      const batch = rows.slice(offset, offset + BAR_CACHE_WRITE_BATCH_SIZE);
+      const now = new Date();
+      try {
+        const changedRows = await runWithMarketDataStoreContext(
+          "bar-cache-write",
+          () =>
+            db
+              .insert(barCacheTable)
+              .values(
+                batch.map((row) => ({
+                  instrumentId: row.instrumentId,
+                  symbol: row.symbol,
+                  timeframe: row.timeframe,
+                  startsAt: row.startsAt,
+                  open: row.open,
+                  high: row.high,
+                  low: row.low,
+                  close: row.close,
+                  volume: row.volume,
+                  source: row.source,
+                  updatedAt: now,
+                })),
+              )
+              .onConflictDoUpdate({
+                target: [
+                  barCacheTable.instrumentId,
+                  barCacheTable.timeframe,
+                  barCacheTable.source,
+                  barCacheTable.startsAt,
+                ],
+                set: {
+                  symbol: sql`excluded.symbol`,
+                  open: sql`excluded.open`,
+                  high: sql`excluded.high`,
+                  low: sql`excluded.low`,
+                  close: sql`excluded.close`,
+                  volume: sql`excluded.volume`,
+                  updatedAt: now,
+                },
+                setWhere: barCacheRowChangedPredicate,
+              })
+              .returning({
+                symbol: barCacheTable.symbol,
+                timeframe: barCacheTable.timeframe,
+                source: barCacheTable.source,
+                startsAt: barCacheTable.startsAt,
+              }),
+        );
+        anyChunkSucceeded = true;
+        for (const row of changedRows) {
+          changedBarKeys.push({
+            symbol: row.symbol,
+            timeframe: row.timeframe,
+            sourceName: row.source,
+            startsAtMs: startsAtToMs(row.startsAt),
+          });
+        }
+      } catch (error) {
+        lastChunkError = error;
+        handleStoreError(error, "persistMarketDataBarsMixed");
+        for (const row of batch) {
+          okByIndex[row.entryIndex] = false;
+        }
+      }
+    }
+    dispatchBarCacheChanges(changedBarKeys);
+    if (anyChunkSucceeded && !lastChunkError) {
+      // A fully-successful flush proves the store is healthy again — clear any
+      // backoff. If any chunk failed, leave the backoff to handleStoreError above.
+      marketDataStoreBackoff.clear();
+    }
+    return { okByIndex, error: lastChunkError };
+  } catch (error) {
+    handleStoreError(error, "persistMarketDataBarsMixed");
+    return { okByIndex: input.entries.map(() => false), error };
   }
 }

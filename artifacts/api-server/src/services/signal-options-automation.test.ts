@@ -8,6 +8,18 @@ import {
   runSignalOptionsShadowBackfill,
   type SignalOptionsPosition,
 } from "./signal-options-automation";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
+import { __signalQualityKpisInternalsForTests } from "./signal-quality-kpis";
+import { __signalMonitorInternalsForTests } from "./signal-monitor";
+
+// Pin trading-day semantics: snapshot blocker assertions must not flip to
+// market_closed when the suite runs on a holiday/weekend.
+__signalMonitorInternalsForTests.setSignalMonitorQuietMarketSessionNowForTests(
+  false,
+);
 
 test("resolveSameScanEntryAction: a symbol opened earlier this scan defers (no duplicate entry); block/flip/proceed preserved", () => {
   const { resolveSameScanEntryAction } = __signalOptionsAutomationInternalsForTests;
@@ -108,6 +120,82 @@ test("evaluateMtfPatternGate requires an EXACT per-timeframe match (divergence-a
   assert.equal(evaluateMtfPatternGate({}, { "1m": "sell" } as Live), "ok");
 });
 
+test("classifySignalOptionsEntryQuality uses calibrated expected-move-v2 directional features before setup quality", () => {
+  const { classifySignalOptionsEntryQuality } =
+    __signalOptionsAutomationInternalsForTests;
+  const directionalFeatures = {
+    rangePosition20: 0.95,
+    mtfAlignment: 3,
+    adxComponent: 2,
+    volatilityComponent: -0.2,
+    shortMomentumPct: 4,
+    riskAdjustedMomentum: 3,
+    atrPct: 0.9,
+    volumeRatio20: 1.8,
+  };
+
+  const quality = classifySignalOptionsEntryQuality({
+    candidate: {
+      direction: "buy",
+      signal: {
+        filterState: {
+          mtfDirections: [1, 1, 1],
+          adx: 30,
+          directionalFeatures,
+        },
+      },
+      quote: { spreadPctOfMid: 10 },
+    },
+    orderPlan: { premiumAtRisk: 100 },
+  } as never);
+  const calibratedScore =
+    __signalQualityKpisInternalsForTests.scoreSignalWithModel(
+      {
+        symbol: "CAL",
+        direction: "long",
+        directionalFeatures,
+        realizedReturnPercent: 0,
+        mfePercent: 0,
+        maePercent: 0,
+      },
+      "expected-move-v2",
+    );
+
+  // The classifier score must not drift from the KPI-calibration scorer.
+  assert.equal(quality.score, calibratedScore);
+  // Hand-computed: atr=max(0.9,0.02)=0.9, vr=max(1.8,0.25)=1.8.
+  // volatilityRegime=5*clamp(log2(1.5),-2,3.5)=2.9, volumeParticipation=
+  // 3*clamp(log2(1.8),-2,7)=2.5, momentum=0.6*3+0.5*(4/0.9)=4.0,
+  // reversionTilt=4*(0.5-0.95)=-1.8 -> raw=42+2.9+2.5+4.0-1.8=49.7.
+  // volumeRatio20=1.8 is below the vspike (>=10) conviction threshold, so
+  // conviction=0 and the v2 score is unchanged from v1's raw output.
+  assert.equal(quality.score, 49.7);
+  assert.equal(quality.raw?.modelVersion, "expected-move-v2");
+  assert.equal(quality.components?.reversionTilt, -1.8);
+  assert.equal(quality.components?.conviction, 0);
+  assert.ok(quality.reasons.includes("expected_move_v2"));
+  assert.ok(quality.reasons.includes("extension_risk"));
+});
+
+test("classifySignalOptionsEntryQuality keeps setup-quality fallback without directional features", () => {
+  const { classifySignalOptionsEntryQuality } =
+    __signalOptionsAutomationInternalsForTests;
+
+  const quality = classifySignalOptionsEntryQuality({
+    candidate: {
+      direction: "buy",
+      signal: { filterState: { mtfDirections: [1, 1, 1], adx: 30 } },
+      quote: { spreadPctOfMid: 10 },
+    },
+    orderPlan: { premiumAtRisk: 100 },
+  } as never);
+
+  assert.equal(quality.score, 100);
+  assert.equal(quality.tier, "high");
+  assert.equal(quality.components?.mtfAlignment, 35.7);
+  assert.equal(quality.raw?.modelVersion, undefined);
+});
+
 const signalState = (
   symbol: string,
   signalAt: string,
@@ -177,6 +265,61 @@ test("Signal Options default cockpit summary bypasses cached fast-summary state"
   );
   assert.match(cockpitFunction, /getSignalOptionsDashboardSnapshot\(\{\s*deploymentId: input\.deploymentId,/);
   assert.match(cockpitFunction, /withFreshSignalOptionsStateSignals\(snapshot, \{/);
+});
+
+test("Signal Options performance pressure predicate follows API headline pressure", () => {
+  const { shouldServeSignalOptionsPerformancePressureFallback } =
+    __signalOptionsAutomationInternalsForTests;
+  __resetApiResourcePressureForTests();
+  try {
+    assert.equal(shouldServeSignalOptionsPerformancePressureFallback(), false);
+    updateApiResourcePressure({ eventLoopUtilization: 0.8 });
+    assert.equal(shouldServeSignalOptionsPerformancePressureFallback(), true);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("Signal Options performance serves fallback and refreshes in background under pressure", () => {
+  const start = source.indexOf("export async function getSignalOptionsPerformance");
+  const end = source.indexOf("\nfunction formatEnumReason", start + 1);
+  assert.notEqual(start, -1, "Missing Signal Options performance function");
+  assert.notEqual(end, -1, "Missing function boundary after performance function");
+  const body = source.slice(start, end);
+  const pressureFallbackIndex = body.indexOf(
+    "shouldServeSignalOptionsPerformancePressureFallback()",
+  );
+  const refreshIndex = body.indexOf("void startSignalOptionsPerformanceRefresh");
+  const returnFallbackIndex = body.indexOf(
+    "return buildSignalOptionsPerformancePressureFallback",
+  );
+  const blockingRefreshIndex = body.indexOf(
+    "return startSignalOptionsPerformanceRefresh",
+  );
+
+  assert.ok(pressureFallbackIndex > -1, "Missing pressure fallback branch");
+  assert.ok(refreshIndex > pressureFallbackIndex, "Missing background refresh");
+  assert.ok(
+    returnFallbackIndex > refreshIndex,
+    "Pressure branch must return fallback after starting refresh",
+  );
+  assert.ok(
+    blockingRefreshIndex > returnFallbackIndex,
+    "Blocking refresh should only run after the pressure fallback branch",
+  );
+});
+
+test("Signal Options performance refresh avoids full dashboard hydration", () => {
+  const start = source.indexOf("function startSignalOptionsPerformanceRefresh");
+  const end = source.indexOf("\nexport async function getSignalOptionsPerformance", start);
+  assert.notEqual(start, -1, "Missing Signal Options performance refresh helper");
+  assert.notEqual(end, -1, "Missing performance refresh helper boundary");
+  const body = source.slice(start, end);
+
+  assert.match(body, /listDeploymentEvents\(\s*deployment\.id,\s*SIGNAL_OPTIONS_STATE_EVENT_LIMIT,/);
+  assert.match(body, /buildStatePayload\(\{\s*deployment,\s*profile,\s*events,\s*view:\s*"summary",/);
+  assert.doesNotMatch(body, /view:\s*"full"/);
+  assert.doesNotMatch(body, /getSignalOptionsDashboardSnapshot/);
 });
 
 test("Signal Options backfill requires explicit bar-evaluation opt-in", async () => {
@@ -252,7 +395,7 @@ test("Signal Options cockpit keeps real gateway failures as warnings", () => {
     readiness: {
       ready: false,
       reason: "gateway_login_required",
-      message: "IB Gateway is connected, but the broker session is not authenticated.",
+      message: "IBKR Client Portal is connected, but the broker session is not authenticated.",
       diagnostics: {},
     },
     candidates: [],
@@ -864,4 +1007,238 @@ test("deriveCandidateActionStatus: a resolved shadow link marks an open position
     events: [],
   } as never);
   assert.equal(pending.actionStatus, "candidate");
+});
+
+test("reconcileActivePositionsWithShadowLedger reuses a provided shadow index instead of rebuilding it (fix A)", async () => {
+  const { reconcileActivePositionsWithShadowLedger } =
+    __signalOptionsAutomationInternalsForTests;
+
+  const position = {
+    id: "position-1",
+    candidateId: "cand-1",
+    symbol: "AAPL",
+    selectedContract: {},
+  } as unknown as SignalOptionsPosition;
+
+  // The provided index reports this candidate's position fully closed
+  // (positionQuantity <= 0), so reconcile must DROP it. A DB rebuild here would
+  // read an empty index (no such row in the unit-test DB) and KEEP the position,
+  // so an empty result can only mean the provided index was consulted — i.e. no
+  // rebuild and none of its batched shadow_positions/orders/fills queries ran
+  // (which would otherwise touch the DB and fail in this test environment).
+  const providedIndex = {
+    byEventId: new Map(),
+    byCandidateId: new Map([["cand-1", { positionQuantity: 0 }]]),
+    cashByPositionKey: new Map(),
+  } as never;
+
+  const result = await reconcileActivePositionsWithShadowLedger({
+    positions: [position],
+    events: [],
+    shadowIndex: providedIndex,
+  });
+
+  assert.deepEqual(result, []);
+});
+
+test("Signal Options reconcile takes an optional shadow index and buildStatePayload passes the one it built (fix A)", () => {
+  const reconcileStart = source.indexOf(
+    "async function reconcileActivePositionsWithShadowLedger",
+  );
+  assert.notEqual(reconcileStart, -1);
+  const reconcileEnd = source.indexOf(
+    "const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS",
+    reconcileStart,
+  );
+  assert.notEqual(reconcileEnd, -1);
+  const reconcileBody = source.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileBody, /shadowIndex\?:\s*SignalOptionsShadowIndex;/);
+  // Reuse the provided index, else fall back to a rebuild (unchanged for other callers).
+  assert.match(
+    reconcileBody,
+    /input\.shadowIndex\s*\?\?\s*\(await buildSignalOptionsShadowIndex\(input\.events\)\)/,
+  );
+
+  // buildStatePayload builds the index once (from the identical events) and hands
+  // that exact index to reconcile instead of letting it rebuild.
+  const buildReconcile = source.indexOf(
+    "reconcileActivePositionsWithShadowLedger({",
+    source.indexOf("async function buildStatePayload"),
+  );
+  assert.notEqual(buildReconcile, -1);
+  const buildCall = source.slice(buildReconcile, buildReconcile + 520);
+  assert.match(buildCall, /events:\s*activeSignalEventsBeforeReconciliation,/);
+  assert.match(buildCall, /deploymentId:\s*input\.deployment\.id,/);
+  assert.match(buildCall, /\n\s*shadowIndex,\n/);
+});
+
+test("Signal Options summary snapshot serves a fresh cache in normal mode before rebuilding (fix C)", () => {
+  const start = source.indexOf(
+    "async function getSignalOptionsSummaryDashboardSnapshot",
+  );
+  const end = source.indexOf(
+    "async function getSignalOptionsDashboardSnapshot",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const body = source.slice(start, end);
+
+  // Anchor after the cache-ONLY branch (its cold fallback string) so we inspect
+  // the new normal-mode read, not the pre-existing cache-only read.
+  const afterCacheOnly = body.indexOf(
+    "signal_options_summary_cold_cache_only_fallback",
+  );
+  assert.notEqual(afterCacheOnly, -1);
+  const normalCacheIdx = body.indexOf(
+    "signalOptionsSummaryDashboardCache.get(input.deploymentId)",
+    afterCacheOnly,
+  );
+  const inFlightIdx = body.indexOf(
+    "const inFlight = readSignalOptionsDashboardInFlight",
+  );
+  const rebuildIdx = body.indexOf("const work = (async () =>");
+
+  assert.ok(
+    normalCacheIdx > afterCacheOnly,
+    "normal-mode cache read must come after the cache-only branch",
+  );
+  assert.ok(
+    inFlightIdx > normalCacheIdx,
+    "normal-mode cache read must precede the in-flight check",
+  );
+  assert.ok(
+    rebuildIdx > normalCacheIdx,
+    "normal-mode cache read must precede the rebuild",
+  );
+  // Same 15s freshness gate as cache-only (expiresAt > now), not the stale window.
+  assert.match(
+    body.slice(normalCacheIdx, inFlightIdx),
+    /if\s*\(cached\s*&&\s*cached\.expiresAt\s*>\s*now\)\s*\{\s*return cached;/,
+  );
+});
+
+test("Signal Options flags cold rebuilds freshlyBuilt and skips the refresh only for them, not cache hits (fix B)", () => {
+  const summaryStart = source.indexOf(
+    "async function getSignalOptionsSummaryDashboardSnapshot",
+  );
+  const fullStart = source.indexOf(
+    "async function getSignalOptionsFullDashboardSnapshot",
+  );
+  assert.notEqual(summaryStart, -1);
+  assert.notEqual(fullStart, -1);
+  // getSignalOptionsFullDashboardSnapshot precedes the summary function.
+  const fullBody = source.slice(fullStart, summaryStart);
+  const summaryBody = source.slice(
+    summaryStart,
+    source.indexOf(
+      "async function getSignalOptionsDashboardSnapshot",
+      summaryStart,
+    ),
+  );
+
+  // Both cold-rebuild closures flag the RETURNED value (the cached object stays clean).
+  assert.match(
+    fullBody,
+    /return\s*\{\s*\.\.\.snapshot,\s*freshlyBuilt:\s*true\s*\}/,
+  );
+  assert.match(
+    summaryBody,
+    /return\s*\{\s*\.\.\.snapshot,\s*freshlyBuilt:\s*true\s*\}/,
+  );
+
+  // The live-signal refresh returns early for a freshly-built snapshot...
+  const refreshStart = source.indexOf(
+    "async function withFreshSignalOptionsStateSignals",
+  );
+  const refreshEnd = source.indexOf(
+    "export async function listSignalOptionsAutomationState",
+    refreshStart,
+  );
+  assert.notEqual(refreshStart, -1);
+  assert.notEqual(refreshEnd, -1);
+  const refreshBody = source.slice(refreshStart, refreshEnd);
+  assert.match(
+    refreshBody,
+    /if\s*\(snapshot\.freshlyBuilt === true\)\s*\{\s*return snapshot\.state;/,
+  );
+
+  // ...but the normal-mode cache hit returns the clean cached snapshot (no
+  // freshlyBuilt), so its stale signals still fall through to the refresh.
+  const cacheHit = summaryBody.slice(
+    summaryBody.indexOf("signal_options_summary_cold_cache_only_fallback"),
+  );
+  assert.match(
+    cacheHit,
+    /if\s*\(cached\s*&&\s*cached\.expiresAt\s*>\s*now\)\s*\{\s*return cached;/,
+  );
+});
+
+test("MTF entry gate honors configured requiredCount instead of forcing unanimity", async () => {
+  const { evaluateSignalOptionsEntryGate, requiredSignalOptionsMtfCount } =
+    __signalOptionsAutomationInternalsForTests;
+  const { resolveSignalOptionsExecutionProfile } = await import(
+    "@workspace/backtest-core"
+  );
+
+  // Clamping: unset falls back to full frame count; configured values clamp
+  // to [1, frames].
+  assert.equal(requiredSignalOptionsMtfCount(undefined, [1, 1, 1]), 3);
+  assert.equal(requiredSignalOptionsMtfCount(2, [1, 1, 1]), 2);
+  assert.equal(requiredSignalOptionsMtfCount(9, [1, 1, 1]), 3);
+  assert.equal(requiredSignalOptionsMtfCount(0, [1, 1, 1]), 1);
+
+  const candidate = {
+    symbol: "PLTR",
+    direction: "sell",
+    optionRight: "put",
+    signal: { filterState: {} },
+  } as unknown as Parameters<
+    typeof evaluateSignalOptionsEntryGate
+  >[0]["candidate"];
+  const mtfTimeframeDirections = {
+    "1m": "sell",
+    "2m": "sell",
+    "5m": "buy",
+  } as Parameters<
+    typeof evaluateSignalOptionsEntryGate
+  >[0]["mtfTimeframeDirections"];
+
+  // Configured 2-of-3: two bearish frames align a sell entry.
+  const partialProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          enabled: true,
+          timeframes: ["1m", "2m", "5m"],
+          requiredCount: 2,
+        },
+      },
+    },
+  });
+  assert.equal(partialProfile.entryGate.mtfAlignment.requiredCount, 2);
+  const partial = evaluateSignalOptionsEntryGate({
+    candidate,
+    profile: partialProfile,
+    mtfTimeframeDirections,
+  });
+  assert.equal(partial.requiredMtfCount, 2);
+  assert.equal(partial.mtfMatches, 2);
+  assert.equal(partial.reasons.includes("mtf_not_aligned"), false);
+
+  // Unconfigured count still defaults to unanimity and blocks the same setup.
+  const strictProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: { enabled: true, timeframes: ["1m", "2m", "5m"] },
+      },
+    },
+  });
+  assert.equal(strictProfile.entryGate.mtfAlignment.requiredCount, 3);
+  const strict = evaluateSignalOptionsEntryGate({
+    candidate,
+    profile: strictProfile,
+    mtfTimeframeDirections,
+  });
+  assert.ok(strict.reasons.includes("mtf_not_aligned"));
 });

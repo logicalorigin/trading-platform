@@ -31,7 +31,8 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, GLOW, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { useValueFlash } from "../../lib/motion.jsx";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
@@ -55,17 +56,10 @@ import {
   IBKR_BRIDGE_SESSION_KEYS,
   IBKR_RECONNECT_REQUEST_EVENT,
   clearIbkrBridgeSessionValues,
-  closeIbkrProtocolLauncher,
   invalidateIbkrRuntimeQueries,
-  isWindowsIbkrLaunchBrowser,
-  navigateIbkrProtocolLauncher,
-  openIbkrProtocolLauncher,
   readIbkrBridgeSessionValue,
   removeIbkrBridgeSessionValue,
-  shouldUseRemoteIbkrLaunchBrowser,
-  writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession";
-import { waitForBridgeLaunchFeedbackPaint } from "./ibkrBridgeLaunchFeedback";
 import {
   isIbkrLoginKeyReadActivationNotFoundError,
   isTransientIbkrLoginKeyReadError,
@@ -95,6 +89,8 @@ import { platformJsonRequest } from "./platformJsonRequest";
 import { TRADE_OPTIONS_CHAIN_LABEL } from "./runtimeControlModel";
 import { useIbkrLineUsageSnapshot } from "./useIbkrLineUsageSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
+import { HeaderSnapTradeBrokerStatus } from "./HeaderSnapTradeBrokerStatus";
+import { HeaderSessionStatus } from "./HeaderSessionStatus";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const getIbkrInsightToneColor = (tone) => {
@@ -111,7 +107,13 @@ const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 25_000;
 const IBKR_LOGIN_HANDOFF_WAIT_MS = 60_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
-const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 500;
+// Realtime launch status: the popover holds a long-poll against /status that the backend
+// wakes the instant a phase changes, so the stepper reflects each step within ~ms instead
+// of a fixed poll cadence. WAIT_MS is how long the server parks an idle request (well under
+// the server's 30s long-poll cap) before returning the unchanged snapshot to be re-issued;
+// RETRY_MS is the brief backoff after a transient network/pressure blip.
+const IBKR_BRIDGE_ACTIVATION_STATUS_WAIT_MS = 20_000;
+const IBKR_BRIDGE_ACTIVATION_STATUS_RETRY_MS = 500;
 // Client-side stall backstop: if a launch in flight makes no observable progress
 // for this long, settle the stepper into a non-animating "warning" even when the
 // backend never sends its own insight.stale signal (agent died, polling failing,
@@ -185,69 +187,8 @@ const createIbkrLaunchCanceledError = () => {
   return error;
 };
 
-const waitForIbkrLoginKey = async ({
-  activationId,
-  managementToken,
-  shouldAbort,
-  signal,
-}) => {
-  const deadline = Date.now() + IBKR_LOGIN_HANDOFF_WAIT_MS;
-  let lastTransientError = null;
-  while (Date.now() < deadline) {
-    if (shouldAbort?.()) {
-      throw createIbkrLaunchCanceledError();
-    }
-    try {
-      const payload = await platformJsonRequest(
-        `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-key/read`,
-        {
-          method: "POST",
-          body: {
-            managementToken,
-            ...(IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS > 0
-              ? { waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS }
-              : {}),
-          },
-          signal,
-          timeoutMs: 0,
-        },
-      );
-      if (payload?.ready) {
-        if (payload.algorithm !== IBKR_LOGIN_HANDOFF_ALGORITHM) {
-          throw new Error("The Windows helper advertised an unsupported credential handoff.");
-        }
-        return {
-          completedWithoutCredentials: false,
-          key: payload,
-        };
-      }
-      lastTransientError = null;
-    } catch (error) {
-      if (shouldAbort?.()) {
-        throw createIbkrLaunchCanceledError();
-      }
-      if (isIbkrLoginKeyReadActivationNotFoundError(error)) {
-        return {
-          completedWithoutCredentials: true,
-          key: null,
-        };
-      }
-      if (isTransientIbkrLoginKeyReadError(error)) {
-        lastTransientError = error;
-        await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
-        continue;
-      }
-      throw error;
-    }
-
-    await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
-  }
-
-  throw new Error(
-    lastTransientError instanceof Error
-      ? `Timed out waiting for the Windows helper secure credential handoff. Last request error: ${lastTransientError.message}`
-      : "Timed out waiting for the Windows helper secure credential handoff.",
-  );
+const waitForIbkrLoginKey = async () => {
+  throw new Error("The legacy IBKR desktop bridge has been retired. Use the broker Client Portal connection instead.");
 };
 
 const IBKR_LOGIN_ENVELOPE_ACCEPTED_STEPS = new Set([
@@ -271,17 +212,11 @@ const IBKR_LOGIN_ENVELOPE_ACCEPTED_STEPS = new Set([
   "validating_tunnel",
 ]);
 
-const readIbkrActivationStatus = ({ activationId, managementToken }) =>
-  platformJsonRequest(
-    `/api/ibkr/activation/${encodeURIComponent(activationId)}/status`,
-    {
-      method: "POST",
-      body: {
-        managementToken,
-      },
-      timeoutMs: 5_000,
-    },
-  );
+const readIbkrActivationStatus = async () => ({
+  active: false,
+  canceled: true,
+  retired: true,
+});
 
 const ibkrActivationStatusShowsAcceptedLoginEnvelope = (payload) => {
   if (!payload || payload.canceled) {
@@ -299,69 +234,9 @@ const ibkrActivationStatusShowsAcceptedLoginEnvelope = (payload) => {
 // Fire-and-forget reporting of browser-side connection events (encrypt step, envelope-POST
 // outcome, timeouts) to the backend connection audit. Best-effort: never blocks or throws, so
 // the credential flow is unaffected if the audit endpoint is unavailable.
-const reportIbkrBrowserConnectionEvent = ({
-  activationId,
-  managementToken,
-  phase = null,
-  step,
-  status = null,
-  message = null,
-  errorCode = null,
-  errorMessage = null,
-}) => {
-  if (!activationId || !managementToken || !step) {
-    return;
-  }
-  try {
-    void platformJsonRequest(
-      `/api/ibkr/activation/${encodeURIComponent(activationId)}/browser-event`,
-      {
-        method: "POST",
-        body: {
-          managementToken,
-          phase,
-          step,
-          status,
-          message,
-          errorCode,
-          errorMessage,
-        },
-        timeoutMs: 5000,
-      },
-    ).catch(() => {});
-  } catch {
-    // best-effort
-  }
-};
+const reportIbkrBrowserConnectionEvent = () => {};
 
-const waitForIbkrDesktopJob = async ({ jobId, statusToken }) => {
-  if (!jobId || !statusToken) {
-    return null;
-  }
-
-  const deadline = Date.now() + IBKR_DESKTOP_SHUTDOWN_WAIT_MS;
-  while (Date.now() < deadline) {
-    const payload = await platformJsonRequest("/api/ibkr/desktop/jobs/status", {
-      method: "POST",
-      body: { jobId, statusToken },
-      timeoutMs: 0,
-    });
-    if (payload?.state === "completed") {
-      return payload;
-    }
-    if (payload?.state === "failed") {
-      throw new Error(
-        payload.message || "The Windows desktop could not stop IB Gateway.",
-      );
-    }
-    if (payload?.state === "expired") {
-      throw new Error("The Windows desktop did not claim the IB Gateway shutdown request.");
-    }
-    await sleep(IBKR_DESKTOP_JOB_POLL_MS);
-  }
-
-  throw new Error("Timed out waiting for the Windows desktop to stop IB Gateway.");
-};
+const waitForIbkrDesktopJob = async () => null;
 
 const isIbkrRemoteDesktopUnavailableError = (error) =>
   error?.status === 409 && error?.code === "ibkr_remote_desktop_unavailable";
@@ -698,6 +573,13 @@ const HeaderIbkrTriggerSummary = ({
       : lineValue;
   const showInlineLineUsage =
     compressed && Boolean(compactLineUsage?.summary || lineUsage?.summary);
+  const lineUsageUsed = compactLineUsage?.used ?? lineUsage?.used;
+  const lineUsageFlashClass = useValueFlash(lineUsageUsed, {
+    enabled: Number.isFinite(lineUsageUsed),
+  });
+  const pingFlashClass = useValueFlash(pingMs, {
+    enabled: Number.isFinite(pingMs),
+  });
 
   return (
     <span
@@ -780,10 +662,23 @@ const HeaderIbkrTriggerSummary = ({
             >
               {compact || minimal ? "L" : "Lines"}
             </span>
-            <span>{inlineLineValue}</span>
+            <span
+              className={
+                lineUsageFlashClass
+                  ? `${lineUsageFlashClass} ra-value-flash--quick`
+                  : undefined
+              }
+            >
+              {inlineLineValue}
+            </span>
           </span>
         ) : null}
         <span
+          className={
+            pingFlashClass
+              ? `${pingFlashClass} ra-value-flash--quick`
+              : undefined
+          }
           style={{
             color: CSS_COLOR.textSec,
             fontSize: textSize("caption"),
@@ -852,7 +747,7 @@ const buildIbkrDeactivatedPopoverModel = (model) => {
     label: detachBridge ? "Bridge Detached" : "Deactivated",
     color: CSS_COLOR.green,
     detail: detachBridge
-      ? "IBKR bridge runtime was detached."
+      ? "IBKR broker runtime was disconnected."
       : "Windows helper confirmed IB Gateway shutdown.",
   };
   const deactivatedIssue = {
@@ -1307,6 +1202,7 @@ const HeaderProviderIcon = ({
 
 const HeaderProviderStatusGlyph = ({ iconKey, tone, size = 18 }) => {
   const color = tone || CSS_COLOR.textSec;
+  const attention = tone === CSS_COLOR.amber || tone === CSS_COLOR.red;
   return (
     <span
       aria-hidden="true"
@@ -1321,6 +1217,9 @@ const HeaderProviderStatusGlyph = ({ iconKey, tone, size = 18 }) => {
         borderRadius: dim(RADII.pill),
         background: cssColorMix(color, 11),
         color,
+        ...(attention
+          ? { "--ra-glow-tone": color, boxShadow: GLOW.sm }
+          : null),
       }}
     >
       <HeaderProviderIcon
@@ -1338,6 +1237,7 @@ const HeaderProviderChip = ({ chip, baseTone, compact = false }) => {
     return null;
   }
   const tone = chip.tone || baseTone || CSS_COLOR.textSec;
+  const chipAttention = tone === CSS_COLOR.amber || tone === CSS_COLOR.red;
   const tooltipContent =
     chip.title && chip.title !== chip.label ? chip.title : null;
   const chipNode = (
@@ -1358,6 +1258,9 @@ const HeaderProviderChip = ({ chip, baseTone, compact = false }) => {
         fontVariantNumeric: "tabular-nums",
         whiteSpace: "nowrap",
         minWidth: 0,
+        ...(chipAttention
+          ? { "--ra-glow-tone": tone, boxShadow: GLOW.sm }
+          : null),
       }}
     >
       {chip.iconKey ? (
@@ -1594,7 +1497,7 @@ const HeaderMassiveProviderPanel = ({ row }) => (
           chip={{
             iconKey: "network",
             label: row.host,
-            title: "Massive REST host",
+            title: "Massive HTTP host",
           }}
           baseTone={CSS_COLOR.textSec}
         />
@@ -2416,7 +2319,7 @@ const IbkrInsightElapsedLabel = memo(function IbkrInsightElapsedLabel({ startedA
   );
 });
 
-const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
+const RetiredBrokerCredentialForm = memo(function RetiredBrokerCredentialForm({
   actionDisabled = false,
   actionLabel,
   busy = false,
@@ -2542,7 +2445,7 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
           fontWeight: FONT_WEIGHTS.medium,
         }}
       >
-        IBKR username
+        Retired username
         <input
           ref={usernameInputRef}
           type="text"
@@ -2570,7 +2473,7 @@ const HeaderIbkrCredentialForm = memo(function HeaderIbkrCredentialForm({
           fontWeight: FONT_WEIGHTS.medium,
         }}
       >
-        IBKR password
+        Retired password
         <input
           ref={passwordInputRef}
           type="password"
@@ -3174,12 +3077,7 @@ export const HeaderStatusCluster = ({
     ibkrRuntimeState?.desktopAgentCompatible !== false;
   const desktopAgentUpgradeRequiredForLaunch =
     ibkrRuntimeState?.desktopAgentUpgradeRequired === true;
-  const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser({
-    desktopAgentCompatible: desktopAgentCompatibleForLaunch,
-    desktopAgentOnline: desktopAgentOnlineForLaunch,
-    desktopAgentRegistered: desktopAgentRegisteredForLaunch,
-    desktopAgentUpgradeRequired: desktopAgentUpgradeRequiredForLaunch,
-  });
+  const remoteDesktopLaunchBrowser = false;
   const bridgeActivationLoginHandoffReady =
     bridgeRuntimeActivation?.loginHandoffReady === true;
   const bridgeActivationLoginKeyReadCount = Number(
@@ -3269,7 +3167,7 @@ export const HeaderStatusCluster = ({
     busy: bridgeLauncherBusy,
     inFlight: bridgeLaunchInFlight,
   });
-  let autoLoginActionLabel = "Launch with credentials";
+  let autoLoginActionLabel = "Retired connection";
   if (bridgeDirectActivationShouldRelaunchRemotely) {
     autoLoginActionLabel = "Launch on desktop";
   } else if (bridgeDirectActivationShouldRestartLocally) {
@@ -3504,85 +3402,16 @@ export const HeaderStatusCluster = ({
       setBridgeActivationActive(false);
       return undefined;
     }
-    if (bridgeLaunchInFlightUntil <= Date.now()) {
-      if (bridgeRuntimeActivationStillActive) {
-        setBridgeActivationActive(true);
-        return undefined;
-      }
-      const staleActivationId = bridgeActivationId;
-      const staleManagementToken = bridgeManagementToken;
-      clearBridgeLaunchSessionState();
-      void platformJsonRequest(
-        `/api/ibkr/activation/${encodeURIComponent(staleActivationId)}/cancel`,
-        {
-          method: "POST",
-          body: {
-            managementToken: staleManagementToken,
-          },
-          timeoutMs: 0,
-        },
-      ).catch(() => {});
-      return undefined;
-    }
-
-    let canceled = false;
-    let timerId = null;
-    const validateActivation = async () => {
-      try {
-        const payload = await platformJsonRequest(
-          `/api/ibkr/activation/${encodeURIComponent(bridgeActivationId)}/status`,
-          {
-            method: "POST",
-            body: {
-              managementToken: bridgeManagementToken,
-            },
-            timeoutMs: 0,
-          },
-        );
-        if (canceled) {
-          return;
-        }
-        setBridgeActivationStatus(payload || null);
-        if (payload?.active && !payload.canceled) {
-          setBridgeActivationActive(true);
-          return;
-        }
-        clearBridgeLaunchSessionState();
-      } catch (error) {
-        if (canceled) {
-          return;
-        }
-        if (
-          error?.status === 404 ||
-          error?.code === "ibkr_bridge_activation_not_found" ||
-          error?.code === "ibkr_bridge_activation_superseded" ||
-          error?.code === "ibkr_bridge_activation_canceled"
-        ) {
-          clearBridgeLaunchSessionState();
-          return;
-        }
-        setBridgeActivationActive(false);
-      }
-    };
-
-    void validateActivation();
-    timerId = window.setInterval(
-      validateActivation,
-      IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS,
-    );
-    return () => {
-      canceled = true;
-      if (timerId !== null) {
-        window.clearInterval(timerId);
-      }
-    };
+    setBridgeActivationActive(false);
+    clearBridgeLaunchSessionState();
+    void refreshIbkrConnectionStatus();
+    return undefined;
   }, [
     bridgeActivationId,
-    bridgeLaunchInFlightUntil,
     bridgeManagementToken,
-    bridgeRuntimeActivationStillActive,
     clearBridgeLaunchSessionState,
     gatewayConnectedForBridge,
+    refreshIbkrConnectionStatus,
   ]);
 
   useEffect(() => {
@@ -3761,173 +3590,13 @@ export const HeaderStatusCluster = ({
   );
 
   const deliverIbkrLoginCredentials = useCallback(
-    async ({
-      activationId,
-      managementToken,
-      password,
-      shouldAbort: shouldAbortOverride,
-      signal,
-      username,
-    }) => {
-      // The user-cancel signal. Read live (not captured) so a cancel that lands
-      // mid-handoff is observed by the key-wait loop and the pre-POST guard.
-      const shouldAbort = () =>
-        bridgeLaunchCancelRequestedRef.current || shouldAbortOverride?.() === true;
-      let handoff;
-      reportIbkrBrowserConnectionEvent({
-        activationId,
-        managementToken,
-        phase: "credentials",
-        step: "login_key_wait_started",
-        message: "Browser is waiting for the Windows helper credential key.",
-      });
-      try {
-        handoff = await waitForIbkrLoginKey({
-          activationId,
-          managementToken,
-          signal,
-          shouldAbort,
-        });
-      } catch (error) {
-        reportIbkrBrowserConnectionEvent({
-          activationId,
-          managementToken,
-          phase: "credentials",
-          step: "login_key_timeout",
-          status: "error",
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-      if (handoff.completedWithoutCredentials) {
-        setBridgeLauncherNotice(
-          "IB Gateway was already ready or the bridge attached before credentials were needed.",
-        );
-        clearBridgeLaunchSessionState();
-        // No credentials were actually delivered (the activation vanished/was
-        // already attached). Report not-delivered so callers do NOT wipe the
-        // typed password — the user may still need it to retry.
-        return { delivered: false, completedWithoutCredentials: true };
-      }
-
-      reportIbkrBrowserConnectionEvent({
-        activationId,
-        managementToken,
-        phase: "credentials",
-        step: "login_key_ready",
-        message: "Browser received the Windows helper credential key.",
-      });
-      appendBridgeActivationProgress({
-        activationId,
-        status: "waiting_gateway",
-        step: "encrypting_credentials",
-        message: "Encrypting one-time IBKR credentials in this browser.",
-      });
-      reportIbkrBrowserConnectionEvent({
-        activationId,
-        managementToken,
-        phase: "credentials",
-        step: "encrypting_credentials",
-        message: "Encrypting one-time IBKR credentials in this browser.",
-      });
-      let envelope;
-      try {
-        envelope = await encryptIbkrLoginEnvelope({
-          publicKeyJwk: handoff.key.publicKeyJwk,
-          payload: {
-            version: 1,
-            username,
-            password,
-            tradingMode: "live",
-          },
-        });
-      } catch (error) {
-        reportIbkrBrowserConnectionEvent({
-          activationId,
-          managementToken,
-          phase: "credentials",
-          step: "encrypt_failed",
-          status: "error",
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-      // Last gate before the credentials leave the browser: if the user
-      // canceled while we were waiting for the key or encrypting, never POST
-      // the envelope to an activation they abandoned.
-      if (shouldAbort()) {
-        throw createIbkrLaunchCanceledError();
-      }
-      let envelopeAccepted = false;
-      let lastEnvelopePostError = null;
-      for (let attempt = 1; attempt <= 2 && !envelopeAccepted; attempt += 1) {
-        try {
-          await platformJsonRequest(
-            `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-envelope`,
-            {
-              method: "POST",
-              body: {
-                managementToken,
-                helperInstanceId: handoff.key.helperInstanceId,
-                ...envelope,
-              },
-              timeoutMs: 0,
-            },
-          );
-          envelopeAccepted = true;
-        } catch (error) {
-          lastEnvelopePostError = error;
-          reportIbkrBrowserConnectionEvent({
-            activationId,
-            managementToken,
-            phase: "credentials",
-            step: "envelope_post_failed",
-            status: "error",
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-          try {
-            const status = await readIbkrActivationStatus({
-              activationId,
-              managementToken,
-            });
-            if (ibkrActivationStatusShowsAcceptedLoginEnvelope(status)) {
-              envelopeAccepted = true;
-              break;
-            }
-          } catch {
-            // The retry below is the recovery path when status is also temporarily unavailable.
-          }
-          if (attempt < 2) {
-            await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
-          }
-        }
-      }
-      if (!envelopeAccepted) {
-        throw (
-          lastEnvelopePostError ||
-          new Error("IBKR encrypted credential envelope was not accepted.")
-        );
-      }
-      appendBridgeActivationProgress({
-        activationId,
-        status: "waiting_gateway",
-        step: "credentials_sent_to_pyrus",
-        message: "Encrypted credentials sent to Pyrus for the Windows helper.",
-      });
-      reportIbkrBrowserConnectionEvent({
-        activationId,
-        managementToken,
-        phase: "credentials",
-        step: "credentials_sent_to_pyrus",
-        message: "Encrypted credentials sent to Pyrus for the Windows helper.",
-      });
-      setBridgeActivationActive(true);
-      setBridgeLauncherNotice(
-        "Encrypted credentials delivered. Approve the IBKR Mobile/2FA prompt.",
+    async () => {
+      clearBridgeLaunchSessionState();
+      throw new Error(
+        "The legacy IBKR desktop bridge has been retired. Use the broker Client Portal connection instead.",
       );
-      return { delivered: true };
     },
-    [appendBridgeActivationProgress, clearBridgeLaunchSessionState],
+    [clearBridgeLaunchSessionState],
   );
 
   useEffect(() => {
@@ -3981,7 +3650,6 @@ export const HeaderStatusCluster = ({
 
     void (async () => {
       try {
-        await waitForBridgeLaunchFeedbackPaint();
         if (canceled) {
           return;
         }
@@ -4039,385 +3707,34 @@ export const HeaderStatusCluster = ({
     gatewayConnectedForBridge,
   ]);
 
-  const handleSubmitAutoLogin = useCallback(async ({ password, username }) => {
+  const handleSubmitAutoLogin = useCallback(async () => {
     bridgeLaunchCancelRequestedRef.current = false;
-    const normalizedUsername = String(username || "").trim();
-    const credentialsReady = Boolean(normalizedUsername && password);
-    const helperUpdateOnly = Boolean(
-      !credentialsReady && desktopReconnectNeedsHelperUpdate,
-    );
-    if (!credentialsReady && !helperUpdateOnly) {
-      setBridgeLauncherError("IBKR username and password are required.");
-      return { credentialsDelivered: false };
-    }
-    bridgePendingAutoLoginCredentialsRef.current = credentialsReady
-      ? {
-          activationId: bridgeActivationId || null,
-          password,
-          username: normalizedUsername,
-        }
-      : null;
+    bridgePendingAutoLoginCredentialsRef.current = null;
     setBridgeManualOperationModel(null);
-
-    if (
-      bridgeDirectActivationShouldReplaceCurrentLaunch &&
-      bridgeActivationId &&
-      bridgeManagementToken
-    ) {
-      const staleActivationId = bridgeActivationId;
-      const staleManagementToken = bridgeManagementToken;
-      clearBridgeLaunchSessionState();
-      void platformJsonRequest(
-        `/api/ibkr/activation/${encodeURIComponent(staleActivationId)}/cancel`,
-        {
-          method: "POST",
-          body: {
-            managementToken: staleManagementToken,
-          },
-          timeoutMs: 0,
-        },
-      ).catch(() => {});
-    } else if (
-      bridgeCredentialResumeAvailable &&
-      bridgeActivationId &&
-      bridgeManagementToken
-    ) {
-      setBridgePopoverOpen(true);
-      setBridgeLauncherBusy(true);
-      setBridgeLauncherError(null);
-      setBridgeLauncherNotice(
-        "Sending credentials to the active Windows helper.",
-      );
-      // Claim the one-shot auto-resume slot for this activation so the auto-resume
-      // effect cannot also post an envelope for it before the backend flips
-      // loginEnvelopeSubmitted (which would be a double-submit).
-      bridgeCredentialAutoResumeAttemptRef.current = bridgeActivationId;
-      bridgePendingAutoLoginCredentialsRef.current = {
-        activationId: bridgeActivationId,
-        password,
-        username: normalizedUsername,
-      };
-      let resumeDeliveryResult = null;
-      try {
-        await waitForBridgeLaunchFeedbackPaint();
-        resumeDeliveryResult = await deliverIbkrLoginCredentials({
-          activationId: bridgeActivationId,
-          managementToken: bridgeManagementToken,
-          username: normalizedUsername,
-          password,
-        });
-      } catch (error) {
-        if (
-          bridgeLaunchCancelRequestedRef.current ||
-          error?.code === "ibkr_bridge_activation_canceled"
-        ) {
-          setBridgeLauncherError(null);
-          clearBridgeLaunchSessionState();
-          return { clearPassword: true };
-        }
-        setBridgeLauncherError(
-          error instanceof Error ? error.message : "IBKR auto-login failed.",
-        );
-        return { credentialsDelivered: false };
-      } finally {
-        setBridgeLauncherBusy(false);
-      }
-      if (resumeDeliveryResult?.delivered) {
-        bridgePendingAutoLoginCredentialsRef.current = null;
-      }
-      return {
-        credentialsDelivered: Boolean(resumeDeliveryResult?.delivered),
-      };
-    }
-
-    const initialUseRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentCompatible: desktopAgentCompatibleForLaunch,
-      desktopAgentOnline: desktopAgentOnlineForLaunch,
-      desktopAgentRegistered: desktopAgentRegisteredForLaunch,
-      desktopAgentUpgradeRequired: desktopAgentUpgradeRequiredForLaunch,
-    });
-    let protocolLauncher = null;
-    setBridgeActivationStatus(null);
     setBridgePopoverOpen(true);
-    setBridgeLauncherBusy(true);
-    setBridgeLauncherError(null);
-    setBridgeLauncherNotice(
-      initialUseRemoteDesktopLaunch
-        ? "Sending the IBKR launch request to the paired Windows desktop."
-        : "Preparing the Windows helper secure credential handoff.",
+    setBridgeLauncherBusy(false);
+    setBridgeLauncherNotice(null);
+    setBridgeLauncherError(
+      "The legacy IBKR desktop bridge has been retired. Use the broker Client Portal connection instead.",
     );
-    void waitForBridgeLaunchFeedbackPaint();
-    if (!initialUseRemoteDesktopLaunch) {
-      protocolLauncher = openIbkrProtocolLauncher();
-    }
-
-    try {
-      const launchIbkrBridge = async (useRemoteDesktopLaunch) => {
-        if (!useRemoteDesktopLaunch && !protocolLauncher) {
-          protocolLauncher = openIbkrProtocolLauncher();
-        }
-
-        const requestController =
-          typeof AbortController === "function" ? new AbortController() : null;
-        const credentialDeliveryController =
-          typeof AbortController === "function" ? new AbortController() : null;
-        let credentialDeliveryCanceled = false;
-        const startCredentialDelivery = (payload) => {
-          if (
-            !credentialsReady ||
-            !payload?.activationId ||
-            !payload?.managementToken
-          ) {
-            return Promise.resolve({ delivered: false });
-          }
-          return deliverIbkrLoginCredentials({
-            activationId: payload.activationId,
-            managementToken: payload.managementToken,
-            password,
-            signal: credentialDeliveryController?.signal,
-            shouldAbort: () => credentialDeliveryCanceled,
-            username: normalizedUsername,
-          });
-        };
-
-        const payload = await platformJsonRequest(
-          useRemoteDesktopLaunch
-            ? "/api/ibkr/remote-launch"
-            : "/api/ibkr/bridge/launcher",
-          {
-            method: useRemoteDesktopLaunch ? "POST" : "GET",
-            body: useRemoteDesktopLaunch
-              ? { autoLogin: credentialsReady, helperUpdateOnly }
-              : undefined,
-            signal: requestController?.signal,
-            timeoutMs: 0,
-          },
-        );
-        const selectedLaunchUrl = credentialsReady
-          ? payload.autoLoginLaunchUrl || payload.launchUrl
-          : payload.updateOnlyLaunchUrl || payload.launchUrl;
-        if (credentialsReady && payload.activationId) {
-          bridgePendingAutoLoginCredentialsRef.current = {
-            activationId: payload.activationId,
-            password,
-            username: normalizedUsername,
-          };
-        }
-        setBridgeActivationId(payload.activationId || null);
-        setBridgeManagementToken(payload.managementToken || null);
-        setBridgeLaunchUrl(selectedLaunchUrl || null);
-        writeIbkrBridgeSessionValue(
-          IBKR_BRIDGE_SESSION_KEYS.activationId,
-          payload.activationId,
-        );
-        writeIbkrBridgeSessionValue(
-          IBKR_BRIDGE_SESSION_KEYS.managementToken,
-          payload.managementToken,
-        );
-        writeIbkrBridgeSessionValue(
-          IBKR_BRIDGE_SESSION_KEYS.launchUrl,
-          selectedLaunchUrl,
-        );
-        const pendingCredentialDelivery = startCredentialDelivery(payload);
-        const launched = useRemoteDesktopLaunch
-          ? Boolean(payload.remoteLaunch?.jobId)
-          : navigateIbkrProtocolLauncher(
-              protocolLauncher,
-              selectedLaunchUrl,
-            );
-        if (!launched) {
-          credentialDeliveryCanceled = true;
-          credentialDeliveryController?.abort();
-          void pendingCredentialDelivery.catch(() => {});
-          clearBridgeLaunchSessionState();
-          throw new Error(
-            useRemoteDesktopLaunch
-              ? "No paired Windows desktop accepted the IBKR launch request."
-              : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
-          );
-        }
-
-        setBridgeActivationActive(true);
-        appendBridgeActivationProgress({
-          activationId: payload.activationId,
-          status: "starting_bridge",
-          step: useRemoteDesktopLaunch
-            ? "queued_on_pyrus"
-            : "helper_launch_requested",
-          message: useRemoteDesktopLaunch
-            ? "IBKR launch request queued in Pyrus for the Windows desktop."
-            : "Windows helper launch requested from this browser.",
-        });
-        if (useRemoteDesktopLaunch) {
-          appendBridgeActivationProgress({
-            activationId: payload.activationId,
-            status: "starting_bridge",
-            step: "waiting_desktop_agent",
-            message:
-              "Waiting for the Windows desktop helper to claim the launch request.",
-          });
-        }
-        const inFlightUntil = Date.now() + IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS;
-        setBridgeLaunchInFlightUntil(inFlightUntil);
-        writeIbkrBridgeSessionValue(
-          IBKR_BRIDGE_SESSION_KEYS.launchInFlightUntil,
-          String(inFlightUntil),
-        );
-        setBridgeLauncherNotice(
-          !credentialsReady
-            ? "Helper update launched. Re-run broker launch with credentials after PowerShell updates the helper."
-            : useRemoteDesktopLaunch
-            ? "Waiting for the Windows desktop helper to claim the launch request."
-            : "Waiting for the Windows helper to request encrypted credentials.",
-        );
-        return { payload, pendingCredentialDelivery, useRemoteDesktopLaunch };
-      };
-
-      let launchResult;
-      try {
-        launchResult = await launchIbkrBridge(initialUseRemoteDesktopLaunch);
-      } catch (error) {
-        if (
-          initialUseRemoteDesktopLaunch &&
-          isIbkrRemoteDesktopUnavailableError(error) &&
-          isWindowsIbkrLaunchBrowser()
-        ) {
-          clearBridgeLaunchSessionState();
-          setBridgeLauncherNotice(
-            "No paired desktop agent is online. Opening the Windows helper directly.",
-          );
-          launchResult = await launchIbkrBridge(false);
-        } else {
-          throw error;
-        }
-      }
-
-      if (!credentialsReady) {
-        setBridgeLauncherNotice(
-          launchResult.useRemoteDesktopLaunch
-            ? "Helper update request queued for the Windows desktop. Waiting for the helper to report the update result."
-            : "Helper update launched in PowerShell. Waiting for the helper to report the update result.",
-        );
-        void refreshIbkrConnectionStatus({ includeSupplementalState: true });
-        return { clearPassword: true };
-      }
-
-      const deliveryResult = await launchResult.pendingCredentialDelivery;
-      if (deliveryResult?.delivered) {
-        bridgePendingAutoLoginCredentialsRef.current = null;
-      }
-      return { credentialsDelivered: Boolean(deliveryResult?.delivered) };
-    } catch (error) {
-      if (protocolLauncher) {
-        closeIbkrProtocolLauncher(protocolLauncher);
-      }
-      if (
-        bridgeLaunchCancelRequestedRef.current ||
-        error?.code === "ibkr_bridge_activation_canceled"
-      ) {
-        setBridgeLauncherNotice("IB Gateway launch canceled.");
-        setBridgeLauncherError(null);
-        clearBridgeLaunchSessionState();
-        return { clearPassword: true };
-      }
-      if (
-        isIbkrRemoteDesktopUnavailableError(error) ||
-        isTerminalIbkrLaunchError(error)
-      ) {
-        setBridgeLauncherNotice(null);
-        setBridgeLauncherError(
-          error instanceof Error ? error.message : "IBKR bridge launch failed.",
-        );
-        clearBridgeLaunchSessionState();
-        return { credentialsDelivered: false };
-      }
-      setBridgeLauncherError(
-        error instanceof Error ? error.message : "IBKR auto-login failed.",
-      );
-      return { credentialsDelivered: false };
-    } finally {
-      setBridgeLauncherBusy(false);
-    }
+    clearBridgeLaunchSessionState();
+    return { credentialsDelivered: false };
   }, [
-    appendBridgeActivationProgress,
-    bridgeActivationId,
-    bridgeCredentialResumeAvailable,
-    bridgeDirectActivationShouldReplaceCurrentLaunch,
-    bridgeManagementToken,
     clearBridgeLaunchSessionState,
-    deliverIbkrLoginCredentials,
-    desktopReconnectNeedsHelperUpdate,
-    desktopAgentCompatibleForLaunch,
-    desktopAgentOnlineForLaunch,
-    desktopAgentRegisteredForLaunch,
-    desktopAgentUpgradeRequiredForLaunch,
-    refreshIbkrConnectionStatus,
   ]);
 
   const handleCancelBridgeLaunch = useCallback(async () => {
-    if (!bridgeActivationId || !bridgeManagementToken) {
-      setBridgeLauncherNotice(null);
-      setBridgeLauncherError(
-        "Cancel launch is unavailable because the backend activation identity is missing.",
-      );
-      return;
-    }
-
     bridgeLaunchCancelRequestedRef.current = true;
     setBridgeLaunchCancelInFlight(true);
-    setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
-    setBridgeLauncherNotice("Canceling IB Gateway launch.");
+    setBridgeLauncherNotice("Legacy IBKR desktop bridge launch cleared.");
     setBridgeActivationActive(false);
-    markBridgeActivationCanceled({
-      activationId: bridgeActivationId,
-      message: "Cancel requested. Waiting for PYRUS to acknowledge.",
-    });
-    try {
-      await platformJsonRequest(
-        `/api/ibkr/activation/${encodeURIComponent(bridgeActivationId)}/cancel`,
-        {
-          method: "POST",
-          body: {
-            managementToken: bridgeManagementToken,
-          },
-          timeoutMs: 0,
-        },
-      );
-      markBridgeActivationCanceled({
-        activationId: bridgeActivationId,
-        message: "IB Gateway bridge launch was canceled from PYRUS.",
-      });
-      setBridgeManualOperationModel(null);
-      setBridgeLauncherNotice("IB Gateway launch canceled.");
-      clearBridgeLaunchSessionState();
-    } catch (error) {
-      if (
-        error?.status === 404 ||
-        error?.code === "ibkr_bridge_activation_not_found" ||
-        error?.code === "ibkr_bridge_activation_superseded"
-      ) {
-        markBridgeActivationCanceled({
-          activationId: bridgeActivationId,
-          message: "No active IB Gateway launch remained.",
-        });
-        setBridgeManualOperationModel(null);
-        setBridgeLauncherNotice("No active IB Gateway launch remained.");
-        clearBridgeLaunchSessionState();
-      } else {
-        setBridgeLauncherError(
-          error instanceof Error ? error.message : "Cancel launch failed.",
-        );
-      }
-    } finally {
-      setBridgeLauncherBusy(false);
-      setBridgeLaunchCancelInFlight(false);
-    }
+    setBridgeManualOperationModel(null);
+    clearBridgeLaunchSessionState();
+    setBridgeLauncherBusy(false);
+    setBridgeLaunchCancelInFlight(false);
   }, [
-    bridgeActivationId,
-    bridgeManagementToken,
     clearBridgeLaunchSessionState,
-    markBridgeActivationCanceled,
   ]);
 
   const handleDeactivate = useCallback(async () => {
@@ -4430,13 +3747,6 @@ export const HeaderStatusCluster = ({
         variant: action.stepperVariant,
         ...state,
       });
-    // Only queue + wait on a Windows desktop shutdown when there is a live
-    // Gateway to stop. When the bridge is already off, queueing a remote
-    // shutdown leaves the "Desktop" step animating on a job no desktop will
-    // ever claim (a 35s wait that reads as "stuck detaching"). In that case the
-    // detach is idempotent: clear the runtime and settle immediately.
-    const queueRemoteShutdown =
-      action.queueRemoteShutdown === true && gatewayConnectedForBridge;
     const detachingBridgeOnly = action.stepperVariant === "clear-state";
 
     setBridgeLauncherBusy(true);
@@ -4446,92 +3756,27 @@ export const HeaderStatusCluster = ({
     setBridgeManualOperationModel(
       buildDeactivateModel({
         detach: detachingBridgeOnly ? "current" : "pending",
-        queue: queueRemoteShutdown ? "current" : "complete",
-        message: queueRemoteShutdown
-          ? "Queueing Windows desktop shutdown."
-          : "Detaching IBKR bridge runtime.",
+        queue: "complete",
+        message: "Clearing retired IBKR desktop bridge state.",
       }),
     );
-    const shutdownRequest = queueRemoteShutdown
-      ? platformJsonRequest("/api/ibkr/remote-shutdown", {
-          method: "POST",
-          body: { managementToken: bridgeManagementToken },
-          timeoutMs: 0,
-        }).then(
-          (payload) => ({ payload, error: null }),
-          (error) => ({ payload: null, error }),
-        )
-      : Promise.resolve({ payload: null, error: null });
 
     try {
       setBridgeManualOperationModel(
         buildDeactivateModel({
-          queue: queueRemoteShutdown ? "current" : "complete",
+          queue: "complete",
           detach: "current",
-          message: queueRemoteShutdown
-            ? "Queueing Windows shutdown and detaching backend runtime."
-            : "Detaching IBKR bridge runtime.",
+          message: "Clearing retired IBKR desktop bridge state.",
         }),
       );
 
-      setBridgeLauncherNotice(
-        queueRemoteShutdown ? "Detaching IBKR bridge." : "Detaching IBKR bridge.",
-      );
-      // The clear competes with live SSE streams on the event loop and can run
-      // slow. Bound it generously (IBKR_BRIDGE_DETACH_TIMEOUT_MS) so it isn't cut
-      // off mid-flight, and treat a timeout as "proceeding" rather than a hard
-      // failure: the clear is idempotent and the teardown is already underway, so
-      // we fall through to the settle path and let the state refresh confirm.
-      let detachTimedOut = false;
-      try {
-        if (bridgeManagementToken && queueRemoteShutdown) {
-          try {
-            await platformJsonRequest("/api/ibkr/bridge/detach", {
-              method: "POST",
-              body: {
-                managementToken: bridgeManagementToken,
-              },
-              timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
-            });
-          } catch (error) {
-            if (error?.code !== "invalid_ibkr_bridge_detach_token") {
-              throw error;
-            }
-            await platformJsonRequest(
-              "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
-              {
-                method: "POST",
-                body: { force: true },
-                timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
-              },
-            );
-          }
-        } else {
-          await platformJsonRequest(
-            "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
-            {
-              method: "POST",
-              body: { force: true },
-              timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS,
-            },
-          );
-        }
-      } catch (error) {
-        if (error?.code !== "request_timeout") {
-          throw error;
-        }
-        detachTimedOut = true;
-      }
+      setBridgeLauncherNotice("Clearing retired IBKR desktop bridge state.");
       setBridgeManualOperationModel(
         buildDeactivateModel({
-          queue: queueRemoteShutdown ? "current" : "complete",
+          queue: "complete",
           detach: "complete",
           refresh: "current",
-          message: detachTimedOut
-            ? "Detach is taking longer than usual; verifying connection state."
-            : queueRemoteShutdown
-              ? "IBKR runtime detached. Refreshing connection state."
-              : "IBKR bridge detached. Refreshing connection state.",
+          message: "Retired IBKR desktop bridge state cleared. Refreshing connection state.",
         }),
       );
       setBridgeManagementToken(null);
@@ -4543,142 +3788,35 @@ export const HeaderStatusCluster = ({
       void refreshIbkrConnectionStatus({ includeSupplementalState: true });
       setBridgeManualOperationModel(
         buildDeactivateModel({
-          queue: queueRemoteShutdown ? "current" : "complete",
+          queue: "complete",
           detach: "complete",
           refresh: "complete",
-          desktop: queueRemoteShutdown ? "pending" : "complete",
-          message: detachTimedOut
-            ? "IBKR detach requested; the clear is taking longer than usual. Verifying connection state."
-            : queueRemoteShutdown
-              ? "IBKR detached. Waiting for Windows shutdown queue confirmation."
-              : "IBKR bridge detached.",
+          desktop: "complete",
+          message: "Retired IBKR desktop bridge state cleared.",
         }),
       );
-      setBridgeLauncherNotice(
-        detachTimedOut
-          ? "IBKR detach requested; verifying connection state."
-          : queueRemoteShutdown
-            ? "IBKR detached."
-            : "IBKR bridge detached.",
-      );
-      if (!queueRemoteShutdown) {
-        return;
-      }
-      void shutdownRequest.then(({ payload: shutdown, error }) => {
-        if (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "shutdown request was not queued";
-          setBridgeManualOperationModel(
-            buildDeactivateModel({
-              queue: "warning",
-              detach: "complete",
-              refresh: "complete",
-              desktop: "warning",
-              message: `Windows shutdown was not queued: ${message}`,
-            }),
-          );
-          setBridgeLauncherNotice(
-            `IBKR detached. Windows shutdown was not queued: ${message}`,
-          );
-          return;
-        }
-
-        const shutdownJob = shutdown?.shutdown;
-        if (!shutdownJob?.jobId || !shutdownJob?.statusToken) {
-          setBridgeManualOperationModel(
-            buildDeactivateModel({
-              queue: "warning",
-              detach: "complete",
-              refresh: "complete",
-              desktop: "warning",
-              message: "IBKR detached. Windows shutdown was not queued.",
-            }),
-          );
-          setBridgeLauncherNotice("IBKR detached.");
-          return;
-        }
-
-        setBridgeManualOperationModel(
-          buildDeactivateModel({
-            queue: "complete",
-            detach: "complete",
-            refresh: "complete",
-            desktop: "current",
-            message: "Waiting for the Windows desktop to stop IB Gateway.",
-          }),
-        );
-        setBridgeLauncherNotice(
-          "IBKR detached. Waiting for the Windows desktop to stop IB Gateway.",
-        );
-        void waitForIbkrDesktopJob({
-          jobId: shutdownJob.jobId,
-          statusToken: shutdownJob.statusToken,
-        }).then(
-          () => {
-            invalidateIbkrRuntimeQueries(queryClient);
-            void refreshIbkrConnectionStatus({ includeSupplementalState: true });
-            setBridgeManualOperationModel(
-              buildDeactivateModel({
-                queue: "complete",
-                detach: "complete",
-                refresh: "complete",
-                desktop: "complete",
-                message: "IBKR detached and Gateway stopped on the Windows desktop.",
-              }),
-            );
-            setBridgeLauncherNotice(
-              "IBKR detached and Gateway stopped on the Windows desktop.",
-            );
-          },
-          (statusError) => {
-            const message =
-              statusError instanceof Error
-                ? statusError.message
-                : "shutdown was not confirmed";
-            setBridgeManualOperationModel(
-              buildDeactivateModel({
-                queue: "complete",
-                detach: "complete",
-                refresh: "complete",
-                desktop: "warning",
-                message: `Windows shutdown was not confirmed: ${message}`,
-              }),
-            );
-            setBridgeLauncherNotice(
-              `IBKR detached. Windows shutdown was not confirmed: ${message}`,
-            );
-          },
-        );
-      });
+      setBridgeLauncherNotice("Retired IBKR desktop bridge state cleared.");
     } catch (error) {
       setBridgeManualOperationModel(
         buildDeactivateModel({
-          queue: queueRemoteShutdown ? "current" : "complete",
+          queue: "complete",
           detach: "error",
           message:
             error instanceof Error
               ? error.message
-              : detachingBridgeOnly
-                ? "Detach bridge failed."
-                : "Deactivate failed.",
+              : "Clearing retired IBKR desktop bridge state failed.",
         }),
       );
       setBridgeLauncherError(
         error instanceof Error
           ? error.message
-          : detachingBridgeOnly
-            ? "Detach bridge failed."
-            : "Deactivate failed.",
+          : "Clearing retired IBKR desktop bridge state failed.",
       );
     } finally {
       setBridgeLauncherBusy(false);
     }
   }, [
     bridgeDeactivateAction,
-    bridgeManagementToken,
-    gatewayConnectedForBridge,
     queryClient,
     refreshIbkrConnectionStatus,
   ]);
@@ -4698,285 +3836,22 @@ export const HeaderStatusCluster = ({
         flex: "0 0 max-content",
       }}
     >
-      <div style={{ position: "relative", display: "flex", flex: "0 0 max-content" }}>
-        <button
-          ref={bridgeTriggerRef}
-          type="button"
-          aria-label="Open IB Gateway connection details"
-          aria-expanded={bridgePopoverOpen}
-          onClick={() => setBridgePopoverOpen((current) => !current)}
-          className="ra-hover-accent-bg"
-          style={{
-            ...surfaceStyle,
-            display: "grid",
-            alignItems: "center",
-            justifyContent: "stretch",
-            width: "max-content",
-            minWidth: "max-content",
-            maxWidth: "none",
-            padding: sp(compact ? "2px 14px 2px 3px" : compressed ? "2px 15px 2px 4px" : "6px 20px 6px 8px"),
-            position: "relative",
-            color: CSS_COLOR.text,
-            appearance: "none",
-            font: "inherit",
-            cursor: "pointer",
-          }}
-        >
-          <HeaderIbkrTriggerSummaryMemo
-            model={displayedGatewayPopoverModel}
-            connection={gatewayConnection}
-            tone={displayedGatewayTone}
-            latencyStats={activeGatewayLatencyStats}
-            compact={compact}
-            dense={isDense}
-            minimal={minimal}
-          />
-          <ChevronDown
-            size={dim(12)}
-            color={CSS_COLOR.textMuted}
-            strokeWidth={2.3}
-            style={{
-              position: "absolute",
-              right: dim(5),
-              top: dim(compressed ? 3 : 5),
-              pointerEvents: "none",
-            }}
-          />
-        </button>
+      <HeaderSessionStatus
+        compressed={compressed}
+        compact={compact}
+        mobileSheet={mobileSheet}
+        surfaceStyle={surfaceStyle}
+      />
 
-        {bridgePopoverOpen && typeof document !== "undefined" ? createPortal((
-          <>
-          {bridgePopoverAsSheet ? (
-            <div
-              data-testid="header-ibkr-mobile-sheet-backdrop"
-              aria-hidden="true"
-              style={{
-                position: "fixed",
-                inset: 0,
-                zIndex: 279,
-                background: `${cssColorMix(CSS_COLOR.bg0, 40)}`,
-                touchAction: "none",
-              }}
-            />
-          ) : null}
-          <div
-            data-testid={bridgePopoverAsSheet ? "header-ibkr-mobile-sheet" : undefined}
-            ref={bridgePopoverRef}
-            role="dialog"
-            aria-modal={bridgePopoverAsSheet ? true : undefined}
-            aria-label="IB Gateway bridge"
-            style={{
-              position: "fixed",
-              top: bridgePopoverAsSheet ? "auto" : bridgePopoverPosition?.top ?? dim(40),
-              left: bridgePopoverAsSheet ? 0 : bridgePopoverPosition?.left ?? dim(8),
-              right: bridgePopoverAsSheet ? 0 : undefined,
-              bottom: bridgePopoverAsSheet ? 0 : undefined,
-              zIndex: bridgePopoverAsSheet ? 280 : 240,
-              width: bridgePopoverAsSheet ? "100vw" : bridgePopoverPosition?.width ?? dim(408),
-              maxWidth: bridgePopoverAsSheet ? "100vw" : `calc(100vw - ${dim(16)}px)`,
-              maxHeight: bridgePopoverAsSheet
-                ? "min(82dvh, 620px)"
-                : Math.min(
-                  bridgePopoverPosition?.maxHeight ?? dim(420),
-                  dim(420),
-                ),
-              visibility:
-                !bridgePopoverAsSheet && !bridgePopoverPosition
-                  ? "hidden"
-                  : undefined,
-              overflowY: "auto",
-              WebkitOverflowScrolling: bridgePopoverAsSheet ? "touch" : undefined,
-              overscrollBehavior: bridgePopoverAsSheet ? "contain" : undefined,
-              boxSizing: "border-box",
-              padding: bridgePopoverAsSheet
-                ? sp("8px 8px max(12px, env(safe-area-inset-bottom))")
-                : sp(8),
-              background: CSS_COLOR.bg0,
-              border: bridgePopoverAsSheet ? `1px solid ${CSS_COLOR.borderLight}` : "none",
-              borderBottom: bridgePopoverAsSheet ? "none" : undefined,
-              borderTopLeftRadius: bridgePopoverAsSheet ? dim(RADII.md) : undefined,
-              borderTopRightRadius: bridgePopoverAsSheet ? dim(RADII.md) : undefined,
-              boxShadow: bridgePopoverAsSheet ? `0 -18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}` : ELEVATION.lg,
-              color: CSS_COLOR.text,
-              fontFamily: T.sans,
-            }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) auto auto",
-                alignItems: "center",
-                gap: sp(6),
-                marginBottom: sp(6),
-              }}
-            >
-              <div
-                style={{
-                  minWidth: 0,
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: sp(5),
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span
-                  style={{
-                    color: CSS_COLOR.text,
-                    fontSize: textSize("paragraph"),
-                    fontWeight: FONT_WEIGHTS.medium,
-                    fontFamily: T.sans,
-                    lineHeight: 1.15,
-                  }}
-                >
-                  IB Gateway
-                </span>
-                <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("paragraphMuted") }}>
-                  ·
-                </span>
-                <span
-                  style={{
-                    color: displayedBridgeTone.color,
-                    fontSize: textSize("paragraph"),
-                    fontWeight: FONT_WEIGHTS.label,
-                    fontFamily: T.sans,
-                    lineHeight: 1.15,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {displayedBridgeTone.label}
-                </span>
-              </div>
-              <span
-                style={{
-                  color: CSS_COLOR.textSec,
-                  fontSize: textSize("paragraphMuted"),
-                  fontWeight: FONT_WEIGHTS.medium,
-                  fontFamily: T.sans,
-                  fontVariantNumeric: "tabular-nums",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {popoverLatencyLabel}
-              </span>
-              <AppTooltip content="Close">
-                <button
-                  type="button"
-                  onClick={() => setBridgePopoverOpen(false)}
-                  style={{
-                    width: dim(22),
-                    height: dim(22),
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: "none",
-                    borderRadius: dim(RADII.sm),
-                    background: "transparent",
-                    color: CSS_COLOR.textSec,
-                    cursor: "pointer",
-                  }}
-                >
-                  <X size={dim(13)} strokeWidth={2.2} />
-                </button>
-              </AppTooltip>
-            </div>
+      <HeaderSnapTradeBrokerStatus
+        compressed={compressed}
+        compact={compact}
+        minimal={minimal}
+        mobileSheet={mobileSheet}
+        surfaceStyle={surfaceStyle}
+        theme={theme}
+      />
 
-            {canDeactivate ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr",
-                  gap: sp(6),
-                  marginBottom: sp(8),
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={handleDeactivate}
-                  disabled={bridgeLauncherBusy}
-                  style={{
-                    minHeight: dim(32),
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: sp(6),
-                    padding: sp("6px 12px"),
-                    border: `1px solid ${CSS_COLOR.border}`,
-                    borderRadius: dim(RADII.sm),
-                    background: CSS_COLOR.bg1,
-                    color: CSS_COLOR.textSec,
-                    cursor: bridgeLauncherBusy ? "default" : "pointer",
-                    fontSize: textSize("paragraphMuted"),
-                    fontWeight: FONT_WEIGHTS.medium,
-                    fontFamily: T.sans,
-                    letterSpacing: 0,
-                  }}
-                >
-                  <X size={dim(12)} strokeWidth={2.2} />
-                  {bridgeDeactivateAction.label}
-                </button>
-              </div>
-            ) : null}
-
-            {showCredentialForm ? (
-              <HeaderIbkrCredentialForm
-                actionDisabled={autoLoginActionDisabled}
-                actionLabel={autoLoginActionLabel}
-                busy={bridgeLauncherBusy}
-                credentialsOptional={autoLoginCredentialsOptional}
-                inFlight={bridgeLaunchInFlight}
-                launchCancelInFlight={bridgeLaunchCancelInFlight}
-                onCancelBridgeLaunch={handleCancelBridgeLaunch}
-                onSubmitCredentials={handleSubmitAutoLogin}
-                passwordInputRef={autoLoginPasswordInputRef}
-                secondaryActionDisabled={bridgeCredentialSecondaryActionDisabled}
-                secondaryCancelsLaunch={bridgeCredentialSecondaryCancelsLaunch}
-                usernameInputRef={autoLoginUsernameInputRef}
-              />
-            ) : null}
-
-            {bridgePopoverMessage?.trim() && !bridgeOperationModel ? (
-              <div
-                style={{
-                  minHeight: dim(32),
-                  marginBottom: sp(8),
-                  padding: sp("10px 12px"),
-                  background: CSS_COLOR.bg1,
-                  border: `1px solid ${CSS_COLOR.borderLight}`,
-                  borderRadius: dim(RADII.sm),
-                  color: bridgeLauncherError
-                    ? CSS_COLOR.red
-                    : CSS_COLOR.textSec,
-                  fontSize: textSize("paragraphMuted"),
-                  lineHeight: 1.4,
-                  fontFamily: T.sans,
-                  whiteSpace: "normal",
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {bridgePopoverMessage}
-              </div>
-            ) : null}
-
-            <HeaderIbkrOperationStepperMemo
-              insightModel={bridgeConnectionInsightModel}
-              model={bridgeOperationModel}
-            />
-
-            <HeaderIbkrConnectionSummaryMemo model={displayedGatewayPopoverModel} />
-            <HeaderMarketDataLineUsageMemo
-              lineUsage={displayedGatewayPopoverModel.lineUsage}
-              compactLineUsage={displayedGatewayPopoverModel.compactLineUsage}
-            />
-
-            <HeaderIbkrAdvancedDetailsMemo
-              insightModel={bridgeConnectionInsightModel}
-              model={displayedGatewayPopoverModel}
-            />
-          </div>
-          </>
-        ), document.body) : null}
-      </div>
 
       {compact ? null : (
         <HeaderMarketClock compressed={compressed} surfaceStyle={surfaceStyle} />

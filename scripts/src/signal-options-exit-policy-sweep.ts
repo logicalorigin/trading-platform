@@ -94,8 +94,6 @@ const WINNING_COMBO_EXIT_POLICY = {
   trailActivationPct: 35,
   minLockedGainPct: 15,
   trailGivebackPct: 20,
-  tightenAtFiveXGivebackPct: 30,
-  tightenAtTenXGivebackPct: 15,
   overnightExitEnabled: true,
   overnightMinGainPct: 10,
   overnightRunnerGivebackPct: 15,

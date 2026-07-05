@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import type { RuntimeMode } from "../lib/runtime";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import { IbkrClient } from "../providers/ibkr/client";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -11,25 +11,19 @@ import {
   isTransientBridgeWorkError,
   runBridgeWork,
 } from "./bridge-governor";
-import {
-  getBridgeHealthForSession,
-  type AnnotatedBridgeHealth,
-} from "./platform-bridge-health";
+import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 
 type CacheEntry<T> = {
   payload: T;
   cachedAt: number;
 };
 
-type AccountBridgeHealthReader = typeof getBridgeHealthForSession;
 type AccountBridgeClient = Pick<
-  IbkrBridgeClient,
+  IbkrClient,
   "listAccounts" | "listPositions" | "listExecutions"
 >;
 
-let bridgeClient: AccountBridgeClient = new IbkrBridgeClient();
-let readBridgeHealthForAccountRead: AccountBridgeHealthReader =
-  getBridgeHealthForSession;
+let accountClientFactory: () => AccountBridgeClient = getIbkrClientPortalClient;
 const accountListCache = new Map<string, CacheEntry<BrokerAccountSnapshot[]>>();
 const accountListInflight = new Map<string, Promise<BrokerAccountSnapshot[]>>();
 const positionCache = new Map<string, CacheEntry<BrokerPositionSnapshot[]>>();
@@ -40,12 +34,11 @@ const executionInflight = new Map<string, Promise<BrokerExecutionSnapshot[]>>();
 export function __setIbkrAccountBridgeDependenciesForTests(
   input: {
     bridgeClient?: AccountBridgeClient | null;
-    getBridgeHealthForSession?: AccountBridgeHealthReader | null;
   } | null,
 ): void {
-  bridgeClient = input?.bridgeClient ?? new IbkrBridgeClient();
-  readBridgeHealthForAccountRead =
-    input?.getBridgeHealthForSession ?? getBridgeHealthForSession;
+  accountClientFactory = input?.bridgeClient
+    ? () => input.bridgeClient as AccountBridgeClient
+    : getIbkrClientPortalClient;
   accountListCache.clear();
   accountListInflight.clear();
   positionCache.clear();
@@ -147,10 +140,9 @@ async function runCachedAccountRead<T extends unknown[]>({
     cached && isUsableStale(cached, staleTtlMs) ? cached : null;
   const normalizedInitialWaitMs = normalizeInitialWaitMs(initialWaitMs);
   // When the initial-wait budget elapses before the live read returns, prefer
-  // the cached payload over an empty array so a slow/504-ing bridge still
-  // surfaces the last-known data (e.g. open positions) instead of a momentary
-  // empty render. The live read keeps running and refreshes the cache for the
-  // next poll. Falls back to empty only when there is no usable cache.
+  // the cached payload over an empty array so a slow broker read still surfaces
+  // last-known data (e.g. open positions) instead of a momentary empty render.
+  // The live read keeps running and refreshes the cache for the next poll.
   const initialWaitFallback = (staleCached?.payload ?? []) as unknown as T;
 
   const pending = inflight.get(key);
@@ -171,32 +163,6 @@ async function runCachedAccountRead<T extends unknown[]>({
     return staleCached.payload;
   }
 
-  const health = await readBridgeHealthForAccountRead({
-    waitForInitialRefresh: false,
-    waitForStaleRefresh: false,
-  }).catch((): AnnotatedBridgeHealth | null => null);
-  const accountBridgeReady = Boolean(
-    health?.bridgeReachable &&
-      health.socketConnected &&
-      health.brokerServerConnected &&
-      health.authenticated &&
-      health.accountsLoaded,
-  );
-  if (!accountBridgeReady) {
-    if (allowStaleFallback && staleCached) {
-      return staleCached.payload;
-    }
-    logger.debug(
-      {
-        label,
-        key,
-        strictReason: health?.strictReason ?? "health_unavailable",
-      },
-      "Skipping IBKR account bridge read until Gateway is ready",
-    );
-    return [] as unknown as T;
-  }
-
   const promise = runBridgeWork("account", work)
     .then((payload) => {
       if (
@@ -208,7 +174,7 @@ async function runCachedAccountRead<T extends unknown[]>({
       ) {
         logger.warn(
           { label, key, cacheAgeMs: cacheAgeMs(staleCached) },
-          "Preserving non-empty IBKR account bridge cache after empty refresh",
+          "Preserving non-empty IBKR account cache after empty refresh",
         );
         return staleCached.payload;
       }
@@ -226,14 +192,14 @@ async function runCachedAccountRead<T extends unknown[]>({
       ) {
         logger.warn(
           { err: error, label, key, cacheAgeMs: cacheAgeMs(cached) },
-          "Returning cached IBKR account bridge read after transient failure",
+          "Returning cached IBKR account read after transient failure",
         );
         return cached.payload;
       }
       if (isTransientBridgeWorkError(error)) {
         logger.warn(
           { err: error, label, key },
-          "Returning empty IBKR account bridge read after transient failure",
+          "Returning empty IBKR account read after transient failure",
         );
         return [] as unknown as T;
       }
@@ -248,7 +214,7 @@ async function runCachedAccountRead<T extends unknown[]>({
     promise.catch((error) => {
       logger.warn(
         { err: error, label, key, cacheAgeMs: cacheAgeMs(staleCached) },
-        "Background IBKR account bridge refresh failed after serving stale cache",
+        "Background IBKR account refresh failed after serving stale cache",
       );
     });
     return staleCached.payload;
@@ -272,7 +238,7 @@ export function listIbkrAccounts(
     freshTtlMs: accountFreshTtlMs(),
     staleTtlMs: accountStaleTtlMs(),
     label: "accounts",
-    work: () => bridgeClient.listAccounts(mode),
+    work: () => accountClientFactory().listAccounts(mode),
   });
 }
 
@@ -296,7 +262,7 @@ export function listIbkrPositions(input: {
     serveStaleWhileRefreshing: false,
     initialWaitMs: positionsInitialWaitMs(),
     work: async () =>
-      (await bridgeClient.listPositions(input)).filter(
+      (await accountClientFactory().listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,
       ),
   });
@@ -327,7 +293,7 @@ export function listIbkrExecutions(input: {
     label: "executions",
     initialWaitMs: executionsInitialWaitMs(),
     preserveNonEmptyStaleOnEmpty: true,
-    work: () => bridgeClient.listExecutions(input),
+    work: () => accountClientFactory().listExecutions(input),
   });
 }
 

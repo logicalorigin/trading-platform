@@ -16,14 +16,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("account list does not wait on stale bridge health before fallback", async () => {
-  let bridgeAccountCalls = 0;
-  let observedOptions: unknown = null;
+test("account list reads through broker client without bridge health", async () => {
+  let accountCalls = 0;
 
   __setIbkrAccountBridgeDependenciesForTests({
     bridgeClient: {
       async listAccounts() {
-        bridgeAccountCalls += 1;
+        accountCalls += 1;
         return [];
       },
       async listPositions() {
@@ -33,20 +32,6 @@ test("account list does not wait on stale bridge health before fallback", async 
         return [];
       },
     },
-    async getBridgeHealthForSession(options) {
-      observedOptions = options;
-      if (options?.waitForStaleRefresh !== false) {
-        await delay(75);
-      }
-      return {
-        bridgeReachable: false,
-        socketConnected: false,
-        brokerServerConnected: false,
-        authenticated: false,
-        accountsLoaded: false,
-        strictReason: "health_error",
-      } as never;
-    },
   });
 
   const startedAt = performance.now();
@@ -54,25 +39,21 @@ test("account list does not wait on stale bridge health before fallback", async 
   const elapsedMs = performance.now() - startedAt;
 
   assert.deepEqual(accounts, []);
-  assert.deepEqual(observedOptions, {
-    waitForInitialRefresh: false,
-    waitForStaleRefresh: false,
-  });
-  assert.equal(bridgeAccountCalls, 0);
+  assert.equal(accountCalls, 1);
   assert(
     elapsedMs < 50,
-    `expected account list fallback to avoid bridge health wait, took ${elapsedMs.toFixed(1)}ms`,
+    `expected account list to avoid bridge health wait, took ${elapsedMs.toFixed(1)}ms`,
   );
 });
 
-test("positions return cached rows within the initial-wait budget when the bridge is slow", async () => {
+test("positions return cached rows within the initial-wait budget when the broker read is slow", async () => {
   const priorTtl = process.env["IBKR_ACCOUNT_CACHE_TTL_MS"];
   const priorStaleTtl = process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"];
   const priorWait = process.env["IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS"];
   process.env["IBKR_ACCOUNT_CACHE_TTL_MS"] = "1";
   process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"] = "120000";
   process.env["IBKR_ACCOUNT_POSITIONS_INITIAL_WAIT_MS"] = "150";
-  let bridgePositionCalls = 0;
+  let positionCalls = 0;
 
   const position = {
     accountId: "DU123",
@@ -96,10 +77,10 @@ test("positions return cached rows within the initial-wait budget when the bridg
         return [];
       },
       async listPositions() {
-        bridgePositionCalls += 1;
+        positionCalls += 1;
         // First read populates the cache fast; the second read simulates a
-        // slow/504-ing bridge that exceeds the initial-wait budget.
-        if (bridgePositionCalls === 1) {
+        // slow broker read that exceeds the initial-wait budget.
+        if (positionCalls === 1) {
           return [position];
         }
         await delay(2_000);
@@ -108,15 +89,6 @@ test("positions return cached rows within the initial-wait budget when the bridg
       async listExecutions() {
         return [];
       },
-    },
-    async getBridgeHealthForSession() {
-      return {
-        bridgeReachable: true,
-        socketConnected: true,
-        brokerServerConnected: true,
-        authenticated: true,
-        accountsLoaded: true,
-      } as never;
     },
   });
 
@@ -134,7 +106,7 @@ test("positions return cached rows within the initial-wait budget when the bridg
     const elapsedMs = performance.now() - startedAt;
 
     // The slow refresh must not block the request: it returns the cached rows
-    // within the ~150ms budget rather than hanging for the full 2s bridge read.
+    // within the ~150ms budget rather than hanging for the full 2s broker read.
     assert.equal(refreshed.length, 1);
     assert(
       elapsedMs < 900,
@@ -155,12 +127,12 @@ test("positions return cached rows within the initial-wait budget when the bridg
   }
 });
 
-test("positions refresh to empty rows instead of preserving stale bridge rows", async () => {
+test("positions refresh to empty rows instead of preserving stale broker rows", async () => {
   const priorTtl = process.env["IBKR_ACCOUNT_CACHE_TTL_MS"];
   const priorStaleTtl = process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"];
   process.env["IBKR_ACCOUNT_CACHE_TTL_MS"] = "1";
   process.env["IBKR_ACCOUNT_STALE_CACHE_TTL_MS"] = "1000";
-  let bridgePositionCalls = 0;
+  let positionCalls = 0;
 
   __setIbkrAccountBridgeDependenciesForTests({
     bridgeClient: {
@@ -168,8 +140,8 @@ test("positions refresh to empty rows instead of preserving stale bridge rows", 
         return [];
       },
       async listPositions() {
-        bridgePositionCalls += 1;
-        return bridgePositionCalls === 1
+        positionCalls += 1;
+        return positionCalls === 1
           ? [
               {
                 accountId: "DU123",
@@ -193,15 +165,6 @@ test("positions refresh to empty rows instead of preserving stale bridge rows", 
         return [];
       },
     },
-    async getBridgeHealthForSession() {
-      return {
-        bridgeReachable: true,
-        socketConnected: true,
-        brokerServerConnected: true,
-        authenticated: true,
-        accountsLoaded: true,
-      } as never;
-    },
   });
 
   try {
@@ -215,7 +178,7 @@ test("positions refresh to empty rows instead of preserving stale bridge rows", 
       mode: "shadow",
     });
     assert.deepEqual(refreshed, []);
-    assert.equal(bridgePositionCalls, 2);
+    assert.equal(positionCalls, 2);
   } finally {
     if (priorTtl == null) {
       delete process.env["IBKR_ACCOUNT_CACHE_TTL_MS"];

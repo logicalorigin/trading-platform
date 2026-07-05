@@ -214,7 +214,7 @@ export const bridgeRuntimeMessage = (session) => {
       bridge?.liveMarketDataAvailable === false
     ) {
       const modeMeta = marketDataMode ? ` (${marketDataMode})` : "";
-      return `IBKR bridge authenticated via ${transportMeta}${accountMeta}, but market data is delayed${modeMeta}.`;
+      return `IBKR broker session authenticated via ${transportMeta}${accountMeta}, but market data is delayed${modeMeta}.`;
     }
     if (
       streamState === "quiet" &&
@@ -264,7 +264,7 @@ export const bridgeRuntimeMessage = (session) => {
     if (streamState === "stale" || bridge?.streamFresh === false) {
       return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; stream is waiting for the next live event.`;
     }
-    return `IBKR bridge authenticated via ${transportMeta}${accountMeta}; waiting for strict stream proof.`;
+    return `IBKR broker session authenticated via ${transportMeta}${accountMeta}; waiting for strict stream proof.`;
   }
 
   if (bridge?.connected) {

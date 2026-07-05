@@ -28,9 +28,6 @@ const requestPlatformJson = async (path, params = {}) => {
 export const listBrokerExecutionsRequest = (params = {}) =>
   requestPlatformJson("/api/executions", params);
 
-export const getBrokerMarketDepthRequest = (params = {}) =>
-  requestPlatformJson("/api/market-depth", params);
-
 export const FINAL_ORDER_STATUSES = new Set([
   "filled",
   "canceled",

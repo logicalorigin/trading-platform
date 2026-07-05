@@ -54,7 +54,7 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function findRepoRoot(): string {
+export function findRepoRoot(): string {
   const configured = process.env["PYRUS_REPO_ROOT"];
   if (configured) return path.resolve(configured);
 
@@ -726,23 +726,36 @@ export function startRuntimeFlightRecorder(): void {
   heartbeatTimer.unref?.();
 }
 
+function appendPostgresPoolDiagnosticEvent(
+  event: PostgresPoolDiagnosticEvent,
+): void {
+  const eventName =
+    event.type === "acquire"
+      ? "api-db-pool-acquire-slow"
+      : "api-db-query-slow";
+  appendRuntimeFlightRecorderEvent(eventName, {
+    source: event.source,
+    durationMs: event.durationMs,
+    sql: event.sql,
+    queryName: event.queryName,
+    error: event.error,
+    pool: event.pool,
+    stack: event.stack,
+    context: event.context,
+  });
+}
+
+export function __appendPostgresPoolDiagnosticEventForTests(
+  event: PostgresPoolDiagnosticEvent,
+): void {
+  appendPostgresPoolDiagnosticEvent(event);
+}
+
 export function installRuntimeFlightRecorderDbDiagnostics(): void {
   if (dbDiagnosticsInstalled) return;
   dbDiagnosticsInstalled = true;
   setPostgresPoolDiagnosticListener((event: PostgresPoolDiagnosticEvent) => {
-    const eventName =
-      event.type === "acquire"
-        ? "api-db-pool-acquire-slow"
-        : "api-db-query-slow";
-    appendRuntimeFlightRecorderEvent(eventName, {
-      source: event.source,
-      durationMs: event.durationMs,
-      sql: event.sql,
-      queryName: event.queryName,
-      error: event.error,
-      pool: event.pool,
-      stack: event.stack,
-    });
+    appendPostgresPoolDiagnosticEvent(event);
   });
 }
 

@@ -91,7 +91,7 @@ test("the priority sweep can only run behind the background screen-code gate", (
 test("long-lived signal matrix stream pauses while cold screen code is loading", () => {
   assert.match(
     platformAppSource,
-    /const signalMatrixStreamReady = Boolean\(\s*signalMatrixUniverseSymbols\.length > 0[\s\S]*?activeScreenBackgroundDataAllowed[\s\S]*?screenWarmupPhase === "ready"[\s\S]*?!startupProtectionActive[\s\S]*?!criticalApiMutationPaused[\s\S]*?\);/,
+    /const signalMatrixStreamReady = shouldRunSignalMatrixStream\(\{[\s\S]*?profileUniverse: signalMatrixStreamUsesProfileUniverse,[\s\S]*?universeSymbolCount: signalMatrixUniverseSymbols\.length,[\s\S]*?screen,[\s\S]*?foregroundReady: signalMatrixRequestActive,[\s\S]*?backgroundAllowed: activeScreenBackgroundDataAllowed,[\s\S]*?screenWarmupPhase,[\s\S]*?startupProtectionActive,[\s\S]*?criticalApiMutationPaused,[\s\S]*?\}\);/,
     "the matrix EventSource must require active-screen background readiness",
   );
   assert.match(
@@ -101,15 +101,38 @@ test("long-lived signal matrix stream pauses while cold screen code is loading",
   );
 });
 
-test("signal monitor event history pauses during critical API mutations", () => {
+test("PlatformApp tags signal matrix stream states by bootstrap vs delta source", () => {
   assert.match(
     platformAppSource,
-    /if \(!criticalApiMutationPaused\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?queryClient\.cancelQueries\(\{[\s\S]*?queryKey: getListSignalMonitorEventsQueryKey\(\),[\s\S]*?\}\);/,
-    "critical mutations must cancel in-flight signal event history pagination",
+    /const handleSignalMatrixStreamStates = useCallback\(\s*\(incomingStates, kind, payload = null\) => \{/,
+    "stream state handler must receive the stream event kind",
   );
   assert.match(
     platformAppSource,
-    /const signalMonitorEventsReady = Boolean\(\s*signalMonitorDisplayReady && screen !== "algo" && !criticalApiMutationPaused,\s*\);/,
-    "signal event history must not run on the Algo screen or restart during critical API mutations",
+    /kind === "bootstrap" \? "stream-bootstrap" : "stream-delta"/,
+    "bootstrap and state-delta payloads must be tagged before merge",
+  );
+  assert.match(
+    platformAppSource,
+    /displayHydrationSource: hydrationSource/,
+    "stream states must carry displayHydrationSource into the matrix merge",
+  );
+  assert.match(
+    platformAppSource,
+    /onStates: handleSignalMatrixStreamStates/,
+    "the matrix stream hook must pass event kind into the tagging handler",
+  );
+});
+
+test("signal monitor event history pauses during blocking API mutations", () => {
+  assert.match(
+    platformAppSource,
+    /if \(!criticalApiMutationPaused\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?queryClient\.cancelQueries\(\{[\s\S]*?queryKey: getListSignalMonitorEventsQueryKey\(\),[\s\S]*?\}\);/,
+    "blocking mutations must cancel in-flight signal event history pagination",
+  );
+  assert.match(
+    platformAppSource,
+    /const signalMonitorEventsReady = Boolean\(\s*signalMonitorDisplayReady &&\s*screen !== "algo" &&\s*screen !== "trade" &&\s*!criticalApiMutationPaused,\s*\);/,
+    "signal event history must not run on Algo/Trade or restart during blocking API mutations",
   );
 });

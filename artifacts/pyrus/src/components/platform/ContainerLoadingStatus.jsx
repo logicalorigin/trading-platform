@@ -166,12 +166,18 @@ export const formatLoadingWaitLine = (item) => {
   if (!item) return "";
   const status = normalizeWaitStatus(item.status) || "loading";
   const label = cleanText(item.label || item.id || "container") || "container";
-  const primary = `${STATUS_LABELS[status] || "Waiting on"} ${label}`;
+  const statusLabel = STATUS_LABELS[status] || "Waiting on";
+  // Callers sometimes pass labels that already lead with the status verb
+  // ("Loading algo monitor") — don't render "Loading Loading …".
+  const primary = label.toLowerCase().startsWith(`${statusLabel.toLowerCase()} `)
+    ? label
+    : `${statusLabel} ${label}`;
+  // Endpoints/module paths are diagnostics data, not product copy — they are
+  // surfaced via the row's title attribute instead of the visible line.
   return [
     primary,
     formatLoadingSourceLine(item),
     cleanText(item.detail),
-    sanitizeLoadingEndpoint(item.endpoint),
     item.elapsedLabel || formatLoadingElapsed(item.elapsedMs),
   ]
     .filter(Boolean)
@@ -296,6 +302,7 @@ export const ContainerLoadingStatus = ({
         <div
           key={wait.id}
           data-loading-wait-id={wait.id}
+          title={wait.endpoint || undefined}
           style={{
             overflow: "hidden",
             textOverflow: "ellipsis",

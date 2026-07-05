@@ -76,6 +76,7 @@ import {
   resolveSignalMove,
   resolveSignalScoreBreakdown,
   isMarketIdleSignalRecord,
+  resolveDteDays,
   signalActionBlockerLabel,
   signalActionLabel,
   signalFreshnessLabel,
@@ -878,6 +879,17 @@ const statusPillMeta = (signal, candidate, blocker) => {
     }
     if (normalized.includes("stale")) {
       return { label, tone: CSS_COLOR.amber, Icon: Clock };
+    }
+    if (normalized.includes("closed")) {
+      // Terminal lifecycle (stop/force-close/expiration/ledger-reconcile exit).
+      // Tag it so the decision verdict shows "Closed" instead of falling through
+      // to the generic "Wait" pill.
+      return {
+        label,
+        tone: CSS_COLOR.textDim,
+        Icon: CheckCircle2,
+        lifecycle: "closed",
+      };
     }
     return {
       label,
@@ -2565,11 +2577,18 @@ export const OperationsSignalRow = ({
           selectionStage: liveSelectionStage,
         });
   const spreadWidth = spread.main;
+  // Days-to-expiry of the selected contract, so the spread tone widens its bands
+  // for long-dated (LEAP) contracts instead of always flagging them red.
+  const contractDte = resolveDteDays(
+    asRecord(effectiveSelectedContract).expirationDate ??
+      asRecord(effectiveSelectedContract).exp ??
+      asRecord(effectiveSelectedContract).expiry,
+  );
   const quoteTone = contractIsPreview ? CSS_COLOR.textDim : quoteState.tone;
   const spreadTone = contractIsPreview
     ? CSS_COLOR.textDim
     : Number.isFinite(Number(spreadGauge.widthPct))
-      ? spreadGaugeTone(spreadGauge.widthPct)
+      ? spreadGaugeTone(spreadGauge.widthPct, contractDte)
       : quoteState.tone;
   const contractTone =
     hasDisplayValue(rawContract.main) && !contractIsPreview
@@ -2844,6 +2863,7 @@ export const OperationsSignalRow = ({
               ask={spreadGauge.ask}
               mid={spreadGauge.mid}
               widthPct={spreadGauge.widthPct}
+              dte={contractDte}
             />
           ) : null
         }

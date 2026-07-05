@@ -40,6 +40,8 @@ import type {
 import { PatternVector } from "../../components/platform/signal-language/PatternVector.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { DenseVirtualTable } from "../../components/platform/DenseVirtualTable.jsx";
+// @ts-expect-error JSX module imported into TypeScript context
+import { Select } from "../../components/platform/primitives.jsx";
 import {
   cssColorAlpha,
   cssColorMix,
@@ -86,7 +88,7 @@ const DISPLAY = T.display as string;
 const inputStyle: CSSProperties = {
   width: "100%",
   padding: sp("8px 10px"),
-  borderRadius: dim(5),
+  borderRadius: dim(RADII.xs),
   border: `1px solid ${CSS_COLOR.border}`,
   background: CSS_COLOR.bg0,
   color: CSS_COLOR.text,
@@ -114,7 +116,7 @@ const buttonStyle = (
         : "none",
     background,
     color,
-    borderRadius: dim(5),
+    borderRadius: dim(RADII.xs),
     padding: sp("6px 9px"),
     fontFamily: SANS,
     fontSize: fs(10),
@@ -126,7 +128,7 @@ const buttonStyle = (
 const cardStyle: CSSProperties = {
   background: CSS_COLOR.bg2,
   border: `1px solid ${CSS_COLOR.border}`,
-  borderRadius: dim(6),
+  borderRadius: dim(RADII.xs),
   padding: sp("8px 10px"),
 };
 
@@ -212,7 +214,7 @@ function StatusBadge({ status }: { status: string }) {
         alignItems: "center",
         gap: sp(4),
         padding: sp("2px 8px"),
-        borderRadius: dim(999),
+        borderRadius: dim(RADII.pill),
         border: `1px solid ${cssColorAlpha(color, "33")}`,
         background: cssColorAlpha(color, "18"),
         color,
@@ -1086,7 +1088,7 @@ function PatternSetupAtlasStrip({
                 border: `1px solid ${active ? cssColorAlpha(tone, "88") : CSS_COLOR.border}`,
                 background: active ? cssColorAlpha(tone, "20") : CSS_COLOR.bg0,
                 color: active ? tone : CSS_COLOR.textSec,
-                borderRadius: dim(5),
+                borderRadius: dim(RADII.xs),
                 padding: sp("6px 7px"),
                 minHeight: dim(54),
                 cursor: "pointer",
@@ -1829,22 +1831,24 @@ export function PatternDiscoveryPanel() {
       >
         <div style={{ marginBottom: sp(10) }}>
           <Field label="Saved pattern study">
-            <select
+            <Select
               value={studyId ?? ""}
-              onChange={(event) => handleLoadStudy(event.target.value)}
-              style={inputStyle}
-            >
-              <option value="">
-                {patternStudies.length > 0
-                  ? "New discovery study"
-                  : "No saved pattern studies"}
-              </option>
-              {patternStudies.map((study) => (
-                <option key={study.id} value={study.id}>
-                  {formatPatternStudyOption(study)}
-                </option>
-              ))}
-            </select>
+              onChange={(next: string) => handleLoadStudy(next)}
+              options={[
+                {
+                  value: "",
+                  label:
+                    patternStudies.length > 0
+                      ? "New discovery study"
+                      : "No saved pattern studies",
+                },
+                ...patternStudies.map((study) => ({
+                  value: study.id,
+                  label: formatPatternStudyOption(study),
+                })),
+              ]}
+              style={{ width: "100%" }}
+            />
           </Field>
           {activeSweepId && sweepPeerStudies.length > 0 ? (
             <div style={{ marginTop: sp(10) }}>
@@ -1895,17 +1899,12 @@ export function PatternDiscoveryPanel() {
             />
           </Field>
           <Field label="Base timeframe">
-            <select
+            <Select
               value={baseTimeframe}
-              onChange={(event) => setBaseTimeframe(event.target.value)}
-              style={inputStyle}
-            >
-              {TIMEFRAME_CHOICES.map((tf) => (
-                <option key={tf} value={tf}>
-                  {tf}
-                </option>
-              ))}
-            </select>
+              onChange={(next: string) => setBaseTimeframe(next)}
+              options={TIMEFRAME_CHOICES.map((tf) => ({ value: tf, label: tf }))}
+              style={{ width: "100%" }}
+            />
           </Field>
           <Field label="Forward horizons (bars)">
             <input
@@ -2124,17 +2123,18 @@ export function PatternDiscoveryPanel() {
             </label>
             <label style={filterLabel}>
               bias
-              <select
+              <Select
                 value={biasFilter}
-                onChange={(event) =>
-                  setBiasFilter(event.target.value as "all" | "long" | "short")
+                onChange={(next: string) =>
+                  setBiasFilter(next as "all" | "long" | "short")
                 }
-                style={{ ...inputStyle, width: dim(78), padding: sp("3px 6px") }}
-              >
-                <option value="all">all</option>
-                <option value="long">long</option>
-                <option value="short">short</option>
-              </select>
+                options={[
+                  { value: "all", label: "all" },
+                  { value: "long", label: "long" },
+                  { value: "short", label: "short" },
+                ]}
+                style={{ width: dim(78) }}
+              />
             </label>
             <label style={{ ...filterLabel, cursor: "pointer" }}>
               <input

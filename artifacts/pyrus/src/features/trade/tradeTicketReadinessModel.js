@@ -1,9 +1,12 @@
 export const buildTicketReadinessModel = ({
   executionMode = "real",
+  brokerRoute = "ibkr",
   gatewayTradingReady = false,
   brokerConfigured = false,
   brokerAuthenticated = false,
   accountId = null,
+  snapTradeExecutionReady = false,
+  snapTradeExecutionBlockers = [],
   ticketInstrumentReady = false,
   quoteReady = false,
   spreadPct = null,
@@ -16,6 +19,7 @@ export const buildTicketReadinessModel = ({
   const issues = [];
   const warnings = [];
   const shadowMode = executionMode === "shadow";
+  const snapTradeMode = !shadowMode && brokerRoute === "snaptrade";
 
   if (!ticketInstrumentReady) {
     issues.push("contract");
@@ -23,17 +27,26 @@ export const buildTicketReadinessModel = ({
   if (!quoteReady) {
     issues.push("quote");
   }
-  if (!shadowMode && !brokerConfigured) {
-    issues.push("ibkr");
-  }
-  if (!shadowMode && brokerConfigured && !brokerAuthenticated) {
-    issues.push("auth");
-  }
-  if (!shadowMode && !accountId) {
-    issues.push("account");
-  }
-  if (!gatewayTradingReady) {
-    warnings.push("gateway");
+  if (snapTradeMode) {
+    if (!snapTradeExecutionReady) {
+      const blockers = Array.isArray(snapTradeExecutionBlockers)
+        ? snapTradeExecutionBlockers.filter(Boolean)
+        : [];
+      issues.push(blockers.length ? blockers.join(" / ") : "snaptrade account");
+    }
+  } else if (!shadowMode) {
+    if (!brokerConfigured) {
+      issues.push("ibkr");
+    }
+    if (brokerConfigured && !brokerAuthenticated) {
+      issues.push("auth");
+    }
+    if (!accountId) {
+      issues.push("account");
+    }
+    if (!gatewayTradingReady) {
+      warnings.push("gateway");
+    }
   }
   if (Number.isFinite(spreadPct) && spreadPct >= 18) {
     warnings.push("wide spread");
@@ -74,7 +87,11 @@ export const buildTicketReadinessModel = ({
   return {
     tone: "good",
     label: "Ready",
-    detail: shadowMode ? "Shadow route ready" : "IBKR route ready",
+    detail: shadowMode
+      ? "Shadow route ready"
+      : snapTradeMode
+        ? "SnapTrade route ready"
+        : "IBKR route ready",
     issues,
     warnings,
   };

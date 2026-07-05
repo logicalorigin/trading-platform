@@ -9,8 +9,15 @@ import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
 import { useFlowScannerControlState } from "./marketFlowStore";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
 
+const RUNTIME_DIAGNOSTICS_COMPACT_HEADERS = {
+  "x-pyrus-diagnostics-detail": "compact",
+};
+
 const readRuntimeDiagnosticsSnapshot = (signal) =>
-  getRuntimeDiagnostics(signal ? { signal } : undefined);
+  getRuntimeDiagnostics({
+    ...(signal ? { signal } : {}),
+    headers: RUNTIME_DIAGNOSTICS_COMPACT_HEADERS,
+  });
 
 export const useRuntimeControlSnapshot = ({
   enabled = true,
@@ -103,7 +110,6 @@ export const useRuntimeControlSnapshot = ({
   return {
     snapshot,
     lineUsage: snapshot.lineUsage,
-    bridgeGovernor: snapshot.bridgeGovernor,
     streams: snapshot.streams,
     flowScanner: snapshot.flowScanner,
     runtimeDiagnostics: effectiveRuntimeDiagnostics,

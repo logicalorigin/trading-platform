@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildPlatformPressureCaps,
   buildPlatformWorkSchedule,
+  shouldRunSignalMatrixStream,
   shouldRunSignalMonitorDisplay,
 } from "./appWorkScheduler.js";
 
@@ -52,7 +53,6 @@ test("massive stock realtime can drive market quotes and charting without broker
   assert.equal(schedule.streams.marketStockAggregates, true);
   assert.equal(schedule.leases.activeCharting, true);
   assert.equal(schedule.streams.watchlistQuoteStream, true);
-  assert.equal(schedule.streams.positionQuoteStream, false);
   assert.equal(schedule.streams.accountRealtime, false);
 });
 
@@ -88,11 +88,27 @@ test("runtime streams pause while the active screen is still loading code", () =
   });
 
   assert.equal(schedule.streams.watchlistQuoteStream, false);
-  assert.equal(schedule.streams.positionQuoteStream, false);
   assert.equal(schedule.streams.marketStockAggregates, false);
   assert.equal(schedule.streams.accountRealtime, false);
   assert.equal(schedule.streams.shadowAccountRealtime, false);
   assert.equal(schedule.streams.broadFlowRuntime, false);
+});
+
+test("trade chart priority does not start the broad flow scanner", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    massiveStockRealtimeConfigured: true,
+    activeScreen: "trade",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: true,
+    memoryPressure: { level: "normal", observedAt: "2026-06-27T15:10:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.leases.flowDiscovery, false);
 });
 
 test("watch pressure degrades hydration without blocking near-priority work", () => {
@@ -146,6 +162,46 @@ test("background signal display still respects a disabled scan profile", () => {
       profileEnabled: false,
       profileFetched: true,
       profileError: false,
+    }),
+    false,
+  );
+});
+
+test("foreground algo signal matrix stream does not require background warmup", () => {
+  assert.equal(
+    shouldRunSignalMatrixStream({
+      profileUniverse: true,
+      screen: "algo",
+      foregroundReady: true,
+      backgroundAllowed: false,
+      screenWarmupPhase: "ready",
+    }),
+    true,
+  );
+});
+
+test("non-signal surfaces still need the background stream gate", () => {
+  assert.equal(
+    shouldRunSignalMatrixStream({
+      profileUniverse: true,
+      screen: "market",
+      foregroundReady: false,
+      backgroundAllowed: false,
+      screenWarmupPhase: "ready",
+    }),
+    false,
+  );
+});
+
+test("signal matrix stream remains blocked during startup protection", () => {
+  assert.equal(
+    shouldRunSignalMatrixStream({
+      profileUniverse: true,
+      screen: "algo",
+      foregroundReady: true,
+      backgroundAllowed: false,
+      screenWarmupPhase: "ready",
+      startupProtectionActive: true,
     }),
     false,
   );

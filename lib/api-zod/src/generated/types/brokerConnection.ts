@@ -8,13 +8,18 @@
 import type { BrokerConnectionProvider } from './brokerConnectionProvider';
 import type { ConnectionStatus } from './connectionStatus';
 import type { EnvironmentMode } from './environmentMode';
+import type { ExecutionDecisionResponse } from './executionDecisionResponse';
 
 export interface BrokerConnection {
   id: string;
   provider: typeof BrokerConnectionProvider[keyof typeof BrokerConnectionProvider];
   name: string;
+  /** Optional SnapTrade brokerage slug for provider connections (e.g. ETRADE). */
+  brokerageSlug?: string;
   mode: EnvironmentMode;
   status: ConnectionStatus;
   capabilities: string[];
+  /** Optional registry-backed execution decision metadata for broker execution surfaces. */
+  executionDecision?: ExecutionDecisionResponse;
   updatedAt: Date;
 }

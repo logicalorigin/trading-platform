@@ -155,15 +155,9 @@ export const installPyrusQaMode = (): PyrusQaMode => {
   }
 
   const searchMode = resolvePyrusQaModeFromSearch(window.location.search);
-  if (searchMode === "off") {
-    safeWriteSessionStorage(PYRUS_QA_MODE_STORAGE_KEY, null);
-  } else if (searchMode === PYRUS_QA_SAFE_MODE) {
-    safeWriteSessionStorage(PYRUS_QA_MODE_STORAGE_KEY, searchMode);
-  }
+  safeWriteSessionStorage(PYRUS_QA_MODE_STORAGE_KEY, null);
 
-  const mode = normalizePyrusQaMode(
-    safeReadSessionStorage(PYRUS_QA_MODE_STORAGE_KEY),
-  );
+  const mode = searchMode === PYRUS_QA_SAFE_MODE ? searchMode : null;
   window.__PYRUS_QA_MODE__ = mode;
   if (mode === PYRUS_QA_SAFE_MODE) {
     document.documentElement.dataset.pyrusQaMode = mode;
@@ -179,8 +173,6 @@ export const isPyrusSafeQaMode = (): boolean => {
     return false;
   }
   return (
-    window.__PYRUS_QA_MODE__ === PYRUS_QA_SAFE_MODE ||
-    normalizePyrusQaMode(safeReadSessionStorage(PYRUS_QA_MODE_STORAGE_KEY)) ===
-      PYRUS_QA_SAFE_MODE
+    window.__PYRUS_QA_MODE__ === PYRUS_QA_SAFE_MODE
   );
 };

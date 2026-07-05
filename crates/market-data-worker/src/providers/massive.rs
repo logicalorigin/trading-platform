@@ -3,7 +3,6 @@ use chrono::{DateTime, Utc};
 use reqwest::header::HeaderMap;
 use reqwest::{Client, Url};
 use serde::Deserialize;
-use serde_json::{Map, Value};
 
 use crate::config::MarketDataProviderConfig;
 
@@ -64,26 +63,6 @@ pub struct OptionChainFetchResult {
     pub snapshots: Vec<OptionChainSnapshot>,
     pub page_count: usize,
     pub truncated: bool,
-    pub metadata: ProviderRequestMetadata,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StockSnapshot {
-    pub symbol: String,
-    pub bid: Option<f64>,
-    pub ask: Option<f64>,
-    pub last: f64,
-    pub bid_size: Option<i32>,
-    pub ask_size: Option<i32>,
-    pub last_size: Option<i32>,
-    pub change: Option<f64>,
-    pub change_percent: Option<f64>,
-    pub as_of: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StockSnapshotFetchResult {
-    pub snapshot: StockSnapshot,
     pub metadata: ProviderRequestMetadata,
 }
 
@@ -190,38 +169,6 @@ pub async fn fetch_option_chain_snapshots(
     })
 }
 
-pub async fn fetch_stock_snapshot(
-    client: &Client,
-    config: &MarketDataProviderConfig,
-    symbol: &str,
-) -> Result<StockSnapshotFetchResult> {
-    let symbol = normalize_symbol(symbol);
-    if symbol.is_empty() {
-        return Err(anyhow!("symbol is required"));
-    }
-
-    let mut url = Url::parse(&format!(
-        "{}/v2/snapshot/locale/us/markets/stocks/tickers",
-        config.base_url
-    ))?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("tickers", &symbol);
-        query.append_pair("apiKey", &config.api_key);
-    }
-
-    let response = client.get(url).send().await?;
-    let metadata = ProviderRequestMetadata::from_response(response.status(), response.headers());
-    let payload = response.error_for_status()?.json::<Value>().await?;
-
-    let snapshot = derive_snapshot_array(&payload)
-        .into_iter()
-        .filter_map(map_stock_snapshot)
-        .find(|snapshot| snapshot.symbol == symbol)
-        .ok_or_else(|| anyhow!("provider returned no usable stock snapshot for {symbol}"))?;
-    Ok(StockSnapshotFetchResult { snapshot, metadata })
-}
-
 fn parse_rate_limit_reset_header(headers: &HeaderMap) -> Option<DateTime<Utc>> {
     [
         "x-ratelimit-reset",
@@ -266,175 +213,6 @@ fn build_next_url(value: &str, api_key: &str) -> Result<Url> {
         url.query_pairs_mut().append_pair("apiKey", api_key);
     }
     Ok(url)
-}
-
-fn normalize_symbol(symbol: &str) -> String {
-    let normalized = symbol.trim().to_uppercase();
-    if normalized.len() >= 3 {
-        let bytes = normalized.as_bytes();
-        if bytes.iter().any(|byte| *byte == b' ' || *byte == b'-') {
-            return normalized.replace([' ', '-'], ".");
-        }
-    }
-    normalized
-}
-
-fn derive_snapshot_array(payload: &Value) -> Vec<&Value> {
-    if let Some(array) = payload.as_array() {
-        return array.iter().collect();
-    }
-    if let Some(record) = payload.as_object() {
-        for key in ["tickers", "results"] {
-            if let Some(array) = record.get(key).and_then(Value::as_array) {
-                return array.iter().collect();
-            }
-        }
-        for key in ["ticker", "snapshot"] {
-            if let Some(value) = record.get(key).filter(|value| value.is_object()) {
-                return vec![value];
-            }
-        }
-    }
-    Vec::new()
-}
-
-fn object_field<'a>(record: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Value> {
-    keys.iter().find_map(|key| record.get(*key))
-}
-
-fn value_number(value: Option<&Value>) -> Option<f64> {
-    let value = value?;
-    let number = match value {
-        Value::Number(number) => number.as_f64(),
-        Value::String(text) => {
-            let stripped = text
-                .trim()
-                .trim_start_matches(|character: char| {
-                    !character.is_ascii_digit()
-                        && character != '.'
-                        && character != '+'
-                        && character != '-'
-                })
-                .replace(',', "");
-            if stripped.is_empty() {
-                None
-            } else {
-                stripped.parse::<f64>().ok()
-            }
-        }
-        _ => None,
-    }?;
-    number.is_finite().then_some(number)
-}
-
-fn value_i32(value: Option<&Value>) -> Option<i32> {
-    value_number(value)
-        .filter(|value| value.is_finite())
-        .map(|value| value.round() as i32)
-}
-
-fn nested_object<'a>(
-    record: &'a Map<String, Value>,
-    keys: &[&str],
-) -> Option<&'a Map<String, Value>> {
-    object_field(record, keys).and_then(Value::as_object)
-}
-
-fn nested_number(record: Option<&Map<String, Value>>, keys: &[&str]) -> Option<f64> {
-    value_number(record.and_then(|record| object_field(record, keys)))
-}
-
-fn nested_i32(record: Option<&Map<String, Value>>, keys: &[&str]) -> Option<i32> {
-    value_i32(record.and_then(|record| object_field(record, keys)))
-}
-
-fn value_datetime(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    let value = value?;
-    if let Some(number) = value_number(Some(value)) {
-        let abs = number.abs();
-        let millis = if abs >= 1e17 {
-            number / 1e6
-        } else if abs >= 1e14 {
-            number / 1e3
-        } else if abs >= 1e11 {
-            number
-        } else if abs >= 1e9 {
-            number * 1e3
-        } else {
-            number
-        };
-        return DateTime::<Utc>::from_timestamp_millis(millis.round() as i64);
-    }
-    match value {
-        Value::String(text) => DateTime::parse_from_rfc3339(text.trim())
-            .ok()
-            .map(|date| date.with_timezone(&Utc)),
-        _ => None,
-    }
-}
-
-fn nested_datetime(record: Option<&Map<String, Value>>, keys: &[&str]) -> Option<DateTime<Utc>> {
-    value_datetime(record.and_then(|record| object_field(record, keys)))
-}
-
-fn map_stock_snapshot(snapshot: &Value) -> Option<StockSnapshot> {
-    let record = snapshot.as_object()?;
-    let symbol = object_field(record, &["ticker", "symbol"])
-        .and_then(Value::as_str)
-        .map(normalize_symbol)?;
-    if symbol.is_empty() {
-        return None;
-    }
-
-    let last_trade = nested_object(record, &["lastTrade", "last_trade"]);
-    let last_quote = nested_object(record, &["lastQuote", "last_quote"]);
-    let minute_bar = nested_object(record, &["min", "minute", "minuteBar"]);
-    let day_bar = nested_object(record, &["day"]);
-    let prev_day_bar = nested_object(record, &["prevDay", "prev_day"]);
-
-    let last = nested_number(last_trade, &["p", "price"])
-        .or_else(|| nested_number(minute_bar, &["c", "close"]))
-        .or_else(|| nested_number(day_bar, &["c", "close"]))
-        .or_else(|| value_number(object_field(record, &["currentPrice", "price", "last"])))?;
-    if !(last > 0.0 && last.is_finite()) {
-        return None;
-    }
-
-    let bid = nested_number(last_quote, &["p", "bp", "bid", "bidPrice", "bid_price"]);
-    let ask = nested_number(last_quote, &["P", "ap", "ask", "askPrice", "ask_price"]);
-    let bid_size = nested_i32(last_quote, &["s", "bs", "bidSize", "bid_size"]);
-    let ask_size = nested_i32(last_quote, &["S", "as", "askSize", "ask_size"]);
-    let last_size = nested_i32(last_trade, &["s", "size", "lastSize", "last_size"]);
-    let prev_close = nested_number(prev_day_bar, &["c", "close"]);
-    let change = value_number(object_field(record, &["todaysChange", "change"]))
-        .or_else(|| prev_close.map(|prev_close| last - prev_close));
-    let change_percent = value_number(object_field(
-        record,
-        &["todaysChangePerc", "changePercent", "change_percent"],
-    ))
-    .or_else(|| {
-        prev_close
-            .filter(|prev_close| *prev_close != 0.0)
-            .map(|prev_close| ((last - prev_close) / prev_close) * 100.0)
-    });
-    let as_of = nested_datetime(last_quote, &["t", "timestamp"])
-        .or_else(|| nested_datetime(last_trade, &["t", "timestamp"]))
-        .or_else(|| nested_datetime(minute_bar, &["t", "timestamp"]))
-        .or_else(|| nested_datetime(day_bar, &["t", "timestamp"]))
-        .unwrap_or_else(Utc::now);
-
-    Some(StockSnapshot {
-        symbol,
-        bid,
-        ask,
-        last,
-        bid_size,
-        ask_size,
-        last_size,
-        change,
-        change_percent,
-        as_of,
-    })
 }
 
 fn map_chain_result(result: ChainResult) -> Option<OptionChainSnapshot> {

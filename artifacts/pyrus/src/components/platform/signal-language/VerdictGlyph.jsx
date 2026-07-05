@@ -29,6 +29,18 @@ export const resolveSignalVerdict = ({
     };
   }
 
+  // A closed/exited position is terminal — it should read "Closed", not fall
+  // through to the generic "Wait" pill (statusPillMeta tags this lifecycle).
+  if (statusMeta?.lifecycle === "closed") {
+    return {
+      bucket: "closed",
+      label: statusMeta.label || "Closed",
+      reason: statusMeta.label || "Position closed",
+      tone: statusMeta.tone,
+      Icon: CheckCircle2,
+    };
+  }
+
   const score = Number(signalRecord?.score ?? signal?.score);
   if (
     signal?.fresh === true &&

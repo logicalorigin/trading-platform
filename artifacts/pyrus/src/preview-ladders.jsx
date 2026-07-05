@@ -116,7 +116,7 @@ function LadderRow({ label, min = 0, max, line, live, mode, fmt = int }) {
           ))}
         </div>
         {mode !== "cap" ? (
-          <div style={{ position: "absolute", left: `${linePct}%`, top: dim(-3), bottom: dim(-3), width: dim(2), transform: "translateX(-1px)", background: CSS_COLOR.text, borderRadius: dim(1) }} />
+          <div style={{ position: "absolute", left: `${linePct}%`, top: dim(-3), bottom: dim(-3), width: dim(2), transform: "translateX(-1px)", background: CSS_COLOR.text, borderRadius: dim(RADII.xs) }} />
         ) : null}
         <div
           style={{
@@ -311,7 +311,7 @@ const PANEL_STYLE = {
   flexDirection: "column",
   gap: dim(6),
   border: `1px solid ${CSS_COLOR.border}`,
-  borderRadius: 8,
+  borderRadius: RADII.md,
   background: CSS_COLOR.bg1,
   padding: sp("12px"),
   boxSizing: "border-box",

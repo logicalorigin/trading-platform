@@ -110,9 +110,11 @@ import { getChartTimeframeDefinition } from "./timeframes";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { CSS_COLOR, THEMES, cssColorAlpha, cssColorMix, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, GLOW, THEMES, cssColorAlpha, cssColorMix, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
+// @ts-expect-error JSX module imported into TypeScript context
+import { ChartSkeleton } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
   resolveCanvasAlphaColor,
@@ -2097,6 +2099,69 @@ export const isVisibleRangeNearRealtime = ({
   return visibleRange.to >= barCount - 1 - Math.max(0, tolerance);
 };
 
+export const resolveGuardedAutoHydrationProgrammaticRange = ({
+  source,
+  autoHydration,
+  currentRange,
+  nextRange,
+  defaultRange,
+  barCount,
+  tolerance = DEFAULT_REALTIME_FOLLOW_TOLERANCE,
+}: {
+  source: "programmatic" | "user";
+  autoHydration: boolean;
+  currentRange: VisibleLogicalRange | null | undefined;
+  nextRange: VisibleLogicalRange | null | undefined;
+  defaultRange?: VisibleLogicalRange | null | undefined;
+  barCount: number;
+  tolerance?: number;
+}): VisibleLogicalRange | null => {
+  if (
+    source !== "programmatic" ||
+    !autoHydration ||
+    !isFiniteNumber(barCount) ||
+    barCount <= 0
+  ) {
+    return null;
+  }
+
+  const current =
+    resolveViewportVisibleLogicalRange(currentRange) ||
+    (() => {
+      const normalizedDefault = resolveViewportVisibleLogicalRange(defaultRange);
+      if (!normalizedDefault) {
+        return null;
+      }
+      const to = Math.max(0, Math.floor(barCount) - 1);
+      const span = Math.max(0, normalizedDefault.to - normalizedDefault.from);
+      return {
+        from: Math.max(0, to - span),
+        to,
+      };
+    })();
+  const next = resolveViewportVisibleLogicalRange(nextRange);
+  if (!current || !next) {
+    return null;
+  }
+
+  if (
+    !isVisibleRangeNearRealtime({
+      visibleRange: current,
+      barCount,
+      tolerance,
+    }) ||
+    isVisibleRangeNearRealtime({
+      visibleRange: next,
+      barCount,
+      tolerance,
+    })
+  ) {
+    return null;
+  }
+
+  return next.to < current.to ? current : null;
+};
+
 export const resolveVisibleRangePublishState = ({
   range,
   barCount,
@@ -3910,6 +3975,25 @@ const resolveOverlayLabelFontSize = (
 ): number =>
   labelSize === "tiny" ? 8 : labelSize === "normal" ? 10 : 9;
 
+// Phone chart annotation thinning. The drawable/plot width drops below this
+// threshold only on phone-class viewports (the existing tick-spacing density
+// knob uses the same 520px cutoff), so gating on it keeps every desktop render
+// byte-identical while collapsing the collision field on small screens.
+const PHONE_CHART_WIDTH_THRESHOLD = 520;
+
+const isPhoneChartWidth = (width: number): boolean =>
+  isFiniteNumber(width) && width > 0 && width < PHONE_CHART_WIDTH_THRESHOLD;
+
+// Moving-average / VWAP value readouts overlap the candles on phones; the same
+// values remain in the legend affordance, so on-chart readout strings are
+// suppressed by leading-token match (PDH/PDL/etc. price tags do NOT match and
+// stay, only shrunk to tiny elsewhere).
+const MOVING_AVERAGE_READOUT_LABEL =
+  /^(ema|sma|wma|hma|dema|tema|vwap|svwap|ma)\b/i;
+
+const isMovingAverageReadoutLabel = (label: string | undefined): boolean =>
+  typeof label === "string" && MOVING_AVERAGE_READOUT_LABEL.test(label.trim());
+
 const stringArraysEqual = (left: string[], right: string[]): boolean => {
   if (left === right) {
     return true;
@@ -4612,6 +4696,7 @@ const buildZoneOverlays = (
   viewportHeight: number,
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
+  const phoneChart = isPhoneChartWidth(viewportWidth);
 
   return model.indicatorZones.reduce<OverlayShape[]>(
     (result, zone: IndicatorZone) => {
@@ -4657,7 +4742,12 @@ const buildZoneOverlays = (
       const style = meta.style as string | undefined;
       const border = (meta.borderColor as string | undefined) || defaultBorder;
       const fill = (meta.fillColor as string | undefined) || defaultFill;
-      const label = typeof zone.label === "string" ? zone.label : undefined;
+      const rawLabel = typeof zone.label === "string" ? zone.label : undefined;
+      // Phone: suppress EMA/SMA/VWAP value readout strings (they overlap the
+      // candles); the same values remain in the legend affordance. Price tags
+      // like PDH/PDL do not match and are only shrunk to tiny below.
+      const label =
+        phoneChart && isMovingAverageReadoutLabel(rawLabel) ? undefined : rawLabel;
       const isFillBand = style === "fill-band";
       const resolvedLabelPosition = resolveOverlayLabelPosition(
         meta.labelPosition,
@@ -4716,10 +4806,11 @@ const buildZoneOverlays = (
             ),
           labelVariant:
             meta.labelVariant === "plain" ? "plain" : "pill",
-          labelSize:
-            meta.labelSize === "tiny" ||
-            meta.labelSize === "small" ||
-            meta.labelSize === "normal"
+          labelSize: phoneChart
+            ? "tiny"
+            : meta.labelSize === "tiny" ||
+                meta.labelSize === "small" ||
+                meta.labelSize === "normal"
               ? meta.labelSize
               : "small",
           opacity: 0.95,
@@ -4776,10 +4867,11 @@ const buildZoneOverlays = (
         labelBorder: (meta.labelBorderColor as string | undefined),
         labelVariant:
           meta.labelVariant === "plain" ? "plain" : "pill",
-        labelSize:
-          meta.labelSize === "tiny" ||
-          meta.labelSize === "small" ||
-          meta.labelSize === "normal"
+        labelSize: phoneChart
+          ? "tiny"
+          : meta.labelSize === "tiny" ||
+              meta.labelSize === "small" ||
+              meta.labelSize === "normal"
             ? meta.labelSize
             : "small",
         radius: resolveFiniteMetaNumber(meta.radius, isFillBand ? 0 : 4),
@@ -5154,35 +5246,192 @@ const buildPositionRiskLineOverlays = ({
   });
 };
 
+// Prefix a grouped marker's label with a count glyph (e.g. "×3") without
+// double-labeling: the model already sets `label` to the bare count string for
+// grouped markers, so a single trade keeps its label untouched.
+const resolveGroupedMarkerText = (
+  label: string | undefined,
+  tradeCount: number,
+): string | undefined => {
+  if (tradeCount <= 1) {
+    return label;
+  }
+  if (label && label.includes("×")) {
+    return label;
+  }
+  return `×${tradeCount}`;
+};
+
 const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
   const entryMarkers = model.tradeMarkerGroups.entryGroups
     .filter((group) => group.barIndex != null)
-    .map((group) => ({
-      id: group.id,
-      time: group.time,
-      barIndex: group.barIndex ?? 0,
-      position: group.dir === "long" ? "belowBar" : "aboveBar",
-      shape: group.dir === "long" ? "arrowUp" : "arrowDown",
-      color: group.dir === "long" ? theme.green : theme.red,
-      text: group.label,
-      size: group.tradeSelectionIds.length > 1 ? 1 : undefined,
-    }));
+    .map((group) => {
+      const tradeCount = group.tradeSelectionIds.length;
+      // Buys enter arrow-up in the positive tone, sells arrow-down in the
+      // negative tone.
+      return {
+        id: group.id,
+        time: group.time,
+        barIndex: group.barIndex ?? 0,
+        position: group.dir === "long" ? "belowBar" : "aboveBar",
+        shape: group.dir === "long" ? "arrowUp" : "arrowDown",
+        color: group.dir === "long" ? theme.green : theme.red,
+        text: resolveGroupedMarkerText(group.label, tradeCount),
+        size: tradeCount > 1 ? 1 : undefined,
+      };
+    });
   const exitMarkers = model.tradeMarkerGroups.exitGroups
     .filter((group) => group.barIndex != null)
-    .map((group) => ({
-      id: group.id,
-      time: group.time,
-      barIndex: group.barIndex ?? 0,
-      position: group.dir === "long" ? "aboveBar" : "belowBar",
-      shape: "square" as const,
-      color: group.profitable === false ? theme.red : theme.green,
-      text: group.label,
-      size: group.tradeSelectionIds.length > 1 ? 1 : undefined,
-    }));
+    .map((group) => {
+      const tradeCount = group.tradeSelectionIds.length;
+      // Exits are non-directional events: square glyph, tone by outcome. A
+      // known win/loss keeps the positive/negative tone; an unknown outcome
+      // falls back to the neutral accent tone rather than reading as a win.
+      const color =
+        group.profitable === true
+          ? theme.green
+          : group.profitable === false
+            ? theme.red
+            : theme.amber;
+      return {
+        id: group.id,
+        time: group.time,
+        barIndex: group.barIndex ?? 0,
+        position: group.dir === "long" ? "aboveBar" : "belowBar",
+        shape: "square" as const,
+        color,
+        text: resolveGroupedMarkerText(group.label, tradeCount),
+        size: tradeCount > 1 ? 1 : undefined,
+      };
+    });
 
   return [...entryMarkers, ...exitMarkers].sort(
     (left, right) => left.time - right.time,
   );
+};
+
+type SeriesMarkerLike = {
+  time: number;
+  position?: string;
+  shape?: string;
+  text?: string;
+  size?: number;
+};
+
+const resolveSeriesMarkerSide = (
+  marker: SeriesMarkerLike,
+): "buy" | "sell" | null => {
+  const text = typeof marker.text === "string" ? marker.text.toLowerCase() : "";
+  if (text.includes("buy")) {
+    return "buy";
+  }
+  if (text.includes("sell")) {
+    return "sell";
+  }
+  if (marker.shape === "arrowUp" || marker.position === "belowBar") {
+    return "buy";
+  }
+  if (marker.shape === "arrowDown" || marker.position === "aboveBar") {
+    return "sell";
+  }
+  return null;
+};
+
+const resolveSeriesMarkerPriority = (marker: SeriesMarkerLike): number => {
+  // size is set only for grouped (multi-trade) markers, which carry more weight.
+  const multiTradeBoost = (marker.size ?? 0) > 0 ? 1 : 0;
+  // Executed trade markers (entry arrows / square exits) outrank signal pills.
+  if (
+    marker.shape === "arrowUp" ||
+    marker.shape === "arrowDown" ||
+    marker.shape === "square"
+  ) {
+    return 3 + multiTradeBoost;
+  }
+  if (resolveSeriesMarkerSide(marker) != null) {
+    return 2 + multiTradeBoost;
+  }
+  return 1 + multiTradeBoost;
+};
+
+// Phones need a wider gap because their glyphs are large relative to the chart;
+// desktop glyphs are smaller so a tighter spacing thins only genuine collisions.
+const PHONE_MARKER_MIN_SPACING_PX = 30;
+const DESKTOP_MARKER_MIN_SPACING_PX = 16;
+
+// Density-driven render-boundary thinning: cluster series markers that would
+// collide horizontally within `minSpacingPx` and keep the highest-priority /
+// most recent marker per cluster, always retaining the latest BUY and latest
+// SELL. Always safe to run — a spacing that no cluster crosses is a no-op, so
+// sparse marker sets pass through untouched.
+const thinCollidingSeriesMarkers = <T extends { x: number; marker: SeriesMarkerLike }>(
+  entries: T[],
+  minSpacingPx: number,
+): T[] => {
+  if (entries.length <= 1) {
+    return entries;
+  }
+  if (entries.some((entry) => !isFiniteNumber(entry.x))) {
+    return entries;
+  }
+
+  let latestBuy: T | null = null;
+  let latestSell: T | null = null;
+  entries.forEach((entry) => {
+    const side = resolveSeriesMarkerSide(entry.marker);
+    if (side === "buy") {
+      if (!latestBuy || entry.marker.time >= latestBuy.marker.time) {
+        latestBuy = entry;
+      }
+    } else if (side === "sell") {
+      if (!latestSell || entry.marker.time >= latestSell.marker.time) {
+        latestSell = entry;
+      }
+    }
+  });
+
+  const sorted = [...entries].sort((left, right) => left.x - right.x);
+  const kept = new Set<T>();
+  let cluster: T[] = [];
+
+  const flushCluster = () => {
+    if (!cluster.length) {
+      return;
+    }
+    let best = cluster[0];
+    cluster.forEach((entry) => {
+      const entryPriority = resolveSeriesMarkerPriority(entry.marker);
+      const bestPriority = resolveSeriesMarkerPriority(best.marker);
+      if (
+        entryPriority > bestPriority ||
+        (entryPriority === bestPriority && entry.marker.time > best.marker.time)
+      ) {
+        best = entry;
+      }
+      if (entry === latestBuy || entry === latestSell) {
+        kept.add(entry);
+      }
+    });
+    kept.add(best);
+    cluster = [];
+  };
+
+  sorted.forEach((entry) => {
+    if (!cluster.length) {
+      cluster.push(entry);
+      return;
+    }
+    const previous = cluster[cluster.length - 1];
+    if (Math.abs(entry.x - previous.x) < minSpacingPx) {
+      cluster.push(entry);
+    } else {
+      flushCluster();
+      cluster.push(entry);
+    }
+  });
+  flushCluster();
+
+  return entries.filter((entry) => kept.has(entry));
 };
 
 const buildTradeMarkerTargets = (
@@ -6015,6 +6264,61 @@ const buildSelectedTradeOverlays = (
   };
 };
 
+const PHONE_BADGE_COLLISION_X = 34;
+const PHONE_BADGE_COLLISION_Y = 16;
+
+const resolveBadgeOverlayPriority = (
+  variant: IndicatorBadgeOverlay["variant"],
+): number => {
+  switch (variant) {
+    case "signal":
+      return 4;
+    case "secondary_signal":
+    case "triangle":
+      return 3;
+    default:
+      // structure / swing (HH/HL/LL) — lowest, droppable on collision.
+      return 1;
+  }
+};
+
+// Phone-only: place higher-priority badges first, then drop low-priority
+// structure/swing tags that collide with an already-placed badge. Signals and
+// triangles are never dropped. Desktop widths return the input untouched.
+const thinPhoneBadgeOverlays = (
+  badges: IndicatorBadgeOverlay[],
+  viewportWidth: number,
+): IndicatorBadgeOverlay[] => {
+  if (!isPhoneChartWidth(viewportWidth) || badges.length <= 1) {
+    return badges;
+  }
+
+  const order = badges
+    .map((badge, index) => ({ badge, index }))
+    .sort(
+      (left, right) =>
+        resolveBadgeOverlayPriority(right.badge.variant) -
+          resolveBadgeOverlayPriority(left.badge.variant) ||
+        left.index - right.index,
+    );
+
+  const kept: IndicatorBadgeOverlay[] = [];
+  order.forEach(({ badge }) => {
+    const collides = kept.some(
+      (placed) =>
+        Math.abs(placed.left - badge.left) < PHONE_BADGE_COLLISION_X &&
+        Math.abs(placed.top - badge.top) < PHONE_BADGE_COLLISION_Y,
+    );
+    if (collides && resolveBadgeOverlayPriority(badge.variant) <= 1) {
+      return;
+    }
+    kept.push(badge);
+  });
+
+  const keptSet = new Set(kept);
+  return badges.filter((badge) => keptSet.has(badge));
+};
+
 const buildIndicatorEventOverlays = (
   chart: ChartApi,
   series: ChartSeriesApi,
@@ -6207,7 +6511,11 @@ const buildIndicatorEventOverlays = (
     }
   });
 
-  return { badges, dots, dashboard };
+  return {
+    badges: thinPhoneBadgeOverlays(badges, viewportWidth),
+    dots,
+    dashboard,
+  };
 };
 
 const syncStudySeries = (
@@ -6609,6 +6917,14 @@ const ResearchChartSurfaceComponent = ({
     writeSurfaceDiagnosticsAttributes();
   };
   const hasChartBars = model.chartBars.length > 0;
+  // D4 hydrate cross-fade: one-shot fade the moment the first bars paint.
+  // Latches true and stays on (the .ra-chart-hydrate animation runs once).
+  const [hasHydrated, setHasHydrated] = useState(false);
+  useEffect(() => {
+    if (!hasHydrated && hasChartBars) {
+      setHasHydrated(true);
+    }
+  }, [hasHydrated, hasChartBars]);
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [tapSelectedBar, setTapSelectedBar] = useState<HoverBar | null>(null);
   const tapSelectedBarRef = useRef<HoverBar | null>(null);
@@ -7465,12 +7781,18 @@ const ResearchChartSurfaceComponent = ({
     }
 
     const handleNativeWheel = (event: globalThis.WheelEvent) => {
+      if (isChartControlEventTarget(event.target)) {
+        return;
+      }
       markUserViewportIntent(event.target, "wheel", {
         clientX: event.clientX,
         clientY: event.clientY,
       });
     };
     const handleNativePointerDown = (event: globalThis.PointerEvent) => {
+      if (isChartControlEventTarget(event.target)) {
+        return;
+      }
       markUserViewportIntent(event.target, "pointer", {
         clientX: event.clientX,
         clientY: event.clientY,
@@ -8041,6 +8363,30 @@ const ResearchChartSurfaceComponent = ({
       const hasMatchingProgrammaticIntent =
         hasRecentProgrammaticIntent &&
         programmaticVisibleRangeSignatureRef.current === signature;
+      const guardedAutoHydrationRange =
+        resolveGuardedAutoHydrationProgrammaticRange({
+          source,
+          autoHydration: autoHydrationViewportRef.current,
+          currentRange: visibleLogicalRangeRef.current,
+          nextRange: visibleRange,
+          defaultRange: model.defaultVisibleLogicalRange,
+          barCount: chartBarCountRef.current,
+        });
+      if (guardedAutoHydrationRange) {
+        const guardedSignature = buildVisibleRangeSignature(
+          guardedAutoHydrationRange,
+        );
+        lastPublishedVisibleRangeSignatureRef.current = guardedSignature;
+        markProgrammaticViewportIntent(guardedSignature);
+        chartRef.current
+          ?.timeScale?.()
+          .setVisibleLogicalRange?.(guardedAutoHydrationRange);
+        recordChartHydrationCounter(
+          "visibleRangeAutoHydrationGuarded",
+          hydrationScopeKey,
+        );
+        return guardedAutoHydrationRange;
+      }
       const lockedUserRange =
         activeUserTouchedViewport
           ? resolveViewportVisibleLogicalRange(lastUserVisibleRangeRef.current) ||
@@ -8120,8 +8466,10 @@ const ResearchChartSurfaceComponent = ({
       effectiveViewportSnapshot?.userTouched,
       externalViewportUserTouched,
       hasRecentProgrammaticViewportIntent,
+      hydrationScopeKey,
       markProgrammaticViewportIntent,
       markViewportUserTouched,
+      model.defaultVisibleLogicalRange,
       publishViewportSnapshot,
       viewportUserTouched,
     ],
@@ -9707,44 +10055,56 @@ const ResearchChartSurfaceComponent = ({
             size: marker.size,
           }))
         : [];
-    const markers = [
+    const rangeVisibleMarkers = [
       ...flowChartModel.indicatorMarkerPayload.overviewMarkers,
       ...buildTradeMarkers(flowChartModel, chartTheme),
       ...positionMarkers,
-    ]
-      .filter((marker) =>
-        isMarkerVisibleInLogicalRange(
-          marker,
-          visibleLogicalRange,
-          flowChartModel.chartBars.length,
-        ),
-      )
-      .filter((marker) => {
-        if (!chart || !plotSize.width || !plotSize.height) {
-          return true;
-        }
+    ].filter((marker) =>
+      isMarkerVisibleInLogicalRange(
+        marker,
+        visibleLogicalRange,
+        flowChartModel.chartBars.length,
+      ),
+    );
+    // Keep the x coordinate computed by the in-bounds pass so phone thinning can
+    // cluster by horizontal collision without recomputing timeToCoordinate.
+    const boundedMarkerEntries = rangeVisibleMarkers.reduce<
+      Array<{ x: number; marker: (typeof rangeVisibleMarkers)[number] }>
+    >((result, marker) => {
+      if (!chart || !plotSize.width || !plotSize.height) {
+        result.push({ x: Number.NaN, marker });
+        return result;
+      }
 
-        const x = chart.timeScale().timeToCoordinate(marker.time);
-        if (!isFiniteNumber(x)) {
-          return false;
-        }
+      const x = chart.timeScale().timeToCoordinate(marker.time);
+      if (!isFiniteNumber(x)) {
+        return result;
+      }
 
-        const drawableWidth = resolveChartDrawableWidth(chart, plotSize.width);
-        const textWidth = marker.text
-          ? estimateMonoTextWidth(marker.text, compact ? 8 : 10, 2)
-          : 0;
-        const rightPadding = Math.max(24, textWidth + 16);
+      const drawableWidth = resolveChartDrawableWidth(chart, plotSize.width);
+      const textWidth = marker.text
+        ? estimateMonoTextWidth(marker.text, compact ? 8 : 10, 2)
+        : 0;
+      const rightPadding = Math.max(24, textWidth + 16);
 
-        return x >= 14 && x <= drawableWidth - rightPadding;
-      })
-      .map((marker) => ({
-        time: marker.time,
-        position: marker.position,
-        shape: marker.shape,
-        color: resolveCanvasColor(marker.color, chartTheme.accent || chartTheme.text),
-        text: marker.text,
-        size: marker.size,
-      }));
+      if (x >= 14 && x <= drawableWidth - rightPadding) {
+        result.push({ x, marker });
+      }
+      return result;
+    }, []);
+    const markers = thinCollidingSeriesMarkers(
+      boundedMarkerEntries,
+      isPhoneChartWidth(plotSize.width)
+        ? PHONE_MARKER_MIN_SPACING_PX
+        : DESKTOP_MARKER_MIN_SPACING_PX,
+    ).map(({ marker }) => ({
+      time: marker.time,
+      position: marker.position,
+      shape: marker.shape,
+      color: resolveCanvasColor(marker.color, chartTheme.accent || chartTheme.text),
+      text: marker.text,
+      size: marker.size,
+    }));
     const markerSignature = JSON.stringify(markers);
     if (markerSignatureRef.current === markerSignature) {
       return;
@@ -10500,6 +10860,17 @@ const ResearchChartSurfaceComponent = ({
     (legend?.symbol
       ? `${legend.symbol} ${legend?.timeframe || ""} bars are not hydrated yet. Controls remain available while the feed reconnects or the symbol changes.`
       : "Chart bars are not hydrated yet. Controls remain available while the feed reconnects or the symbol changes.");
+  // Loading-ish variant: a skeleton implies "data is coming", so gate it on
+  // explicit loading queues (loadingWaitItems) or a status title/detail that
+  // reads as loading ("LOADING", "loading option history", "resolving…").
+  // Pure empty ("Chart data unavailable", "NO DATA", "…not hydrated yet") and
+  // the separate chartError branch stay skeleton-free.
+  const emptyStateIsLoading = Boolean(
+    emptyState?.loadingWaitItems?.length ||
+      /\b(loading|resolving|requesting|hydrating|fetching)\b/i.test(
+        `${emptyStateEyebrow} ${emptyStateTitle} ${emptyStateDetail}`,
+      ),
+  );
   const legendDetailMode = userPreferences.chart.statusLineDetail;
   const legendMinimal = legendDetailMode === "minimal";
   const legendCompactMode = compact || legendDetailMode === "compact";
@@ -10662,6 +11033,9 @@ const ResearchChartSurfaceComponent = ({
     clearRememberedViewport(null);
   };
   const handleRootWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
+    if (isChartControlEventTarget(event.target)) {
+      return;
+    }
     markUserViewportIntent(event.target, "wheel", {
       clientX: event.clientX,
       clientY: event.clientY,
@@ -11585,6 +11959,11 @@ const ResearchChartSurfaceComponent = ({
     latestQuoteUpdatedAtMs != null
       ? Math.max(0, Date.now() - latestQuoteUpdatedAtMs)
       : null;
+  // D2 live-frame halo: a live quote feed (finite price + timestamp) is the
+  // status signal that the chart is streaming. Static accent ring (GLOW.ring
+  // defaults to the accent tone), never animated.
+  const chartIsLive =
+    isFiniteNumber(latestQuotePrice) && latestQuoteUpdatedAtMs != null;
   const watchlistChartPriceDelta =
     isFiniteNumber(latestQuotePrice) && isFiniteNumber(latestRenderedBar?.c)
       ? Number((Number(latestRenderedBar?.c) - Number(latestQuotePrice)).toFixed(6))
@@ -11789,6 +12168,7 @@ const ResearchChartSurfaceComponent = ({
         zIndex: isFullscreen ? 160 : undefined,
         overflow: "hidden",
         background: theme.bg2,
+        boxShadow: chartIsLive ? GLOW.ring : undefined,
         touchAction: chartInteractionConfig.touchAction,
         // Cancel the ancestor screenFitZoom (CSS zoom<1 below the design width)
         // so the chart subtree renders at net zoom 1. lightweight-charts maps
@@ -11953,6 +12333,7 @@ const ResearchChartSurfaceComponent = ({
             ref={containerRef}
             data-chart-plot-root
             data-testid={dataTestId ? `${dataTestId}-plot` : undefined}
+            className={hasHydrated ? "ra-chart-hydrate" : undefined}
             style={{
               position: "absolute",
               top: chartInsetTop,
@@ -13552,8 +13933,16 @@ const ResearchChartSurfaceComponent = ({
               "linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 100%)",
           }}
         >
+          {emptyStateIsLoading ? (
+            <ChartSkeleton
+              fill
+              style={{ position: "absolute", inset: 0, zIndex: 0 }}
+            />
+          ) : null}
           <div
             style={{
+              position: "relative",
+              zIndex: 1,
               minWidth: 220,
               maxWidth: 360,
               padding: "16px 18px",
@@ -13628,11 +14017,11 @@ const ResearchChartSurfaceComponent = ({
             height: dashboardDensity.height,
             maxWidth: dashboardDensity.maxWidth,
             padding: dashboardDensity.padding,
-            background: withAlpha("#05070a", "d9"),
-            border: `1px solid ${withAlpha("#86837D", "66")}`,
+            background: withAlpha(theme.bg2, "d9"),
+            border: `1px solid ${withAlpha(theme.border, "66")}`,
             borderRadius: RADII.none,
             boxSizing: "border-box",
-            color: "#ffffff",
+            color: theme.text,
             boxShadow: "none",
             zIndex: 19,
             display: "flex",
@@ -13648,7 +14037,7 @@ const ResearchChartSurfaceComponent = ({
           {dashboardSegments.map((segment, index) => {
             const isTitle = segment.kind === "title";
             const isSubtitle = segment.kind === "subtitle";
-            const segmentColor = segment.color || "#ffffff";
+            const segmentColor = segment.color || theme.text;
             return (
               <AppTooltip key={segment.key} content={
                   segment.title ||
@@ -13670,14 +14059,14 @@ const ResearchChartSurfaceComponent = ({
                     dashboardTier === "micro"
                       ? "transparent"
                       : isTitle
-                        ? withAlpha("#86837D", "54")
+                        ? withAlpha(theme.border, "54")
                         : "transparent",
                   border: "none",
                   borderLeft:
                     index > 0
-                      ? `1px solid ${withAlpha("#86837D", "4d")}`
+                      ? `1px solid ${withAlpha(theme.border, "4d")}`
                       : "none",
-                  color: "#ffffff",
+                  color: theme.text,
                   fontSize: isTitle
                     ? dashboardDensity.titleSize
                     : isSubtitle
@@ -13695,7 +14084,7 @@ const ResearchChartSurfaceComponent = ({
                   <span
                     style={{
                       flexShrink: 0,
-                      color: "#86837D",
+                      color: theme.textMuted,
                       fontWeight: FONT_WEIGHTS.regular,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -13707,7 +14096,7 @@ const ResearchChartSurfaceComponent = ({
                 <span
                   style={{
                     minWidth: 0,
-                    color: isSubtitle ? "#B8B4AC" : segmentColor,
+                    color: isSubtitle ? withAlpha(theme.text, "b8") : segmentColor,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                   }}
@@ -13718,7 +14107,7 @@ const ResearchChartSurfaceComponent = ({
                   <span
                     style={{
                       minWidth: 0,
-                      color: "#86837D",
+                      color: theme.textMuted,
                       fontSize: dashboardDensity.detailSize,
                       fontWeight: FONT_WEIGHTS.regular,
                       overflow: "hidden",

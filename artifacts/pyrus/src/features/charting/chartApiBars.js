@@ -102,16 +102,18 @@ export const describeBrokerChartSource = (source) => {
   if (source === "ibkr-websocket-derived") return "WS";
   if (source === "massive-delayed-websocket") return "DELAYED WS";
   if (source === "ibkr-stock-quote-derived") return "LIVE";
+  if (source === "massive-stock-quote-derived") return "LIVE";
   if (source === "ibkr-option-quote-derived") return "LIVE";
+  if (source === "massive-option-quote-derived") return "LIVE";
   if (source === "ibkr+massive-gap-fill") return "IBKR + GAP";
   if (source === "ibkr-history") return "IBKR";
-  if (source === "mixed-option-history") return "IBKR + POLY";
-  if (source === "massive-option-aggregates") return "POLY";
+  if (source === "mixed-option-history") return "MIXED";
+  if (source === "massive-option-aggregates") return "MASSIVE";
   return source ? "REST" : "";
 };
 
 export const describeBrokerChartStatus = (status, timeframe) =>
-  status === "live" ? `IBKR ${timeframe}` : status;
+  status === "live" ? `LIVE ${timeframe}` : status;
 
 const formatOptionFreshnessLabel = (value) => {
   const freshness = normalizeText(value) || "unavailable";
@@ -187,7 +189,7 @@ export const resolveBrokerChartSourceState = ({
     freshness === "delayed" ||
     marketDataMode === "delayed" ||
     source.includes("delayed") ||
-    source.includes("massive");
+    (source.includes("massive") && marketDataMode !== "live");
   const isFallback =
     statusText === "fallback" ||
     source.includes("massive") ||
@@ -201,7 +203,6 @@ export const resolveBrokerChartSourceState = ({
     statusText === "error";
   const isIbkr =
     baseSource.startsWith("ibkr") ||
-    marketDataMode === "live" ||
     sourceLabel === "IBKR" ||
     sourceLabel === "IBKR ROLL" ||
     sourceLabel === "WS" ||
@@ -228,8 +229,16 @@ export const resolveBrokerChartSourceState = ({
 
   if (isRealtime) {
     state = "live";
-    label = baseSource === "ibkr-websocket-derived" ? "IBKR WS" : "IBKR LIVE";
-    shortLabel = baseSource === "ibkr-websocket-derived" ? "WS" : "LIVE";
+    if (baseSource === "ibkr-websocket-derived") {
+      label = "IBKR WS";
+      shortLabel = "WS";
+    } else if (baseSource.startsWith("ibkr")) {
+      label = "IBKR LIVE";
+      shortLabel = "LIVE";
+    } else {
+      label = "LIVE";
+      shortLabel = "LIVE";
+    }
     tone = "good";
   } else if (statusText === "fallback") {
     state = "fallback";
@@ -356,7 +365,7 @@ export const resolveOptionChartSourceState = ({
     if (feedIssue && dataSource === "massive-option-aggregates") {
       return {
         ...sourceState,
-        label: "IBKR feed issue · Massive history",
+        label: "Metadata issue · Massive history",
         sourceLabel: "Massive history",
         tone: "warn",
         freshness,
@@ -366,9 +375,9 @@ export const resolveOptionChartSourceState = ({
       return {
         ...sourceState,
         state: "historical",
-        label: "IBKR + Massive history",
+        label: "Mixed option history",
         shortLabel: "MIXED",
-        sourceLabel: "IBKR + Massive history",
+        sourceLabel: "Mixed option history",
         tone: "neutral",
         freshness,
         isRealtime: false,
@@ -386,8 +395,8 @@ export const resolveOptionChartSourceState = ({
     if (dataSource === "ibkr-history") {
       return {
         ...sourceState,
-        label: "IBKR option history",
-        sourceLabel: "IBKR option history",
+        label: "Legacy option history",
+        sourceLabel: "Legacy option history",
         tone: sourceState.tone || "neutral",
         freshness,
       };

@@ -281,6 +281,50 @@ test("python signal matrix state keeps signal identity when the cell is stale", 
   assert.ok((result?.barsSinceSignal ?? 0) > 0);
 });
 
+test("python signal matrix unavailable cell defers to the JS fallback", () => {
+  // An "unavailable" python cell must return null (not a present "no signal"
+  // state) so the ?? merge falls back to the JS completed-bars evaluation.
+  const evaluatedAt = new Date("2026-06-12T13:44:30.000Z");
+  const result =
+    __signalMonitorInternalsForTests.signalMonitorMatrixStateFromPython({
+      profile: {
+        id: "paper-profile",
+        environment: "shadow",
+        enabled: true,
+        watchlistId: null,
+        timeframe: "5m",
+        pyrusSignalsSettings: {},
+        freshWindowBars: 8,
+        pollIntervalSeconds: 60,
+        maxSymbols: 500,
+        evaluationConcurrency: 2,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: evaluatedAt,
+        updatedAt: evaluatedAt,
+      },
+      symbol: "AAPL",
+      timeframe: "1m",
+      evaluatedAt,
+      completedBars: [
+        bar("2026-06-12T13:15:00.000Z"),
+        bar("2026-06-12T13:44:00.000Z"),
+      ],
+      pythonState: {
+        symbol: "AAPL",
+        timeframe: "1m",
+        status: "unavailable",
+        signal: null,
+        barsSinceSignal: null,
+        fresh: false,
+        indicatorSnapshot: null,
+        warning: "No bars were provided for this signal matrix cell.",
+      },
+    });
+
+  assert.equal(result, null);
+});
+
 test("a delayed bar replay never displaces a live bar for the same bucket", () => {
   const mergeBars = __signalMonitorInternalsForTests.mergeCompletedBars;
   const liveBar = {

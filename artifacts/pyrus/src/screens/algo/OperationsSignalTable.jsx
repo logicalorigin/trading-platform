@@ -54,6 +54,7 @@ import { formatRelativeTimeShort } from "../../lib/formatters";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import {
   DataUnavailableState,
+  Select,
   extractSparklinePoints,
 } from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
@@ -433,6 +434,9 @@ const signalTimestampMs = (signal) =>
 const rowActivityTimestampMs = (row) =>
   Math.max(
     signalTimestampMs(row.signal),
+    timestampMs(row.signal?.latestBarAt),
+    timestampMs(row.signal?.updatedAt),
+    timestampMs(row.signal?.lastEvaluatedAt),
     timestampMs(row.candidate?.signalAt),
     timestampMs(row.candidate?.updatedAt),
     latestTimelineMs(row.candidate),
@@ -638,6 +642,7 @@ export const classifySignal = (signal, candidate) => {
   if (signalRecord.actionEligible === false || signalRecord.actionBlocker) {
     return "blocked";
   }
+  if (signalRecord.actionEligible === true) return "ready";
   if (!Object.keys(candidateRecord).length) return "blocked";
   const actionStatus = String(
     candidateRecord.actionStatus || candidateRecord.status || "",
@@ -647,15 +652,41 @@ export const classifySignal = (signal, candidate) => {
   return "ready";
 };
 
-export const hasStaCandidateAction = (candidate) =>
-  Object.keys(asRecord(asRecord(candidate).action)).length > 0;
+const signalRecordForSource = (row) => {
+  const rowRecord = asRecord(row);
+  const nestedSignal = asRecord(rowRecord.signal);
+  return Object.keys(nestedSignal).length ? nestedSignal : rowRecord;
+};
 
 export const isHistoricalSignalRow = (row) =>
-  String(asRecord(asRecord(row).signal).sourceType || "") === "signal_monitor_event";
+  String(signalRecordForSource(row).sourceType || "") === "signal_monitor_event";
 
-const isReceivedSignalRow = (row) => {
-  const signal = asRecord(asRecord(row).signal);
-  return Boolean(signal.eventId || signal.sourceType === "signal_monitor_event");
+const hasSignalMonitorStateShape = (signal) => {
+  const symbol = String(signal.symbol || "").trim();
+  const timeframe = String(signal.timeframe || "").trim();
+  if (!symbol || !timeframe) return false;
+  return Boolean(
+    signal.currentSignalDirection ||
+      signal.currentSignalAt ||
+      signal.latestBarAt ||
+      signal.lastEvaluatedAt ||
+      signal.trendDirection ||
+      signal.actionEligible !== undefined ||
+      signal.actionBlocker,
+  );
+};
+
+export const isReceivedSignalRow = (row) => {
+  const signal = signalRecordForSource(row);
+  const sourceType = String(signal.sourceType || "").trim();
+  const source = String(signal.source || "").trim();
+  return Boolean(
+    signal.eventId ||
+      sourceType === "signal_monitor_event" ||
+      sourceType === "signal_matrix_state" ||
+      source === "signal-matrix" ||
+      hasSignalMonitorStateShape(signal),
+  );
 };
 
 export const buildStaSignalStatusSummary = ({
@@ -723,6 +754,66 @@ export const buildStaTableRowsSnapshot = ({
     actionCount,
     historyCount,
     activeFilterLabel,
+  };
+};
+
+export const buildStaEmptyStateModel = ({
+  searchQuery = "",
+  filter = "all",
+  sourceRowCount = 0,
+  matrixPendingRowCount = 0,
+  signalMatrixStateCount = 0,
+  displaySignalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
+} = {}) => {
+  const hasSearch = Boolean(String(searchQuery || "").trim());
+  const selectedTimeframes = (
+    Array.isArray(displaySignalTimeframes) && displaySignalTimeframes.length
+      ? displaySignalTimeframes
+      : SIGNALS_TABLE_TIMEFRAMES
+  )
+    .map((timeframe) => String(timeframe || "").trim())
+    .filter(Boolean);
+
+  if (hasSearch) {
+    return {
+      title: "No signals match this search",
+      detail: "Clear search to return to the current signal list.",
+      loading: false,
+    };
+  }
+
+  if (filter !== "all") {
+    return {
+      title: "No signals match this filter",
+      detail: "Switch filter to All to see signals in other states.",
+      loading: false,
+    };
+  }
+
+  if (sourceRowCount > 0 && matrixPendingRowCount > 0) {
+    return {
+      title: "Hydrating selected signal rows",
+      detail: `${matrixPendingRowCount} signal ${
+        matrixPendingRowCount === 1 ? "row is" : "rows are"
+      } waiting for ${selectedTimeframes.join(", ")} bubbles.`,
+      loading: true,
+    };
+  }
+
+  if (signalMatrixStateCount <= 0) {
+    return {
+      title: "Connecting to Signal Matrix",
+      detail:
+        "STA rows populate from live Signal Matrix states once selected execution-timeframe cells arrive.",
+      loading: true,
+    };
+  }
+
+  return {
+    title: "No current STA rows",
+    detail:
+      "Signal Matrix is live; no selected execution-timeframe cells currently carry a buy or sell row that passes the STA filters.",
+    loading: false,
   };
 };
 
@@ -924,6 +1015,15 @@ export const sortRows = (
     compareTextValues(a.signal.direction, b.signal.direction, "asc") ||
     compareTextValues(rowStableIdentity(a), rowStableIdentity(b), "asc");
   const baseCompare = (a, b) => {
+    if (sortKey === "newest") {
+      return (
+        compareTimestampValues(
+          signalTimestampMs(a.signal),
+          signalTimestampMs(b.signal),
+          sortDirection,
+        ) || fallbackCompare(a, b)
+      );
+    }
     if (sortKey === "symbol") {
       return (
         compareTextValues(a.signal.symbol, b.signal.symbol, sortDirection) ||
@@ -1274,7 +1374,6 @@ export const OperationsSignalTable = ({
   signals = [],
   candidates = [],
   signalMonitorEventsSourceStatus = "database",
-  signalOptionsSourceHealth = null,
   signalMatrixStates = [],
   signalTimeframes = SIGNALS_TABLE_TIMEFRAMES,
   mtfAlignmentConfig = null,
@@ -1490,11 +1589,20 @@ export const OperationsSignalTable = ({
   );
   const actionMappedCount = useMemo(
     () =>
-      (candidates || []).filter(
-        (candidate) => hasStaCandidateAction(candidate),
-      ).length,
-    [candidates],
+      staFilteredRows.filter((row) => row.classification === "ready").length,
+    [staFilteredRows],
   );
+  const signalMatrixStateCount = Array.isArray(signalMatrixStates)
+    ? signalMatrixStates.length
+    : 0;
+  const emptyStateModel = buildStaEmptyStateModel({
+    searchQuery,
+    filter,
+    sourceRowCount: sourceRows.length,
+    matrixPendingRowCount: matrixPendingRows.length,
+    signalMatrixStateCount,
+    displaySignalTimeframes,
+  });
 
   const freshness = useMemo(() => {
     const latestSignalMs = (signals || []).reduce(
@@ -1577,13 +1685,6 @@ export const OperationsSignalTable = ({
     staFilteredRows,
   ]);
 
-  const sourceHealth = asRecord(signalOptionsSourceHealth);
-  const sourceHealthLabel =
-    sourceHealth.degraded || sourceHealth.stale
-      ? "Action source degraded"
-      : sourceHealth.source && sourceHealth.source !== "empty"
-        ? `Action ${formatCompactStatusValue(sourceHealth.source)}`
-        : null;
   const freshnessItems = [
     freshness.latestSignalAt
       ? `Signal ${formatRelativeTimeShort(freshness.latestSignalAt)}`
@@ -1601,7 +1702,6 @@ export const OperationsSignalTable = ({
     freshness.sourcePolicy
       ? formatCompactStatusValue(freshness.sourcePolicy)
       : "Source --",
-    sourceHealthLabel,
     matrixPendingRows.length ? `${matrixPendingRows.length} matrix pending` : null,
   ];
   const staleScanBanner =
@@ -1610,19 +1710,6 @@ export const OperationsSignalTable = ({
           "Signal Matrix freshness is outside the expected window.",
           freshness.latestBarAt
             ? `Latest bar ${formatRelativeTimeShort(freshness.latestBarAt)}.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : null;
-  const sourceHealthBanner =
-    (sourceHealth.degraded || sourceHealth.stale) && !staFilteredRows.length
-      ? [
-          "STA action source is currently unavailable.",
-          Array.isArray(sourceHealth.failedSources) && sourceHealth.failedSources.length
-            ? `Failed source ${sourceHealth.failedSources
-                .map(formatCompactStatusValue)
-                .join(", ")}.`
             : null,
         ]
           .filter(Boolean)
@@ -1874,28 +1961,19 @@ export const OperationsSignalTable = ({
             />
           </label>
           {compactTools ? (
-            <select
-              aria-label="Filter signals"
+            <Select
+              ariaLabel="Filter signals"
               value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+              onChange={(next) => setFilter(next)}
+              options={FILTER_OPTIONS.map((option) => ({
+                value: option.id,
+                label: `${option.label} ${counts[option.id] ?? 0}`,
+              }))}
               style={{
-                height: dim(algoIsPhone ? 24 : 26),
                 flex: algoIsPhone ? "1 1 calc(50% - 4px)" : "0 0 auto",
                 maxWidth: algoIsPhone ? "none" : dim(132),
-                borderRadius: dim(RADII.sm),
-                border: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg2,
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
               }}
-            >
-              {FILTER_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label} {counts[option.id] ?? 0}
-                </option>
-              ))}
-            </select>
+            />
           ) : (
             FILTER_OPTIONS.map((option) => {
               const active = filter === option.id;
@@ -1937,28 +2015,13 @@ export const OperationsSignalTable = ({
             })
           )}
           {algoIsPhone ? (
-            <select
-              aria-label="Sort signals"
+            <Select
+              ariaLabel="Sort signals"
               value={compactSortValue}
-              onChange={(event) => handleCompactSortChange(event.target.value)}
-              style={{
-                height: dim(24),
-                flex: "1 1 calc(50% - 4px)",
-                maxWidth: "none",
-                borderRadius: dim(RADII.sm),
-                border: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg2,
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-              }}
-            >
-              {compactSortOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              onChange={(next) => handleCompactSortChange(next)}
+              options={compactSortOptions}
+              style={{ flex: "1 1 calc(50% - 4px)", maxWidth: "none" }}
+            />
           ) : null}
           {!algoIsPhone ? (
             <AppTooltip content="Choose signal table columns">
@@ -1990,7 +2053,6 @@ export const OperationsSignalTable = ({
           ) : null}
         </div>
         {staleScanBanner ||
-        sourceHealthBanner ||
         receivedHistorySourceBanner ||
         matrixHydrationBanner ? (
           <div
@@ -2026,7 +2088,6 @@ export const OperationsSignalTable = ({
             >
               {[
                 staleScanBanner,
-                sourceHealthBanner,
                 receivedHistorySourceBanner,
                 matrixHydrationBanner,
               ]
@@ -2080,35 +2141,14 @@ export const OperationsSignalTable = ({
             }}
           >
             {rows.length === 0 ? (
-              <div style={{ padding: sp(6) }}>
+              <div style={{ padding: sp(4) }}>
                 <DataUnavailableState
-                  title={
-                    searchQuery.trim()
-                      ? "No signals match this search"
-                      : filter === "all" && sourceRows.length && matrixPendingRows.length
-                      ? "Hydrating signal matrix"
-                      : filter === "all"
-                      ? "No actionable signals"
-                      : "No signals match this filter"
-                  }
-                  detail={
-                    searchQuery.trim()
-                      ? "Clear search to return to the current signal list."
-                      : filter === "all" && sourceRows.length && matrixPendingRows.length
-                      ? `${matrixPendingRows.length} signal ${
-                          matrixPendingRows.length === 1 ? "row is" : "rows are"
-                        } waiting for ${displaySignalTimeframes.join(", ")} bubbles.`
-                      : filter === "all"
-                      ? "Rows appear as soon as the signal matrix fires a buy or sell on a tracked symbol."
-                      : "Switch filter to All to see signals in other states."
-                  }
+                  title={emptyStateModel.title}
+                  detail={emptyStateModel.detail}
                   icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}
                   minHeight={56}
-                  loading={
-                    filter === "all" &&
-                    !searchQuery.trim() &&
-                    (!sourceRows.length || matrixPendingRows.length > 0)
-                  }
+                  loading={emptyStateModel.loading}
+                  standby={!emptyStateModel.loading}
                 />
               </div>
             ) : (

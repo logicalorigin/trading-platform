@@ -4,6 +4,10 @@ import pinoHttp from "pino-http";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
+import {
+  runWithPostgresDiagnosticContext,
+  type PostgresDiagnosticContext,
+} from "@workspace/db";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
@@ -14,8 +18,10 @@ import {
   getApiRouteAdmission,
   readApiRouteRequestContext,
 } from "./services/route-admission";
-import { recordIbkrRemoteDesktopRawRequestAttempt } from "./services/ibkr-bridge-runtime";
 import { isRawJson } from "./lib/raw-json";
+import { readSessionToken } from "./routes/auth";
+import { readAuthSessionFromToken } from "./services/auth";
+import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
 
 const app: Express = express();
 
@@ -182,29 +188,87 @@ app.use(
     },
   }),
 );
-app.use((req, _res, next) => {
-  const path = req.originalUrl?.split("?")[0] || req.url?.split("?")[0] || "/";
-  const normalized = path.toLowerCase();
-  if (
-    normalized.includes("ibkr") &&
-    (normalized.includes("desktop") ||
-      normalized.includes("agent") ||
-      normalized.includes("job"))
-  ) {
-    recordIbkrRemoteDesktopRawRequestAttempt({
-      contentType: req.get("content-type") ?? null,
-      method: req.method,
-      path,
-      userAgent: req.get("user-agent") ?? null,
-    });
-  }
-  next();
-});
 app.use(cors());
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
 app.use(apiRouteAdmissionMiddleware);
+app.use((req, res, next) => {
+  const admission = getApiRouteAdmission(res);
+  const requestContext = readApiRouteRequestContext(req);
+  const path = req.path || req.originalUrl?.split("?")[0] || req.url?.split("?")[0] || "/";
+  const requestId = (req as { id?: unknown }).id;
+  const context: PostgresDiagnosticContext = {
+    requestId: typeof requestId === "string" ? requestId : null,
+    method: req.method,
+    path,
+    route: `${req.method} ${path}`,
+    routeClass: admission.routeClass,
+    requestFamily: requestContext.requestFamily,
+    clientRole: requestContext.clientRole,
+    fetchPriority: requestContext.fetchPriority,
+    requestOrigin: requestContext.requestOrigin,
+    admissionAction: admission.action,
+    workloadFamily: admission.routeClass,
+  };
+  runWithPostgresDiagnosticContext(context, next);
+});
+// Bind the authenticated app user to the request so IBKR calls can route to
+// that user's hosted Client Portal gateway (getIbkrClientPortalClient). Only a
+// read-only, indexed session lookup, and only when a session cookie is present.
+app.use((req, _res, next) => {
+  const token = readSessionToken(req);
+  if (!token) {
+    next();
+    return;
+  }
+  readAuthSessionFromToken(token)
+    .then((session) => {
+      if (session) {
+        runWithIbkrPortalUser(session.user.id, next);
+      } else {
+        next();
+      }
+    })
+    .catch(() => next());
+});
 app.use(gzipJsonResponses);
+
+// The IBKR Client Portal gateway popup (reverse-proxied at this mount) runs
+// IBKR's SPA, which computes root-absolute URLs at runtime — asset includes
+// (e.g. /en/includes/general/gdpr-am.php) and the credential POST itself
+// (/api/Authenticator). Those escape the subpath mount and would otherwise
+// hit OUR routes: the SPA shell gets INJECTED into the login popup (PYRUS
+// boots inside the popup and hides the form) and the credential POST 404s
+// against our /api. Re-anchor any request whose Referer is inside the
+// gateway mount back into the mount. 307 preserves method + body across the
+// redirect (302 would turn the credential POST into a bodyless GET). Mirrors
+// the dev-side guard in artifacts/pyrus/vite.config.ts.
+const ibkrGatewayMount = "/api/broker-execution/ibkr-portal/gateway";
+app.use((req, res, next) => {
+  const referer = req.headers.referer;
+  if (!referer || req.path.startsWith(ibkrGatewayMount)) {
+    next();
+    return;
+  }
+  try {
+    if (new URL(referer).pathname.startsWith(ibkrGatewayMount)) {
+      // The SPA derives its API base from the page URL's FIRST path segment
+      // (host + "/" + pathname.split("/")[1] + "/"). Under this mount that
+      // segment is "api", so its auth calls arrive as /api/Authenticator when
+      // the gateway's real handler is /sso/Authenticator. Restore the intended
+      // "sso" prefix, then re-anchor under the mount. 307 preserves method +
+      // body (302 would turn the credential POST into a bodyless GET).
+      const fixed = req.originalUrl.startsWith("/api/")
+        ? "/sso/" + req.originalUrl.slice("/api/".length)
+        : req.originalUrl;
+      res.redirect(307, ibkrGatewayMount + fixed);
+      return;
+    }
+  } catch {
+    // Unparseable Referer — treat as unrelated.
+  }
+  next();
+});
 
 app.use("/api", router);
 

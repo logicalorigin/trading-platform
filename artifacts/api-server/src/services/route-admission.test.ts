@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyApiRoute, resolveApiRouteAdmission } from "./route-admission";
+import {
+  apiRouteAdmissionMiddleware,
+  classifyApiRoute,
+  resolveApiRouteAdmission,
+} from "./route-admission";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 test("Signal Options performance is active-screen", () => {
   assert.equal(
@@ -149,6 +157,92 @@ test("visible trade chart warmups are allowed under high pressure", () => {
   );
 });
 
+test("Massive option chart bars default to live data, not shed-prone analytics", () => {
+  const routeClass = classifyApiRoute({
+    method: "GET",
+    path: "/api/options/chart-bars?underlying=AAPL&timeframe=1m",
+  });
+
+  assert.equal(routeClass, "live-data");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "allow",
+  );
+});
+
+test("Massive flow events default to live data, not shed-prone analytics", () => {
+  const routeClass = classifyApiRoute({
+    method: "GET",
+    path: "/api/flow/events?underlying=SPY",
+  });
+
+  assert.equal(routeClass, "live-data");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "allow",
+  );
+});
+
+test("explicit option chart backfills remain deferrable under pressure", () => {
+  const routeClass = classifyApiRoute({
+    method: "GET",
+    path: "/api/options/chart-bars?underlying=AAPL&timeframe=1m",
+    requestFamily: "chart-backfill",
+    fetchPriority: 4,
+  });
+
+  assert.equal(routeClass, "deferred-analytics");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "shed",
+  );
+});
+
+test("selected trade option-chain metadata remains active-screen", () => {
+  const routeClass = classifyApiRoute({
+    method: "POST",
+    path: "/api/options/chains",
+    requestFamily: "trade-option-chain",
+    fetchPriority: 8,
+  });
+
+  assert.equal(routeClass, "active-screen");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "allow",
+  );
+});
+
+test("trade option-chain batches remain deferrable under pressure", () => {
+  const routeClass = classifyApiRoute({
+    method: "POST",
+    path: "/api/options/chains/batch",
+    requestFamily: "trade-option-chain-batch",
+    fetchPriority: -2,
+  });
+
+  assert.equal(routeClass, "deferred-analytics");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "shed",
+  );
+});
+
 test("near-priority trade chart warmups remain deferrable", () => {
   assert.equal(
     classifyApiRoute({
@@ -170,6 +264,93 @@ test("background bars requests remain deferred analytics", () => {
       fetchPriority: -2,
     }),
     "deferred-analytics",
+  );
+});
+
+test("sparkline seed is deferred analytics and sheds under finite-resource pressure", () => {
+  const routeClass = classifyApiRoute({
+    method: "POST",
+    path: "/api/sparklines/seed",
+  });
+
+  assert.equal(routeClass, "deferred-analytics");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "shed",
+  );
+});
+
+test("route pressure headers stay aligned with finite-resource admission", () => {
+  __resetApiResourcePressureForTests();
+  try {
+    updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+    updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
+
+    const headers = new Map<string, string>();
+    let nextCalled = false;
+    const req = {
+      method: "GET",
+      originalUrl: "/api/healthz",
+      url: "/api/healthz",
+      path: "/api/healthz",
+      query: {},
+      get: () => undefined,
+    };
+    const res = {
+      locals: {},
+      setHeader(name: string, value: unknown) {
+        headers.set(name, String(value));
+        return this;
+      },
+      status() {
+        throw new Error("event-loop-only pressure must not shed health");
+      },
+      type() {
+        return this;
+      },
+      json() {
+        return this;
+      },
+      end() {
+        return this;
+      },
+    };
+
+    apiRouteAdmissionMiddleware(
+      req as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[0],
+      res as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[1],
+      () => {
+        nextCalled = true;
+      },
+    );
+
+    assert.equal(nextCalled, true);
+    assert.equal(headers.get("X-Pyrus-Pressure-Level"), "normal");
+    assert.equal(headers.get("X-Pyrus-Resource-Level"), "normal");
+    assert.equal(headers.get("X-Pyrus-Observed-Resource-Level"), "high");
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("visible sparkline seed remains deferred analytics", () => {
+  const routeClass = classifyApiRoute({
+    method: "POST",
+    path: "/api/sparklines/seed",
+    requestFamily: "signal-sparkline-seed",
+    fetchPriority: 6,
+  });
+
+  assert.equal(routeClass, "deferred-analytics");
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass,
+      pressureLevel: "high",
+    }).action,
+    "shed",
   );
 });
 

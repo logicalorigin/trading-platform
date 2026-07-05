@@ -475,469 +475,6 @@ paths:
               schema:
                 type: string
 
-  /ibkr/bridge/launcher:
-    get:
-      operationId: getIbkrBridgeLauncher
-      tags: [broker]
-      summary: Create an IBKR bridge one-click launcher payload
-      responses:
-        "200":
-          description: IBKR bridge launcher payload
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeLauncherResponse"
-
-  /ibkr/bridge/helper-metadata:
-    get:
-      operationId: getIbkrBridgeHelperMetadata
-      tags: [broker]
-      summary: Read paired IBKR helper metadata without starting a launch
-      responses:
-        "200":
-          description: IBKR helper metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeHelperMetadataResponse"
-
-  /ibkr/desktops:
-    get:
-      operationId: listIbkrRemoteDesktops
-      tags: [broker]
-      summary: List paired Windows desktop agents for remote IBKR bridge launch
-      responses:
-        "200":
-          description: Paired desktop agents
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopsResponse"
-
-  /ibkr/desktop/register:
-    post:
-      operationId: registerIbkrRemoteDesktop
-      tags: [broker]
-      summary: Register a Windows desktop agent for remote IBKR bridge launch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Registered desktop agent
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopRegisterResponse"
-
-  /ibkr/desktop/heartbeat:
-    post:
-      operationId: heartbeatIbkrRemoteDesktop
-      tags: [broker]
-      summary: Record a Windows desktop agent heartbeat
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Desktop heartbeat recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopHeartbeatResponse"
-
-  /ibkr/desktop/jobs/claim:
-    post:
-      operationId: claimIbkrRemoteDesktopLaunchJob
-      tags: [broker]
-      summary: Claim a pending IBKR bridge desktop job for a Windows desktop agent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Pending desktop job if available
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopLaunchClaimResponse"
-
-  /ibkr/desktop/jobs/complete:
-    post:
-      operationId: completeIbkrRemoteDesktopJob
-      tags: [broker]
-      summary: Mark an IBKR desktop job complete from the Windows helper
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Desktop job completion recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopJobStatusResponse"
-
-  /ibkr/desktop/jobs/status:
-    post:
-      operationId: readIbkrRemoteDesktopJobStatus
-      tags: [broker]
-      summary: Read a queued IBKR desktop job status
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Desktop job status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrRemoteDesktopJobStatusResponse"
-
-  /ibkr/activation/diagnostics:
-    get:
-      operationId: getIbkrBridgeActivationDiagnostics
-      tags: [broker]
-      summary: Read the latest IBKR bridge activation diagnostics
-      responses:
-        "200":
-          description: Activation diagnostics
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsResponse"
-
-  /ibkr/remote-launch:
-    post:
-      operationId: createIbkrRemoteBridgeLaunch
-      tags: [broker]
-      summary: Queue an IBKR bridge launch on a paired Windows desktop agent
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Remote desktop launch queued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeRemoteLauncherResponse"
-
-  /ibkr/remote-shutdown:
-    post:
-      operationId: createIbkrRemoteBridgeShutdown
-      tags: [broker]
-      summary: Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Remote desktop shutdown queued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeRemoteShutdownResponse"
-
-  /ibkr/activation/{activationId}/progress:
-    post:
-      operationId: recordIbkrBridgeActivationProgress
-      tags: [broker]
-      summary: Record IBKR bridge activation progress
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Activation progress recorded
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                required:
-                  - ok
-
-  /ibkr/activation/{activationId}/status:
-    post:
-      operationId: readIbkrBridgeActivationStatus
-      tags: [broker]
-      summary: Read IBKR bridge activation cancellation status
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Activation status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeActivationStatusResponse"
-
-  /ibkr/activation/{activationId}/cancel:
-    post:
-      operationId: cancelIbkrBridgeActivation
-      tags: [broker]
-      summary: Cancel a pending IBKR bridge activation
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Activation canceled
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeActivationCancelResponse"
-
-  /ibkr/activation/{activationId}/login-key:
-    post:
-      operationId: submitIbkrBridgeLoginKey
-      tags: [broker]
-      summary: Publish the helper public key for one-time IBKR credential handoff
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Login key recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OkResponse"
-
-  /ibkr/activation/{activationId}/login-key/read:
-    post:
-      operationId: readIbkrBridgeLoginKey
-      tags: [broker]
-      summary: Read the helper public key for one-time IBKR credential handoff
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Login key readiness
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeLoginKeyReadResponse"
-
-  /ibkr/activation/{activationId}/login-envelope:
-    post:
-      operationId: submitIbkrBridgeLoginEnvelope
-      tags: [broker]
-      summary: Submit encrypted one-time IBKR credentials for the helper to claim
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Login envelope recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OkResponse"
-
-  /ibkr/activation/{activationId}/login-envelope/claim:
-    post:
-      operationId: claimIbkrBridgeLoginEnvelope
-      tags: [broker]
-      summary: Claim encrypted one-time IBKR credentials from the helper
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Login envelope readiness
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeLoginEnvelopeClaimResponse"
-
-  /ibkr/activation/{activationId}/complete:
-    post:
-      operationId: completeIbkrBridgeActivation
-      tags: [broker]
-      summary: Complete IBKR bridge activation and attach runtime
-      parameters:
-        - name: activationId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Attached IBKR bridge runtime
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeAttachResponse"
-
-  /ibkr/bridge/helper.ps1:
-    get:
-      operationId: getIbkrBridgeHelperScript
-      tags: [broker]
-      summary: Download the IBKR bridge helper PowerShell script
-      responses:
-        "200":
-          description: IBKR bridge helper script
-          content:
-            text/plain:
-              schema:
-                type: string
-
-  /ibkr/bridge/bundle.tar.gz:
-    get:
-      operationId: getIbkrBridgeBundle
-      tags: [broker]
-      summary: Download the IBKR bridge helper bundle
-      responses:
-        "200":
-          description: IBKR bridge helper bundle
-          content:
-            application/gzip:
-              schema:
-                type: string
-                format: binary
-        "302":
-          description: Redirect to configured helper bundle URL
-        "404":
-          description: Helper bundle is not configured
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/JsonObject"
-
-  /ibkr/bridge/attach:
-    post:
-      operationId: attachIbkrBridgeRuntime
-      tags: [broker]
-      summary: Attach an IBKR bridge runtime override
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Attached IBKR bridge runtime
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeAttachResponse"
-
-  /ibkr/bridge/detach:
-    post:
-      operationId: detachIbkrBridgeRuntime
-      tags: [broker]
-      summary: Detach the IBKR bridge runtime override
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: Detached IBKR bridge runtime
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IbkrBridgeDetachResponse"
-
   /broker-connections:
     get:
       operationId: listBrokerConnections
@@ -950,6 +487,385 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BrokerConnectionsResponse"
+
+  /broker-execution/snaptrade/readiness:
+    get:
+      operationId: getSnapTradeReadiness
+      tags: [broker]
+      summary: Get sanitized SnapTrade execution readiness
+      responses:
+        "200":
+          description: Sanitized SnapTrade readiness and capability summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeReadinessResponse"
+
+  /broker-execution/ibkr/oauth/readiness:
+    get:
+      operationId: getIbkrOAuthReadiness
+      tags: [broker]
+      summary: Get sanitized IBKR OAuth execution readiness
+      responses:
+        "200":
+          description: Sanitized IBKR OAuth readiness and hosted-connect requirements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrOAuthReadinessResponse"
+
+  /broker-execution/snaptrade/users/current:
+    post:
+      operationId: registerSnapTradeCurrentUser
+      tags: [broker]
+      summary: Register the authenticated user with SnapTrade
+      responses:
+        "200":
+          description: Existing sanitized SnapTrade user registration state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeUserRegistrationResponse"
+        "201":
+          description: Sanitized SnapTrade user registration state created for the current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeUserRegistrationResponse"
+
+  /broker-execution/snaptrade/connection-portal:
+    post:
+      operationId: generateSnapTradeConnectionPortal
+      tags: [broker]
+      summary: Generate a SnapTrade Connection Portal URL for the authenticated user
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateSnapTradeConnectionPortalBody"
+      responses:
+        "200":
+          description: Short-lived SnapTrade Connection Portal URL for the current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeConnectionPortalResponse"
+
+  /broker-execution/snaptrade/sync:
+    post:
+      operationId: syncSnapTradeBrokerageConnections
+      tags: [broker]
+      summary: Sync SnapTrade brokerage connections and accounts for the authenticated user
+      responses:
+        "200":
+          description: Sanitized SnapTrade brokerage connection and account inventory persisted locally
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSnapTradeBrokerageConnectionsResponse"
+
+  /broker-execution/snaptrade/brokerages:
+    get:
+      operationId: listSnapTradeBrokerages
+      tags: [broker]
+      summary: List SnapTrade brokerages available to this app with trading capability and logos
+      responses:
+        "200":
+          description: Sanitized partner-scoped SnapTrade brokerage listing (trade-capable first)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeBrokerageListResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/portfolio:
+    get:
+      operationId: getSnapTradeAccountPortfolio
+      tags: [broker]
+      summary: Get sanitized SnapTrade balances and positions for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+      responses:
+        "200":
+          description: Sanitized SnapTrade account portfolio snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSnapTradeAccountPortfolioResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/history:
+    get:
+      operationId: getSnapTradeAccountHistory
+      tags: [broker]
+      summary: Backfill and read SnapTrade activities, closed trades, and equity history for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Optional lower bound for returned closed trades.
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Optional upper bound for activity fetch and returned closed trades.
+        - name: range
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AccountHistoryRange"
+      responses:
+        "200":
+          description: Sanitized SnapTrade activity backfill, closed trades, and beta balance history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSnapTradeAccountHistoryResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/symbols/search:
+    get:
+      operationId: searchSnapTradeAccountSymbols
+      tags: [broker]
+      summary: Search SnapTrade universal symbols tradable by a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 80
+          description: Ticker or security-name substring to search within this account's brokerage-supported symbols.
+      responses:
+        "200":
+          description: Sanitized SnapTrade universal-symbol search results for the selected account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchSnapTradeAccountSymbolsResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/orders/impact:
+    post:
+      operationId: checkSnapTradeEquityOrderImpact
+      tags: [broker]
+      summary: Check SnapTrade equity order impact for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapTradeEquityOrderImpactBody"
+      responses:
+        "200":
+          description: Sanitized SnapTrade order impact response. This does not place an order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeEquityOrderImpactResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/orders/recent:
+    get:
+      operationId: getSnapTradeRecentOrders
+      tags: [broker]
+      summary: Get realtime SnapTrade recent orders for post-submit reconciliation
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+      responses:
+        "200":
+          description: Sanitized realtime SnapTrade recent orders from the last 24 hours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSnapTradeRecentOrdersResponse"
+
+  /broker-execution/snaptrade/accounts/{accountId}/orders:
+    post:
+      operationId: submitSnapTradeEquityOrder
+      tags: [broker]
+      summary: Submit a confirmed SnapTrade equity order for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS broker account id returned by SnapTrade account sync.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapTradeEquityOrderSubmitBody"
+      responses:
+        "200":
+          description: Sanitized SnapTrade direct equity order status from the brokerage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapTradeEquityOrderSubmitResponse"
+
+  /broker-execution/robinhood/readiness:
+    get:
+      operationId: getRobinhoodReadiness
+      tags: [broker]
+      summary: Get sanitized Robinhood Agentic Trading execution readiness
+      responses:
+        "200":
+          description: Sanitized Robinhood Agentic readiness including current-user OAuth custody state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RobinhoodReadinessResponse"
+
+  /broker-execution/robinhood/connect:
+    post:
+      operationId: startRobinhoodConnect
+      tags: [broker]
+      summary: Start the Robinhood Agentic OAuth authorization for the authenticated user
+      responses:
+        "200":
+          description: Robinhood consent URL for the current user. The OAuth callback completes server-side; tokens never transit the client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RobinhoodConnectResponse"
+
+  /broker-execution/robinhood/sync:
+    post:
+      operationId: syncRobinhoodConnections
+      tags: [broker]
+      summary: Sync Robinhood Agentic accounts for the authenticated user via the Trading MCP
+      responses:
+        "200":
+          description: Sanitized Robinhood Agentic connection and account inventory persisted locally
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRobinhoodConnectionsResponse"
+
+  /broker-execution/schwab/readiness:
+    get:
+      operationId: getSchwabReadiness
+      tags: [broker]
+      summary: Get sanitized Schwab Trader API execution readiness
+      responses:
+        "200":
+          description: Sanitized Schwab Trader API readiness including current-user OAuth custody state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchwabReadinessResponse"
+
+  /broker-execution/schwab/connect:
+    post:
+      operationId: startSchwabConnect
+      tags: [broker]
+      summary: Start the Schwab Trader API OAuth authorization for the authenticated user
+      responses:
+        "200":
+          description: Schwab consent URL for the current user. The OAuth callback completes server-side; tokens never transit the client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchwabConnectResponse"
+
+  /broker-execution/schwab/sync:
+    post:
+      operationId: syncSchwabConnections
+      tags: [broker]
+      summary: Sync Schwab Trader API accounts for the authenticated user
+      responses:
+        "200":
+          description: Sanitized Schwab Trader API connection and account inventory persisted locally
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSchwabConnectionsResponse"
+
+  /broker-execution/ibkr-portal/readiness:
+    get:
+      operationId: getIbkrPortalReadiness
+      tags: [broker]
+      summary: Get IBKR Client Portal browser-login session readiness
+      responses:
+        "200":
+          description: IBKR Client Portal gateway and session readiness
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrPortalReadinessResponse"
+
+  /broker-execution/ibkr-portal/status:
+    get:
+      operationId: getIbkrPortalStatus
+      tags: [broker]
+      summary: Get the current IBKR Client Portal browser-login session status
+      responses:
+        "200":
+          description: IBKR Client Portal gateway and session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrPortalReadinessResponse"
+
+  /broker-execution/ibkr-portal/connect:
+    post:
+      operationId: connectIbkrPortal
+      tags: [broker]
+      summary: Start the IBKR Client Portal gateway and return the browser login path
+      responses:
+        "200":
+          description: IBKR Client Portal login path and current session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrPortalConnectResponse"
+
+  /broker-execution/ibkr-portal/disconnect:
+    post:
+      operationId: disconnectIbkrPortal
+      tags: [broker]
+      summary: Stop the IBKR Client Portal gateway and end the browser-login session
+      responses:
+        "200":
+          description: IBKR Client Portal disconnect result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrPortalDisconnectResponse"
 
   /accounts:
     get:
@@ -1712,6 +1628,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/GexDashboardResponse"
 
+  /gex-snapshots:
+    get:
+      operationId: getGexSnapshots
+      tags: [market-data]
+      summary: Get latest net GEX for multiple symbols (bulk)
+      description: Bulk latest net gamma exposure per symbol from persisted GEX snapshots. Lets the universe table render its Net γ column with a single request instead of one dashboard fetch per row.
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated ticker symbols.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest net gamma exposure per symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GexSnapshotsResponse"
+
   /options/quotes:
     post:
       operationId: getOptionQuoteSnapshots
@@ -1875,7 +1812,7 @@ paths:
     get:
       operationId: getBars
       tags: [market-data]
-      summary: Get broker-first historical bars for a symbol or contract
+      summary: Get historical bars for a symbol
       parameters:
         - name: symbol
           in: query
@@ -1949,19 +1886,19 @@ paths:
         - name: allowHistoricalSynthesis
           in: query
           required: false
-          description: Allow Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+          description: Allow Massive historical synthesis when cached/provider history is incomplete. Defaults to enabled for equities unless explicitly false.
           schema:
             type: boolean
         - name: allowStudyFallback
           in: query
           required: false
-          description: Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
+          description: Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
           schema:
             type: boolean
         - name: brokerRecentWindowMinutes
           in: query
           required: false
-          description: Limit broker-sourced recent history to this many minutes before falling back to Massive history.
+          description: Equity-only broker fallback limit, in minutes, when Massive history is unavailable.
           schema:
             type: integer
             minimum: 0
@@ -2055,7 +1992,7 @@ paths:
         - name: maxExpirations
           in: query
           required: false
-          description: Optional cap. Omit to discover every expiration IBKR exposes.
+          description: Optional cap. Omit to discover every Massive option expiration.
           schema:
             type: integer
             minimum: 1
@@ -2071,7 +2008,7 @@ paths:
     get:
       operationId: resolveOptionContract
       tags: [market-data]
-      summary: Resolve an option contract to an IBKR broker contract id
+      summary: Resolve an option contract to its market-data contract id
       parameters:
         - name: underlying
           in: query
@@ -2263,51 +2200,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
-  /streams/bars:
-    get:
-      operationId: streamBars
-      tags: [market-data]
-      summary: Stream latest historical bar snapshots over server-sent events
-      parameters:
-        - name: symbol
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: timeframe
-          in: query
-          required: true
-          schema:
-            $ref: "#/components/schemas/BarTimeframe"
-        - name: assetClass
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/AssetClass"
-        - name: providerContractId
-          in: query
-          required: false
-          schema:
-            type: string
-            nullable: true
-        - name: outsideRth
-          in: query
-          required: false
-          schema:
-            type: boolean
-        - name: source
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/BarDataSource"
-      responses:
-        "200":
-          description: Historical bar SSE stream
-          content:
-            text/event-stream:
-              schema:
-                $ref: "#/components/schemas/SseStream"
-
   /streams/orders:
     get:
       operationId: streamOrders
@@ -2433,52 +2325,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
-  /market-depth:
-    get:
-      operationId: getMarketDepth
-      tags: [market-data]
-      summary: Get a market depth snapshot
-      parameters:
-        - name: symbol
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: accountId
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: assetClass
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/AssetClass"
-        - name: providerContractId
-          in: query
-          required: false
-          schema:
-            type: string
-            nullable: true
-        - name: exchange
-          in: query
-          required: false
-          schema:
-            type: string
-            nullable: true
-      responses:
-        "200":
-          description: Market depth snapshot
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  depth:
-                    $ref: "#/components/schemas/JsonObject"
-                required:
-                  - depth
-
   /footprints:
     get:
       operationId: getFootprints
@@ -2562,47 +2408,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FootprintResponse"
-
-  /streams/market-depth:
-    get:
-      operationId: streamMarketDepth
-      tags: [market-data]
-      summary: Stream market depth snapshots over server-sent events
-      parameters:
-        - name: symbol
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: accountId
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: assetClass
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/AssetClass"
-        - name: providerContractId
-          in: query
-          required: false
-          schema:
-            type: string
-            nullable: true
-        - name: exchange
-          in: query
-          required: false
-          schema:
-            type: string
-            nullable: true
-      responses:
-        "200":
-          description: Market depth SSE stream
-          content:
-            text/event-stream:
-              schema:
-                $ref: "#/components/schemas/SseStream"
 
   /streams/accounts:
     get:
@@ -2966,7 +2771,7 @@ paths:
         - name: lineBudget
           in: query
           required: false
-          description: Maximum IBKR option quote lines this request may use.
+          description: Maximum option quote subscriptions this request may use.
           schema:
             type: integer
             minimum: 1
@@ -2982,21 +2787,21 @@ paths:
         - name: from
           in: query
           required: false
-          description: Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+          description: Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
           schema:
             type: string
             format: date-time
         - name: to
           in: query
           required: false
-          description: Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+          description: Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
           schema:
             type: string
             format: date-time
         - name: blocking
           in: query
           required: false
-          description: Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+          description: Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.
           schema:
             type: boolean
         - name: queueRefresh
@@ -4608,7 +4413,2102 @@ components:
 
     BrokerProvider:
       type: string
-      enum: [ibkr]
+      enum: [ibkr, snaptrade, robinhood]
+
+    ExecutionDecisionCode:
+      type: string
+      enum:
+        - BROKER_SCOPE_READY
+        - BROKER_SCOPE_MISSING
+        - BROKER_CAPABILITY_READY
+        - BROKER_CAPABILITY_SYNC_REQUIRED
+        - BROKER_CAPABILITY_STALE
+        - BROKER_CAPABILITY_UNSUPPORTED
+        - BROKER_ORDER_SHAPE_UNSUPPORTED
+        - PROVIDER_ELIGIBLE
+        - PROVIDER_RESEARCH_REQUIRED
+        - PROVIDER_INSUFFICIENT_CAPABILITY
+        - PROVIDER_UNSUPPORTED
+        - PROVIDER_SPECIAL_CONNECTOR_REQUIRED
+        - PROVIDER_COMPLIANCE_REVIEW_REQUIRED
+
+    ExecutionDecisionGateFamily:
+      type: string
+      enum: [scope, capability, provider]
+
+    ExecutionDecisionOutcome:
+      type: string
+      enum: [allowed, blocked]
+
+    ExecutionDecisionSeverity:
+      type: string
+      enum:
+        - info
+        - action_required
+        - blocked
+        - security_blocked
+        - provider_limitation
+
+    ExecutionDecisionRedactionClass:
+      type: string
+      enum: [customer_safe, support_safe, internal_only]
+
+    ExecutionCustomerMessageKey:
+      type: string
+      enum:
+        - broker.provider.complianceReviewRequired
+        - broker.provider.eligible
+        - broker.provider.ibkrSpecialConnector
+        - broker.provider.insufficientCapability
+        - broker.provider.researchRequired
+        - broker.provider.unsupported
+        - broker.scope.automationTradingConnection.missingRequired
+        - broker.scope.ready
+        - capability.asset_class.single_leg_options.unsupported
+        - capability.cancel_replace.unsupported
+        - capability.order_shape.unsupported
+        - capability.order_status_streaming.unavailable
+        - capability.preview.unavailable
+        - capability.ready
+        - capability.sync.required
+        - capability.sync.stale
+        - capability.unsupported
+        - provider.demo.unsupported
+        - provider.paper.unsupported
+        - provider.read_only.unsupported
+        - provider.submit_only.unsupported
+
+    ExecutionDecisionResponse:
+      type: object
+      description: Customer-safe execution decision metadata from the backend registry.
+      properties:
+        decisionCode:
+          $ref: "#/components/schemas/ExecutionDecisionCode"
+        gateFamily:
+          $ref: "#/components/schemas/ExecutionDecisionGateFamily"
+        outcome:
+          $ref: "#/components/schemas/ExecutionDecisionOutcome"
+        customerMessageKey:
+          $ref: "#/components/schemas/ExecutionCustomerMessageKey"
+        severity:
+          $ref: "#/components/schemas/ExecutionDecisionSeverity"
+        auditEventHint:
+          type: string
+        redactionClass:
+          $ref: "#/components/schemas/ExecutionDecisionRedactionClass"
+      required:
+        - decisionCode
+        - gateFamily
+        - outcome
+        - customerMessageKey
+        - severity
+        - auditEventHint
+        - redactionClass
+
+    SnapTradeReadinessStatus:
+      type: string
+      enum: [unconfigured, research_required, upstream_error]
+
+    IbkrOAuthReadinessStatus:
+      type: string
+      enum: [unconfigured, approval_required, research_required]
+
+    IbkrOAuthCredentialReadiness:
+      type: object
+      properties:
+        consumerKeyPresent:
+          type: boolean
+        signingKeyPresent:
+          type: boolean
+        callbackUrlPresent:
+          type: boolean
+        thirdPartyApprovalRecorded:
+          type: boolean
+      required:
+        - consumerKeyPresent
+        - signingKeyPresent
+        - callbackUrlPresent
+        - thirdPartyApprovalRecorded
+
+    IbkrOAuthHostedConnectRequirements:
+      type: object
+      properties:
+        oauthVersion:
+          type: string
+          enum: [oauth1a_third_party]
+        localGatewayRequired:
+          type: boolean
+          enum: [false]
+        clientPortalGatewayCustomerPath:
+          type: boolean
+          enum: [false]
+        approvalRequired:
+          type: boolean
+          enum: [true]
+        officialSources:
+          type: array
+          items:
+            type: string
+      required:
+        - oauthVersion
+        - localGatewayRequired
+        - clientPortalGatewayCustomerPath
+        - approvalRequired
+        - officialSources
+
+    IbkrOAuthReadinessResponse:
+      type: object
+      description: Sanitized server-side IBKR OAuth readiness. Never includes OAuth consumer keys, signing keys, callback URLs, access tokens, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [ibkr_oauth]
+        configured:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/IbkrOAuthReadinessStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        executionDecision:
+          $ref: "#/components/schemas/ExecutionDecisionResponse"
+        credentials:
+          $ref: "#/components/schemas/IbkrOAuthCredentialReadiness"
+        requirements:
+          $ref: "#/components/schemas/IbkrOAuthHostedConnectRequirements"
+        limitations:
+          type: array
+          items:
+            type: string
+      required:
+        - provider
+        - configured
+        - status
+        - checkedAt
+        - executionDecision
+        - credentials
+        - requirements
+        - limitations
+
+    SnapTradeCredentialReadiness:
+      type: object
+      properties:
+        clientIdPresent:
+          type: boolean
+        apiKeyPresent:
+          type: boolean
+      required:
+        - clientIdPresent
+        - apiKeyPresent
+
+    SnapTradeClientInfoReadiness:
+      type: object
+      properties:
+        reachable:
+          type: boolean
+        redirectUriConfigured:
+          type: boolean
+          nullable: true
+        canAccessTrades:
+          type: boolean
+          nullable: true
+        canAccessHoldings:
+          type: boolean
+          nullable: true
+        canAccessAccountHistory:
+          type: boolean
+          nullable: true
+        canAccessReferenceData:
+          type: boolean
+          nullable: true
+        canAccessPortfolioManagement:
+          type: boolean
+          nullable: true
+        canAccessOrders:
+          type: boolean
+          nullable: true
+      required:
+        - reachable
+        - redirectUriConfigured
+        - canAccessTrades
+        - canAccessHoldings
+        - canAccessAccountHistory
+        - canAccessReferenceData
+        - canAccessPortfolioManagement
+        - canAccessOrders
+
+    SnapTradeBrokerageReadinessSummary:
+      type: object
+      properties:
+        total:
+          type: number
+        enabled:
+          type: number
+        allowsTrading:
+          type: number
+        degradedOrMaintenance:
+          type: number
+      required:
+        - total
+        - enabled
+        - allowsTrading
+        - degradedOrMaintenance
+
+    SnapTradeUpstreamReadiness:
+      type: object
+      properties:
+        status:
+          type: number
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - status
+        - code
+        - message
+
+    SnapTradeUserReadinessStatus:
+      type: string
+      enum: [not_registered, registered, disabled]
+
+    SnapTradeUserReadinessNextAction:
+      type: string
+      enum:
+        - register_snaptrade_user
+        - configure_redirect_uri
+        - generate_connection_portal
+        - manual_review
+
+    SnapTradeConnectionType:
+      type: string
+      enum: [read, trade, trade-if-available]
+
+    GenerateSnapTradeConnectionPortalBody:
+      type: object
+      description: Request for a short-lived SnapTrade Connection Portal URL. customRedirect is intentionally not accepted from clients.
+      additionalProperties: false
+      properties:
+        broker:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_-]+$"
+          description: Optional SnapTrade brokerage slug. Leave empty to show SnapTrade's brokerage picker.
+        reconnect:
+          type: string
+          format: uuid
+          description: Existing SnapTrade connection UUID to re-authorize. Only use for reconnect flows.
+        connectionType:
+          $ref: "#/components/schemas/SnapTradeConnectionType"
+          description: Defaults to trade-if-available so supported brokerages can grant trading while unsupported brokerages can still connect read-only.
+        immediateRedirect:
+          type: boolean
+          description: Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted.
+        showCloseButton:
+          type: boolean
+          description: Forwarded to SnapTrade. Defaults to true when omitted.
+        darkMode:
+          type: boolean
+          description: Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted.
+
+    SnapTradeUserReadiness:
+      type: object
+      description: Sanitized current-user SnapTrade custody readiness. Never includes SnapTrade user secrets or provider user ids.
+      properties:
+        registered:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SnapTradeUserReadinessStatus"
+        snapTradeUserIdPresent:
+          type: boolean
+        userSecretStored:
+          type: boolean
+        registeredAt:
+          type: string
+          format: date-time
+          nullable: true
+        disabledAt:
+          type: string
+          format: date-time
+          nullable: true
+        nextAction:
+          $ref: "#/components/schemas/SnapTradeUserReadinessNextAction"
+      required:
+        - registered
+        - status
+        - snapTradeUserIdPresent
+        - userSecretStored
+        - registeredAt
+        - disabledAt
+        - nextAction
+
+    SnapTradeUserRegistrationResponse:
+      type: object
+      description: Sanitized result of registering the authenticated app user with SnapTrade. Never includes SnapTrade user secrets or provider user ids.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        created:
+          type: boolean
+          description: True when a new SnapTrade user credential was created during this request.
+        user:
+          $ref: "#/components/schemas/SnapTradeUserReadiness"
+      required:
+        - provider
+        - created
+        - user
+
+    SnapTradeConnectionPortalResponse:
+      type: object
+      description: Short-lived SnapTrade Connection Portal response for the current user. Contains the user-facing redirect URL but never includes SnapTrade userSecret or PYRUS user identifiers.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        redirectUri:
+          type: string
+          format: uri
+          description: SnapTrade Connection Portal URL. SnapTrade documents this URL as expiring in five minutes.
+        sessionId:
+          type: string
+          description: SnapTrade Connection Portal session identifier.
+        expiresAt:
+          type: string
+          format: date-time
+        requestedConnectionType:
+          $ref: "#/components/schemas/SnapTradeConnectionType"
+        connectionPortalVersion:
+          type: string
+          enum: [v4]
+        broker:
+          type: string
+          nullable: true
+        reconnect:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+        - provider
+        - redirectUri
+        - sessionId
+        - expiresAt
+        - requestedConnectionType
+        - connectionPortalVersion
+        - broker
+        - reconnect
+
+    SnapTradeBrokerageListing:
+      type: object
+      description: Sanitized SnapTrade brokerage entry from the partner-scoped allowed-brokerages list. Never includes credentials or upstream identifiers.
+      properties:
+        slug:
+          type: string
+          description: SnapTrade brokerage slug, for example ETRADE.
+        displayName:
+          type: string
+        description:
+          type: string
+          nullable: true
+        url:
+          type: string
+          format: uri
+          nullable: true
+          description: Brokerage homepage URL.
+        allowsTrading:
+          type: boolean
+          description: True when SnapTrade supports order placement for this brokerage under this app's clientId.
+        enabled:
+          type: boolean
+        maintenanceMode:
+          type: boolean
+        isDegraded:
+          type: boolean
+        allowsFractionalUnits:
+          type: boolean
+          nullable: true
+        logoUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: SnapTrade-hosted wordmark logo image URL.
+        squareLogoUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: SnapTrade-hosted square logo image URL.
+        authorizationTypes:
+          type: array
+          description: Connection access levels SnapTrade offers for this brokerage, for example trade or read.
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              authType:
+                type: string
+                nullable: true
+            required:
+              - type
+              - authType
+      required:
+        - slug
+        - displayName
+        - description
+        - url
+        - allowsTrading
+        - enabled
+        - maintenanceMode
+        - isDegraded
+        - allowsFractionalUnits
+        - logoUrl
+        - squareLogoUrl
+        - authorizationTypes
+
+    SnapTradeBrokerageListResponse:
+      type: object
+      description: Partner-scoped SnapTrade brokerage listing, sorted trade-capable first.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        checkedAt:
+          type: string
+          format: date-time
+        brokerages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeBrokerageListing"
+      required:
+        - provider
+        - checkedAt
+        - brokerages
+
+    SnapTradeBrokerageConnectionSyncConnection:
+      type: object
+      description: Sanitized SnapTrade brokerage connection stored in PYRUS. Never includes SnapTrade user ids, user secrets, or raw upstream payloads.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker connection id.
+        provider:
+          type: string
+          enum: [snaptrade]
+        snapTradeConnectionId:
+          type: string
+          description: SnapTrade brokerage authorization id. This is not a credential.
+        brokerageSlug:
+          type: string
+          nullable: true
+        brokerageName:
+          type: string
+        connectionType:
+          type: string
+          enum: [read, trade, unknown]
+          description: Sanitized SnapTrade connection permission type returned by the connection list.
+        status:
+          $ref: "#/components/schemas/ConnectionStatus"
+        tradeEnabled:
+          type: boolean
+          nullable: true
+        executionReady:
+          type: boolean
+          description: True only when this connection is currently eligible for live order submission.
+        executionBlockers:
+          type: array
+          description: Machine-readable reasons this connection is not currently eligible for live order submission.
+          items:
+            type: string
+        accountCount:
+          type: number
+        mode:
+          type: string
+          enum: [live]
+      required:
+        - id
+        - provider
+        - snapTradeConnectionId
+        - brokerageSlug
+        - brokerageName
+        - connectionType
+        - status
+        - tradeEnabled
+        - executionReady
+        - executionBlockers
+        - accountCount
+        - mode
+
+    SnapTradeBrokerageConnectionSyncAccount:
+      type: object
+      description: Sanitized SnapTrade brokerage account stored in PYRUS. Account display names are redacted before persistence.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        snapTradeAccountId:
+          type: string
+          description: SnapTrade account id. This is not an account number.
+        displayName:
+          type: string
+        brokerageName:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+          enum: [open, closed, archived]
+          description: Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage.
+        baseCurrency:
+          type: string
+        executionReady:
+          type: boolean
+          description: True only when this account and its connection are currently eligible for live order submission.
+        executionBlockers:
+          type: array
+          description: Machine-readable reasons this account is not currently eligible for live order submission.
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [live]
+        lastSyncedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - connectionId
+        - snapTradeAccountId
+        - displayName
+        - brokerageName
+        - status
+        - baseCurrency
+        - executionReady
+        - executionBlockers
+        - mode
+        - lastSyncedAt
+
+    SnapTradeBrokerageConnectionSyncTotals:
+      type: object
+      properties:
+        upstreamConnections:
+          type: number
+        upstreamAccounts:
+          type: number
+        storedConnections:
+          type: number
+        storedAccounts:
+          type: number
+      required:
+        - upstreamConnections
+        - upstreamAccounts
+        - storedConnections
+        - storedAccounts
+
+    SyncSnapTradeBrokerageConnectionsResponse:
+      type: object
+      description: Sanitized result of syncing the authenticated user's SnapTrade brokerage connections and accounts. Never includes SnapTrade userSecret, PYRUS user ids, full account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        syncedAt:
+          type: string
+          format: date-time
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeBrokerageConnectionSyncConnection"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeBrokerageConnectionSyncAccount"
+        totals:
+          $ref: "#/components/schemas/SnapTradeBrokerageConnectionSyncTotals"
+      required:
+        - provider
+        - syncedAt
+        - connections
+        - accounts
+        - totals
+
+    SnapTradeAccountPortfolioAccount:
+      type: object
+      description: Local account metadata for a synced SnapTrade brokerage account.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        snapTradeAccountId:
+          type: string
+          description: SnapTrade account id. This is not an account number.
+        displayName:
+          type: string
+        baseCurrency:
+          type: string
+        mode:
+          type: string
+          enum: [live]
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - connectionId
+        - snapTradeAccountId
+        - displayName
+        - baseCurrency
+        - mode
+        - lastSyncedAt
+
+    SnapTradeAccountPortfolioBalance:
+      type: object
+      properties:
+        currency:
+          type: string
+        cash:
+          type: number
+          nullable: true
+        buyingPower:
+          type: number
+          nullable: true
+      required:
+        - currency
+        - cash
+        - buyingPower
+
+    SnapTradeAccountPortfolioPositionSide:
+      type: string
+      enum: [long, short, flat]
+
+    SnapTradeAccountPortfolioPositionAssetClass:
+      type: string
+      enum: [equity, option, crypto, future, other]
+
+    SnapTradeAccountPortfolioPosition:
+      type: object
+      description: Normalized SnapTrade position row for account preview and future trading context.
+      properties:
+        snapTradePositionId:
+          type: string
+        symbol:
+          type: string
+        rawSymbol:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        instrumentKind:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioPositionAssetClass"
+        optionContract:
+          allOf:
+            - $ref: "#/components/schemas/OptionContract"
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        side:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioPositionSide"
+        price:
+          type: number
+          nullable: true
+        averagePurchasePrice:
+          type: number
+          nullable: true
+        marketValue:
+          type: number
+          nullable: true
+        costBasis:
+          type: number
+          nullable: true
+        unrealizedPnl:
+          type: number
+          nullable: true
+        currency:
+          type: string
+        cashEquivalent:
+          type: boolean
+      required:
+        - snapTradePositionId
+        - symbol
+        - rawSymbol
+        - description
+        - instrumentKind
+        - assetClass
+        - optionContract
+        - quantity
+        - side
+        - price
+        - averagePurchasePrice
+        - marketValue
+        - costBasis
+        - unrealizedPnl
+        - currency
+        - cashEquivalent
+
+    SnapTradeAccountPortfolioTotals:
+      type: object
+      properties:
+        cash:
+          type: number
+          nullable: true
+        buyingPower:
+          type: number
+          nullable: true
+        positionMarketValue:
+          type: number
+          nullable: true
+        netLiquidation:
+          type: number
+          nullable: true
+        positionCount:
+          type: number
+      required:
+        - cash
+        - buyingPower
+        - positionMarketValue
+        - netLiquidation
+        - positionCount
+
+    SnapTradeAccountPortfolioFreshness:
+      type: object
+      properties:
+        asOf:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - asOf
+
+    GetSnapTradeAccountPortfolioResponse:
+      type: object
+      description: Sanitized SnapTrade balances and positions for one synced account. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        syncedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioAccount"
+        balances:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeAccountPortfolioBalance"
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeAccountPortfolioPosition"
+        totals:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioTotals"
+        dataFreshness:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioFreshness"
+      required:
+        - provider
+        - syncedAt
+        - account
+        - balances
+        - positions
+        - totals
+        - dataFreshness
+
+    SnapTradeAccountHistoryActivity:
+      type: object
+      description: Normalized SnapTrade activity row persisted for account history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        symbol:
+          type: string
+          nullable: true
+        rawSymbol:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        type:
+          type: string
+        optionType:
+          type: string
+          nullable: true
+        optionTicker:
+          type: string
+          nullable: true
+        tradeDate:
+          type: string
+          format: date-time
+        settlementDate:
+          type: string
+          format: date-time
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        price:
+          type: number
+          nullable: true
+        amount:
+          type: number
+          nullable: true
+        fee:
+          type: number
+          nullable: true
+        currency:
+          type: string
+        externalReferenceId:
+          type: string
+          nullable: true
+        optionContract:
+          allOf:
+            - $ref: "#/components/schemas/OptionContract"
+          nullable: true
+      required:
+        - id
+        - accountId
+        - symbol
+        - rawSymbol
+        - description
+        - type
+        - optionType
+        - optionTicker
+        - tradeDate
+        - settlementDate
+        - quantity
+        - price
+        - amount
+        - fee
+        - currency
+        - externalReferenceId
+        - optionContract
+
+    SnapTradeAccountHistoryBalanceHistory:
+      type: object
+      properties:
+        available:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        pointCount:
+          type: number
+      required:
+        - available
+        - reason
+        - pointCount
+
+    SnapTradeAccountHistoryBackfill:
+      type: object
+      properties:
+        activitiesFetched:
+          type: number
+        activitiesStored:
+          type: number
+        balanceSnapshotsFetched:
+          type: number
+        balanceSnapshotsStored:
+          type: number
+      required:
+        - activitiesFetched
+        - activitiesStored
+        - balanceSnapshotsFetched
+        - balanceSnapshotsStored
+
+    GetSnapTradeAccountHistoryResponse:
+      type: object
+      description: Sanitized SnapTrade account history response assembled from activities and beta balance history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        syncedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SnapTradeAccountPortfolioAccount"
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeAccountHistoryActivity"
+        closedTrades:
+          $ref: "#/components/schemas/AccountClosedTradesResponse"
+        equityHistory:
+          $ref: "#/components/schemas/AccountEquityHistoryResponse"
+        balanceHistory:
+          $ref: "#/components/schemas/SnapTradeAccountHistoryBalanceHistory"
+        backfill:
+          $ref: "#/components/schemas/SnapTradeAccountHistoryBackfill"
+      required:
+        - provider
+        - syncedAt
+        - account
+        - activities
+        - closedTrades
+        - equityHistory
+        - balanceHistory
+        - backfill
+
+    SnapTradeEquityOrderAction:
+      type: string
+      enum: [BUY, SELL]
+
+    SnapTradeEquityOrderType:
+      type: string
+      enum: [Market, Limit, Stop, StopLimit]
+
+    SnapTradeEquityTimeInForce:
+      type: string
+      enum: [Day, GTC, FOK, IOC]
+
+    SnapTradeEquityTradingSession:
+      type: string
+      enum: [REGULAR, EXTENDED]
+
+    SnapTradeEquityOrderImpactBody:
+      type: object
+      description: Local PYRUS request for SnapTrade's equity order-impact endpoint. Uses camelCase locally and is translated to SnapTrade snake_case server-side.
+      properties:
+        action:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAction"
+        universalSymbolId:
+          type: string
+          format: uuid
+          description: SnapTrade universal symbol id required by the order-impact endpoint.
+        symbol:
+          type: string
+          nullable: true
+          description: Optional display/trading symbol for PYRUS response context.
+        orderType:
+          $ref: "#/components/schemas/SnapTradeEquityOrderType"
+        timeInForce:
+          $ref: "#/components/schemas/SnapTradeEquityTimeInForce"
+        units:
+          type: number
+          nullable: true
+          description: Share quantity. Must be omitted/null when notionalValue is provided.
+        notionalValue:
+          type: number
+          nullable: true
+          description: Notional order value. Only valid for Market + Day orders when supported by the brokerage.
+        price:
+          type: number
+          nullable: true
+          description: Required for Limit and StopLimit orders.
+        stop:
+          type: number
+          nullable: true
+          description: Required for Stop and StopLimit orders.
+      required:
+        - action
+        - universalSymbolId
+        - orderType
+        - timeInForce
+
+    SnapTradeEquityOrderSubmitBody:
+      type: object
+      description: Local PYRUS request for SnapTrade's direct equity order endpoint. confirm=true is required because this can submit a live brokerage order.
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true to submit the order to SnapTrade and the brokerage.
+        action:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAction"
+        symbol:
+          type: string
+          description: Brokerage trading symbol. SnapTrade recommends symbol when placing equity orders.
+        orderType:
+          $ref: "#/components/schemas/SnapTradeEquityOrderType"
+        timeInForce:
+          $ref: "#/components/schemas/SnapTradeEquityTimeInForce"
+        tradingSession:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeEquityTradingSession"
+          nullable: true
+        expiryDate:
+          type: string
+          nullable: true
+          description: Future GTD support field passed through only when enabled by validation.
+        units:
+          type: number
+          nullable: true
+          description: Share quantity. Must be omitted/null when notionalValue is provided.
+        notionalValue:
+          type: number
+          nullable: true
+          description: Notional order value. Only valid for Market + Day orders when supported by the brokerage.
+        price:
+          type: number
+          nullable: true
+          description: Required for Limit and StopLimit orders.
+        stop:
+          type: number
+          nullable: true
+          description: Required for Stop and StopLimit orders.
+        clientOrderId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional idempotency/correlation UUID passed through to SnapTrade.
+      required:
+        - confirm
+        - action
+        - symbol
+        - orderType
+        - timeInForce
+
+    SnapTradeEquityOrderAccount:
+      type: object
+      description: Sanitized local account metadata for a SnapTrade order operation.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        snapTradeAccountId:
+          type: string
+          description: SnapTrade account id. This is not an account number.
+        displayName:
+          type: string
+        baseCurrency:
+          type: string
+        mode:
+          type: string
+          enum: [live]
+        accountStatus:
+          type: string
+          nullable: true
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - connectionId
+        - snapTradeAccountId
+        - displayName
+        - baseCurrency
+        - mode
+        - accountStatus
+        - executionReady
+        - executionBlockers
+        - lastSyncedAt
+
+    SnapTradeAccountSymbol:
+      type: object
+      description: Sanitized SnapTrade Universal Symbol available for one connected brokerage account.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: SnapTrade universal symbol id used by order-impact requests.
+        symbol:
+          type: string
+        rawSymbol:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        currencyCode:
+          type: string
+          nullable: true
+        exchangeCode:
+          type: string
+          nullable: true
+        exchangeMicCode:
+          type: string
+          nullable: true
+        exchangeName:
+          type: string
+          nullable: true
+        exchangeSuffix:
+          type: string
+          nullable: true
+        securityTypeCode:
+          type: string
+          nullable: true
+        securityTypeDescription:
+          type: string
+          nullable: true
+      required:
+        - id
+        - symbol
+        - rawSymbol
+        - description
+        - currencyCode
+        - exchangeCode
+        - exchangeMicCode
+        - exchangeName
+        - exchangeSuffix
+        - securityTypeCode
+        - securityTypeDescription
+
+    SearchSnapTradeAccountSymbolsResponse:
+      type: object
+      description: Sanitized account-scoped SnapTrade universal-symbol search response. Never includes user secrets, client credentials, raw account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        checkedAt:
+          type: string
+          format: date-time
+        query:
+          type: string
+        account:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAccount"
+        symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeAccountSymbol"
+        bestMatch:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeAccountSymbol"
+          nullable: true
+      required:
+        - provider
+        - checkedAt
+        - query
+        - account
+        - symbols
+        - bestMatch
+
+    SnapTradeEquityOrderDetails:
+      type: object
+      description: Sanitized order details accepted by PYRUS and translated to SnapTrade upstream fields.
+      properties:
+        action:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAction"
+        symbol:
+          type: string
+          nullable: true
+        universalSymbolId:
+          type: string
+          nullable: true
+        orderType:
+          $ref: "#/components/schemas/SnapTradeEquityOrderType"
+        timeInForce:
+          $ref: "#/components/schemas/SnapTradeEquityTimeInForce"
+        tradingSession:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeEquityTradingSession"
+          nullable: true
+        units:
+          type: number
+          nullable: true
+        notionalValue:
+          type: number
+          nullable: true
+        price:
+          type: number
+          nullable: true
+        stop:
+          type: number
+          nullable: true
+        clientOrderId:
+          type: string
+          nullable: true
+      required:
+        - action
+        - symbol
+        - universalSymbolId
+        - orderType
+        - timeInForce
+        - tradingSession
+        - units
+        - notionalValue
+        - price
+        - stop
+        - clientOrderId
+
+    SnapTradeEquityOrderImpact:
+      type: object
+      properties:
+        remainingCash:
+          type: number
+          nullable: true
+        estimatedCommission:
+          type: number
+          nullable: true
+        forexFees:
+          type: number
+          nullable: true
+      required:
+        - remainingCash
+        - estimatedCommission
+        - forexFees
+
+    SnapTradeEquityOrderImpactTrade:
+      type: object
+      properties:
+        id:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+          description: SnapTrade order-impact trades expire after approximately five minutes.
+      required:
+        - id
+        - expiresAt
+
+    SnapTradeEquityOrderImpactResponse:
+      type: object
+      description: Sanitized response from SnapTrade's order-impact endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        checkedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAccount"
+        order:
+          $ref: "#/components/schemas/SnapTradeEquityOrderDetails"
+        trade:
+          $ref: "#/components/schemas/SnapTradeEquityOrderImpactTrade"
+        impact:
+          $ref: "#/components/schemas/SnapTradeEquityOrderImpact"
+      required:
+        - provider
+        - checkedAt
+        - account
+        - order
+        - trade
+        - impact
+
+    SnapTradeEquitySubmittedOrder:
+      allOf:
+        - $ref: "#/components/schemas/SnapTradeEquityOrderDetails"
+        - type: object
+          properties:
+            brokerageOrderId:
+              type: string
+              nullable: true
+            status:
+              type: string
+          required:
+            - brokerageOrderId
+            - status
+
+    SnapTradeEquityOrderSubmitResponse:
+      type: object
+      description: Sanitized response from SnapTrade's direct equity order endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        submittedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAccount"
+        order:
+          $ref: "#/components/schemas/SnapTradeEquitySubmittedOrder"
+      required:
+        - provider
+        - submittedAt
+        - account
+        - order
+
+    SnapTradeRecentOrder:
+      type: object
+      description: Sanitized SnapTrade recent-order leg used for post-submit status reconciliation.
+      properties:
+        brokerageOrderId:
+          type: string
+          nullable: true
+        brokerageGroupOrderId:
+          type: string
+          nullable: true
+        orderRole:
+          type: string
+          nullable: true
+        status:
+          type: string
+        symbol:
+          type: string
+          nullable: true
+        rawSymbol:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        universalSymbolId:
+          type: string
+          nullable: true
+        optionSymbolId:
+          type: string
+          nullable: true
+        optionTicker:
+          type: string
+          nullable: true
+        action:
+          type: string
+          nullable: true
+        totalQuantity:
+          type: number
+          nullable: true
+        openQuantity:
+          type: number
+          nullable: true
+        canceledQuantity:
+          type: number
+          nullable: true
+        filledQuantity:
+          type: number
+          nullable: true
+        executionPrice:
+          type: number
+          nullable: true
+        limitPrice:
+          type: number
+          nullable: true
+        stopPrice:
+          type: number
+          nullable: true
+        orderType:
+          type: string
+          nullable: true
+        timeInForce:
+          type: string
+          nullable: true
+        timePlaced:
+          type: string
+          format: date-time
+          nullable: true
+        timeUpdated:
+          type: string
+          format: date-time
+          nullable: true
+        timeExecuted:
+          type: string
+          format: date-time
+          nullable: true
+        expiryDate:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - brokerageOrderId
+        - brokerageGroupOrderId
+        - orderRole
+        - status
+        - symbol
+        - rawSymbol
+        - description
+        - universalSymbolId
+        - optionSymbolId
+        - optionTicker
+        - action
+        - totalQuantity
+        - openQuantity
+        - canceledQuantity
+        - filledQuantity
+        - executionPrice
+        - limitPrice
+        - stopPrice
+        - orderType
+        - timeInForce
+        - timePlaced
+        - timeUpdated
+        - timeExecuted
+        - expiryDate
+
+    GetSnapTradeRecentOrdersResponse:
+      type: object
+      description: Sanitized SnapTrade realtime recent-order response. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        checkedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SnapTradeEquityOrderAccount"
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapTradeRecentOrder"
+      required:
+        - provider
+        - checkedAt
+        - account
+        - orders
+
+    SnapTradeReadinessResponse:
+      type: object
+      description: Sanitized server-side SnapTrade readiness. Never includes SnapTrade secrets, client names, raw brokerage lists, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [snaptrade]
+        configured:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SnapTradeReadinessStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        executionDecision:
+          $ref: "#/components/schemas/ExecutionDecisionResponse"
+        credentials:
+          $ref: "#/components/schemas/SnapTradeCredentialReadiness"
+        user:
+          $ref: "#/components/schemas/SnapTradeUserReadiness"
+        clientInfo:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeClientInfoReadiness"
+          nullable: true
+        brokerages:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeBrokerageReadinessSummary"
+          nullable: true
+        limitations:
+          type: array
+          items:
+            type: string
+        upstream:
+          allOf:
+            - $ref: "#/components/schemas/SnapTradeUpstreamReadiness"
+          nullable: true
+      required:
+        - provider
+        - configured
+        - status
+        - checkedAt
+        - executionDecision
+        - credentials
+        - user
+        - clientInfo
+        - brokerages
+        - limitations
+        - upstream
+
+    RobinhoodReadinessStatus:
+      type: string
+      enum: [unconfigured, research_required, upstream_error]
+
+    RobinhoodUserReadinessStatus:
+      type: string
+      enum: [not_connected, pending, connected, disabled]
+
+    RobinhoodUserReadinessNextAction:
+      type: string
+      enum:
+        - start_connect
+        - complete_authorization
+        - sync_accounts
+        - manual_review
+
+    RobinhoodUserReadiness:
+      type: object
+      description: Sanitized current-user Robinhood Agentic OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.
+      properties:
+        connected:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/RobinhoodUserReadinessStatus"
+        oauthClientRegistered:
+          type: boolean
+        refreshTokenStored:
+          type: boolean
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        disabledAt:
+          type: string
+          format: date-time
+          nullable: true
+        nextAction:
+          $ref: "#/components/schemas/RobinhoodUserReadinessNextAction"
+      required:
+        - connected
+        - status
+        - oauthClientRegistered
+        - refreshTokenStored
+        - connectedAt
+        - disabledAt
+        - nextAction
+
+    RobinhoodOAuthMetadataReadiness:
+      type: object
+      description: Live probe of Robinhood's published OAuth authorization-server metadata.
+      properties:
+        reachable:
+          type: boolean
+        authorizationEndpointPresent:
+          type: boolean
+          nullable: true
+        tokenEndpointPresent:
+          type: boolean
+          nullable: true
+        registrationEndpointPresent:
+          type: boolean
+          nullable: true
+        pkceS256Supported:
+          type: boolean
+          nullable: true
+      required:
+        - reachable
+        - authorizationEndpointPresent
+        - tokenEndpointPresent
+        - registrationEndpointPresent
+        - pkceS256Supported
+
+    RobinhoodReadinessResponse:
+      type: object
+      description: Sanitized Robinhood Agentic Trading readiness. Never includes tokens or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [robinhood]
+        configured:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/RobinhoodReadinessStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        executionDecision:
+          $ref: "#/components/schemas/ExecutionDecisionResponse"
+        prerequisites:
+          type: object
+          properties:
+            credentialEncryptionKeyPresent:
+              type: boolean
+            redirectBaseUrlPresent:
+              type: boolean
+          required:
+            - credentialEncryptionKeyPresent
+            - redirectBaseUrlPresent
+        user:
+          $ref: "#/components/schemas/RobinhoodUserReadiness"
+        oauth:
+          allOf:
+            - $ref: "#/components/schemas/RobinhoodOAuthMetadataReadiness"
+          nullable: true
+        limitations:
+          type: array
+          items:
+            type: string
+        upstream:
+          type: object
+          nullable: true
+          properties:
+            status:
+              type: number
+            code:
+              type: string
+            message:
+              type: string
+          required:
+            - status
+            - code
+            - message
+      required:
+        - provider
+        - configured
+        - status
+        - checkedAt
+        - executionDecision
+        - prerequisites
+        - user
+        - oauth
+        - limitations
+        - upstream
+
+    RobinhoodConnectResponse:
+      type: object
+      description: Robinhood Agentic OAuth authorization start for the current user. The URL opens Robinhood's consent page; tokens are exchanged and stored server-side only.
+      properties:
+        provider:
+          type: string
+          enum: [robinhood]
+        authorizationUrl:
+          type: string
+          format: uri
+        state:
+          type: string
+        redirectUri:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+        - provider
+        - authorizationUrl
+        - state
+        - redirectUri
+        - expiresAt
+
+    RobinhoodConnectionSyncConnection:
+      type: object
+      description: Sanitized Robinhood Agentic OAuth connection stored in PYRUS.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker connection id.
+        provider:
+          type: string
+          enum: [robinhood]
+        connectionKind:
+          type: string
+          enum: [agentic_oauth]
+        status:
+          type: string
+          enum: [connected, disconnected, error]
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        accountCount:
+          type: number
+        mode:
+          type: string
+          enum: [live]
+      required:
+        - id
+        - provider
+        - connectionKind
+        - status
+        - executionReady
+        - executionBlockers
+        - accountCount
+        - mode
+
+    RobinhoodConnectionSyncAccount:
+      type: object
+      description: Sanitized Robinhood account stored in PYRUS. Account display names are redacted before persistence.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        robinhoodAccountId:
+          type: string
+          description: Robinhood account identifier as returned by the Trading MCP. May be redacted upstream.
+        displayName:
+          type: string
+        agentic:
+          type: boolean
+          nullable: true
+          description: True when the account is the dedicated Agentic account. Null means the MCP payload did not identify it.
+        status:
+          type: string
+          nullable: true
+          enum: [open, closed, archived]
+        baseCurrency:
+          type: string
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [live]
+        lastSyncedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - connectionId
+        - robinhoodAccountId
+        - displayName
+        - agentic
+        - status
+        - baseCurrency
+        - executionReady
+        - executionBlockers
+        - mode
+        - lastSyncedAt
+
+    SyncRobinhoodConnectionsResponse:
+      type: object
+      description: Sanitized result of syncing the authenticated user's Robinhood Agentic accounts. Never includes tokens, full account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [robinhood]
+        syncedAt:
+          type: string
+          format: date-time
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/RobinhoodConnectionSyncConnection"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/RobinhoodConnectionSyncAccount"
+        totals:
+          type: object
+          properties:
+            upstreamAccounts:
+              type: number
+            storedConnections:
+              type: number
+            storedAccounts:
+              type: number
+          required:
+            - upstreamAccounts
+            - storedConnections
+            - storedAccounts
+      required:
+        - provider
+        - syncedAt
+        - connections
+        - accounts
+        - totals
+
+    SchwabReadinessStatus:
+      type: string
+      enum: [unconfigured, research_required]
+
+    SchwabUserReadinessStatus:
+      type: string
+      enum: [not_connected, pending, connected, expired, disabled]
+
+    SchwabUserReadinessNextAction:
+      type: string
+      enum:
+        - start_connect
+        - complete_authorization
+        - sync_accounts
+        - reconnect
+        - manual_review
+
+    SchwabUserReadiness:
+      type: object
+      description: Sanitized current-user Schwab Trader API OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.
+      properties:
+        connected:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SchwabUserReadinessStatus"
+        refreshTokenStored:
+          type: boolean
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Schwab refresh tokens hard-expire 7 days after issuance; users must reconnect weekly.
+        disabledAt:
+          type: string
+          format: date-time
+          nullable: true
+        nextAction:
+          $ref: "#/components/schemas/SchwabUserReadinessNextAction"
+      required:
+        - connected
+        - status
+        - refreshTokenStored
+        - connectedAt
+        - refreshTokenExpiresAt
+        - disabledAt
+        - nextAction
+
+    SchwabReadinessResponse:
+      type: object
+      description: Sanitized Schwab Trader API readiness. Never includes tokens, app secrets, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        configured:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SchwabReadinessStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        executionDecision:
+          $ref: "#/components/schemas/ExecutionDecisionResponse"
+        prerequisites:
+          type: object
+          properties:
+            credentialEncryptionKeyPresent:
+              type: boolean
+            redirectBaseUrlPresent:
+              type: boolean
+            appCredentialsPresent:
+              type: boolean
+          required:
+            - credentialEncryptionKeyPresent
+            - redirectBaseUrlPresent
+            - appCredentialsPresent
+        user:
+          $ref: "#/components/schemas/SchwabUserReadiness"
+        limitations:
+          type: array
+          items:
+            type: string
+        upstream:
+          type: object
+          nullable: true
+          properties:
+            status:
+              type: number
+            code:
+              type: string
+            message:
+              type: string
+          required:
+            - status
+            - code
+            - message
+      required:
+        - provider
+        - configured
+        - status
+        - checkedAt
+        - executionDecision
+        - prerequisites
+        - user
+        - limitations
+        - upstream
+
+    SchwabConnectResponse:
+      type: object
+      description: Schwab Trader API OAuth authorization start for the current user. The URL opens Schwab's consent page; tokens are exchanged and stored server-side only.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        authorizationUrl:
+          type: string
+          format: uri
+        state:
+          type: string
+        redirectUri:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+        - provider
+        - authorizationUrl
+        - state
+        - redirectUri
+        - expiresAt
+
+    SchwabConnectionSyncConnection:
+      type: object
+      description: Sanitized Schwab Trader API OAuth connection stored in PYRUS.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker connection id.
+        provider:
+          type: string
+          enum: [schwab]
+        connectionKind:
+          type: string
+          enum: [trader_api_oauth]
+        status:
+          type: string
+          enum: [connected, disconnected, error]
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        accountCount:
+          type: number
+        mode:
+          type: string
+          enum: [live]
+      required:
+        - id
+        - provider
+        - connectionKind
+        - status
+        - executionReady
+        - executionBlockers
+        - accountCount
+        - mode
+
+    SchwabConnectionSyncAccount:
+      type: object
+      description: Sanitized Schwab account stored in PYRUS. Account display names are redacted before persistence.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        schwabAccountHash:
+          type: string
+          description: Schwab account hash value used in place of the account number.
+        displayName:
+          type: string
+        accountType:
+          type: string
+          nullable: true
+          description: Schwab account type, e.g. CASH or MARGIN. Null means the upstream payload did not identify it.
+        baseCurrency:
+          type: string
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [live]
+        lastSyncedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - connectionId
+        - schwabAccountHash
+        - displayName
+        - accountType
+        - baseCurrency
+        - executionReady
+        - executionBlockers
+        - mode
+        - lastSyncedAt
+
+    SyncSchwabConnectionsResponse:
+      type: object
+      description: Sanitized result of syncing the authenticated user's Schwab Trader API accounts. Never includes tokens, full account numbers, or raw upstream payloads.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        syncedAt:
+          type: string
+          format: date-time
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchwabConnectionSyncConnection"
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchwabConnectionSyncAccount"
+        totals:
+          type: object
+          properties:
+            upstreamAccounts:
+              type: number
+            storedConnections:
+              type: number
+            storedAccounts:
+              type: number
+          required:
+            - upstreamAccounts
+            - storedConnections
+            - storedAccounts
+      required:
+        - provider
+        - syncedAt
+        - connections
+        - accounts
+        - totals
+
+    IbkrPortalConnectionStatus:
+      type: string
+      enum:
+        - unavailable
+        - disconnected
+        - gateway_starting
+        - needs_login
+        - competing
+        - connected
+
+    IbkrPortalReadinessResponse:
+      type: object
+      description: IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.
+      properties:
+        status:
+          $ref: "#/components/schemas/IbkrPortalConnectionStatus"
+        gatewayRunning:
+          type: boolean
+        authenticated:
+          type: boolean
+        selectedAccountId:
+          type: string
+          nullable: true
+        accounts:
+          type: array
+          items:
+            type: string
+        loginPath:
+          type: string
+          nullable: true
+        message:
+          type: string
+      required:
+        - status
+        - gatewayRunning
+        - authenticated
+        - selectedAccountId
+        - accounts
+        - loginPath
+        - message
+
+    IbkrPortalConnectResponse:
+      type: object
+      description: IBKR Client Portal gateway login path returned after starting (or reusing) the per-user gateway.
+      properties:
+        loginPath:
+          type: string
+        status:
+          $ref: "#/components/schemas/IbkrPortalConnectionStatus"
+      required:
+        - loginPath
+        - status
+
+    IbkrPortalDisconnectResponse:
+      type: object
+      description: Result of stopping the IBKR Client Portal gateway and ending the browser-login session.
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
 
     MarketDataProvider:
       type: string
@@ -5126,14 +7026,10 @@ components:
           $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
         tunnel:
           $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-      required:
-        - request
-        - update
-        - credentials
-        - gateway
-        - twoFactor
-        - bridge
-        - tunnel
+      # Phase timings are populated incrementally as an activation advances, and
+      # the retired IBKR desktop bridge emits an empty object, so every member is
+      # optional. Marking them required made `/api/session` fail its own response
+      # validation (ZodError -> 400) whenever no activation had run.
 
     IbkrBridgeActivationTimelineRow:
       allOf:
@@ -5960,8 +7856,6 @@ components:
           type: [string, "null"]
         orderCapability:
           $ref: "#/components/schemas/RuntimeOrderCapabilityDiagnostics"
-        governor:
-          $ref: "#/components/schemas/JsonObject"
         streams:
           $ref: "#/components/schemas/JsonObject"
       required:
@@ -5999,7 +7893,6 @@ components:
         - lastRecoveryError
         - lastError
         - orderCapability
-        - governor
         - streams
 
     RuntimeDiagnosticsResponse:
@@ -7290,6 +9183,9 @@ components:
             - $ref: "#/components/schemas/MarketDataProvider"
         name:
           type: string
+        brokerageSlug:
+          type: string
+          description: Optional SnapTrade brokerage slug for provider connections (e.g. ETRADE).
         mode:
           $ref: "#/components/schemas/EnvironmentMode"
         status:
@@ -7298,6 +9194,10 @@ components:
           type: array
           items:
             type: string
+        executionDecision:
+          allOf:
+            - $ref: "#/components/schemas/ExecutionDecisionResponse"
+          description: Optional registry-backed execution decision metadata for broker execution surfaces.
         updatedAt:
           type: string
           format: date-time
@@ -7715,6 +9615,9 @@ components:
         providerContractId:
           type: string
           nullable: true
+        brokerContractId:
+          type: string
+          nullable: true
       required:
         - ticker
         - underlying
@@ -7759,6 +9662,12 @@ components:
         updatedAt:
           type: string
           format: date-time
+        prevClose:
+          type: [number, "null"]
+        change:
+          type: [number, "null"]
+        changePercent:
+          type: [number, "null"]
         quoteFreshness:
           $ref: "#/components/schemas/MarketDataFreshness"
         marketDataMode:
@@ -7777,6 +9686,8 @@ components:
           type: [string, "null"]
           format: date-time
         ageMs:
+          type: [number, "null"]
+        underlyingPrice:
           type: [number, "null"]
       required:
         - contract
@@ -8670,7 +10581,7 @@ components:
           type: string
         providerContractId:
           type: [string, "null"]
-          description: Broker contract identifier, when the flow source can map the option to a broker-backed contract.
+          description: Market-data contract identifier, typically the OPRA/Massive option ticker.
         strike:
           type: number
         expirationDate:
@@ -9144,6 +11055,7 @@ components:
             - SHADOW_LEDGER
             - SHADOW_BACKTEST
             - SHADOW_OPTIONS_REPLAY
+            - SNAPTRADE_BALANCE_HISTORY
         deposits:
           type: number
         withdrawals:
@@ -9233,6 +11145,7 @@ components:
             - shadow_ledger
             - shadow_watchlist_backtest
             - shadow_options_replay
+            - snaptrade_balance_history
         liveTerminalIncluded:
           type: boolean
         sourceScope:
@@ -9711,7 +11624,7 @@ components:
           type: string
         source:
           type: string
-          enum: [LIVE, LIVE_ORDER, LIVE_EXECUTION, FLEX, SHADOW, SHADOW_ACTIVITY]
+          enum: [LIVE, LIVE_ORDER, LIVE_EXECUTION, FLEX, SHADOW, SHADOW_ACTIVITY, SNAPTRADE_ACTIVITY]
         accountId:
           type: string
         symbol:
@@ -10709,6 +12622,34 @@ components:
         - flowContextStatus
         - source
 
+    GexNetSnapshot:
+      type: object
+      properties:
+        symbol:
+          type: string
+        netGex:
+          type: number
+        computedAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+      required:
+        - symbol
+        - netGex
+        - computedAt
+        - stale
+
+    GexSnapshotsResponse:
+      type: object
+      properties:
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/GexNetSnapshot"
+      required:
+        - snapshots
+
     RequestDebug:
       type: object
       properties:
@@ -11100,7 +13041,7 @@ components:
 
     OptionChartBarsDataSource:
       type: string
-      enum: [ibkr-history, mixed-history, massive-option-aggregates, none]
+      enum: [massive-option-aggregates, none]
 
     OptionChartBarsResponse:
       allOf:
@@ -11595,6 +13536,310 @@ components:
         - buy
         - sell
 
+    SignalQualityScoreRangeBucket:
+      type: object
+      description: A 10-point score range used for signal-quality outcome audits.
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        min:
+          type: number
+          nullable: true
+        max:
+          type: number
+          nullable: true
+      required:
+        - key
+        - label
+        - min
+        - max
+
+    SignalQualityScoreBucket:
+      allOf:
+        - $ref: "#/components/schemas/SignalQualityScoreRangeBucket"
+        - $ref: "#/components/schemas/SignalQualityKpiMetrics"
+
+    SignalQualityFeatureSummary:
+      type: object
+      description: >-
+        Signal-time feature diagnostics for outcome alignment. AUC is measured
+        with higher feature values predicting positive directional returns.
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+        avgValue:
+          type: number
+        favorableAvgValue:
+          type: number
+        adverseAvgValue:
+          type: number
+        pointBiserial:
+          type: number
+        auc:
+          type: number
+        topQuartile:
+          $ref: "#/components/schemas/SignalQualityKpiMetrics"
+        bottomQuartile:
+          $ref: "#/components/schemas/SignalQualityKpiMetrics"
+      required:
+        - key
+        - label
+        - count
+        - avgValue
+        - favorableAvgValue
+        - adverseAvgValue
+        - pointBiserial
+        - auc
+        - topQuartile
+        - bottomQuartile
+
+    SignalScoreModelKey:
+      type: string
+      enum:
+        - observed-score
+        - sot-outcome-v1
+        - evidence-weighted-v2
+        - trend-confirmation-v2
+        - balanced-sot-v2
+
+    SignalScoreModelAlignment:
+      type: object
+      description: >-
+        Outcome-alignment diagnostics for one scoring methodology. Positive
+        topBucketLiftPercent means the highest populated score bucket beat the
+        lower-score baseline expectancy.
+      properties:
+        populatedBucketCount:
+          type: integer
+        topBucketKey:
+          type: string
+          nullable: true
+        topBucketSignalCount:
+          type: integer
+        topBucketExpectancyPercent:
+          type: number
+          nullable: true
+        lowerBaselineSignalCount:
+          type: integer
+        lowerBaselineExpectancyPercent:
+          type: number
+          nullable: true
+        topBucketLiftPercent:
+          type: number
+        monotonicPairCount:
+          type: integer
+        inversionCount:
+          type: integer
+        inversionSeverityPercent:
+          type: number
+        alignmentScore:
+          type: number
+      required:
+        - populatedBucketCount
+        - topBucketKey
+        - topBucketSignalCount
+        - topBucketExpectancyPercent
+        - lowerBaselineSignalCount
+        - lowerBaselineExpectancyPercent
+        - topBucketLiftPercent
+        - monotonicPairCount
+        - inversionCount
+        - inversionSeverityPercent
+        - alignmentScore
+
+    SignalScoreModelRecommendationSupportReason:
+      type: string
+      enum:
+        - min_observation_count
+        - min_populated_bucket_count
+        - min_top_bucket_signal_count
+        - min_lower_baseline_signal_count
+        - min_alignment_score
+        - coverage_degraded
+
+    SignalScoreCalibrationState:
+      type: string
+      enum:
+        - calibrated
+        - needs_more_data
+        - uncalibrated
+
+    SignalScoreCalibrationDecision:
+      type: object
+      description: >-
+        Overall score-formula calibration decision derived from the model
+        recommendation support gates. calibrated means a support-qualified
+        model can be recommended, needs_more_data means sample/support gates
+        are still sparse, and uncalibrated means data support exists but
+        outcome alignment still fails.
+      properties:
+        state:
+          $ref: "#/components/schemas/SignalScoreCalibrationState"
+        recommendedModelKey:
+          allOf:
+            - $ref: "#/components/schemas/SignalScoreModelKey"
+          nullable: true
+        candidateModelKey:
+          allOf:
+            - $ref: "#/components/schemas/SignalScoreModelKey"
+          nullable: true
+        supportedModelCount:
+          type: integer
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreModelRecommendationSupportReason"
+      required:
+        - state
+        - recommendedModelKey
+        - candidateModelKey
+        - supportedModelCount
+        - reasons
+
+    SignalScoreModelRecommendationSupportObserved:
+      type: object
+      description: Observed sample/support values used to gate formula recommendations.
+      properties:
+        observationCount:
+          type: integer
+        populatedBucketCount:
+          type: integer
+        topBucketSignalCount:
+          type: integer
+        lowerBaselineSignalCount:
+          type: integer
+        alignmentScore:
+          type: number
+        qualifiedTopBandKey:
+          type: string
+          nullable: true
+        qualifiedTopBandSignalCount:
+          type: integer
+        qualifiedTopBandExpectancyPercent:
+          type: number
+          nullable: true
+        qualifiedLowerBaselineSignalCount:
+          type: integer
+        qualifiedLowerBaselineExpectancyPercent:
+          type: number
+          nullable: true
+        qualifiedTopBandLiftPercent:
+          type: number
+        qualifiedAlignmentScore:
+          type: number
+      required:
+        - observationCount
+        - populatedBucketCount
+        - topBucketSignalCount
+        - lowerBaselineSignalCount
+        - alignmentScore
+        - qualifiedTopBandKey
+        - qualifiedTopBandSignalCount
+        - qualifiedTopBandExpectancyPercent
+        - qualifiedLowerBaselineSignalCount
+        - qualifiedLowerBaselineExpectancyPercent
+        - qualifiedTopBandLiftPercent
+        - qualifiedAlignmentScore
+
+    SignalScoreModelRecommendationSupportThresholds:
+      type: object
+      description: Minimum support gates required before a scoring model can be recommended.
+      properties:
+        minObservationCount:
+          type: integer
+        minPopulatedBucketCount:
+          type: integer
+        minTopBucketSignalCount:
+          type: integer
+        minLowerBaselineSignalCount:
+          type: integer
+        minAlignmentScore:
+          type: number
+      required:
+        - minObservationCount
+        - minPopulatedBucketCount
+        - minTopBucketSignalCount
+        - minLowerBaselineSignalCount
+        - minAlignmentScore
+
+    SignalScoreModelRecommendationSupport:
+      type: object
+      description: >-
+        Recommendation eligibility diagnostics for one scoring methodology.
+        supported=false means one or more sample/alignment gates failed.
+      properties:
+        supported:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreModelRecommendationSupportReason"
+        observed:
+          $ref: "#/components/schemas/SignalScoreModelRecommendationSupportObserved"
+        thresholds:
+          $ref: "#/components/schemas/SignalScoreModelRecommendationSupportThresholds"
+      required:
+        - supported
+        - reasons
+        - observed
+        - thresholds
+
+    SignalScoreModelComparison:
+      type: object
+      properties:
+        modelKey:
+          $ref: "#/components/schemas/SignalScoreModelKey"
+        byScoreRange:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/SignalQualityKpiMetrics"
+        scoreBuckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalQualityScoreBucket"
+        alignment:
+          $ref: "#/components/schemas/SignalScoreModelAlignment"
+        recommendationSupport:
+          $ref: "#/components/schemas/SignalScoreModelRecommendationSupport"
+      required:
+        - modelKey
+        - byScoreRange
+        - scoreBuckets
+        - alignment
+        - recommendationSupport
+
+    SignalScoreModelComparisonResult:
+      type: object
+      properties:
+        observationCount:
+          type: integer
+        modelKeys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreModelKey"
+        recommendedModelKey:
+          allOf:
+            - $ref: "#/components/schemas/SignalScoreModelKey"
+          nullable: true
+        calibration:
+          $ref: "#/components/schemas/SignalScoreCalibrationDecision"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreModelComparison"
+      required:
+        - observationCount
+        - modelKeys
+        - recommendedModelKey
+        - calibration
+        - models
+
     SignalQualityKpiResult:
       allOf:
         - $ref: "#/components/schemas/SignalQualityKpiMetrics"
@@ -11610,11 +13855,34 @@ components:
                 $ref: "#/components/schemas/SignalQualitySymbolBreakdown"
             byDirection:
               $ref: "#/components/schemas/SignalQualityKpiDirectionalBreakdown"
+            byScoreRange:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/SignalQualityKpiMetrics"
+            scoreBuckets:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignalQualityScoreBucket"
+            scoreRangeBuckets:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignalQualityScoreRangeBucket"
+            featureSummaries:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignalQualityFeatureSummary"
+            scoreModelComparisons:
+              $ref: "#/components/schemas/SignalScoreModelComparisonResult"
           required:
             - horizonBars
             - mtfFilteredOutCount
             - perSymbol
             - byDirection
+            - byScoreRange
+            - scoreBuckets
+            - scoreRangeBuckets
+            - featureSummaries
+            - scoreModelComparisons
 
     SignalQualityResolvedSettings:
       type: object

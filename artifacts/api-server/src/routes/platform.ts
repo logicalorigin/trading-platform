@@ -1,9 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   GetBarsQueryParams,
   GetBarsResponse,
@@ -19,6 +15,8 @@ import {
   GetOptionChartBarsResponse,
   GetOptionQuoteSnapshotsBody,
   GetOptionQuoteSnapshotsResponse,
+  GetGexSnapshotsQueryParams,
+  GetGexSnapshotsResponse,
   GetQuoteSnapshotsQueryParams,
   GetQuoteSnapshotsResponse,
   GetGexDashboardResponse,
@@ -54,7 +52,6 @@ import {
   getBarsWithDebug,
   benchmarkOptionsFlowScannerTickerPass,
   batchOptionChains,
-  getMarketDepth,
   getNews,
   getOptionChainWithDebug,
   getOptionExpirationsWithDebug,
@@ -64,6 +61,7 @@ import {
   resolveOptionContractWithDebug,
   getQuoteSnapshots,
   getRuntimeDiagnostics,
+  getRuntimeDiagnosticsCompact,
   getFlowPremiumDistribution,
   getOptionsFlowUniverse,
   getSession,
@@ -90,28 +88,22 @@ import {
   getCachedGexDashboardHttpCacheEntry,
   getGexDashboardData,
   getGexProjectionData,
+  getGexSnapshots,
   getGexZeroGammaData,
 } from "../services/gex";
 import {
   fetchAccountSnapshotPayload,
   fetchExecutionSnapshotPayload,
-  fetchMarketDepthSnapshotPayload,
-  fetchHistoricalBarSnapshotPayload,
   fetchOptionQuoteSnapshotPayload,
   fetchOrderSnapshotPayload,
-  fetchPositionQuoteSnapshotPayload,
   fetchQuoteSnapshotPayload,
   readOptionQuoteDemandSnapshotPayload,
-  resolvePositionQuoteStreamSource,
   resolveQuoteStreamSource,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
-  subscribeMarketDepthSnapshots,
   subscribeOptionChains,
-  subscribeHistoricalBarSnapshots,
   subscribeOptionQuoteSnapshots,
   subscribeOrderSnapshots,
-  subscribePositionQuoteSnapshots,
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
 import type { OptionQuoteSnapshotPayload } from "../services/bridge-option-quote-stream";
@@ -127,6 +119,10 @@ import {
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
 import { loadStoredMarketBarsBySymbol } from "../services/market-data-store";
+import {
+  readSignalMonitorLocalMemoryBars,
+  type SignalMonitorLocalBarCacheTimeframe,
+} from "../services/signal-monitor-local-bar-cache";
 import { normalizeSymbol } from "../lib/values";
 import {
   getCurrentStockMinuteAggregates,
@@ -155,6 +151,7 @@ import {
   getAccountRisk,
   getAccountSummary,
   getFlexHealth,
+  hasSnapTradeBackedAccounts,
   listAccounts,
   testFlexToken,
 } from "../services/account";
@@ -185,10 +182,11 @@ import {
   getIbkrBridgeActivationDiagnostics,
   getIbkrBridgeHelperMetadata,
   getIbkrBridgeLauncher,
+  getRetiredIbkrBridgeHelperScript,
   heartbeatIbkrRemoteDesktop,
   listIbkrRemoteDesktops,
   readIbkrRemoteDesktopJobStatus,
-  readLegacyIbkrBridgeActivationStatus,
+  readLegacyIbkrBridgeActivationStatusWithWait,
   readLegacyIbkrBridgeLoginKeyWithWait,
   recordIbkrBridgeBrowserConnectionEvent,
   recordIbkrRemoteDesktopRouteAttempt,
@@ -217,11 +215,22 @@ const parsedGexDashboardResponses = new WeakMap<object, ParsedGexDashboardRespon
 
 const ibkrConfiguredForRealAccounts = () => getProviderConfiguration().ibkr;
 
-const admitAccountRoute = (res: Response, accountId?: unknown): boolean => {
+const admitAccountRoute = async (
+  res: Response,
+  accountId?: unknown,
+): Promise<boolean> => {
+  const ibkrConfigured = ibkrConfiguredForRealAccounts();
+  // Only pay the (cached) SnapTrade presence lookup when IBKR alone would
+  // reject the route — connected SnapTrade accounts also admit real
+  // account routes under the multi-broker model.
+  const snapTradeAccountsPresent =
+    !shouldAdmitAccountRoute({ accountId, ibkrConfigured }) &&
+    (await hasSnapTradeBackedAccounts());
   if (
     shouldAdmitAccountRoute({
       accountId,
-      ibkrConfigured: ibkrConfiguredForRealAccounts(),
+      ibkrConfigured,
+      snapTradeAccountsPresent,
     })
   ) {
     return true;
@@ -307,13 +316,6 @@ function sameOriginLogoUrl(logoUrl: string | null): string | null {
     return null;
   }
 }
-const HISTORY_BAR_TIMEFRAMES = ["5s", "1m", "5m", "15m", "1h", "1d"] as const;
-type RouteHistoryBarTimeframe = (typeof HISTORY_BAR_TIMEFRAMES)[number];
-const isHistoryBarTimeframe = (
-  value: string,
-): value is RouteHistoryBarTimeframe =>
-  HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
-
 function readFetchPriority(req: Request): number | undefined {
   const raw =
     req.get("x-pyrus-fetch-priority") ?? readQueryString(req, "fetchPriority");
@@ -361,23 +363,6 @@ function normalizeStreamSymbols(rawSymbols: unknown): string[] {
     ),
   );
 }
-const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
-const IBKR_BRIDGE_HELPER_SCRIPT_PATHS = [
-  resolve(ROUTE_DIR, "../../../../scripts/windows/pyrus-ibkr-helper.ps1"),
-  resolve(ROUTE_DIR, "../../../scripts/windows/pyrus-ibkr-helper.ps1"),
-  resolve(process.cwd(), "../../scripts/windows/pyrus-ibkr-helper.ps1"),
-  resolve(process.cwd(), "scripts/windows/pyrus-ibkr-helper.ps1"),
-];
-const IBKR_BRIDGE_BUNDLE_PATHS = [
-  resolve(ROUTE_DIR, "../../../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
-  resolve(ROUTE_DIR, "../../../ibgateway-bridge-windows-current.tar.gz"),
-  resolve(process.cwd(), "../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
-  resolve(process.cwd(), "artifacts/ibgateway-bridge-windows-current.tar.gz"),
-];
-const IBKR_BRIDGE_BUNDLE_URL_ENV_NAMES = [
-  "IBKR_BRIDGE_BUNDLE_URL",
-  "PYRUS_IBKR_BRIDGE_BUNDLE_URL",
-];
 const IBKR_BRIDGE_PUBLIC_BASE_URL_ENV_NAMES = [
   "IBKR_BRIDGE_API_BASE_URL",
   "PYRUS_PUBLIC_API_BASE_URL",
@@ -401,6 +386,13 @@ const SSE_DRAIN_TIMEOUT_MS = Math.max(
   1_000,
   Number.parseInt(process.env["IBKR_SSE_DRAIN_TIMEOUT_MS"] ?? "15000", 10) ||
     15_000,
+);
+const QUOTE_STREAM_SNAPSHOT_REFRESH_MS = Math.max(
+  10_000,
+  Number.parseInt(
+    process.env["QUOTE_STREAM_SNAPSHOT_REFRESH_MS"] ?? "60000",
+    10,
+  ) || 60_000,
 );
 const OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS = Math.max(
   1_000,
@@ -434,32 +426,6 @@ const optionChartBarsRouteInFlight = new Map<
   string,
   Promise<OptionChartBarsRouteResult>
 >();
-
-async function readIbkrBridgeHelperScript(): Promise<string> {
-  let lastError: unknown = null;
-
-  for (const candidate of IBKR_BRIDGE_HELPER_SCRIPT_PATHS) {
-    try {
-      return await readFile(candidate, "utf8");
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("IB Gateway bridge protocol helper script was not found.");
-}
-
-function findIbkrBridgeBundlePath(): string | null {
-  for (const candidate of IBKR_BRIDGE_BUNDLE_PATHS) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
 
 function isLoopbackHost(host: string): boolean {
   const hostname = host.split(":")[0]?.toLowerCase() ?? "";
@@ -626,26 +592,6 @@ function getConfiguredBridgeBaseUrl(): string | null {
     const normalized = normalizeOrigin(value);
     if (normalized) {
       return normalized;
-    }
-  }
-
-  return null;
-}
-
-export function getIbkrBridgeBundleRedirectUrl(): string | null {
-  for (const name of IBKR_BRIDGE_BUNDLE_URL_ENV_NAMES) {
-    const value = process.env[name]?.trim();
-    if (!value) {
-      continue;
-    }
-
-    try {
-      const url = new URL(value);
-      if (url.protocol === "https:" || url.protocol === "http:") {
-        return url.toString();
-      }
-    } catch {
-      // Ignore invalid configuration and continue to the next supported name.
     }
   }
 
@@ -820,16 +766,15 @@ const BARS_BATCH_CONCURRENCY = 6;
 const BARS_BATCH_SPARKLINE_DEFAULT_POINT_LIMIT = 40;
 const BARS_BATCH_SPARKLINE_MAX_POINT_LIMIT = 240;
 const SPARKLINE_SEED_MAX_SYMBOLS = 600;
-const SPARKLINE_SEED_DB_BATCH_SIZE = 32;
-// Sparkline seeding is background hydration (non-critical). Against the hard
-// 12-connection pool, concurrency 4 let a single seed grab a third of the pool
-// for the duration of its per-chunk bar reads, starving live quote/bar/state
-// reads and feeding pool-acquire contention (seed p95 hit ~12s while waiting).
-// Cap it low (env-overridable) so background hydration can never monopolize the
-// pool; each chunk is an index-backed batched query that stays fast uncontended.
+const SPARKLINE_SEED_DB_BATCH_SIZE = 4;
+// Sparkline seeding is background hydration. Runtime evidence
+// after the rebuild showed 31-32 symbol historical backfill chunks taking
+// 10s+ under contention; letting client and server concurrency compose into
+// multiple simultaneous chunks saturated the 12-slot DB pool. Keep the server
+// default at one DB reader per seed request; the live edge comes from memory.
 const SPARKLINE_SEED_DB_CONCURRENCY = Math.max(
   1,
-  Number(process.env["SPARKLINE_SEED_DB_CONCURRENCY"]) || 2,
+  Number(process.env["SPARKLINE_SEED_DB_CONCURRENCY"]) || 1,
 );
 const SPARKLINE_SEED_DEFAULT_LIMIT = 120;
 const SPARKLINE_SEED_MAX_LIMIT = 240;
@@ -843,6 +788,14 @@ const SPARKLINE_SEED_TIMEFRAMES = new Set([
   "30m",
   "1h",
   "4h",
+  "1d",
+]);
+const SPARKLINE_SEED_MEMORY_TIMEFRAMES = new Set<SignalMonitorLocalBarCacheTimeframe>([
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
   "1d",
 ]);
 type BarsBatchResponseShape = "bars" | "sparkline";
@@ -989,18 +942,16 @@ async function mapWithConcurrency<T, U>(
 
 // Per-symbol cache for sparkline seeding. The ~500-670 symbol signal universe is
 // reseeded on every Signals/Algo mount, tab switch, and universe symbol-set
-// change, across every open client -- each a full cold pass over bar_cache (the
-// dominant API-pressure driver, which in turn trips the signal-matrix pressure
-// backoff). Caching the per-symbol bars collapses those repeated reads; keyed by
-// symbol|timeframe|limit so it is reused regardless of how a request chunks the
-// universe. TTL is generous (5 min) because the cached bars are HISTORY: the live
-// edge is re-merged client-side from the live aggregate stream, so a longer cache
-// only delays backfilled pre-market history, not the current price action.
+// change, across every open client -- each can cold-pass over bar_cache. Cache
+// only the historical backfill; the live edge is read from the in-process signal
+// local bar cache on every request so `/sparklines/seed` does not loop live
+// websocket bars back through the hot 12M-row bar_cache table.
 const SPARKLINE_SEED_CACHE_TTL_MS = Math.max(
   0,
   Number(process.env["SPARKLINE_SEED_CACHE_TTL_MS"]) || 300_000,
 );
 const SPARKLINE_SEED_CACHE_MAX_ENTRIES = 16_000;
+const SPARKLINE_SEED_IN_FLIGHT_MAX_ENTRIES = 128;
 type SparklineSeedBarsBySymbol = Awaited<
   ReturnType<typeof loadStoredMarketBarsBySymbol>
 >;
@@ -1009,11 +960,112 @@ const sparklineSeedBarsCache = new Map<
   string,
   { bars: SparklineSeedBars; expiresAt: number }
 >();
+const sparklineSeedInFlight = new Map<
+  string,
+  Promise<Record<string, SparklineSeedBars>>
+>();
+const sparklineSeedHistoryWarmInFlight = new Map<string, Promise<void>>();
+let sparklineSeedDbBackfillTail: Promise<void> = Promise.resolve();
 const sparklineSeedCacheKey = (
   symbol: string,
   timeframe: string,
   limit: number,
 ) => `${normalizeSymbol(symbol)}|${timeframe}|${limit}`;
+const sparklineSeedInFlightKey = (
+  body: ReturnType<typeof parseSparklineSeedBody>,
+) =>
+  `${body.timeframe}|${body.limit}|${Array.from(
+    new Set(body.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  )
+    .sort()
+    .join(",")}`;
+
+function pruneSparklineSeedInFlight(): void {
+  while (sparklineSeedInFlight.size > SPARKLINE_SEED_IN_FLIGHT_MAX_ENTRIES) {
+    const oldestKey = sparklineSeedInFlight.keys().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    sparklineSeedInFlight.delete(oldestKey);
+  }
+  while (sparklineSeedHistoryWarmInFlight.size > SPARKLINE_SEED_IN_FLIGHT_MAX_ENTRIES) {
+    const oldestKey = sparklineSeedHistoryWarmInFlight.keys().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    sparklineSeedHistoryWarmInFlight.delete(oldestKey);
+  }
+}
+
+async function runSparklineSeedDbBackfill<T>(task: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const previous = sparklineSeedDbBackfillTail.catch(() => undefined);
+  sparklineSeedDbBackfillTail = previous.then(() => turn);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
+function isSparklineSeedMemoryTimeframe(
+  timeframe: string,
+): timeframe is SignalMonitorLocalBarCacheTimeframe {
+  return SPARKLINE_SEED_MEMORY_TIMEFRAMES.has(
+    timeframe as SignalMonitorLocalBarCacheTimeframe,
+  );
+}
+
+function toSparklineSeedBars(
+  bars: ReturnType<typeof readSignalMonitorLocalMemoryBars>,
+): SparklineSeedBars {
+  return bars
+    .map((bar) => {
+      const timestamp =
+        bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp);
+      const close = Number(bar.close);
+      return Number.isFinite(timestamp.getTime()) && Number.isFinite(close)
+        ? { timestamp, close }
+        : null;
+    })
+    .filter(
+      (bar): bar is SparklineSeedBars[number] =>
+        bar !== null,
+    );
+}
+
+function readSparklineSeedMemoryBarsBySymbol(
+  symbols: string[],
+  body: ReturnType<typeof parseSparklineSeedBody>,
+): Record<string, SparklineSeedBars> {
+  if (!isSparklineSeedMemoryTimeframe(body.timeframe)) {
+    return {};
+  }
+  const evaluatedAt = new Date();
+  const barsBySymbol: Record<string, SparklineSeedBars> = {};
+  for (const symbol of symbols) {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) {
+      continue;
+    }
+    const bars = toSparklineSeedBars(
+      readSignalMonitorLocalMemoryBars({
+        symbol,
+        timeframe: body.timeframe,
+        evaluatedAt,
+        limit: body.limit,
+      }),
+    );
+    if (bars.length) {
+      barsBySymbol[normalized] = bars;
+    }
+  }
+  return barsBySymbol;
+}
 
 // The watchlist sparkline must reflect the CURRENT session's price action so its
 // signal-timeline coloring aligns with the exec-timeframe signal. Reading
@@ -1042,24 +1094,48 @@ function mergeSparklineSeedBars(
 async function loadSparklineSeedBarsBySymbol(
   body: ReturnType<typeof parseSparklineSeedBody>,
 ) {
+  const key = sparklineSeedInFlightKey(body);
+  const existing = sparklineSeedInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const flight = loadSparklineSeedBarsBySymbolUncoalesced(body).finally(() => {
+    sparklineSeedInFlight.delete(key);
+  });
+  sparklineSeedInFlight.set(key, flight);
+  pruneSparklineSeedInFlight();
+  return flight;
+}
+
+async function loadSparklineSeedBarsBySymbolUncoalesced(
+  body: ReturnType<typeof parseSparklineSeedBody>,
+) {
   const now = Date.now();
   const cacheEnabled = SPARKLINE_SEED_CACHE_TTL_MS > 0;
   const result: Record<string, SparklineSeedBars> = {};
   const misses: string[] = [];
   const seenMiss = new Set<string>();
+  const liveBySymbol = readSparklineSeedMemoryBarsBySymbol(body.symbols, body);
 
   for (const symbol of body.symbols) {
     const normalized = normalizeSymbol(symbol);
     if (!normalized) {
       continue;
     }
+    const liveBars = liveBySymbol[normalized] ?? [];
     if (cacheEnabled) {
       const cached = sparklineSeedBarsCache.get(
         sparklineSeedCacheKey(symbol, body.timeframe, body.limit),
       );
       if (cached && cached.expiresAt > now) {
-        if (cached.bars.length) {
-          result[normalized] = cached.bars;
+        const merged = mergeSparklineSeedBars(
+          cached.bars,
+          liveBars,
+          body.limit,
+        );
+        if (merged.length) {
+          result[normalized] = merged;
         }
         continue;
       }
@@ -1071,6 +1147,33 @@ async function loadSparklineSeedBarsBySymbol(
   }
 
   if (misses.length) {
+    for (const symbol of misses) {
+      const normalized = normalizeSymbol(symbol);
+      const liveBars = normalized ? liveBySymbol[normalized] ?? [] : [];
+      if (normalized && liveBars.length) {
+        result[normalized] = liveBars;
+      }
+    }
+    scheduleSparklineSeedHistoryWarm(body, misses, cacheEnabled);
+  }
+
+  return result;
+}
+
+function scheduleSparklineSeedHistoryWarm(
+  body: ReturnType<typeof parseSparklineSeedBody>,
+  misses: string[],
+  cacheEnabled: boolean,
+): void {
+  if (!cacheEnabled || !misses.length) {
+    return;
+  }
+  const key = sparklineSeedInFlightKey(body);
+  if (sparklineSeedHistoryWarmInFlight.has(key)) {
+    return;
+  }
+
+  const warm = (async () => {
     const chunks = chunkArray(misses, SPARKLINE_SEED_DB_BATCH_SIZE);
     const chunkResults = await mapWithConcurrency(
       chunks,
@@ -1084,73 +1187,51 @@ async function loadSparklineSeedBarsBySymbol(
           limit: body.limit,
           outsideRth: true,
         };
-        // Read the LIVE (today's) bars first — they carry the current session the
-        // sparkline color needs. Only symbols SHORT on live bars need the deep
-        // massive-history fill, so we skip the second universe-wide bar_cache read
-        // for the common (active) case. The unconditional dual read doubled this
-        // route's DB cost, and /sparklines/seed is a top DB-pool/event-loop
-        // offender (it pegs the 12-conn pool and stalls live SSE delivery).
-        const live = await loadStoredMarketBarsBySymbol({
-          ...shared,
-          sourceName: "massive-websocket",
-        });
-        const minPoints = Math.max(1, body.pointLimit);
-        const gapSymbols = symbols.filter((symbol) => {
-          const normalized = normalizeSymbol(symbol);
-          return Boolean(normalized) && (live[normalized]?.length ?? 0) < minPoints;
-        });
-        const history = gapSymbols.length
-          ? await loadStoredMarketBarsBySymbol({
-              ...shared,
-              symbols: gapSymbols,
-              sourceName: "massive-history",
-            })
-          : ({} as Awaited<ReturnType<typeof loadStoredMarketBarsBySymbol>>);
-        const merged: Record<string, SparklineSeedBars> = {};
-        for (const symbol of symbols) {
-          const normalized = normalizeSymbol(symbol);
-          if (!normalized) {
-            continue;
-          }
-          merged[normalized] = mergeSparklineSeedBars(
-            history[normalized] ?? [],
-            live[normalized] ?? [],
-            body.limit,
-          );
-        }
-        return merged;
+        // Historical backfill is the only DB read here. The live edge is already
+        // in memory from the stock aggregate stream, and reading
+        // `massive-websocket` back out of bar_cache made `/sparklines/seed` the
+        // dominant slow route during algo/signal page loads.
+        return runSparklineSeedDbBackfill(() =>
+          loadStoredMarketBarsBySymbol({
+            ...shared,
+            sourceName: "massive-history",
+          }),
+        );
       },
     );
     const loaded: Record<string, SparklineSeedBars> = Object.assign(
       {},
       ...chunkResults,
     );
-    if (cacheEnabled && sparklineSeedBarsCache.size > SPARKLINE_SEED_CACHE_MAX_ENTRIES) {
+    if (sparklineSeedBarsCache.size > SPARKLINE_SEED_CACHE_MAX_ENTRIES) {
+      const now = Date.now();
       for (const [key, entry] of sparklineSeedBarsCache) {
         if (entry.expiresAt <= now) {
           sparklineSeedBarsCache.delete(key);
         }
       }
     }
-    const expiresAt = now + SPARKLINE_SEED_CACHE_TTL_MS;
+    const expiresAt = Date.now() + SPARKLINE_SEED_CACHE_TTL_MS;
     for (const symbol of misses) {
       const normalized = normalizeSymbol(symbol);
-      const bars = loaded[normalized] || [];
+      const historyBars = loaded[normalized] || [];
       // Cache negatives (empty bars) too: the universe has many symbols with no
-      // stored history; without this they re-hit the DB on every seed.
-      if (cacheEnabled) {
+      // stored history; without this they re-hit the DB on every seed. This
+      // caches history only; live memory bars are merged per request above.
+      if (normalized) {
         sparklineSeedBarsCache.set(
           sparklineSeedCacheKey(symbol, body.timeframe, body.limit),
-          { bars, expiresAt },
+          { bars: historyBars, expiresAt },
         );
       }
-      if (bars.length) {
-        result[normalized] = bars;
-      }
     }
-  }
-
-  return result;
+  })()
+    .catch(() => {})
+    .finally(() => {
+      sparklineSeedHistoryWarmInFlight.delete(key);
+    });
+  sparklineSeedHistoryWarmInFlight.set(key, warm);
+  pruneSparklineSeedInFlight();
 }
 
 function readBatchBarCloseValue(bar: unknown): number | null {
@@ -1589,6 +1670,13 @@ async function startSse(
   const writeComment = (comment: string): Promise<void> =>
     enqueueChunk(`: ${comment.replace(/\r?\n/g, " ")}\n\n`);
 
+  const writeHeartbeat = (at: string): Promise<void> =>
+    enqueueChunk(
+      `: ping ${at}\n` +
+        "event: heartbeat\n" +
+        `data: ${serializeSseEventData({ at, stream: streamName })}\n\n`,
+    );
+
   const writeEvent = (event: string, payload: unknown): Promise<void> => {
     const eventId = String(nextEventId);
     nextEventId += 1;
@@ -1618,7 +1706,7 @@ async function startSse(
   await enqueueChunk("retry: 5000\n\n");
 
   heartbeat = setInterval(() => {
-    void writeComment(`ping ${new Date().toISOString()}`);
+    void writeHeartbeat(new Date().toISOString());
   }, 15_000);
 
   res.on("close", () => {
@@ -1679,8 +1767,15 @@ router.get("/session", async (_req, res) => {
   res.json(data);
 });
 
-router.get("/diagnostics/runtime", async (_req, res) => {
-  res.json(await getRuntimeDiagnostics());
+router.get("/diagnostics/runtime", async (req, res) => {
+  const detail = String(
+    req.query.detail ?? req.get("x-pyrus-diagnostics-detail") ?? "",
+  ).toLowerCase();
+  res.json(
+    detail === "compact"
+      ? await getRuntimeDiagnosticsCompact()
+      : await getRuntimeDiagnostics(),
+  );
 });
 
 router.get("/diagnostics/ibkr-perf", async (_req, res) => {
@@ -1707,15 +1802,11 @@ router.post("/diagnostics/ibkr-perf/control", async (req, res) => {
 
 router.get("/ibkr/bridge/launcher", async (req, res) => {
   const apiBaseUrl = getIbkrBridgeRequestOrigin(req);
-  const bundleUrl =
-    findIbkrBridgeBundlePath() || getIbkrBridgeBundleRedirectUrl()
-      ? `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`
-      : null;
 
   res.json(
     getIbkrBridgeLauncher({
       apiBaseUrl,
-      bundleUrl,
+      bundleUrl: null,
     }),
   );
 });
@@ -1777,16 +1868,12 @@ router.get("/ibkr/activation/diagnostics", async (_req, res) => {
 
 router.post("/ibkr/remote-launch", async (req, res) => {
   const apiBaseUrl = getIbkrBridgeRequestOrigin(req);
-  const bundleUrl =
-    findIbkrBridgeBundlePath() || getIbkrBridgeBundleRedirectUrl()
-      ? `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`
-      : null;
 
   res.json(
     createIbkrRemoteBridgeLaunch({
       apiBaseUrl,
       body: req.body,
-      bundleUrl,
+      bundleUrl: null,
     }),
   );
 });
@@ -1810,7 +1897,12 @@ router.post("/ibkr/activation/:activationId/progress", async (req, res) => {
 });
 
 router.post("/ibkr/activation/:activationId/status", async (req, res) => {
-  res.json(readLegacyIbkrBridgeActivationStatus(req.params.activationId, req.body));
+  res.json(
+    await readLegacyIbkrBridgeActivationStatusWithWait(
+      req.params.activationId,
+      req.body,
+    ),
+  );
 });
 
 router.post("/ibkr/activation/:activationId/cancel", async (req, res) => {
@@ -1872,7 +1964,7 @@ router.get("/ibkr/connection-audit", async (_req, res) => {
 });
 
 router.get("/ibkr/bridge/helper.ps1", async (_req, res) => {
-  const script = await readIbkrBridgeHelperScript();
+  const script = getRetiredIbkrBridgeHelperScript();
 
   res
     .type("text/plain; charset=utf-8")
@@ -1881,27 +1973,11 @@ router.get("/ibkr/bridge/helper.ps1", async (_req, res) => {
 });
 
 router.get("/ibkr/bridge/bundle.tar.gz", async (_req, res) => {
-  const bundlePath = findIbkrBridgeBundlePath();
-  if (!bundlePath) {
-    const redirectUrl = getIbkrBridgeBundleRedirectUrl();
-    if (redirectUrl) {
-      res.setHeader("Cache-Control", "no-store");
-      res.redirect(302, redirectUrl);
-      return;
-    }
-
-    res.status(404).json({
-      error: "IB Gateway bridge bundle was not found.",
-      detail:
-        "Set IBKR_BRIDGE_BUNDLE_URL to an external artifact URL or provide a local bridge bundle.",
-    });
-    return;
-  }
-
-  res
-    .type("application/gzip")
-    .setHeader("Cache-Control", "no-store");
-  res.sendFile(bundlePath);
+  res.status(410).json({
+    ok: false,
+    retired: true,
+    error: "IBKR desktop bridge bundle has been retired.",
+  });
 });
 
 router.post("/ibkr/bridge/attach", async (req, res) => {
@@ -1919,7 +1995,7 @@ router.get("/broker-connections", async (_req, res) => {
 });
 
 router.get("/accounts", async (req, res) => {
-  if (!admitAccountRoute(res)) return;
+  if (!(await admitAccountRoute(res))) return;
   const query = ListAccountsQueryParams.parse(req.query);
   const data = ListAccountsResponse.parse(await listAccounts(query));
 
@@ -1935,7 +2011,7 @@ router.post("/accounts/flex/test", async (_req, res) => {
 });
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountSummary({
@@ -1947,7 +2023,7 @@ router.get("/accounts/:accountId/summary", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/equity-history", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountEquityHistory({
@@ -1965,7 +2041,7 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/allocation", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountAllocation({
@@ -1977,7 +2053,7 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const liveQuotes =
     req.query.liveQuotes === "true"
@@ -2000,7 +2076,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountPositionsAtDate({
@@ -2018,7 +2094,7 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/closed-trades", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountClosedTrades({
@@ -2046,7 +2122,7 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/orders", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountOrders({
@@ -2062,7 +2138,7 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
 });
 
 router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const body = CancelAccountOrderBody.parse(req.body);
   res.json(
     await cancelAccountOrder({
@@ -2075,7 +2151,7 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
@@ -2090,7 +2166,7 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
 });
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {
-  if (!admitAccountRoute(res, req.params.accountId)) return;
+  if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
     await getAccountCashActivity({
@@ -2333,6 +2409,16 @@ router.get("/quotes/snapshot", async (req, res) => {
   const query = GetQuoteSnapshotsQueryParams.parse(req.query);
   const data = GetQuoteSnapshotsResponse.parse(await getQuoteSnapshots(query));
 
+  res.json(data);
+});
+
+router.get("/gex-snapshots", async (req, res) => {
+  const query = GetGexSnapshotsQueryParams.parse(req.query);
+  const symbols = query.symbols
+    .split(",")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean);
+  const data = GetGexSnapshotsResponse.parse(await getGexSnapshots({ symbols }));
   res.json(data);
 });
 
@@ -2794,40 +2880,6 @@ router.get("/options/chart-bars", async (req, res) => {
   res.json(data);
 });
 
-router.get("/market-depth", async (req, res) => {
-  const query = req.query as Record<string, unknown>;
-
-  if (typeof query.symbol !== "string" || !query.symbol.trim()) {
-    res.status(400).json({
-      title: "Invalid request",
-      status: 400,
-      detail: "symbol query parameter is required.",
-    });
-    return;
-  }
-
-  res.json(await getMarketDepth({
-    accountId:
-      typeof query.accountId === "string" ? query.accountId : undefined,
-    symbol: query.symbol,
-    assetClass:
-      query.assetClass === "option"
-        ? "option"
-        : query.assetClass === "equity"
-          ? "equity"
-          : undefined,
-    providerContractId:
-      typeof query.providerContractId === "string" &&
-      query.providerContractId.trim()
-        ? query.providerContractId.trim()
-        : null,
-    exchange:
-      typeof query.exchange === "string" && query.exchange.trim()
-        ? query.exchange.trim()
-        : null,
-  }));
-});
-
 function readDateQuery(value: unknown): Date | null {
   const raw = Array.isArray(value) ? value[0] : value;
   if (typeof raw !== "string" || !raw.trim()) {
@@ -3044,9 +3096,46 @@ router.get("/streams/quotes", async (req, res) => {
     });
 
     let active = true;
+    let snapshotRefreshInFlight = false;
+    let lastQuotePayloadAt = 0;
+    let snapshotRefreshTimer: NodeJS.Timeout | null = null;
+    const writeQuotePayload = (payload: Awaited<ReturnType<typeof fetchQuoteSnapshotPayload>>) => {
+      lastQuotePayloadAt = Date.now();
+      return writeEvent("quotes", payload);
+    };
+    const refreshSnapshot = (title: string) => {
+      if (!active || snapshotRefreshInFlight) {
+        return;
+      }
+      snapshotRefreshInFlight = true;
+      void fetchQuoteSnapshotPayload(symbols)
+        .then((payload) => {
+          if (!active) {
+            return undefined;
+          }
+          return writeQuotePayload(payload);
+        })
+        .catch((error: unknown) => {
+          if (!active) {
+            return;
+          }
+          void writeEvent("error", {
+            title,
+            status: 502,
+            detail:
+              error instanceof Error
+                ? error.message
+                : "Unknown quote snapshot error.",
+          });
+        })
+        .finally(() => {
+          snapshotRefreshInFlight = false;
+        });
+    };
     const unsubscribe = subscribeQuoteSnapshots(symbols, (payload, serializeEvent) => {
       // Live fan-out supplies a shared serialize-once thunk: stringify the
       // payload a single time per matched subset and reuse it across subscribers.
+      lastQuotePayloadAt = Date.now();
       if (serializeEvent) {
         void writeSerializedEvent("quotes", serializeEvent());
         return;
@@ -3054,89 +3143,27 @@ router.get("/streams/quotes", async (req, res) => {
       void writeEvent("quotes", payload);
     });
 
-    void fetchQuoteSnapshotPayload(symbols)
-      .then((payload) => {
-        if (!active) {
-          return undefined;
-        }
-        return writeEvent("quotes", payload);
-      })
-      .catch((error: unknown) => {
-        if (!active) {
-          return;
-        }
-        void writeEvent("error", {
-          title: "Initial quote snapshot failed",
-          status: 502,
-          detail:
-            error instanceof Error
-              ? error.message
-              : "Unknown quote snapshot error.",
-        });
-      });
+    refreshSnapshot("Initial quote snapshot failed");
+    snapshotRefreshTimer = setInterval(() => {
+      if (!active) {
+        return;
+      }
+      const payloadAgeMs = lastQuotePayloadAt
+        ? Date.now() - lastQuotePayloadAt
+        : Number.POSITIVE_INFINITY;
+      if (payloadAgeMs < QUOTE_STREAM_SNAPSHOT_REFRESH_MS) {
+        return;
+      }
+      refreshSnapshot("Quote snapshot refresh failed");
+    }, QUOTE_STREAM_SNAPSHOT_REFRESH_MS);
+    snapshotRefreshTimer.unref?.();
 
     return () => {
       active = false;
-      unsubscribe();
-    };
-  });
-});
-
-router.get("/streams/position-quotes", async (req, res) => {
-  const rawSymbols = Array.isArray(req.query.symbols)
-    ? req.query.symbols.join(",")
-    : typeof req.query.symbols === "string"
-      ? req.query.symbols
-      : "";
-  const symbols = rawSymbols
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter(Boolean);
-
-  if (!symbols.length) {
-    res.status(400).type("application/problem+json").json({
-      type: "https://pyrus.local/problems/invalid-request",
-      title: "Missing symbols",
-      status: 400,
-      detail: "Provide one or more comma-separated stock symbols in the symbols query parameter.",
-    });
-    return;
-  }
-
-  await startSse(req, res, "position-quotes", async ({ writeEvent }) => {
-    await writeEvent("ready", {
-      symbols,
-      source: resolvePositionQuoteStreamSource(),
-    });
-
-    let active = true;
-    const unsubscribe = subscribePositionQuoteSnapshots(symbols, (payload) => {
-      void writeEvent("quotes", payload);
-    });
-
-    void fetchPositionQuoteSnapshotPayload(symbols)
-      .then((payload) => {
-        if (!active) {
-          return undefined;
-        }
-        return writeEvent("quotes", payload);
-      })
-      .catch((error: unknown) => {
-        if (!active) {
-          return;
-        }
-        void writeEvent("error", {
-          title: "Initial position quote snapshot failed",
-          status: 502,
-          detail:
-            error instanceof Error
-              ? error.message
-              : "Unknown position quote snapshot error.",
-        });
-      });
-
-    return () => {
-      active = false;
+      if (snapshotRefreshTimer) {
+        clearInterval(snapshotRefreshTimer);
+        snapshotRefreshTimer = null;
+      }
       unsubscribe();
     };
   });
@@ -3264,171 +3291,6 @@ router.get("/streams/options/quotes", async (req, res) => {
   });
 });
 
-router.get("/streams/bars", async (req, res) => {
-  const symbol =
-    typeof req.query.symbol === "string" && req.query.symbol.trim()
-      ? req.query.symbol.trim().toUpperCase()
-      : "";
-  const timeframe =
-    typeof req.query.timeframe === "string" ? req.query.timeframe : "";
-
-  if (!symbol || !isHistoryBarTimeframe(timeframe)) {
-    res.status(400).type("application/problem+json").json({
-      type: "https://pyrus.local/problems/invalid-request",
-      title: "Missing bar stream input",
-      status: 400,
-      detail: "Provide symbol and timeframe query parameters for the historical bar stream.",
-    });
-    return;
-  }
-
-  const providerContractId =
-    typeof req.query.providerContractId === "string" &&
-    req.query.providerContractId.trim()
-      ? req.query.providerContractId.trim()
-      : null;
-
-  await startSse(req, res, "bars", async ({ writeEvent }) => {
-    let lastBarSignature: string | null = null;
-    const buildBarSignature = (
-      bar: {
-        timestamp: Date | string;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-      } | null,
-    ): string | null => {
-      if (!bar) {
-        return null;
-      }
-
-      const timestamp =
-        bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp);
-      return JSON.stringify({
-        timestamp,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-      });
-    };
-    const writeBarPayload = async (payload: Awaited<
-      ReturnType<typeof fetchHistoricalBarSnapshotPayload>
-    >) => {
-      const signature = buildBarSignature(payload.bar);
-      if (!payload.bar || !signature || signature === lastBarSignature) {
-        return;
-      }
-
-      lastBarSignature = signature;
-      await writeEvent("bar", payload);
-    };
-
-    // Cap the initial bridge snapshot fetch so a slow/hung bridge can't block the
-    // "ready" event (and the live subscription below) indefinitely. REST /api/bars
-    // owns first paint; this snapshot only seeds the live edge, which the
-    // subscription below re-delivers. Bounded so the stream always becomes ready
-    // promptly. A reject still propagates (preserves prior error semantics); only
-    // the hang case is newly bounded.
-    // Seed the live edge from the initial bridge snapshot whenever it resolves. The live
-    // subscription below only streams FUTURE ticks and does NOT re-deliver this current
-    // bar, so the one-time seed must come from here. Deliver it fire-and-forget so a slow
-    // or hung bridge can never block the stream from becoming "ready": under a slow bridge
-    // the seed "bar" event simply arrives shortly after "ready" instead of before it. The
-    // client overlays bars by timestamp regardless of event order, and writeBarPayload
-    // de-dupes by signature, so a late seed is harmless. The catch swallows the expected
-    // timeout/abort/closed-stream errors (and prevents an unhandledRejection).
-    void fetchHistoricalBarSnapshotPayload({
-      symbol,
-      timeframe,
-      assetClass:
-        req.query.assetClass === "option"
-          ? "option"
-          : req.query.assetClass === "equity"
-            ? "equity"
-            : undefined,
-      providerContractId,
-      outsideRth:
-        typeof req.query.outsideRth === "string"
-          ? req.query.outsideRth === "true"
-          : undefined,
-      source:
-        req.query.source === "midpoint" || req.query.source === "bid_ask"
-          ? req.query.source
-          : req.query.source === "trades"
-            ? "trades"
-            : undefined,
-      priority:
-        typeof req.query.priority === "string" &&
-        Number.isFinite(Number(req.query.priority))
-          ? Number(req.query.priority)
-          : undefined,
-    })
-      .then((payload) => writeBarPayload(payload))
-      .catch(() => {});
-    await writeEvent("ready", {
-      symbol,
-      timeframe,
-      providerContractId,
-      source: "ibkr-bridge",
-    });
-    const heartbeat = setInterval(() => {
-      void writeEvent("heartbeat", { at: new Date().toISOString() });
-    }, 15_000);
-    heartbeat.unref?.();
-
-    try {
-      const unsubscribeBars = subscribeHistoricalBarSnapshots(
-        {
-          symbol,
-          timeframe,
-          assetClass:
-            req.query.assetClass === "option"
-              ? "option"
-              : req.query.assetClass === "equity"
-                ? "equity"
-                : undefined,
-          providerContractId,
-          outsideRth:
-            typeof req.query.outsideRth === "string"
-              ? req.query.outsideRth === "true"
-              : undefined,
-          source:
-            req.query.source === "midpoint" || req.query.source === "bid_ask"
-              ? req.query.source
-              : req.query.source === "trades"
-                ? "trades"
-                : undefined,
-          priority:
-            typeof req.query.priority === "string" &&
-            Number.isFinite(Number(req.query.priority))
-              ? Number(req.query.priority)
-              : undefined,
-        },
-        (payload) => {
-          void writeBarPayload(payload);
-        },
-        (error) => {
-          void writeEvent("stream-error", {
-            title: "Historical bar stream interrupted",
-            detail: error instanceof Error ? error.message : "Unknown stream error.",
-          });
-        },
-      );
-      return () => {
-        clearInterval(heartbeat);
-        unsubscribeBars();
-      };
-    } catch (error) {
-      clearInterval(heartbeat);
-      throw error;
-    }
-  });
-});
-
 router.get("/streams/orders", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
@@ -3523,69 +3385,6 @@ router.get("/streams/executions", async (req, res) => {
   });
 });
 
-router.get("/streams/market-depth", async (req, res) => {
-  if (typeof req.query.symbol !== "string" || !req.query.symbol.trim()) {
-    res.status(400).type("application/problem+json").json({
-      type: "https://pyrus.local/problems/invalid-request",
-      title: "Missing symbol",
-      status: 400,
-      detail: "Provide a symbol query parameter.",
-    });
-    return;
-  }
-
-  const accountId =
-    typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  const assetClass =
-    req.query.assetClass === "option"
-      ? "option"
-      : req.query.assetClass === "equity"
-        ? "equity"
-        : undefined;
-  const providerContractId =
-    typeof req.query.providerContractId === "string" &&
-    req.query.providerContractId.trim()
-      ? req.query.providerContractId.trim()
-      : null;
-  const exchange =
-    typeof req.query.exchange === "string" && req.query.exchange.trim()
-      ? req.query.exchange.trim()
-      : null;
-  const symbol = req.query.symbol.trim().toUpperCase();
-
-  await startSse(req, res, "market-depth", async ({ writeEvent }) => {
-    await writeEvent(
-      "depth",
-      await fetchMarketDepthSnapshotPayload({
-        accountId,
-        symbol,
-        assetClass,
-        providerContractId,
-        exchange,
-      }),
-    );
-    await writeEvent("ready", {
-      accountId: accountId ?? null,
-      symbol,
-      providerContractId,
-      source: "ibkr-bridge",
-    });
-
-    return subscribeMarketDepthSnapshots(
-      {
-        accountId,
-        symbol,
-        assetClass,
-        providerContractId,
-        exchange,
-      },
-      (payload) => {
-        writeEvent("depth", payload);
-      },
-    );
-  });
-});
-
 router.get("/streams/footprints", async (req, res) => {
   const input = buildFootprintsInput(req);
   if (!input.symbol || !input.timeframe) {
@@ -3656,7 +3455,7 @@ router.get("/streams/accounts/page", async (req, res) => {
     typeof req.query.accountId === "string" && req.query.accountId.trim()
       ? req.query.accountId.trim()
       : "combined";
-  if (!admitAccountRoute(res, accountId)) return;
+  if (!(await admitAccountRoute(res, accountId))) return;
   const input = {
     accountId,
     mode,
@@ -3744,7 +3543,7 @@ router.get("/streams/accounts/page", async (req, res) => {
 router.get("/streams/accounts", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "shadow";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  if (!admitAccountRoute(res, accountId)) return;
+  if (!(await admitAccountRoute(res, accountId))) return;
 
   await startSse(req, res, "accounts", async ({ writeEvent }) => {
     await writeEvent(
@@ -3829,7 +3628,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       type: "https://pyrus.local/problems/upstream",
       title: "Stock aggregate streaming is not configured.",
       status: 503,
-      detail: "Set IBKR bridge configuration or Massive market-data credentials before using stock aggregate streams.",
+      detail: "Set Massive market-data credentials before using stock aggregate streams.",
       code: "stock_aggregate_stream_unavailable",
     });
     return;
@@ -3885,11 +3684,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 
     await writeSnapshotAggregates(symbols);
     const writeReady = async (nextSymbols: string[]) => {
-      const streamDiagnostics = getStockAggregateStreamDiagnostics();
-      const streamSource =
-        streamDiagnostics.provider === "none"
-          ? "ibkr-websocket-derived"
-          : streamDiagnostics.provider;
+      const streamSource = getStockAggregateStreamDiagnostics().provider;
       await writeEvent("ready", {
         symbols: nextSymbols,
         delayed: streamSource === "massive-delayed-websocket",

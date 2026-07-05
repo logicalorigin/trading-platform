@@ -8,6 +8,7 @@
 import type { EnvironmentMode } from './environmentMode';
 import type { StreamSignalMonitorMatrixClientRole } from './streamSignalMonitorMatrixClientRole';
 import type { StreamSignalMonitorMatrixRequestOrigin } from './streamSignalMonitorMatrixRequestOrigin';
+import type { StreamSignalMonitorMatrixUniverse } from './streamSignalMonitorMatrixUniverse';
 
 export type StreamSignalMonitorMatrixParams = {
 environment?: EnvironmentMode;
@@ -15,6 +16,10 @@ environment?: EnvironmentMode;
  * Comma-separated ticker symbols to stream when exact cells are not supplied.
  */
 symbols?: string;
+/**
+ * Server-resolved symbol universe to stream when exact cells and explicit symbols are not supplied.
+ */
+universe?: StreamSignalMonitorMatrixUniverse;
 /**
  * Comma-separated Signal Matrix timeframes to stream.
  */

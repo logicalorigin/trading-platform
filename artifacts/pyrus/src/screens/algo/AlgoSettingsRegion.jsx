@@ -17,7 +17,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { toneForDirectionalIntent } from "../../features/platform/semanticToneModel.js";
-import { SegmentedControl } from "../../components/platform/primitives.jsx";
+import { Select, SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
   MAX_SIGNAL_OPTIONS_STRIKE_SLOTS,
@@ -88,16 +88,9 @@ const EXIT_TRACK_MARKERS = [
     side: "gain",
   },
   {
-    key: "five-x",
-    fieldPath: "exitPolicy.tightenAtFiveXGivebackPct",
-    label: "5x",
-    tone: CSS_COLOR.green,
-    side: "gain",
-  },
-  {
-    key: "ten-x",
-    fieldPath: "exitPolicy.tightenAtTenXGivebackPct",
-    label: "10x",
+    key: "trail-giveback",
+    fieldPath: "exitPolicy.trailGivebackPct",
+    label: "Trail",
     tone: CSS_COLOR.green,
     side: "gain",
   },
@@ -159,7 +152,7 @@ const numericInputWidth = (field, value) => {
 };
 
 const compactInputStyle = ({ invalid, disabled, numeric = false, field, value }) => ({
-  height: dim(24),
+  height: dim(22),
   width: numeric ? numericInputWidth(field, value) : "100%",
   minWidth: 0,
   maxWidth: "100%",
@@ -309,7 +302,7 @@ const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
             background: impact.background,
             borderRadius: dim(RADII.xs),
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
             lineHeight: 1,
             marginLeft: "auto",
             padding: sp("0 4px"),
@@ -348,25 +341,19 @@ export const CompactFieldInput = ({
   };
   if (field.type === "select") {
     return (
-      <select
+      <Select
         id={id}
         value={value ?? ""}
         disabled={disabled}
-        aria-label={ariaLabel}
-        data-testid={testId}
-        onChange={(event) => patchFieldValue(event.target.value)}
-        style={inputStyle}
-      >
-        {(field.options || []).map((option) => {
-          const optionValue = typeof option === "string" ? option : option.value;
-          const optionLabel = typeof option === "string" ? option : option.label;
-          return (
-            <option key={optionValue} value={optionValue}>
-              {optionLabel}
-            </option>
-          );
-        })}
-      </select>
+        ariaLabel={ariaLabel}
+        selectProps={{ "data-testid": testId }}
+        onChange={(next) => patchFieldValue(next)}
+        options={(field.options || []).map((option) =>
+          typeof option === "string"
+            ? { value: option, label: option }
+            : { value: option.value, label: option.label },
+        )}
+      />
     );
   }
   if (field.type === "timeframeChips") {
@@ -421,7 +408,7 @@ export const CompactFieldInput = ({
                   : CSS_COLOR.bg1,
                 color: selectedFrame ? CSS_COLOR.text : CSS_COLOR.textSec,
                 fontFamily: T.data,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
                 cursor: disabled ? "not-allowed" : "pointer",
                 padding: sp("0 5px"),
               }}
@@ -514,6 +501,8 @@ export const CompactFieldInput = ({
 
 const invalidNumericValue = (field, value) => {
   if (!numericField(field)) return false;
+  // An untouched/empty field is "not set", not out-of-range — don't flag it red.
+  if (value == null || value === "") return false;
   const numericValue = Number(value);
   return (
     !Number.isFinite(numericValue) ||
@@ -570,15 +559,53 @@ export const CompactSettingCell = ({
   const impactBadge = compactImpactSummary(field, field.impact ? impact[field.impact] : null);
   const className = field.compactWide || field.fullWidth ? "algo-cell--wide" : undefined;
 
+  if (field.type === "boolean") {
+    // Booleans pair label + switch on a single row (no input/validation sub-rows),
+    // halving cell height vs the stacked numeric cells below.
+    return (
+      <label
+        className={className}
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: sp(2),
+          minHeight: dim(20),
+          minWidth: 0,
+          opacity: disabled ? 0.55 : 1,
+          pointerEvents: disabled ? "none" : undefined,
+        }}
+        data-testid={`algo-compact-control-${field.path}`}
+      >
+        <span style={{ flex: "1 1 auto", minWidth: 0, display: "flex" }}>
+          <CompactLabel
+            label={field.compactLabel || field.label}
+            dirty={dirty}
+            previousValue={previousValue}
+            field={field}
+            impact={impactBadge}
+          />
+        </span>
+        <CompactSwitch
+          checked={Boolean(value)}
+          disabled={disabled}
+          ariaLabel={field.label}
+          testId={`algo-compact-toggle-${field.path}`}
+          onChange={(nextValue) => onPatch(field.path, nextValue)}
+        />
+      </label>
+    );
+  }
+
   return (
     <label
-      htmlFor={field.type === "boolean" ? undefined : id}
+      htmlFor={id}
       className={className}
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(2),
-        minHeight: dim(42),
+        gap: sp(1),
+        minHeight: dim(34),
         minWidth: 0,
         opacity: disabled ? 0.55 : 1,
         pointerEvents: disabled ? "none" : undefined,
@@ -592,25 +619,7 @@ export const CompactSettingCell = ({
         field={field}
         impact={impactBadge}
       />
-      {field.type === "boolean" ? (
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            minWidth: 0,
-            height: dim(24),
-          }}
-        >
-          <CompactSwitch
-            checked={Boolean(value)}
-            disabled={disabled}
-            ariaLabel={field.label}
-            testId={`algo-compact-toggle-${field.path}`}
-            onChange={(nextValue) => onPatch(field.path, nextValue)}
-          />
-        </span>
-      ) : (
+      {(
         <span
           style={{
             display: "flex",
@@ -636,7 +645,7 @@ export const CompactSettingCell = ({
               style={{
                 color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
                 lineHeight: 1,
                 flex: "0 0 auto",
               }}
@@ -651,7 +660,7 @@ export const CompactSettingCell = ({
           style={{
             color: CSS_COLOR.red,
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
           }}
         >
           {field.min}-{field.max}
@@ -669,7 +678,7 @@ export const CompactSettingCell = ({
                   style={{
                     color: CSS_COLOR.amber,
                     fontFamily: T.sans,
-                    fontSize: textSize("micro"),
+                    fontSize: textSize("caption"),
                   }}
                 >
                   Below max premium/entry — most entries size down. Denominates
@@ -918,9 +927,9 @@ const DteTimelineEditor = ({
       data-testid="algo-contract-dte-timeline"
       style={{
         display: "grid",
-        gap: sp(7),
+        gap: sp(5),
         minWidth: 0,
-        padding: sp("8px 9px 10px"),
+        padding: sp("6px 9px 7px"),
         border: `1px solid ${dirty ? cssColorMix(CSS_COLOR.accent, 34) : CSS_COLOR.borderLight}`,
         borderRadius: dim(RADII.sm),
         background: dirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
@@ -931,14 +940,14 @@ const DteTimelineEditor = ({
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr) auto",
           alignItems: "center",
-          gap: sp(5),
+          gap: sp(6),
           minWidth: 0,
         }}
       >
         <span
           style={{
             display: "grid",
-            gap: sp(1),
+            gap: sp(2),
             minWidth: 0,
           }}
         >
@@ -946,8 +955,9 @@ const DteTimelineEditor = ({
             style={{
               color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
-              fontSize: textSize("micro"),
+              fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.label,
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -994,7 +1004,7 @@ const DteTimelineEditor = ({
             color: zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.textMuted,
             cursor: disabled ? "not-allowed" : "pointer",
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
             padding: sp("0 9px"),
             textTransform: "uppercase",
@@ -1076,7 +1086,7 @@ const DteTimelineEditor = ({
               cursor: disabled ? "not-allowed" : "grab",
               boxShadow: `0 0 0 2px ${CSS_COLOR.bg1}`,
               fontFamily: T.data,
-              fontSize: textSize("micro"),
+              fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.label,
               lineHeight: 1,
               padding: 0,
@@ -1097,7 +1107,7 @@ const DteTimelineEditor = ({
               bottom: 0,
               color: CSS_COLOR.textMuted,
               fontFamily: T.data,
-              fontSize: textSize("micro"),
+              fontSize: textSize("caption"),
             }}
           >
             {value}
@@ -1148,7 +1158,7 @@ const DteTimelineEditor = ({
           style={{
             color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
           }}
         >
           was {formatSettingValue(minField, minPrevious)}-{formatSettingValue(maxField, maxPrevious)} · target {formatSettingValue(targetField, targetPrevious)} · 0DTE {formatSettingValue(zeroDteField, zeroDtePrevious)}
@@ -1213,7 +1223,7 @@ const ChainStrikeButton = ({
       outlineOffset: dim(1),
       boxShadow: selected ? `inset 0 -2px 0 ${tone}` : "none",
       fontFamily: T.sans,
-      fontSize: textSize("micro"),
+      fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.label,
       lineHeight: 1,
       whiteSpace: "nowrap",
@@ -1234,7 +1244,7 @@ const ChainStrikeButton = ({
           alignItems: "center",
           justifyContent: "center",
           fontFamily: T.data,
-          fontSize: textSize("micro"),
+          fontSize: textSize("caption"),
           lineHeight: 1,
         }}
       >
@@ -1352,7 +1362,7 @@ export const ContractSelectionCell = ({
                 ? toneForDirectionalIntent("bearish")
                 : CSS_COLOR.textMuted,
           fontFamily: T.sans,
-          fontSize: textSize("micro"),
+          fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.label,
           textTransform: "uppercase",
           minWidth: 0,
@@ -1452,7 +1462,7 @@ export const ContractSelectionCell = ({
           style={{
             color: CSS_COLOR.textDim,
             fontFamily: T.data,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -1488,7 +1498,7 @@ export const ContractSelectionCell = ({
                 gap: sp(3),
                 color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
                 margin: sp("1px 0"),
               }}
             >
@@ -1556,6 +1566,8 @@ export const ExitLadderTrack = ({
 }) => {
   const [editingKey, setEditingKey] = useState(null);
   const [draftValue, setDraftValue] = useState("");
+  const chartRef = useRef(null);
+  const [draggingKey, setDraggingKey] = useState(null);
   const fieldByPath = Object.fromEntries(
     item.fields.map((field) => [field.path, field]),
   );
@@ -1580,49 +1592,183 @@ export const ExitLadderTrack = ({
     `trail ${formatPctLabel(markerByKey["trail-activation"]?.positionValue)}`,
     `lock ${formatPctLabel(markerByKey["min-locked"]?.positionValue)}`,
   ].join(" / ");
-  const lossMin = Math.min(
-    ...markers
-      .filter((marker) => marker.side === "loss")
-      .map((marker) => marker.positionValue),
-    0,
+  // Chart model: a dummy price path that rises then pulls back, with three
+  // direct-manipulation levers — a flat hard-stop line (drag up/down ->
+  // hardStopPct), a trail-activation point on the price (drag left/right ->
+  // trailActivationPct), and a trailing-stop line that rides a draggable distance
+  // below the running peak once activated (drag up/down -> trailGivebackPct). The
+  // lock floor and early-loss level stay as click-to-edit chips below the chart.
+  const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
+  const hardStopMarker = markerByKey["hard-stop"];
+  const activationMarker = markerByKey["trail-activation"];
+  const givebackMarker = markerByKey["trail-giveback"];
+  const hardStopLevel = num(hardStopMarker?.positionValue);
+  const earlyLossLevel = num(markerByKey["early-loss"]?.positionValue);
+  const trailActivation = Math.max(0, num(activationMarker?.positionValue));
+  const trailGiveback = Math.max(0, num(givebackMarker?.positionValue));
+
+  const pricePeak = Math.max(
+    60,
+    trailActivation * 1.7,
+    trailGiveback * 1.6,
+    Math.abs(hardStopLevel) + 30,
   );
-  const gainMax = Math.max(
-    ...markers
-      .filter((marker) => marker.side === "gain")
-      .map((marker) => marker.positionValue),
-    0,
+  const yMax = Math.ceil((pricePeak * 1.06) / 10) * 10;
+  const yMin = Math.min(
+    -10,
+    Math.floor((Math.min(hardStopLevel, earlyLossLevel) - 5) / 10) * 10,
   );
-  const domainMin = Math.floor(lossMin);
-  const domainMax = Math.ceil(gainMax);
-  const domainSpan = Math.max(1, domainMax - domainMin);
-  const positionedMarkers = markers
-    .map((marker) => ({
-      ...marker,
-      leftPct: ((marker.positionValue - domainMin) / domainSpan) * 100,
-    }))
-    .sort((left, right) => left.leftPct - right.leftPct)
-    .map((marker, index, sorted) => {
-      const previous = sorted[index - 1];
-      const collision = previous && Math.abs(marker.leftPct - previous.leftPct) < 8;
-      return { ...marker, stagger: collision ? 1 : 0 };
-    });
-  const entryPct = ((0 - domainMin) / domainSpan) * 100;
-  const editingMarker = positionedMarkers.find((marker) => marker.key === editingKey);
-  const trackInset = dim(24);
-  const trackLeft = (leftPct) =>
-    `calc(${leftPct}% + ${
-      trackInset - (trackInset * 2 * leftPct) / 100
-    }px)`;
-  const popoverAnchor = editingMarker
-    ? editingMarker.leftPct < 12
-      ? { left: trackInset, transform: "none" }
-      : editingMarker.leftPct > 88
-        ? { right: trackInset, transform: "none" }
-        : {
-            left: trackLeft(editingMarker.leftPct),
-            transform: "translateX(-50%)",
-          }
-    : null;
+  const ySpan = Math.max(1, yMax - yMin);
+
+  const VIEW_W = 320;
+  const VIEW_H = 132;
+  const PAD_L = 38;
+  const PAD_R = 62;
+  const PAD_T = 12;
+  const PAD_B = 22;
+  const plotW = VIEW_W - PAD_L - PAD_R;
+  const plotH = VIEW_H - PAD_T - PAD_B;
+  const xAt = (t) => PAD_L + clamp(t, 0, 1) * plotW;
+  const yPix = (level) =>
+    PAD_T + (1 - (clamp(level, yMin, yMax) - yMin) / ySpan) * plotH;
+  const leftPctOf = (t) => (xAt(t) / VIEW_W) * 100;
+  const topPctOf = (level) => (yPix(level) / VIEW_H) * 100;
+  const rightHandleLeftPct = ((PAD_L + plotW) / VIEW_W) * 100;
+  const fmtSvg = (value) => value.toFixed(1);
+
+  // Dummy price: ease up to a peak near t=0.72, then pull back so the trailing
+  // stop visibly catches the reversal. Light waviness for a price-like feel.
+  const SAMPLES = 60;
+  const smoothstep = (u) => {
+    const c = clamp(u, 0, 1);
+    return c * c * (3 - 2 * c);
+  };
+  const priceAt = (t) => {
+    const base =
+      t <= 0.72
+        ? 1 - Math.pow(1 - t / 0.72, 2)
+        : 1 - 0.24 * smoothstep((t - 0.72) / 0.28);
+    return pricePeak * (base + 0.03 * Math.sin(t * 7));
+  };
+  const pricePoints = Array.from({ length: SAMPLES + 1 }, (_, index) => {
+    const t = index / SAMPLES;
+    return [t, priceAt(t)];
+  });
+  const toPath = (points) =>
+    points
+      .map(
+        ([t, level], index) =>
+          `${index === 0 ? "M" : "L"} ${fmtSvg(xAt(t))} ${fmtSvg(yPix(level))}`,
+      )
+      .join(" ");
+  const pricePath = toPath(pricePoints);
+  const peakValue = Math.max(...pricePoints.map(([, level]) => level));
+
+  // Trailing stop: parked at the hard stop until the running peak reaches the
+  // activation gain, then rides `trailGiveback` below the running peak (it
+  // ratchets and never drops), floored at the hard stop.
+  let runningPeak = -Infinity;
+  const trailPoints = pricePoints.map(([t, level]) => {
+    runningPeak = Math.max(runningPeak, level);
+    const activated = trailActivation <= 0 || runningPeak >= trailActivation;
+    const trailLevel = activated
+      ? Math.max(hardStopLevel, runningPeak - trailGiveback)
+      : hardStopLevel;
+    return [t, trailLevel];
+  });
+  const trailPath = toPath(trailPoints);
+  const trailEndLevel = trailPoints[trailPoints.length - 1][1];
+  const stopLinePath = `M ${fmtSvg(xAt(0))} ${fmtSvg(
+    yPix(hardStopLevel),
+  )} L ${fmtSvg(xAt(1))} ${fmtSvg(yPix(hardStopLevel))}`;
+
+  // Activation point: where the rising price first reaches the activation gain.
+  const activationHit =
+    trailActivation > 0
+      ? pricePoints.find(([, level]) => level >= trailActivation)
+      : pricePoints[0];
+  const activationT = activationHit ? activationHit[0] : null;
+  const activationLevel = activationT == null ? null : priceAt(activationT);
+
+  // Direct-manipulation levers: map a pointer coordinate to the bound field.
+  const dragSpecs = {
+    "hard-stop": {
+      field: hardStopMarker?.field,
+      axis: "y",
+      toValue: (level) => level,
+    },
+    "trail-giveback": {
+      field: givebackMarker?.field,
+      axis: "y",
+      toValue: (level) => peakValue - level,
+    },
+    "trail-activation": {
+      field: activationMarker?.field,
+      axis: "x",
+      toValue: (t) => priceAt(t),
+    },
+  };
+  const roundToStep = (value, step) => {
+    const stepSize = Number(step) || 1;
+    return Math.round(value / stepSize) * stepSize;
+  };
+  const coordFromClient = (axis, clientX, clientY) => {
+    const node = chartRef.current;
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    if (axis === "x") {
+      const leftFrac = PAD_L / VIEW_W;
+      const rightFrac = (VIEW_W - PAD_R) / VIEW_W;
+      const fracX = (clientX - rect.left) / rect.width;
+      return clamp((fracX - leftFrac) / (rightFrac - leftFrac), 0, 1);
+    }
+    const topFrac = PAD_T / VIEW_H;
+    const bottomFrac = (VIEW_H - PAD_B) / VIEW_H;
+    const fracY = (clientY - rect.top) / rect.height;
+    const plotFrac = clamp((fracY - topFrac) / (bottomFrac - topFrac), 0, 1);
+    return yMax - plotFrac * ySpan;
+  };
+  const makeDragHandlers = (key) => {
+    const spec = dragSpecs[key];
+    if (!spec?.field || disabled) return {};
+    const applyAt = (event) => {
+      const coord = coordFromClient(spec.axis, event.clientX, event.clientY);
+      if (coord == null) return;
+      const next = clamp(
+        roundToStep(spec.toValue(coord), spec.field.step),
+        spec.field.min ?? -100,
+        spec.field.max ?? 10000,
+      );
+      patchProfileDraftPath(spec.field.path, next);
+    };
+    return {
+      onPointerDown: (event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        setDraggingKey(key);
+        applyAt(event);
+      },
+      onPointerMove: (event) => {
+        if (!(event.buttons & 1)) return;
+        applyAt(event);
+      },
+      onPointerUp: (event) => {
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        setDraggingKey(null);
+      },
+      onPointerCancel: () => setDraggingKey(null),
+    };
+  };
+
+  const CHIP_LABELS = { "early-loss": "Early Loss", "min-locked": "Lock" };
+  const chipMarkers = [
+    markerByKey["early-loss"],
+    markerByKey["min-locked"],
+  ].filter(Boolean);
+  const editingMarker = markerByKey[editingKey] || null;
+  const popoverPos = { left: "50%", top: "14%" };
 
   const openEditor = (marker) => {
     if (disabled) return;
@@ -1650,9 +1796,9 @@ export const ExitLadderTrack = ({
       aria-label="Primary stop track"
       style={{
         display: "grid",
-        gap: sp(7),
+        gap: sp(5),
         minWidth: 0,
-        padding: sp("8px 9px 9px"),
+        padding: sp("6px 9px 7px"),
         border: `1px solid ${
           trackDirty ? cssColorMix(CSS_COLOR.accent, 34) : CSS_COLOR.borderLight
         }`,
@@ -1671,7 +1817,7 @@ export const ExitLadderTrack = ({
           style={{
             color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
             letterSpacing: "0.04em",
             textTransform: "uppercase",
@@ -1695,123 +1841,265 @@ export const ExitLadderTrack = ({
         </span>
       </span>
       <div
+        ref={chartRef}
         style={{
           position: "relative",
-          minHeight: dim(92),
+          width: "100%",
+          height: dim(156),
           minWidth: 0,
-          padding: sp("28px 6px 20px"),
+          touchAction: "none",
         }}
       >
-        <div
+        <svg
+          viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+          preserveAspectRatio="none"
           aria-hidden="true"
           style={{
             position: "absolute",
-            left: trackInset,
-            right: trackInset,
-            top: dim(48),
-            height: dim(2),
-            background: CSS_COLOR.border,
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            overflow: "visible",
           }}
-        />
+        >
+          <rect
+            x={PAD_L}
+            y={yPix(yMax)}
+            width={plotW}
+            height={Math.max(0, yPix(0) - yPix(yMax))}
+            fill={cssColorMix(CSS_COLOR.green, 6)}
+          />
+          <rect
+            x={PAD_L}
+            y={yPix(0)}
+            width={plotW}
+            height={Math.max(0, yPix(yMin) - yPix(0))}
+            fill={cssColorMix(CSS_COLOR.red, 6)}
+          />
+          <line
+            x1={PAD_L}
+            y1={yPix(0)}
+            x2={PAD_L + plotW}
+            y2={yPix(0)}
+            stroke={CSS_COLOR.border}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d={trailPath}
+            fill="none"
+            stroke={CSS_COLOR.green}
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d={stopLinePath}
+            fill="none"
+            stroke={CSS_COLOR.red}
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d={pricePath}
+            fill="none"
+            stroke={CSS_COLOR.accent}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
         <span
           aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: trackLeft(entryPct),
-            top: dim(42),
-            width: dim(2),
-            height: dim(14),
-            background: CSS_COLOR.textDim,
-            transform: "translateX(-50%)",
-          }}
-        />
-        <span
           className="tnum"
           style={{
             position: "absolute",
-            left: trackLeft(entryPct),
-            top: dim(60),
-            transform: "translateX(-50%)",
+            left: sp(1),
+            top: `${topPctOf(0)}%`,
+            transform: "translateY(-50%)",
             color: CSS_COLOR.textMuted,
             fontFamily: T.data,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
           }}
         >
           0%
         </span>
-        {positionedMarkers.map((marker) => (
-          <button
-            key={marker.key}
-            type="button"
-            data-testid={`algo-exit-track-marker-${marker.key}`}
-            disabled={disabled}
-            onClick={() => openEditor(marker)}
+        <span
+          aria-hidden="true"
+          className="tnum"
+          style={{
+            position: "absolute",
+            left: sp(1),
+            top: `${topPctOf(yMin)}%`,
+            transform: "translateY(-95%)",
+            color: CSS_COLOR.textDim,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+          }}
+        >
+          {formatPctLabel(yMin)}
+        </span>
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: `${(PAD_L / VIEW_W) * 100}%`,
+            bottom: 0,
+            color: CSS_COLOR.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+          }}
+        >
+          price →
+        </span>
+        <div
+          data-testid="algo-exit-track-marker-hard-stop"
+          {...makeDragHandlers("hard-stop")}
+          role="slider"
+          aria-label={`Hard stop ${formatPctLabel(hardStopMarker?.rawValue)}`}
+          aria-valuenow={Number(hardStopMarker?.rawValue) || 0}
+          tabIndex={disabled ? -1 : 0}
+          style={{
+            position: "absolute",
+            left: `${rightHandleLeftPct}%`,
+            top: `${topPctOf(hardStopLevel)}%`,
+            transform: "translateY(-50%)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(1),
+            padding: sp("1px 5px"),
+            borderRadius: dim(RADII.pill),
+            border: `1px solid ${
+              hardStopMarker?.dirty
+                ? CSS_COLOR.accent
+                : cssColorMix(CSS_COLOR.red, 45)
+            }`,
+            background: cssColorMix(
+              CSS_COLOR.red,
+              draggingKey === "hard-stop" ? 28 : 14,
+            ),
+            color: CSS_COLOR.red,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.label,
+            whiteSpace: "nowrap",
+            cursor: disabled ? "not-allowed" : "ns-resize",
+            opacity: disabled ? 0.55 : 1,
+            touchAction: "none",
+            zIndex: 3,
+          }}
+        >
+          Stop {formatPctLabel(hardStopMarker?.rawValue)}
+        </div>
+        <div
+          data-testid="algo-exit-track-marker-trail-giveback"
+          {...makeDragHandlers("trail-giveback")}
+          role="slider"
+          aria-label={`Trailing stop cushion ${formatPctLabel(
+            givebackMarker?.rawValue,
+          )}`}
+          aria-valuenow={Number(givebackMarker?.rawValue) || 0}
+          tabIndex={disabled ? -1 : 0}
+          style={{
+            position: "absolute",
+            left: `${rightHandleLeftPct}%`,
+            top: `${topPctOf(trailEndLevel)}%`,
+            transform: "translateY(-50%)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(1),
+            padding: sp("1px 5px"),
+            borderRadius: dim(RADII.pill),
+            border: `1px solid ${
+              givebackMarker?.dirty
+                ? CSS_COLOR.accent
+                : cssColorMix(CSS_COLOR.green, 45)
+            }`,
+            background: cssColorMix(
+              CSS_COLOR.green,
+              draggingKey === "trail-giveback" ? 28 : 14,
+            ),
+            color: CSS_COLOR.green,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.label,
+            whiteSpace: "nowrap",
+            cursor: disabled ? "not-allowed" : "ns-resize",
+            opacity: disabled ? 0.55 : 1,
+            touchAction: "none",
+            zIndex: 3,
+          }}
+        >
+          Trail {formatPctLabel(givebackMarker?.rawValue)}
+        </div>
+        {activationT != null ? (
+          <div
+            data-testid="algo-exit-track-marker-trail-activation"
+            {...makeDragHandlers("trail-activation")}
+            role="slider"
+            aria-label={`Trail activates ${formatPctLabel(
+              activationMarker?.rawValue,
+            )}`}
+            aria-valuenow={Number(activationMarker?.rawValue) || 0}
+            tabIndex={disabled ? -1 : 0}
             style={{
               position: "absolute",
-              left: trackLeft(marker.leftPct),
-              top: dim(43),
-              width: dim(10),
-              height: dim(10),
-              borderRadius: dim(RADII.pill),
-              border: `1px solid ${marker.dirty ? CSS_COLOR.accent : CSS_COLOR.bg2}`,
-              background: marker.tone,
-              boxShadow: marker.dirty
-                ? `0 0 0 2px ${cssColorMix(CSS_COLOR.accent, 24)}`
-                : `0 0 0 2px ${cssColorMix(marker.tone, 16)}`,
+              left: `${leftPctOf(activationT)}%`,
+              top: `${topPctOf(activationLevel)}%`,
               transform: "translate(-50%, -50%)",
-              cursor: disabled ? "not-allowed" : "pointer",
+              width: dim(13),
+              height: dim(13),
+              borderRadius: dim(RADII.pill),
+              border: `1px solid ${CSS_COLOR.bg1}`,
+              background: cssColorMix(
+                CSS_COLOR.accent,
+                draggingKey === "trail-activation" ? 60 : 36,
+              ),
+              boxShadow: `0 0 0 2px ${cssColorMix(CSS_COLOR.accent, 22)}`,
+              cursor: disabled ? "not-allowed" : "ew-resize",
               opacity: disabled ? 0.55 : 1,
+              touchAction: "none",
               padding: 0,
+              zIndex: 3,
             }}
-            aria-label={`${marker.label} ${formatPctLabel(marker.rawValue)}`}
           >
-            <span
-              style={{
-                position: "absolute",
-                left: "50%",
-                bottom: `${dim(marker.stagger ? 18 : 14)}px`,
-                transform: "translateX(-50%)",
-                color: marker.tone,
-                fontFamily: T.sans,
-                fontSize: textSize("micro"),
-                fontWeight: FONT_WEIGHTS.label,
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-              }}
-            >
-              {marker.label}
-            </span>
             <span
               className="tnum"
               style={{
                 position: "absolute",
                 left: "50%",
-                top: dim(13),
+                bottom: `${dim(14)}px`,
                 transform: "translateX(-50%)",
-                color: CSS_COLOR.textMuted,
-                fontFamily: T.data,
-                fontSize: textSize("micro"),
+                color: CSS_COLOR.accent,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.label,
                 whiteSpace: "nowrap",
                 pointerEvents: "none",
               }}
             >
-              {formatPctLabel(marker.positionValue)}
+              Activate {formatPctLabel(activationMarker?.rawValue)}
             </span>
-          </button>
-        ))}
+          </div>
+        ) : null}
         {editingMarker ? (
           <div
             role="dialog"
-            aria-label={`${editingMarker.label} level`}
+            aria-label={`${CHIP_LABELS[editingMarker.key] || editingMarker.label} level`}
             style={{
               position: "absolute",
-              ...popoverAnchor,
-              top: dim(64),
-              zIndex: 3,
+              left: popoverPos.left,
+              top: popoverPos.top,
+              transform: "translate(-50%, -50%)",
+              zIndex: 4,
               display: "flex",
               alignItems: "center",
               gap: sp(2),
-              minWidth: dim(92),
+              minWidth: dim(96),
               padding: sp(3),
               border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
@@ -1819,6 +2107,16 @@ export const ExitLadderTrack = ({
               boxShadow: `0 12px 28px ${cssColorMix(CSS_COLOR.bg0, 70)}`,
             }}
           >
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                whiteSpace: "nowrap",
+              }}
+            >
+              {CHIP_LABELS[editingMarker.key] || editingMarker.label}
+            </span>
             <input
               className="tnum"
               data-testid={`algo-exit-track-input-${editingMarker.key}`}
@@ -1853,7 +2151,7 @@ export const ExitLadderTrack = ({
               style={{
                 color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
               }}
             >
               %
@@ -1861,22 +2159,68 @@ export const ExitLadderTrack = ({
           </div>
         ) : null}
       </div>
-      <div
-        aria-hidden="true"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto auto auto",
-          justifyContent: "space-between",
-          color: CSS_COLOR.textMuted,
-          fontFamily: T.data,
-          fontSize: textSize("micro"),
-          padding: sp("0 4px"),
-        }}
-      >
-        <span className="tnum">{formatPctLabel(domainMin)}</span>
-        <span className="tnum">0%</span>
-        <span className="tnum">{formatPctLabel(domainMax)}</span>
-      </div>
+      {chipMarkers.length ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: sp(3),
+            minWidth: 0,
+          }}
+        >
+          {chipMarkers.map((marker) => (
+            <button
+              key={marker.key}
+              type="button"
+              data-testid={`algo-exit-track-marker-${marker.key}`}
+              disabled={disabled}
+              onClick={() => openEditor(marker)}
+              style={{
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: sp(2),
+                padding: sp("2px 7px"),
+                border: `1px solid ${
+                  marker.dirty ? CSS_COLOR.accent : CSS_COLOR.borderLight
+                }`,
+                borderRadius: dim(RADII.pill),
+                background: marker.dirty
+                  ? cssColorMix(CSS_COLOR.accent, 8)
+                  : CSS_COLOR.bg2,
+                cursor: disabled ? "not-allowed" : "pointer",
+                opacity: disabled ? 0.55 : 1,
+              }}
+              aria-label={`${CHIP_LABELS[marker.key] || marker.label} ${formatPctLabel(
+                marker.rawValue,
+              )}`}
+            >
+              <span
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em",
+                }}
+              >
+                {CHIP_LABELS[marker.key] || marker.label}
+              </span>
+              <span
+                className="tnum"
+                style={{
+                  color: CSS_COLOR.textSec,
+                  fontFamily: T.data,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.emphasis,
+                }}
+              >
+                {formatPctLabel(marker.rawValue)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -1998,7 +2342,7 @@ const ExitGroupShell = ({
           style={{
             color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
-            fontSize: textSize("micro"),
+            fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
             letterSpacing: "0.04em",
             textTransform: "uppercase",
@@ -2117,7 +2461,7 @@ const ProgressiveTrailPreview = ({ steps }) => {
       data-algo-pocket-grid="two"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(72)}px, 1fr))`,
         gap: sp(3),
         minWidth: 0,
       }}
@@ -2155,7 +2499,7 @@ const ProgressiveTrailPreview = ({ steps }) => {
               style={{
                 color: CSS_COLOR.textMuted,
                 fontFamily: T.data,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
                 lineHeight: 1.15,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -2239,7 +2583,7 @@ const WireTrailPreview = ({ rungs }) => {
       data-algo-pocket-grid="two"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(62px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(72)}px, 1fr))`,
         gap: sp(3),
         minWidth: 0,
       }}
@@ -2276,7 +2620,7 @@ const WireTrailPreview = ({ rungs }) => {
               style={{
                 color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
-                fontSize: textSize("micro"),
+                fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.label,
                 lineHeight: 1,
                 overflow: "hidden",
@@ -2662,13 +3006,10 @@ const SectionSummaryStrip = ({
   return (
     <div
       data-testid={`algo-settings-section-summary-${section.id}`}
-      data-algo-pocket-grid="two"
+      className="algo-settings-grid"
       style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
-        gap: sp(3),
         minWidth: 0,
-        marginBottom: sp(5),
+        marginBottom: sp(4),
       }}
     >
       {items.map((item) => {
@@ -2694,7 +3035,7 @@ const SectionSummaryStrip = ({
                 style={{
                   color: CSS_COLOR.textMuted,
                   fontFamily: T.sans,
-                  fontSize: textSize("micro"),
+                  fontSize: textSize("caption"),
                   fontWeight: FONT_WEIGHTS.label,
                   lineHeight: 1,
                   overflow: "hidden",
@@ -2713,6 +3054,7 @@ const SectionSummaryStrip = ({
                   fontSize: textSize("caption"),
                   fontWeight: FONT_WEIGHTS.emphasis,
                   lineHeight: 1.15,
+                  minHeight: Math.round(textSize("caption") * 1.15),
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -2769,7 +3111,7 @@ export const AlgoSettingsRegion = ({
         padding: sp("2px 12px 12px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(5),
+        gap: sp(4),
         minWidth: 0,
       }}
     >
@@ -2802,12 +3144,16 @@ export const AlgoSettingsRegion = ({
                 setOpenSections((prev) => ({ ...prev, [section.id]: !open }))
               }
             />
-            <SectionSummaryStrip
-              section={section}
-              profileDraft={profileDraft}
-              strategySettingsDraft={strategySettingsDraft}
-              dirtyFieldKeys={dirtyFieldKeys}
-            />
+            {!open ? (
+              // Collapsed: summary chips are a value preview. Open: the editable
+              // fields below ARE the detail, so the chips would just duplicate them.
+              <SectionSummaryStrip
+                section={section}
+                profileDraft={profileDraft}
+                strategySettingsDraft={strategySettingsDraft}
+                dirtyFieldKeys={dirtyFieldKeys}
+              />
+            ) : null}
             {open ? (
               <div id={bodyId} className="algo-settings-grid">
                 {section.fields.map((item) =>

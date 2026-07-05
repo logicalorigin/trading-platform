@@ -7,6 +7,8 @@ import {
   shadowPositionMarksTable,
   shadowPositionsTable,
   signalMonitorBreadthSnapshotsTable,
+  signalMonitorEventsTable,
+  signalMonitorSymbolStatesTable,
 } from "./schema";
 
 /**
@@ -211,6 +213,57 @@ export async function pruneShadowBalanceSnapshots(
 }
 
 /**
+ * `signal_monitor_events` is the append-only crossover-event log and grows with
+ * every signal across the whole universe (~4x faster at the 2000-symbol cap).
+ * Two readers constrain deletion: the signal-quality KPI calibration reads
+ * TRUSTED events (direction buy/sell with a close) inside its 90-day rolling
+ * window — the default 120-day retention always covers it — and the
+ * latest-trusted-event lookup (`listLatestTrustedSignalMonitorEventsForProfile`,
+ * DISTINCT ON (symbol, timeframe) per profile) needs the newest trusted event
+ * per cell to survive REGARDLESS of age, or a thinly-signaled symbol loses its
+ * canonical signal identity. Untrusted rows have no latest-per-cell reader.
+ */
+export async function pruneSignalMonitorEvents(
+  opts: RetentionOptions,
+): Promise<RetentionResult> {
+  const { dryRun, batchSize, cutoff } = resolve(opts);
+  const t = signalMonitorEventsTable;
+  const trusted = sql`${inArray(t.direction, ["buy", "sell"])} and ${t.close} is not null`;
+  const latestTrustedPerCell = sql`select distinct on (${t.profileId}, ${t.symbol}, ${t.timeframe}) ${t.id} from ${t} where ${trusted} order by ${t.profileId}, ${t.symbol}, ${t.timeframe}, ${t.signalAt} desc, ${t.createdAt} desc`;
+  const deletable = sql`${t.signalAt} < ${cutoff} and ${t.id} not in (${latestTrustedPerCell})`;
+  return sweep({
+    table: "signal_monitor_events",
+    cutoff,
+    dryRun,
+    count: sql`select count(*)::int as n from ${t} where ${deletable}`,
+    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+  });
+}
+
+/**
+ * `signal_monitor_symbol_states` rows are deactivated (`active = false`) when a
+ * symbol leaves the resolved universe; every state reader filters
+ * `active = true`, so inactive rows exist only to restore a prior signal latch
+ * if the symbol re-enters. A latch that old is meaningless (freshness is
+ * measured in bars), so inactive rows untouched for `retentionDays` are safe to
+ * drop. Active rows are NEVER eligible, regardless of age.
+ */
+export async function pruneInactiveSignalMonitorSymbolStates(
+  opts: RetentionOptions,
+): Promise<RetentionResult> {
+  const { dryRun, batchSize, cutoff } = resolve(opts);
+  const t = signalMonitorSymbolStatesTable;
+  const deletable = sql`${t.active} = false and ${t.updatedAt} < ${cutoff}`;
+  return sweep({
+    table: "signal_monitor_symbol_states",
+    cutoff,
+    dryRun,
+    count: sql`select count(*)::int as n from ${t} where ${deletable}`,
+    deleteBatch: sql`delete from ${t} where ${t.id} in (select ${t.id} from ${t} where ${deletable} limit ${batchSize}) returning ${t.id}`,
+  });
+}
+
+/**
  * Per-table retention windows (days) + batch size, the single source of truth
  * shared by the CLI and the api-server scheduler. Defaults are the conservative,
  * forward-looking values chosen for Task 7.
@@ -220,6 +273,8 @@ export type SnapshotRetentionConfig = {
   balanceSnapshotDays: number;
   shadowBalanceSnapshotDays: number;
   shadowPositionMarkDays: number;
+  signalMonitorEventDays: number;
+  signalMonitorInactiveStateDays: number;
   batchSize: number;
 };
 
@@ -245,6 +300,13 @@ export function resolveSnapshotRetentionConfig(
     balanceSnapshotDays: envInt(env, "BALANCE_SNAPSHOT_RETENTION_DAYS", 180),
     shadowBalanceSnapshotDays: envInt(env, "SHADOW_BALANCE_SNAPSHOT_RETENTION_DAYS", 180),
     shadowPositionMarkDays: envInt(env, "SHADOW_POSITION_MARK_RETENTION_DAYS", 180),
+    // Must stay above the signal-quality KPI 90-day rolling window.
+    signalMonitorEventDays: envInt(env, "SIGNAL_MONITOR_EVENT_RETENTION_DAYS", 120),
+    signalMonitorInactiveStateDays: envInt(
+      env,
+      "SIGNAL_MONITOR_INACTIVE_STATE_RETENTION_DAYS",
+      90,
+    ),
     batchSize: envInt(env, "SNAPSHOT_RETENTION_BATCH_SIZE", DEFAULT_RETENTION_BATCH_SIZE),
   };
 }
@@ -276,6 +338,14 @@ export async function runAllSnapshotRetention(opts?: {
     await pruneClosedShadowPositionMarks({
       ...common,
       retentionDays: config.shadowPositionMarkDays,
+    }),
+    await pruneSignalMonitorEvents({
+      ...common,
+      retentionDays: config.signalMonitorEventDays,
+    }),
+    await pruneInactiveSignalMonitorSymbolStates({
+      ...common,
+      retentionDays: config.signalMonitorInactiveStateDays,
     }),
   ];
 }

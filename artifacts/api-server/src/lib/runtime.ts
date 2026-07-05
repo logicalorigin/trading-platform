@@ -17,6 +17,7 @@ export type MassiveRuntimeConfig = {
 };
 export type MassiveProviderIdentity = "massive";
 export type MassiveStocksRecency = "realtime" | "delayed";
+export type MassiveOptionsRecency = "realtime" | "delayed";
 export type FmpRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
@@ -59,11 +60,17 @@ export type IbkrBridgeRuntimeConfig = {
 export type IbkrBridgeRuntimeOverrideMetadata = {
   bridgeId?: string | null;
   managementTokenHash?: string | null;
+  // Epoch ms when the user INTENTIONALLY stopped this bridge (Shutdown). Persisted
+  // so an intentionally-stopped bridge is never auto-revived by self-heal, even
+  // across an api-server restart (the in-memory shutdown job is lost; the file is not).
+  // Null/absent => not intentionally stopped (a crash/tunnel-drop is healable).
+  stopRequestedAt?: number | null;
 };
 export type IbkrBridgeRuntimeOverrideSnapshot = IbkrBridgeRuntimeConfig & {
   updatedAt: Date;
   bridgeId: string | null;
   managementTokenHash: string | null;
+  stopRequestedAt: number | null;
 };
 export type IbkrBridgeRuntimeChangeEvent =
   | {
@@ -126,16 +133,33 @@ const IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES = [
   "IB_GATEWAY_MARKET_DATA_TYPE",
 ];
 
-const IBKR_DEFAULT_ACCOUNT_ENV_NAMES = [
-  "IBKR_ACCOUNT_ID",
-  "IBKR_DEFAULT_ACCOUNT_ID",
-];
-
-const IGNORED_IBKR_BRIDGE_URL_ENV_NAMES = [
+const IBKR_CLIENT_PORTAL_BASE_URL_ENV_NAMES = [
+  "IBKR_CLIENT_PORTAL_BASE_URL",
+  "IBKR_CLIENT_PORTAL_URL",
   "IBKR_BASE_URL",
   "IBKR_API_BASE_URL",
   "IB_GATEWAY_URL",
   "IBKR_GATEWAY_URL",
+];
+const IBKR_BEARER_TOKEN_ENV_NAMES = [
+  "IBKR_BEARER_TOKEN",
+  "IBKR_ACCESS_TOKEN",
+  "IBKR_API_TOKEN",
+];
+const IBKR_COOKIE_ENV_NAMES = [
+  "IBKR_COOKIE",
+  "IBKR_CLIENT_PORTAL_COOKIE",
+  "IBKR_SESSION_COOKIE",
+];
+const IBKR_DEFAULT_ACCOUNT_ENV_NAMES = [
+  "IBKR_ACCOUNT_ID",
+  "IBKR_DEFAULT_ACCOUNT_ID",
+];
+const IBKR_EXT_OPERATOR_ENV_NAMES = ["IBKR_EXT_OPERATOR"];
+const IBKR_USERNAME_ENV_NAMES = ["IBKR_USERNAME", "IBKR_CLIENT_PORTAL_USERNAME"];
+const IBKR_PASSWORD_ENV_NAMES = ["IBKR_PASSWORD", "IBKR_CLIENT_PORTAL_PASSWORD"];
+
+const IGNORED_IBKR_BRIDGE_URL_ENV_NAMES = [
   "IBKR_BRIDGE_URL",
   "IBKR_BRIDGE_BASE_URL",
 ];
@@ -236,6 +260,7 @@ function normalizeIbkrBridgeRuntimeConfig(
     updatedAt,
     bridgeId: metadata.bridgeId ?? null,
     managementTokenHash: metadata.managementTokenHash ?? null,
+    stopRequestedAt: metadata.stopRequestedAt ?? null,
   };
 }
 
@@ -281,6 +306,12 @@ function readIbkrBridgeRuntimeOverrideFile(
           typeof record.managementTokenHash === "string" &&
           record.managementTokenHash.trim()
             ? record.managementTokenHash.trim()
+            : null,
+        // Legacy (version 1) files have no stopRequestedAt — treat as not-stopped.
+        stopRequestedAt:
+          typeof record.stopRequestedAt === "number" &&
+          Number.isFinite(record.stopRequestedAt)
+            ? record.stopRequestedAt
             : null,
       },
     );
@@ -335,11 +366,12 @@ function persistIbkrBridgeRuntimeOverride(
       tempPath,
       JSON.stringify(
         {
-          version: 1,
+          version: 2,
           baseUrl: snapshot.baseUrl,
           apiToken: snapshot.apiToken,
           bridgeId: snapshot.bridgeId,
           managementTokenHash: snapshot.managementTokenHash,
+          stopRequestedAt: snapshot.stopRequestedAt,
           updatedAt: snapshot.updatedAt.toISOString(),
         },
         null,
@@ -444,6 +476,15 @@ function parseIntegerEnv(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseBooleanEnv(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export function getRuntimeMode(): RuntimeMode {
   return process.env["TRADING_MODE"] === "live" ? "live" : "shadow";
 }
@@ -455,11 +496,13 @@ export function getRuntimeMode(): RuntimeMode {
 let massiveRuntimeConfigCache: MassiveRuntimeConfig | null | undefined;
 let fmpRuntimeConfigCache: FmpRuntimeConfig | null | undefined;
 let massiveStocksRecencyCache: MassiveStocksRecency | undefined;
+let massiveOptionsRecencyCache: MassiveOptionsRecency | undefined;
 
 export function __resetProviderRuntimeConfigCacheForTests(): void {
   massiveRuntimeConfigCache = undefined;
   fmpRuntimeConfigCache = undefined;
   massiveStocksRecencyCache = undefined;
+  massiveOptionsRecencyCache = undefined;
 }
 
 export function getMassiveRuntimeConfig(): MassiveRuntimeConfig | null {
@@ -513,6 +556,28 @@ export function isMassiveStocksRealtimeConfigured(
   );
 }
 
+export function getMassiveOptionsRecency(): MassiveOptionsRecency {
+  if (massiveOptionsRecencyCache !== undefined) {
+    return massiveOptionsRecencyCache;
+  }
+
+  const normalized = (process.env["MASSIVE_OPTIONS_RECENCY"] ?? "")
+    .trim()
+    .toLowerCase();
+  massiveOptionsRecencyCache =
+    normalized === "delayed" ? "delayed" : "realtime";
+  return massiveOptionsRecencyCache;
+}
+
+export function isMassiveOptionsRealtimeConfigured(
+  config: MassiveRuntimeConfig | null = getMassiveRuntimeConfig(),
+): boolean {
+  return (
+    getMassiveProviderIdentity(config) === "massive" &&
+    getMassiveOptionsRecency() === "realtime"
+  );
+}
+
 export function getFmpRuntimeConfig(): FmpRuntimeConfig | null {
   if (fmpRuntimeConfigCache !== undefined) {
     return fmpRuntimeConfigCache;
@@ -531,6 +596,27 @@ export function getFmpRuntimeConfig(): FmpRuntimeConfig | null {
     : null;
 
   return fmpRuntimeConfigCache;
+}
+
+export function getIbkrRuntimeConfig(): IbkrRuntimeConfig | null {
+  const baseUrl = getOptionalEnv(IBKR_CLIENT_PORTAL_BASE_URL_ENV_NAMES);
+  if (!baseUrl) {
+    return null;
+  }
+
+  return {
+    baseUrl: stripTrailingSlash(baseUrl),
+    bearerToken: getOptionalEnv(IBKR_BEARER_TOKEN_ENV_NAMES),
+    cookie: getOptionalEnv(IBKR_COOKIE_ENV_NAMES),
+    defaultAccountId: getOptionalEnv(IBKR_DEFAULT_ACCOUNT_ENV_NAMES),
+    extOperator: getOptionalEnv(IBKR_EXT_OPERATOR_ENV_NAMES),
+    extraHeaders: {},
+    username: getOptionalEnv(IBKR_USERNAME_ENV_NAMES),
+    password: getOptionalEnv(IBKR_PASSWORD_ENV_NAMES),
+    allowInsecureTls: parseBooleanEnv(
+      process.env["IBKR_ALLOW_INSECURE_TLS"] ?? null,
+    ),
+  };
 }
 
 export function getIbkrTwsRuntimeConfig(): IbkrTwsRuntimeConfig | null {
@@ -628,6 +714,34 @@ export function setIbkrBridgeRuntimeOverride(
   return ibkrBridgeRuntimeOverride;
 }
 
+/**
+ * Durably stamp the override as INTENTIONALLY stopped (user Shutdown). Persisted so
+ * self-heal never revives it across an api-server restart. No-op when there is no
+ * override (Detach already deleted the file). A subsequent successful attach via
+ * setIbkrBridgeRuntimeOverride writes fresh metadata, clearing stopRequestedAt.
+ */
+export function markIbkrBridgeRuntimeStopRequested(
+  now: number = Date.now(),
+): IbkrBridgeRuntimeOverrideSnapshot | null {
+  const current = loadIbkrBridgeRuntimeOverride();
+  if (!current) {
+    return null;
+  }
+  const nextOverride: IbkrBridgeRuntimeOverrideSnapshot = {
+    ...current,
+    updatedAt: new Date(),
+    stopRequestedAt: now,
+  };
+  persistIbkrBridgeRuntimeOverride(nextOverride);
+  ibkrBridgeRuntimeOverride = nextOverride;
+  ibkrBridgeRuntimeOverrideLoaded = true;
+  notifyIbkrBridgeRuntimeChanged({
+    type: "set",
+    override: cloneIbkrBridgeRuntimeOverride(nextOverride),
+  });
+  return ibkrBridgeRuntimeOverride;
+}
+
 export function clearIbkrBridgeRuntimeOverride(
   options: { deletePersisted?: boolean } = {},
 ): void {
@@ -693,6 +807,6 @@ export function getProviderConfiguration() {
   return {
     massive: Boolean(massiveConfig),
     research: Boolean(getFmpRuntimeConfig()),
-    ibkr: Boolean(getIbkrBridgeRuntimeConfig()),
+    ibkr: Boolean(getIbkrRuntimeConfig()),
   } as const;
 }

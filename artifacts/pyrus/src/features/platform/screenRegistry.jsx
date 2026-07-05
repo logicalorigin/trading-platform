@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useState } from "react";
+import { summarizeErrorSignature } from "../../components/platform/PlatformErrorBoundary";
+import { RADII } from "../../lib/uiTokens.jsx";
 import {
   getPreloadedScreenComponent,
   getScreenModulePreloadSnapshot,
@@ -87,8 +89,16 @@ const createPreloadableScreen = (screenId, label) => {
         }}
       >
         <div style={{ fontSize: 15 }}>Screen failed to load</div>
-        <div style={{ maxWidth: 520, textAlign: "center", opacity: 0.72 }}>
-          {loadError instanceof Error ? loadError.message : String(loadError)}
+        {/* Sanitized signature only: chunk-load failures carry the raw chunk
+            URL in error.message, which must not reach user-facing copy. Full
+            detail stays available on hover via title. */}
+        <div
+          title={loadError instanceof Error ? loadError.message : String(loadError)}
+          style={{ maxWidth: 520, textAlign: "center", opacity: 0.72 }}
+        >
+          {summarizeErrorSignature(
+            loadError instanceof Error ? loadError : new Error(String(loadError)),
+          )}
         </div>
         <button type="button" onClick={retryLoad}>
           Retry
@@ -127,7 +137,7 @@ const createPreloadableScreen = (screenId, label) => {
             style={{
               width: 6,
               height: 6,
-              borderRadius: 999,
+              borderRadius: RADII.pill,
               background: "currentColor",
               opacity: 0.72,
             }}
@@ -140,6 +150,7 @@ const createPreloadableScreen = (screenId, label) => {
 };
 
 const MarketScreen = createPreloadableScreen("market", "MarketScreen");
+const MarketDemoScreen = createPreloadableScreen("market-demo", "MarketDemoScreen");
 const SignalsScreen = createPreloadableScreen("signals", "SignalsScreen");
 const FlowScreen = createPreloadableScreen("flow", "FlowScreen");
 const GexScreen = createPreloadableScreen("gex", "GexScreen");
@@ -153,6 +164,10 @@ const SettingsScreen = createPreloadableScreen("settings", "SettingsScreen");
 
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
+  // Hidden demo of the Market redesign. `hidden: true` keeps it out of every
+  // visible nav surface (desktop nav, command palette) while still being rendered
+  // by the shell's panel loop and reachable via `?screen=market-demo`.
+  { id: "market-demo", label: "Market Demo", icon: "◉", hidden: true },
   { id: "signals", label: "Signals", icon: "◌" },
   { id: "flow", label: "Flow", icon: "◈" },
   { id: "gex", label: "GEX", icon: "✳" },
@@ -208,6 +223,10 @@ export const skipStableHiddenScreenRender = (prevProps, nextProps) =>
   prevProps?.isVisible === false && nextProps?.isVisible === false;
 
 export const MemoMarketScreen = memo(MarketScreen, skipStableHiddenScreenRender);
+export const MemoMarketDemoScreen = memo(
+  MarketDemoScreen,
+  skipStableHiddenScreenRender,
+);
 export const MemoSignalsScreen = memo(SignalsScreen, skipStableHiddenScreenRender);
 export const MemoFlowScreen = memo(FlowScreen, skipStableHiddenScreenRender);
 export const MemoGexScreen = memo(GexScreen, skipStableHiddenScreenRender);

@@ -34,6 +34,7 @@ type Unsubscribe = () => void;
 
 export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EVENT_LIMIT = 50;
 export const MARKETING_SHADOW_DASHBOARD_MAX_EVENT_LIMIT = 100;
+export const MARKETING_SHADOW_DASHBOARD_DEFAULT_EQUITY_RANGE: AccountRange = "1D";
 export const MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS = 5_000;
 export const MARKETING_SHADOW_DASHBOARD_STREAM_COALESCE_MS = 1_000;
 export const MARKETING_SHADOW_DASHBOARD_STALE_MS = 24 * 60 * 60_000;
@@ -171,7 +172,7 @@ export function normalizeMarketingShadowDashboardInput(
     typeof input.equityRange === "string" ? input.equityRange.toUpperCase() : "";
   const equityRange = ACCOUNT_HISTORY_RANGES.includes(rawRange as AccountRange)
     ? (rawRange as AccountRange)
-    : "ALL";
+    : MARKETING_SHADOW_DASHBOARD_DEFAULT_EQUITY_RANGE;
   const rawEventLimit = Number(input.eventLimit);
   const eventLimit = Number.isFinite(rawEventLimit)
     ? Math.min(
@@ -528,40 +529,34 @@ export async function fetchMarketingShadowDashboardSnapshot(
 ): Promise<MarketingShadowDashboardPayload> {
   const normalized = normalizeMarketingShadowDashboardInput(input);
   const deps = resolveDependencies(dependencies);
-  const [
-    summary,
-    equityHistory,
-    positions,
-    closedTrades,
-    workingOrders,
-    historyOrders,
-    allocation,
-    deployments,
-  ] = await Promise.all([
-    deps.getSummary(),
-    deps.getEquityHistory({ range: normalized.equityRange }),
-    deps.getPositions({}),
-    deps.getClosedTrades({}),
-    deps.getOrders({ tab: "working" }),
-    deps.getOrders({ tab: "history" }),
-    deps.getAllocation(),
-    deps.listDeployments({ mode: "shadow" }),
-  ]);
+  // The first dashboard snapshot often lands during app warmup. These reads are
+  // cached below the service layer, but cold parallel fan-out can occupy the
+  // entire shared DB pool alongside signal-monitor bar-cache warmup.
+  const summary = await deps.getSummary();
+  const equityHistory = await deps.getEquityHistory({
+    range: normalized.equityRange,
+  });
+  const positions = await deps.getPositions({});
+  const closedTrades = await deps.getClosedTrades({});
+  const workingOrders = await deps.getOrders({ tab: "working" });
+  const historyOrders = await deps.getOrders({ tab: "history" });
+  const allocation = await deps.getAllocation();
+  const deployments = await deps.listDeployments({ mode: "shadow" });
   const risk = await deps.getRisk({
     positionsResponse: positions,
     closedTrades,
     detail: "fast",
   });
   const focusedDeployment = selectMarketingDeployment(deployments.deployments);
-  const [cockpit, events] = focusedDeployment
-    ? await Promise.all([
-        deps.getCockpit({ deploymentId: focusedDeployment.id }),
-        deps.listEvents({
-          deploymentId: focusedDeployment.id,
-          limit: normalized.eventLimit,
-        }),
-      ])
-    : [null, { events: [] } as ExecutionEvents];
+  let cockpit: AlgoCockpit | null = null;
+  let events: ExecutionEvents = { events: [] } as ExecutionEvents;
+  if (focusedDeployment) {
+    cockpit = await deps.getCockpit({ deploymentId: focusedDeployment.id });
+    events = await deps.listEvents({
+      deploymentId: focusedDeployment.id,
+      limit: normalized.eventLimit,
+    });
+  }
 
   const accountAsOf = latestIsoTimestamp(
     summary.updatedAt,

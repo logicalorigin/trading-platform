@@ -211,7 +211,7 @@ const LEGEND_EVIDENCE = ["observed", "inferred", "unknown"];
 
 const ATTENTION_STATUSES = new Set(["checking", "degraded", "down"]);
 // Hand-authored top-down flow (the diagram is a visual architecture view, not a
-// 1:1 trace of backend edges): sources feed Market Data, which fans out to the
+// 1:1 trace of backend edges): Massive feeds Market Data, which fans out to the
 // three analysis lanes, all converging on Algo (which owns trade management),
 // which acts on the Account. Edge status = worst of its two endpoint cards.
 //
@@ -223,21 +223,12 @@ const ATTENTION_STATUSES = new Set(["checking", "degraded", "down"]);
 // Model.js ~L1490) and the Market Data provider table; pending backend audit.
 const VISUAL_FLOW_EDGES = Object.freeze([
   {
-    from: "broker",
-    to: "market",
-    label: "quotes / chains",
-    transports: [
-      { means: "IBKR live quotes", detail: "TWS → IBKR bridge, SSE stream", fresh: true },
-      { means: "IBKR chains/snapshots", detail: "IBKR bridge REST", fresh: true },
-    ],
-  },
-  {
     from: "massive",
     to: "market",
     label: "equities + options",
     transports: [
       { means: "Massive realtime equities", detail: "Massive WebSocket", fresh: true },
-      { means: "Massive historical", detail: "Massive REST, on-demand", fresh: false },
+      { means: "Massive historical", detail: "Massive HTTP, on-demand", fresh: false },
     ],
   },
   // Market Data fans out per source column: Equities (col 0) feeds Signals;
@@ -258,8 +249,7 @@ const VISUAL_FLOW_EDGES = Object.freeze([
     fromCol: 1,
     portBias: -0.24,
     transports: [
-      { means: "IBKR realtime", detail: "TWS → bridge, live chains/quotes", fresh: true },
-      { means: "Massive ≥15m delayed", detail: "Massive REST spot fallback", fresh: false },
+      { means: "Massive realtime", detail: "Massive option chains/quotes", fresh: true },
     ],
   },
   {
@@ -268,15 +258,15 @@ const VISUAL_FLOW_EDGES = Object.freeze([
     label: "option chains",
     fromCol: 1,
     portBias: 0.24,
-    transports: [{ means: "IBKR realtime", detail: "option chains via bridge", fresh: true }],
+    transports: [{ means: "Massive realtime", detail: "Massive option chains", fresh: true }],
   },
   {
     from: "algo",
     to: "account",
     label: "orders / exits",
     transports: [
-      { means: "IBKR order submit", detail: "IBKR bridge REST", fresh: true },
-      { means: "IBKR fills/status", detail: "order stream, broker SSE", fresh: true },
+      { means: "Broker order submit", detail: "broker execution API", fresh: true },
+      { means: "Broker fills/status", detail: "order stream, broker SSE", fresh: true },
     ],
   },
 ]);
@@ -371,6 +361,12 @@ const edgePath = (fromRect, toRect, fromPortX = null) => {
     return {
       d: `M ${fromX} ${fromY} L ${fromX} ${gutterY} L ${toX} ${gutterY} L ${toX} ${toY}`,
       mid: { x: (fromX + toX) / 2, y: gutterY },
+      points: [
+        [fromX, fromY],
+        [fromX, gutterY],
+        [toX, gutterY],
+        [toX, toY],
+      ],
     };
   }
 
@@ -382,7 +378,54 @@ const edgePath = (fromRect, toRect, fromPortX = null) => {
   return {
     d: `M ${fromX} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${toX} ${to.y}`,
     mid: { x: midX, y: (from.y + to.y) / 2 },
+    points: [
+      [fromX, from.y],
+      [midX, from.y],
+      [midX, to.y],
+      [toX, to.y],
+    ],
   };
+};
+
+// D6.1: evenly spaced directional chevron marks along a manhattan polyline so
+// flow direction stays readable mid-path (the endpoint arrowhead alone is not
+// enough on long gutter runs). Marks near the transport dot at `mid` are
+// skipped so the two glyphs never overlap.
+const EDGE_CHEVRON_SPACING = 34;
+const edgeChevronMarks = (points, mid) => {
+  const segments = [];
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[i + 1];
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len === 0) continue;
+    segments.push({ x1, y1, x2, y2, len });
+    total += len;
+  }
+  if (total < EDGE_CHEVRON_SPACING * 1.6) return [];
+  const count = Math.floor(total / EDGE_CHEVRON_SPACING);
+  const step = total / (count + 1);
+  const marks = [];
+  let walked = 0;
+  let target = step;
+  for (const seg of segments) {
+    while (target <= walked + seg.len) {
+      const t = (target - walked) / seg.len;
+      const x = seg.x1 + (seg.x2 - seg.x1) * t;
+      const y = seg.y1 + (seg.y2 - seg.y1) * t;
+      if (Math.hypot(x - mid.x, y - mid.y) > TRANSPORT_DOT_R + 5) {
+        marks.push({
+          x,
+          y,
+          angle: (Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1) * 180) / Math.PI,
+        });
+      }
+      target += step;
+    }
+    walked += seg.len;
+  }
+  return marks;
 };
 
 const edgeLabelPosition = (fromRect, toRect, fromPortX = null) => {
@@ -548,6 +591,18 @@ const buildDatabaseHighway = (rects, masterById, rowCounts = {}) => {
     });
   }
   return lanes;
+};
+
+// D6.1 data-ink: weight a database-highway lane's stroke by its row throughput.
+// Log-scaled against the busiest lane so a 220M-row lane reads visibly heavier
+// than a 1k-row lane without swamping the diagram. Null/empty rows keep the base
+// hairline. `maxLog` is the largest log10(rowCount+1) across visible lanes.
+const DB_LANE_STROKE_MIN = 1.2;
+const DB_LANE_STROKE_MAX = 3;
+const dbLaneStrokeWidth = (rowCount, maxLog) => {
+  if (rowCount == null || rowCount <= 0 || maxLog <= 0) return DB_LANE_STROKE_MIN;
+  const t = Math.min(1, Math.log10(rowCount + 1) / maxLog);
+  return DB_LANE_STROKE_MIN + t * (DB_LANE_STROKE_MAX - DB_LANE_STROKE_MIN);
 };
 
 // --- Algo convergence bus ---------------------------------------------------
@@ -881,15 +936,14 @@ const MasterCard = ({ master, rect, pressureSource = false }) => {
   );
 };
 
-// Provider per quadrant. Equities are Massive-only (IBKR no longer serves equity
-// bars); options realtime rides IBKR broker lines because Massive options is
-// 15-min delayed, while historical options come from Massive. So IBKR appears in
-// exactly one cell. Each cell carries a live status glyph: realtime cells from
-// the equity/option stream sensors, historical cells from the Massive provider
-// connection (`massive-feed`) since historical is served on demand from it.
+// Provider per quadrant. Equities and options market data are Massive-backed;
+// Broker execution stays on broker/account/order paths. Each cell carries a live status
+// glyph: realtime cells from the equity/option stream sensors, historical cells
+// from the Massive provider connection (`massive-feed`) since historical is
+// served on demand from it.
 const MARKET_TABLE_CELLS = Object.freeze([
   { row: 0, col: 0, providers: "Massive", liveChildId: "market-equities" },
-  { row: 0, col: 1, providers: "IBKR", liveChildId: "market-options" },
+  { row: 0, col: 1, providers: "Massive", liveChildId: "market-options" },
   { row: 1, col: 0, providers: "Massive", liveChildId: "massive-feed" },
   { row: 1, col: 1, providers: "Massive", liveChildId: "massive-feed" },
 ]);
@@ -1166,6 +1220,17 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
     () => buildDatabaseHighway(groupRects, masterById, databaseRowCounts || {}),
     [groupRects, masterById, databaseRowCounts],
   );
+  const dbLaneMaxLog = useMemo(
+    () =>
+      databaseHighway.reduce(
+        (max, lane) =>
+          lane.rowCount != null && lane.rowCount > 0
+            ? Math.max(max, Math.log10(lane.rowCount + 1))
+            : max,
+        0,
+      ),
+    [databaseHighway],
+  );
   const algoConvergence = useMemo(
     () => buildAlgoConvergence(groupRects, masterById),
     [groupRects, masterById],
@@ -1268,13 +1333,27 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                   ? marketColumnPortX(fromRect, edge.fromCol, edge.portBias || 0)
                   : null;
               const labelPosition = edgeLabelPosition(fromRect, toRect, fromPortX);
-              const baseStrokeWidth = edge.isPrimary ? 1.8 : 1;
-              const geom = edgePath(fromRect, toRect, fromPortX);
               // Each transport (means of moving data) draws its own parallel
               // line + dot. A delayed/historical path (fresh:false) is dashed so
               // it reads as a distinct source, never merged with the realtime line.
               const transports = edge.transports;
               const transportCount = transports.length;
+              // D6.1: edge weight = real signal. isPrimary sets the base and the
+              // fraction of fresh transports scales width/opacity, so an edge
+              // whose transports are all fresh reads strong and a stale edge
+              // reads thin/dim. Status coloring (meta.tone) is unchanged.
+              const freshCount = transports.filter(
+                (transport) => transport.fresh !== false,
+              ).length;
+              const freshFraction =
+                transportCount > 0 ? freshCount / transportCount : 0;
+              const baseStrokeWidth =
+                (edge.isPrimary ? 1.3 : 0.8) +
+                (edge.isPrimary ? 1 : 0.5) * freshFraction;
+              const weightOpacity = 0.55 + 0.45 * freshFraction;
+              const geom = edgePath(fromRect, toRect, fromPortX);
+              const chevronMarks = edgeChevronMarks(geom.points, geom.mid);
+              const chevronsMarch = Boolean(edge.animated) && freshCount > 0;
               return (
                 <g key={edge.id}>
                   {transports.map((transport, transportIndex) => {
@@ -1311,7 +1390,9 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                           }
                           style={{
                             ...motionVars({ accent: meta.tone }),
-                            opacity: fresh ? (edge.isPrimary ? 0.7 : 0.14) : 0.5,
+                            opacity:
+                              (fresh ? (edge.isPrimary ? 0.7 : 0.14) : 0.4) *
+                              weightOpacity,
                           }}
                         >
                           <title>{`${edge.from} → ${edge.to} · ${tip}`}</title>
@@ -1330,6 +1411,37 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                       </g>
                     );
                   })}
+                  {/* D6.1: mid-path direction chevrons. Marching (slow staggered
+                      brightness wave = live-flow indicator) only when the edge
+                      is animated AND at least one transport is fresh. */}
+                  {chevronMarks.map((mark, markIndex) => (
+                    <path
+                      key={`chevron-${markIndex}`}
+                      className={
+                        chevronsMarch
+                          ? "ra-edge-chevron ra-edge-chevron-march"
+                          : "ra-edge-chevron"
+                      }
+                      d="M -2.4 -2.8 L 2.4 0 L -2.4 2.8"
+                      fill="none"
+                      stroke={meta.tone}
+                      strokeWidth={edge.isPrimary ? 1.3 : 1}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      pointerEvents="none"
+                      transform={`translate(${mark.x} ${mark.y}) rotate(${mark.angle})`}
+                      style={
+                        chevronsMarch
+                          ? {
+                              animationDelay: `${(markIndex * 0.35 - 6).toFixed(2)}s`,
+                            }
+                          : {
+                              opacity:
+                                (0.3 + 0.3 * freshFraction) * weightOpacity,
+                            }
+                      }
+                    />
+                  ))}
                   {edge.showLabel ? (
                     <text
                       x={labelPosition.x}
@@ -1361,7 +1473,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
                     d={lane.d}
                     fill="none"
                     stroke={meta.tone}
-                    strokeWidth={1.2}
+                    strokeWidth={dbLaneStrokeWidth(lane.rowCount, dbLaneMaxLog)}
                     strokeLinejoin="round"
                     strokeLinecap="round"
                     strokeDasharray={lane.dashed ? "4 4" : undefined}

@@ -896,9 +896,7 @@ const OptionRiskReviewStrip = ({ riskRecommendations, currency, maskValues }) =>
                   gap: sp(1),
                   minWidth: 0,
                   padding: `${sp(2)} ${sp(2)}`,
-                  borderRadius: RADII.sm,
                   background: CSS_COLOR.bg2,
-                  border: `1px solid ${CSS_COLOR.border}`,
                 }}
               >
                 <div
@@ -1308,7 +1306,7 @@ export const PortfolioExposurePanel = ({
       {allBlank ? (
         <EmptyState
           title="No exposure yet"
-          body="Open positions, cash balances, and IBKR risk metrics will populate this panel."
+          body="Open positions, cash balances, and broker risk metrics will populate this panel."
         />
       ) : (
         <div data-testid="portfolio-exposure-dashboard" style={{ display: "grid", gap: sp(isPhone ? 3 : 4) }}>

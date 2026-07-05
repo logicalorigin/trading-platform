@@ -508,7 +508,7 @@ export const TradePositionsPanel = ({
   brokerConfigured,
   brokerAuthenticated,
   gatewayTradingReady = false,
-  gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  gatewayTradingMessage = "IBKR Client Portal must be connected before trading.",
   onLoadPosition,
   isVisible = false,
   safeQaMode = false,
@@ -670,7 +670,7 @@ export const TradePositionsPanel = ({
   const notifyGatewayTradingUnavailable = () => {
     toast.push({
       kind: "warn",
-      title: "IB Gateway disconnected",
+      title: "IBKR session unavailable",
       body: gatewayTradingMessage,
     });
   };
@@ -939,7 +939,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Bring the local IBKR bridge online before managing live positions.",
+        body: "Connect IBKR Client Portal before managing live positions.",
       });
       return;
     }
@@ -995,7 +995,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Authenticate the bridge before flattening live positions.",
+        body: "Authenticate IBKR Client Portal before flattening live positions.",
       });
       return;
     }
@@ -1003,7 +1003,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1074,7 +1074,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Authenticate the bridge before modifying live risk controls.",
+        body: "Authenticate IBKR Client Portal before modifying live risk controls.",
       });
       return;
     }
@@ -1082,7 +1082,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1198,7 +1198,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Authenticate the bridge before modifying live risk controls.",
+        body: "Authenticate IBKR Client Portal before modifying live risk controls.",
       });
       return;
     }
@@ -1207,7 +1207,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1322,7 +1322,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Authenticate the bridge before attempting a live roll workflow.",
+        body: "Authenticate IBKR Client Portal before attempting a live roll workflow.",
       });
       return;
     }
@@ -1330,7 +1330,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1369,7 +1369,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "IBKR login required",
-        body: "Authenticate the bridge before canceling live orders.",
+        body: "Authenticate IBKR Client Portal before canceling live orders.",
       });
       return;
     }
@@ -1378,7 +1378,7 @@ export const TradePositionsPanel = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1570,8 +1570,8 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              IBKR is configured, but live positions stay hidden until the local
-              bridge authenticates.
+              IBKR is configured, but live positions stay hidden until Client
+              Portal authenticates.
             </div>
           ) : brokerConfigured && !accountId ? (
             <div
@@ -1588,7 +1588,7 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              The bridge is authenticated, but no IBKR account is active yet.
+              The Client Portal session is authenticated, but no IBKR account is active yet.
             </div>
           ) : openPositions.length === 0 ? (
             <div
@@ -1740,7 +1740,7 @@ export const TradePositionsPanel = ({
                         fontSize: textSize("caption"),
                         padding: sp("1px 4px"),
                         background: CSS_COLOR.bg0,
-                        borderRadius: dim(2),
+                        borderRadius: dim(RADII.xs),
                         border: `1px solid ${CSS_COLOR.border}`,
                         textAlign: "center",
                         alignSelf: "center",
@@ -2002,7 +2002,7 @@ export const TradePositionsPanel = ({
               textAlign: "center",
             }}
           >
-              No broker history is available until the IBKR bridge is configured and fills exist on the selected account.
+              No broker history is available until IBKR Client Portal is configured and fills exist on the selected account.
             </div>
           ) : !brokerAuthenticated ? (
             <div
@@ -2019,7 +2019,7 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              Bring the local IBKR bridge online to load broker fills.
+              Connect IBKR Client Portal to load broker fills.
             </div>
           ) : !accountId ? (
             <div
@@ -2036,7 +2036,7 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              The bridge is authenticated, but no IBKR account is active yet.
+              The Client Portal session is authenticated, but no IBKR account is active yet.
             </div>
           ) : executionsQuery.isPending && !executionRows.length ? (
             <DataUnavailableState
@@ -2212,7 +2212,7 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              Bring the local IBKR bridge online to load live IBKR
+              Connect IBKR Client Portal to load live IBKR
               orders.
             </div>
           ) : !accountId ? (
@@ -2230,7 +2230,7 @@ export const TradePositionsPanel = ({
                 lineHeight: 1.45,
               }}
             >
-              The bridge is authenticated, but no IBKR account is active yet.
+              The Client Portal session is authenticated, but no IBKR account is active yet.
             </div>
           ) : ordersQuery.isPending && !liveOrders.length ? (
             <DataUnavailableState
@@ -2383,7 +2383,7 @@ export const TradePositionsPanel = ({
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
-                        borderRadius: dim(2),
+                        borderRadius: dim(RADII.xs),
                         cursor:
                           cancelDisabled
                             ? "not-allowed"
@@ -2421,7 +2421,7 @@ export const TradePositionsPanel = ({
               padding: sp("4px 0"),
               background: "transparent",
               border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               color: CSS_COLOR.red,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
@@ -2440,7 +2440,7 @@ export const TradePositionsPanel = ({
               padding: sp("4px 0"),
               background: "transparent",
               border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               color: CSS_COLOR.textSec,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
@@ -2459,7 +2459,7 @@ export const TradePositionsPanel = ({
               padding: sp("4px 0"),
               background: "transparent",
               border: `1px solid ${cssColorMix(CSS_COLOR.amber, 25)}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               color: CSS_COLOR.amber,
               fontSize: textSize("caption"),
               fontFamily: T.sans,

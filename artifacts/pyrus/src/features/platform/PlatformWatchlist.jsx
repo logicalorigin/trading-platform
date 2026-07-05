@@ -750,8 +750,11 @@ const WatchlistRow = memo(
           <div
             style={{
               display: "grid",
+              // Reserve the symbol column so it fits a 5-char ticker and never
+              // shrinks — the signal/sparkline cluster (minmax(0,auto)) gives up
+              // width or the parent clips it before a ticker can render partially.
               gridTemplateColumns:
-                "16px 18px minmax(0,1fr) auto",
+                `16px 18px minmax(${dim(56)}px, 1fr) minmax(0, auto)`,
               alignItems: "center",
               gap: sp(3),
               minWidth: 0,

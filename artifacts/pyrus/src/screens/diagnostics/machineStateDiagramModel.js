@@ -46,7 +46,6 @@ const MISSING_VALUE = "n/a";
 const DB_TABLE_SOURCE = Object.freeze({
   quote_cache: "market",
   bar_cache: "market",
-  option_chain_snapshots: "market",
   ticker_reference_cache: "market",
   flow_events: "flow",
   flow_event_hydration_sessions: "flow",
@@ -230,6 +229,7 @@ const makeNode = ({
   id,
   label,
   lane,
+  groupId = null,
   canonicalState,
   status = "unknown",
   detail = MISSING_VALUE,
@@ -242,6 +242,7 @@ const makeNode = ({
   id,
   label,
   lane,
+  ...(groupId ? { groupId } : {}),
   canonicalState,
   status: normalizeStatus(status),
   detail: detail || MISSING_VALUE,
@@ -367,6 +368,196 @@ const statusFromProviderRecord = (provider) => {
   return declaredIdle && STATUS_ORDER[combined] <= STATUS_ORDER.healthy
     ? "idle"
     : combined;
+};
+
+const SNAPTRADE_BROKER_LABELS = Object.freeze({
+  ETRADE: "E*TRADE",
+  "INTERACTIVE-BROKERS-FLEX": "Interactive Brokers",
+  "ALPACA-PAPER": "Alpaca Paper",
+});
+
+const statusFromBrokerConnection = (status) => {
+  const value = String(status || "").toLowerCase();
+  if (value === "connected") return "healthy";
+  if (value === "configured") return "checking";
+  if (value === "error") return "down";
+  if (value === "disconnected") return "down";
+  return statusFromDiagnosticValue(value);
+};
+
+const brokerConnectionStatusLabel = (status) => {
+  const value = String(status || "").trim();
+  return value || "unknown";
+};
+
+const slugToLabel = (slug) => {
+  const value = String(slug || "").trim().toUpperCase();
+  if (!value) return "";
+  if (SNAPTRADE_BROKER_LABELS[value]) return SNAPTRADE_BROKER_LABELS[value];
+  return value
+    .toLowerCase()
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const brokerConnectionLabel = (connection) =>
+  slugToLabel(connection?.brokerageSlug) ||
+  firstString(connection?.displayName, connection?.name, connection?.id, "Broker");
+
+const brokerConnectionNodeId = (connection) => {
+  const raw = firstString(
+    connection?.brokerageSlug,
+    connection?.name,
+    connection?.id,
+    "broker",
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `broker-snaptrade-${raw || "connection"}`;
+};
+
+const snapTradeBrokerConnectionRecords = (brokerConnections) =>
+  arrayOrEmpty(
+    Array.isArray(brokerConnections)
+      ? brokerConnections
+      : safeRecord(brokerConnections).connections,
+  )
+    .map(safeRecord)
+    .filter(
+      (record) => record.provider === "snaptrade" && record.status !== "disconnected",
+    );
+
+const connectionCapabilities = (connection) =>
+  new Set(
+    arrayOrEmpty(connection.capabilities).map((capability) =>
+      String(capability || "").trim().toLowerCase(),
+    ),
+  );
+
+const connectionHasAnyCapability = (connection, capabilities) => {
+  const advertised = connectionCapabilities(connection);
+  return capabilities.some((capability) =>
+    advertised.has(String(capability || "").toLowerCase()),
+  );
+};
+
+const snapTradeCapabilityState = ({
+  connections,
+  capabilities,
+  idleDetail,
+}) => {
+  if (!connections.length) return null;
+  const capable = connections.filter((connection) =>
+    connectionHasAnyCapability(connection, capabilities),
+  );
+  if (!capable.length) {
+    return {
+      status: "idle",
+      detail: idleDetail,
+      evidence: "observed",
+    };
+  }
+  const status = worstStatus(
+    ...capable.map((connection) => statusFromBrokerConnection(connection.status)),
+  );
+  const connectedCount = capable.filter(
+    (connection) => statusFromBrokerConnection(connection.status) === "healthy",
+  ).length;
+  return {
+    status,
+    detail: metricDetail([
+      "SnapTrade",
+      `${formatCount(capable.length)} broker${capable.length === 1 ? "" : "s"}`,
+      connectedCount ? `${formatCount(connectedCount)} connected` : null,
+    ]),
+    evidence: "observed",
+  };
+};
+
+const snapTradeCapabilityNode = ({ id, label, lane, state, observedAt }) =>
+  makeNode({
+    id,
+    label,
+    lane,
+    canonicalState:
+      state.status === "down" || state.status === "degraded"
+        ? "SourceUnavailable"
+        : state.status === "idle"
+          ? "SourceIdle"
+          : "SourceRead",
+    status: state.status,
+    detail: state.detail,
+    observedAt,
+    evidence: state.evidence,
+    source: "runtime",
+  });
+
+const buildSnapTradeBrokerConnectionNodes = ({
+  brokerConnections,
+  connections = null,
+  nowMs,
+  fallbackObservedAt,
+}) => {
+  const snapTradeConnections =
+    connections ?? snapTradeBrokerConnectionRecords(brokerConnections);
+
+  const byKey = new Map();
+  for (const connection of snapTradeConnections) {
+    const record = safeRecord(connection);
+    const key = firstString(record.brokerageSlug, record.name, record.id).toUpperCase();
+    if (!key) continue;
+    const existing = byKey.get(key);
+    const status = statusFromBrokerConnection(record.status);
+    const capabilities = arrayOrEmpty(record.capabilities).map((capability) =>
+      String(capability || "").trim(),
+    );
+    const updatedAt = firstString(record.updatedAt);
+    const normalized = {
+      key,
+      id: brokerConnectionNodeId(record),
+      label: brokerConnectionLabel(record),
+      status,
+      mode: firstString(record.mode),
+      rawStatus: brokerConnectionStatusLabel(record.status),
+      executionReady: capabilities.includes("execution-ready"),
+      readOnly: capabilities.includes("read-only"),
+      updatedAt,
+    };
+    if (!existing || STATUS_ORDER[status] > STATUS_ORDER[existing.status]) {
+      byKey.set(key, normalized);
+    }
+  }
+
+  return [...byKey.values()]
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((connection) =>
+      makeNode({
+        id: connection.id,
+        label: connection.label,
+        lane: "Data Sources",
+        groupId: "broker",
+        canonicalState:
+          connection.status === "down" || connection.status === "degraded"
+            ? "SourceUnavailable"
+            : "SourceRead",
+        status: connection.status,
+        detail: metricDetail([
+          "SnapTrade",
+          connection.mode,
+          `status=${connection.rawStatus}`,
+          connection.executionReady ? "execution-ready" : null,
+          connection.readOnly ? "read-only" : null,
+          connection.updatedAt ? `updated ${formatAge(connection.updatedAt, nowMs)}` : null,
+        ]),
+        observedAt: connection.updatedAt || fallbackObservedAt,
+        evidence: "observed",
+        source: "runtime",
+        metric: connection.rawStatus,
+      }),
+    );
 };
 
 const lineUsageDetail = (lineUsage) => {
@@ -584,8 +775,8 @@ const summaryFromNodes = (nodes, snapshotAgeMs) => {
 export const MACHINE_STATE_GROUPS = Object.freeze([
   {
     id: "broker",
-    label: "Broker Feed (IBKR)",
-    children: Object.freeze(["ibkr-bridge", "bridge-governor"]),
+    label: "Broker Feed",
+    children: Object.freeze(["ibkr-bridge"]),
   },
   {
     id: "massive",
@@ -678,20 +869,14 @@ export const MACHINE_STATE_GROUPS = Object.freeze([
 // Labels for the locked master edges (key: groupId->groupId).
 const MASTER_EDGE_LABELS = Object.freeze({
   "broker->account": "broker REST/SSE + quote lines",
-  "broker->market": "quotes/chains",
-  "broker->trade": "chain line budget",
-  "broker->flow": "chains + line budget",
-  "broker->gex": "option chains",
-  "broker->algo": "algo budget",
-  "broker->client": "pressure/backoff",
   "massive->market": "Massive WS",
-  "massive->flow": "spot fallback",
+  "massive->flow": "chains + quotes",
+  "massive->gex": "option chains",
   "massive->account": "equity quote fallback",
   "market->account": "quote marks",
   "market->signals": "bars/quotes",
   "flow->signals": "flow events",
   "signals->algo": "worker state",
-  "flow->signals": "flow events",
   "account->algo": "risk/capital",
   "algo->trade-mgmt": "decisions",
   "account->trade-mgmt": "positions/fills",
@@ -700,7 +885,6 @@ const MASTER_EDGE_LABELS = Object.freeze({
   "flow->client": "flow model",
   "gex->client": "gex model",
   "signals->client": "signal model",
-  "algo->client": "algo state",
   "account->client": "account model",
   "trade-mgmt->client": "trade state",
   "diagnostics->client": "EventSource + pressure gate",
@@ -713,17 +897,33 @@ export const buildMachineStateDiagramGroups = (model) => {
   const nodes = arrayOrEmpty(record.nodes);
   const edges = arrayOrEmpty(record.edges);
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const groupIds = new Set(MACHINE_STATE_GROUPS.map((group) => group.id));
   const groupByChild = new Map();
+  const dynamicChildrenByGroup = new Map();
   for (const group of MACHINE_STATE_GROUPS) {
     for (const childId of group.children) {
       groupByChild.set(childId, group.id);
     }
   }
+  for (const node of nodes) {
+    if (!node?.groupId || !groupIds.has(node.groupId)) continue;
+    groupByChild.set(node.id, node.groupId);
+    if (
+      !MACHINE_STATE_GROUPS.find((group) => group.id === node.groupId)?.children.includes(
+        node.id,
+      )
+    ) {
+      const dynamicChildren = dynamicChildrenByGroup.get(node.groupId) || [];
+      dynamicChildren.push(node);
+      dynamicChildrenByGroup.set(node.groupId, dynamicChildren);
+    }
+  }
 
   const masters = MACHINE_STATE_GROUPS.map((group) => {
-    const children = group.children
-      .map((childId) => nodesById.get(childId))
-      .filter(Boolean);
+    const children = [
+      ...group.children.map((childId) => nodesById.get(childId)).filter(Boolean),
+      ...(dynamicChildrenByGroup.get(group.id) || []),
+    ];
     const status = children.reduce(
       (worst, child) => worstStatus(worst, child.status),
       "unknown",
@@ -798,6 +998,7 @@ export const buildMachineStateDiagramModel = ({
   latest = null,
   streamState = "unknown",
   runtimeControl = null,
+  brokerConnections = null,
   footerSignal = null,
   memoryPressureState = null,
   gexClientState = null,
@@ -898,7 +1099,6 @@ export const buildMachineStateDiagramModel = ({
   const lineUsage = safeRecord(runtimePart(runtimeControl, "lineUsage"));
   const streams = safeRecord(runtimePart(runtimeControl, "streams"));
   const flowScanner = safeRecord(runtimePart(runtimeControl, "flowScanner"));
-  const bridgeGovernor = safeRecord(runtimePart(runtimeControl, "bridgeGovernor"));
   const runtimeMassive = safeRecord(runtimePart(runtimeControl, "massive"));
   const massiveRecord = hasRecordKeys(runtimeMassive) ? runtimeMassive : rawMassive;
   const massiveWebSocket = safeRecord(massiveRecord.websocket);
@@ -956,58 +1156,62 @@ export const buildMachineStateDiagramModel = ({
           bridgeGapMs > MARKET_DATA_STREAM_GAP_WARNING_MS ? "degraded" : "unknown",
           marketDataMetrics.reconnectScheduled === true ? "checking" : "unknown",
         );
-  const accountStreamNode = streamFreshnessNode({
-    id: "account-stream",
-    label: "Account State",
-    lane: "Account & Trading",
-    stream: safeRecord(streams.account),
-    nowMs,
-    observedAt,
+  const snapTradeBrokerConnections = snapTradeBrokerConnectionRecords(brokerConnections);
+  const snapTradeAccountState = snapTradeCapabilityState({
+    connections: snapTradeBrokerConnections,
+    capabilities: ["accounts", "positions"],
+    idleDetail: "SnapTrade account capability not advertised",
   });
-  const orderStreamNode = streamFreshnessNode({
-    id: "order-stream",
-    label: "Order State",
-    lane: "Account & Trading",
-    stream: safeRecord(streams.order),
-    nowMs,
-    observedAt,
+  const snapTradeOrderState = snapTradeCapabilityState({
+    connections: snapTradeBrokerConnections,
+    capabilities: ["orders", "executions", "execution-ready"],
+    idleDetail: "SnapTrade trading not enabled",
   });
+  const accountStreamNode = snapTradeAccountState
+    ? snapTradeCapabilityNode({
+        id: "account-stream",
+        label: "Account State",
+        lane: "Account & Trading",
+        state: snapTradeAccountState,
+        observedAt,
+      })
+    : streamFreshnessNode({
+        id: "account-stream",
+        label: "Account State",
+        lane: "Account & Trading",
+        stream: safeRecord(streams.account),
+        nowMs,
+        observedAt,
+      });
+  const orderStreamNode = snapTradeOrderState
+    ? snapTradeCapabilityNode({
+        id: "order-stream",
+        label: "Order State",
+        lane: "Account & Trading",
+        state: snapTradeOrderState,
+        observedAt,
+      })
+    : streamFreshnessNode({
+        id: "order-stream",
+        label: "Order State",
+        lane: "Account & Trading",
+        stream: safeRecord(streams.order),
+        nowMs,
+        observedAt,
+      });
   // tradingFresh is hook-derived from the same coerced booleans; only trust a
   // false when at least one underlying stream actually reported an event time.
+  // In SnapTrade mode, broker connection/readiness evidence supersedes the old
+  // IBKR SSE freshness hooks.
   const tradingFreshObserved =
+    !snapTradeBrokerConnections.length &&
     typeof streams.tradingFresh === "boolean" &&
     (safeRecord(streams.account).lastEventAt != null ||
       safeRecord(streams.order).lastEventAt != null);
   const massiveObserved = hasRecordKeys(massiveRecord);
   const massiveStatus = statusFromProviderRecord(massiveRecord);
-  const governorLanes = Object.entries(bridgeGovernor).filter(
-    ([, lane]) => lane && typeof lane === "object",
-  );
-  const governorOpenLanes = governorLanes
-    .filter(([, lane]) => lane.circuitOpen)
-    .map(([name]) => name);
-  const lineTotal = safeRecord(lineUsage.total);
-  const lineWarnings = firstFiniteNumber(lineUsage.warnings);
-  const linePressure = safeRecord(lineUsage.pressure);
-  const lineDriftRecord = safeRecord(lineUsage.drift);
-  const lineUsageAvailable = lineUsage.available !== false;
-  const lineDriftMatched =
-    lineDriftRecord.status === "matched" ||
-    lineDriftRecord.status === "settling" ||
-    firstFiniteNumber(lineDriftRecord.admissionVsBridgeLineDelta) === 0;
-  const protectedByUtilizationOnly =
-    linePressure.state === "protected" && lineWarnings <= 0 && lineDriftMatched;
   const accountMonitorUsage = safeRecord(lineUsage.accountMonitor);
   const shadowAccountUsage = safeRecord(lineUsage.shadowAccount);
-  const lineStatus = !lineUsageAvailable
-    ? "unknown"
-    : worstStatus(
-        protectedByUtilizationOnly ? "healthy" : statusFromLineUsage(lineTotal),
-        protectedByUtilizationOnly
-          ? "healthy"
-          : statusFromPressureLevel(linePressure.state),
-        lineWarnings > 0 ? "degraded" : "unknown",
-      );
   const flowScannerUsage = safeRecord(lineUsage.flowScanner);
   // The live lineUsage payload exposes automation and the Trade Options Chain
   // pool only under lineUsage.pools (runtimeControlModel.js:1455-1474); the
@@ -1149,37 +1353,77 @@ export const buildMachineStateDiagramModel = ({
     automationMetrics.gatewayBlockedCount,
     automationMetrics.gateway_blocked_count,
   );
+  const signalCount = firstFiniteNumber(automationMetrics.signalCount);
   const candidateCount = firstFiniteNumber(automationMetrics.candidateCount);
   const freshSignalCount = firstFiniteNumber(automationMetrics.freshSignalCount);
-  const staleSignalCount = firstFiniteNumber(
-    automationMetrics.staleSignalCount,
-    automationMetrics.notFreshSignalCount,
+  const staleSignalCount = firstFiniteNumber(automationMetrics.staleSignalCount);
+  const unavailableSignalCount = firstFiniteNumber(
+    automationMetrics.unavailableSignalCount,
   );
+  const degradedSignalInputCount =
+    (staleSignalCount ?? 0) + (unavailableSignalCount ?? 0);
+  const degradedSignalInputRatio =
+    signalCount > 0 ? degradedSignalInputCount / signalCount : 0;
+  const signalInputsDegraded = degradedSignalInputCount > 0;
   const shadowExitCount = firstFiniteNumber(automationMetrics.shadowExitCount);
   const expirationDueCount = firstFiniteNumber(
     automationMetrics.expirationMaintenanceDueCount,
   );
   const automationObserved = Boolean(automationSnapshot);
+  const staleScanCount = firstFiniteNumber(
+    automationMetrics.inactiveStaleScanCount,
+    automationMetrics.staleScanCount,
+  );
+  const activeLongScanCount = firstFiniteNumber(automationMetrics.activeLongScanCount);
+  const algoWorkerStatus = worstStatus(
+    automationMetrics.workerRunning === false ? "degraded" : "unknown",
+    automationMetrics.workerScanEnabled === true && staleScanCount > 0
+      ? "degraded"
+      : "unknown",
+    activeLongScanCount > 0 ? "degraded" : "unknown",
+    failureCount > 0 || gatewayBlockedCount > 0 ? "degraded" : "unknown",
+  );
+  const algoEngineStatus = automationObserved
+    ? worstStatus(
+        automationMetrics.workerRunning === true ||
+          latestScanAgeMs != null ||
+          lastScanDurationMs != null
+          ? "healthy"
+          : "unknown",
+        algoWorkerStatus,
+        statusFromLineUsage(automationUsage),
+      )
+    : "unknown";
   const orderFailureCount = firstFiniteNumber(orderMetrics.failureCount);
+  const brokerConnectionNodes = buildSnapTradeBrokerConnectionNodes({
+    brokerConnections,
+    connections: snapTradeBrokerConnections,
+    nowMs,
+    fallbackObservedAt: observedAt,
+  });
+  const fallbackBrokerNode = makeNode({
+    id: "ibkr-bridge",
+    label: "Broker Feed",
+    lane: "Data Sources",
+    canonicalState: ibkrStatus === "down" || ibkrStatus === "degraded"
+      ? "SourceUnavailable"
+      : "SourceRead",
+    status: ibkrStatus,
+    detail: ibkrSnapshot
+      ? diagnosticDetail(ibkrSnapshot, [
+          ibkrMetrics.connected === false ? "disconnected" : null,
+          `${formatMs(firstFiniteNumber(ibkrMetrics.heartbeatAgeMs))} heartbeat`,
+        ])
+      : "Broker snapshot not observed",
+    observedAt,
+    evidence: ibkrSnapshot ? "observed" : "unknown",
+  });
+  const brokerSourceNodes = brokerConnectionNodes.length
+    ? brokerConnectionNodes
+    : [fallbackBrokerNode];
 
   const nodes = [
-    makeNode({
-      id: "ibkr-bridge",
-      label: "Broker Feed",
-      lane: "Data Sources",
-      canonicalState: ibkrStatus === "down" || ibkrStatus === "degraded"
-        ? "SourceUnavailable"
-        : "SourceRead",
-      status: ibkrStatus,
-      detail: ibkrSnapshot
-        ? diagnosticDetail(ibkrSnapshot, [
-            ibkrMetrics.connected === false ? "disconnected" : null,
-            `${formatMs(firstFiniteNumber(ibkrMetrics.heartbeatAgeMs))} heartbeat`,
-          ])
-        : "IBKR snapshot not observed",
-      observedAt,
-      evidence: ibkrSnapshot ? "observed" : "unknown",
-    }),
+    ...brokerSourceNodes,
     makeNode({
       id: "massive-feed",
       label: "Massive Feed",
@@ -1205,50 +1449,6 @@ export const buildMachineStateDiagramModel = ({
       observedAt,
       evidence: massiveObserved ? "observed" : "unknown",
       source: "runtime",
-    }),
-    makeNode({
-      id: "bridge-governor",
-      label: "Bridge Governor",
-      lane: "Broker Feed (IBKR)",
-      canonicalState:
-        governorOpenLanes.length || lineStatus === "degraded" || lineStatus === "down"
-          ? "AdmissionShed"
-          : "RouteClassified",
-      // One merged readout: the governor IS the broker-line distribution hub —
-      // line pools and lane circuits are two fields of the same hub's health.
-      status: worstStatus(
-        lineStatus,
-        governorLanes.length
-          ? governorOpenLanes.length
-            ? "degraded"
-            : "healthy"
-          : "unknown",
-      ),
-      detail:
-        (lineUsageAvailable && Object.keys(lineUsage).length) || governorLanes.length
-          ? metricDetail([
-              lineUsageAvailable && Object.keys(lineUsage).length
-                ? `${lineUsageDetail(lineTotal)} lines`
-                : null,
-              firstString(linePressure.state) ? `pressure=${linePressure.state}` : null,
-              lineWarnings ? `${formatCount(lineWarnings)} warnings` : null,
-              governorLanes.length
-                ? governorOpenLanes.length
-                  ? `circuit open: ${governorOpenLanes.join(", ")}`
-                  : "circuits closed"
-                : null,
-            ])
-          : "governor not observed",
-      observedAt,
-      evidence:
-        (lineUsageAvailable && Object.keys(lineUsage).length) || governorLanes.length
-          ? "observed"
-          : "unknown",
-      source: "runtime",
-      metric:
-        lineUsageAvailable && Object.keys(lineUsage).length
-          ? `${formatCount(firstFiniteNumber(lineTotal.used, lineTotal.activeLineCount))}/${formatCount(firstFiniteNumber(lineTotal.cap, lineTotal.maxLines))}`
-          : null,
     }),
     accountStreamNode,
     orderStreamNode,
@@ -1434,9 +1634,9 @@ export const buildMachineStateDiagramModel = ({
       id: "signal-engine",
       label: "Signals",
       lane: "Signals",
-      canonicalState: staleSignalCount > 0 ? "SourceUnavailable" : "Normalized",
+      canonicalState: signalInputsDegraded ? "SourceUnavailable" : "Normalized",
       status: automationObserved
-        ? staleSignalCount > 0
+        ? signalInputsDegraded
           ? "checking"
           : freshSignalCount != null || latestScanAgeMs != null
             ? "healthy"
@@ -1448,7 +1648,13 @@ export const buildMachineStateDiagramModel = ({
               ? `${formatCount(freshSignalCount)} fresh signals`
               : null,
             staleSignalCount > 0
-              ? `${formatCount(staleSignalCount)} stale/not fresh`
+              ? `${formatCount(staleSignalCount)} stale signals`
+              : null,
+            unavailableSignalCount > 0
+              ? `${formatCount(unavailableSignalCount)} unavailable`
+              : null,
+            degradedSignalInputRatio >= 0.1
+              ? `${Math.round(degradedSignalInputRatio * 100)}% degraded inputs`
               : null,
             latestScanAgeMs !== null ? `${formatMs(latestScanAgeMs)} scan age` : null,
           ])
@@ -1464,13 +1670,7 @@ export const buildMachineStateDiagramModel = ({
         gatewayBlockedCount > 0 || failureCount > 0
           ? "AdmissionShed"
           : "ServiceSelected",
-      status: automationObserved
-        ? worstStatus(
-            statusFromSnapshot(automationSnapshot),
-            statusFromLineUsage(automationUsage),
-            failureCount > 0 || gatewayBlockedCount > 0 ? "degraded" : "unknown",
-          )
-        : "unknown",
+      status: algoEngineStatus,
       detail: automationObserved
         ? metricDetail([
             candidateCount !== null ? `${formatCount(candidateCount)} candidates` : null,
@@ -1727,21 +1927,27 @@ export const buildMachineStateDiagramModel = ({
   const decayedNodes = applySnapshotDecay(nodes, snapshotAgeMs);
   const nodesById = new Map(decayedNodes.map((node) => [node.id, node]));
   const edges = [
-    { from: "ibkr-bridge", to: "bridge-governor", label: "broker lines" },
-    { from: "ibkr-bridge", to: "account-stream", label: "broker REST/SSE" },
-    { from: "ibkr-bridge", to: "order-stream", label: "broker SSE" },
-    { from: "ibkr-bridge", to: "market-equities", label: "IBKR quotes" },
-    { from: "ibkr-bridge", to: "market-options", label: "chains/quotes" },
-    { from: "ibkr-bridge", to: "flow-scanner", label: "chains/quotes" },
-    { from: "ibkr-bridge", to: "gex-projection", label: "option chains" },
+    ...brokerSourceNodes.flatMap((node) => [
+      {
+        from: node.id,
+        to: "account-stream",
+        label: node.id.startsWith("broker-snaptrade-")
+          ? "broker sync"
+          : "broker REST/SSE",
+      },
+      {
+        from: node.id,
+        to: "order-stream",
+        label: node.id.startsWith("broker-snaptrade-")
+          ? "broker orders"
+          : "broker SSE",
+      },
+    ]),
     { from: "massive-feed", to: "market-equities", label: "Massive WS" },
-    { from: "massive-feed", to: "flow-scanner", label: "spot fallback" },
+    { from: "massive-feed", to: "market-options", label: "chains/quotes" },
+    { from: "massive-feed", to: "flow-scanner", label: "chains/quotes" },
+    { from: "massive-feed", to: "gex-projection", label: "option chains" },
     { from: "massive-feed", to: "position-quotes", label: "equity quote fallback" },
-    { from: "bridge-governor", to: "trade-chain", label: "chain line budget" },
-    { from: "bridge-governor", to: "flow-scanner", label: "line budget" },
-    { from: "bridge-governor", to: "algo-engine", label: "algo budget" },
-    { from: "bridge-governor", to: "position-quotes", label: "quote lines" },
-    { from: "bridge-governor", to: "route-admission", label: "pressure/backoff" },
     { from: "market-equities", to: "position-quotes", label: "stock marks" },
     { from: "market-options", to: "position-quotes", label: "option marks" },
     { from: "market-equities", to: "signal-engine", label: "bars/quotes" },

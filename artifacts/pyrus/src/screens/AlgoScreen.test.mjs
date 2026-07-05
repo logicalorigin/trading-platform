@@ -26,7 +26,11 @@ test("Algo STA row universe follows the Signal Matrix universe before deployment
   );
   assert.match(
     source,
-    /const staSignalUniverseSymbols = signalMonitorUniverseSymbols\.length\s*\?\s*signalMonitorUniverseSymbols\s*:\s*focusedDeployment\?\.symbolUniverse \|\| \[\];/,
+    /const signalMatrixStateUniverseSymbols = useMemo\(/,
+  );
+  assert.match(
+    source,
+    /const staSignalUniverseSymbols = signalMonitorUniverseSymbols\.length\s*\?\s*signalMonitorUniverseSymbols\s*:\s*signalMatrixStateUniverseSymbols\.length\s*\?\s*signalMatrixStateUniverseSymbols\s*:\s*focusedDeployment\?\.symbolUniverse \|\| \[\];/,
   );
   assert.match(source, /universeSymbols: staSignalUniverseSymbols,/);
 });
@@ -34,19 +38,20 @@ test("Algo STA row universe follows the Signal Matrix universe before deployment
 test("Algo settings save mutations fail fast instead of spinning indefinitely", () => {
   assert.match(source, /const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 25_000;/);
   assert.match(source, /const ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS = 300;/);
-  assert.match(source, /const ALGO_SETTINGS_SAVE_API_BASE_URL = normalizeAlgoSettingsSaveApiBaseUrl\(/);
-  assert.match(source, /import\.meta\.env\?\.VITE_PROXY_API_TARGET/);
+  assert.match(source, /const ALGO_SETTINGS_SAVE_PAUSE_TTL_MS =\s*ALGO_SETTINGS_SAVE_TIMEOUT_MS \+ ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS \+ 5_000;/);
+  assert.doesNotMatch(source, /ALGO_SETTINGS_SAVE_API_BASE_URL/);
+  assert.doesNotMatch(source, /VITE_PROXY_API_TARGET/);
   assert.match(
     source,
-    /const ALGO_SETTINGS_SAVE_REQUEST_OPTIONS = Object\.freeze\(\{\s*timeoutMs: ALGO_SETTINGS_SAVE_TIMEOUT_MS,[\s\S]*?baseUrl: ALGO_SETTINGS_SAVE_API_BASE_URL/s,
+    /const ALGO_SETTINGS_SAVE_REQUEST_OPTIONS = Object\.freeze\(\{\s*timeoutMs: ALGO_SETTINGS_SAVE_TIMEOUT_MS,\s*\}\);/,
   );
   assert.match(
     source,
-    /useUpdateSignalOptionsExecutionProfile\(\{\s*request: ALGO_SETTINGS_SAVE_REQUEST_OPTIONS,/s,
+    /useUpdateSignalOptionsExecutionProfile\(\{\s*request: \{ \.\.\.ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders \},/s,
   );
   assert.match(
     source,
-    /useUpdateAlgoDeploymentStrategySettings\(\{\s*request: ALGO_SETTINGS_SAVE_REQUEST_OPTIONS,/s,
+    /useUpdateAlgoDeploymentStrategySettings\(\{\s*request: \{ \.\.\.ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders \},/s,
   );
   assert.match(source, /title: "Save failed"/);
 });
@@ -54,8 +59,17 @@ test("Algo settings save mutations fail fast instead of spinning indefinitely", 
 test("Algo settings save frees live stream connection slots before mutating", () => {
   assert.match(source, /useCriticalApiMutationPause\(\)/);
   assert.match(source, /isVisible && !criticalApiMutationPaused/);
-  assert.match(source, /const releaseConnectionPause = beginCriticalApiMutationPause\(\);/);
+  assert.match(
+    source,
+    /const releaseConnectionPause = beginCriticalApiMutationPause\(\{\s*ttlMs: ALGO_SETTINGS_SAVE_PAUSE_TTL_MS,\s*\}\);/,
+  );
   assert.match(source, /getListSignalMonitorEventsQueryKey/);
+  assert.match(source, /getListAlgoDeploymentsQueryKey/);
+  assert.match(source, /getListExecutionEventsQueryKey/);
+  assert.match(source, /getGetAccountPositionsQueryKey\("shadow"\)/);
+  assert.match(source, /getGetSignalOptionsAutomationStateQueryKey\(deploymentId\)/);
+  assert.match(source, /getGetAlgoDeploymentCockpitQueryKey\(deploymentId\)/);
+  assert.match(source, /getGetSignalOptionsPerformanceQueryKey\(deploymentId\)/);
   assert.match(
     source,
     /void queryClient\.cancelQueries\(\{\s*queryKey: getListSignalMonitorEventsQueryKey\(\),\s*\}\);/,

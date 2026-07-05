@@ -8,7 +8,6 @@ import {
   isTransientBridgeWorkError,
   runBridgeWork,
 } from "./bridge-governor";
-import { getBridgeHealthForSession } from "./platform-bridge-health";
 import {
   listIbkrAccounts,
   listIbkrExecutions,
@@ -20,15 +19,7 @@ import {
   markBridgeOrderReadsSuppressed,
   shouldProbeBridgeOrderReadSuppression,
 } from "./bridge-order-read-state";
-import type {
-  HistoryBarTimeframe,
-  HistoryDataSource,
-} from "../providers/ibkr/client";
-import {
-  fetchBridgeQuoteSnapshots,
-  subscribeBridgeQuoteSnapshots,
-} from "./bridge-quote-stream";
-import { readRecentAccountPositionQuoteSymbols } from "./account-position-quote-symbols";
+import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
@@ -45,9 +36,7 @@ import type {
 } from "./market-data-admission";
 import {
   admitMarketDataLeases,
-  getMarketDataLeasesSnapshot,
   releaseMarketDataLeases,
-  subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
 import {
@@ -58,10 +47,7 @@ import {
 
 const bridgeClient = new IbkrBridgeClient();
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
-const STREAM_RECONNECT_MIN_MS = 1_000;
-const STREAM_RECONNECT_MAX_MS = 30_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
-const POSITION_QUOTE_SUBSCRIPTION_RECONCILE_MS = 1_000;
 let nextOptionQuoteDemandStreamId = 1;
 
 type Unsubscribe = () => void;
@@ -72,14 +58,6 @@ const orderSnapshotCache = new Map<
   string,
   { payload: OrderSnapshotPayload; cachedAt: number }
 >();
-type BridgePrewarmSyncState = {
-  signature: string;
-  syncedAt: number;
-};
-const accountMonitorPrewarmSignatures = new Map<
-  string,
-  BridgePrewarmSyncState
->();
 const accountMonitorSnapshots = new Map<
   string,
   {
@@ -89,13 +67,6 @@ const accountMonitorSnapshots = new Map<
     orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
   }
 >();
-
-function isBridgeWorkBackoffError(error: unknown): boolean {
-  return (
-    isHttpError(error) &&
-    error.code === "ibkr_bridge_work_backoff"
-  );
-}
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -127,13 +98,6 @@ function orderSnapshotTimeoutMs(): number {
   );
 }
 
-function accountMonitorPrewarmBridgeResyncMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_ACCOUNT_MONITOR_PREWARM_BRIDGE_RESYNC_MS",
-    15_000,
-  );
-}
-
 function isOrderSnapshotTimeoutError(error: unknown): boolean {
   if (!isHttpError(error)) {
     return false;
@@ -142,13 +106,6 @@ function isOrderSnapshotTimeoutError(error: unknown): boolean {
   return (
     error.code === "orders_timeout" ||
     (cause instanceof HttpError && cause.code === "orders_timeout")
-  );
-}
-
-function nextReconnectDelay(attempt: number): number {
-  return Math.min(
-    STREAM_RECONNECT_MAX_MS,
-    STREAM_RECONNECT_MIN_MS * 2 ** Math.max(0, attempt),
   );
 }
 
@@ -251,17 +208,35 @@ function optionRightCode(value: unknown): "C" | "P" | null {
   return null;
 }
 
+function normalizeOpraOptionTicker(value: unknown): string | null {
+  const normalized =
+    typeof value === "string"
+      ? value.trim().toUpperCase().replace(/\s+/g, "")
+      : "";
+  if (!normalized) {
+    return null;
+  }
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : null;
+}
+
 function structuredOptionProviderContractIdFromInstrument(input: {
   optionContract?: {
+    ticker?: unknown;
+    providerContractId?: unknown;
     underlying?: unknown;
     expirationDate?: unknown;
     strike?: unknown;
     right?: unknown;
-    multiplier?: unknown;
-    sharesPerContract?: unknown;
   } | null;
 }): string | null {
   const contract = input.optionContract;
+  const explicitTicker =
+    normalizeOpraOptionTicker(contract?.providerContractId) ??
+    normalizeOpraOptionTicker(contract?.ticker);
+  if (explicitTicker) {
+    return explicitTicker;
+  }
   const underlying = normalizeSymbol(String(contract?.underlying ?? ""));
   const expiration = optionExpirationKey(contract?.expirationDate);
   const strike = finiteOptionNumber(contract?.strike);
@@ -269,90 +244,12 @@ function structuredOptionProviderContractIdFromInstrument(input: {
   if (!underlying || !expiration || strike === null || !right) {
     return null;
   }
-  const multiplier =
-    Math.trunc(
-      finiteOptionNumber(contract?.multiplier) ??
-        finiteOptionNumber(contract?.sharesPerContract) ??
-        100,
-    ) || 100;
-  return `twsopt:${Buffer.from(
-    JSON.stringify({
-      v: 1,
-      u: underlying,
-      e: expiration,
-      s: strike,
-      r: right,
-      x: "SMART",
-      tc: underlying,
-      m: multiplier,
-    }),
-    "utf8",
-  ).toString("base64url")}`;
-}
-
-function prewarmAccountMonitorQuotes(
-  owner: string,
-  requests: MarketDataLineRequest[],
-): void {
-  if (isMassiveStocksRealtimeConfigured()) {
-    clearAccountMonitorQuotePrewarm(owner);
-    return;
-  }
-
-  const symbols = Array.from(
-    new Set(
-      requests
-        .map((request) =>
-          normalizeSymbol(
-            request.assetClass === "equity"
-              ? request.symbol ?? ""
-              : request.underlying ?? request.symbol ?? "",
-          ).toUpperCase(),
-        )
-        .filter(Boolean),
-    ),
-  ).sort();
-  syncAccountMonitorQuotePrewarm(owner, symbols);
-}
-
-function clearAccountMonitorQuotePrewarm(owner: string): void {
-  syncAccountMonitorQuotePrewarm(owner, []);
-}
-
-function syncAccountMonitorQuotePrewarm(
-  owner: string,
-  symbols: string[],
-): void {
-  const signature = symbols.join(",");
-  const previousSync = accountMonitorPrewarmSignatures.get(owner);
-  const now = Date.now();
-  if (
-    previousSync?.signature === signature &&
-    now - previousSync.syncedAt < accountMonitorPrewarmBridgeResyncMs()
-  ) {
-    return;
-  }
-  accountMonitorPrewarmSignatures.set(owner, {
-    signature,
-    syncedAt: now,
-  });
-
-  void runBridgeWork(
-    "quotes",
-    () => bridgeClient.prewarmQuoteSubscriptions(symbols, owner),
-    { recordFailure: false },
-  ).catch((error) => {
-    if (!isBridgeWorkBackoffError(error)) {
-      accountMonitorPrewarmSignatures.delete(owner);
-    }
-    const log = isBridgeWorkBackoffError(error)
-      ? logger.debug.bind(logger)
-      : logger.warn.bind(logger);
-    log(
-      { err: error, symbols, owner },
-      "IBKR account monitor quote prewarm failed",
-    );
-  });
+  const opraUnderlying = underlying.replace(/[^A-Z0-9]/g, "");
+  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
+  return opraUnderlying
+    ? `O:${opraUnderlying}${opraExpiration}${right}${strikeKey}`
+    : null;
 }
 
 function refreshAccountMonitorLeases(input: {
@@ -402,7 +299,6 @@ function refreshAccountMonitorLeases(input: {
   const requests = Array.from(requestsByKey.values());
   if (!requests.length) {
     releaseMarketDataLeases(key, "account_monitor_empty");
-    clearAccountMonitorQuotePrewarm(key);
     return;
   }
 
@@ -413,7 +309,6 @@ function refreshAccountMonitorLeases(input: {
     ttlMs: ACCOUNT_MONITOR_LEASE_TTL_MS,
     fallbackProvider: "cache",
   });
-  prewarmAccountMonitorQuotes(key, requests);
 }
 
 function updateAccountMonitorPositions(input: {
@@ -511,116 +406,24 @@ type OptionChainSnapshotPayload = {
   }>;
 };
 
-type HistoricalBarSnapshotPayload = {
-  symbol: string;
-  timeframe: HistoryBarTimeframe;
-  bar:
-    | (Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>>[number] & {
-        source: string;
-      })
-    | null;
-};
-
 type QuoteStreamPayload = {
-  quotes: Array<
-    Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
-      source: "ibkr" | "massive";
-    }
-  >;
+  quotes: Array<QuoteSnapshot & { source: "massive" }>;
 };
 
 export async function fetchQuoteSnapshotPayload(
   symbols: string[],
 ): Promise<QuoteStreamPayload> {
-  if (isMassiveStocksRealtimeConfigured()) {
-    const payload = await getQuoteSnapshots({ symbols: symbols.join(",") });
-    return {
-      quotes: payload.quotes as Array<
-        Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
-          source: "ibkr" | "massive";
-        }
-      >,
-    };
-  }
-  return fetchBridgeQuoteSnapshots(symbols);
-}
-
-export function resolveQuoteStreamSource(): "massive" | "ibkr-bridge" {
-  return isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge";
-}
-
-export function resolvePositionQuoteStreamSource(): "ibkr-bridge" {
-  return "ibkr-bridge";
-}
-
-const POSITION_QUOTE_ELIGIBLE_OWNER_PREFIXES = [
-  "account-monitor:",
-  "account-position-equity-quotes:",
-  "account-position-option-quotes:",
-  "shadow-position:",
-];
-
-function positionQuoteLeaseOwnerIsEligible(owner: unknown): boolean {
-  const normalizedOwner = String(owner || "").trim();
-  if (
-    normalizedOwner === "account-position-option-quotes:ui" ||
-    normalizedOwner.startsWith("account-position-option-quotes:ui:")
-  ) {
-    return false;
-  }
-  return POSITION_QUOTE_ELIGIBLE_OWNER_PREFIXES.some((prefix) =>
-    normalizedOwner.startsWith(prefix),
-  );
-}
-
-function currentAccountPositionQuoteSymbols(): Set<string> {
-  const symbols = readRecentAccountPositionQuoteSymbols();
-  getMarketDataLeasesSnapshot().forEach((lease) => {
-    if (
-      lease.intent !== "account-monitor-live" ||
-      !positionQuoteLeaseOwnerIsEligible(lease.owner)
-    ) {
-      return;
-    }
-    lease.lineIds.forEach((lineId) => {
-      if (!lineId.startsWith("equity:")) {
-        return;
-      }
-      const symbol = normalizeSymbol(lineId.slice("equity:".length));
-      if (symbol) {
-        symbols.add(symbol);
-      }
-    });
-  });
-  return symbols;
-}
-
-function filterPositionQuoteSymbols(symbols: string[]): string[] {
-  const eligibleSymbols = currentAccountPositionQuoteSymbols();
-  if (!eligibleSymbols.size) {
-    return [];
-  }
-  return Array.from(
-    new Set(
-      symbols
-        .map((symbol) => normalizeSymbol(symbol))
-        .filter((symbol) => symbol && eligibleSymbols.has(symbol)),
+  const payload = await getQuoteSnapshots({ symbols: symbols.join(",") });
+  return {
+    quotes: payload.quotes.filter(
+      (quote): quote is QuoteSnapshot & { source: "massive" } =>
+        quote.source === "massive",
     ),
-  );
+  };
 }
 
-export async function fetchPositionQuoteSnapshotPayload(
-  symbols: string[],
-): Promise<QuoteStreamPayload> {
-  const positionSymbols = filterPositionQuoteSymbols(symbols);
-  if (!positionSymbols.length) {
-    return { quotes: [] };
-  }
-  return fetchBridgeQuoteSnapshots(positionSymbols, {
-    intent: "account-monitor-live",
-    fallbackProvider: "none",
-    hydrate: false,
-  });
+export function resolveQuoteStreamSource(): "massive" {
+  return "massive";
 }
 
 export async function fetchOptionChainSnapshotPayload(
@@ -673,7 +476,9 @@ export function readOptionQuoteDemandSnapshotPayload(input: {
   const requestedAt = Date.now();
   const state = readIbkrLiveDemandState(input);
   const quotes = state.states.flatMap((item) =>
-    item.quote ? [{ ...item.quote, source: "ibkr" as const }] : [],
+    item.quote
+      ? [{ ...item.quote, source: "massive" as const }]
+      : [],
   );
   const missingStates = state.states.filter((item) => !item.quote);
   const rejectedStates = state.states.filter((item) => item.status === "rejected");
@@ -702,39 +507,6 @@ export function readOptionQuoteDemandSnapshotPayload(input: {
       acceptedProviderContractIds,
       missingProviderContractIds: missingStates.map((item) => item.providerContractId),
     },
-  };
-}
-
-export async function fetchHistoricalBarSnapshotPayload(input: {
-  symbol: string;
-  timeframe: HistoryBarTimeframe;
-  assetClass?: "equity" | "option";
-  providerContractId?: string | null;
-  outsideRth?: boolean;
-  source?: HistoryDataSource;
-  priority?: number;
-}): Promise<HistoricalBarSnapshotPayload> {
-  const bars = await bridgeClient.getHistoricalBars({
-    symbol: normalizeSymbol(input.symbol),
-    timeframe: input.timeframe,
-    limit: 1,
-    assetClass: input.assetClass,
-    providerContractId: input.providerContractId ?? null,
-    outsideRth: input.outsideRth,
-    source: input.source,
-    priority: input.priority,
-  });
-
-  return {
-    symbol: normalizeSymbol(input.symbol),
-    timeframe: input.timeframe,
-    bar:
-      bars[bars.length - 1] != null
-        ? {
-            ...bars[bars.length - 1],
-            partial: true,
-          }
-        : null,
   };
 }
 
@@ -873,37 +645,6 @@ export async function fetchExecutionSnapshotPayload(input: {
   };
 }
 
-export async function fetchMarketDepthSnapshotPayload(input: {
-  accountId?: string;
-  symbol: string;
-  assetClass?: "equity" | "option";
-  providerContractId?: string | null;
-  exchange?: string | null;
-}): Promise<{
-  depth: Awaited<ReturnType<IbkrBridgeClient["getMarketDepth"]>>;
-}> {
-  const health = await getBridgeHealthForSession({
-    waitForInitialRefresh: false,
-    waitForStaleRefresh: false,
-  });
-  if (
-    !health ||
-    health.connected !== true ||
-    health.authenticated !== true ||
-    health.healthFresh === false
-  ) {
-    throw new HttpError(503, "IBKR market depth is unavailable.", {
-      code: "ibkr_market_depth_unavailable",
-      detail:
-        "Market depth requires a fresh authenticated IBKR bridge session. Massive realtime stock quotes remain available without IBKR.",
-    });
-  }
-
-  return {
-    depth: await bridgeClient.getMarketDepth(input),
-  };
-}
-
 export function subscribeQuoteSnapshots(
   symbols: string[],
   onSnapshot: (
@@ -915,109 +656,10 @@ export function subscribeQuoteSnapshots(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
 
-  if (isMassiveStocksRealtimeConfigured()) {
-    return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
-  }
-
-  return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
-}
-
-export function subscribePositionQuoteSnapshots(
-  symbols: string[],
-  onSnapshot: (payload: QuoteStreamPayload) => void,
-): Unsubscribe {
-  const requestedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
-  if (!requestedSymbols.length) {
-    return () => {};
-  }
-
-  let active = true;
-  let reconcileTimer: NodeJS.Timeout | null = null;
-  let bridgeUnsubscribe: Unsubscribe = () => {};
-  let subscribedSignature = "";
-
-  const clearReconcileTimer = () => {
-    if (!reconcileTimer) {
-      return;
-    }
-    clearTimeout(reconcileTimer);
-    reconcileTimer = null;
-  };
-
-  const reconcile = () => {
-    if (!active) {
-      return;
-    }
-
-    const normalizedSymbols = filterPositionQuoteSymbols(requestedSymbols);
-    const signature = normalizedSymbols.join(",");
-    if (signature === subscribedSignature) {
-      return;
-    }
-
-    bridgeUnsubscribe();
-    bridgeUnsubscribe = () => {};
-    subscribedSignature = signature;
-
-    if (!normalizedSymbols.length) {
-      return;
-    }
-
-    bridgeUnsubscribe = subscribeBridgeQuoteSnapshots(
-      normalizedSymbols,
-      onSnapshot,
-      {
-        ownerPrefix: "account-position-quote-stream",
-        intent: "account-monitor-live",
-        fallbackProvider: "none",
-      },
-    );
-
-  };
-
-  const scheduleReconcile = (delayMs = 0) => {
-    if (!active) {
-      return;
-    }
-    if (delayMs <= 0) {
-      clearReconcileTimer();
-      reconcile();
-      return;
-    }
-    if (reconcileTimer) {
-      return;
-    }
-    reconcileTimer = setTimeout(() => {
-      reconcileTimer = null;
-      reconcile();
-    }, delayMs);
-    reconcileTimer.unref?.();
-  };
-
-  const steadyTimer = setInterval(() => {
-    scheduleReconcile(0);
-  }, POSITION_QUOTE_SUBSCRIPTION_RECONCILE_MS);
-  steadyTimer.unref?.();
-  const unsubscribeLeaseChanges = subscribeMarketDataLeaseChanges((event) => {
-    if (event.intent === "account-monitor-live") {
-      scheduleReconcile(0);
-    }
-  });
-  reconcile();
-
-  return () => {
-    active = false;
-    clearReconcileTimer();
-    clearInterval(steadyTimer);
-    unsubscribeLeaseChanges();
-    bridgeUnsubscribe();
-  };
+  return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
 }
 
 export const __bridgeStreamsInternalsForTests = {
-  filterPositionQuoteSymbols,
   marketDataRequestFromInstrument,
   structuredOptionProviderContractIdFromInstrument,
 };
@@ -1067,75 +709,6 @@ export function subscribeOptionQuoteSnapshots(
     { ...input, owner, intent: input.intent ?? "visible-live" },
     onSnapshot,
   );
-}
-
-export function subscribeHistoricalBarSnapshots(
-  input: {
-    symbol: string;
-    timeframe: HistoryBarTimeframe;
-    assetClass?: "equity" | "option";
-    providerContractId?: string | null;
-    outsideRth?: boolean;
-    source?: HistoryDataSource;
-    priority?: number;
-  },
-  onSnapshot: (payload: HistoricalBarSnapshotPayload) => void,
-  onStreamError?: (error: unknown) => void,
-): Unsubscribe {
-  let active = true;
-  let unsubscribe: Unsubscribe = () => {};
-  let reconnectTimer: NodeJS.Timeout | null = null;
-  let reconnectAttempt = 0;
-
-  const connect = () => {
-    unsubscribe = bridgeClient.streamHistoricalBars(
-      {
-        symbol: normalizeSymbol(input.symbol),
-        timeframe: input.timeframe,
-        assetClass: input.assetClass,
-        providerContractId: input.providerContractId ?? null,
-        outsideRth: input.outsideRth,
-        source: input.source,
-        priority: input.priority,
-      },
-      (bar) => {
-        onSnapshot({
-          symbol: normalizeSymbol(input.symbol),
-          timeframe: input.timeframe,
-          bar,
-        });
-        reconnectAttempt = 0;
-      },
-      (error) => {
-        logger.warn({ err: error }, "Bridge historical bar stream failed");
-        onStreamError?.(error);
-        unsubscribe();
-        if (!active || reconnectTimer) {
-          return;
-        }
-
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          if (active) {
-            connect();
-          }
-        }, nextReconnectDelay(reconnectAttempt));
-        reconnectAttempt += 1;
-        reconnectTimer.unref?.();
-      },
-    );
-  };
-
-  connect();
-
-  return () => {
-    active = false;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    unsubscribe();
-  };
 }
 
 export function subscribeOrderSnapshots(
@@ -1205,25 +778,6 @@ export function subscribeExecutionSnapshots(
   return createPollingStream({
     intervalMs: 1_000,
     fetchSnapshot: async () => fetchExecutionSnapshotPayload(input),
-    onSnapshot,
-  });
-}
-
-export function subscribeMarketDepthSnapshots(
-  input: {
-    accountId?: string;
-    symbol: string;
-    assetClass?: "equity" | "option";
-    providerContractId?: string | null;
-    exchange?: string | null;
-  },
-  onSnapshot: (payload: {
-    depth: Awaited<ReturnType<IbkrBridgeClient["getMarketDepth"]>>;
-  }) => void,
-): Unsubscribe {
-  return createPollingStream({
-    intervalMs: 1_000,
-    fetchSnapshot: async () => fetchMarketDepthSnapshotPayload(input),
     onSnapshot,
   });
 }

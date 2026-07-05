@@ -92,6 +92,33 @@ const reportPlatformBoundaryError = (
 const normalizeBoundaryError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error || "Render failed."));
 
+const SIGNATURE_MAX_LENGTH = 72;
+
+// Compact, URL-free hint for the fallback headline. Dynamic-import failures put
+// the full chunk URL in error.message ("Failed to fetch dynamically imported
+// module: https://…/assets/[chunk]-[hash].js"); surfacing it verbatim leaks
+// build internals into user-facing copy. Strip any scheme / protocol-relative
+// URL and keep a short reason keyed off the error name. Full detail (message +
+// component stack) stays available in the collapsed diagnostic section below.
+// Also consumed by screenRegistry's screen-load fallback for the same reason.
+export const summarizeErrorSignature = (error: Error): string => {
+  const name = (error.name || "Error").trim();
+  const firstLine = String(error.message || "").split("\n", 1)[0] ?? "";
+  const withoutUrls = firstLine
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "")
+    .replace(/\/\/\S+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s:]+$/, "")
+    .trim();
+  const detail =
+    withoutUrls && withoutUrls.toLowerCase() !== name.toLowerCase()
+      ? `${name}: ${withoutUrls}`
+      : name;
+  return detail.length > SIGNATURE_MAX_LENGTH
+    ? `${detail.slice(0, SIGNATURE_MAX_LENGTH - 1)}…`
+    : detail;
+};
+
 function WidgetErrorFallback({
   error,
   label,
@@ -171,13 +198,24 @@ function WidgetErrorFallback({
       setCopyLabel("Copy failed");
     }
   };
+  const signature = summarizeErrorSignature(normalizedError);
+  // Hairline + semantic tone tokens with light-theme fallbacks (mirrors the
+  // sibling screen-load fallback in screenRegistry.jsx). This fallback only
+  // renders inside the themed app, so the --ra-* tokens resolve; the fallbacks
+  // are belt-and-suspenders for a token-less render.
+  const hairline =
+    "1px solid color-mix(in srgb, var(--ra-border-default, #C7D0DE) 68%, transparent)";
+  const textSecondary = "var(--ra-text-secondary, #4B5563)";
+  const textMuted = "var(--ra-text-muted, #6B7280)";
+  const toneAccent = "var(--ra-amber-500, #C28526)";
   const actionStyle = {
-    border: "1px solid color-mix(in srgb, currentColor 28%, transparent)",
-    background: "Canvas",
-    color: "CanvasText",
+    border: hairline,
+    background: "var(--ra-surface-0, #FFFFFF)",
+    color: "var(--ra-text-primary, #101827)",
     cursor: "pointer",
-    font: `700 ${TYPE_CSS_VAR.label} ${FONT_CSS_VAR.code}`,
-    padding: "6px 10px",
+    font: `${FONT_WEIGHT.label} ${TYPE_CSS_VAR.label} ${FONT_CSS_VAR.code}`,
+    padding: "6px 12px",
+    borderRadius: 4,
   } as const;
 
   return (
@@ -188,48 +226,119 @@ function WidgetErrorFallback({
         .replace(/[^a-z0-9]+/g, "-")}`}
       style={{
         minHeight: minHeight ?? 180,
+        boxSizing: "border-box",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 10,
         padding: 16,
-        border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
-        background: "color-mix(in srgb, Canvas 94%, currentColor 6%)",
-        color: "CanvasText",
-        fontFamily: FONT_CSS_VAR.code,
-        fontSize: TYPE_CSS_VAR.label,
-        textAlign: "center",
       }}
     >
-      <div style={{ fontWeight: FONT_WEIGHT.emphasis }}>{label} unavailable</div>
       <div
         style={{
-          maxWidth: 420,
-          opacity: 0.72,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {normalizedError.message || "Render failed."}
-      </div>
-      <div
-        style={{
+          width: "100%",
+          maxWidth: 520,
           display: "flex",
-          flexWrap: "wrap",
-          justifyContent: "center",
-          gap: 8,
+          flexDirection: "column",
+          gap: 10,
+          padding: 16,
+          border: hairline,
+          borderLeft: `2px solid ${toneAccent}`,
+          borderRadius: 8,
+          background: "var(--ra-surface-1, #F5F8FD)",
+          color: "var(--ra-text-primary, #101827)",
+          fontFamily: FONT_CSS_VAR.sans,
+          fontSize: TYPE_CSS_VAR.body,
+          textAlign: "left",
         }}
       >
-        <button type="button" onClick={handleManualRetry} style={actionStyle}>
-          Retry
-        </button>
-        <button type="button" onClick={openDiagnosticsScreen} style={actionStyle}>
-          Open Diagnostics
-        </button>
-        <button type="button" onClick={handleCopyBundle} style={actionStyle}>
-          {copyLabel}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background: toneAccent,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontWeight: FONT_WEIGHT.emphasis,
+              fontSize: TYPE_CSS_VAR.bodyStrong,
+            }}
+          >
+            {label} unavailable
+          </span>
+        </div>
+        <div style={{ color: textSecondary, lineHeight: 1.5 }}>
+          This section stopped responding while loading. Retry to reload it, or
+          copy the diagnostic bundle for support.
+        </div>
+        <code
+          style={{
+            alignSelf: "flex-start",
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontFamily: FONT_CSS_VAR.code,
+            fontSize: TYPE_CSS_VAR.label,
+            color: textMuted,
+            background: "var(--ra-surface-2, #E9EEF6)",
+            border: hairline,
+            borderRadius: 4,
+            padding: "3px 8px",
+          }}
+        >
+          {signature}
+        </code>
+        <details style={{ color: textMuted }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              color: textSecondary,
+              fontSize: TYPE_CSS_VAR.label,
+            }}
+          >
+            Diagnostic detail
+          </summary>
+          <pre
+            style={{
+              margin: "8px 0 0",
+              maxHeight: 200,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: FONT_CSS_VAR.code,
+              fontSize: TYPE_CSS_VAR.micro,
+              lineHeight: 1.5,
+              color: textMuted,
+            }}
+          >
+            {`${normalizedError.message || "Render failed."}${
+              componentStack ? `\n\n${componentStack}` : ""
+            }`}
+          </pre>
+        </details>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginTop: 2,
+          }}
+        >
+          <button type="button" onClick={handleManualRetry} style={actionStyle}>
+            Retry
+          </button>
+          <button type="button" onClick={openDiagnosticsScreen} style={actionStyle}>
+            Open Diagnostics
+          </button>
+          <button type="button" onClick={handleCopyBundle} style={actionStyle}>
+            {copyLabel}
+          </button>
+        </div>
       </div>
     </div>
   );

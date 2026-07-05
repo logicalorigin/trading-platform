@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
@@ -6,6 +7,20 @@ import { resolveDatabaseRuntimeConfig } from "./runtime";
 import * as schema from "./schema";
 
 const { Pool } = pg;
+
+export type PostgresDiagnosticContext = {
+  requestId?: string | null;
+  method?: string | null;
+  path?: string | null;
+  route?: string | null;
+  routeClass?: string | null;
+  requestFamily?: string | null;
+  clientRole?: string | null;
+  fetchPriority?: number | null;
+  requestOrigin?: string | null;
+  admissionAction?: string | null;
+  workloadFamily?: string | null;
+};
 
 export type PostgresPoolDiagnosticEvent = {
   type: "acquire" | "query";
@@ -16,6 +31,7 @@ export type PostgresPoolDiagnosticEvent = {
   error: string | null;
   pool: PostgresPoolStats;
   stack: string[];
+  context: PostgresDiagnosticContext | null;
 };
 
 type PostgresPoolDiagnosticListener = (
@@ -23,6 +39,19 @@ type PostgresPoolDiagnosticListener = (
 ) => void;
 
 let postgresPoolDiagnosticListener: PostgresPoolDiagnosticListener | null = null;
+const postgresDiagnosticContext =
+  new AsyncLocalStorage<PostgresDiagnosticContext>();
+
+export function runWithPostgresDiagnosticContext<T>(
+  context: PostgresDiagnosticContext,
+  fn: () => T,
+): T {
+  return postgresDiagnosticContext.run(context, fn);
+}
+
+export function getPostgresDiagnosticContext(): PostgresDiagnosticContext | null {
+  return postgresDiagnosticContext.getStore() ?? null;
+}
 
 const readOptionalPositiveInteger = (name: string): number | undefined => {
   const parsed = Number(process.env[name]);
@@ -46,6 +75,18 @@ const slowAcquireDiagnosticMs = (): number =>
 
 const slowQueryDiagnosticMs = (): number =>
   readPositiveInteger("DB_QUERY_SLOW_DIAGNOSTIC_MS", 2_000);
+
+// Per-event stack capture is OFF by default. `new Error().stack` formats a deep
+// async/drizzle/pg stack, and on the slow-query/acquire firehose (~1,100 events/sec
+// when the pool saturates) that V8 stack formatting is the single largest
+// event-loop CPU cost — and it is self-amplifying, because the events fire
+// *because* the loop is already saturated, which inflates every in-flight query's
+// measured duration and trips more of them over the gate. The captured frames are
+// mostly pg/drizzle internals the filter in diagnosticStack() strips anyway. Set
+// DB_DIAGNOSTIC_CAPTURE_STACK=1 (or =true) to re-enable for targeted debugging.
+const DB_DIAGNOSTIC_CAPTURE_STACK =
+  process.env.DB_DIAGNOSTIC_CAPTURE_STACK === "1" ||
+  process.env.DB_DIAGNOSTIC_CAPTURE_STACK === "true";
 
 export function setPostgresPoolDiagnosticListener(
   listener: PostgresPoolDiagnosticListener | null,
@@ -84,6 +125,7 @@ function queryName(args: unknown[]): string | null {
 }
 
 function diagnosticStack(): string[] {
+  if (!DB_DIAGNOSTIC_CAPTURE_STACK) return [];
   return (new Error().stack ?? "")
     .split("\n")
     .slice(3)
@@ -101,8 +143,12 @@ function emitPostgresPoolDiagnostic(input: {
   type: "acquire" | "query";
   source: "pool" | "client";
   startedAtMs: number;
-  sql?: string | null;
-  queryName?: string | null;
+  // Raw query args, NOT a precomputed sql string. `queryText`/`compactSql` run a
+  // regex over up to 600 chars, and computing that for every (overwhelmingly fast)
+  // query was unconditional per-query overhead on the hot path. We derive sql/name
+  // lazily below, only AFTER the slow/failed gate returns, so fast queries — the
+  // vast majority — never pay it.
+  queryArgs?: unknown[];
   error?: unknown;
 }): void {
   const listener = postgresPoolDiagnosticListener;
@@ -118,16 +164,18 @@ function emitPostgresPoolDiagnostic(input: {
     return;
   }
 
+  const args = input.queryArgs;
   try {
     listener({
       type: input.type,
       source: input.source,
       durationMs,
-      sql: input.sql ?? null,
-      queryName: input.queryName ?? null,
+      sql: args ? queryText(args) : null,
+      queryName: args ? queryName(args) : null,
       error: errorMessage(input.error),
       pool: getPoolStats(),
       stack: diagnosticStack(),
+      context: getPostgresDiagnosticContext(),
     });
   } catch {
     // Diagnostics must not affect database behavior.
@@ -210,8 +258,6 @@ function instrumentQuery(
 ): (...args: unknown[]) => unknown {
   return (...args: unknown[]) => {
     const startedAtMs = Date.now();
-    const sql = queryText(args);
-    const name = queryName(args);
     const lastArg = args[args.length - 1];
 
     if (typeof lastArg === "function") {
@@ -222,8 +268,7 @@ function instrumentQuery(
           type: "query",
           source,
           startedAtMs,
-          sql,
-          queryName: name,
+          queryArgs: args,
           error: callbackArgs[0],
         });
         return callback(...callbackArgs);
@@ -235,8 +280,7 @@ function instrumentQuery(
           type: "query",
           source,
           startedAtMs,
-          sql,
-          queryName: name,
+          queryArgs: args,
           error,
         });
         throw error;
@@ -252,8 +296,7 @@ function instrumentQuery(
               type: "query",
               source,
               startedAtMs,
-              sql,
-              queryName: name,
+              queryArgs: args,
             });
             return value;
           },
@@ -262,8 +305,7 @@ function instrumentQuery(
               type: "query",
               source,
               startedAtMs,
-              sql,
-              queryName: name,
+              queryArgs: args,
               error,
             });
             throw error;
@@ -274,8 +316,7 @@ function instrumentQuery(
         type: "query",
         source,
         startedAtMs,
-        sql,
-        queryName: name,
+        queryArgs: args,
       });
       return result;
     } catch (error) {
@@ -283,8 +324,7 @@ function instrumentQuery(
         type: "query",
         source,
         startedAtMs,
-        sql,
-        queryName: name,
+        queryArgs: args,
         error,
       });
       throw error;

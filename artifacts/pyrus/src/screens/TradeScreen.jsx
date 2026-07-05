@@ -1,8 +1,4 @@
-import {
-  useQuery,
-  useQueryClient,
-  useQueries,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
 import {
   Suspense,
   useCallback,
@@ -55,9 +51,7 @@ import { useContractFlowChartEvents } from "../features/charting/useContractFlow
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
 import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
-import {
-  PYRUS_SIGNALS_PINE_SCRIPT_KEY,
-} from "../features/charting/pyrusSignalsPineAdapter";
+import { PYRUS_SIGNALS_PINE_SCRIPT_KEY } from "../features/charting/pyrusSignalsPineAdapter";
 import {
   resolveAlgoPyrusSignalsSettingsPatch,
   buildPyrusSignalsIndicatorSettings,
@@ -81,9 +75,7 @@ import {
   useTradeOptionChainSnapshot,
 } from "../features/platform/tradeOptionChainStore";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
-import {
-  useFlowTapeFilterState,
-} from "../features/platform/flowFilterStore";
+import { useFlowTapeFilterState } from "../features/platform/flowFilterStore";
 import {
   recordOptionHydrationMetric,
   setOptionHydrationDiagnostics,
@@ -94,9 +86,7 @@ import {
 } from "../features/charting/useOptionChartBars.js";
 import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import { resolveOptionChartSourceState } from "../features/charting/chartApiBars.js";
-import {
-  TradeEquityPanel,
-} from "../features/trade/TradeEquityPanel.jsx";
+import { TradeEquityPanel } from "../features/trade/TradeEquityPanel.jsx";
 import { TradeOrderTicket } from "../features/trade/TradeOrderTicket.jsx";
 import { TradeChainPanel } from "../features/trade/TradeChainPanel.jsx";
 import { TradeStrategyGreeksPanel } from "../features/trade/TradeStrategyGreeksPanel.jsx";
@@ -104,9 +94,11 @@ import { TradeL2Panel } from "../features/trade/TradeL2Panel.jsx";
 import { TradePositionsPanel } from "../features/trade/TradePositionsPanel.jsx";
 import { mapFlowEventToUi } from "../features/flow/flowEventMapper";
 import {
+  GEX_ZERO_GAMMA_MODE_SNAPSHOT,
   useGexZeroGamma,
   useGexZeroGammaReferenceLine,
 } from "../features/gex/useGexZeroGamma.js";
+import { GEX_PROJECTION_MODE_SNAPSHOT } from "../features/gex/useGexProjection.js";
 import {
   TickerTabStrip,
   TradeTickerHeader,
@@ -150,9 +142,7 @@ import {
   buildOptionChainRowsFromApi,
   patchOptionChainRowWithQuoteGetter,
 } from "../features/trade/optionChainRows";
-import {
-  buildOptionChainRowsIdentitySignature,
-} from "../features/trade/optionChainVirtualRows";
+import { buildOptionChainRowsIdentitySignature } from "../features/trade/optionChainVirtualRows";
 import {
   OPTION_CHAIN_AUTO_BATCH_ENABLED,
   OPTION_CHAIN_BATCH_ACTIVE_CHUNKS,
@@ -167,9 +157,7 @@ import {
   resolveTradeOptionChainHydrationPlan,
   shouldFallbackOptionChainToFullCoverage,
 } from "../features/trade/optionChainLoadingPlan";
-import {
-  buildTradeOptionQuoteSubscriptionPlan,
-} from "../features/trade/optionQuoteHydrationPlan";
+import { buildTradeOptionQuoteSubscriptionPlan } from "../features/trade/optionQuoteHydrationPlan";
 import {
   clearTradeFlowSnapshot,
   publishTradeFlowSnapshot,
@@ -184,7 +172,7 @@ import {
   writeCachedOptionChainSnapshot,
 } from "../features/platform/runtimeCache";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { MetricChip } from "../components/platform/primitives.jsx";
+import { MetricChip, Skeleton } from "../components/platform/primitives.jsx";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
 import { DockedSheet } from "../components/platform/DockedSheet.jsx";
 import { TradeTicketCollapsedBar } from "../features/trade/TradeTicketCollapsedBar.jsx";
@@ -208,10 +196,7 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import {
-  motionRowStyle,
-  motionVars,
-} from "../lib/motion";
+import { motionRowStyle, motionVars } from "../lib/motion";
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
@@ -220,7 +205,6 @@ import {
   preloadMiniChartTickerSearch,
   scheduleChartTickerSearchPreload,
 } from "../features/platform/tickerSearch/chartTickerSearchLoader.js";
-
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
   staleTime: 5 * 60_000,
@@ -304,14 +288,13 @@ const TradeContractContextStrip = ({
     isFiniteNumber(spread) && isFiniteNumber(mark) && mark > 0
       ? (spread / mark) * 100
       : null;
-  const spreadTone =
-    !isFiniteNumber(spreadPct)
-      ? CSS_COLOR.textDim
-      : spreadPct >= 18
-        ? CSS_COLOR.red
-        : spreadPct >= 8
-          ? CSS_COLOR.amber
-          : CSS_COLOR.green;
+  const spreadTone = !isFiniteNumber(spreadPct)
+    ? CSS_COLOR.textDim
+    : spreadPct >= 18
+      ? CSS_COLOR.red
+      : spreadPct >= 8
+        ? CSS_COLOR.amber
+        : CSS_COLOR.green;
   const freshnessTitle = [
     quoteUpdatedAt ? `Quote ${formatRelativeTimeShort(quoteUpdatedAt)}` : null,
     barUpdatedAt ? `Bars ${formatRelativeTimeShort(barUpdatedAt)}` : null,
@@ -368,7 +351,9 @@ const TradeContractContextStrip = ({
       />
       <MetricChip
         label="Δ"
-        value={isFiniteNumber(delta) ? Math.abs(delta).toFixed(2) : MISSING_VALUE}
+        value={
+          isFiniteNumber(delta) ? Math.abs(delta).toFixed(2) : MISSING_VALUE
+        }
         tone={CSS_COLOR.accent}
         style={{ maxWidth: dim(58) }}
       />
@@ -470,14 +455,22 @@ const createTradeWorkspace = (ticker, patch = {}) => {
   };
 };
 
-const normalizeTradeWorkspaces = ({ recentTickers = [], contracts = {}, stored = {} } = {}) => {
+const normalizeTradeWorkspaces = ({
+  recentTickers = [],
+  contracts = {},
+  stored = {},
+} = {}) => {
   const next = {};
   const sourceTickers = [
-    ...new Set([
-      ...Object.keys(stored || {}),
-      ...recentTickers,
-      ...Object.keys(contracts || {}),
-    ].map(normalizeTradeTickerSymbol).filter(Boolean)),
+    ...new Set(
+      [
+        ...Object.keys(stored || {}),
+        ...recentTickers,
+        ...Object.keys(contracts || {}),
+      ]
+        .map(normalizeTradeTickerSymbol)
+        .filter(Boolean),
+    ),
   ];
 
   sourceTickers.forEach((ticker) => {
@@ -487,7 +480,10 @@ const normalizeTradeWorkspaces = ({ recentTickers = [], contracts = {}, stored =
       id: ticker,
       ticker,
       selectedContract: {
-        strike: contracts?.[ticker]?.strike ?? existing.selectedContract?.strike ?? null,
+        strike:
+          contracts?.[ticker]?.strike ??
+          existing.selectedContract?.strike ??
+          null,
         cp: contracts?.[ticker]?.cp ?? existing.selectedContract?.cp ?? "C",
         exp: contracts?.[ticker]?.exp ?? existing.selectedContract?.exp ?? "",
         providerContractId:
@@ -495,9 +491,18 @@ const normalizeTradeWorkspaces = ({ recentTickers = [], contracts = {}, stored =
           existing.selectedContract?.providerContractId ??
           null,
       },
-      notes: { ...createTradeWorkspace(ticker).notes, ...(existing.notes || {}) },
-      equityChart: { ...createTradeWorkspace(ticker).equityChart, ...(existing.equityChart || {}) },
-      optionChart: { ...createTradeWorkspace(ticker).optionChart, ...(existing.optionChart || {}) },
+      notes: {
+        ...createTradeWorkspace(ticker).notes,
+        ...(existing.notes || {}),
+      },
+      equityChart: {
+        ...createTradeWorkspace(ticker).equityChart,
+        ...(existing.equityChart || {}),
+      },
+      optionChart: {
+        ...createTradeWorkspace(ticker).optionChart,
+        ...(existing.optionChart || {}),
+      },
       levels: Array.isArray(existing.levels) ? existing.levels : [],
       chainHeatmapEnabled: Boolean(existing.chainHeatmapEnabled),
     });
@@ -507,7 +512,9 @@ const normalizeTradeWorkspaces = ({ recentTickers = [], contracts = {}, stored =
 };
 
 export const normalizeTradeTickerSymbol = (value) =>
-  String(value ?? "").trim().toUpperCase();
+  String(value ?? "")
+    .trim()
+    .toUpperCase();
 
 const finiteTradeQuoteNumber = (value) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -550,9 +557,15 @@ export const buildTrackedTradeTickers = ({
   return tracked.slice(0, limit);
 };
 
-export const resolveInitialTradeTicker = ({ persistedActive, sym, symPing } = {}) => {
+export const resolveInitialTradeTicker = ({
+  persistedActive,
+  sym,
+  symPing,
+} = {}) => {
   const pingSymbol =
-    symPing && Number(symPing.n) > 0 ? normalizeTradeTickerSymbol(symPing.sym) : "";
+    symPing && Number(symPing.n) > 0
+      ? normalizeTradeTickerSymbol(symPing.sym)
+      : "";
   return (
     pingSymbol ||
     normalizeTradeTickerSymbol(sym) ||
@@ -747,15 +760,13 @@ const getOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
   if (emptyReason === "no-option-aggregate-bars") {
     return {
       title: "No option trades in this window",
-      detail:
-        "IBKR and Massive returned no bars for this contract and timeframe.",
+      detail: "Massive returned no bars for this contract and timeframe.",
     };
   }
   if (emptyReason === "massive-not-configured") {
     return {
       title: "Option aggregate feed unavailable",
-      detail:
-        "IBKR did not return chart bars and the Massive fallback is not configured.",
+      detail: "Massive option aggregates are not configured.",
     };
   }
   if (
@@ -766,14 +777,14 @@ const getOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
     return {
       title: "Option contract lookup unavailable",
       detail:
-        "IBKR did not provide a current contract id. Option aggregates will display when available.",
+        "Massive did not provide a current option contract id. Option aggregates will display when available.",
     };
   }
   if (feedIssue) {
     return {
-      title: "Broker history unavailable",
+      title: "Option metadata unavailable",
       detail:
-        "IBKR option history was unavailable and no fallback option bars were returned.",
+        "Option metadata hydration was degraded and no Massive option bars were returned.",
     };
   }
   return {
@@ -810,6 +821,7 @@ const TradePanelShell = ({
       flexDirection: "column",
       background: CSS_COLOR.bg1,
       border: "none",
+      boxShadow: "var(--ra-edge-top)",
       overflow: "hidden",
     }}
   >
@@ -920,7 +932,8 @@ const TradeContractDetailPanel = ({
     contract.providerContractId ||
     null;
   const optionTicker =
-    typeof selectedContract?.ticker === "string" && selectedContract.ticker.trim()
+    typeof selectedContract?.ticker === "string" &&
+    selectedContract.ticker.trim()
       ? selectedContract.ticker.trim()
       : null;
   const optionExpirationIso = normalizeFlowOptionExpirationIso(
@@ -948,7 +961,9 @@ const TradeContractDetailPanel = ({
     }),
   );
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() =>
-    resolvePersistedPyrusSignalsSettings(_initialState.tradeOptionPyrusSignalsSettings),
+    resolvePersistedPyrusSignalsSettings(
+      _initialState.tradeOptionPyrusSignalsSettings,
+    ),
   );
   const lastAlgoPyrusSignalsSettingsRef = useRef(null);
   const lastAlgoSignalTimeframeRef = useRef(null);
@@ -974,15 +989,8 @@ const TradeContractDetailPanel = ({
     providerContractId,
     ticker,
   ]);
-  const {
-    drawings,
-    addDrawing,
-    clearDrawings,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-  } = useDrawingHistory([], optionProgressiveScopeKey);
+  const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
+    useDrawingHistory([], optionProgressiveScopeKey);
   const optionProgressiveBars = useProgressiveChartBarLimit({
     scopeKey: optionProgressiveScopeKey,
     timeframe: optionChartTimeframe,
@@ -1139,7 +1147,9 @@ const TradeContractDetailPanel = ({
     );
   }, [signalMonitorProfile]);
   useEffect(() => {
-    const nextAlgoTimeframe = normalizeChartTimeframe(signalMonitorProfile?.timeframe);
+    const nextAlgoTimeframe = normalizeChartTimeframe(
+      signalMonitorProfile?.timeframe,
+    );
     if (
       !nextAlgoTimeframe ||
       !isTimeframeValidForOption(nextAlgoTimeframe) ||
@@ -1295,7 +1305,8 @@ const TradeContractDetailPanel = ({
   const rowAsk = selectedRow?.[`${sidePrefix}Ask`] ?? null;
   const rowMark = selectedRow?.[`${sidePrefix}Prem`] ?? null;
   const rowFreshness = selectedRow?.[`${sidePrefix}Freshness`] ?? "metadata";
-  const rowQuoteUpdatedAt = selectedRow?.[`${sidePrefix}QuoteUpdatedAt`] ?? null;
+  const rowQuoteUpdatedAt =
+    selectedRow?.[`${sidePrefix}QuoteUpdatedAt`] ?? null;
   const bid = isFiniteNumber(liveQuote?.bid) ? liveQuote.bid : rowBid;
   const ask = isFiniteNumber(liveQuote?.ask) ? liveQuote.ask : rowAsk;
   const last = isFiniteNumber(liveQuote?.price) ? liveQuote.price : rowMark;
@@ -1304,13 +1315,13 @@ const TradeContractDetailPanel = ({
     isFiniteNumber(ask) && isFiniteNumber(bid) ? Math.max(0, ask - bid) : null;
   const delta = isFiniteNumber(liveQuote?.delta)
     ? liveQuote.delta
-    : selectedRow?.[`${sidePrefix}Delta`] ?? null;
+    : (selectedRow?.[`${sidePrefix}Delta`] ?? null);
   const optionVolume = isFiniteNumber(liveQuote?.volume)
     ? liveQuote.volume
-    : selectedRow?.[`${sidePrefix}Vol`] ?? null;
+    : (selectedRow?.[`${sidePrefix}Vol`] ?? null);
   const optionOpenInterest = isFiniteNumber(liveQuote?.openInterest)
     ? liveQuote.openInterest
-    : selectedRow?.[`${sidePrefix}Oi`] ?? null;
+    : (selectedRow?.[`${sidePrefix}Oi`] ?? null);
   const latestBar = displayBars[displayBars.length - 1] || null;
   const quoteFreshness = normalizeMarketFreshness(
     liveQuote?.freshness ?? rowFreshness,
@@ -1365,11 +1376,12 @@ const TradeContractDetailPanel = ({
       ...(liveQuote || {}),
       freshness: quoteFreshness,
       updatedAt: quoteUpdatedAt,
-      status: isFiniteNumber(bid) && isFiniteNumber(ask)
-        ? liveQuote?.status
-        : isFiniteNumber(mark)
-          ? "metadata"
-          : "unavailable",
+      status:
+        isFiniteNumber(bid) && isFiniteNumber(ask)
+          ? liveQuote?.status
+          : isFiniteNumber(mark)
+            ? "metadata"
+            : "unavailable",
       unavailableDetail:
         isFiniteNumber(bid) && isFiniteNumber(ask)
           ? null
@@ -1381,7 +1393,7 @@ const TradeContractDetailPanel = ({
       valueLabel: `${contractLabel} quote`,
       source: "trade option quote",
       nextAction:
-        "Check quote hydration or wait for the IBKR option stream before using this contract for order pricing.",
+        "Check Massive option quote hydration before using this contract for order pricing.",
     },
   );
   const sourceIssues = collectChartSourceDataIssues(optionChartSourceState, {
@@ -1515,8 +1527,9 @@ const TradeContractDetailPanel = ({
       optionProgressiveBars.expandForVisibleRange,
     ],
   );
-  const scheduleOptionVisibleRangeExpansion =
-    useDebouncedVisibleRangeExpansion(expandOptionVisibleLogicalRange, {
+  const scheduleOptionVisibleRangeExpansion = useDebouncedVisibleRangeExpansion(
+    expandOptionVisibleLogicalRange,
+    {
       resetKey: `${optionContractScopeKey}:${optionChartTimeframe}`,
       recheckKey: [
         optionContractScopeKey,
@@ -1526,16 +1539,20 @@ const TradeContractDetailPanel = ({
         isPrependingOlder ? "prepending" : "ready",
         hasExhaustedOlderHistory ? "exhausted" : "open",
       ].join(":"),
-    });
-  const handleOptionChartTimeframeChange = useCallback((timeframe) => {
-    const nextTimeframe = normalizeChartTimeframe(timeframe);
-    if (!nextTimeframe || nextTimeframe === optionChartTimeframe) {
-      return;
-    }
-    setOptionChartTimeframe(nextTimeframe);
-    setOptionChartIntervalRevision((revision) => revision + 1);
-    onOptionChartTimeframeChange?.(nextTimeframe);
-  }, [onOptionChartTimeframeChange, optionChartTimeframe]);
+    },
+  );
+  const handleOptionChartTimeframeChange = useCallback(
+    (timeframe) => {
+      const nextTimeframe = normalizeChartTimeframe(timeframe);
+      if (!nextTimeframe || nextTimeframe === optionChartTimeframe) {
+        return;
+      }
+      setOptionChartTimeframe(nextTimeframe);
+      setOptionChartIntervalRevision((revision) => revision + 1);
+      onOptionChartTimeframeChange?.(nextTimeframe);
+    },
+    [onOptionChartTimeframeChange, optionChartTimeframe],
+  );
   useEffect(() => {
     if (!optionChartTimeframeOverride) {
       return;
@@ -1739,35 +1756,42 @@ const TradeContractDetailPanel = ({
                       }}
                     >
                       {displayBars.length && chartFlowBadge ? (
-                        <AppTooltip content={chartFlowBadge.tooltip}><div
-                          data-testid="trade-contract-option-chart-flow-badge"
-                          style={{
-                            border: `1px solid ${cssColorAlpha(chartFlowBadge.color, "66")}`,
-                            background: cssColorAlpha(chartFlowBadge.color, "18"),
-                            color: chartFlowBadge.color,
-                            borderRadius: dim(3),
-                            padding: sp(iconOnly ? "3px 4px" : "4px 6px"),
-                            fontFamily: T.sans,
-                            fontSize: textSize("control"),
-                            fontWeight: FONT_WEIGHTS.regular,
-                            lineHeight: 1,
-                            maxWidth: dim(iconOnly ? 44 : 104),
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            pointerEvents: "auto",
-                            boxShadow: `0 0 0 1px ${cssColorMix(CSS_COLOR.bg4, 80)}`,
-                          }}
-                        >
-                          {iconOnly ? "Flow" : chartFlowBadge.label}
-                        </div></AppTooltip>
+                        <AppTooltip content={chartFlowBadge.tooltip}>
+                          <div
+                            data-testid="trade-contract-option-chart-flow-badge"
+                            style={{
+                              border: `1px solid ${cssColorAlpha(chartFlowBadge.color, "66")}`,
+                              background: cssColorAlpha(
+                                chartFlowBadge.color,
+                                "18",
+                              ),
+                              color: chartFlowBadge.color,
+                              borderRadius: dim(RADII.xs),
+                              padding: sp(iconOnly ? "3px 4px" : "4px 6px"),
+                              fontFamily: T.sans,
+                              fontSize: textSize("control"),
+                              fontWeight: FONT_WEIGHTS.regular,
+                              lineHeight: 1,
+                              maxWidth: dim(iconOnly ? 44 : 104),
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              pointerEvents: "auto",
+                              boxShadow: `0 0 0 1px ${cssColorMix(CSS_COLOR.bg4, 80)}`,
+                            }}
+                          >
+                            {iconOnly ? "Flow" : chartFlowBadge.label}
+                          </div>
+                        </AppTooltip>
                       ) : null}
                       <PyrusSignalsSettingsMenu
                         theme={T}
                         settings={pyrusSignalsSettings}
                         onChange={setPyrusSignalsSettings}
                         dense={iconOnly}
-                        disabled={!isPyrusSignalsIndicatorSelected(selectedIndicators)}
+                        disabled={
+                          !isPyrusSignalsIndicatorSelected(selectedIndicators)
+                        }
                       />
                     </div>
                   )}
@@ -1820,9 +1844,9 @@ const TradeContractDetailPanel = ({
               ? ` / ${formatMarketFreshnessLabel(barFreshness)} bars ${formatRelativeTimeShort(
                   barUpdatedAt,
                 )}`
-            : changePercent != null
-              ? ` / ${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%`
-              : ""}
+              : changePercent != null
+                ? ` / ${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%`
+                : ""}
         </div>
       </div>
     </TradePanelShell>
@@ -1832,6 +1856,7 @@ const TradeContractDetailPanel = ({
 const TradeSpotFlowPanel = ({ ticker }) => {
   const flow = useTradeFlowSnapshot(ticker);
   const latest = flow.events?.[0] || null;
+  const isLoading = flow.status === "loading";
 
   return (
     <TradePanelShell
@@ -1859,7 +1884,9 @@ const TradeSpotFlowPanel = ({ ticker }) => {
             fontFamily: T.sans,
           }}
         >
-          <span style={{ color: CSS_COLOR.textDim }}>{ticker || MISSING_VALUE}</span>
+          <span style={{ color: CSS_COLOR.textDim }}>
+            {ticker || MISSING_VALUE}
+          </span>
           <span style={{ color: CSS_COLOR.text }}>
             {flow.events?.length || 0} prints
           </span>
@@ -1874,7 +1901,12 @@ const TradeSpotFlowPanel = ({ ticker }) => {
         >
           {latest ? (
             <div>
-              <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
+              <div
+                style={{
+                  color: CSS_COLOR.text,
+                  fontWeight: FONT_WEIGHTS.regular,
+                }}
+              >
                 {latest.side || "flow"}{" "}
                 {latest.contract || latest.ticker || ticker}
               </div>
@@ -1884,8 +1916,15 @@ const TradeSpotFlowPanel = ({ ticker }) => {
                   : flow.status}
               </div>
             </div>
+          ) : isLoading ? (
+            <div style={{ display: "grid", gap: sp(4) }}>
+              <Skeleton width="70%" height={dim(10)} />
+              <Skeleton width="45%" height={dim(10)} />
+            </div>
           ) : (
-            <span style={{ color: CSS_COLOR.textDim }}>No recent spot flow</span>
+            <span style={{ color: CSS_COLOR.textDim }}>
+              No recent spot flow
+            </span>
           )}
         </div>
       </div>
@@ -1896,6 +1935,7 @@ const TradeSpotFlowPanel = ({ ticker }) => {
 const TradeOptionsFlowPanel = ({ ticker }) => {
   const flow = useTradeFlowSnapshot(ticker);
   const events = (flow.events || []).slice(0, 6);
+  const isLoading = flow.status === "loading";
 
   return (
     <TradePanelShell
@@ -1942,6 +1982,12 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
               </span>
             </div>
           ))
+        ) : isLoading ? (
+          <div style={{ display: "grid", gap: sp(5), minHeight: dim(72) }}>
+            <Skeleton width="100%" height={dim(12)} />
+            <Skeleton width="82%" height={dim(12)} />
+            <Skeleton width="90%" height={dim(12)} />
+          </div>
         ) : (
           <div
             style={{
@@ -2095,9 +2141,7 @@ const TradeDeferredPanel = ({
           textAlign: "center",
         }}
       >
-        {detail ? (
-          <span>{detail}</span>
-        ) : null}
+        {detail ? <span>{detail}</span> : null}
         <ContainerLoadingStatus
           items={
             loadingWaitItems || [
@@ -2172,12 +2216,26 @@ const TRADE_VISIBLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.active,
   "trade-visible",
 );
+const TRADE_OPTION_CHAIN_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.active,
+  "trade-option-chain",
+);
+const TRADE_OPTION_CHAIN_BATCH_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.background,
+  "trade-option-chain-batch",
+);
+const withTradeAbortSignal = (requestOptions, signal) => ({
+  ...(requestOptions || {}),
+  signal,
+});
 
 const TradeQuoteRuntime = ({
   ticker,
   symbols,
   enabled,
   stockAggregateStreamingEnabled,
+  massiveStockRealtimeConfigured = false,
+  marketDataProviderConfigurationReady = false,
 }) => {
   const runtimeSymbols = useMemo(() => {
     const source = Array.isArray(symbols) ? symbols : [ticker];
@@ -2188,6 +2246,9 @@ const TradeQuoteRuntime = ({
   const streamQuoteRuntimeActive = Boolean(
     stockAggregateStreamingEnabled && runtimeSymbols.length && enabled,
   );
+  const quoteSnapshotFallbackEnabled = Boolean(
+    marketDataProviderConfigurationReady && !massiveStockRealtimeConfigured,
+  );
   const streamRuntimeQuotesReady = useMemo(
     () =>
       runtimeSymbols.length > 0 &&
@@ -2196,9 +2257,14 @@ const TradeQuoteRuntime = ({
       ),
     [runtimeSnapshotsBySymbol, runtimeSymbols],
   );
-  const [streamQuoteFallbackReady, setStreamQuoteFallbackReady] = useState(false);
+  const [streamQuoteFallbackReady, setStreamQuoteFallbackReady] =
+    useState(false);
   useEffect(() => {
-    if (!streamQuoteRuntimeActive || streamRuntimeQuotesReady) {
+    if (
+      !quoteSnapshotFallbackEnabled ||
+      !streamQuoteRuntimeActive ||
+      streamRuntimeQuotesReady
+    ) {
       setStreamQuoteFallbackReady(false);
       return undefined;
     }
@@ -2210,9 +2276,14 @@ const TradeQuoteRuntime = ({
       setStreamQuoteFallbackReady(true);
     }, TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [streamQuoteRuntimeActive, streamRuntimeQuotesReady, runtimeSymbolsKey]);
+  }, [
+    quoteSnapshotFallbackEnabled,
+    streamQuoteRuntimeActive,
+    streamRuntimeQuotesReady,
+    runtimeSymbolsKey,
+  ]);
   const restQuoteSymbols = useMemo(() => {
-    if (!enabled) {
+    if (!enabled || !quoteSnapshotFallbackEnabled) {
       return [];
     }
     return runtimeSymbols.filter((symbol) => {
@@ -2223,6 +2294,7 @@ const TradeQuoteRuntime = ({
     });
   }, [
     enabled,
+    quoteSnapshotFallbackEnabled,
     runtimeSnapshotsBySymbol,
     runtimeSymbols,
     streamQuoteFallbackReady,
@@ -2250,7 +2322,8 @@ const TradeQuoteRuntime = ({
         updatedAt: quote.updatedAt ?? currentInfo.updatedAt ?? null,
         dataUpdatedAt: quote.dataUpdatedAt ?? currentInfo.dataUpdatedAt ?? null,
         freshness: quote.freshness ?? currentInfo.freshness ?? null,
-        marketDataMode: quote.marketDataMode ?? currentInfo.marketDataMode ?? null,
+        marketDataMode:
+          quote.marketDataMode ?? currentInfo.marketDataMode ?? null,
         delayed: quote.delayed ?? currentInfo.delayed ?? null,
         source: quote.source ?? currentInfo.source ?? null,
         transport: quote.transport ?? currentInfo.transport ?? null,
@@ -2353,12 +2426,16 @@ const TradeFlowRuntime = ({
     [historicalBucketSeconds, timeframe, ticker],
   );
 
-  useRuntimeWorkloadFlag(`trade:flow:${ticker || "none"}`, flowEnabled && !background, {
-    kind: "poll",
-    label: "Trade flow",
-    detail: `${Math.round(tradeFlowRefreshMs / 1000)}s`,
-    priority: 5,
-  });
+  useRuntimeWorkloadFlag(
+    `trade:flow:${ticker || "none"}`,
+    flowEnabled && !background,
+    {
+      kind: "poll",
+      label: "Trade flow",
+      detail: `${Math.round(tradeFlowRefreshMs / 1000)}s`,
+      priority: 5,
+    },
+  );
 
   const tickerFlowQuery = useQuery({
     queryKey: ["trade-flow-aggregate", TRADE_FLOW_AGGREGATE_LIMIT],
@@ -2368,10 +2445,7 @@ const TradeFlowRuntime = ({
           limit: TRADE_FLOW_AGGREGATE_LIMIT,
           scope: "all",
         },
-        buildBarsRequestOptions(
-          BARS_REQUEST_PRIORITY.active,
-          "chart-flow",
-        ),
+        buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
       ),
     enabled: flowEnabled,
     staleTime: tradeFlowRefreshMs,
@@ -2397,10 +2471,7 @@ const TradeFlowRuntime = ({
           historicalBucketSeconds,
           blocking: false,
         },
-        buildBarsRequestOptions(
-          BARS_REQUEST_PRIORITY.active,
-          "chart-flow",
-        ),
+        buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
       ),
     enabled: flowEnabled,
     staleTime: tradeFlowHistoryRefreshMs,
@@ -2431,7 +2502,8 @@ const TradeFlowRuntime = ({
       }
       publishTradeFlowSnapshot(ticker, {
         events: snapshot.events,
-        status: snapshot.status === "live" ? "stale" : snapshot.status || "stale",
+        status:
+          snapshot.status === "live" ? "stale" : snapshot.status || "stale",
         source: snapshot.source || {
           provider: "indexeddb",
           status: "stale",
@@ -2460,8 +2532,9 @@ const TradeFlowRuntime = ({
       ticker,
     ).map((event) => mapFlowEventToUi(event));
     const incomingHistoricalEvents =
-      historicalFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
-      [];
+      historicalFlowQuery.data?.events?.map((event) =>
+        mapFlowEventToUi(event),
+      ) || [];
     const historicalReason = String(
       historicalFlowQuery.data?.source?.ibkrReason || "",
     ).toLowerCase();
@@ -2483,7 +2556,8 @@ const TradeFlowRuntime = ({
       };
     }
     const historicalEvents = incomingHistoricalEvents.length
-      ? historicalRefreshTransient && historicalFlowEventsRef.current.events.length
+      ? historicalRefreshTransient &&
+        historicalFlowEventsRef.current.events.length
         ? historicalFlowEventsRef.current.events
         : incomingHistoricalEvents
       : historicalFlowEventsRef.current.events;
@@ -2566,8 +2640,7 @@ const TradeOptionChainRuntime = ({
     return (
       expirationOptions.find((option) =>
         doesExpirationOptionMatchValue(option, expirationValue),
-      ) ||
-      expirationOptions[0]
+      ) || expirationOptions[0]
     );
   }, [expirationOptions, expirationValue]);
   const selectedActiveChainKey = getExpirationChainKey(activeExpiration);
@@ -2595,7 +2668,7 @@ const TradeOptionChainRuntime = ({
         expiration: "all",
         coverage: effectiveChainCoverage,
         marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
-        provider: "ibkr",
+        provider: "massive",
       }),
     [effectiveChainCoverage, ticker],
   );
@@ -2613,13 +2686,15 @@ const TradeOptionChainRuntime = ({
       const currentSnapshot = getTradeOptionChainSnapshot(ticker);
       if (
         currentSnapshot?.loadedExpirationCount > 0 &&
-        Number(currentSnapshot.updatedAt || 0) >= Number(snapshot.updatedAt || 0)
+        Number(currentSnapshot.updatedAt || 0) >=
+          Number(snapshot.updatedAt || 0)
       ) {
         return;
       }
       publishTradeOptionChainSnapshot(ticker, {
         ...snapshot,
-        status: snapshot.status === "live" ? "stale" : snapshot.status || "stale",
+        status:
+          snapshot.status === "live" ? "stale" : snapshot.status || "stale",
         runtimeCache: cached?.meta || null,
       });
     });
@@ -2660,7 +2735,12 @@ const TradeOptionChainRuntime = ({
         autoBatchEnabled: OPTION_CHAIN_AUTO_BATCH_ENABLED,
         coverage: effectiveChainCoverage,
       }),
-    [activeExpiration, background, effectiveChainCoverage, orderedExpirationOptions],
+    [
+      activeExpiration,
+      background,
+      effectiveChainCoverage,
+      orderedExpirationOptions,
+    ],
   );
   const batchExpirationChunkSignature = useMemo(
     () =>
@@ -2695,9 +2775,8 @@ const TradeOptionChainRuntime = ({
     return entries;
   }, [batchExpirationChunks]);
   const trackedChainKeySet = useMemo(() => {
-    const trackedExpirationCount = background || !chainAnalysisEnabled
-      ? 1
-      : orderedExpirationOptions.length;
+    const trackedExpirationCount =
+      background || !chainAnalysisEnabled ? 1 : orderedExpirationOptions.length;
     const keys = new Set(
       orderedExpirationOptions
         .slice(0, trackedExpirationCount)
@@ -2708,7 +2787,12 @@ const TradeOptionChainRuntime = ({
       keys.add(activeChainKey);
     }
     return keys;
-  }, [activeChainKey, background, chainAnalysisEnabled, orderedExpirationOptions]);
+  }, [
+    activeChainKey,
+    background,
+    chainAnalysisEnabled,
+    orderedExpirationOptions,
+  ]);
   const activeOptionChainQuery = useQuery({
     queryKey: getTradeOptionChainQueryKey(
       ticker,
@@ -2727,14 +2811,18 @@ const TradeOptionChainRuntime = ({
             ...buildOptionChainCoverageRequestParams(activeRequest),
             quoteHydration: OPTION_CHAIN_METADATA_HYDRATION,
           },
-          { signal },
+          withTradeAbortSignal(TRADE_OPTION_CHAIN_REQUEST_OPTIONS, signal),
         );
       } finally {
         recordOptionHydrationMetric("activeChainMs", nowMs() - startedAt);
       }
     },
     enabled: Boolean(
-      enabled && ticker && activeExpiration?.isoDate && activeChainKey,
+      enabled &&
+        !background &&
+        ticker &&
+        activeExpiration?.isoDate &&
+        activeChainKey,
     ),
     ...OPTION_CHAIN_QUERY_DEFAULTS,
   });
@@ -2814,7 +2902,10 @@ const TradeOptionChainRuntime = ({
                 ...buildOptionChainCoverageRequestParams(backgroundRequest),
                 quoteHydration: OPTION_CHAIN_METADATA_HYDRATION,
               },
-              { signal },
+              withTradeAbortSignal(
+                TRADE_OPTION_CHAIN_BATCH_REQUEST_OPTIONS,
+                signal,
+              ),
             );
           } finally {
             recordOptionHydrationMetric("batchChainMs", nowMs() - startedAt);
@@ -2920,10 +3011,10 @@ const TradeOptionChainRuntime = ({
         : !chainAnalysisEnabled
           ? "execution-warm"
           : background
-          ? "background"
-          : !ticker
-            ? "missing-ticker"
-            : null,
+            ? "background"
+            : !ticker
+              ? "missing-ticker"
+              : null,
     });
   }, [
     activeChainKey,
@@ -3195,7 +3286,7 @@ const TradeOptionChainRuntime = ({
           expiration: "all",
           coverage: effectiveChainCoverage,
           marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
-          provider: "ibkr",
+          provider: "massive",
         },
       );
     }
@@ -3335,8 +3426,7 @@ const TradeOptionQuoteRuntime = ({
       expiration: contract.exp,
       requestedQuotes: requestedProviderContractIds.length,
       pendingQuotes: 0,
-      activeQuoteSubscriptions:
-        requestedProviderContractIds.length,
+      activeQuoteSubscriptions: requestedProviderContractIds.length,
       pinnedQuoteSubscriptions: executionProviderContractIds.length,
       rotatingQuoteSubscriptions: visibleProviderContractIds.length,
       chainCoverage: visibleStrikeCoverage,
@@ -3361,9 +3451,7 @@ const TradeOptionQuoteRuntime = ({
     underlying: ticker,
     providerContractIds: executionProviderContractIds,
     enabled: Boolean(
-      executionEnabled &&
-        ticker &&
-        executionProviderContractIds.length > 0,
+      executionEnabled && ticker && executionProviderContractIds.length > 0,
     ),
     owner: `trade-option-execution:${ticker || "unknown"}`,
     intent: "execution-live",
@@ -3374,9 +3462,7 @@ const TradeOptionQuoteRuntime = ({
     underlying: ticker,
     providerContractIds: visibleProviderContractIds,
     enabled: Boolean(
-      visibleEnabled &&
-        ticker &&
-        visibleProviderContractIds.length > 0,
+      visibleEnabled && ticker && visibleProviderContractIds.length > 0,
     ),
     owner: `trade-option-visible:${ticker || "unknown"}`,
     intent: "visible-live",
@@ -3386,10 +3472,7 @@ const TradeOptionQuoteRuntime = ({
   return null;
 };
 
-const buildTradeRuntimeActivity = ({
-  isVisible,
-  searchOpen,
-} = {}) => {
+const buildTradeRuntimeActivity = ({ isVisible, searchOpen } = {}) => {
   const visibleInteractive = Boolean(isVisible && !searchOpen);
   return {
     executionWarm: Boolean(isVisible),
@@ -3408,11 +3491,14 @@ const TradeScreenInner = ({
   accountId,
   brokerConfigured,
   brokerAuthenticated,
+  massiveStockRealtimeConfigured = false,
+  marketDataProviderConfigurationReady = false,
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   gatewayTradingBlockReason = "gateway",
   safeQaMode = false,
   isVisible = false,
+  signalMonitorProfile: platformSignalMonitorProfile = undefined,
   onReadinessChange,
 }) => {
   const toast = useToast();
@@ -3422,18 +3508,30 @@ const TradeScreenInner = ({
     { environment },
     {
       query: {
-        enabled: Boolean(environment && isVisible && !safeQaMode),
+        enabled: Boolean(
+          environment &&
+            isVisible &&
+            !safeQaMode &&
+            platformSignalMonitorProfile === undefined,
+        ),
         staleTime: 60_000,
         retry: false,
       },
     },
   );
-  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const signalMonitorProfile =
+    platformSignalMonitorProfile === undefined
+      ? signalMonitorProfileQuery.data || null
+      : platformSignalMonitorProfile;
   const [tradeRootRef, tradeRootSize] = useElementSize();
   const tradeWidth = tradeRootSize.width;
   const { isPhone: tradeIsPhone, isNarrow: tradeIsNarrow } =
     responsiveFlags(tradeWidth);
-  const tradeLayout = tradeIsPhone ? "phone" : tradeIsNarrow ? "tablet" : "desktop";
+  const tradeLayout = tradeIsPhone
+    ? "phone"
+    : tradeIsNarrow
+      ? "tablet"
+      : "desktop";
   const tradeTopGridTemplate = tradeIsPhone
     ? "minmax(0, 1fr)"
     : tradeIsNarrow
@@ -3526,25 +3624,20 @@ const TradeScreenInner = ({
   const [ticketSideRequest, setTicketSideRequest] = useState(null);
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
-    onReadinessChange?.({
-      contentReady: Boolean(isVisible),
-      primaryReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible),
-      backgroundAllowed: Boolean(isVisible && !safeQaMode),
-    });
-  }, [isVisible, onReadinessChange, safeQaMode]);
-  useEffect(() => {
     if (!isVisible) {
       return undefined;
     }
     return scheduleChartTickerSearchPreload(preloadMiniChartTickerSearch);
   }, [isVisible]);
   const stockAggregateStreamingEnabled = Boolean(
-    brokerConfigured && brokerAuthenticated && !safeQaMode,
+    (massiveStockRealtimeConfigured ||
+      (brokerConfigured && brokerAuthenticated)) &&
+      !safeQaMode,
   );
   const activeTickerInfo = ensureTradeTickerInfo(activeTicker, activeTicker);
   const activeWorkspace =
     tradeWorkspaces[activeTicker] || createTradeWorkspace(activeTicker);
+  const activeEquityTimeframe = activeWorkspace.equityChart?.timeframe || "5m";
   const contract =
     contracts[activeTicker] ||
     activeWorkspace.selectedContract ||
@@ -3558,6 +3651,68 @@ const TradeScreenInner = ({
   const trackedTradeTickers = useMemo(
     () => buildTrackedTradeTickers({ recentTickers, activeTicker }),
     [activeTicker, recentTickers],
+  );
+  const [tradePrimaryChartHydrationState, setTradePrimaryChartHydrationState] =
+    useState({
+      ticker: null,
+      timeframe: null,
+      ready: false,
+      renderedBarCount: 0,
+      requestedLimit: 0,
+      targetLimit: 0,
+      fetchStatus: "idle",
+    });
+  useEffect(() => {
+    setTradePrimaryChartHydrationState((current) => {
+      if (
+        current.ticker === activeTicker &&
+        current.timeframe === activeEquityTimeframe &&
+        !current.ready &&
+        current.renderedBarCount === 0
+      ) {
+        return current;
+      }
+      return {
+        ticker: activeTicker,
+        timeframe: activeEquityTimeframe,
+        ready: false,
+        renderedBarCount: 0,
+        requestedLimit: 0,
+        targetLimit: 0,
+        fetchStatus: "idle",
+      };
+    });
+  }, [activeEquityTimeframe, activeTicker]);
+  const handleTradePrimaryChartHydrationStateChange = useCallback(
+    (nextState) => {
+      setTradePrimaryChartHydrationState((current) => {
+        const next = {
+          ticker: nextState?.ticker || null,
+          timeframe: nextState?.timeframe || null,
+          ready: Boolean(nextState?.ready),
+          renderedBarCount: Math.max(
+            0,
+            Number(nextState?.renderedBarCount) || 0,
+          ),
+          requestedLimit: Math.max(0, Number(nextState?.requestedLimit) || 0),
+          targetLimit: Math.max(0, Number(nextState?.targetLimit) || 0),
+          fetchStatus: nextState?.fetchStatus || "idle",
+        };
+        if (
+          current.ticker === next.ticker &&
+          current.timeframe === next.timeframe &&
+          current.ready === next.ready &&
+          current.renderedBarCount === next.renderedBarCount &&
+          current.requestedLimit === next.requestedLimit &&
+          current.targetLimit === next.targetLimit &&
+          current.fetchStatus === next.fetchStatus
+        ) {
+          return current;
+        }
+        return next;
+      });
+    },
+    [],
   );
   const tradeRuntimeActivity = buildTradeRuntimeActivity({
     isVisible,
@@ -3575,6 +3730,29 @@ const TradeScreenInner = ({
   const tradeAnalysisWorkEnabled = Boolean(
     tradeRuntimeActivity.analysisVisible && !safeQaMode,
   );
+  const tradePrimaryChartHydrated = Boolean(
+    tradePrimaryChartDataEnabled &&
+      tradePrimaryChartHydrationState.ready &&
+      tradePrimaryChartHydrationState.ticker === activeTicker &&
+      tradePrimaryChartHydrationState.timeframe === activeEquityTimeframe,
+  );
+  const tradeSecondaryWorkEnabled = Boolean(
+    tradeAnalysisWorkEnabled && tradePrimaryChartHydrated,
+  );
+  const tradeOptionChainWorkEnabled = Boolean(tradeExecutionWorkEnabled);
+  useEffect(() => {
+    const primaryReady = Boolean(
+      isVisible && (safeQaMode || tradePrimaryChartHydrated),
+    );
+    onReadinessChange?.({
+      contentReady: Boolean(isVisible),
+      primaryReady,
+      derivedReady: primaryReady,
+      backgroundAllowed: Boolean(
+        isVisible && !safeQaMode && tradePrimaryChartHydrated,
+      ),
+    });
+  }, [isVisible, onReadinessChange, safeQaMode, tradePrimaryChartHydrated]);
   const renderPrimaryTradePanel = tradeRuntimeActivity.primaryVisible;
   const renderTradePanels = tradeRuntimeActivity.secondaryPanelsVisible;
   const tradeBrokerStreamingEnabled = Boolean(
@@ -3584,13 +3762,13 @@ const TradeScreenInner = ({
     tradeExecutionWorkEnabled && stockAggregateStreamingEnabled,
   );
   const tradeAnalysisBrokerStreamingEnabled = Boolean(
-    tradeAnalysisWorkEnabled && stockAggregateStreamingEnabled,
+    tradeSecondaryWorkEnabled && stockAggregateStreamingEnabled,
   );
   const gexZeroGamma = useGexZeroGamma(activeTicker, {
     enabled: tradePrimaryChartDataEnabled,
+    mode: GEX_ZERO_GAMMA_MODE_SNAPSHOT,
   });
-  const gexZeroGammaReferenceLine =
-    useGexZeroGammaReferenceLine(gexZeroGamma);
+  const gexZeroGammaReferenceLine = useGexZeroGammaReferenceLine(gexZeroGamma);
   const trackedQuoteSymbols = useMemo(
     () => (tradeLiveStreamsEnabled ? trackedTradeTickers : [activeTicker]),
     [activeTicker, trackedTradeTickers, tradeLiveStreamsEnabled],
@@ -3613,7 +3791,7 @@ const TradeScreenInner = ({
   );
   useRuntimeWorkloadFlag(
     "trade:tracked-ticker-runtimes",
-    Boolean(tradeAnalysisWorkEnabled && backgroundTradeRuntimeModels.length),
+    Boolean(tradeSecondaryWorkEnabled && backgroundTradeRuntimeModels.length),
     {
       kind: "poll",
       label: "Tracked trade tickers",
@@ -3629,7 +3807,11 @@ const TradeScreenInner = ({
     subscribe: Boolean(isVisible && !safeQaMode),
   });
   const activeTickerBroadFlowEvents = useMemo(
-    () => filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], activeTicker),
+    () =>
+      filterFlowEventsForSymbol(
+        broadFlowSnapshot.flowEvents || [],
+        activeTicker,
+      ),
     [activeTicker, broadFlowSnapshot.flowEvents],
   );
   const activeTickerChartFlowEvents = useMemo(
@@ -3640,14 +3822,20 @@ const TradeScreenInner = ({
       ),
     [activeTickerBroadFlowEvents, activeTickerTradeFlowSnapshot.events],
   );
-  useRuntimeWorkloadFlag("trade:streams", tradeExecutionBrokerStreamingEnabled, {
-    kind: "stream",
-    label: "Trade live streams",
-    detail: activeTicker,
-    priority: 2,
-  });
+  useRuntimeWorkloadFlag(
+    "trade:streams",
+    tradeExecutionBrokerStreamingEnabled,
+    {
+      kind: "stream",
+      label: "Trade live streams",
+      detail: activeTicker,
+      priority: 2,
+    },
+  );
   const trimRecentTickers = useCallback((tickers) => {
-    const unique = [...new Set(tickers.map(normalizeTradeTickerSymbol).filter(Boolean))];
+    const unique = [
+      ...new Set(tickers.map(normalizeTradeTickerSymbol).filter(Boolean)),
+    ];
     return unique.slice(-TRADE_RECENT_TICKER_LIMIT);
   }, []);
   const upsertTradeWorkspace = useCallback((ticker, patch = {}) => {
@@ -3819,18 +4007,21 @@ const TradeScreenInner = ({
   }, [activeTicker]);
 
   // Helper: focus a ticker, and add to recent strip if not present
-  const focusTicker = useCallback((ticker, fallbackName = ticker) => {
-    const normalized = normalizeTradeTickerSymbol(ticker);
-    if (!normalized) return;
-    ensureTradeTickerInfo(normalized, fallbackName);
-    upsertTradeWorkspace(normalized, {});
-    setActiveTicker(normalized);
-    setRecentTickers((prev) =>
-      prev.includes(normalized)
-        ? prev
-        : trimRecentTickers([...prev, normalized]),
-    );
-  }, [trimRecentTickers, upsertTradeWorkspace]);
+  const focusTicker = useCallback(
+    (ticker, fallbackName = ticker) => {
+      const normalized = normalizeTradeTickerSymbol(ticker);
+      if (!normalized) return;
+      ensureTradeTickerInfo(normalized, fallbackName);
+      upsertTradeWorkspace(normalized, {});
+      setActiveTicker(normalized);
+      setRecentTickers((prev) =>
+        prev.includes(normalized)
+          ? prev
+          : trimRecentTickers([...prev, normalized]),
+      );
+    },
+    [trimRecentTickers, upsertTradeWorkspace],
+  );
   const closeTicker = useCallback(
     (ticker) => {
       const normalized = normalizeTradeTickerSymbol(ticker);
@@ -3843,26 +4034,32 @@ const TradeScreenInner = ({
     },
     [activeTicker],
   );
-  const reorderTradeTickers = useCallback((fromTicker, toTicker, side = "before") => {
-    const normalizedFrom = normalizeTradeTickerSymbol(fromTicker);
-    const normalizedTo = normalizeTradeTickerSymbol(toTicker);
-    if (!normalizedFrom || !normalizedTo || normalizedFrom === normalizedTo) return;
+  const reorderTradeTickers = useCallback(
+    (fromTicker, toTicker, side = "before") => {
+      const normalizedFrom = normalizeTradeTickerSymbol(fromTicker);
+      const normalizedTo = normalizeTradeTickerSymbol(toTicker);
+      if (!normalizedFrom || !normalizedTo || normalizedFrom === normalizedTo)
+        return;
 
-    setRecentTickers((current) => {
-      const fromIndex = current.indexOf(normalizedFrom);
-      const toIndex = current.indexOf(normalizedTo);
-      if (fromIndex < 0 || toIndex < 0) return current;
+      setRecentTickers((current) => {
+        const fromIndex = current.indexOf(normalizedFrom);
+        const toIndex = current.indexOf(normalizedTo);
+        if (fromIndex < 0 || toIndex < 0) return current;
 
-      const next = [...current];
-      const [moved] = next.splice(fromIndex, 1);
-      let insertIndex = toIndex + (side === "after" ? 1 : 0);
-      if (fromIndex < insertIndex) insertIndex -= 1;
-      insertIndex = Math.max(0, Math.min(insertIndex, next.length));
-      next.splice(insertIndex, 0, moved);
+        const next = [...current];
+        const [moved] = next.splice(fromIndex, 1);
+        let insertIndex = toIndex + (side === "after" ? 1 : 0);
+        if (fromIndex < insertIndex) insertIndex -= 1;
+        insertIndex = Math.max(0, Math.min(insertIndex, next.length));
+        next.splice(insertIndex, 0, moved);
 
-      return next.every((ticker, index) => ticker === current[index]) ? current : next;
-    });
-  }, []);
+        return next.every((ticker, index) => ticker === current[index])
+          ? current
+          : next;
+      });
+    },
+    [],
+  );
   const openEquitySearch = useCallback(
     () => setTradeTickerSearchAnchor("equity"),
     [],
@@ -4071,7 +4268,7 @@ const TradeScreenInner = ({
     [focusTicker],
   );
   const renderTradeTickerSearch = useCallback(
-    (open, embedded = true) => (
+    (open, embedded = true) =>
       open ? (
         <Suspense fallback={null}>
           <LazyMiniChartTickerSearch
@@ -4083,8 +4280,7 @@ const TradeScreenInner = ({
             onSelectTicker={handleSelectUniverseTicker}
           />
         </Suspense>
-      ) : null
-    ),
+      ) : null,
     [
       activeTicker,
       closeTradeTickerSearch,
@@ -4216,8 +4412,10 @@ const TradeScreenInner = ({
           },
         })
       }
+      onHydrationStateChange={handleTradePrimaryChartHydrationStateChange}
       referenceLines={workspaceReferenceLines}
       gexOverlay={equityGexOverlay}
+      gexProjectionMode={GEX_PROJECTION_MODE_SNAPSHOT}
       signalMonitorProfile={signalMonitorProfile}
       positionOverlaysEnabled={!safeQaMode}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
@@ -4243,8 +4441,8 @@ const TradeScreenInner = ({
       contract={contract}
       heldContracts={heldContracts}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={tradeAnalysisWorkEnabled}
-      liveDataEnabled={tradeAnalysisWorkEnabled}
+      historicalDataEnabled={tradeSecondaryWorkEnabled}
+      liveDataEnabled={tradeSecondaryWorkEnabled}
       optionChartTimeframeOverride={equityTimeframeForOptionSync}
       signalMonitorProfile={signalMonitorProfile}
       positionOverlaysEnabled={!safeQaMode}
@@ -4318,10 +4516,7 @@ const TradeScreenInner = ({
   const spotFlowPanel = <MemoTradeSpotFlowPanel ticker={activeTicker} />;
   const optionsFlowPanel = <MemoTradeOptionsFlowPanel ticker={activeTicker} />;
   const strategyGreeksPanel = (
-    <MemoTradeStrategyGreeksPanel
-      slot={slot}
-      onApplyStrategy={applyStrategy}
-    />
+    <MemoTradeStrategyGreeksPanel slot={slot} onApplyStrategy={applyStrategy} />
   );
   const l2Panel = (
     <MemoTradeL2Panel
@@ -4355,10 +4550,10 @@ const TradeScreenInner = ({
         : "off";
   const tradePulseLabel =
     tradePulseState === "live"
-      ? "Broker connected, ready to trade"
+      ? "IBKR connected, ready to trade"
       : tradePulseState === "slow"
-        ? "Broker configured, gateway pending"
-        : "Broker not connected";
+        ? "IBKR configured, gateway pending"
+        : "IBKR not connected";
   return (
     <div
       ref={tradeRootRef}
@@ -4391,18 +4586,22 @@ const TradeScreenInner = ({
         symbols={trackedQuoteSymbols}
         enabled={tradeExecutionWorkEnabled}
         stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+        massiveStockRealtimeConfigured={massiveStockRealtimeConfigured}
+        marketDataProviderConfigurationReady={
+          marketDataProviderConfigurationReady
+        }
       />
       <TradeOptionChainRuntime
         ticker={activeTicker}
         expirationValue={contract.exp}
         chainCoverage={tradeOptionChainCoverage}
-        enabled={tradeExecutionWorkEnabled}
-        analysisEnabled={tradeAnalysisWorkEnabled}
+        enabled={tradeOptionChainWorkEnabled}
+        analysisEnabled={tradeSecondaryWorkEnabled}
       />
       <TradeFlowRuntime
         ticker={activeTicker}
-        enabled={tradeAnalysisWorkEnabled}
-        timeframe={activeWorkspace.equityChart?.timeframe || "5m"}
+        enabled={tradeSecondaryWorkEnabled}
+        timeframe={activeEquityTimeframe}
       />
       {backgroundTradeRuntimeModels.map((model) => (
         <Fragment key={`tracked-trade-runtime-${model.ticker}`}>
@@ -4410,13 +4609,13 @@ const TradeScreenInner = ({
             ticker={model.ticker}
             expirationValue={model.expirationValue}
             chainCoverage={tradeOptionChainCoverage}
-            enabled={tradeAnalysisWorkEnabled}
-            analysisEnabled={tradeAnalysisWorkEnabled}
+            enabled={tradeSecondaryWorkEnabled}
+            analysisEnabled={tradeSecondaryWorkEnabled}
             background
           />
           <TradeFlowRuntime
             ticker={model.ticker}
-            enabled={tradeAnalysisWorkEnabled}
+            enabled={tradeSecondaryWorkEnabled}
             timeframe={model.timeframe}
             background
           />
@@ -4460,11 +4659,17 @@ const TradeScreenInner = ({
             className="ra-panel-enter ra-focus-rail"
             style={{
               ...motionVars({
-                accent: automationContractMatches ? CSS_COLOR.cyan : CSS_COLOR.amber,
+                accent: automationContractMatches
+                  ? CSS_COLOR.cyan
+                  : CSS_COLOR.amber,
               }),
-              background: automationContractMatches ? `${cssColorMix(CSS_COLOR.cyan, 7)}` : `${cssColorMix(CSS_COLOR.amber, 7)}`,
+              background: automationContractMatches
+                ? `${cssColorMix(CSS_COLOR.cyan, 7)}`
+                : `${cssColorMix(CSS_COLOR.amber, 7)}`,
               border: `1px solid ${
-                automationContractMatches ? `${cssColorMix(CSS_COLOR.cyan, 21)}` : `${cssColorMix(CSS_COLOR.amber, 27)}`
+                automationContractMatches
+                  ? `${cssColorMix(CSS_COLOR.cyan, 21)}`
+                  : `${cssColorMix(CSS_COLOR.amber, 27)}`
               }`,
               borderRadius: dim(RADII.sm),
               padding: sp("8px 10px"),
@@ -4495,7 +4700,9 @@ const TradeScreenInner = ({
                 </span>
                 <span
                   style={{
-                    color: automationContractMatches ? CSS_COLOR.cyan : CSS_COLOR.amber,
+                    color: automationContractMatches
+                      ? CSS_COLOR.cyan
+                      : CSS_COLOR.amber,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -4527,7 +4734,9 @@ const TradeScreenInner = ({
                 )}{" "}
                 · fill{" "}
                 {Number.isFinite(
-                  Number(asRecord(automationContext.orderPlan).simulatedFillPrice),
+                  Number(
+                    asRecord(automationContext.orderPlan).simulatedFillPrice,
+                  ),
                 )
                   ? Number(
                       asRecord(automationContext.orderPlan).simulatedFillPrice,
@@ -4573,7 +4782,9 @@ const TradeScreenInner = ({
                   type="button"
                   aria-pressed={activeTradePhonePanel === panel.id}
                   onClick={() => handleTradePhonePanelSelect(panel.id)}
-                  style={tradeMobileTabButtonStyle(activeTradePhonePanel === panel.id)}
+                  style={tradeMobileTabButtonStyle(
+                    activeTradePhonePanel === panel.id,
+                  )}
                 >
                   {panel.label}
                 </button>
@@ -4585,7 +4796,7 @@ const TradeScreenInner = ({
                 data-testid="trade-top-zone"
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
-            >
+              >
                 {renderPrimaryTradePanel ? (
                   <div style={tradeMobileChartFrameStyle}>{equityPanel}</div>
                 ) : (
@@ -4712,181 +4923,189 @@ const TradeScreenInner = ({
           </>
         ) : (
           <>
-        {/* Chart sync toggles */}
-        <div
-          data-testid="trade-chart-sync-toolbar"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: sp(6),
-            padding: sp("3px 6px"),
-            flexShrink: 0,
-          }}
-        >
-          <span
-            style={{
-              fontSize: textSize("caption"),
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              letterSpacing: "0.04em",
-              marginRight: sp(2),
-            }}
-          >
-            CHART SYNC
-          </span>
-          <button
-            type="button"
-            onClick={() => setTradeTimeframeSync((current) => !current)}
-            data-testid="trade-chart-sync-timeframe"
-            style={{
-              padding: sp("3px 8px"),
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              background: tradeTimeframeSync ? CSS_COLOR.accent : CSS_COLOR.bg3,
-              color: tradeTimeframeSync ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
-              border: "none",
-              borderRadius: dim(RADII.xs),
-              cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >
-            SYNC TF
-          </button>
-          <button
-            type="button"
-            onClick={() => setTradeCrosshairSync((current) => !current)}
-            data-testid="trade-chart-sync-crosshair"
-            style={{
-              padding: sp("3px 8px"),
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              background: tradeCrosshairSync ? CSS_COLOR.accent : CSS_COLOR.bg3,
-              color: tradeCrosshairSync ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
-              border: "none",
-              borderRadius: dim(RADII.xs),
-              cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >
-            SYNC X
-          </button>
-        </div>
-        {/* Top zone: Equity chart + selected contract chart + order ticket */}
-        <div
-          data-testid="trade-top-zone"
-          className="ra-panel-enter"
-          style={{
-            display: "grid",
-            gridTemplateColumns: tradeTopGridTemplate,
-            gridTemplateRows: tradeIsNarrow ? undefined : "minmax(0, 1fr)",
-            gap: sp(6),
-            height: tradeTopHeight,
-            flexShrink: 0,
-            minWidth: 0,
-            alignItems: "stretch",
-            overflow: tradeIsNarrow ? undefined : "hidden",
-          }}
-        >
-          {renderPrimaryTradePanel ? (
-            equityPanel
-          ) : (
-            <TradeDeferredPanel title="Chart" minHeight={340} />
-          )}
-          {renderTradePanels ? (
-            contractDetailPanel
-          ) : (
-            <TradeDeferredPanel
-              title="Contract"
-              testId="trade-contract-chart-panel"
-              minHeight={340}
-            />
-          )}
-          {renderTradePanels ? (
-            chainPanel
-          ) : (
-            <TradeDeferredPanel
-              title="Chain"
-              testId="trade-options-chain-panel"
-              minHeight={340}
-            />
-          )}
-        </div>
-        {/* Middle zone: spot flow + options flow */}
-        <div
-          data-testid="trade-middle-zone"
-          className="ra-panel-enter"
-          style={{
-            display: "grid",
-            gridTemplateColumns: tradeMiddleGridTemplate,
-            gap: sp(6),
-            height: tradeMiddleHeight,
-            flexShrink: 0,
-            minWidth: 0,
-            alignItems: "stretch",
-          }}
-        >
-          {renderTradePanels ? (
-            <>
-              {spotFlowPanel}
-              {optionsFlowPanel}
-            </>
-          ) : (
-            <>
-              <TradeDeferredPanel
-                title="Spot Flow"
-                testId="trade-spot-flow-panel"
-                minHeight={220}
-              />
-              <TradeDeferredPanel
-                title="Options Flow"
-                testId="trade-options-flow-panel"
-                minHeight={220}
-              />
-            </>
-          )}
-        </div>
-        {/* Bottom zone: Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
-        <div
-          data-testid="trade-bottom-zone"
-          className="ra-panel-enter"
-          style={{
-            display: "grid",
-            gridTemplateColumns: tradeBottomGridTemplate,
-            gap: sp(6),
-            height: tradeBottomHeight,
-            flexShrink: 0,
-            minWidth: 0,
-            alignItems: "stretch",
-          }}
-        >
-          {renderTradePanels ? (
-            <>
-              {strategyGreeksPanel}
-              {l2Panel}
-              {positionsPanel}
-            </>
-          ) : (
-            <>
-              <TradeDeferredPanel
-                title="Strategy"
-                testId="trade-strategy-greeks-panel"
-                minHeight={200}
-              />
-              <TradeDeferredPanel
-                title="L2"
-                testId="trade-l2-panel"
-                minHeight={200}
-              />
-              <TradeDeferredPanel
-                title="Positions"
-                testId="trade-positions-panel"
-                minHeight={200}
-              />
-            </>
-          )}
-        </div>
+            {/* Chart sync toggles */}
+            <div
+              data-testid="trade-chart-sync-toolbar"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: sp(6),
+                padding: sp("3px 6px"),
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: textSize("caption"),
+                  color: CSS_COLOR.textMuted,
+                  fontFamily: T.sans,
+                  letterSpacing: "0.04em",
+                  marginRight: sp(2),
+                }}
+              >
+                CHART SYNC
+              </span>
+              <button
+                type="button"
+                onClick={() => setTradeTimeframeSync((current) => !current)}
+                data-testid="trade-chart-sync-timeframe"
+                style={{
+                  padding: sp("3px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  background: tradeTimeframeSync
+                    ? CSS_COLOR.accent
+                    : CSS_COLOR.bg3,
+                  color: tradeTimeframeSync
+                    ? CSS_COLOR.onAccent
+                    : CSS_COLOR.textDim,
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  cursor: "pointer",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                SYNC TF
+              </button>
+              <button
+                type="button"
+                onClick={() => setTradeCrosshairSync((current) => !current)}
+                data-testid="trade-chart-sync-crosshair"
+                style={{
+                  padding: sp("3px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  background: tradeCrosshairSync
+                    ? CSS_COLOR.accent
+                    : CSS_COLOR.bg3,
+                  color: tradeCrosshairSync
+                    ? CSS_COLOR.onAccent
+                    : CSS_COLOR.textDim,
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  cursor: "pointer",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                SYNC X
+              </button>
+            </div>
+            {/* Top zone: Equity chart + selected contract chart + order ticket */}
+            <div
+              data-testid="trade-top-zone"
+              className="ra-panel-enter"
+              style={{
+                display: "grid",
+                gridTemplateColumns: tradeTopGridTemplate,
+                gridTemplateRows: tradeIsNarrow ? undefined : "minmax(0, 1fr)",
+                gap: sp(6),
+                height: tradeTopHeight,
+                flexShrink: 0,
+                minWidth: 0,
+                alignItems: "stretch",
+                overflow: tradeIsNarrow ? undefined : "hidden",
+              }}
+            >
+              {renderPrimaryTradePanel ? (
+                equityPanel
+              ) : (
+                <TradeDeferredPanel title="Chart" minHeight={340} />
+              )}
+              {renderTradePanels ? (
+                contractDetailPanel
+              ) : (
+                <TradeDeferredPanel
+                  title="Contract"
+                  testId="trade-contract-chart-panel"
+                  minHeight={340}
+                />
+              )}
+              {renderTradePanels ? (
+                chainPanel
+              ) : (
+                <TradeDeferredPanel
+                  title="Chain"
+                  testId="trade-options-chain-panel"
+                  minHeight={340}
+                />
+              )}
+            </div>
+            {/* Middle zone: spot flow + options flow */}
+            <div
+              data-testid="trade-middle-zone"
+              className="ra-panel-enter"
+              style={{
+                display: "grid",
+                gridTemplateColumns: tradeMiddleGridTemplate,
+                gap: sp(6),
+                height: tradeMiddleHeight,
+                flexShrink: 0,
+                minWidth: 0,
+                alignItems: "stretch",
+              }}
+            >
+              {renderTradePanels ? (
+                <>
+                  {spotFlowPanel}
+                  {optionsFlowPanel}
+                </>
+              ) : (
+                <>
+                  <TradeDeferredPanel
+                    title="Spot Flow"
+                    testId="trade-spot-flow-panel"
+                    minHeight={220}
+                  />
+                  <TradeDeferredPanel
+                    title="Options Flow"
+                    testId="trade-options-flow-panel"
+                    minHeight={220}
+                  />
+                </>
+              )}
+            </div>
+            {/* Bottom zone: Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
+            <div
+              data-testid="trade-bottom-zone"
+              className="ra-panel-enter"
+              style={{
+                display: "grid",
+                gridTemplateColumns: tradeBottomGridTemplate,
+                gap: sp(6),
+                height: tradeBottomHeight,
+                flexShrink: 0,
+                minWidth: 0,
+                alignItems: "stretch",
+              }}
+            >
+              {renderTradePanels ? (
+                <>
+                  {strategyGreeksPanel}
+                  {l2Panel}
+                  {positionsPanel}
+                </>
+              ) : (
+                <>
+                  <TradeDeferredPanel
+                    title="Strategy"
+                    testId="trade-strategy-greeks-panel"
+                    minHeight={200}
+                  />
+                  <TradeDeferredPanel
+                    title="L2"
+                    testId="trade-l2-panel"
+                    minHeight={200}
+                  />
+                  <TradeDeferredPanel
+                    title="Positions"
+                    testId="trade-positions-panel"
+                    minHeight={200}
+                  />
+                </>
+              )}
+            </div>
           </>
         )}
       </div>

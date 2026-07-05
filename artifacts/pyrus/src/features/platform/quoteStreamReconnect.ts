@@ -5,10 +5,10 @@
 // forever - which is what froze long-lived tabs (prices stop, never recover).
 //
 // Terminal closes reconnect with capped exponential backoff. A stall watchdog
-// covers the silent case (socket open but no data): its window grows
-// exponentially while quiet and resets the instant any quotes frame arrives, so a
-// real mid-session stall recovers in ~90s while a legitimately quiet market backs
-// off toward one reconnect / 5 min instead of hammering the already-strained API.
+// covers the silent case (socket open but no heartbeat/data): its window grows
+// exponentially while quiet and resets the instant any heartbeat or quotes frame
+// arrives, so a real mid-session stall recovers in ~90s while a legitimately
+// quiet market keeps the original connection open.
 //
 // These helpers are kept dependency-free so they can be unit-tested in isolation
 // (importing live-streams.ts pulls the whole app module graph).

@@ -222,6 +222,22 @@ export const shadowOrdersTable = pgTable(
     index("shadow_orders_position_type_idx").on(table.positionType),
     index("shadow_orders_status_idx").on(table.status),
     index("shadow_orders_placed_at_idx").on(table.placedAt),
+    // Stream/dashboard readers filter by account and ask for newest orders first.
+    // The composite avoids scanning one single-column index then sorting/filtering
+    // while the shadow account streams are polling.
+    index("shadow_orders_account_placed_at_idx").on(
+      table.accountId,
+      table.placedAt.desc(),
+    ),
+    // Latest-option-fill attribution probes include account/asset/side/symbol and
+    // ORDER BY placed_at DESC LIMIT 1. Keep that seek bounded under stream load.
+    index("shadow_orders_account_asset_side_symbol_placed_at_idx").on(
+      table.accountId,
+      table.assetClass,
+      table.side,
+      table.symbol,
+      table.placedAt.desc(),
+    ),
     uniqueIndex("shadow_orders_source_event_idx").on(table.sourceEventId),
     uniqueIndex("shadow_orders_client_order_idx").on(table.clientOrderId),
   ],
@@ -262,6 +278,10 @@ export const shadowFillsTable = pgTable(
     index("shadow_fills_symbol_idx").on(table.symbol),
     index("shadow_fills_position_type_idx").on(table.positionType),
     index("shadow_fills_occurred_at_idx").on(table.occurredAt),
+    index("shadow_fills_account_occurred_at_idx").on(
+      table.accountId,
+      table.occurredAt,
+    ),
     uniqueIndex("shadow_fills_source_event_idx").on(table.sourceEventId),
   ],
 );
@@ -345,6 +365,13 @@ export const shadowPositionMarksTable = pgTable(
       table.asOf,
       table.createdAt,
     ),
+    // Peak-mark lookups for shadow position stops and marketing dashboard stream:
+    // WHERE position_id IN (...) GROUP BY position_id MAX(mark) is rewritten as
+    // one ORDER BY mark DESC LIMIT 1 probe per position.
+    index("shadow_position_marks_position_mark_idx").on(
+      table.positionId,
+      table.mark.desc(),
+    ),
   ],
 );
 
@@ -376,6 +403,10 @@ export const shadowBalanceSnapshotsTable = pgTable(
   (table) => [
     index("shadow_balance_snapshots_account_idx").on(table.accountId),
     index("shadow_balance_snapshots_as_of_idx").on(table.asOf),
+    index("shadow_balance_snapshots_account_as_of_idx").on(
+      table.accountId,
+      table.asOf,
+    ),
   ],
 );
 

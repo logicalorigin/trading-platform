@@ -103,7 +103,9 @@ import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
-import { cssColorAlpha } from "../../lib/uiTokens.jsx";
+import { DataUnavailableState, Select } from "../../components/platform/primitives.jsx";
+// @ts-expect-error JSX module imported into TypeScript context
+import { cssColorAlpha, RADII } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
@@ -891,7 +893,7 @@ function inputStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
   return {
     width: "100%",
     padding: scale.sp("8px 10px"),
-    borderRadius: scale.dim(5),
+    borderRadius: scale.dim(RADII.xs),
     border: `1px solid ${theme.border}`,
     background: theme.bg0,
     color: theme.text,
@@ -948,7 +950,7 @@ function buttonStyle(
         : "none",
     background,
     color,
-    borderRadius: scale.dim(5),
+    borderRadius: scale.dim(RADII.xs),
     padding: scale.sp("6px 9px"),
     fontFamily: theme.sans,
     fontSize: scale.fs(10),
@@ -960,8 +962,7 @@ function buttonStyle(
 function cardStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
   return {
     background: theme.bg2,
-    border: `1px solid ${theme.border}`,
-    borderRadius: scale.dim(6),
+    boxShadow: "var(--ra-edge-top)",
     padding: scale.sp("8px 10px"),
   };
 }
@@ -1074,7 +1075,7 @@ function StatusBadge({
         alignItems: "center",
         gap: scale.sp(4),
         padding: scale.sp("2px 8px"),
-        borderRadius: scale.dim(999),
+        borderRadius: scale.dim(RADII.pill),
         border: `1px solid ${cssColorAlpha(color, "33")}`,
         background: cssColorAlpha(color, "18"),
         color,
@@ -1116,8 +1117,6 @@ function MetricCard({
       className="ra-panel-enter"
       style={{
         background: theme.bg0,
-        border: `1px solid ${theme.border}`,
-        borderRadius: scale.dim(5),
         padding: scale.sp("10px 12px"),
       }}
     >
@@ -1162,7 +1161,7 @@ function DraftStrategiesList({
       <div
         style={{
           border: `1px dashed ${theme.border}`,
-          borderRadius: scale.dim(5),
+          borderRadius: scale.dim(RADII.xs),
           background: theme.bg0,
           padding: scale.sp("14px 12px"),
           color: theme.textDim,
@@ -1182,8 +1181,6 @@ function DraftStrategiesList({
           key={draft.id}
           style={{
             background: theme.bg0,
-            border: `1px solid ${theme.border}`,
-            borderRadius: scale.dim(5),
             padding: scale.sp("10px 12px"),
           }}
         >
@@ -1355,8 +1352,7 @@ export function AlgoDraftStrategiesPanel({
     <div
       style={{
         background: theme.bg2,
-        border: `1px solid ${theme.border}`,
-        borderRadius: scale.dim(6),
+        boxShadow: "var(--ra-edge-top)",
         padding: scale.sp("12px 14px"),
       }}
     >
@@ -1582,6 +1578,8 @@ export function BacktestWorkspace({
           strategy.version === selectedStudy.strategyVersion,
       ) ?? null)
     : null;
+  const queueRunDisabled =
+    !selectedStudy || selectedStudyStrategy?.status !== "runnable";
   useEffect(() => {
     if (!selectedStudy) {
       lastStudyPyrusSignalsSettingsRef.current = null;
@@ -2910,6 +2908,21 @@ export function BacktestWorkspace({
             </div>
           </div>
 
+          {studies.length === 0 ? (
+            <DataUnavailableState
+              title="No studies yet"
+              detail="Create a study to lock in a strategy and universe, then queue backtest runs from here."
+              action={
+                <button
+                  type="button"
+                  onClick={() => void handleCreateStudy()}
+                  style={buttonStyle(theme, scale, "primary")}
+                >
+                  Create study
+                </button>
+              }
+            />
+          ) : (
           <div
             style={{
               display: "grid",
@@ -2920,54 +2933,51 @@ export function BacktestWorkspace({
           >
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Study</div>
-              <select
+              <Select
                 value={selectedStudyId}
-                onChange={(event) => setSelectedStudyId(event.target.value)}
-                style={inputStyle(theme, scale)}
-              >
-                {studies.length === 0 ? (
-                  <option value="">No studies available</option>
-                ) : null}
-                {studies.map((study) => (
-                  <option key={study.id} value={study.id}>
-                    {study.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(next: string) => setSelectedStudyId(next)}
+                options={[
+                  ...(studies.length === 0
+                    ? [{ value: "", label: "No studies available" }]
+                    : []),
+                  ...studies.map((study) => ({
+                    value: study.id,
+                    label: study.name,
+                  })),
+                ]}
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Run</div>
-              <select
+              <Select
                 value={selectedRunId}
-                onChange={(event) => setSelectedRunId(event.target.value)}
-                style={inputStyle(theme, scale)}
-              >
-                {runs.length === 0 ? (
-                  <option value="">No runs queued</option>
-                ) : null}
-                {runs.map((run) => (
-                  <option key={run.id} value={run.id}>
-                    {run.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(next: string) => setSelectedRunId(next)}
+                options={[
+                  ...(runs.length === 0
+                    ? [{ value: "", label: "No runs queued" }]
+                    : []),
+                  ...runs.map((run) => ({ value: run.id, label: run.name })),
+                ]}
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Symbol</div>
-              <select
+              <Select
                 value={selectedChartSymbol}
-                onChange={(event) => handleRunChartSymbolChange(event.target.value)}
-                style={inputStyle(theme, scale)}
-              >
-                {chartSymbolOptions.length === 0 ? (
-                  <option value="">No symbols available</option>
-                ) : null}
-                {chartSymbolOptions.map((symbol) => (
-                  <option key={symbol} value={symbol}>
-                    {symbol}
-                  </option>
-                ))}
-              </select>
+                onChange={(next: string) => handleRunChartSymbolChange(next)}
+                options={[
+                  ...(chartSymbolOptions.length === 0
+                    ? [{ value: "", label: "No symbols available" }]
+                    : []),
+                  ...chartSymbolOptions.map((symbol) => ({
+                    value: symbol,
+                    label: symbol,
+                  })),
+                ]}
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Queue Run Name</div>
@@ -2981,15 +2991,12 @@ export function BacktestWorkspace({
             <button
               type="button"
               onClick={() => void handleQueueRun()}
-              disabled={
-                !selectedStudy || selectedStudyStrategy?.status !== "runnable"
-              }
+              disabled={queueRunDisabled}
+              aria-disabled={queueRunDisabled}
               style={{
                 ...buttonStyle(theme, scale, "primary"),
-                opacity:
-                  !selectedStudy || selectedStudyStrategy?.status !== "runnable"
-                    ? 0.5
-                    : 1,
+                opacity: queueRunDisabled ? 0.5 : 1,
+                cursor: queueRunDisabled ? "not-allowed" : "pointer",
               }}
             >
               Queue Run
@@ -3022,6 +3029,7 @@ export function BacktestWorkspace({
               Promote
             </button>
           </div>
+          )}
         </div>
       </div>
 
@@ -3067,28 +3075,22 @@ export function BacktestWorkspace({
           >
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={fieldLabelStyle(theme, scale)}>Strategy</div>
-              <select
+              <Select
                 value={strategyKey}
-                onChange={(event) => {
+                onChange={(next: string) => {
                   const nextStrategy = strategies.find(
-                    (strategy) =>
-                      getStrategyKey(strategy) === event.target.value,
+                    (strategy) => getStrategyKey(strategy) === next,
                   );
                   if (nextStrategy) {
                     applyStrategySelection(nextStrategy);
                   }
                 }}
-                style={inputStyle(theme, scale)}
-              >
-                {strategies.map((strategy) => (
-                  <option
-                    key={getStrategyKey(strategy)}
-                    value={getStrategyKey(strategy)}
-                  >
-                    {strategy.label} · v{strategy.version} · {strategy.status}
-                  </option>
-                ))}
-              </select>
+                options={strategies.map((strategy) => ({
+                  value: getStrategyKey(strategy),
+                  label: `${strategy.label} · v${strategy.version} · ${strategy.status}`,
+                }))}
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Study Name</div>
@@ -3100,34 +3102,28 @@ export function BacktestWorkspace({
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Timeframe</div>
-              <select
+              <Select
                 value={timeframe}
-                onChange={(event) =>
-                  setTimeframe(event.target.value as BarTimeframe)
-                }
-                style={inputStyle(theme, scale)}
-              >
-                {(selectedStrategy?.supportedTimeframes ?? ["1d"]).map(
-                  (value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ),
+                onChange={(next: string) => setTimeframe(next as BarTimeframe)}
+                options={(selectedStrategy?.supportedTimeframes ?? ["1d"]).map(
+                  (value) => ({ value, label: value }),
                 )}
-              </select>
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Direction</div>
-              <select
+              <Select
                 value={directionMode}
-                onChange={(event) =>
-                  setDirectionMode(event.target.value as BacktestDirectionMode)
+                onChange={(next: string) =>
+                  setDirectionMode(next as BacktestDirectionMode)
                 }
-                style={inputStyle(theme, scale)}
-              >
-                <option value="long_only">long_only</option>
-                <option value="long_short">long_short</option>
-              </select>
+                options={[
+                  { value: "long_only", label: "long_only" },
+                  { value: "long_short", label: "long_short" },
+                ]}
+                style={{ width: "100%" }}
+              />
             </div>
             <div>
               <div style={fieldLabelStyle(theme, scale)}>Start</div>
@@ -3153,7 +3149,7 @@ export function BacktestWorkspace({
                 style={{
                   display: "inline-flex",
                   border: `1px solid ${theme.border}`,
-                  borderRadius: scale.dim(999),
+                  borderRadius: scale.dim(RADII.pill),
                   padding: scale.sp(2),
                   background: theme.bg0,
                   marginBottom: scale.sp(8),
@@ -3185,17 +3181,15 @@ export function BacktestWorkspace({
                 </button>
               </div>
               {universeMode === "watchlist" ? (
-                <select
+                <Select
                   value={watchlistId}
-                  onChange={(event) => setWatchlistId(event.target.value)}
-                  style={inputStyle(theme, scale)}
-                >
-                  {watchlists.map((watchlist) => (
-                    <option key={watchlist.id} value={watchlist.id}>
-                      {watchlist.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(next: string) => setWatchlistId(next)}
+                  options={watchlists.map((watchlist) => ({
+                    value: watchlist.id,
+                    label: watchlist.name,
+                  }))}
+                  style={{ width: "100%" }}
+                />
               ) : (
                 <textarea
                   value={symbolsText}
@@ -3370,8 +3364,6 @@ export function BacktestWorkspace({
           <div
             style={{
               padding: scale.sp("10px 12px"),
-              borderRadius: scale.dim(5),
-              border: `1px solid ${theme.border}`,
               background: theme.bg1,
               display: "grid",
               gap: scale.sp(8),
@@ -3697,7 +3689,7 @@ export function BacktestWorkspace({
                       gap: scale.sp(10),
                       padding: scale.sp("16px 18px"),
                       border: `1px dashed ${theme.border}`,
-                      borderRadius: scale.dim(6),
+                      borderRadius: scale.dim(RADII.xs),
                       background: theme.bg1,
                     }}
                   >
@@ -4020,7 +4012,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       border: `1px solid ${theme.border}`,
-                      borderRadius: scale.dim(999),
+                      borderRadius: scale.dim(RADII.pill),
                       color: theme.textDim,
                       fontFamily: theme.mono,
                       fontSize: scale.fs(8),
@@ -4056,7 +4048,7 @@ export function BacktestWorkspace({
                           <span
                             style={{
                               border: `1px solid ${cssColorAlpha(warningColor, "73")}`,
-                              borderRadius: scale.dim(999),
+                              borderRadius: scale.dim(RADII.pill),
                               background: cssColorAlpha(warningColor, "1f"),
                               color: warningColor,
                               fontSize: scale.fs(8),
@@ -4100,7 +4092,7 @@ export function BacktestWorkspace({
                                 key={`${warning.id}:${evidence}`}
                                 style={{
                                   border: `1px solid ${theme.borderLight}`,
-                                  borderRadius: scale.dim(999),
+                                  borderRadius: scale.dim(RADII.pill),
                                   color: theme.textDim,
                                   fontFamily: theme.mono,
                                   fontSize: scale.fs(8),
@@ -4355,8 +4347,7 @@ export function BacktestWorkspace({
                           }
                           style={{
                             textAlign: "left",
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
+                            border: "none",
                             background: theme.bg2,
                             padding: scale.sp("8px 10px"),
                             cursor: "pointer",
@@ -4441,8 +4432,7 @@ export function BacktestWorkspace({
                           }
                           style={{
                             textAlign: "left",
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
+                            border: "none",
                             background: theme.bg2,
                             padding: scale.sp("8px 10px"),
                             cursor: "pointer",
@@ -4552,8 +4542,12 @@ export function BacktestWorkspace({
                           }
                           style={{
                             textAlign: "left",
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
+                            border: "none",
+                            borderLeft: `2px solid ${
+                              trade.tradeSelectionId === activeTradeSelectionId
+                                ? theme.accent
+                                : "transparent"
+                            }`,
                             background:
                               trade.tradeSelectionId === activeTradeSelectionId
                                 ? theme.accentDim
@@ -4791,8 +4785,6 @@ export function BacktestWorkspace({
                       </div>
                       <div
                         style={{
-                          border: `1px solid ${theme.border}`,
-                          borderRadius: scale.dim(5),
                           padding: scale.sp("10px 12px"),
                           background: theme.bg2,
                           fontSize: scale.fs(9),
@@ -4880,8 +4872,6 @@ export function BacktestWorkspace({
                       >
                         <div
                           style={{
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
                             padding: scale.sp("10px 12px"),
                             background: theme.bg2,
                           }}
@@ -4909,8 +4899,6 @@ export function BacktestWorkspace({
                                         "minmax(0, 1fr) auto",
                                       gap: scale.sp(8),
                                       padding: scale.sp("8px 10px"),
-                                      border: `1px solid ${theme.border}`,
-                                      borderRadius: scale.dim(5),
                                       background: theme.bg0,
                                     }}
                                   >
@@ -4984,7 +4972,7 @@ export function BacktestWorkspace({
                                     key={segment.id}
                                     style={{
                                       padding: scale.sp("4px 8px"),
-                                      borderRadius: scale.dim(999),
+                                      borderRadius: scale.dim(RADII.pill),
                                       border: `1px solid ${theme.border}`,
                                       background: theme.bg0,
                                       fontSize: scale.fs(9),
@@ -5014,8 +5002,6 @@ export function BacktestWorkspace({
                         </div>
                         <div
                           style={{
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
                             padding: scale.sp("10px 12px"),
                             background: theme.bg2,
                           }}
@@ -5046,8 +5032,6 @@ export function BacktestWorkspace({
                               <div
                                 style={{
                                   padding: scale.sp("8px 10px"),
-                                  border: `1px solid ${theme.border}`,
-                                  borderRadius: scale.dim(5),
                                   background: theme.bg0,
                                 }}
                               >
@@ -5094,8 +5078,6 @@ export function BacktestWorkspace({
                               <div
                                 style={{
                                   padding: scale.sp("8px 10px"),
-                                  border: `1px solid ${theme.border}`,
-                                  borderRadius: scale.dim(5),
                                   background: theme.bg0,
                                 }}
                               >
@@ -5576,68 +5558,64 @@ export function BacktestWorkspace({
               </div>
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>Symbol</div>
-                <select
+                <Select
                   value={tradeSymbolFilter}
-                  onChange={(event) => setTradeSymbolFilter(event.target.value)}
-                  style={inputStyle(theme, scale)}
-                >
-                  <option value="all">All symbols</option>
-                  {tradeSymbolOptions.map((symbol) => (
-                    <option key={symbol} value={symbol}>
-                      {symbol}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(next: string) => setTradeSymbolFilter(next)}
+                  options={[
+                    { value: "all", label: "All symbols" },
+                    ...tradeSymbolOptions.map((symbol) => ({
+                      value: symbol,
+                      label: symbol,
+                    })),
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>Direction</div>
-                <select
+                <Select
                   value={tradeSideFilter}
-                  onChange={(event) =>
-                    setTradeSideFilter(
-                      event.target.value as "all" | "long" | "short",
-                    )
+                  onChange={(next: string) =>
+                    setTradeSideFilter(next as "all" | "long" | "short")
                   }
-                  style={inputStyle(theme, scale)}
-                >
-                  <option value="all">All</option>
-                  <option value="long">Long</option>
-                  <option value="short">Short</option>
-                </select>
+                  options={[
+                    { value: "all", label: "All" },
+                    { value: "long", label: "Long" },
+                    { value: "short", label: "Short" },
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>Outcome</div>
-                <select
+                <Select
                   value={tradeOutcomeFilter}
-                  onChange={(event) =>
-                    setTradeOutcomeFilter(
-                      event.target.value as TradeOutcomeFilter,
-                    )
+                  onChange={(next: string) =>
+                    setTradeOutcomeFilter(next as TradeOutcomeFilter)
                   }
-                  style={inputStyle(theme, scale)}
-                >
-                  <option value="all">All</option>
-                  <option value="winner">Winner</option>
-                  <option value="loser">Loser</option>
-                  <option value="breakeven">Breakeven</option>
-                </select>
+                  options={[
+                    { value: "all", label: "All" },
+                    { value: "winner", label: "Winner" },
+                    { value: "loser", label: "Loser" },
+                    { value: "breakeven", label: "Breakeven" },
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>Exit Reason</div>
-                <select
+                <Select
                   value={tradeExitReasonFilter}
-                  onChange={(event) =>
-                    setTradeExitReasonFilter(event.target.value)
-                  }
-                  style={inputStyle(theme, scale)}
-                >
-                  <option value="all">All reasons</option>
-                  {tradeExitReasonOptions.map((reason) => (
-                    <option key={reason} value={reason}>
-                      {reason}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(next: string) => setTradeExitReasonFilter(next)}
+                  options={[
+                    { value: "all", label: "All reasons" },
+                    ...tradeExitReasonOptions.map((reason) => ({
+                      value: reason,
+                      label: reason,
+                    })),
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div>
                 <div style={fieldLabelStyle(theme, scale)}>From</div>
@@ -5676,8 +5654,7 @@ export function BacktestWorkspace({
 
             <div
               style={{
-                border: `1px solid ${theme.border}`,
-                borderRadius: scale.dim(5),
+                borderTop: `1px solid ${theme.border}`,
                 overflow: "hidden",
                 background: theme.bg0,
               }}
@@ -6092,8 +6069,6 @@ export function BacktestWorkspace({
                         alignItems: "center",
                         gap: scale.sp(8),
                         padding: scale.sp("8px 10px"),
-                        border: `1px solid ${theme.border}`,
-                        borderRadius: scale.dim(5),
                         background: theme.bg2,
                       }}
                     >
@@ -6142,7 +6117,7 @@ export function BacktestWorkspace({
                 <span
                   style={{
                     padding: scale.sp("4px 8px"),
-                    borderRadius: scale.dim(999),
+                    borderRadius: scale.dim(RADII.pill),
                     border: `1px solid ${theme.border}`,
                     background: theme.bg2,
                     fontSize: scale.fs(9),
@@ -6192,8 +6167,7 @@ export function BacktestWorkspace({
                     gridTemplateColumns: "minmax(0, 0.9fr) minmax(0, 1.1fr)",
                     gap: scale.sp(8),
                     padding: scale.sp("8px 10px"),
-                    border: `1px solid ${theme.border}`,
-                    borderRadius: scale.dim(5),
+                    borderTop: `1px solid ${theme.border}`,
                   }}
                 >
                   <div
@@ -6257,12 +6231,12 @@ export function BacktestWorkspace({
                       onClick={() => setSelectedRunId(run.id)}
                       style={{
                         textAlign: "left",
-                        border: `1px solid ${run.id === selectedRunId ? theme.accent : theme.border}`,
+                        border: "none",
+                        borderLeft: `2px solid ${run.id === selectedRunId ? theme.accent : "transparent"}`,
                         background:
                           run.id === selectedRunId
                             ? theme.accentDim
                             : theme.bg2,
-                        borderRadius: scale.dim(5),
                         padding: scale.sp("10px 12px"),
                         cursor: "pointer",
                       }}
@@ -6331,12 +6305,12 @@ export function BacktestWorkspace({
                       onClick={() => setSelectedRunId(run.id)}
                       style={{
                         textAlign: "left",
-                        border: `1px solid ${run.id === selectedRunId ? theme.accent : theme.border}`,
+                        border: "none",
+                        borderLeft: `2px solid ${run.id === selectedRunId ? theme.accent : "transparent"}`,
                         background:
                           run.id === selectedRunId
                             ? theme.accentDim
                             : theme.bg2,
-                        borderRadius: scale.dim(5),
                         padding: scale.sp("10px 12px"),
                         cursor: "pointer",
                       }}
@@ -6436,8 +6410,6 @@ export function BacktestWorkspace({
                     <div
                       key={job.id}
                       style={{
-                        border: `1px solid ${theme.border}`,
-                        borderRadius: scale.dim(5),
                         padding: scale.sp("8px 10px"),
                         background: theme.bg2,
                       }}
@@ -6705,7 +6677,7 @@ export function BacktestWorkspace({
                             display: "inline-flex",
                             alignItems: "center",
                             padding: scale.sp("2px 8px"),
-                            borderRadius: scale.dim(999),
+                            borderRadius: scale.dim(RADII.pill),
                             border: `1px solid ${
                               chartState.chartReady
                                 ? cssColorAlpha(theme.green, "33")
@@ -6768,8 +6740,6 @@ export function BacktestWorkspace({
                         <div
                           key={`${script.id}-${label}`}
                           style={{
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(5),
                             padding: scale.sp("8px 10px"),
                             background: theme.bg1,
                           }}
@@ -6804,7 +6774,7 @@ export function BacktestWorkspace({
                         style={{
                           marginBottom: scale.sp(8),
                           border: `1px solid ${cssColorAlpha(theme.red, "33")}`,
-                          borderRadius: scale.dim(5),
+                          borderRadius: scale.dim(RADII.xs),
                           background: cssColorAlpha(theme.redBg, "66"),
                           padding: scale.sp("8px 10px"),
                         }}
@@ -6972,35 +6942,33 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>
                       Default Pane
                     </div>
-                    <select
+                    <Select
                       value={pineDefaultPaneType}
-                      onChange={(event) =>
-                        setPineDefaultPaneType(
-                          event.target.value as PineScriptPaneType,
-                        )
+                      onChange={(next: string) =>
+                        setPineDefaultPaneType(next as PineScriptPaneType)
                       }
-                      style={inputStyle(theme, scale)}
-                    >
-                      <option value="price">price</option>
-                      <option value="lower">lower</option>
-                    </select>
+                      options={[
+                        { value: "price", label: "price" },
+                        { value: "lower", label: "lower" },
+                      ]}
+                      style={{ width: "100%" }}
+                    />
                   </div>
                   <div>
                     <div style={fieldLabelStyle(theme, scale)}>Status</div>
-                    <select
+                    <Select
                       value={pineScriptStatus}
-                      onChange={(event) =>
-                        setPineScriptStatus(
-                          event.target.value as PineScriptStatus,
-                        )
+                      onChange={(next: string) =>
+                        setPineScriptStatus(next as PineScriptStatus)
                       }
-                      style={inputStyle(theme, scale)}
-                    >
-                      <option value="draft">draft</option>
-                      <option value="ready">ready</option>
-                      <option value="error">error</option>
-                      <option value="archived">archived</option>
-                    </select>
+                      options={[
+                        { value: "draft", label: "draft" },
+                        { value: "ready", label: "ready" },
+                        { value: "error", label: "error" },
+                        { value: "archived", label: "archived" },
+                      ]}
+                      style={{ width: "100%" }}
+                    />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <div style={fieldLabelStyle(theme, scale)}>Description</div>
@@ -7021,18 +6989,17 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>
                       Chart Access
                     </div>
-                    <select
+                    <Select
                       value={pineChartAccessEnabled ? "enabled" : "disabled"}
-                      onChange={(event) =>
-                        setPineChartAccessEnabled(
-                          event.target.value === "enabled",
-                        )
+                      onChange={(next: string) =>
+                        setPineChartAccessEnabled(next === "enabled")
                       }
-                      style={inputStyle(theme, scale)}
-                    >
-                      <option value="enabled">enabled</option>
-                      <option value="disabled">disabled</option>
-                    </select>
+                      options={[
+                        { value: "enabled", label: "enabled" },
+                        { value: "disabled", label: "disabled" },
+                      ]}
+                      style={{ width: "100%" }}
+                    />
                   </div>
                   <div>
                     <div style={fieldLabelStyle(theme, scale)}>Tags</div>
@@ -7080,7 +7047,7 @@ export function BacktestWorkspace({
                     style={{
                       marginTop: scale.sp(8),
                       padding: scale.sp("8px 10px"),
-                      borderRadius: scale.dim(5),
+                      borderRadius: scale.dim(RADII.xs),
                       border: `1px solid ${cssColorAlpha(theme.red, "33")}`,
                       background: cssColorAlpha(theme.redBg, "66"),
                     }}

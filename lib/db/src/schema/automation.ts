@@ -1,11 +1,14 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   boolean,
+  date,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -119,6 +122,17 @@ export const executionEventsTable = pgTable(
     index("execution_events_overnight_deploy_occurred_idx")
       .on(table.deploymentId, table.occurredAt.desc())
       .where(sql`${table.eventType} LIKE 'overnight_spot_%'`),
+    // Shadow dashboard repair/marking reads filter by fixed signal-options event
+    // types. Keep these as partial indexes so the 260MB ledger is not scanned
+    // when the dashboard builds performance and position-mark snapshots.
+    index("execution_events_shadow_entry_exit_occurred_idx")
+      .on(table.occurredAt.desc())
+      .where(
+        sql`${table.eventType} IN ('signal_options_shadow_entry', 'signal_options_shadow_exit')`,
+      ),
+    index("execution_events_shadow_mark_symbol_occurred_idx")
+      .on(table.symbol, table.occurredAt.desc())
+      .where(sql`${table.eventType} = 'signal_options_shadow_mark'`),
   ],
 );
 
@@ -164,6 +178,46 @@ export const automationDiagnosticsTable = pgTable(
   ],
 );
 
+// Materialized signal-quality KPI calibration response. The GET route reads
+// this cheap snapshot; explicit refresh/background work owns the expensive
+// full-universe bar-cache sweep.
+export const signalQualityKpiSnapshotsTable = pgTable(
+  "signal_quality_kpi_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    deploymentId: uuid("deployment_id")
+      .notNull()
+      .references(() => algoDeploymentsTable.id),
+    settingsHash: varchar("settings_hash", { length: 64 }).notNull(),
+    asOfDay: date("as_of_day").notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull(),
+    resolvedTimeframe: varchar("resolved_timeframe", { length: 16 }),
+    calibrationState: varchar("calibration_state", { length: 32 }),
+    recommendedModelKey: varchar("recommended_model_key", { length: 64 }),
+    evaluatedSymbolCount: integer("evaluated_symbol_count"),
+    symbolsWithBars: integer("symbols_with_bars"),
+    symbolsTimedOut: integer("symbols_timed_out"),
+    response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("signal_quality_kpi_snapshots_deployment_settings_day_idx").on(
+      table.deploymentId,
+      table.settingsHash,
+      table.asOfDay,
+    ),
+    index("signal_quality_kpi_snapshots_deployment_generated_idx").on(
+      table.deploymentId,
+      table.generatedAt.desc(),
+    ),
+    index("signal_quality_kpi_snapshots_deployment_day_generated_idx").on(
+      table.deploymentId,
+      table.asOfDay,
+      table.generatedAt.desc(),
+    ),
+  ],
+);
+
 export const insertAlgoStrategySchema = createInsertSchema(algoStrategiesTable);
 export const insertAlgoDeploymentSchema = createInsertSchema(algoDeploymentsTable);
 
@@ -173,3 +227,5 @@ export type AlgoDeployment = typeof algoDeploymentsTable.$inferSelect;
 export type InsertAlgoDeployment = typeof algoDeploymentsTable.$inferInsert;
 export type ExecutionEvent = typeof executionEventsTable.$inferSelect;
 export type AutomationDiagnostic = typeof automationDiagnosticsTable.$inferSelect;
+export type SignalQualityKpiSnapshot =
+  typeof signalQualityKpiSnapshotsTable.$inferSelect;

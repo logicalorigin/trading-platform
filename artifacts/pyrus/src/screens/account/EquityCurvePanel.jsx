@@ -7,7 +7,7 @@ import {
 } from "react";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
-import { SegmentedControl } from "../../components/platform/primitives.jsx";
+import { ChartSkeleton, SegmentedControl } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { ResilienceMarker } from "../../components/platform/ResilienceMarker.jsx";
 import { collectWidgetIssues } from "../../features/platform/resilienceIssues.js";
@@ -506,13 +506,15 @@ export const EquityCurvePanel = ({
         )
       }
       rightRail={baseRightRail}
-      loading={equityLoading}
       error={blockingError}
       onRetry={query.refetch}
-      minHeight={compact ? 320 : 460}
+      minHeight={hasPoints || equityLoading ? (compact ? 320 : 460) : undefined}
+      fillBody={equityLoading}
       action={compact ? null : headerControls}
     >
-      {!hasPoints && !chartData?.flexConfigured ? (
+      {equityLoading ? (
+        <ChartSkeleton fill />
+      ) : !hasPoints && !chartData?.flexConfigured ? (
         <EmptyState
           title="No equity history yet"
           body="Recorded account snapshots have not populated yet. Flex is only required for full lifetime NAV, deposits, withdrawals, dividends, fees, and trade history."

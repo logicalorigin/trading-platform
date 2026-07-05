@@ -1,13 +1,24 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 
-import { barCacheTable, db, instrumentsTable } from "@workspace/db";
+import {
+  barCacheTable,
+  db,
+  instrumentsTable,
+} from "@workspace/db";
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import {
   loadStoredMarketBars,
+  loadStoredMarketBarsBySymbol,
+  loadStoredMarketBarsForSymbols,
+  persistMarketDataBars,
   __resetMarketDataStoreBackoffForTests,
 } from "./market-data-store";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 // Bars must sit OUTSIDE the durable store's recent-window (default 60 min): the
 // reader intentionally only serves bars older than that boundary. Anchor the
@@ -25,6 +36,7 @@ after(async () => {
 });
 
 beforeEach(async () => {
+  __resetApiResourcePressureForTests();
   __resetMarketDataStoreBackoffForTests();
   // Fresh state per test: truncate the tables this suite touches.
   await testDb.client.exec(
@@ -32,57 +44,65 @@ beforeEach(async () => {
   );
 });
 
-test("loadStoredMarketBars returns seeded bar_cache rows via the real reader", async () => {
-  const symbol = "AAPL";
-  const sourceName = "massive";
-  const timeframe = "1m" as const;
-
-  // Seed an instrument, then two bars using the SAME `db` the production reader
-  // imports — proving the seam routes both writes and reads to PGlite.
+async function seedBars(input: {
+  symbol: string;
+  sourceName: string;
+  timeframe: "1m";
+}): Promise<Date[]> {
   const [instrument] = await db
     .insert(instrumentsTable)
     .values({
-      symbol,
+      symbol: input.symbol,
       assetClass: "equity",
-      name: symbol,
+      name: input.symbol,
       currency: "USD",
       isActive: true,
     })
     .returning({ id: instrumentsTable.id });
   assert.ok(instrument?.id, "instrument should be inserted into PGlite");
 
-  // The reader buckets bars to the timeframe boundary (1m -> floor to minute),
-  // so seed on exact minute boundaries to keep returned timestamps equal to the
-  // seeded ones.
-  const olderTs = new Date(Math.floor((Date.now() - TWO_HOURS_MS) / 60_000) * 60_000);
+  const olderTs = new Date(
+    Math.floor((Date.now() - TWO_HOURS_MS) / 60_000) * 60_000,
+  );
   const newerTs = new Date(olderTs.getTime() + 60_000);
-
   await db.insert(barCacheTable).values([
     {
       instrumentId: instrument.id,
-      symbol,
-      timeframe,
+      symbol: input.symbol,
+      timeframe: input.timeframe,
       startsAt: olderTs,
       open: "100.5",
       high: "101.25",
       low: "100.0",
       close: "101.0",
       volume: "1000",
-      source: sourceName,
+      source: input.sourceName,
     },
     {
       instrumentId: instrument.id,
-      symbol,
-      timeframe,
+      symbol: input.symbol,
+      timeframe: input.timeframe,
       startsAt: newerTs,
       open: "101.0",
       high: "102.5",
       low: "100.75",
       close: "102.0",
       volume: "2000",
-      source: sourceName,
+      source: input.sourceName,
     },
   ]);
+  return [olderTs, newerTs];
+}
+
+test("loadStoredMarketBars returns seeded bar_cache rows via the real reader", async () => {
+  const symbol = "AAPL";
+  const sourceName = "massive";
+  const timeframe = "1m" as const;
+
+  // The reader buckets bars to the timeframe boundary (1m -> floor to minute),
+  // so seed on exact minute boundaries to keep returned timestamps equal to the
+  // seeded ones.
+  const [olderTs, newerTs] = await seedBars({ symbol, sourceName, timeframe });
 
   const bars = await loadStoredMarketBars({
     symbol,
@@ -110,6 +130,23 @@ test("loadStoredMarketBars returns seeded bar_cache rows via the real reader", a
   assert.equal(first.source, sourceName);
 });
 
+test("durable bar reads continue while API pressure is high", async () => {
+  const symbol = "AAPL";
+  const sourceName = "massive";
+  const timeframe = "1m" as const;
+  await seedBars({ symbol, sourceName, timeframe });
+  updateApiResourcePressure({ eventLoopUtilization: 0.95 });
+
+  const bars = await loadStoredMarketBars({
+    symbol,
+    timeframe,
+    sourceName,
+    limit: 100,
+  });
+
+  assert.equal(bars.length, 2);
+});
+
 test("loadStoredMarketBars filters by source and timeframe", async () => {
   const symbol = "MSFT";
   const baseTs = new Date(Math.floor((Date.now() - TWO_HOURS_MS) / 60_000) * 60_000);
@@ -132,4 +169,200 @@ test("loadStoredMarketBars filters by source and timeframe", async () => {
 
   assert.equal(bars.length, 1, "only the matching (source, timeframe) bar should return");
   assert.equal(bars[0].close, 1);
+});
+
+test("durable readers ignore stale dirty rows not aligned to the requested timeframe", async () => {
+  const symbol = "SPY";
+  const sourceName = "massive-history";
+  const baseTs = new Date(
+    Math.floor((Date.now() - TWO_HOURS_MS) / (15 * 60_000)) * 15 * 60_000,
+  );
+
+  const [instrument] = await db
+    .insert(instrumentsTable)
+    .values({
+      symbol,
+      assetClass: "equity",
+      name: symbol,
+      currency: "USD",
+      isActive: true,
+    })
+    .returning({ id: instrumentsTable.id });
+
+  assert.ok(instrument?.id, "instrument should be inserted into PGlite");
+
+  await db.insert(barCacheTable).values([
+    {
+      instrumentId: instrument.id,
+      symbol,
+      timeframe: "15m",
+      startsAt: baseTs,
+      open: "100",
+      high: "101",
+      low: "99",
+      close: "100",
+      volume: "1000",
+      source: sourceName,
+    },
+    {
+      instrumentId: instrument.id,
+      symbol,
+      timeframe: "15m",
+      startsAt: new Date(baseTs.getTime() + 4 * 60_000),
+      open: "900",
+      high: "901",
+      low: "899",
+      close: "900",
+      volume: "9000",
+      source: sourceName,
+    },
+    {
+      instrumentId: instrument.id,
+      symbol,
+      timeframe: "15m",
+      startsAt: new Date(baseTs.getTime() + 15 * 60_000),
+      open: "101",
+      high: "102",
+      low: "100",
+      close: "101",
+      volume: "1100",
+      source: sourceName,
+    },
+    {
+      instrumentId: instrument.id,
+      symbol,
+      timeframe: "15m",
+      startsAt: new Date(baseTs.getTime() + 19 * 60_000),
+      open: "901",
+      high: "902",
+      low: "900",
+      close: "901",
+      volume: "9100",
+      source: sourceName,
+    },
+  ]);
+
+  const perSymbol = await loadStoredMarketBars({
+    symbol,
+    timeframe: "15m",
+    sourceName,
+    limit: 10,
+  });
+  const batched = await loadStoredMarketBarsForSymbols({
+    symbols: [symbol],
+    timeframe: "15m",
+    sourceName,
+    limit: 10,
+  });
+
+  assert.deepEqual(
+    perSymbol.map((bar) => [bar.timestamp.getTime(), bar.close]),
+    [
+      [baseTs.getTime(), 100],
+      [baseTs.getTime() + 15 * 60_000, 101],
+    ],
+  );
+  assert.deepEqual(batched.get(symbol), perSymbol);
+});
+
+test("durable writer normalizes misaligned intraday bars before they enter bar_cache", async () => {
+  const symbol = "SPY";
+  const sourceName = "massive-history";
+  const baseTs = new Date(
+    Math.floor((Date.now() - TWO_HOURS_MS) / (15 * 60_000)) * 15 * 60_000,
+  );
+
+  await persistMarketDataBars({
+    request: {
+      symbol,
+      assetClass: "equity",
+      timeframe: "15m",
+      limit: 10,
+    },
+    sourceName,
+    bars: [
+      {
+        timestamp: baseTs,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 1000,
+      },
+      {
+        timestamp: new Date(baseTs.getTime() + 4 * 60_000),
+        open: 100,
+        high: 105,
+        low: 98,
+        close: 104,
+        volume: 4000,
+      },
+      {
+        timestamp: new Date(baseTs.getTime() + 15 * 60_000),
+        open: 101,
+        high: 102,
+        low: 100,
+        close: 101,
+        volume: 1100,
+      },
+      {
+        timestamp: new Date(baseTs.getTime() + 19 * 60_000),
+        open: 101,
+        high: 106,
+        low: 99,
+        close: 105,
+        volume: 4100,
+      },
+    ],
+  });
+
+  const storedRows = await db.select().from(barCacheTable);
+  assert.deepEqual(
+    storedRows
+      .map((row) => row.startsAt.getTime())
+      .sort((left, right) => left - right),
+    [baseTs.getTime(), baseTs.getTime() + 15 * 60_000],
+  );
+
+  const perSymbol = await loadStoredMarketBars({
+    symbol,
+    timeframe: "15m",
+    sourceName,
+    limit: 2,
+  });
+  const batched = await loadStoredMarketBarsForSymbols({
+    symbols: [symbol],
+    timeframe: "15m",
+    sourceName,
+    limit: 2,
+  });
+  const sparkline = await loadStoredMarketBarsBySymbol({
+    symbols: [symbol],
+    timeframe: "15m",
+    sourceName,
+    limit: 2,
+  });
+
+  const expected = [
+    [baseTs.getTime(), 104],
+    [baseTs.getTime() + 15 * 60_000, 105],
+  ];
+  assert.deepEqual(
+    perSymbol.map((bar) => [bar.timestamp.getTime(), bar.close]),
+    expected,
+  );
+  assert.deepEqual(
+    (batched.get(symbol) ?? []).map((bar) => [
+      bar.timestamp.getTime(),
+      bar.close,
+    ]),
+    expected,
+  );
+  assert.deepEqual(
+    (sparkline[symbol] ?? []).map((bar) => [
+      bar.timestamp.getTime(),
+      bar.close,
+    ]),
+    expected,
+  );
 });

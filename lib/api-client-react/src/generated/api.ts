@@ -78,6 +78,7 @@ import type {
   FlowPremiumDistributionResponse,
   FlowUniverseResponse,
   FootprintResponse,
+  GenerateSnapTradeConnectionPortalBody,
   GetAccountAllocationParams,
   GetAccountCashActivityParams,
   GetAccountClosedTradesParams,
@@ -92,8 +93,7 @@ import type {
   GetBarsParams,
   GetFlowPremiumDistributionParams,
   GetFootprintsParams,
-  GetMarketDepth200,
-  GetMarketDepthParams,
+  GetGexSnapshotsParams,
   GetNewsParams,
   GetOptionChainParams,
   GetOptionChartBarsParams,
@@ -111,25 +111,18 @@ import type {
   GetResearchTranscriptsParams,
   GetSignalMonitorProfileParams,
   GetSignalMonitorStateParams,
+  GetSnapTradeAccountHistoryParams,
+  GetSnapTradeAccountHistoryResponse,
+  GetSnapTradeAccountPortfolioResponse,
+  GetSnapTradeRecentOrdersResponse,
   GetUniverseLogosParams,
   GexDashboardResponse,
+  GexSnapshotsResponse,
   HealthStatus,
-  IbkrBridgeActivationCancelResponse,
-  IbkrBridgeActivationDiagnosticsResponse,
-  IbkrBridgeActivationStatusResponse,
-  IbkrBridgeAttachResponse,
-  IbkrBridgeDetachResponse,
-  IbkrBridgeHelperMetadataResponse,
-  IbkrBridgeLauncherResponse,
-  IbkrBridgeLoginEnvelopeClaimResponse,
-  IbkrBridgeLoginKeyReadResponse,
-  IbkrBridgeRemoteLauncherResponse,
-  IbkrBridgeRemoteShutdownResponse,
-  IbkrRemoteDesktopHeartbeatResponse,
-  IbkrRemoteDesktopJobStatusResponse,
-  IbkrRemoteDesktopLaunchClaimResponse,
-  IbkrRemoteDesktopRegisterResponse,
-  IbkrRemoteDesktopsResponse,
+  IbkrOAuthReadinessResponse,
+  IbkrPortalConnectResponse,
+  IbkrPortalDisconnectResponse,
+  IbkrPortalReadinessResponse,
   JsonObject,
   ListAccountsParams,
   ListAggregateFlowEventsParams,
@@ -173,7 +166,6 @@ import type {
   ProxyUniverseLogoParams,
   QuoteSnapshotsResponse,
   ReadinessStatus,
-  RecordIbkrBridgeActivationProgress200,
   ReorderWatchlistItemsRequest,
   ReplaceOrderRequest,
   ResearchCalendarResponse,
@@ -188,8 +180,14 @@ import type {
   ResolveBacktestOptionContract200,
   ResolveBacktestOptionContractBody,
   ResolveOptionContractParams,
+  RobinhoodConnectResponse,
+  RobinhoodReadinessResponse,
   RunSignalOptionsShadowBackfillBody,
   RuntimeDiagnosticsResponse,
+  SchwabConnectResponse,
+  SchwabReadinessResponse,
+  SearchSnapTradeAccountSymbolsParams,
+  SearchSnapTradeAccountSymbolsResponse,
   SearchUniverseTickersParams,
   SessionInfo,
   SetAlgoDeploymentModeRequest,
@@ -203,14 +201,20 @@ import type {
   SignalOptionsManualDeviationResponse,
   SignalOptionsPerformanceResponse,
   SignalQualityKpiResponse,
+  SnapTradeBrokerageListResponse,
+  SnapTradeConnectionPortalResponse,
+  SnapTradeEquityOrderImpactBody,
+  SnapTradeEquityOrderImpactResponse,
+  SnapTradeEquityOrderSubmitBody,
+  SnapTradeEquityOrderSubmitResponse,
+  SnapTradeReadinessResponse,
+  SnapTradeUserRegistrationResponse,
   SseStream,
   StockAggregateStreamSessionResponse,
   StreamAccountPageParams,
   StreamAccountsParams,
-  StreamBarsParams,
   StreamExecutionsParams,
   StreamFootprintsParams,
-  StreamMarketDepthParams,
   StreamOptionChainsParams,
   StreamOptionQuoteSnapshotsParams,
   StreamOrdersParams,
@@ -219,6 +223,9 @@ import type {
   StreamStockAggregatesParams,
   SubmitIbkrOrdersRequest,
   SubmitIbkrOrdersResponse,
+  SyncRobinhoodConnectionsResponse,
+  SyncSchwabConnectionsResponse,
+  SyncSnapTradeBrokerageConnectionsResponse,
   UniverseTickersResponse,
   UpdateAlgoDeploymentStrategySettingsRequest,
   UpdateAlgoDeploymentStrategySettingsResponse,
@@ -2110,1671 +2117,6 @@ export function useStreamDiagnostics<TData = Awaited<ReturnType<typeof streamDia
 
 
 /**
- * @summary Create an IBKR bridge one-click launcher payload
- */
-export const getGetIbkrBridgeLauncherUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/launcher`
-}
-
-export const getIbkrBridgeLauncher = async ( options?: RequestInit): Promise<IbkrBridgeLauncherResponse> => {
-
-  return customFetch<IbkrBridgeLauncherResponse>(getGetIbkrBridgeLauncherUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetIbkrBridgeLauncherQueryKey = () => {
-    return [
-    `/api/ibkr/bridge/launcher`
-    ] as const;
-    }
-
-
-export const getGetIbkrBridgeLauncherQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeLauncher>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeLauncher>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeLauncherQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeLauncher>>> = ({ signal }) => getIbkrBridgeLauncher({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeLauncher>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetIbkrBridgeLauncherQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeLauncher>>>
-export type GetIbkrBridgeLauncherQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Create an IBKR bridge one-click launcher payload
- */
-
-export function useGetIbkrBridgeLauncher<TData = Awaited<ReturnType<typeof getIbkrBridgeLauncher>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeLauncher>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetIbkrBridgeLauncherQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Read paired IBKR helper metadata without starting a launch
- */
-export const getGetIbkrBridgeHelperMetadataUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/helper-metadata`
-}
-
-export const getIbkrBridgeHelperMetadata = async ( options?: RequestInit): Promise<IbkrBridgeHelperMetadataResponse> => {
-
-  return customFetch<IbkrBridgeHelperMetadataResponse>(getGetIbkrBridgeHelperMetadataUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetIbkrBridgeHelperMetadataQueryKey = () => {
-    return [
-    `/api/ibkr/bridge/helper-metadata`
-    ] as const;
-    }
-
-
-export const getGetIbkrBridgeHelperMetadataQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeHelperMetadataQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>> = ({ signal }) => getIbkrBridgeHelperMetadata({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetIbkrBridgeHelperMetadataQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>>
-export type GetIbkrBridgeHelperMetadataQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Read paired IBKR helper metadata without starting a launch
- */
-
-export function useGetIbkrBridgeHelperMetadata<TData = Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetIbkrBridgeHelperMetadataQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary List paired Windows desktop agents for remote IBKR bridge launch
- */
-export const getListIbkrRemoteDesktopsUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktops`
-}
-
-export const listIbkrRemoteDesktops = async ( options?: RequestInit): Promise<IbkrRemoteDesktopsResponse> => {
-
-  return customFetch<IbkrRemoteDesktopsResponse>(getListIbkrRemoteDesktopsUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getListIbkrRemoteDesktopsQueryKey = () => {
-    return [
-    `/api/ibkr/desktops`
-    ] as const;
-    }
-
-
-export const getListIbkrRemoteDesktopsQueryOptions = <TData = Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListIbkrRemoteDesktopsQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>> = ({ signal }) => listIbkrRemoteDesktops({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type ListIbkrRemoteDesktopsQueryResult = NonNullable<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>>
-export type ListIbkrRemoteDesktopsQueryError = ErrorType<unknown>
-
-
-/**
- * @summary List paired Windows desktop agents for remote IBKR bridge launch
- */
-
-export function useListIbkrRemoteDesktops<TData = Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getListIbkrRemoteDesktopsQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Register a Windows desktop agent for remote IBKR bridge launch
- */
-export const getRegisterIbkrRemoteDesktopUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktop/register`
-}
-
-export const registerIbkrRemoteDesktop = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopRegisterResponse> => {
-
-  return customFetch<IbkrRemoteDesktopRegisterResponse>(getRegisterIbkrRemoteDesktopUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getRegisterIbkrRemoteDesktopMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['registerIbkrRemoteDesktop'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  registerIbkrRemoteDesktop(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RegisterIbkrRemoteDesktopMutationResult = NonNullable<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>>
-    export type RegisterIbkrRemoteDesktopMutationBody = BodyType<JsonObject>
-    export type RegisterIbkrRemoteDesktopMutationError = ErrorType<unknown>
-
-    /**
- * @summary Register a Windows desktop agent for remote IBKR bridge launch
- */
-export const useRegisterIbkrRemoteDesktop = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getRegisterIbkrRemoteDesktopMutationOptions(options));
-    }
-
-/**
- * @summary Record a Windows desktop agent heartbeat
- */
-export const getHeartbeatIbkrRemoteDesktopUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktop/heartbeat`
-}
-
-export const heartbeatIbkrRemoteDesktop = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopHeartbeatResponse> => {
-
-  return customFetch<IbkrRemoteDesktopHeartbeatResponse>(getHeartbeatIbkrRemoteDesktopUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getHeartbeatIbkrRemoteDesktopMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['heartbeatIbkrRemoteDesktop'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  heartbeatIbkrRemoteDesktop(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type HeartbeatIbkrRemoteDesktopMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>>
-    export type HeartbeatIbkrRemoteDesktopMutationBody = BodyType<JsonObject>
-    export type HeartbeatIbkrRemoteDesktopMutationError = ErrorType<unknown>
-
-    /**
- * @summary Record a Windows desktop agent heartbeat
- */
-export const useHeartbeatIbkrRemoteDesktop = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getHeartbeatIbkrRemoteDesktopMutationOptions(options));
-    }
-
-/**
- * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
- */
-export const getClaimIbkrRemoteDesktopLaunchJobUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktop/jobs/claim`
-}
-
-export const claimIbkrRemoteDesktopLaunchJob = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopLaunchClaimResponse> => {
-
-  return customFetch<IbkrRemoteDesktopLaunchClaimResponse>(getClaimIbkrRemoteDesktopLaunchJobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getClaimIbkrRemoteDesktopLaunchJobMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['claimIbkrRemoteDesktopLaunchJob'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  claimIbkrRemoteDesktopLaunchJob(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ClaimIbkrRemoteDesktopLaunchJobMutationResult = NonNullable<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>>
-    export type ClaimIbkrRemoteDesktopLaunchJobMutationBody = BodyType<JsonObject>
-    export type ClaimIbkrRemoteDesktopLaunchJobMutationError = ErrorType<unknown>
-
-    /**
- * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
- */
-export const useClaimIbkrRemoteDesktopLaunchJob = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getClaimIbkrRemoteDesktopLaunchJobMutationOptions(options));
-    }
-
-/**
- * @summary Mark an IBKR desktop job complete from the Windows helper
- */
-export const getCompleteIbkrRemoteDesktopJobUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktop/jobs/complete`
-}
-
-export const completeIbkrRemoteDesktopJob = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopJobStatusResponse> => {
-
-  return customFetch<IbkrRemoteDesktopJobStatusResponse>(getCompleteIbkrRemoteDesktopJobUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getCompleteIbkrRemoteDesktopJobMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['completeIbkrRemoteDesktopJob'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  completeIbkrRemoteDesktopJob(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CompleteIbkrRemoteDesktopJobMutationResult = NonNullable<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>>
-    export type CompleteIbkrRemoteDesktopJobMutationBody = BodyType<JsonObject>
-    export type CompleteIbkrRemoteDesktopJobMutationError = ErrorType<unknown>
-
-    /**
- * @summary Mark an IBKR desktop job complete from the Windows helper
- */
-export const useCompleteIbkrRemoteDesktopJob = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getCompleteIbkrRemoteDesktopJobMutationOptions(options));
-    }
-
-/**
- * @summary Read a queued IBKR desktop job status
- */
-export const getReadIbkrRemoteDesktopJobStatusUrl = () => {
-
-
-
-
-  return `/api/ibkr/desktop/jobs/status`
-}
-
-export const readIbkrRemoteDesktopJobStatus = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopJobStatusResponse> => {
-
-  return customFetch<IbkrRemoteDesktopJobStatusResponse>(getReadIbkrRemoteDesktopJobStatusUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getReadIbkrRemoteDesktopJobStatusMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['readIbkrRemoteDesktopJobStatus'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  readIbkrRemoteDesktopJobStatus(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReadIbkrRemoteDesktopJobStatusMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>>
-    export type ReadIbkrRemoteDesktopJobStatusMutationBody = BodyType<JsonObject>
-    export type ReadIbkrRemoteDesktopJobStatusMutationError = ErrorType<unknown>
-
-    /**
- * @summary Read a queued IBKR desktop job status
- */
-export const useReadIbkrRemoteDesktopJobStatus = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getReadIbkrRemoteDesktopJobStatusMutationOptions(options));
-    }
-
-/**
- * @summary Read the latest IBKR bridge activation diagnostics
- */
-export const getGetIbkrBridgeActivationDiagnosticsUrl = () => {
-
-
-
-
-  return `/api/ibkr/activation/diagnostics`
-}
-
-export const getIbkrBridgeActivationDiagnostics = async ( options?: RequestInit): Promise<IbkrBridgeActivationDiagnosticsResponse> => {
-
-  return customFetch<IbkrBridgeActivationDiagnosticsResponse>(getGetIbkrBridgeActivationDiagnosticsUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetIbkrBridgeActivationDiagnosticsQueryKey = () => {
-    return [
-    `/api/ibkr/activation/diagnostics`
-    ] as const;
-    }
-
-
-export const getGetIbkrBridgeActivationDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeActivationDiagnosticsQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>> = ({ signal }) => getIbkrBridgeActivationDiagnostics({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetIbkrBridgeActivationDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>>
-export type GetIbkrBridgeActivationDiagnosticsQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Read the latest IBKR bridge activation diagnostics
- */
-
-export function useGetIbkrBridgeActivationDiagnostics<TData = Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetIbkrBridgeActivationDiagnosticsQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
- */
-export const getCreateIbkrRemoteBridgeLaunchUrl = () => {
-
-
-
-
-  return `/api/ibkr/remote-launch`
-}
-
-export const createIbkrRemoteBridgeLaunch = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeRemoteLauncherResponse> => {
-
-  return customFetch<IbkrBridgeRemoteLauncherResponse>(getCreateIbkrRemoteBridgeLaunchUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getCreateIbkrRemoteBridgeLaunchMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['createIbkrRemoteBridgeLaunch'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createIbkrRemoteBridgeLaunch(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateIbkrRemoteBridgeLaunchMutationResult = NonNullable<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>>
-    export type CreateIbkrRemoteBridgeLaunchMutationBody = BodyType<JsonObject>
-    export type CreateIbkrRemoteBridgeLaunchMutationError = ErrorType<unknown>
-
-    /**
- * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
- */
-export const useCreateIbkrRemoteBridgeLaunch = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getCreateIbkrRemoteBridgeLaunchMutationOptions(options));
-    }
-
-/**
- * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
- */
-export const getCreateIbkrRemoteBridgeShutdownUrl = () => {
-
-
-
-
-  return `/api/ibkr/remote-shutdown`
-}
-
-export const createIbkrRemoteBridgeShutdown = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeRemoteShutdownResponse> => {
-
-  return customFetch<IbkrBridgeRemoteShutdownResponse>(getCreateIbkrRemoteBridgeShutdownUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getCreateIbkrRemoteBridgeShutdownMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['createIbkrRemoteBridgeShutdown'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createIbkrRemoteBridgeShutdown(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateIbkrRemoteBridgeShutdownMutationResult = NonNullable<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>>
-    export type CreateIbkrRemoteBridgeShutdownMutationBody = BodyType<JsonObject>
-    export type CreateIbkrRemoteBridgeShutdownMutationError = ErrorType<unknown>
-
-    /**
- * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
- */
-export const useCreateIbkrRemoteBridgeShutdown = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getCreateIbkrRemoteBridgeShutdownMutationOptions(options));
-    }
-
-/**
- * @summary Record IBKR bridge activation progress
- */
-export const getRecordIbkrBridgeActivationProgressUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/progress`
-}
-
-export const recordIbkrBridgeActivationProgress = async (activationId: string,
-    jsonObject?: JsonObject, options?: RequestInit): Promise<RecordIbkrBridgeActivationProgress200> => {
-
-  return customFetch<RecordIbkrBridgeActivationProgress200>(getRecordIbkrBridgeActivationProgressUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getRecordIbkrBridgeActivationProgressMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['recordIbkrBridgeActivationProgress'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  recordIbkrBridgeActivationProgress(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RecordIbkrBridgeActivationProgressMutationResult = NonNullable<Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>>
-    export type RecordIbkrBridgeActivationProgressMutationBody = BodyType<JsonObject>
-    export type RecordIbkrBridgeActivationProgressMutationError = ErrorType<unknown>
-
-    /**
- * @summary Record IBKR bridge activation progress
- */
-export const useRecordIbkrBridgeActivationProgress = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof recordIbkrBridgeActivationProgress>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getRecordIbkrBridgeActivationProgressMutationOptions(options));
-    }
-
-/**
- * @summary Read IBKR bridge activation cancellation status
- */
-export const getReadIbkrBridgeActivationStatusUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/status`
-}
-
-export const readIbkrBridgeActivationStatus = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeActivationStatusResponse> => {
-
-  return customFetch<IbkrBridgeActivationStatusResponse>(getReadIbkrBridgeActivationStatusUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getReadIbkrBridgeActivationStatusMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['readIbkrBridgeActivationStatus'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  readIbkrBridgeActivationStatus(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReadIbkrBridgeActivationStatusMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>>
-    export type ReadIbkrBridgeActivationStatusMutationBody = BodyType<JsonObject>
-    export type ReadIbkrBridgeActivationStatusMutationError = ErrorType<unknown>
-
-    /**
- * @summary Read IBKR bridge activation cancellation status
- */
-export const useReadIbkrBridgeActivationStatus = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getReadIbkrBridgeActivationStatusMutationOptions(options));
-    }
-
-/**
- * @summary Cancel a pending IBKR bridge activation
- */
-export const getCancelIbkrBridgeActivationUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/cancel`
-}
-
-export const cancelIbkrBridgeActivation = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeActivationCancelResponse> => {
-
-  return customFetch<IbkrBridgeActivationCancelResponse>(getCancelIbkrBridgeActivationUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getCancelIbkrBridgeActivationMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['cancelIbkrBridgeActivation'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  cancelIbkrBridgeActivation(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CancelIbkrBridgeActivationMutationResult = NonNullable<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>>
-    export type CancelIbkrBridgeActivationMutationBody = BodyType<JsonObject>
-    export type CancelIbkrBridgeActivationMutationError = ErrorType<unknown>
-
-    /**
- * @summary Cancel a pending IBKR bridge activation
- */
-export const useCancelIbkrBridgeActivation = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getCancelIbkrBridgeActivationMutationOptions(options));
-    }
-
-/**
- * @summary Publish the helper public key for one-time IBKR credential handoff
- */
-export const getSubmitIbkrBridgeLoginKeyUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/login-key`
-}
-
-export const submitIbkrBridgeLoginKey = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<OkResponse> => {
-
-  return customFetch<OkResponse>(getSubmitIbkrBridgeLoginKeyUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getSubmitIbkrBridgeLoginKeyMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['submitIbkrBridgeLoginKey'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  submitIbkrBridgeLoginKey(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SubmitIbkrBridgeLoginKeyMutationResult = NonNullable<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>>
-    export type SubmitIbkrBridgeLoginKeyMutationBody = BodyType<JsonObject>
-    export type SubmitIbkrBridgeLoginKeyMutationError = ErrorType<unknown>
-
-    /**
- * @summary Publish the helper public key for one-time IBKR credential handoff
- */
-export const useSubmitIbkrBridgeLoginKey = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getSubmitIbkrBridgeLoginKeyMutationOptions(options));
-    }
-
-/**
- * @summary Read the helper public key for one-time IBKR credential handoff
- */
-export const getReadIbkrBridgeLoginKeyUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/login-key/read`
-}
-
-export const readIbkrBridgeLoginKey = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeLoginKeyReadResponse> => {
-
-  return customFetch<IbkrBridgeLoginKeyReadResponse>(getReadIbkrBridgeLoginKeyUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getReadIbkrBridgeLoginKeyMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['readIbkrBridgeLoginKey'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  readIbkrBridgeLoginKey(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReadIbkrBridgeLoginKeyMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>>
-    export type ReadIbkrBridgeLoginKeyMutationBody = BodyType<JsonObject>
-    export type ReadIbkrBridgeLoginKeyMutationError = ErrorType<unknown>
-
-    /**
- * @summary Read the helper public key for one-time IBKR credential handoff
- */
-export const useReadIbkrBridgeLoginKey = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getReadIbkrBridgeLoginKeyMutationOptions(options));
-    }
-
-/**
- * @summary Submit encrypted one-time IBKR credentials for the helper to claim
- */
-export const getSubmitIbkrBridgeLoginEnvelopeUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/login-envelope`
-}
-
-export const submitIbkrBridgeLoginEnvelope = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<OkResponse> => {
-
-  return customFetch<OkResponse>(getSubmitIbkrBridgeLoginEnvelopeUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getSubmitIbkrBridgeLoginEnvelopeMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['submitIbkrBridgeLoginEnvelope'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  submitIbkrBridgeLoginEnvelope(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SubmitIbkrBridgeLoginEnvelopeMutationResult = NonNullable<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>>
-    export type SubmitIbkrBridgeLoginEnvelopeMutationBody = BodyType<JsonObject>
-    export type SubmitIbkrBridgeLoginEnvelopeMutationError = ErrorType<unknown>
-
-    /**
- * @summary Submit encrypted one-time IBKR credentials for the helper to claim
- */
-export const useSubmitIbkrBridgeLoginEnvelope = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getSubmitIbkrBridgeLoginEnvelopeMutationOptions(options));
-    }
-
-/**
- * @summary Claim encrypted one-time IBKR credentials from the helper
- */
-export const getClaimIbkrBridgeLoginEnvelopeUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/login-envelope/claim`
-}
-
-export const claimIbkrBridgeLoginEnvelope = async (activationId: string,
-    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeLoginEnvelopeClaimResponse> => {
-
-  return customFetch<IbkrBridgeLoginEnvelopeClaimResponse>(getClaimIbkrBridgeLoginEnvelopeUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getClaimIbkrBridgeLoginEnvelopeMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['claimIbkrBridgeLoginEnvelope'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  claimIbkrBridgeLoginEnvelope(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ClaimIbkrBridgeLoginEnvelopeMutationResult = NonNullable<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>>
-    export type ClaimIbkrBridgeLoginEnvelopeMutationBody = BodyType<JsonObject>
-    export type ClaimIbkrBridgeLoginEnvelopeMutationError = ErrorType<unknown>
-
-    /**
- * @summary Claim encrypted one-time IBKR credentials from the helper
- */
-export const useClaimIbkrBridgeLoginEnvelope = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getClaimIbkrBridgeLoginEnvelopeMutationOptions(options));
-    }
-
-/**
- * @summary Complete IBKR bridge activation and attach runtime
- */
-export const getCompleteIbkrBridgeActivationUrl = (activationId: string,) => {
-
-
-
-
-  return `/api/ibkr/activation/${activationId}/complete`
-}
-
-export const completeIbkrBridgeActivation = async (activationId: string,
-    jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeAttachResponse> => {
-
-  return customFetch<IbkrBridgeAttachResponse>(getCompleteIbkrBridgeActivationUrl(activationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getCompleteIbkrBridgeActivationMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof completeIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['completeIbkrBridgeActivation'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeIbkrBridgeActivation>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
-          const {activationId,data} = props ?? {};
-
-          return  completeIbkrBridgeActivation(activationId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CompleteIbkrBridgeActivationMutationResult = NonNullable<Awaited<ReturnType<typeof completeIbkrBridgeActivation>>>
-    export type CompleteIbkrBridgeActivationMutationBody = BodyType<JsonObject>
-    export type CompleteIbkrBridgeActivationMutationError = ErrorType<unknown>
-
-    /**
- * @summary Complete IBKR bridge activation and attach runtime
- */
-export const useCompleteIbkrBridgeActivation = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof completeIbkrBridgeActivation>>,
-        TError,
-        {activationId: string;data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getCompleteIbkrBridgeActivationMutationOptions(options));
-    }
-
-/**
- * @summary Download the IBKR bridge helper PowerShell script
- */
-export const getGetIbkrBridgeHelperScriptUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/helper.ps1`
-}
-
-export const getIbkrBridgeHelperScript = async ( options?: RequestInit): Promise<string> => {
-
-  return customFetch<string>(getGetIbkrBridgeHelperScriptUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetIbkrBridgeHelperScriptQueryKey = () => {
-    return [
-    `/api/ibkr/bridge/helper.ps1`
-    ] as const;
-    }
-
-
-export const getGetIbkrBridgeHelperScriptQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeHelperScriptQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>> = ({ signal }) => getIbkrBridgeHelperScript({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetIbkrBridgeHelperScriptQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>>
-export type GetIbkrBridgeHelperScriptQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Download the IBKR bridge helper PowerShell script
- */
-
-export function useGetIbkrBridgeHelperScript<TData = Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperScript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetIbkrBridgeHelperScriptQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Download the IBKR bridge helper bundle
- */
-export const getGetIbkrBridgeBundleUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/bundle.tar.gz`
-}
-
-export const getIbkrBridgeBundle = async ( options?: RequestInit): Promise<Blob> => {
-
-  return customFetch<Blob>(getGetIbkrBridgeBundleUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetIbkrBridgeBundleQueryKey = () => {
-    return [
-    `/api/ibkr/bridge/bundle.tar.gz`
-    ] as const;
-    }
-
-
-export const getGetIbkrBridgeBundleQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeBundle>>, TError = ErrorType<void | JsonObject>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeBundle>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeBundleQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeBundle>>> = ({ signal }) => getIbkrBridgeBundle({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeBundle>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetIbkrBridgeBundleQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeBundle>>>
-export type GetIbkrBridgeBundleQueryError = ErrorType<void | JsonObject>
-
-
-/**
- * @summary Download the IBKR bridge helper bundle
- */
-
-export function useGetIbkrBridgeBundle<TData = Awaited<ReturnType<typeof getIbkrBridgeBundle>>, TError = ErrorType<void | JsonObject>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeBundle>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetIbkrBridgeBundleQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Attach an IBKR bridge runtime override
- */
-export const getAttachIbkrBridgeRuntimeUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/attach`
-}
-
-export const attachIbkrBridgeRuntime = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeAttachResponse> => {
-
-  return customFetch<IbkrBridgeAttachResponse>(getAttachIbkrBridgeRuntimeUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getAttachIbkrBridgeRuntimeMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['attachIbkrBridgeRuntime'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  attachIbkrBridgeRuntime(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type AttachIbkrBridgeRuntimeMutationResult = NonNullable<Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>>
-    export type AttachIbkrBridgeRuntimeMutationBody = BodyType<JsonObject>
-    export type AttachIbkrBridgeRuntimeMutationError = ErrorType<unknown>
-
-    /**
- * @summary Attach an IBKR bridge runtime override
- */
-export const useAttachIbkrBridgeRuntime = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof attachIbkrBridgeRuntime>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getAttachIbkrBridgeRuntimeMutationOptions(options));
-    }
-
-/**
- * @summary Detach the IBKR bridge runtime override
- */
-export const getDetachIbkrBridgeRuntimeUrl = () => {
-
-
-
-
-  return `/api/ibkr/bridge/detach`
-}
-
-export const detachIbkrBridgeRuntime = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeDetachResponse> => {
-
-  return customFetch<IbkrBridgeDetachResponse>(getDetachIbkrBridgeRuntimeUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      jsonObject,)
-  }
-);}
-
-
-
-
-export const getDetachIbkrBridgeRuntimeMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext> => {
-
-const mutationKey = ['detachIbkrBridgeRuntime'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>, {data: BodyType<JsonObject>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  detachIbkrBridgeRuntime(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DetachIbkrBridgeRuntimeMutationResult = NonNullable<Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>>
-    export type DetachIbkrBridgeRuntimeMutationBody = BodyType<JsonObject>
-    export type DetachIbkrBridgeRuntimeMutationError = ErrorType<unknown>
-
-    /**
- * @summary Detach the IBKR bridge runtime override
- */
-export const useDetachIbkrBridgeRuntime = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof detachIbkrBridgeRuntime>>,
-        TError,
-        {data: BodyType<JsonObject>},
-        TContext
-      > => {
-      return useMutation(getDetachIbkrBridgeRuntimeMutationOptions(options));
-    }
-
-/**
  * @summary List configured broker and market data connections
  */
 export const getListBrokerConnectionsUrl = () => {
@@ -3848,6 +2190,1630 @@ export function useListBrokerConnections<TData = Awaited<ReturnType<typeof listB
 
 
 
+
+/**
+ * @summary Get sanitized SnapTrade execution readiness
+ */
+export const getGetSnapTradeReadinessUrl = () => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/readiness`
+}
+
+export const getSnapTradeReadiness = async ( options?: RequestInit): Promise<SnapTradeReadinessResponse> => {
+
+  return customFetch<SnapTradeReadinessResponse>(getGetSnapTradeReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSnapTradeReadinessQueryKey = () => {
+    return [
+    `/api/broker-execution/snaptrade/readiness`
+    ] as const;
+    }
+
+
+export const getGetSnapTradeReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getSnapTradeReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSnapTradeReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSnapTradeReadiness>>> = ({ signal }) => getSnapTradeReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSnapTradeReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof getSnapTradeReadiness>>>
+export type GetSnapTradeReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sanitized SnapTrade execution readiness
+ */
+
+export function useGetSnapTradeReadiness<TData = Awaited<ReturnType<typeof getSnapTradeReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSnapTradeReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get sanitized IBKR OAuth execution readiness
+ */
+export const getGetIbkrOAuthReadinessUrl = () => {
+
+
+
+
+  return `/api/broker-execution/ibkr/oauth/readiness`
+}
+
+export const getIbkrOAuthReadiness = async ( options?: RequestInit): Promise<IbkrOAuthReadinessResponse> => {
+
+  return customFetch<IbkrOAuthReadinessResponse>(getGetIbkrOAuthReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIbkrOAuthReadinessQueryKey = () => {
+    return [
+    `/api/broker-execution/ibkr/oauth/readiness`
+    ] as const;
+    }
+
+
+export const getGetIbkrOAuthReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrOAuthReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrOAuthReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIbkrOAuthReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrOAuthReadiness>>> = ({ signal }) => getIbkrOAuthReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrOAuthReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetIbkrOAuthReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrOAuthReadiness>>>
+export type GetIbkrOAuthReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sanitized IBKR OAuth execution readiness
+ */
+
+export function useGetIbkrOAuthReadiness<TData = Awaited<ReturnType<typeof getIbkrOAuthReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrOAuthReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetIbkrOAuthReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Register the authenticated user with SnapTrade
+ */
+export const getRegisterSnapTradeCurrentUserUrl = () => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/users/current`
+}
+
+export const registerSnapTradeCurrentUser = async ( options?: RequestInit): Promise<SnapTradeUserRegistrationResponse> => {
+
+  return customFetch<SnapTradeUserRegistrationResponse>(getRegisterSnapTradeCurrentUserUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRegisterSnapTradeCurrentUserMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>, TError,void, TContext> => {
+
+const mutationKey = ['registerSnapTradeCurrentUser'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>, void> = () => {
+
+
+          return  registerSnapTradeCurrentUser(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterSnapTradeCurrentUserMutationResult = NonNullable<Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>>
+
+    export type RegisterSnapTradeCurrentUserMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Register the authenticated user with SnapTrade
+ */
+export const useRegisterSnapTradeCurrentUser = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof registerSnapTradeCurrentUser>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRegisterSnapTradeCurrentUserMutationOptions(options));
+    }
+
+/**
+ * @summary Generate a SnapTrade Connection Portal URL for the authenticated user
+ */
+export const getGenerateSnapTradeConnectionPortalUrl = () => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/connection-portal`
+}
+
+export const generateSnapTradeConnectionPortal = async (generateSnapTradeConnectionPortalBody?: GenerateSnapTradeConnectionPortalBody, options?: RequestInit): Promise<SnapTradeConnectionPortalResponse> => {
+
+  return customFetch<SnapTradeConnectionPortalResponse>(getGenerateSnapTradeConnectionPortalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      generateSnapTradeConnectionPortalBody,)
+  }
+);}
+
+
+
+
+export const getGenerateSnapTradeConnectionPortalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>, TError,{data: BodyType<GenerateSnapTradeConnectionPortalBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>, TError,{data: BodyType<GenerateSnapTradeConnectionPortalBody>}, TContext> => {
+
+const mutationKey = ['generateSnapTradeConnectionPortal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>, {data: BodyType<GenerateSnapTradeConnectionPortalBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  generateSnapTradeConnectionPortal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GenerateSnapTradeConnectionPortalMutationResult = NonNullable<Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>>
+    export type GenerateSnapTradeConnectionPortalMutationBody = BodyType<GenerateSnapTradeConnectionPortalBody>
+    export type GenerateSnapTradeConnectionPortalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Generate a SnapTrade Connection Portal URL for the authenticated user
+ */
+export const useGenerateSnapTradeConnectionPortal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>, TError,{data: BodyType<GenerateSnapTradeConnectionPortalBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof generateSnapTradeConnectionPortal>>,
+        TError,
+        {data: BodyType<GenerateSnapTradeConnectionPortalBody>},
+        TContext
+      > => {
+      return useMutation(getGenerateSnapTradeConnectionPortalMutationOptions(options));
+    }
+
+/**
+ * @summary Sync SnapTrade brokerage connections and accounts for the authenticated user
+ */
+export const getSyncSnapTradeBrokerageConnectionsUrl = () => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/sync`
+}
+
+export const syncSnapTradeBrokerageConnections = async ( options?: RequestInit): Promise<SyncSnapTradeBrokerageConnectionsResponse> => {
+
+  return customFetch<SyncSnapTradeBrokerageConnectionsResponse>(getSyncSnapTradeBrokerageConnectionsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSyncSnapTradeBrokerageConnectionsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>, TError,void, TContext> => {
+
+const mutationKey = ['syncSnapTradeBrokerageConnections'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>, void> = () => {
+
+
+          return  syncSnapTradeBrokerageConnections(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SyncSnapTradeBrokerageConnectionsMutationResult = NonNullable<Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>>
+
+    export type SyncSnapTradeBrokerageConnectionsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Sync SnapTrade brokerage connections and accounts for the authenticated user
+ */
+export const useSyncSnapTradeBrokerageConnections = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof syncSnapTradeBrokerageConnections>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSyncSnapTradeBrokerageConnectionsMutationOptions(options));
+    }
+
+/**
+ * @summary List SnapTrade brokerages available to this app with trading capability and logos
+ */
+export const getListSnapTradeBrokeragesUrl = () => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/brokerages`
+}
+
+export const listSnapTradeBrokerages = async ( options?: RequestInit): Promise<SnapTradeBrokerageListResponse> => {
+
+  return customFetch<SnapTradeBrokerageListResponse>(getListSnapTradeBrokeragesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSnapTradeBrokeragesQueryKey = () => {
+    return [
+    `/api/broker-execution/snaptrade/brokerages`
+    ] as const;
+    }
+
+
+export const getListSnapTradeBrokeragesQueryOptions = <TData = Awaited<ReturnType<typeof listSnapTradeBrokerages>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSnapTradeBrokerages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSnapTradeBrokeragesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSnapTradeBrokerages>>> = ({ signal }) => listSnapTradeBrokerages({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSnapTradeBrokerages>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSnapTradeBrokeragesQueryResult = NonNullable<Awaited<ReturnType<typeof listSnapTradeBrokerages>>>
+export type ListSnapTradeBrokeragesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List SnapTrade brokerages available to this app with trading capability and logos
+ */
+
+export function useListSnapTradeBrokerages<TData = Awaited<ReturnType<typeof listSnapTradeBrokerages>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSnapTradeBrokerages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSnapTradeBrokeragesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get sanitized SnapTrade balances and positions for a synced local account
+ */
+export const getGetSnapTradeAccountPortfolioUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/accounts/${accountId}/portfolio`
+}
+
+export const getSnapTradeAccountPortfolio = async (accountId: string, options?: RequestInit): Promise<GetSnapTradeAccountPortfolioResponse> => {
+
+  return customFetch<GetSnapTradeAccountPortfolioResponse>(getGetSnapTradeAccountPortfolioUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSnapTradeAccountPortfolioQueryKey = (accountId: string,) => {
+    return [
+    `/api/broker-execution/snaptrade/accounts/${accountId}/portfolio`
+    ] as const;
+    }
+
+
+export const getGetSnapTradeAccountPortfolioQueryOptions = <TData = Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSnapTradeAccountPortfolioQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>> = ({ signal }) => getSnapTradeAccountPortfolio(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSnapTradeAccountPortfolioQueryResult = NonNullable<Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>>
+export type GetSnapTradeAccountPortfolioQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sanitized SnapTrade balances and positions for a synced local account
+ */
+
+export function useGetSnapTradeAccountPortfolio<TData = Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountPortfolio>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSnapTradeAccountPortfolioQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Backfill and read SnapTrade activities, closed trades, and equity history for a synced local account
+ */
+export const getGetSnapTradeAccountHistoryUrl = (accountId: string,
+    params?: GetSnapTradeAccountHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/broker-execution/snaptrade/accounts/${accountId}/history?${stringifiedParams}` : `/api/broker-execution/snaptrade/accounts/${accountId}/history`
+}
+
+export const getSnapTradeAccountHistory = async (accountId: string,
+    params?: GetSnapTradeAccountHistoryParams, options?: RequestInit): Promise<GetSnapTradeAccountHistoryResponse> => {
+
+  return customFetch<GetSnapTradeAccountHistoryResponse>(getGetSnapTradeAccountHistoryUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSnapTradeAccountHistoryQueryKey = (accountId: string,
+    params?: GetSnapTradeAccountHistoryParams,) => {
+    return [
+    `/api/broker-execution/snaptrade/accounts/${accountId}/history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetSnapTradeAccountHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getSnapTradeAccountHistory>>, TError = ErrorType<unknown>>(accountId: string,
+    params?: GetSnapTradeAccountHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSnapTradeAccountHistoryQueryKey(accountId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSnapTradeAccountHistory>>> = ({ signal }) => getSnapTradeAccountHistory(accountId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSnapTradeAccountHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getSnapTradeAccountHistory>>>
+export type GetSnapTradeAccountHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Backfill and read SnapTrade activities, closed trades, and equity history for a synced local account
+ */
+
+export function useGetSnapTradeAccountHistory<TData = Awaited<ReturnType<typeof getSnapTradeAccountHistory>>, TError = ErrorType<unknown>>(
+ accountId: string,
+    params?: GetSnapTradeAccountHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeAccountHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSnapTradeAccountHistoryQueryOptions(accountId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Search SnapTrade universal symbols tradable by a synced local account
+ */
+export const getSearchSnapTradeAccountSymbolsUrl = (accountId: string,
+    params: SearchSnapTradeAccountSymbolsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/broker-execution/snaptrade/accounts/${accountId}/symbols/search?${stringifiedParams}` : `/api/broker-execution/snaptrade/accounts/${accountId}/symbols/search`
+}
+
+export const searchSnapTradeAccountSymbols = async (accountId: string,
+    params: SearchSnapTradeAccountSymbolsParams, options?: RequestInit): Promise<SearchSnapTradeAccountSymbolsResponse> => {
+
+  return customFetch<SearchSnapTradeAccountSymbolsResponse>(getSearchSnapTradeAccountSymbolsUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSearchSnapTradeAccountSymbolsQueryKey = (accountId: string,
+    params?: SearchSnapTradeAccountSymbolsParams,) => {
+    return [
+    `/api/broker-execution/snaptrade/accounts/${accountId}/symbols/search`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSearchSnapTradeAccountSymbolsQueryOptions = <TData = Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>, TError = ErrorType<unknown>>(accountId: string,
+    params: SearchSnapTradeAccountSymbolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchSnapTradeAccountSymbolsQueryKey(accountId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>> = ({ signal }) => searchSnapTradeAccountSymbols(accountId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type SearchSnapTradeAccountSymbolsQueryResult = NonNullable<Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>>
+export type SearchSnapTradeAccountSymbolsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Search SnapTrade universal symbols tradable by a synced local account
+ */
+
+export function useSearchSnapTradeAccountSymbols<TData = Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>, TError = ErrorType<unknown>>(
+ accountId: string,
+    params: SearchSnapTradeAccountSymbolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchSnapTradeAccountSymbols>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getSearchSnapTradeAccountSymbolsQueryOptions(accountId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Check SnapTrade equity order impact for a synced local account
+ */
+export const getCheckSnapTradeEquityOrderImpactUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/accounts/${accountId}/orders/impact`
+}
+
+export const checkSnapTradeEquityOrderImpact = async (accountId: string,
+    snapTradeEquityOrderImpactBody: SnapTradeEquityOrderImpactBody, options?: RequestInit): Promise<SnapTradeEquityOrderImpactResponse> => {
+
+  return customFetch<SnapTradeEquityOrderImpactResponse>(getCheckSnapTradeEquityOrderImpactUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      snapTradeEquityOrderImpactBody,)
+  }
+);}
+
+
+
+
+export const getCheckSnapTradeEquityOrderImpactMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderImpactBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderImpactBody>}, TContext> => {
+
+const mutationKey = ['checkSnapTradeEquityOrderImpact'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>, {accountId: string;data: BodyType<SnapTradeEquityOrderImpactBody>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  checkSnapTradeEquityOrderImpact(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckSnapTradeEquityOrderImpactMutationResult = NonNullable<Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>>
+    export type CheckSnapTradeEquityOrderImpactMutationBody = BodyType<SnapTradeEquityOrderImpactBody>
+    export type CheckSnapTradeEquityOrderImpactMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Check SnapTrade equity order impact for a synced local account
+ */
+export const useCheckSnapTradeEquityOrderImpact = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderImpactBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof checkSnapTradeEquityOrderImpact>>,
+        TError,
+        {accountId: string;data: BodyType<SnapTradeEquityOrderImpactBody>},
+        TContext
+      > => {
+      return useMutation(getCheckSnapTradeEquityOrderImpactMutationOptions(options));
+    }
+
+/**
+ * @summary Get realtime SnapTrade recent orders for post-submit reconciliation
+ */
+export const getGetSnapTradeRecentOrdersUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/accounts/${accountId}/orders/recent`
+}
+
+export const getSnapTradeRecentOrders = async (accountId: string, options?: RequestInit): Promise<GetSnapTradeRecentOrdersResponse> => {
+
+  return customFetch<GetSnapTradeRecentOrdersResponse>(getGetSnapTradeRecentOrdersUrl(accountId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSnapTradeRecentOrdersQueryKey = (accountId: string,) => {
+    return [
+    `/api/broker-execution/snaptrade/accounts/${accountId}/orders/recent`
+    ] as const;
+    }
+
+
+export const getGetSnapTradeRecentOrdersQueryOptions = <TData = Awaited<ReturnType<typeof getSnapTradeRecentOrders>>, TError = ErrorType<unknown>>(accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeRecentOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSnapTradeRecentOrdersQueryKey(accountId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSnapTradeRecentOrders>>> = ({ signal }) => getSnapTradeRecentOrders(accountId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeRecentOrders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSnapTradeRecentOrdersQueryResult = NonNullable<Awaited<ReturnType<typeof getSnapTradeRecentOrders>>>
+export type GetSnapTradeRecentOrdersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get realtime SnapTrade recent orders for post-submit reconciliation
+ */
+
+export function useGetSnapTradeRecentOrders<TData = Awaited<ReturnType<typeof getSnapTradeRecentOrders>>, TError = ErrorType<unknown>>(
+ accountId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSnapTradeRecentOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSnapTradeRecentOrdersQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Submit a confirmed SnapTrade equity order for a synced local account
+ */
+export const getSubmitSnapTradeEquityOrderUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/snaptrade/accounts/${accountId}/orders`
+}
+
+export const submitSnapTradeEquityOrder = async (accountId: string,
+    snapTradeEquityOrderSubmitBody: SnapTradeEquityOrderSubmitBody, options?: RequestInit): Promise<SnapTradeEquityOrderSubmitResponse> => {
+
+  return customFetch<SnapTradeEquityOrderSubmitResponse>(getSubmitSnapTradeEquityOrderUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      snapTradeEquityOrderSubmitBody,)
+  }
+);}
+
+
+
+
+export const getSubmitSnapTradeEquityOrderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderSubmitBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderSubmitBody>}, TContext> => {
+
+const mutationKey = ['submitSnapTradeEquityOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>, {accountId: string;data: BodyType<SnapTradeEquityOrderSubmitBody>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  submitSnapTradeEquityOrder(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitSnapTradeEquityOrderMutationResult = NonNullable<Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>>
+    export type SubmitSnapTradeEquityOrderMutationBody = BodyType<SnapTradeEquityOrderSubmitBody>
+    export type SubmitSnapTradeEquityOrderMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Submit a confirmed SnapTrade equity order for a synced local account
+ */
+export const useSubmitSnapTradeEquityOrder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>, TError,{accountId: string;data: BodyType<SnapTradeEquityOrderSubmitBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitSnapTradeEquityOrder>>,
+        TError,
+        {accountId: string;data: BodyType<SnapTradeEquityOrderSubmitBody>},
+        TContext
+      > => {
+      return useMutation(getSubmitSnapTradeEquityOrderMutationOptions(options));
+    }
+
+/**
+ * @summary Get sanitized Robinhood Agentic Trading execution readiness
+ */
+export const getGetRobinhoodReadinessUrl = () => {
+
+
+
+
+  return `/api/broker-execution/robinhood/readiness`
+}
+
+export const getRobinhoodReadiness = async ( options?: RequestInit): Promise<RobinhoodReadinessResponse> => {
+
+  return customFetch<RobinhoodReadinessResponse>(getGetRobinhoodReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRobinhoodReadinessQueryKey = () => {
+    return [
+    `/api/broker-execution/robinhood/readiness`
+    ] as const;
+    }
+
+
+export const getGetRobinhoodReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getRobinhoodReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRobinhoodReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRobinhoodReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRobinhoodReadiness>>> = ({ signal }) => getRobinhoodReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRobinhoodReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetRobinhoodReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof getRobinhoodReadiness>>>
+export type GetRobinhoodReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sanitized Robinhood Agentic Trading execution readiness
+ */
+
+export function useGetRobinhoodReadiness<TData = Awaited<ReturnType<typeof getRobinhoodReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRobinhoodReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetRobinhoodReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Start the Robinhood Agentic OAuth authorization for the authenticated user
+ */
+export const getStartRobinhoodConnectUrl = () => {
+
+
+
+
+  return `/api/broker-execution/robinhood/connect`
+}
+
+export const startRobinhoodConnect = async ( options?: RequestInit): Promise<RobinhoodConnectResponse> => {
+
+  return customFetch<RobinhoodConnectResponse>(getStartRobinhoodConnectUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getStartRobinhoodConnectMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startRobinhoodConnect>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startRobinhoodConnect>>, TError,void, TContext> => {
+
+const mutationKey = ['startRobinhoodConnect'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startRobinhoodConnect>>, void> = () => {
+
+
+          return  startRobinhoodConnect(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartRobinhoodConnectMutationResult = NonNullable<Awaited<ReturnType<typeof startRobinhoodConnect>>>
+
+    export type StartRobinhoodConnectMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start the Robinhood Agentic OAuth authorization for the authenticated user
+ */
+export const useStartRobinhoodConnect = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startRobinhoodConnect>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startRobinhoodConnect>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getStartRobinhoodConnectMutationOptions(options));
+    }
+
+/**
+ * @summary Sync Robinhood Agentic accounts for the authenticated user via the Trading MCP
+ */
+export const getSyncRobinhoodConnectionsUrl = () => {
+
+
+
+
+  return `/api/broker-execution/robinhood/sync`
+}
+
+export const syncRobinhoodConnections = async ( options?: RequestInit): Promise<SyncRobinhoodConnectionsResponse> => {
+
+  return customFetch<SyncRobinhoodConnectionsResponse>(getSyncRobinhoodConnectionsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSyncRobinhoodConnectionsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncRobinhoodConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof syncRobinhoodConnections>>, TError,void, TContext> => {
+
+const mutationKey = ['syncRobinhoodConnections'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof syncRobinhoodConnections>>, void> = () => {
+
+
+          return  syncRobinhoodConnections(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SyncRobinhoodConnectionsMutationResult = NonNullable<Awaited<ReturnType<typeof syncRobinhoodConnections>>>
+
+    export type SyncRobinhoodConnectionsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Sync Robinhood Agentic accounts for the authenticated user via the Trading MCP
+ */
+export const useSyncRobinhoodConnections = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncRobinhoodConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof syncRobinhoodConnections>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSyncRobinhoodConnectionsMutationOptions(options));
+    }
+
+/**
+ * @summary Get sanitized Schwab Trader API execution readiness
+ */
+export const getGetSchwabReadinessUrl = () => {
+
+
+
+
+  return `/api/broker-execution/schwab/readiness`
+}
+
+export const getSchwabReadiness = async ( options?: RequestInit): Promise<SchwabReadinessResponse> => {
+
+  return customFetch<SchwabReadinessResponse>(getGetSchwabReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSchwabReadinessQueryKey = () => {
+    return [
+    `/api/broker-execution/schwab/readiness`
+    ] as const;
+    }
+
+
+export const getGetSchwabReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getSchwabReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSchwabReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSchwabReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSchwabReadiness>>> = ({ signal }) => getSchwabReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSchwabReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSchwabReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof getSchwabReadiness>>>
+export type GetSchwabReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sanitized Schwab Trader API execution readiness
+ */
+
+export function useGetSchwabReadiness<TData = Awaited<ReturnType<typeof getSchwabReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSchwabReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSchwabReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Start the Schwab Trader API OAuth authorization for the authenticated user
+ */
+export const getStartSchwabConnectUrl = () => {
+
+
+
+
+  return `/api/broker-execution/schwab/connect`
+}
+
+export const startSchwabConnect = async ( options?: RequestInit): Promise<SchwabConnectResponse> => {
+
+  return customFetch<SchwabConnectResponse>(getStartSchwabConnectUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getStartSchwabConnectMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSchwabConnect>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startSchwabConnect>>, TError,void, TContext> => {
+
+const mutationKey = ['startSchwabConnect'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startSchwabConnect>>, void> = () => {
+
+
+          return  startSchwabConnect(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartSchwabConnectMutationResult = NonNullable<Awaited<ReturnType<typeof startSchwabConnect>>>
+
+    export type StartSchwabConnectMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start the Schwab Trader API OAuth authorization for the authenticated user
+ */
+export const useStartSchwabConnect = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSchwabConnect>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startSchwabConnect>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getStartSchwabConnectMutationOptions(options));
+    }
+
+/**
+ * @summary Sync Schwab Trader API accounts for the authenticated user
+ */
+export const getSyncSchwabConnectionsUrl = () => {
+
+
+
+
+  return `/api/broker-execution/schwab/sync`
+}
+
+export const syncSchwabConnections = async ( options?: RequestInit): Promise<SyncSchwabConnectionsResponse> => {
+
+  return customFetch<SyncSchwabConnectionsResponse>(getSyncSchwabConnectionsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSyncSchwabConnectionsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncSchwabConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof syncSchwabConnections>>, TError,void, TContext> => {
+
+const mutationKey = ['syncSchwabConnections'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof syncSchwabConnections>>, void> = () => {
+
+
+          return  syncSchwabConnections(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SyncSchwabConnectionsMutationResult = NonNullable<Awaited<ReturnType<typeof syncSchwabConnections>>>
+
+    export type SyncSchwabConnectionsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Sync Schwab Trader API accounts for the authenticated user
+ */
+export const useSyncSchwabConnections = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncSchwabConnections>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof syncSchwabConnections>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSyncSchwabConnectionsMutationOptions(options));
+    }
+
+/**
+ * @summary Get IBKR Client Portal browser-login session readiness
+ */
+export const getGetIbkrPortalReadinessUrl = () => {
+
+
+
+
+  return `/api/broker-execution/ibkr-portal/readiness`
+}
+
+export const getIbkrPortalReadiness = async ( options?: RequestInit): Promise<IbkrPortalReadinessResponse> => {
+
+  return customFetch<IbkrPortalReadinessResponse>(getGetIbkrPortalReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIbkrPortalReadinessQueryKey = () => {
+    return [
+    `/api/broker-execution/ibkr-portal/readiness`
+    ] as const;
+    }
+
+
+export const getGetIbkrPortalReadinessQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrPortalReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIbkrPortalReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrPortalReadiness>>> = ({ signal }) => getIbkrPortalReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetIbkrPortalReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrPortalReadiness>>>
+export type GetIbkrPortalReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get IBKR Client Portal browser-login session readiness
+ */
+
+export function useGetIbkrPortalReadiness<TData = Awaited<ReturnType<typeof getIbkrPortalReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetIbkrPortalReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get the current IBKR Client Portal browser-login session status
+ */
+export const getGetIbkrPortalStatusUrl = () => {
+
+
+
+
+  return `/api/broker-execution/ibkr-portal/status`
+}
+
+export const getIbkrPortalStatus = async ( options?: RequestInit): Promise<IbkrPortalReadinessResponse> => {
+
+  return customFetch<IbkrPortalReadinessResponse>(getGetIbkrPortalStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIbkrPortalStatusQueryKey = () => {
+    return [
+    `/api/broker-execution/ibkr-portal/status`
+    ] as const;
+    }
+
+
+export const getGetIbkrPortalStatusQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrPortalStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIbkrPortalStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrPortalStatus>>> = ({ signal }) => getIbkrPortalStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetIbkrPortalStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrPortalStatus>>>
+export type GetIbkrPortalStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the current IBKR Client Portal browser-login session status
+ */
+
+export function useGetIbkrPortalStatus<TData = Awaited<ReturnType<typeof getIbkrPortalStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrPortalStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetIbkrPortalStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Start the IBKR Client Portal gateway and return the browser login path
+ */
+export const getConnectIbkrPortalUrl = () => {
+
+
+
+
+  return `/api/broker-execution/ibkr-portal/connect`
+}
+
+export const connectIbkrPortal = async ( options?: RequestInit): Promise<IbkrPortalConnectResponse> => {
+
+  return customFetch<IbkrPortalConnectResponse>(getConnectIbkrPortalUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getConnectIbkrPortalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectIbkrPortal>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof connectIbkrPortal>>, TError,void, TContext> => {
+
+const mutationKey = ['connectIbkrPortal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof connectIbkrPortal>>, void> = () => {
+
+
+          return  connectIbkrPortal(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConnectIbkrPortalMutationResult = NonNullable<Awaited<ReturnType<typeof connectIbkrPortal>>>
+
+    export type ConnectIbkrPortalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start the IBKR Client Portal gateway and return the browser login path
+ */
+export const useConnectIbkrPortal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectIbkrPortal>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof connectIbkrPortal>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getConnectIbkrPortalMutationOptions(options));
+    }
+
+/**
+ * @summary Stop the IBKR Client Portal gateway and end the browser-login session
+ */
+export const getDisconnectIbkrPortalUrl = () => {
+
+
+
+
+  return `/api/broker-execution/ibkr-portal/disconnect`
+}
+
+export const disconnectIbkrPortal = async ( options?: RequestInit): Promise<IbkrPortalDisconnectResponse> => {
+
+  return customFetch<IbkrPortalDisconnectResponse>(getDisconnectIbkrPortalUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getDisconnectIbkrPortalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectIbkrPortal>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disconnectIbkrPortal>>, TError,void, TContext> => {
+
+const mutationKey = ['disconnectIbkrPortal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disconnectIbkrPortal>>, void> = () => {
+
+
+          return  disconnectIbkrPortal(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisconnectIbkrPortalMutationResult = NonNullable<Awaited<ReturnType<typeof disconnectIbkrPortal>>>
+
+    export type DisconnectIbkrPortalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Stop the IBKR Client Portal gateway and end the browser-login session
+ */
+export const useDisconnectIbkrPortal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectIbkrPortal>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof disconnectIbkrPortal>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisconnectIbkrPortalMutationOptions(options));
+    }
 
 /**
  * @summary List broker accounts
@@ -6329,6 +6295,89 @@ export function useGetGexDashboard<TData = Awaited<ReturnType<typeof getGexDashb
 
 
 /**
+ * Bulk latest net gamma exposure per symbol from persisted GEX snapshots. Lets the universe table render its Net γ column with a single request instead of one dashboard fetch per row.
+ * @summary Get latest net GEX for multiple symbols (bulk)
+ */
+export const getGetGexSnapshotsUrl = (params: GetGexSnapshotsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/gex-snapshots?${stringifiedParams}` : `/api/gex-snapshots`
+}
+
+export const getGexSnapshots = async (params: GetGexSnapshotsParams, options?: RequestInit): Promise<GexSnapshotsResponse> => {
+
+  return customFetch<GexSnapshotsResponse>(getGetGexSnapshotsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGexSnapshotsQueryKey = (params?: GetGexSnapshotsParams,) => {
+    return [
+    `/api/gex-snapshots`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetGexSnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof getGexSnapshots>>, TError = ErrorType<unknown>>(params: GetGexSnapshotsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGexSnapshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGexSnapshotsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGexSnapshots>>> = ({ signal }) => getGexSnapshots(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGexSnapshots>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGexSnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof getGexSnapshots>>>
+export type GetGexSnapshotsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get latest net GEX for multiple symbols (bulk)
+ */
+
+export function useGetGexSnapshots<TData = Awaited<ReturnType<typeof getGexSnapshots>>, TError = ErrorType<unknown>>(
+ params: GetGexSnapshotsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGexSnapshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGexSnapshotsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
  * @summary Get latest option quotes for provider contract IDs
  */
 export const getGetOptionQuoteSnapshotsUrl = () => {
@@ -6728,7 +6777,7 @@ export function useProxyUniverseLogo<TData = Awaited<ReturnType<typeof proxyUniv
 
 
 /**
- * @summary Get broker-first historical bars for a symbol or contract
+ * @summary Get historical bars for a symbol
  */
 export const getGetBarsUrl = (params: GetBarsParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -6790,7 +6839,7 @@ export type GetBarsQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get broker-first historical bars for a symbol or contract
+ * @summary Get historical bars for a symbol
  */
 
 export function useGetBars<TData = Awaited<ReturnType<typeof getBars>>, TError = ErrorType<unknown>>(
@@ -7045,7 +7094,7 @@ export function useGetOptionExpirations<TData = Awaited<ReturnType<typeof getOpt
 
 
 /**
- * @summary Resolve an option contract to an IBKR broker contract id
+ * @summary Resolve an option contract to its market-data contract id
  */
 export const getResolveOptionContractUrl = (params: ResolveOptionContractParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -7107,7 +7156,7 @@ export type ResolveOptionContractQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Resolve an option contract to an IBKR broker contract id
+ * @summary Resolve an option contract to its market-data contract id
  */
 
 export function useResolveOptionContract<TData = Awaited<ReturnType<typeof resolveOptionContract>>, TError = ErrorType<unknown>>(
@@ -7455,88 +7504,6 @@ export function useStreamOptionQuoteSnapshots<TData = Awaited<ReturnType<typeof 
 
 
 /**
- * @summary Stream latest historical bar snapshots over server-sent events
- */
-export const getStreamBarsUrl = (params: StreamBarsParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/streams/bars?${stringifiedParams}` : `/api/streams/bars`
-}
-
-export const streamBars = async (params: StreamBarsParams, options?: RequestInit): Promise<SseStream> => {
-
-  return customFetch<SseStream>(getStreamBarsUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getStreamBarsQueryKey = (params?: StreamBarsParams,) => {
-    return [
-    `/api/streams/bars`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getStreamBarsQueryOptions = <TData = Awaited<ReturnType<typeof streamBars>>, TError = ErrorType<unknown>>(params: StreamBarsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamBars>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getStreamBarsQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamBars>>> = ({ signal }) => streamBars(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamBars>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type StreamBarsQueryResult = NonNullable<Awaited<ReturnType<typeof streamBars>>>
-export type StreamBarsQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Stream latest historical bar snapshots over server-sent events
- */
-
-export function useStreamBars<TData = Awaited<ReturnType<typeof streamBars>>, TError = ErrorType<unknown>>(
- params: StreamBarsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamBars>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getStreamBarsQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Stream order snapshots over server-sent events
  */
 export const getStreamOrdersUrl = (params?: StreamOrdersParams,) => {
@@ -7783,88 +7750,6 @@ export function useStreamExecutions<TData = Awaited<ReturnType<typeof streamExec
 
 
 /**
- * @summary Get a market depth snapshot
- */
-export const getGetMarketDepthUrl = (params: GetMarketDepthParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/market-depth?${stringifiedParams}` : `/api/market-depth`
-}
-
-export const getMarketDepth = async (params: GetMarketDepthParams, options?: RequestInit): Promise<GetMarketDepth200> => {
-
-  return customFetch<GetMarketDepth200>(getGetMarketDepthUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetMarketDepthQueryKey = (params?: GetMarketDepthParams,) => {
-    return [
-    `/api/market-depth`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetMarketDepthQueryOptions = <TData = Awaited<ReturnType<typeof getMarketDepth>>, TError = ErrorType<unknown>>(params: GetMarketDepthParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketDepth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetMarketDepthQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketDepth>>> = ({ signal }) => getMarketDepth(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMarketDepth>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetMarketDepthQueryResult = NonNullable<Awaited<ReturnType<typeof getMarketDepth>>>
-export type GetMarketDepthQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get a market depth snapshot
- */
-
-export function useGetMarketDepth<TData = Awaited<ReturnType<typeof getMarketDepth>>, TError = ErrorType<unknown>>(
- params: GetMarketDepthParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketDepth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetMarketDepthQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Get volume footprint candles for a visible chart range
  */
 export const getGetFootprintsUrl = (params: GetFootprintsParams,) => {
@@ -7936,88 +7821,6 @@ export function useGetFootprints<TData = Awaited<ReturnType<typeof getFootprints
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFootprintsQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Stream market depth snapshots over server-sent events
- */
-export const getStreamMarketDepthUrl = (params: StreamMarketDepthParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/streams/market-depth?${stringifiedParams}` : `/api/streams/market-depth`
-}
-
-export const streamMarketDepth = async (params: StreamMarketDepthParams, options?: RequestInit): Promise<SseStream> => {
-
-  return customFetch<SseStream>(getStreamMarketDepthUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getStreamMarketDepthQueryKey = (params?: StreamMarketDepthParams,) => {
-    return [
-    `/api/streams/market-depth`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getStreamMarketDepthQueryOptions = <TData = Awaited<ReturnType<typeof streamMarketDepth>>, TError = ErrorType<unknown>>(params: StreamMarketDepthParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamMarketDepth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getStreamMarketDepthQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamMarketDepth>>> = ({ signal }) => streamMarketDepth(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamMarketDepth>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type StreamMarketDepthQueryResult = NonNullable<Awaited<ReturnType<typeof streamMarketDepth>>>
-export type StreamMarketDepthQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Stream market depth snapshots over server-sent events
- */
-
-export function useStreamMarketDepth<TData = Awaited<ReturnType<typeof streamMarketDepth>>, TError = ErrorType<unknown>>(
- params: StreamMarketDepthParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamMarketDepth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getStreamMarketDepthQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

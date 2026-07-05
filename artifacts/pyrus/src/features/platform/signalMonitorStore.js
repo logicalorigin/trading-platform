@@ -8,6 +8,15 @@ const EMPTY_SIGNAL_MONITOR_SNAPSHOT = Object.freeze({
   universe: null,
   pending: false,
   degraded: false,
+  // Transport surface (set by the stream consumer + query wiring in the host).
+  // Distinct from `degraded`, which is derived purely from profile content:
+  // - transportError: hard transport failure (e.g. matrix SSE repeatedly dead).
+  // - rateLimited: request pacing / 429 — amber, retrying.
+  // - streamErrored: we cannot confirm the real state (e.g. profile fetch
+  //   itself failed), so surface uncertainty rather than a neutral OFF.
+  transportError: false,
+  rateLimited: false,
+  streamErrored: false,
 });
 
 const globalListeners = new Set();
@@ -109,6 +118,9 @@ const areSignalMonitorSnapshotsEquivalent = (left, right) => {
   return (
     Boolean(left.pending) === Boolean(right.pending) &&
     Boolean(left.degraded) === Boolean(right.degraded) &&
+    Boolean(left.transportError) === Boolean(right.transportError) &&
+    Boolean(left.rateLimited) === Boolean(right.rateLimited) &&
+    Boolean(left.streamErrored) === Boolean(right.streamErrored) &&
     areStructuredValuesEquivalent(left.profile, right.profile) &&
     areSignalStateArraysEquivalent(left.states, right.states) &&
     areStructuredValuesEquivalent(left.events, right.events) &&
@@ -175,6 +187,9 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
         universe: nextSnapshot.universe || null,
         pending: Boolean(nextSnapshot.pending),
         degraded,
+        transportError: Boolean(nextSnapshot.transportError),
+        rateLimited: Boolean(nextSnapshot.rateLimited),
+        streamErrored: Boolean(nextSnapshot.streamErrored),
       }
     : EMPTY_SIGNAL_MONITOR_SNAPSHOT;
 

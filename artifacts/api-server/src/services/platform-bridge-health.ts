@@ -7,7 +7,6 @@ import {
   getProviderConfiguration,
 } from "../lib/runtime";
 import { recordConnectionLiveState } from "./ibkr-connection-audit";
-import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import {
   IbkrBridgeClient,
   describeIbkrBridgeRuntimeUnavailable,
@@ -28,6 +27,7 @@ import {
   resolveIbkrRuntimeStrictReason,
   sanitizeConnectedBridgeLastError,
 } from "./platform-runtime-status";
+import type { IbkrBridgeSelfHealOutcome } from "./ibkr-bridge-runtime";
 
 // How long the health circuit must stay continuously open before a launched bridge
 // runtime override is treated as dead and cleared (see maybeAbandonDeadBridgeOverride).
@@ -59,6 +59,35 @@ export function setDesktopAgentOnlineProvider(
   provider: () => boolean,
 ): void {
   desktopAgentOnlineProvider = provider;
+}
+
+// Positive liveness proof that is independent of the /healthz probe AND survives an
+// api-server restart: the bridge quote stream is still delivering transport activity.
+// Live data cannot flow if the tunnel/Gateway were dead, so a fresh stream vouches for
+// the connection — the same principle as streamVouchesForConnection in annotateBridgeHealth.
+// Provider-injected so tests can drive it without standing up the quote-stream module.
+function defaultBridgeStreamLiveness(): boolean {
+  return false;
+}
+
+let bridgeStreamLivenessProvider: () => boolean = defaultBridgeStreamLiveness;
+
+export function __setBridgeStreamLivenessProviderForTests(
+  provider: (() => boolean) | null,
+): void {
+  bridgeStreamLivenessProvider = provider ?? defaultBridgeStreamLiveness;
+}
+
+// Injected by ibkr-bridge-runtime (one-way dependency; avoids a circular import). Asked,
+// when a bridge is genuinely dead but recoverable, to enqueue a headless relaunch. The
+// default declines so the health module is inert until the runtime registers the actuator.
+let bridgeSelfHealProvider: (now: number) => IbkrBridgeSelfHealOutcome = () =>
+  "declined";
+
+export function setBridgeSelfHealProvider(
+  provider: ((now: number) => IbkrBridgeSelfHealOutcome) | null,
+): void {
+  bridgeSelfHealProvider = provider ?? (() => "declined");
 }
 
 export function getIbkrClient(): IbkrBridgeClient {
@@ -328,7 +357,11 @@ export type BridgeConnectivityInput = {
   serverConnectivity: "unknown" | "connected" | "disconnected" | null | undefined;
   /** ms timestamp of the last successful liveness round-trip (getCurrentTime tickle). */
   lastTickleAtMs: number | null;
-  /** Age of the health snapshot (now - updatedAt); the real cache age even when forceStale. */
+  /**
+   * Age of the health snapshot (now - updatedAt); the real cache age even when
+   * forceStale. Pass UNCLAMPED: updatedAt rides the bridge clock, so a forward skew
+   * makes this negative, and a negative age must never vouch for liveness.
+   */
   healthAgeMs: number | null;
   /** True when we are serving the stale last-known-good cache (probe unavailable). */
   forceStale: boolean;
@@ -374,15 +407,17 @@ export function resolveBridgeConnectivity(
   input: BridgeConnectivityInput,
 ): BridgeConnectivityVerdict {
   // NOTE: lastTickleAt is stamped with the bridge host's clock while `now` is the
-  // api-server clock. Math.max(0, ...) clamps a forward (bridge-ahead) skew to age 0,
-  // so a >= livenessFreshMs forward skew would keep liveness perpetually fresh. This
-  // inherits the pre-existing healthFresh skew assumption; a future task that gates
-  // TRADING on connectivityUp must normalize the bridge clock (carry a serverTime
-  // offset) rather than trust this field as skew-proof.
+  // api-server clock (no API-local per-tickle receive time exists to prefer). A
+  // FUTURE tickle timestamp (bridge clock ahead) yields a null age, and a null age
+  // never satisfies liveness — clamping it to 0 would keep liveness perpetually
+  // fresh and bypass the half-open guard. The same rule applies to a negative
+  // (future-skewed) healthAgeMs in the no-tickle fallback below. A future task that
+  // gates TRADING on connectivityUp should still normalize the bridge clock (carry
+  // a serverTime offset) rather than trust these fields as skew-proof.
+  const rawTickleAgeMs =
+    input.lastTickleAtMs === null ? null : input.now - input.lastTickleAtMs;
   const lastTickleAgeMs =
-    input.lastTickleAtMs === null
-      ? null
-      : Math.max(0, input.now - input.lastTickleAtMs);
+    rawTickleAgeMs === null || rawTickleAgeMs < 0 ? null : rawTickleAgeMs;
 
   if (input.serverConnectivity === "disconnected") {
     return {
@@ -418,6 +453,7 @@ export function resolveBridgeConnectivity(
     (input.lastTickleAtMs === null &&
       input.forceStale !== true &&
       input.healthAgeMs !== null &&
+      input.healthAgeMs >= 0 &&
       input.healthAgeMs <= input.healthFreshMs);
   if (!livenessFresh) {
     return {
@@ -460,7 +496,6 @@ function annotateBridgeHealth(
   health: BridgeHealthSnapshot,
   options: {
     forceStale?: boolean;
-    bridgeQuoteDiagnostics?: ReturnType<typeof getBridgeQuoteStreamDiagnostics> | null;
   } = {},
 ) {
   const now = Date.now();
@@ -476,17 +511,7 @@ function annotateBridgeHealth(
     "subscriptions" in health.diagnostics
       ? (health.diagnostics as Record<string, unknown>)["subscriptions"]
       : null;
-  const bridgeQuoteDataAgeMs =
-    options.bridgeQuoteDiagnostics?.streamActive === true
-      ? (options.bridgeQuoteDiagnostics.dataFreshnessAgeMs ??
-        options.bridgeQuoteDiagnostics.lastEventAgeMs)
-      : null;
-  const bridgeQuoteTransportAgeMs =
-    options.bridgeQuoteDiagnostics?.streamActive === true
-      ? options.bridgeQuoteDiagnostics.transportFreshnessAgeMs
-      : null;
   const desiredSymbolCount = Math.max(
-    options.bridgeQuoteDiagnostics?.unionSymbolCount ?? 0,
     numericRecordValue(subscriptions, "quoteListenerCount") ?? 0,
   );
   const lastStreamEventAgeMs = minFinite(
@@ -498,8 +523,6 @@ function annotateBridgeHealth(
       numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
       healthAgeMs,
     ),
-    bridgeQuoteDataAgeMs,
-    bridgeQuoteTransportAgeMs,
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
@@ -545,7 +568,6 @@ function annotateBridgeHealth(
     accountsLoaded,
     configuredLiveMarketDataMode,
     streamFresh,
-    streamActive: options.bridgeQuoteDiagnostics?.streamActive,
     desiredSymbolCount,
     now: new Date(now),
   });
@@ -561,10 +583,7 @@ function annotateBridgeHealth(
     configuredLiveMarketDataMode,
     liveMarketDataAvailable: health.liveMarketDataAvailable,
     streamFresh,
-    streamActive: options.bridgeQuoteDiagnostics?.streamActive,
-    reconnectScheduled: options.bridgeQuoteDiagnostics?.reconnectScheduled,
-    streamLastError: options.bridgeQuoteDiagnostics?.lastError,
-    streamPressure: options.bridgeQuoteDiagnostics?.pressure,
+    streamActive: desiredSymbolCount > 0,
     desiredSymbolCount,
     now: new Date(now),
   });
@@ -577,7 +596,10 @@ function annotateBridgeHealth(
     authenticated: Boolean(health.authenticated),
     serverConnectivity: health.serverConnectivity,
     lastTickleAtMs: timestampMs(health.lastTickleAt),
-    healthAgeMs,
+    // Unclamped on purpose: updatedAt is bridge-clock too, so a forward skew makes
+    // this negative — the verdict must see that instead of a clamped 0 that would
+    // vouch for liveness (same skew rule as lastTickleAt).
+    healthAgeMs: updatedAtMs === null ? null : now - updatedAtMs,
     forceStale: options.forceStale === true,
     streamFresh,
     desktopAgentOnline: desktopAgentOnlineProvider(),
@@ -806,7 +828,8 @@ type BridgeHealthForSessionOptions = {
 // disconnected/relaunchable state. Generous enough that a transient tunnel 502
 // (which recovers in seconds and resets openedAt on the next success) cannot trip it.
 function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
-  if (!getIbkrBridgeRuntimeOverride()) {
+  const override = getIbkrBridgeRuntimeOverride();
+  if (!override) {
     return false;
   }
   // firstOpenedAt marks the start of the current unbroken failure streak and — unlike
@@ -823,14 +846,48 @@ function maybeAbandonDeadBridgeOverride(now = Date.now()): boolean {
   // the Windows desktop agent is online: an online agent is normally positive proof the
   // helper (and Gateway) are alive and the health probes are merely failing/timing out
   // (e.g. sidecar slowness), so abandoning would wrongly flip a LIVE connection to
-  // disconnected and delete the persisted override. BUT that reprieve only holds if the
-  // bridge has actually completed a health probe at least once (lastSuccessAt set). When it
-  // has NEVER succeeded across this entire continuous outage, the helper is up but its
-  // tunnel to the Gateway is dead — not slow — and holding the override strands the UI on
-  // "waiting for Gateway health proof" instead of offering Reconnect. So the agent-online
-  // reprieve requires a prior success; a never-connected dead tunnel is abandoned anyway.
-  if (desktopAgentOnlineProvider() && health.lastSuccessAt !== null) {
+  // disconnected and delete the persisted override. Hold the override when the agent is
+  // online AND we have positive liveness proof from EITHER of two signals:
+  //   - lastSuccessAt: a health probe has succeeded this process. In-memory only, so it
+  //     resets to null on an api-server restart even though the override is persisted (and
+  //     is only ever persisted AFTER attach validation — see attachIbkrBridgeRuntime). On
+  //     its own this falsely abandons a restart-survived live bridge whose probes are slow.
+  //   - a fresh bridge quote stream: live transport activity is proof the tunnel/Gateway is
+  //     alive right now, independent of the probe and surviving restarts. This is what keeps
+  //     a restart from abandoning a still-live bridge whose lines are still flowing.
+  // A genuinely dead tunnel (online helper, dead Gateway link) has NEITHER signal — no
+  // success and no stream — so it is still abandoned below, letting the UI offer Reconnect
+  // instead of stranding on "waiting for Gateway health proof".
+  if (
+    desktopAgentOnlineProvider() &&
+    (health.lastSuccessAt !== null || bridgeStreamLivenessProvider())
+  ) {
     return false;
+  }
+  // The bridge is genuinely dead. Before abandoning, try to SELF-HEAL: if the disconnect
+  // was UNINTENTIONAL (no persisted stopRequestedAt) and the desktop agent is online, ask
+  // the runtime to enqueue a headless relaunch. requestIbkrBridgeSelfHeal applies its own
+  // storm + intent guards. queued/in-flight/throttled => a heal is happening or pending,
+  // so HOLD the override (UI reads as reconnecting). exhausted/declined => give up and
+  // abandon to the manual-Reconnect path below.
+  if (desktopAgentOnlineProvider() && !override.stopRequestedAt) {
+    const outcome = bridgeSelfHealProvider(now);
+    if (outcome === "queued") {
+      logger.warn(
+        {
+          openForMs: now - health.firstOpenedAt,
+          failureCount: health.failureCount,
+        },
+        "Requested IBKR bridge self-heal relaunch (unintentional disconnect, desktop agent online); holding override.",
+      );
+    }
+    if (
+      outcome === "queued" ||
+      outcome === "in-flight" ||
+      outcome === "throttled"
+    ) {
+      return false;
+    }
   }
   clearIbkrBridgeRuntimeOverride();
   logger.warn(
@@ -873,15 +930,11 @@ export async function getBridgeHealthForSession(
     return null;
   }
 
-  const bridgeQuoteDiagnostics = getBridgeQuoteStreamDiagnostics();
   let cacheNeedsRefresh = shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth);
-  let annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
-    bridgeQuoteDiagnostics,
-  });
+  let annotated = annotateBridgeHealth(lastKnownBridgeHealth);
   if (cacheNeedsRefresh && annotated.streamFresh !== true) {
     annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
       forceStale: true,
-      bridgeQuoteDiagnostics,
     });
   }
   if (
@@ -898,13 +951,10 @@ export async function getBridgeHealthForSession(
       );
       if (lastKnownBridgeHealth) {
         cacheNeedsRefresh = shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth);
-        annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
-          bridgeQuoteDiagnostics,
-        });
+        annotated = annotateBridgeHealth(lastKnownBridgeHealth);
         if (cacheNeedsRefresh && annotated.streamFresh !== true) {
           annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
             forceStale: true,
-            bridgeQuoteDiagnostics,
           });
         }
       }
@@ -933,7 +983,7 @@ function serializeBridgeHealthError(error: unknown): BridgeHealthErrorSnapshot {
   };
 }
 
-function getBridgeBackoffRemainingMs(category: "orders" | "options" | "health"): number {
+function getBridgeBackoffRemainingMs(category: "orders" | "health"): number {
   return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
 }
 
@@ -991,17 +1041,8 @@ export function getSessionBridgeHealthFailureState() {
     lastStreamEventAgeMs: null,
     strictReady: false,
     strictReason: "health_error",
+    lastError: healthGovernor.lastFailure ?? healthError,
     ...fallbackStreamState,
-    governor: {
-      health: {
-        circuitOpen: healthGovernor.circuitOpen,
-        backoffRemainingMs: healthGovernor.backoffRemainingMs,
-        failureCount: healthGovernor.failureCount,
-        lastFailure: healthGovernor.lastFailure,
-        lastFailureAt: healthGovernor.lastFailureAt,
-        lastSuccessAt: healthGovernor.lastSuccessAt,
-      },
-    },
   };
 }
 
@@ -1009,7 +1050,6 @@ export async function getRuntimeBridgeHealthState() {
   const configured = getProviderConfiguration();
   const runtimeAvailability = getIbkrBridgeRuntimeAvailability();
   const bridgeHealthTimeoutMs = runtimeDiagnosticsTimeoutMs();
-  const bridgeQuoteDiagnostics = getBridgeQuoteStreamDiagnostics();
   if (
     !runtimeAvailability.runtimeConfigured &&
     runtimeAvailability.desktopAgentOnline
@@ -1018,7 +1058,6 @@ export async function getRuntimeBridgeHealthState() {
       describeIbkrBridgeRuntimeUnavailable(runtimeAvailability),
     );
     return {
-      bridgeQuoteDiagnostics,
       annotatedHealth,
       fallbackStreamState: resolveIbkrRuntimeStreamState({
         configured: true,
@@ -1091,7 +1130,7 @@ export async function getRuntimeBridgeHealthState() {
     (useCachedBridgeHealth || bridgeHealth === null) &&
     shouldRefreshCachedBridgeHealth(annotationSource);
   let annotatedHealth = annotationSource
-    ? annotateBridgeHealth(annotationSource, { bridgeQuoteDiagnostics })
+    ? annotateBridgeHealth(annotationSource)
     : null;
   if (
     annotationSource &&
@@ -1101,7 +1140,6 @@ export async function getRuntimeBridgeHealthState() {
   ) {
     annotatedHealth = annotateBridgeHealth(annotationSource, {
       forceStale: true,
-      bridgeQuoteDiagnostics,
     });
   }
   const fallbackStreamState = resolveIbkrRuntimeStreamState({
@@ -1112,7 +1150,6 @@ export async function getRuntimeBridgeHealthState() {
   });
 
   return {
-    bridgeQuoteDiagnostics,
     annotatedHealth,
     fallbackStreamState,
     healthError: bridgeHealthError?.error ?? null,
@@ -1144,7 +1181,5 @@ export async function getAnnotatedBridgeHealthForTradingGuard(
         detail: "Gateway health did not respond before the trading guard timed out.",
       }),
   );
-  return annotateBridgeHealth(health, {
-    bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
-  });
+  return annotateBridgeHealth(health);
 }

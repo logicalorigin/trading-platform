@@ -75,12 +75,48 @@ test("Signals table loading/errored do not mask pushed matrix state", () => {
   assert.match(screenSource, /const hasSignalData =/);
   assert.match(screenSource, /const loading =\s*!hasSignalData &&/);
   assert.match(screenSource, /const errored =\s*!hasSignalData &&/);
+  assert.match(screenSource, /const displaySummary = useMemo\(\(\) => \{/);
+  assert.match(screenSource, /signalMatrixUniverse\?\.resolvedSymbols/);
+  assert.match(screenSource, /summary=\{displaySummary\}/);
   // The !stateResponseReady guard must remain so a slow state read alone can't
   // mask the matrix (stateResponseReady is true once signalMatrixStates arrive).
   assert.match(screenSource, /!stateResponseReady && effectiveStateLoading/);
   assert.doesNotMatch(
     screenSource,
     /const loading = effectiveStateLoading \|\| \(!profile && effectiveProfileLoading\);/,
+  );
+});
+
+test("Signals platform-managed refresh does not manually refetch state snapshots", () => {
+  const screenSource = source();
+
+  assert.match(screenSource, /const refreshTasks = \[/);
+  assert.match(
+    screenSource,
+    /if \(!platformManagedSignalData\) \{\s*refreshTasks\.push\(\s*profileQuery\.refetch\(\),\s*stateQuery\.refetch\(\),\s*\);\s*\}/s,
+  );
+  assert.doesNotMatch(
+    screenSource,
+    /Promise\.allSettled\(\[\s*breadthHistoryQuery\.refetch\(\),\s*profileQuery\.refetch\(\),\s*stateQuery\.refetch\(\),/s,
+  );
+  assert.doesNotMatch(screenSource, /\/api\/signal-monitor\/state/);
+});
+
+test("Signals matrix cells do not surface aged rows as stale issue tooltips", () => {
+  const screenSource = source();
+
+  assert.match(screenSource, /const issueStatus =/);
+  assert.match(
+    screenSource,
+    /row\.status === SIGNALS_ROW_STATUS\.problem[\s\S]*: null;/,
+  );
+  assert.doesNotMatch(
+    screenSource,
+    /row\.status === SIGNALS_ROW_STATUS\.activeStale\s*\?\s*"stale"/,
+  );
+  assert.doesNotMatch(
+    screenSource,
+    /normalizeSignalStatus\(state\) === "stale"\s*\?\s*"stale"/,
   );
 });
 

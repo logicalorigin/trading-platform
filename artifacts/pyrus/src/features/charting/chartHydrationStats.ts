@@ -23,6 +23,7 @@ export type ChartHydrationCounterKey =
   | "seriesTailAppend"
   | "seriesFullReset"
   | "visibleRangeSyncDeferred"
+  | "visibleRangeAutoHydrationGuarded"
   | "visibleRangeDefaultApplied"
   | "visibleRangeUserPreserved"
   | "visibleRangeRealtimeFollow"
@@ -108,6 +109,7 @@ const hydrationCounters: Record<ChartHydrationCounterKey, number> = {
   seriesTailAppend: 0,
   seriesFullReset: 0,
   visibleRangeSyncDeferred: 0,
+  visibleRangeAutoHydrationGuarded: 0,
   visibleRangeDefaultApplied: 0,
   visibleRangeUserPreserved: 0,
   visibleRangeRealtimeFollow: 0,

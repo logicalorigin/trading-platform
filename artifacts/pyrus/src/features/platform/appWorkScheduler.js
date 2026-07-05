@@ -82,6 +82,31 @@ export const shouldRunSignalMonitorDisplay = ({
   return !profileFetched && !profileError;
 };
 
+export const shouldRunSignalMatrixStream = ({
+  profileUniverse = false,
+  universeSymbolCount = 0,
+  screen = "market",
+  foregroundReady = false,
+  backgroundAllowed = false,
+  screenWarmupPhase = "initial",
+  startupProtectionActive = false,
+  criticalApiMutationPaused = false,
+} = {}) => {
+  const activeScreen = normalizeScreen(screen);
+  const foregroundSignalSurface = Boolean(
+    foregroundReady && (activeScreen === "signals" || activeScreen === "algo"),
+  );
+
+  return Boolean(
+    (profileUniverse || universeSymbolCount > 0) &&
+      activeScreen !== "trade" &&
+      (backgroundAllowed || foregroundSignalSurface) &&
+      screenWarmupPhase === "ready" &&
+      !startupProtectionActive &&
+      !criticalApiMutationPaused,
+  );
+};
+
 const memoryHydrationPressureState = (memoryPressureLevel) => {
   const level = normalizeMemoryPressureLevel(memoryPressureLevel);
   if (level === "high") return "backoff";
@@ -116,7 +141,9 @@ export const buildPlatformWorkSchedule = ({
   const runtimeEnabled = Boolean(runtimeActive);
   const sessionReady = Boolean(sessionMetadataSettled);
   const startupProtected = Boolean(startupProtectionActive);
-  const memoryPressureLevel = normalizeMemoryPressureLevel(memoryPressure?.level);
+  const memoryPressureLevel = normalizeMemoryPressureLevel(
+    memoryPressure?.level,
+  );
   const memoryPressureObserved =
     !memoryPressure ||
     Boolean(memoryPressure.observedAt || memoryPressure.measurement);
@@ -169,23 +196,27 @@ export const buildPlatformWorkSchedule = ({
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
   const dataStreamReady = Boolean(
-    sessionReady && activeBackgroundReady && firstScreenReady && !startupProtected,
+    sessionReady &&
+      activeBackgroundReady &&
+      firstScreenReady &&
+      !startupProtected,
   );
   const broadFlowAllowed = Boolean(
-    // Only run the heavy broad-flow scanner where flow is actually shown. It used
-    // to run on Account/Signals/Algo too, burning API/CPU for data those screens
-    // never render.
-    (market || flow || trade) &&
+    // Only run the heavy broad-flow scanner where flow is actually shown. Trade
+    // has its own flow runtime after the primary chart hydrates; starting the
+    // broad scanner there competes with visible bar hydration.
+    (market || flow) &&
       dataStreamReady &&
       runtimeEnabled &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
-  const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
+  const backgroundHistoryReady =
+    screenWarmupPhase === "ready" && !startupProtected;
   const startupBlocksBackgroundAccountRealtime = startupProtected;
-  const foregroundAccountRealtime = Boolean(
-    account || trade || tradingEnabled,
+  const foregroundAccountRealtime = Boolean(account || trade || tradingEnabled);
+  const backgroundAccountRealtime = Boolean(
+    automationEnabled || foregroundIbkr,
   );
-  const backgroundAccountRealtime = Boolean(automationEnabled || foregroundIbkr);
   const accountRealtime = Boolean(
     accountRealtimeIbkr &&
       activeBackgroundReady &&
@@ -193,7 +224,6 @@ export const buildPlatformWorkSchedule = ({
         (!startupBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
   const watchlistQuoteStream = Boolean(dataStreamReady && quoteStreamAvailable);
-  const positionQuoteStream = Boolean(dataStreamReady && quoteStreamIbkr);
   const idleCodePreloadAllowed = Boolean(
     sessionReady &&
       runtimeEnabled &&
@@ -236,14 +266,15 @@ export const buildPlatformWorkSchedule = ({
     },
     streams: {
       watchlistQuoteStream,
-      positionQuoteStream,
       marketStockAggregates: Boolean(
         dataStreamReady &&
           foregroundStockAggregates &&
           (market || signalMatrixSurface),
       ),
       accountRealtime,
-      shadowAccountRealtime: Boolean(backgroundIbkr && activeBackgroundReady && account),
+      shadowAccountRealtime: Boolean(
+        backgroundIbkr && activeBackgroundReady && account,
+      ),
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
       lowPriorityHistory: Boolean(
@@ -270,7 +301,9 @@ export const buildPlatformWorkSchedule = ({
         (foregroundIbkr || foregroundStockAggregates) && (market || trade),
       ),
       flowDiscovery: broadFlowAllowed,
-      passiveVisuals: Boolean(pressureCaps.sparklineEnabled && memoryAllowsForeground),
+      passiveVisuals: Boolean(
+        pressureCaps.sparklineEnabled && memoryAllowsForeground,
+      ),
       lowPriorityHistory: Boolean(
         sessionReady &&
           backgroundIbkr &&

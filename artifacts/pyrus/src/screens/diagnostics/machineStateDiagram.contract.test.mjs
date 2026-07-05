@@ -201,13 +201,16 @@ test("contract: renderer status glyphs, funnel stages, and observability rail ma
   assert.match(componentSource, /to: "flow",[\s\S]{0,200}?fromCol: 1/);
   assert.match(componentSource, /to: "gex",[\s\S]{0,200}?fromCol: 1/);
   assert.match(componentSource, /const marketColumnPortX = /);
+  assert.doesNotMatch(componentSource, /from: "broker",\s*to: "market"/);
   // Each edge declares the transport means; multi-means edges draw parallel
   // lines + per-means dots (tooltips). Delayed paths (fresh:false) are distinct.
   assert.match(componentSource, /transports: \[/);
   assert.match(componentSource, /const TRANSPORT_LINE_GAP = /);
   assert.match(componentSource, /diagnostics-machine-edge-dot/);
-  // The Flow line carries BOTH the IBKR realtime and Massive delayed means.
-  assert.match(componentSource, /Massive ≥15m delayed/);
+  // The Flow line now rides Massive option data; the old IBKR+delayed fallback
+  // split should not reappear in the visual transport contract.
+  assert.match(componentSource, /Massive realtime/);
+  assert.doesNotMatch(componentSource, /Massive ≥15m delayed/);
   assert.doesNotMatch(componentSource, /height="auto"/);
 });
 

@@ -3,16 +3,16 @@
 ## Session Metadata
 
 - Session ID: `1159b0c5-ada5-45c0-8ba0-0d8e19d2bcf9`
-- Saved At (MT): `2026-07-02 10:56:47 MDT`
-- Saved At (UTC): `2026-07-02T16:56:47.392Z`
-- Summary: 2026-07-02 10:56:47 MDT | 1159b0c5-ada5-45c0-8ba0-0d8e19d2bcf9 | im seeing that when the app launches, the old green sparkline style shows first. this isn't just a ui symptom, i b…
+- Saved At (MT): `2026-07-02 11:09:46 MDT`
+- Saved At (UTC): `2026-07-02T17:09:46.220Z`
+- Summary: 2026-07-02 11:09:46 MDT | 1159b0c5-ada5-45c0-8ba0-0d8e19d2bcf9 | im seeing that when the app launches, the old green sparkline style shows first. this isn't just a ui symptom, i b…
 - Runtime: `claude`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Transcript Path: `/home/runner/.claude/projects/-home-runner-workspace/1159b0c5-ada5-45c0-8ba0-0d8e19d2bcf9.jsonl`
 - Branch: `main`
-- HEAD: `2307ae4c4f4241fad13f3d3ac18f782336a0a4db`
-- Latest Commit: `docs: sync agent doctrine, env reference, and design plans`
+- HEAD: `a564e6fd94b4721da41b675503a55f5935cf26fe`
+- Latest Commit: `chore(backtest): preserve horizon and MTF-KPI research artifacts`
 - Latest Commit Session ID: `unknown`
 - Title: im seeing that when the app launches, the old green sparkline style shows first. this isn't just a ui symptom, i believ…
 - Model: `claude-fable-5`
@@ -26,6 +26,7 @@ im seeing that when the app launches, the old green sparkline style shows first.
 ## Prior Handoffs
 
 - `SESSION_HANDOFF_2026-07-02_f6f727e3-0b38-4e28-980b-24be02f5aa75.md`
+- `SESSION_HANDOFF_2026-07-02_6329348a-b3cd-44cd-ab36-d632f0b53239.md`
 - `SESSION_HANDOFF_2026-07-02_56317444-0a59-48c9-8459-8824106f9ae3.md`
 - `SESSION_HANDOFF_2026-07-02_44ffc443-8b2c-45b4-b29c-f993f6070241.md`
 - `SESSION_HANDOFF_2026-07-02_2c909428-371a-458b-b035-0e87b2fe1642.md`
@@ -479,6 +480,7 @@ im seeing that when the app launches, the old green sparkline style shows first.
 - `2026-07-02 10:21:20 MDT` laymans/simple explanation for me please
 - `2026-07-02 10:22:49 MDT` lets look at 3, and lets also look at how we can better organize/piggyback db callers to reduce line usage
 - `2026-07-02 10:46:44 MDT` just 1 for now
+- `2026-07-02 10:57:41 MDT` lets run a rebuild and check this work before we commit
 
 ## Session Activity Summary
 
@@ -488,21 +490,21 @@ im seeing that when the app launches, the old green sparkline style shows first.
 - `2026-07-02 07:47:29 MDT` Tool: Bash _UPD=$(~/.claude/skills/gstack/bin/gstack-update-check 2>/dev/null || .claude/skills/gstack/bin/gstack-update-check 2>/dev/null || true) [ -n "$_UPD" ] && echo…
 - `2026-07-02 07:48:01 MDT` Tool: Bash rg -li 'sparkline' --type ts --type tsx -g '!*dist*' -g '!node_modules' /home/runner/workspace/artifacts 2>/dev/null | head -30
 - `2026-07-02 07:48:09 MDT` Tool: Bash rg -li 'sparkline' -g '!dist' -g '!node_modules' -g '!*.map' /home/runner/workspace/artifacts | head -40
-- … 291 lower-signal transcript events omitted …
-- `2026-07-02 10:52:52 MDT` Tool: Edit /home/runner/workspace/artifacts/api-server/src/services/signal-monitor-stream-bootstrap.test.ts
-- `2026-07-02 10:52:59 MDT` Tool: Bash pnpm --filter @workspace/api-server run typecheck 2>&1 | tail -2 && pnpm --filter @workspace/api-server exec tsx --test src/services/signal-monitor-stream-boot…
-- `2026-07-02 10:53:34 MDT` Tool: Bash SUP=$(pgrep -f 'node ./scripts/runDevApp.mjs' | head -1); kill -USR2 $SUP; sleep 8; for i in $(seq 1 30); do code=$(curl -s -o /dev/null -w '%{http_code}' http…
-- `2026-07-02 10:54:02 MDT` Tool: Bash U="http://127.0.0.1:8080/api/signal-monitor/matrix/stream?environment=shadow&universe=profile&timeframes=1m%2C2m%2C5m" t1s=$(date +%s.%N); curl -sN --max-time…
-- `2026-07-02 10:54:31 MDT` Tool: Bash U="http://127.0.0.1:8080/api/signal-monitor/matrix/stream?environment=shadow&universe=profile&timeframes=1m%2C2m%2C5m" time (curl -sN --max-time 30 "$U" | grep…
-- `2026-07-02 10:55:57 MDT` Tool: Bash cat > /tmp/claude-1000/-home-runner-workspace/1159b0c5-ada5-45c0-8ba0-0d8e19d2bcf9/scratchpad/time-bootstrap.mjs << 'EOF' const url = "http://127.0.0.1:8080/ap…
-- `2026-07-02 10:56:21 MDT` Tool: TaskUpdate {"taskId":"8","status":"completed"}
-- `2026-07-02 10:56:22 MDT` Tool: TaskUpdate {"taskId":"9","status":"completed"}
-- `2026-07-02 10:56:27 MDT` Tool: Bash ~/.claude/skills/gstack/bin/gstack-learnings-log '{"skill":"investigate","type":"pattern","key":"matrix-bootstrap-single-flight","insight":"Matrix SSE bootstra…
-- `2026-07-02 10:56:46 MDT` Agent: Done — the bootstrap piggyback is implemented, tested, and verified on the live app. **What changed:** all matrix stream subscribers now share one database read. `buildSignalMonit…
+- … 320 lower-signal transcript events omitted …
+- `2026-07-02 11:07:13 MDT` Tool: Bash git commit -m "$(cat <<'EOF' fix(signal-matrix): boot-resilient stream — bootstrap single-flight + client redial Boot investigation (flight recorder + instrume…
+- `2026-07-02 11:07:16 MDT` Tool failed: Bash git commit -m "$(cat <<'EOF' fix(signal-matrix): boot-resilient stream — bootstrap single-flight + client redial Boot investigation (flight recorder + instrume…
+- `2026-07-02 11:07:25 MDT` Agent: The commit exited nonzero with a status dump — checking what actually happened:
+- `2026-07-02 11:07:26 MDT` Tool: Bash git log --oneline -3; echo ===; git diff --cached --stat | tail -3; echo ===; git status --porcelain | grep -cE '^M |^A '
+- `2026-07-02 11:07:42 MDT` Tool: Bash git log --oneline -40 | grep -E 'sparkline|signal-matrix|pending stroke|8d03c16' | head -5; echo ===reflog===; git reflog -15 | head -18; echo ===worktree===;…
+- `2026-07-02 11:08:02 MDT` Tool: Bash git log --oneline -S 'createSignalMonitorStreamBootstrapSnapshotReader' --all | head -3; git log --oneline -S 'signal matrix stream wires terminal-close reconn…
+- `2026-07-02 11:08:49 MDT` Tool: Bash git show HEAD:artifacts/pyrus/src/features/platform/live-streams.ts | grep -c 'reconnectAttempt = 0\|closeSource\|teardown = true' ; git show HEAD:artifacts/ap…
+- `2026-07-02 11:09:07 MDT` Agent: Everything is verified in HEAD. Final test pass to confirm the committed state:
+- `2026-07-02 11:09:13 MDT` Tool: Bash pnpm --filter @workspace/api-server exec tsx --test src/services/signal-monitor-stream-bootstrap.test.ts 2>&1 | grep -E '^ℹ (pass|fail)'; pnpm --filter @worksp…
+- `2026-07-02 11:09:45 MDT` Agent: The work is checked, committed to main, and live — but the commit didn't land the way I intended, and you should know why. **Verification (all observed):** - Rebuilt via SIGUSR2;…
 
 ## High-Signal Changed Files
 
-- `SESSION_HANDOFF_2026-07-02_2c909428-371a-458b-b035-0e87b2fe1642.md`
+- `SESSION_HANDOFF_2026-07-02_44ffc443-8b2c-45b4-b29c-f993f6070241.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
 - `artifacts/api-server/build.mjs`
@@ -536,10 +538,8 @@ im seeing that when the app launches, the old green sparkline style shows first.
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 3]
-M  REPO_CLEANUP_INVENTORY.md
-D  Run-IBGatewayBridge.cmd
- M SESSION_HANDOFF_2026-07-02_2c909428-371a-458b-b035-0e87b2fe1642.md
+## main...origin/main
+ M SESSION_HANDOFF_2026-07-02_44ffc443-8b2c-45b4-b29c-f993f6070241.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
  M artifacts/api-server/build.mjs
@@ -619,33 +619,12 @@ D  Run-IBGatewayBridge.cmd
  M artifacts/api-server/src/services/signal-monitor-local-bar-cache-persist.test.ts
  M artifacts/api-server/src/services/signal-monitor-local-bar-cache-prefetch.test.ts
  M artifacts/api-server/src/services/signal-monitor-local-bar-cache.ts
- M artifacts/api-server/src/services/signal-monitor.ts
  M artifacts/api-server/src/services/signal-options-automation.test.ts
  M artifacts/api-server/src/services/signal-options-automation.ts
  M artifacts/api-server/src/services/signal-options-exit-policy.ts
  M artifacts/api-server/src/services/signal-options-position-tick-manager.ts
- M artifacts/api-server/src/services/signal-quality-kpis-service.test.ts
- M artifacts/api-server/src/services/signal-quality-kpis-service.ts
  M artifacts/api-server/src/services/signal-quality-kpis.test.ts
  M artifacts/api-server/src/services/signal-quality-kpis.ts
-D  artifacts/ibkr-bridge/build.mjs
-D  artifacts/ibkr-bridge/package.json
-D  artifacts/ibkr-bridge/src/app-body-limit.test.ts
-D  artifacts/ibkr-bridge/src/app.ts
-D  artifacts/ibkr-bridge/src/index.ts
-D  artifacts/ibkr-bridge/src/lane-overrides.ts
-D  artifacts/ibkr-bridge/src/logger.ts
-D  artifacts/ibkr-bridge/src/provider.ts
-D  artifacts/ibkr-bridge/src/runtime-limits.ts
-D  artifacts/ibkr-bridge/src/service.ts
-D  artifacts/ibkr-bridge/src/sse-writer.ts
-D  artifacts/ibkr-bridge/src/subscription-budget.ts
-D  artifacts/ibkr-bridge/src/tws-provider-account-read-path.test.ts
-D  artifacts/ibkr-bridge/src/tws-provider-position-market-data.test.mjs
-D  artifacts/ibkr-bridge/src/tws-provider-quote-stream.test.ts
-D  artifacts/ibkr-bridge/src/tws-provider.ts
-D  artifacts/ibkr-bridge/src/work-scheduler.ts
-D  artifacts/ibkr-bridge/tsconfig.json
  M artifacts/pyrus/docs/architecture/modularization-tracker.md
  M artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.spec.ts
  M artifacts/pyrus/package.json
@@ -822,25 +801,11 @@ D  artifacts/ibkr-bridge/tsconfig.json
  M python/pyrus_compute/src/pyrus_compute/jobs.py
  M python/pyrus_compute/uv.lock
  M replit.md
-M  scripts/README.md
-M  scripts/check-legacy-branding.mjs
  M scripts/check-replit-startup-guards.mjs
-D  scripts/package-ibkr-bridge-bundle.mjs
  M scripts/package.json
  M scripts/run-market-data-worker.mjs
  M scripts/run-python-compute.mjs
  M scripts/src/signal-options-exit-policy-sweep.ts
-D  scripts/windows/install-run-ibgateway-bridge.ps1
-D  scripts/windows/pyrus-ibkr-helper.ps1
-D  scripts/windows/pyrus-ibkr-helper.test.mjs
-D  scripts/windows/start-ibkr-tws-sidecar.cmd
-D  scripts/windows/start-ibkr-tws-sidecar.ps1
-?? .mcp.json
-?? AGENT_CHAT_LIVE.jsonl
-?? AGENT_HANDOFF_TO_SESSION2_compute-offload.md
-?? BUG_REPORT_2026-06-26.md
-?? CPU.20260624.214020.159497.0.001.cpuprofile
-?? CPU.20260624.214034.160044.0.001.cpuprofile
 ?? artifacts/api-server/audit-score-outcome-tmp.mts
 ?? artifacts/api-server/kpi-mtf-sweep.ts
 ?? artifacts/api-server/src/lib/runtime-bridge-override-intent.test.ts
@@ -880,7 +845,6 @@ D  scripts/windows/start-ibkr-tws-sidecar.ps1
 ?? artifacts/api-server/src/services/provider-capability-normalizer.ts
 ?? artifacts/api-server/src/services/shadow-account-broker-gate.test.ts
 ?? artifacts/api-server/src/services/shadow-account-latest-marks.test.ts
-?? artifacts/api-server/src/services/signal-monitor-stream-bootstrap.test.ts
 ?? artifacts/api-server/src/services/signal-options-exit-policy-wire.test.ts
 ?? artifacts/api-server/src/services/signal-options-strike-moneyness.test.ts
 ?? artifacts/api-server/src/services/signal-options-wire-trail-gate.test.ts
@@ -898,15 +862,6 @@ D  scripts/windows/start-ibkr-tws-sidecar.ps1
 ?? artifacts/api-server/src/services/snaptrade-user-custody.ts
 ?? artifacts/api-server/src/services/snaptrade-user-registration.test.ts
 ?? artifacts/api-server/src/services/snaptrade-user-registration.ts
-?? artifacts/backtest-worker/fetch-bars.ts
-?? artifacts/backtest-worker/horizon-50tickers.ts
-?? artifacts/backtest-worker/horizon-90d-probe.ts
-?? artifacts/backtest-worker/horizon-merge.ts
-?? artifacts/backtest-worker/horizon-result.md
-?? artifacts/backtest-worker/horizon-shard.ts
-?? artifacts/backtest-worker/mtf-kpi-result-optH.md
-?? artifacts/backtest-worker/mtf-kpi-result.md
-?? artifacts/mcp-server/
 ?? artifacts/pyrus/e2e/neural-loader.browser-validation.spec.ts
 ?? artifacts/pyrus/e2e/snaptrade-surfaces.browser-validation.spec.ts
 ?? artifacts/pyrus/playwright.config.ts
@@ -1062,277 +1017,274 @@ D  scripts/windows/start-ibkr-tws-sidecar.ps1
 ## Diff Summary
 
 ```text
- ...2c909428-371a-458b-b035-0e87b2fe1642.md |  852 ++--
- SESSION_HANDOFF_CURRENT.md                 |   58 +-
- SESSION_HANDOFF_MASTER.md                  |    2 +-
- artifacts/api-server/build.mjs             |   10 +-
- artifacts/api-server/src/app.ts            |   43 +-
- artifacts/api-server/src/index.ts          |   14 +
- .../lib/runtime-provider-config.test.ts    |   17 +
- artifacts/api-server/src/lib/runtime.ts    |  126 +-
- .../src/providers/ibkr/client.ts           |    2 +
- .../src/providers/massive/market-data.ts   |   55 +-
- .../api-server/src/routes/automation.ts    |    1 +
- artifacts/api-server/src/routes/index.ts   |    4 +
- .../api-server/src/routes/platform.ts      |  500 +-
- .../api-server/src/routes/settings.ts      |    1 +
- .../stock-aggregate-stream-route.test.ts   |   30 +
- .../account-position-open-date.test.ts     |    4 +-
- .../services/account-route-admission.ts    |    2 +-
- .../api-server/src/services/account.ts     |  112 +-
- .../src/services/algo-branding.ts          |   36 +-
- .../services/algo-cockpit-streams.test.ts  |   20 +-
- .../src/services/algo-cockpit-streams.ts   |   23 +-
- .../src/services/algo-gateway.test.ts      |   11 +-
- .../src/services/algo-gateway.ts           |   26 +-
- .../src/services/backend-settings.ts       |   78 +-
- .../bridge-option-quote-stream.test.ts     |   97 +-
- .../services/bridge-option-quote-stream.ts |  473 +-
- ...idge-quote-stream-subscriptions.test.ts |    2 +-
- .../src/services/bridge-streams.test.ts    |   31 +-
- .../src/services/bridge-streams.ts         |   76 +-
- .../api-server/src/services/diagnostics.ts |    2 +
- .../src/services/flow-events-model.ts      |    4 +-
- ...flow-universe-optionability-verifier.ts |   13 +-
- .../src/services/flow-universe.ts          |    6 +-
- .../src/services/gex-refresh-queue.test.ts |    6 +-
- ...x-universe-refresh-bulk-enqueue.test.ts |   13 +-
- .../src/services/gex-universe-refresh.ts   |   17 +-
- artifacts/api-server/src/services/gex.ts   |   56 +-
- .../services/ibkr-account-bridge.test.ts   |   69 +-
- .../src/services/ibkr-account-bridge.ts    |   68 +-
- .../services/ibkr-async-sidecar-client.ts  |  111 +-
- .../services/ibkr-bridge-runtime.test.ts   |  526 ---
- .../src/services/ibkr-bridge-runtime.ts    | 3645 +--------------
- .../services/ibkr-connection-audit.test.ts |    5 +
- .../src/services/ibkr-line-usage.ts        |   22 +-
- .../ibkr-live-demand-coordinator.ts        |   10 +-
- .../ibkr-sidecar-generation.test.ts        |   23 +
- .../services/ibkr-sidecar-generation.ts    |   12 +-
- .../services/market-data-admission.test.ts |  214 +-
- .../src/services/market-data-admission.ts  |  141 +-
- .../src/services/market-data-ingest.ts     |  133 +-
- .../market-data-store-pglite.test.ts       |  275 +-
- .../src/services/market-data-store.test.ts |   46 +-
- .../src/services/market-data-store.ts      |  730 ++-
- .../services/market-data-work-planner.ts   |   70 +-
- .../marketing-shadow-dashboard.test.ts     |   30 +-
- .../services/marketing-shadow-dashboard.ts |   53 +-
- ...ock-quote-stream-serialize-once.test.ts |   20 +
- .../option-chain-latest-cutover.test.ts    |   12 +-
- .../services/option-chain-policy.test.ts   |   58 +-
- .../src/services/option-metadata-store.ts  |  854 +++-
- ...s-flow-scanner-metadata-timeout.test.ts |   78 +-
- .../options-flow-scanner-pressure.test.ts  |  120 +-
- .../src/services/options-flow-scanner.ts   |   14 +-
- .../platform-bars-bridge-health.test.ts    |   13 +
- .../platform-bridge-health.test.ts         |  185 +-
- .../src/services/platform-bridge-health.ts |   86 +-
- ...latform-option-degraded-reasons.test.ts |    9 +-
- .../api-server/src/services/platform.ts    | 2265 ++++-----
- .../src/services/python-compute.test.ts    |   80 +-
- .../src/services/python-compute.ts         |   69 +-
- .../quote-snapshot-deblock.test.mjs        |   21 +-
- .../src/services/route-admission.test.ts   |  183 +-
- .../src/services/route-admission.ts        |   49 +-
- .../runtime-flight-recorder.test.ts        |   63 +
- .../services/runtime-flight-recorder.ts    |   39 +-
- .../shadow-account-read-cache.test.ts      |   49 +
- .../src/services/shadow-account.ts         |  348 +-
- ...monitor-local-bar-cache-persist.test.ts |   85 +-
- ...onitor-local-bar-cache-prefetch.test.ts |  437 +-
- .../signal-monitor-local-bar-cache.ts      |  583 ++-
- .../src/services/signal-monitor.ts         |   81 +-
- .../signal-options-automation.test.ts      |   61 +-
- .../services/signal-options-automation.ts  |  299 +-
- .../services/signal-options-exit-policy.ts |   10 +-
- ...signal-options-position-tick-manager.ts |   10 +-
- .../signal-quality-kpis-service.test.ts    |  158 +
- .../signal-quality-kpis-service.ts         |  491 +-
- .../services/signal-quality-kpis.test.ts   |  600 ++-
- .../src/services/signal-quality-kpis.ts    | 1070 ++++-
- .../architecture/modularization-tracker.md |    6 +-
- ...erfall-audit.browser-validation.spec.ts |   69 +-
- artifacts/pyrus/package.json               |    9 +-
- artifacts/pyrus/scripts/runDevApp.mjs      |  297 +-
- artifacts/pyrus/src/app/App.tsx            |    6 +
- .../AppContent.preloadContention.test.mjs  |   33 +-
- artifacts/pyrus/src/app/qa-mode.ts         |   14 +-
- .../signal-language/SpreadGauge.jsx        |   34 +-
- .../signal-language/VerdictGlyph.jsx       |   12 +
- .../charting/ResearchChartSurface.tsx      |   98 +
- .../src/features/charting/chartApiBars.js  |   14 +-
- .../charting/chartBarSpacingParity.test.ts |   68 +
- .../charting/chartHydrationStats.ts        |    2 +
- .../charting/useChartPositionOverlays.ts   |   20 +-
- .../useMassiveStreamedStockBars.ts         |   96 +-
- .../charting/useOptionChartBars.js         |   10 +-
- .../features/flow/ContractDetailInline.jsx |   10 +-
- .../gex/gexProjectionCoverage.test.mjs     |   19 +-
- .../market/MarketActivityPanel.jsx         |    4 +-
- .../MarketChartPremiumFlowIndicator.jsx    |    4 +-
- .../src/features/market/MultiChartGrid.jsx |   11 +-
- .../market/marketGridTrackState.js         |   13 +-
- .../src/features/platform/AppHeader.jsx    |    2 +-
- .../features/platform/CommandPalette.jsx   |    2 +-
- .../platform/HeaderStatusCluster.jsx       | 1306 +-----
- .../platform/HeaderStatusCluster.test.mjs  |  142 +-
- .../MarketDataSubscriptionProvider.jsx     |  173 +-
- ...MarketDataSubscriptionProvider.test.mjs |   24 +-
- .../platform/MobileActivitySheet.jsx       |    2 +
- .../PlatformAlgoMonitorSidebar.jsx         |   80 +-
- .../PlatformAlgoMonitorSidebar.test.mjs    |  112 +-
- .../src/features/platform/PlatformApp.jsx  | 2338 +++++----
- .../platform/PlatformProviders.jsx         |   22 +-
- .../platform/PlatformRuntimeLayer.jsx      |    4 +
- .../platform/PlatformScreenRouter.jsx      |   56 +-
- .../features/platform/PlatformShell.jsx    | 1281 ++---
- .../platform/PlatformWatchlist.test.mjs    |  264 +-
- .../algoStaExecutionTimeframeStore.js      |   54 +-
- ...algoStaExecutionTimeframeStore.test.mjs |   34 +
- .../platform/algoTuningImpactModel.js      |    1 -
- .../features/platform/appWorkScheduler.js  |   59 +-
- .../platform/appWorkScheduler.test.mjs     |   58 +
- .../platform/bootWarmStartCache.js         |    2 -
- .../platform/bridgeRuntimeModel.js         |    4 +-
- .../features/platform/dataIssueModel.js    |    2 +-
- .../features/platform/ibkrBridgeSession.js |  101 -
- .../platform/ibkrBridgeSession.test.mjs    |  208 +-
- ...onnectionCredentialActionModel.test.mjs |    3 +-
- .../ibkrConnectionOperationStepperModel.js |   10 +-
- ...onnectionOperationStepperModel.test.mjs |    6 +-
- .../features/platform/ibkrPopoverModel.js  |    6 +-
- .../platform/ibkrPopoverModel.test.mjs     |   12 +-
- .../platform/initialPlatformScreen.ts      |    1 +
- .../platform/live-streams.test.mjs         |   27 +-
- .../src/features/platform/live-streams.ts  |  168 +-
- .../platform/platformContexts.d.ts         |    8 +
- .../features/platform/platformContexts.jsx |    7 +
- .../platform/platformJsonRequest.test.mjs  |   10 +-
- .../platform/quoteStreamReconnect.test.mjs |   26 +
- .../platform/quoteStreamReconnect.ts       |    8 +-
- .../platform/resilienceIssues.test.mjs     |   16 +
- .../platform/runtimeControlModel.js        |   52 +-
- .../platform/runtimeMarketDataModel.js     |  172 +-
- .../runtimeMarketDataModel.test.mjs        |  230 +
- .../platform/screenModulePreloader.js      |    1 +
- .../features/platform/screenRegistry.jsx   |    9 +
- .../platform/signalMatrixScheduler.js      |   58 +-
- .../signalMatrixScheduler.test.mjs         |   84 +-
- .../features/platform/useLiveMarketFlow.js |   10 +-
- .../platform/useRuntimeControlSnapshot.js  |    9 +-
- .../platform/watchlistQuoteRotation.js     |    7 +-
- .../watchlistQuoteRotation.test.mjs        |    6 +-
- .../signals/signalMatrixSnapshotCache.js   |  240 -
- .../signalMatrixSnapshotCache.test.mjs     |  168 -
- .../signals/signalMatrixStateMerge.js      |   36 +-
- .../signalMatrixStateMerge.test.mjs        |   65 +
- .../features/signals/signalsRowModel.js    |    8 +-
- .../signals/signalsRowModel.test.mjs       |   10 +-
- .../features/trade/TradeEquityPanel.jsx    |  227 +-
- .../src/features/trade/TradeL2Panel.jsx    |  300 +-
- .../trade/TradeL2PanelDiagnostics.test.mjs |    8 +-
- .../features/trade/TradeOrderTicket.jsx    |  602 ++-
- .../features/trade/TradePositionsPanel.jsx |   42 +-
- .../trade/tradeTicketReadinessModel.js     |   41 +-
- artifacts/pyrus/src/index.css              |   67 +-
- artifacts/pyrus/src/lib/formatters.js      |   10 +-
- artifacts/pyrus/src/screens/AlgoScreen.jsx |   80 +-
- .../pyrus/src/screens/AlgoScreen.test.mjs  |   24 +-
- .../src/screens/DiagnosticsScreen.jsx      |   25 +-
- artifacts/pyrus/src/screens/FlowScreen.jsx |   32 +-
- artifacts/pyrus/src/screens/GexScreen.jsx  |   14 +-
- .../pyrus/src/screens/SettingsScreen.jsx   |  118 +-
- .../pyrus/src/screens/SignalsScreen.jsx    |  184 +-
- .../SignalsScreen.state-contract.test.mjs  |   36 +
- .../pyrus/src/screens/TradeScreen.jsx      | 1059 +++--
- .../TradeScreen.tradeTickerSearch.test.mjs |  103 +-
- .../account/PositionOptionQuoteStreams.jsx |   37 +-
- .../PositionOptionQuoteStreams.test.mjs    |   12 +-
- .../PositionsPanel.bridgeDetached.test.mjs |   14 +-
- .../src/screens/account/PositionsPanel.jsx |    6 +-
- .../screens/account/SetupHealthPanel.jsx   |    2 +-
- .../screens/algo/AlgoDiagnosticsTab.jsx    |    6 +-
- .../src/screens/algo/AlgoLivePage.jsx      |   57 +-
- .../src/screens/algo/AlgoLivePage.test.mjs |   17 +
- .../screens/algo/AlgoSettingsRegion.jsx    |  750 ++-
- .../algo/AlgoTimeframeControlBand.jsx      |    4 +-
- .../pyrus/src/screens/algo/HaltStrip.jsx   |   38 +-
- .../screens/algo/OperationsSignalRow.jsx   |   22 +-
- .../screens/algo/OperationsSignalTable.jsx |  192 +-
- .../algo/OperationsSignalTable.test.mjs    |  182 +-
- .../screens/algo/SettingsSectionHeader.jsx |   16 +-
- .../pyrus/src/screens/algo/algoHelpers.js  |  409 +-
- .../src/screens/algo/algoHelpers.test.mjs  |  301 ++
- .../src/screens/algo/algoSettingsFields.js |   60 +-
- .../screens/algo/algoTimeframeControls.js  |   37 +-
- .../algo/algoTimeframeControls.test.mjs    |   34 +-
- .../screens/algo/saveAllAlgoAdjustments.js |   39 +-
- .../algo/saveAllAlgoAdjustments.test.mjs   |   73 +
- .../diagnostics/MACHINE_STATE_WIRING.md    |   13 +-
- .../diagnostics/MachineStateDiagram.jsx    |   33 +-
- .../machineStateDiagram.contract.test.mjs  |    7 +-
- .../machineStateDiagramModel.js            |   16 +-
- .../machineStateDiagramModel.test.mjs      |   38 +-
- .../pyrus/src/screens/gex/GexCharts.jsx    |    2 +-
- artifacts/pyrus/vite.config.ts             |   46 +-
- .../market-data-worker/src/compute/gex.rs  |   32 +-
- crates/market-data-worker/src/ingest.rs    |  248 +-
- crates/market-data-worker/src/jobs.rs      |   11 +-
- crates/market-data-worker/src/main.rs      |  128 +-
- .../src/providers/massive.rs               |  222 -
- ...mation-first-broker-scope-permission.md |   23 +-
- ...roker-provider-classification-matrix.md |    5 +-
- knip.json                                  |    9 +-
- .../src/generated/api.schemas.ts           | 1081 ++++-
- lib/api-client-react/src/generated/api.ts  | 1663 ++-----
- lib/api-spec/openapi.yaml                  | 2159 +++++++--
- lib/api-zod/src/generated/api.ts           | 1417 +++---
- .../generated/types/brokerConnection.ts    |    3 +
- .../src/generated/types/brokerProvider.ts  |    1 +
- .../src/generated/types/flowEvent.ts       |    2 +-
- .../src/generated/types/getBarsParams.ts   |    6 +-
- .../types/getMarketDepthParams.ts          |    3 +
- .../types/getOptionExpirationsParams.ts    |    2 +-
- .../ibkrBridgeActivationPhaseDurations.ts  |   14 +-
- lib/api-zod/src/generated/types/index.ts   |   93 +-
- .../types/listFlowEventsParams.ts          |    8 +-
- .../generated/types/optionChainQuote.ts    |    8 +
- .../types/optionChartBarsDataSource.ts     |    2 -
- .../src/generated/types/optionContract.ts  |    1 +
- .../types/positionOpenedAtSource.ts        |    1 -
- ...ecordIbkrBridgeActivationProgress200.ts |   11 -
- .../types/signalQualityKpiResult.ts        |   10 +
- .../types/streamMarketDepthParams.ts       |    3 +
- .../streamSignalMonitorMatrixParams.ts     |    5 +
- .../src/option-greek-selector.ts           |   16 +-
- .../src/signal-forward-returns.ts          |   48 +-
- lib/backtest-core/src/signal-options.ts    |   18 -
- lib/db/src/index.ts                        |   76 +-
- lib/db/src/retention.test.ts               |  104 +-
- lib/db/src/retention.ts                    |   70 +
- lib/db/src/schema/automation.ts            |   11 +
- lib/db/src/schema/broker.ts                |   19 +-
- lib/db/src/schema/enums.ts                 |    5 +-
- lib/db/src/schema/index.ts                 |    2 +
- lib/db/src/schema/instruments.ts           |   16 +
- lib/db/src/schema/market-data.ts           |    4 +
- lib/db/src/schema/trading.ts               |   31 +
- lib/ibkr-contracts/src/client.ts           |    5 +
- lib/ibkr-contracts/src/runtime.ts          |   51 +
- package.json                               |    9 +-
- pnpm-lock.yaml                             |  399 +-
- pnpm-workspace.yaml                        |    1 +
- python/pyrus_compute/pyproject.toml        |    1 +
- .../src/pyrus_compute/jobs.py              |  120 +
- python/pyrus_compute/uv.lock               |   54 +
- replit.md                                  |   50 +-
- scripts/check-replit-startup-guards.mjs    |   10 +-
- scripts/package.json                       |    3 +
- scripts/run-market-data-worker.mjs         |   97 +-
- scripts/run-python-compute.mjs             |    1 +
- .../signal-options-exit-policy-sweep.ts    |    2 -
- 270 files changed, 23491 insertions(+), 16497 deletions(-)
+ ...5b4-b29c-f993f6070241.md |   81 +-
+ SESSION_HANDOFF_CURRENT.md  |   63 +-
+ SESSION_HANDOFF_MASTER.md   |    2 +-
+ .../api-server/build.mjs    |   10 +-
+ .../api-server/src/app.ts   |   43 +-
+ .../api-server/src/index.ts |   14 +
+ ...-provider-config.test.ts |   17 +
+ .../src/lib/runtime.ts      |  126 +-
+ .../ibkr/client.ts          |    2 +
+ .../massive/market-data.ts  |   55 +-
+ .../routes/automation.ts    |    1 +
+ .../src/routes/index.ts     |    4 +
+ .../src/routes/platform.ts  |  500 +-
+ .../src/routes/settings.ts  |    1 +
+ ...ate-stream-route.test.ts |   30 +
+ ...sition-open-date.test.ts |    4 +-
+ ...count-route-admission.ts |    2 +-
+ .../src/services/account.ts |  112 +-
+ .../algo-branding.ts        |   36 +-
+ ...-cockpit-streams.test.ts |   20 +-
+ .../algo-cockpit-streams.ts |   23 +-
+ .../algo-gateway.test.ts    |   11 +-
+ .../algo-gateway.ts         |   26 +-
+ .../backend-settings.ts     |   78 +-
+ ...ion-quote-stream.test.ts |   97 +-
+ ...e-option-quote-stream.ts |  473 +-
+ ...am-subscriptions.test.ts |    2 +-
+ .../bridge-streams.test.ts  |   31 +-
+ .../bridge-streams.ts       |   76 +-
+ .../services/diagnostics.ts |    2 +
+ .../flow-events-model.ts    |    4 +-
+ ...ptionability-verifier.ts |   13 +-
+ .../flow-universe.ts        |    6 +-
+ ...ex-refresh-queue.test.ts |    6 +-
+ ...esh-bulk-enqueue.test.ts |   13 +-
+ .../gex-universe-refresh.ts |   17 +-
+ .../src/services/gex.ts     |   56 +-
+ ...r-account-bridge.test.ts |   69 +-
+ .../ibkr-account-bridge.ts  |   68 +-
+ ...-async-sidecar-client.ts |  111 +-
+ ...r-bridge-runtime.test.ts |  526 -
+ .../ibkr-bridge-runtime.ts  | 3645 +-----
+ ...connection-audit.test.ts |    5 +
+ .../ibkr-line-usage.ts      |   22 +-
+ ...ve-demand-coordinator.ts |   10 +-
+ ...decar-generation.test.ts |   23 +
+ ...kr-sidecar-generation.ts |   12 +-
+ ...t-data-admission.test.ts |  214 +-
+ ...market-data-admission.ts |  141 +-
+ .../market-data-ingest.ts   |  133 +-
+ ...ata-store-pglite.test.ts |  275 +-
+ ...arket-data-store.test.ts |   46 +-
+ .../market-data-store.ts    |  730 +-
+ ...ket-data-work-planner.ts |   70 +-
+ ...shadow-dashboard.test.ts |   30 +-
+ ...ting-shadow-dashboard.ts |   53 +-
+ ...m-serialize-once.test.ts |   20 +
+ ...n-latest-cutover.test.ts |   12 +-
+ ...ion-chain-policy.test.ts |   58 +-
+ ...option-metadata-store.ts |  854 +-
+ ...metadata-timeout.test.ts |   78 +-
+ ...scanner-pressure.test.ts |  120 +-
+ .../options-flow-scanner.ts |   14 +-
+ ...rs-bridge-health.test.ts |   13 +
+ ...rm-bridge-health.test.ts |  185 +-
+ ...latform-bridge-health.ts |   86 +-
+ ...degraded-reasons.test.ts |    9 +-
+ .../services/platform.ts    | 2265 ++--
+ .../python-compute.test.ts  |   80 +-
+ .../python-compute.ts       |   69 +-
+ ...napshot-deblock.test.mjs |   21 +-
+ .../route-admission.test.ts |  183 +-
+ .../route-admission.ts      |   49 +-
+ ...-flight-recorder.test.ts |   63 +
+ ...ntime-flight-recorder.ts |   39 +-
+ ...count-read-cache.test.ts |   49 +
+ .../shadow-account.ts       |  348 +-
+ ...ar-cache-persist.test.ts |   85 +-
+ ...r-cache-prefetch.test.ts |  437 +-
+ ...nitor-local-bar-cache.ts |  583 +-
+ ...tions-automation.test.ts |   61 +-
+ ...al-options-automation.ts |  299 +-
+ ...l-options-exit-policy.ts |   10 +-
+ ...position-tick-manager.ts |   10 +-
+ ...nal-quality-kpis.test.ts |  600 +-
+ .../signal-quality-kpis.ts  | 1070 +-
+ ...odularization-tracker.md |    6 +-
+ ...owser-validation.spec.ts |   69 +-
+ .../pyrus/package.json      |    9 +-
+ .../scripts/runDevApp.mjs   |  297 +-
+ .../pyrus/src/app/App.tsx   |    6 +
+ ...eloadContention.test.mjs |   33 +-
+ .../src/app/qa-mode.ts      |   14 +-
+ .../SpreadGauge.jsx         |   34 +-
+ .../VerdictGlyph.jsx        |   12 +
+ ...ResearchChartSurface.tsx |   98 +
+ .../chartApiBars.js         |   14 +-
+ ...BarSpacingParity.test.ts |   68 +
+ .../chartHydrationStats.ts  |    2 +
+ ...ChartPositionOverlays.ts |   20 +-
+ ...siveStreamedStockBars.ts |   96 +-
+ .../useOptionChartBars.js   |   10 +-
+ ...ContractDetailInline.jsx |   10 +-
+ ...jectionCoverage.test.mjs |   19 +-
+ .../MarketActivityPanel.jsx |    4 +-
+ ...PremiumFlowIndicator.jsx |    4 +-
+ .../MultiChartGrid.jsx      |   11 +-
+ .../marketGridTrackState.js |   13 +-
+ .../platform/AppHeader.jsx  |    2 +-
+ .../CommandPalette.jsx      |    2 +-
+ .../HeaderStatusCluster.jsx | 1306 +-
+ ...erStatusCluster.test.mjs |  142 +-
+ ...SubscriptionProvider.jsx |  173 +-
+ ...riptionProvider.test.mjs |   24 +-
+ .../MobileActivitySheet.jsx |    2 +
+ ...rmAlgoMonitorSidebar.jsx |   80 +-
+ ...oMonitorSidebar.test.mjs |  112 +-
+ .../PlatformApp.jsx         | 2338 ++--
+ .../PlatformProviders.jsx   |   22 +-
+ ...PlatformRuntimeLayer.jsx |    4 +
+ ...PlatformScreenRouter.jsx |   56 +-
+ .../PlatformShell.jsx       | 1281 +-
+ ...atformWatchlist.test.mjs |  264 +-
+ ...ecutionTimeframeStore.js |   54 +-
+ ...nTimeframeStore.test.mjs |   34 +
+ ...algoTuningImpactModel.js |    1 -
+ .../appWorkScheduler.js     |   59 +-
+ ...ppWorkScheduler.test.mjs |   58 +
+ .../bootWarmStartCache.js   |    2 -
+ .../bridgeRuntimeModel.js   |    4 +-
+ .../dataIssueModel.js       |    2 +-
+ .../ibkrBridgeSession.js    |  101 -
+ ...krBridgeSession.test.mjs |  208 +-
+ ...tialActionModel.test.mjs |    3 +-
+ ...OperationStepperModel.js |   10 +-
+ ...ionStepperModel.test.mjs |    6 +-
+ .../ibkrPopoverModel.js     |    6 +-
+ ...bkrPopoverModel.test.mjs |   12 +-
+ ...initialPlatformScreen.ts |    1 +
+ .../live-streams.test.mjs   |   27 +-
+ .../live-streams.ts         |   64 +-
+ .../platformContexts.d.ts   |    8 +
+ .../platformContexts.jsx    |    7 +
+ ...formJsonRequest.test.mjs |   10 +-
+ ...StreamReconnect.test.mjs |    3 +
+ .../quoteStreamReconnect.ts |    8 +-
+ ...esilienceIssues.test.mjs |   16 +
+ .../runtimeControlModel.js  |   52 +-
+ ...untimeMarketDataModel.js |  172 +-
+ ...MarketDataModel.test.mjs |  230 +
+ ...screenModulePreloader.js |    1 +
+ .../screenRegistry.jsx      |    9 +
+ ...signalMatrixScheduler.js |   58 +-
+ ...MatrixScheduler.test.mjs |   84 +-
+ .../useLiveMarketFlow.js    |   10 +-
+ ...untimeControlSnapshot.js |    9 +-
+ ...atchlistQuoteRotation.js |    7 +-
+ ...stQuoteRotation.test.mjs |    6 +-
+ ...alMatrixSnapshotCache.js |  240 -
+ ...ixSnapshotCache.test.mjs |  168 -
+ ...ignalMatrixStateMerge.js |   36 +-
+ ...atrixStateMerge.test.mjs |   65 +
+ .../signalsRowModel.js      |    8 +-
+ ...signalsRowModel.test.mjs |   10 +-
+ .../TradeEquityPanel.jsx    |  227 +-
+ .../trade/TradeL2Panel.jsx  |  300 +-
+ ...anelDiagnostics.test.mjs |    8 +-
+ .../TradeOrderTicket.jsx    |  602 +-
+ .../TradePositionsPanel.jsx |   42 +-
+ ...eTicketReadinessModel.js |   41 +-
+ .../pyrus/src/index.css     |   67 +-
+ .../src/lib/formatters.js   |   10 +-
+ .../screens/AlgoScreen.jsx  |   80 +-
+ .../AlgoScreen.test.mjs     |   24 +-
+ .../DiagnosticsScreen.jsx   |   25 +-
+ .../screens/FlowScreen.jsx  |   32 +-
+ .../screens/GexScreen.jsx   |   14 +-
+ .../SettingsScreen.jsx      |  118 +-
+ .../SignalsScreen.jsx       |  184 +-
+ ....state-contract.test.mjs |   36 +
+ .../screens/TradeScreen.jsx | 1059 +-
+ ...adeTickerSearch.test.mjs |  103 +-
+ ...onOptionQuoteStreams.jsx |   37 +-
+ ...ionQuoteStreams.test.mjs |   12 +-
+ ....bridgeDetached.test.mjs |   14 +-
+ .../PositionsPanel.jsx      |    6 +-
+ .../SetupHealthPanel.jsx    |    2 +-
+ .../AlgoDiagnosticsTab.jsx  |    6 +-
+ .../algo/AlgoLivePage.jsx   |   57 +-
+ .../AlgoLivePage.test.mjs   |   17 +
+ .../AlgoSettingsRegion.jsx  |  750 +-
+ ...TimeframeControlBand.jsx |    4 +-
+ .../algo/HaltStrip.jsx      |   38 +-
+ .../OperationsSignalRow.jsx |   22 +-
+ ...perationsSignalTable.jsx |  192 +-
+ ...ionsSignalTable.test.mjs |  182 +-
+ ...ettingsSectionHeader.jsx |   16 +-
+ .../algo/algoHelpers.js     |  409 +-
+ .../algoHelpers.test.mjs    |  301 +
+ .../algoSettingsFields.js   |   60 +-
+ ...algoTimeframeControls.js |   37 +-
+ ...meframeControls.test.mjs |   34 +-
+ ...aveAllAlgoAdjustments.js |   39 +-
+ ...AlgoAdjustments.test.mjs |   73 +
+ .../MACHINE_STATE_WIRING.md |   13 +-
+ .../MachineStateDiagram.jsx |   33 +-
+ ...iagram.contract.test.mjs |    7 +-
+ ...hineStateDiagramModel.js |   16 +-
+ ...ateDiagramModel.test.mjs |   38 +-
+ .../gex/GexCharts.jsx       |    2 +-
+ .../pyrus/vite.config.ts    |   46 +-
+ .../src/compute/gex.rs      |   32 +-
+ .../src/ingest.rs           |  248 +-
+ .../src/jobs.rs             |   11 +-
+ .../src/main.rs             |  128 +-
+ .../providers/massive.rs    |  222 -
+ ...oker-scope-permission.md |   23 +-
+ ...classification-matrix.md |    5 +-
+ knip.json                   |    9 +-
+ .../api.schemas.ts          | 1081 +-
+ .../src/generated/api.ts    | 1663 +--
+ lib/api-spec/openapi.yaml   | 2159 ++-
+ .../src/generated/api.ts    | 1417 +-
+ .../brokerConnection.ts     |    3 +
+ .../types/brokerProvider.ts |    1 +
+ .../types/flowEvent.ts      |    2 +-
+ .../types/getBarsParams.ts  |    6 +-
+ .../getMarketDepthParams.ts |    3 +
+ ...tionExpirationsParams.ts |    2 +-
+ ...ivationPhaseDurations.ts |   14 +-
+ .../types/index.ts          |   93 +-
+ .../listFlowEventsParams.ts |    8 +-
+ .../optionChainQuote.ts     |    8 +
+ ...onChartBarsDataSource.ts |    2 -
+ .../types/optionContract.ts |    1 +
+ ...ositionOpenedAtSource.ts |    1 -
+ ...ActivationProgress200.ts |   11 -
+ ...ignalQualityKpiResult.ts |   10 +
+ ...reamMarketDepthParams.ts |    3 +
+ ...alMonitorMatrixParams.ts |    5 +
+ ...option-greek-selector.ts |   16 +-
+ ...ignal-forward-returns.ts |   48 +-
+ .../src/signal-options.ts   |   18 -
+ lib/db/src/index.ts         |   76 +-
+ .../src/retention.test.ts   |  104 +-
+ lib/db/src/retention.ts     |   70 +
+ .../schema/automation.ts    |   11 +
+ lib/db/src/schema/broker.ts |   19 +-
+ lib/db/src/schema/enums.ts  |    5 +-
+ lib/db/src/schema/index.ts  |    2 +
+ .../schema/instruments.ts   |   16 +
+ .../schema/market-data.ts   |    4 +
+ .../src/schema/trading.ts   |   31 +
+ .../src/client.ts           |    5 +
+ .../src/runtime.ts          |   51 +
+ package.json                |    9 +-
+ pnpm-lock.yaml              |  399 +-
+ pnpm-workspace.yaml         |    1 +
+ .../pyproject.toml          |    1 +
+ .../pyrus_compute/jobs.py   |  120 +
+ .../pyrus_compute/uv.lock   |   54 +
+ replit.md                   |   50 +-
+ ...eplit-startup-guards.mjs |   10 +-
+ scripts/package.json        |    3 +
+ ...n-market-data-worker.mjs |   97 +-
+ .../run-python-compute.mjs  |    1 +
+ ...ons-exit-policy-sweep.ts |    2 -
+ 267 files changed, 22375 insertions(+), 15990 deletions(-)
 ```
 
 ## Validations Detected In Transcript

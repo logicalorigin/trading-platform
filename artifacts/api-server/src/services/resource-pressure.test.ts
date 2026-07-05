@@ -35,8 +35,6 @@ test("request latency does not raise overall level and does not freeze trading",
   assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-latency")?.level, "high");
   // ...and it never saturates the server, so trading is not frozen.
   assert.equal(snapshot.resourceLevel, "normal");
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
 
   __resetApiResourcePressureForTests();
@@ -63,8 +61,6 @@ test("event-loop utilization saturation raises the headline level but leaves gat
   // Gating is explicitly NOT affected: utilization feeds the display level only.
   assert.equal(snapshot.resourceLevel, "normal");
   assert.equal(snapshot.hardResourceLevel, "normal");
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
 
   __resetApiResourcePressureForTests();
@@ -97,22 +93,28 @@ test("event-loop utilization watch band reads watch on the headline, normal stay
   __resetApiResourcePressureForTests();
 });
 
-test("rss pressure can still force high pressure without blocking signal refresh", () => {
+test("rss saturation reads high on the headline at once but hard-blocks only after sustained (2-sample) saturation", () => {
   __resetApiResourcePressureForTests();
 
-  const snapshot = updateApiResourcePressure({
+  // rss no longer instant-trips the trading gate: the container does not die from
+  // our RSS (it recycles on a fixed infra schedule; memory stays calm), so a
+  // single high sample surfaces on the display headline but the gate waits for the
+  // 2-sample hysteresis — a benign RSS bump can't single-sample-freeze trading.
+  const first = updateApiResourcePressure({
     rssMb: 9_000,
     apiP95LatencyMs: 2_000,
     dominantSlowRouteP95Ms: 6_000,
   });
 
-  assert.equal(snapshot.level, "high");
-  assert.equal(snapshot.drivers.find((driver) => driver.kind === "api-rss")?.level, "high");
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
-  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
-  assert.equal(isApiResourcePressureHardBlock(snapshot), true);
+  assert.equal(first.level, "high");
+  assert.equal(first.drivers.find((driver) => driver.kind === "api-rss")?.level, "high");
+  assert.equal(first.resourceLevel, "watch");
+  assert.equal(isApiResourcePressureHardBlock(first), false);
+
+  // Sustained across a second sample, a genuine RSS climb still sheds.
+  const second = updateApiResourcePressure({ rssMb: 9_000 });
+  assert.equal(second.resourceLevel, "high");
+  assert.equal(isApiResourcePressureHardBlock(second), true);
 
   __resetApiResourcePressureForTests();
 });
@@ -129,8 +131,6 @@ test("request latency does not defer signal-options action work", () => {
   // server, so signal/action work keeps running.
   assert.equal(snapshot.level, "normal");
   assert.equal(snapshot.resourceLevel, "normal");
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
 
   __resetApiResourcePressureForTests();
@@ -148,16 +148,12 @@ test("single event-loop spike does not enter high resource pressure", () => {
     snapshot.drivers.find((driver) => driver.kind === "api-event-loop")?.level,
     "high",
   );
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
-  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
 
   __resetApiResourcePressureForTests();
 });
 
-test("sustained event-loop saturation enters and exits high resource pressure with hysteresis", () => {
+test("sustained event-loop saturation raises resourceLevel with hysteresis but no longer hard-blocks scans (Stage 2)", () => {
   __resetApiResourcePressureForTests();
 
   updateApiResourcePressure({
@@ -167,14 +163,19 @@ test("sustained event-loop saturation enters and exits high resource pressure wi
     eventLoopDelayP95Ms: 500,
   });
 
+  // resourceLevel still tracks event-loop for display/telemetry + hysteresis...
   assert.equal(sustained.resourceLevel, "high");
-  assert.equal(isApiResourcePressureHardBlock(sustained), true);
+  // ...but scans now gate on hardResourceLevel (finite resources only), so a busy
+  // loop with rss/heap/pool normal does NOT pause trading scans (Stage 2: the CPU
+  // x-ray confirmed scans aren't the loop blocker).
+  assert.equal(sustained.hardResourceLevel, "normal");
+  assert.equal(isApiResourcePressureHardBlock(sustained), false);
 
   const firstClear = updateApiResourcePressure({
     eventLoopDelayP95Ms: 20,
   });
   assert.equal(firstClear.resourceLevel, "high");
-  assert.equal(isApiResourcePressureHardBlock(firstClear), true);
+  assert.equal(isApiResourcePressureHardBlock(firstClear), false);
 
   const secondClear = updateApiResourcePressure({
     eventLoopDelayP95Ms: 20,
@@ -193,9 +194,8 @@ test("event-loop watch does not defer signal-options action work", () => {
   });
 
   assert.equal(snapshot.resourceLevel, "watch");
-  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.signalRefreshAllowed, true);
+  // watch does not hard-block, so signal-options action work keeps running.
+  assert.equal(isApiResourcePressureHardBlock(snapshot), false);
 
   __resetApiResourcePressureForTests();
 });
@@ -365,15 +365,17 @@ test("sustained event-loop saturation raises resourceLevel but NOT hardResourceL
   __resetApiResourcePressureForTests();
 });
 
-test("rss saturation trips hardResourceLevel (real exhaustion still sheds prices)", () => {
+test("rss saturation trips hardResourceLevel after two samples (real exhaustion still sheds prices)", () => {
   __resetApiResourcePressureForTests();
 
-  // RSS is a finite resource and an instant hard-block, so it trips BOTH levels
-  // immediately: real memory exhaustion still sheds cheap price reads.
-  const snapshot = updateApiResourcePressure({ rssMb: 9_000 });
+  // RSS is a finite resource but no longer an INSTANT hard-block: it follows the
+  // same 2-sample hysteresis as heap/pool, so real memory exhaustion still sheds
+  // cheap price reads once sustained, without single-sample false freezes.
+  updateApiResourcePressure({ rssMb: 9_000 });
+  const sustained = updateApiResourcePressure({ rssMb: 9_000 });
 
-  assert.equal(snapshot.resourceLevel, "high");
-  assert.equal(snapshot.hardResourceLevel, "high");
+  assert.equal(sustained.resourceLevel, "high");
+  assert.equal(sustained.hardResourceLevel, "high");
 
   __resetApiResourcePressureForTests();
 });

@@ -228,7 +228,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
               <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>{group.rows.length} event{group.rows.length !== 1 ? "s" : ""}</span>
             </div>
             {/* Rows */}
-            <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", overflow: "hidden" }}>
+            <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderTop: "none", borderRadius: `0 0 ${RADII.md}px ${RADII.md}px`, overflow: "hidden" }}>
               {group.rows.map((row, i) => {
                 const co = cos.find(c => c.t === row.internalTicker);
                 if (!co) return null;

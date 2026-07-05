@@ -9,6 +9,7 @@ export const MobileActivitySheet = ({
   onClose,
   environment = "shadow",
   dataEnabled = open,
+  realtimeStreamGateReason = null,
   signalMatrixStates = [],
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
@@ -36,6 +37,7 @@ export const MobileActivitySheet = ({
       <PlatformAlgoMonitorSidebar
         isVisible={open}
         dataEnabled={Boolean(open && dataEnabled)}
+        realtimeStreamGateReason={realtimeStreamGateReason}
         environment={environment}
         signalMatrixStates={signalMatrixStates}
         signalMonitorEvents={signalMonitorEvents}

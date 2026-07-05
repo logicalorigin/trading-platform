@@ -1,4 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -69,6 +70,7 @@ export const optionContractsTable = pgTable(
       .references(() => instrumentsTable.id),
     massiveTicker: varchar("massive_ticker", { length: 64 }).notNull(),
     providerContractId: varchar("provider_contract_id", { length: 128 }),
+    brokerContractId: varchar("broker_contract_id", { length: 128 }),
     expirationDate: date("expiration_date").notNull(),
     strike: numeric("strike", { precision: 18, scale: 6 }).notNull(),
     right: optionRightEnum("right").notNull(),
@@ -82,6 +84,9 @@ export const optionContractsTable = pgTable(
     uniqueIndex("option_contracts_provider_contract_id_idx").on(
       table.providerContractId,
     ),
+    uniqueIndex("option_contracts_broker_contract_id_idx").on(
+      table.brokerContractId,
+    ),
     index("option_contracts_underlying_idx").on(table.underlyingInstrumentId),
     index("option_contracts_expiration_idx").on(table.expirationDate),
     // Durable option-chain cache loads filter by underlying + expiration_date>=today
@@ -91,6 +96,17 @@ export const optionContractsTable = pgTable(
       table.underlyingInstrumentId,
       table.expirationDate,
     ),
+    // Hot durable option-chain loads read only active future contracts for one
+    // underlying and return display order. Keep the partial index aligned with
+    // lib/db/migrations/20260626_option_contracts_active_chain_order_idx.sql.
+    index("option_contracts_active_chain_order_idx")
+      .on(
+        table.underlyingInstrumentId,
+        table.expirationDate,
+        table.strike,
+        table.right,
+      )
+      .where(sql`${table.isActive} = true`),
   ],
 );
 

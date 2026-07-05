@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import test, { after } from "node:test";
+import test, { after, beforeEach } from "node:test";
 import { GetSessionResponse } from "@workspace/api-zod";
 
 import { HttpError } from "../lib/errors";
 import {
   clearIbkrBridgeRuntimeOverride,
   getIbkrBridgeRuntimeOverride,
+  markIbkrBridgeRuntimeStopRequested,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
 import { setIbkrBridgeRuntimeAvailabilityProvider } from "../providers/ibkr/bridge-client";
@@ -22,6 +23,7 @@ import {
 } from "./bridge-governor";
 import {
   __platformBridgeHealthInternalsForTests,
+  __setBridgeStreamLivenessProviderForTests,
   __setIbkrBridgeClientFactoryForTests,
   getBridgeHealthForSession,
   getRuntimeBridgeHealthState,
@@ -29,6 +31,7 @@ import {
   invalidateBridgeHealthCache,
   primeBridgeHealthForSession,
   resolveBridgeConnectivity,
+  setBridgeSelfHealProvider,
   setDesktopAgentOnlineProvider,
   type BridgeConnectivityInput,
 } from "./platform-bridge-health";
@@ -42,9 +45,18 @@ process.env["PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
   "ibkr-bridge-runtime-override.json",
 );
 
+// ibkr-bridge-runtime registers the REAL self-heal actuator at import. Pin it OFF by
+// default so abandon/liveness tests assert the abandon path in isolation; the self-heal
+// decision-matrix tests opt in by overriding the provider in their own body.
+beforeEach(() => {
+  setBridgeSelfHealProvider(() => "declined");
+});
+
 after(() => {
   clearIbkrBridgeRuntimeOverride();
   __setIbkrBridgeClientFactoryForTests(null);
+  __setBridgeStreamLivenessProviderForTests(null);
+  setBridgeSelfHealProvider(null);
   setDesktopAgentOnlineProvider(() => false);
   setIbkrBridgeRuntimeAvailabilityProvider(null);
   if (previousOverrideFile) {
@@ -233,6 +245,42 @@ test("liveness boundary: fresh at exactly the window, stale one ms past it", () 
   );
   assert.equal(pastBoundary.connectivityUp, false);
   assert.equal(pastBoundary.connectivityReason, "liveness_stale");
+});
+
+// SAFETY INVARIANT (L7): lastTickleAt rides the bridge host's clock. A bridge clock
+// running >= livenessFreshMs ahead used to clamp the age to 0 and keep liveness
+// perpetually fresh, bypassing the half-open guard. A FUTURE tickle timestamp must
+// surface a null age and must NOT vouch for liveness.
+test("a future (forward-skewed) tickle timestamp does not vouch for liveness", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: CONN_NOW + 10 * 60_000 }), // bridge clock 10 min ahead
+  );
+  assert.equal(verdict.lastTickleAgeMs, null);
+  assert.equal(verdict.livenessFresh, false);
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "liveness_stale");
+});
+
+// Inverse control for the skew guard: a normal recent tickle keeps identical behavior.
+test("a normal recent tickle still reads fresh and connected (skew-guard control)", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: CONN_NOW - 5_000 }),
+  );
+  assert.equal(verdict.lastTickleAgeMs, 5_000);
+  assert.equal(verdict.livenessFresh, true);
+  assert.equal(verdict.connectivityUp, true);
+  assert.equal(verdict.connectivityReason, null);
+});
+
+// Same skew rule for the no-tickle fallback: healthAge derives from the bridge clock
+// too, so a negative (future updatedAt) health age must not vouch for liveness either.
+test("a future-skewed health snapshot with no tickle does not vouch for liveness", () => {
+  const verdict = resolveBridgeConnectivity(
+    connInput({ lastTickleAtMs: null, healthAgeMs: -10 * 60_000 }),
+  );
+  assert.equal(verdict.livenessFresh, false);
+  assert.equal(verdict.connectivityUp, false);
+  assert.equal(verdict.connectivityReason, "liveness_stale");
 });
 
 test("floor boundary: trusted at exactly the floor, dropped one ms past it", () => {
@@ -596,42 +644,6 @@ test("stale embedded stream ages do not bypass the connectivity floor", async ()
   assert.equal(health.authenticated, false);
 });
 
-test("fresh quote stream transport prevents false stale state when quote data is quiet", () => {
-  const staleButTransportAliveHealth = {
-    ...bridgeHealth(new Date(Date.now() - 60_000).toISOString()),
-    accounts: ["U123"],
-    authenticated: true,
-    brokerServerConnected: true,
-    connected: true,
-    liveMarketDataAvailable: true,
-    marketDataMode: "live",
-    diagnostics: { subscriptions: { quoteListenerCount: 3 } },
-  };
-
-  const health =
-    __platformBridgeHealthInternalsForTests.annotateBridgeHealth(
-      staleButTransportAliveHealth as never,
-      {
-        bridgeQuoteDiagnostics: {
-          activeConsumerCount: 3,
-          unionSymbolCount: 3,
-          streamActive: true,
-          dataFreshnessAgeMs: 120_000,
-          lastEventAgeMs: 120_000,
-          transportFreshnessAgeMs: 1_000,
-        } as never,
-      },
-    );
-
-  assert(health, "expected cached bridge health");
-  assert.equal(health.healthFresh, false);
-  assert.equal(health.streamFresh, true, "transport heartbeat is fresh");
-  assert.equal(health.streamState, "live");
-  assert.equal(health.strictReady, true);
-  assert.equal(health.connected, true);
-  assert.equal(health.connectivityUp, true);
-});
-
 test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconnected immediately", async () => {
   setIbkrBridgeRuntimeOverride({
     apiToken: "test-token",
@@ -677,7 +689,7 @@ test("invalidateBridgeHealthCache drops the cache so a deactivate reads disconne
   );
 });
 
-test("session bridge health failure state summarizes health governor backoff", () => {
+test("session bridge health failure state exposes the last health failure without a governor payload", () => {
   setIbkrBridgeRuntimeOverride({
     apiToken: "test-token",
     baseUrl: "https://bridge.test",
@@ -704,10 +716,8 @@ test("session bridge health failure state summarizes health governor backoff", (
     assert.equal(state.streamStateReason, "bridge_unreachable");
     assert.equal(state.healthErrorCode, "ibkr_bridge_health_backoff");
     assert.match(state.healthError, /temporarily backed off/i);
-    assert.equal(
-      state.governor.health.lastFailure,
-      "HTTP 530 <none>: error code: 1033",
-    );
+    assert.equal(state.lastError, "HTTP 530 <none>: error code: 1033");
+    assert.equal("governor" in state, false);
   } finally {
     __resetBridgeGovernorForTests();
   }
@@ -892,6 +902,177 @@ test("dead bridge override: agent-online reprieve requires a prior health succes
     assert.equal(getIbkrBridgeRuntimeOverride(), null);
   } finally {
     setDesktopAgentOnlineProvider(() => false);
+    __resetBridgeGovernorForTests();
+  }
+});
+
+// Regression (commit 42edec5): an api-server RESTART resets the in-memory governor, so a
+// previously-validated, still-live bridge has lastSuccessAt=null while its persisted
+// override reloads. A fresh bridge quote stream is positive proof the tunnel/Gateway is
+// alive RIGHT NOW (independent of the probe), so the override must be HELD, not abandoned —
+// otherwise the header flips the whole bridge to "not connected" while lines keep flowing.
+test("dead bridge override: a fresh quote stream spares a restart-nulled lastSuccessAt", () => {
+  __resetBridgeGovernorForTests();
+  const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+    __platformBridgeHealthInternalsForTests;
+  const transient = new HttpError(504, "timeout", {
+    code: "ibkr_bridge_health_timeout",
+  });
+
+  try {
+    // Persisted override reloaded after restart; agent online; NO health success yet
+    // (lastSuccessAt null — only post-restart failures), but the quote stream is live.
+    setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://live.bridge" });
+    setDesktopAgentOnlineProvider(() => true);
+    __setBridgeStreamLivenessProviderForTests(() => true);
+    recordBridgeWorkFailure("health", transient);
+    recordBridgeWorkFailure("health", transient);
+    const firstOpenedAt = getBridgeGovernorSnapshot().health.firstOpenedAt;
+    if (firstOpenedAt === null) {
+      throw new Error("expected the health circuit to be open");
+    }
+    assert.equal(getBridgeGovernorSnapshot().health.lastSuccessAt, null);
+
+    // Sustained outage well past the abandon threshold, but the live stream vouches: HELD.
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      false,
+    );
+    assert.notEqual(getIbkrBridgeRuntimeOverride(), null);
+
+    // Stream goes dead too: now neither signal vouches (no success, no stream) — a genuinely
+    // dead tunnel — so the override IS abandoned (preserves 42edec5's Reconnect path).
+    __setBridgeStreamLivenessProviderForTests(() => false);
+    assert.equal(
+      maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      ),
+      true,
+    );
+    assert.equal(getIbkrBridgeRuntimeOverride(), null);
+  } finally {
+    setDesktopAgentOnlineProvider(() => false);
+    __setBridgeStreamLivenessProviderForTests(null);
+    __resetBridgeGovernorForTests();
+  }
+});
+
+// SELF-HEAL DECISION MATRIX: once the bridge is genuinely dead (agent online, no liveness,
+// continuous outage past the abandon threshold), maybeAbandonDeadBridgeOverride asks the
+// injected self-heal provider whether to relaunch. queued/in-flight/throttled HOLD the
+// override (reconnecting); exhausted/declined ABANDON it (manual Reconnect). An intentional
+// stop (stopRequestedAt) or an offline agent must never even ask the provider.
+const openDeadHealthCircuit = (): number => {
+  const transient = new HttpError(504, "timeout", {
+    code: "ibkr_bridge_health_timeout",
+  });
+  recordBridgeWorkFailure("health", transient);
+  recordBridgeWorkFailure("health", transient);
+  const firstOpenedAt = getBridgeGovernorSnapshot().health.firstOpenedAt;
+  if (firstOpenedAt === null) {
+    throw new Error("expected the health circuit to be open");
+  }
+  return firstOpenedAt;
+};
+
+for (const tc of [
+  { outcome: "queued" as const, expectAbandoned: false },
+  { outcome: "in-flight" as const, expectAbandoned: false },
+  { outcome: "throttled" as const, expectAbandoned: false },
+  { outcome: "exhausted" as const, expectAbandoned: true },
+  { outcome: "declined" as const, expectAbandoned: true },
+]) {
+  test(`dead bridge + unintentional + agent online: self-heal '${tc.outcome}' ${tc.expectAbandoned ? "abandons" : "holds"} the override`, () => {
+    __resetBridgeGovernorForTests();
+    const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+      __platformBridgeHealthInternalsForTests;
+    try {
+      setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://dead.bridge" });
+      setDesktopAgentOnlineProvider(() => true);
+      __setBridgeStreamLivenessProviderForTests(() => false);
+      let calls = 0;
+      setBridgeSelfHealProvider(() => {
+        calls += 1;
+        return tc.outcome;
+      });
+      const firstOpenedAt = openDeadHealthCircuit();
+      const abandoned = maybeAbandonDeadBridgeOverride(
+        firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+      );
+      assert.equal(abandoned, tc.expectAbandoned);
+      assert.equal(calls, 1, "the self-heal provider must be consulted exactly once");
+      assert.equal(
+        getIbkrBridgeRuntimeOverride() === null,
+        tc.expectAbandoned,
+        tc.expectAbandoned
+          ? "override should be cleared when heal is exhausted/declined"
+          : "override should be HELD while a heal is queued/in-flight/throttled",
+      );
+    } finally {
+      setDesktopAgentOnlineProvider(() => false);
+      __setBridgeStreamLivenessProviderForTests(null);
+      setBridgeSelfHealProvider(null);
+      __resetBridgeGovernorForTests();
+    }
+  });
+}
+
+test("dead bridge + INTENTIONAL stop (stopRequestedAt): never asks self-heal, abandons", () => {
+  __resetBridgeGovernorForTests();
+  const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+    __platformBridgeHealthInternalsForTests;
+  try {
+    setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://stopped.bridge" });
+    markIbkrBridgeRuntimeStopRequested(1_700_000_000_000);
+    assert.equal(getIbkrBridgeRuntimeOverride()?.stopRequestedAt, 1_700_000_000_000);
+    setDesktopAgentOnlineProvider(() => true);
+    __setBridgeStreamLivenessProviderForTests(() => false);
+    let calls = 0;
+    setBridgeSelfHealProvider(() => {
+      calls += 1;
+      return "queued";
+    });
+    const firstOpenedAt = openDeadHealthCircuit();
+    const abandoned = maybeAbandonDeadBridgeOverride(
+      firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+    );
+    assert.equal(abandoned, true, "an intentionally-stopped bridge must be abandoned");
+    assert.equal(calls, 0, "self-heal must NOT be consulted for an intentional stop");
+    assert.equal(getIbkrBridgeRuntimeOverride(), null);
+  } finally {
+    setDesktopAgentOnlineProvider(() => false);
+    __setBridgeStreamLivenessProviderForTests(null);
+    setBridgeSelfHealProvider(null);
+    __resetBridgeGovernorForTests();
+  }
+});
+
+test("dead bridge + agent OFFLINE: never asks self-heal, abandons", () => {
+  __resetBridgeGovernorForTests();
+  const { maybeAbandonDeadBridgeOverride, DEAD_BRIDGE_OVERRIDE_ABANDON_MS } =
+    __platformBridgeHealthInternalsForTests;
+  try {
+    setIbkrBridgeRuntimeOverride({ apiToken: "t", baseUrl: "https://dead.bridge" });
+    setDesktopAgentOnlineProvider(() => false);
+    __setBridgeStreamLivenessProviderForTests(() => false);
+    let calls = 0;
+    setBridgeSelfHealProvider(() => {
+      calls += 1;
+      return "queued";
+    });
+    const firstOpenedAt = openDeadHealthCircuit();
+    const abandoned = maybeAbandonDeadBridgeOverride(
+      firstOpenedAt + DEAD_BRIDGE_OVERRIDE_ABANDON_MS + 5_000,
+    );
+    assert.equal(abandoned, true);
+    assert.equal(calls, 0, "an offline agent cannot claim a heal job, so don't enqueue one");
+    assert.equal(getIbkrBridgeRuntimeOverride(), null);
+  } finally {
+    setDesktopAgentOnlineProvider(() => false);
+    __setBridgeStreamLivenessProviderForTests(null);
+    setBridgeSelfHealProvider(null);
     __resetBridgeGovernorForTests();
   }
 });

@@ -8,10 +8,13 @@ import {
   staRowPassesMtfAlignment,
 } from "./algoHelpers.js";
 import {
+  buildStaEmptyStateModel,
   buildStaSignalStatusSummary,
   buildStaTableRowsSnapshot,
-  hasStaCandidateAction,
+  classifySignal,
   hasUsableSparklineData,
+  isHistoricalSignalRow,
+  isReceivedSignalRow,
   resolveRowTickerSnapshot,
   sortRows,
   splitStaRowsBySignalMatrixHydration,
@@ -66,15 +69,44 @@ test("STA Move sort uses the live ticker snapshot shown by each row", () => {
   );
 });
 
-test("STA source-health banner only fires on a genuinely empty matrix", () => {
-  // Event-loop stalls flip the cockpit + signal-options-state queries to isError
-  // together, but the matrix is the real STA row source. The "STA action source is
-  // currently unavailable" banner must stay gated on an empty matrix so a transient
-  // metrics stall does not read as a hard data outage while rows are present.
-  assert.match(
-    source,
-    /const sourceHealthBanner =\s*\(sourceHealth\.degraded \|\| sourceHealth\.stale\) && !staFilteredRows\.length/,
+test("STA Newest sort follows signal recency, not matrix evaluation activity", () => {
+  const rows = [
+    {
+      signal: {
+        symbol: "AAPU",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-25T23:15:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        updatedAt: "2026-06-25T23:20:03.434Z",
+      },
+    },
+    {
+      signal: {
+        symbol: "AISP",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-24T19:20:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        updatedAt: "2026-06-25T23:28:19.971Z",
+      },
+    },
+  ];
+
+  const sorted = sortRows(rows, "newest", null, "desc");
+
+  assert.deepEqual(
+    sorted.map((row) => row.signal.symbol),
+    ["AAPU", "AISP"],
   );
+});
+
+test("STA table does not render cached action-source health", () => {
+  assert.doesNotMatch(source, /signalOptionsSourceHealth/);
+  assert.doesNotMatch(source, /sourceHealthBanner/);
+  assert.doesNotMatch(source, /Action source degraded/);
+  assert.doesNotMatch(source, /STA action source is currently unavailable/);
+  assert.doesNotMatch(source, /findSignalOptionsCandidateForSignal/);
 });
 
 test("STA stale scan banner only fires on a genuinely empty matrix", () => {
@@ -123,12 +155,13 @@ test("STA stale state keeps the compact Signal/Bar age while the primary banner 
   );
 });
 
-test("STA candidate action counting tolerates null action payloads", () => {
-  assert.equal(hasStaCandidateAction(null), false);
-  assert.equal(hasStaCandidateAction({ action: null }), false);
-  assert.equal(hasStaCandidateAction({ action: undefined }), false);
-  assert.equal(hasStaCandidateAction({ action: {} }), false);
-  assert.equal(hasStaCandidateAction({ action: { orderType: "market" } }), true);
+test("STA action classification follows live matrix action eligibility", () => {
+  assert.equal(classifySignal({ actionEligible: true }, null), "ready");
+  assert.equal(classifySignal({ actionEligible: false }, null), "blocked");
+  assert.equal(
+    classifySignal({ actionEligible: true }, { actionStatus: "blocked" }),
+    "ready",
+  );
 });
 
 test("STA status summary separates rows, received signals, actions, and history", () => {
@@ -148,6 +181,125 @@ test("STA status summary separates rows, received signals, actions, and history"
     "All 9/14 rows · Received 8 · Actions 3 · History 5 · Signal 2m ago",
   );
   assert.equal(summary.mobileStatusLine, "All 9/14 · Rec 8 · Act 3 · Hist 5");
+});
+
+test("STA empty state treats a live Signal Matrix with no selected rows as settled", () => {
+  const model = buildStaEmptyStateModel({
+    filter: "all",
+    sourceRowCount: 0,
+    matrixPendingRowCount: 0,
+    signalMatrixStateCount: 20,
+    displaySignalTimeframes: ["5m"],
+  });
+
+  assert.equal(model.title, "No current STA rows");
+  assert.equal(model.loading, false);
+  assert.match(model.detail, /Signal Matrix is live/);
+  assert.doesNotMatch(model.detail, /Rows appear as soon/);
+});
+
+test("STA empty state only shows loading while matrix data is absent or selected rows are pending", () => {
+  assert.equal(
+    buildStaEmptyStateModel({
+      filter: "all",
+      sourceRowCount: 0,
+      matrixPendingRowCount: 0,
+      signalMatrixStateCount: 0,
+    }).loading,
+    true,
+  );
+  assert.equal(
+    buildStaEmptyStateModel({
+      filter: "all",
+      sourceRowCount: 2,
+      matrixPendingRowCount: 1,
+      signalMatrixStateCount: 10,
+      displaySignalTimeframes: ["2m", "5m"],
+    }).loading,
+    true,
+  );
+  assert.equal(
+    buildStaEmptyStateModel({
+      searchQuery: "spy",
+      filter: "all",
+      signalMatrixStateCount: 10,
+    }).loading,
+    false,
+  );
+});
+
+test("STA received count includes live Signal Matrix rows", () => {
+  assert.equal(
+    isReceivedSignalRow({
+      signal: {
+        sourceType: "signal_matrix_state",
+        symbol: "GLD",
+        timeframe: "1m",
+        latestBarAt: "2026-06-25T23:58:00.000Z",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isReceivedSignalRow({
+      sourceType: "signal_matrix_state",
+      symbol: "GLD",
+      timeframe: "1m",
+      latestBarAt: "2026-06-25T23:58:00.000Z",
+    }),
+    true,
+  );
+  assert.equal(
+    isReceivedSignalRow({
+      signal: {
+        sourceType: "signal_monitor_event",
+        eventId: "evt-1",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isHistoricalSignalRow({
+      sourceType: "signal_monitor_event",
+      eventId: "evt-2",
+    }),
+    true,
+  );
+  assert.equal(isReceivedSignalRow({ signal: {} }), false);
+});
+
+test("STA received count includes raw Signal Monitor state rows without sourceType", () => {
+  assert.equal(
+    isReceivedSignalRow({
+      symbol: "AAPL",
+      timeframe: "2m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-25T23:50:00.000Z",
+      latestBarAt: "2026-06-25T23:52:00.000Z",
+      actionEligible: false,
+      actionBlocker: "market_idle",
+    }),
+    true,
+  );
+  assert.equal(
+    isReceivedSignalRow({
+      signal: {
+        symbol: "MSFT",
+        timeframe: "5m",
+        trendDirection: "bearish",
+        latestBarAt: "2026-06-25T23:55:00.000Z",
+        lastEvaluatedAt: "2026-06-25T23:55:02.000Z",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isReceivedSignalRow({
+      symbol: "NOPE",
+      timeframe: "2m",
+    }),
+    false,
+  );
 });
 
 test("STA table snapshot exports computed row signals for KPI consumers", () => {

@@ -114,3 +114,16 @@ test("stale chart bar background refresh gates on resource pressure", () => {
   assert.match(block, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
   assert.doesNotMatch(block, /getApiResourcePressureSnapshot\(\)\.level/);
 });
+
+test("chart cache misses do not use stored-first stale serve", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function getBarsWithDebug");
+  const end = source.indexOf("function refreshBarsCache", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.doesNotMatch(block, /skipProviderHistoryFetch:\s*true/);
+  assert.doesNotMatch(source, /shouldServeStoredFirstBars/);
+  assert.doesNotMatch(source, /storedFirstUnderfilled/);
+});

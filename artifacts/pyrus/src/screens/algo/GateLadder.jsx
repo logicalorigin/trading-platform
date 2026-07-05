@@ -58,7 +58,7 @@ export function GateLadder({ label, threshold, direction = "max", fmt = (v) => `
                   style={{
                     flex: "1 1 0",
                     height: b === 0 ? 0 : Math.max(dim(2), h),
-                    borderRadius: dim(1),
+                    borderRadius: dim(RADII.xs),
                     background: onBlock ? CSS_COLOR.red : CSS_COLOR.green,
                     opacity: b === 0 ? 0 : 0.8,
                   }}
@@ -73,7 +73,7 @@ export function GateLadder({ label, threshold, direction = "max", fmt = (v) => `
         )}
 
         {tPos != null ? (
-          <div style={{ position: "absolute", left: `${tLeft}%`, top: dim(-2), bottom: dim(-2), width: dim(2), transform: "translateX(-1px)", background: CSS_COLOR.text, borderRadius: dim(1) }} />
+          <div style={{ position: "absolute", left: `${tLeft}%`, top: dim(-2), bottom: dim(-2), width: dim(2), transform: "translateX(-1px)", background: CSS_COLOR.text, borderRadius: dim(RADII.xs) }} />
         ) : null}
       </div>
 

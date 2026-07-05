@@ -1,4 +1,4 @@
-export type OptionsFlowScannerTransport = "tws";
+export type OptionsFlowScannerTransport = "tws" | "massive";
 export type OptionsFlowScannerMarketDataMode =
   | "live"
   | "frozen"
@@ -361,15 +361,21 @@ function getTransportSkipReason(
   }
 
   if (status?.configured === false) {
-    return "bridge-not-configured";
+    return transport === "massive"
+      ? "massive-not-configured"
+      : "bridge-not-configured";
   }
 
   if (status?.connected === false) {
-    return "gateway-not-connected";
+    return transport === "massive"
+      ? "massive-not-connected"
+      : "gateway-not-connected";
   }
 
   if (status?.authenticated === false) {
-    return "gateway-not-authenticated";
+    return transport === "massive"
+      ? "massive-not-authenticated"
+      : "gateway-not-authenticated";
   }
 
   const marketDataMode = normalizeMarketDataMode(status?.marketDataMode);

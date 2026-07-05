@@ -15,7 +15,6 @@ export const PositionOpenedAtSource = {
   lot: 'lot',
   flex_open_position: 'flex_open_position',
   flex_snapshot: 'flex_snapshot',
-  expiration_same_day: 'expiration_same_day',
   shadow_position: 'shadow_position',
   automation: 'automation',
   unknown: 'unknown',

@@ -36,11 +36,12 @@ connection type for live automation-capable execution.
   combo orders are deferred.
 - Every provider/adapter must produce an account-specific capability map before
   activation, terminal order enablement, or automation order submission.
-- Multi-provider private beta uses IBKR as a special connector and prioritizes
-  SnapTrade as the first aggregator-backed non-IBKR execution candidate before
-  direct OAuth, subject to official-doc verification, a named selected
-  brokerage/account fixture that proves stocks and single-leg options, and
-  compliance/product sign-off.
+- Multi-provider private beta keeps IBKR Client Portal/Gateway as a special
+  connector, tracks IBKR OAuth as the no-install hosted IBKR candidate, and
+  prioritizes SnapTrade as the first aggregator-backed non-IBKR execution
+  candidate. Both hosted candidates require official-doc verification, a named
+  selected brokerage/account fixture that proves stocks and single-leg options,
+  and compliance/product sign-off before eligibility.
 - Read-only, manual-only, submit-only, paper-only, demo, and shadow links are
   insufficient for customer v1 automation execution.
 - Broker authorization and automation activation are separate. A
@@ -120,11 +121,13 @@ Rejected.
 - Once live customer trading depends on a provider, official provider or
   aggregator docs must be reviewed on every provider-related implementation
   change and at least monthly, with source refs and material changes recorded.
-- Direct OAuth remains a second-wave research lane, but no direct-OAuth broker
-  is named in Phase 1. If the SnapTrade-first aggregator path fails the
-  safety/compliance bar, Phase 3 provider research chooses the replacement lane
-  from current official docs rather than inheriting a preselected backup
-  provider.
+- Direct OAuth remains a research lane; IBKR OAuth is named only as the
+  no-install hosted IBKR candidate and remains blocked until IBKR third-party
+  approval, OAuth implementation, per-user token custody, and account
+  capability fixtures are complete. If the SnapTrade-first aggregator path
+  fails the safety/compliance bar, Phase 3 provider research chooses the
+  replacement lane from current official docs rather than inheriting a
+  preselected backup provider.
 - Generic SnapTrade capability is insufficient for private-beta readiness; the
   selected underlying brokerage/account fixture must prove the supported order
   shapes before Phase 3 can pass.

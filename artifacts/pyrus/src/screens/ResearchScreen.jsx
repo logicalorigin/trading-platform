@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import PhotonicsObservatory from "../features/research/PhotonicsObservatory.jsx";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
+import { useViewport } from "../lib/responsive";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -15,6 +16,7 @@ export const ResearchScreen = ({
   isVisible = false,
   onReadinessChange,
 }) => {
+  const { flags: { isPhone } } = useViewport();
   const contentReady = Boolean(isVisible);
   const primaryReady = Boolean(isVisible);
 
@@ -44,7 +46,7 @@ export const ResearchScreen = ({
         display: "grid",
         gridTemplateRows: "auto minmax(0, 1fr)",
         gap: sp(12),
-        padding: sp(14),
+        padding: isPhone ? sp(8) : sp(14),
         background: CSS_COLOR.bg0,
         color: CSS_COLOR.text,
         fontFamily: T.sans,
@@ -72,7 +74,7 @@ export const ResearchScreen = ({
           <div
             style={{
               color: CSS_COLOR.text,
-              fontSize: fs(18),
+              fontSize: isPhone ? fs(15) : fs(18),
               fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.1,
             }}

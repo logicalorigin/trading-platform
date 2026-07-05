@@ -109,8 +109,6 @@ export type SignalOptionsExecutionProfile = {
     trailActivationPct: number;
     minLockedGainPct: number;
     trailGivebackPct: number;
-    tightenAtFiveXGivebackPct: number;
-    tightenAtTenXGivebackPct: number;
     progressiveTrailEnabled: boolean;
     progressiveTrailSteps: SignalOptionsProgressiveTrailStep[];
     wireGreekTrail: SignalOptionsWireGreekTrailPolicy;
@@ -271,8 +269,6 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       trailActivationPct: 40,
       minLockedGainPct: 10,
       trailGivebackPct: 25,
-      tightenAtFiveXGivebackPct: 30,
-      tightenAtTenXGivebackPct: 15,
       progressiveTrailEnabled: false,
       progressiveTrailSteps: [],
       wireGreekTrail: {
@@ -362,8 +358,6 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     trailActivationPct: 35,
     minLockedGainPct: 15,
     trailGivebackPct: 20,
-    tightenAtFiveXGivebackPct: 30,
-    tightenAtTenXGivebackPct: 15,
     progressiveTrailEnabled: true,
     progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
     wireGreekTrail: {
@@ -808,7 +802,12 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.enabled ?? root.mtfAlignmentEnabled,
           defaults.entryGate.mtfAlignment.enabled,
         ),
-        requiredCount: Math.max(1, mtfTimeframes.length),
+        requiredCount: finiteInteger(
+          mtfAlignment.requiredCount,
+          Math.max(1, mtfTimeframes.length),
+          1,
+          Math.max(1, mtfTimeframes.length),
+        ),
         timeframes: mtfTimeframes,
         preset: signalOptionsMtfPreset(
           mtfAlignment.preset ?? root.mtfAlignmentPreset,
@@ -890,18 +889,6 @@ export function resolveSignalOptionsExecutionProfile(
       trailGivebackPct: finiteNumber(
         exitPolicy.trailGivebackPct ?? root.trailGivebackPct,
         defaults.exitPolicy.trailGivebackPct,
-        0,
-        100,
-      ),
-      tightenAtFiveXGivebackPct: finiteNumber(
-        exitPolicy.tightenAtFiveXGivebackPct ?? root.tightenAtFiveXGivebackPct,
-        defaults.exitPolicy.tightenAtFiveXGivebackPct,
-        0,
-        100,
-      ),
-      tightenAtTenXGivebackPct: finiteNumber(
-        exitPolicy.tightenAtTenXGivebackPct ?? root.tightenAtTenXGivebackPct,
-        defaults.exitPolicy.tightenAtTenXGivebackPct,
         0,
         100,
       ),

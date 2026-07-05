@@ -5,7 +5,6 @@ const PREMIUM_BUDGET = new Set([
   "premium_budget_too_small",
 ]);
 const REGIME_BLOCKS = new Set([
-  "bear_regime_gate_failed",
   "mtf_not_aligned",
   "inverse_put_blocked",
   "entry_gate_failed",

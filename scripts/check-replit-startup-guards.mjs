@@ -185,7 +185,7 @@ check(
   /^\s*args\s*=\s*\["pnpm",\s*"run",\s*"build:pyrus-app"\]\s*$/m.test(
     pyrusArtifact,
   ),
-  "PYRUS production build must use build:pyrus-app so web, API, and bridge bundle are built together.",
+  "PYRUS production build must use build:pyrus-app so web and API are built together.",
 );
 check(
   /^\s*args\s*=\s*\["node",\s*"--enable-source-maps",\s*"artifacts\/api-server\/dist\/index\.mjs"\]\s*$/m.test(
@@ -199,8 +199,8 @@ check(
 
 check(
   rootScripts["build:pyrus-app"] ===
-    "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle",
-  "package.json must keep build:pyrus-app building web, API, and the IBKR bridge bundle.",
+    "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build",
+  "package.json must keep build:pyrus-app building web and API without the retired IBKR bridge bundle.",
 );
 check(
   rootScripts["typecheck:libs"] ===
@@ -307,8 +307,8 @@ check(
     pyrusRunner.includes("MASSIVE_MARKET_DATA_API_KEY") &&
     pyrusRunner.includes("LOCAL_DATABASE_URL") &&
     pyrusRunner.includes("workerPid") &&
-    pyrusRunner.includes("exitWatchers.push(workerExit)"),
-  "runDevApp.mjs must start the market-data worker when database and Massive provider config are present, skip it explicitly when config is missing, and treat a started worker exit as supervisor-fatal.",
+    pyrusRunner.includes('watchFatalExit("market-data worker", workerExit)'),
+  "runDevApp.mjs must start the market-data worker when database and Massive provider config are present, skip it explicitly when config is missing, and treat a started worker exit as supervisor-fatal (a non-reloadable watchFatalExit watcher).",
 );
 check(
   pyrusRunner.includes("pyrus-dev-supervisor-${apiPort}.lock") &&

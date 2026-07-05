@@ -4,7 +4,6 @@ import { normalizeSymbol } from "../lib/values";
 import type { GexResponse } from "./gex";
 
 export type MarketDataIngestJobKind =
-  | "stock_snapshot"
   | "option_chain_snapshot"
   | "gex_snapshot";
 // Reserved future worker jobs: stock_bars, option_flow_events, flow_summary.
@@ -52,7 +51,7 @@ export type BlockedGexJobDiagnostic = {
   dedupeBucket: string;
   createdAt: Date;
   ageMs: number;
-  missingKind: "stock_snapshot" | "option_chain_snapshot";
+  missingKind: "option_chain_snapshot";
   prerequisiteStatus: "missing" | "failed";
   lastError: string | null;
 };
@@ -64,7 +63,6 @@ export type ClaimableQueuedJobsDiagnostic = {
 
 const INGEST_JOB_DEFAULT_MAX_ATTEMPTS = 3;
 export const SUPPORTED_MARKET_DATA_INGEST_JOB_KINDS = [
-  "stock_snapshot",
   "option_chain_snapshot",
   "gex_snapshot",
 ] as const satisfies readonly MarketDataIngestJobKind[];
@@ -73,7 +71,6 @@ const SUPPORTED_MARKET_DATA_INGEST_JOB_KIND_SET = new Set<string>(
   SUPPORTED_MARKET_DATA_INGEST_JOB_KINDS,
 );
 const FORWARD_REFRESH_JOB_KINDS = [
-  "stock_snapshot",
   "option_chain_snapshot",
   "gex_snapshot",
 ] as const satisfies readonly MarketDataIngestJobKind[];
@@ -968,6 +965,86 @@ export async function getLatestGexSnapshot(
   }
 }
 
+export type LatestGexNetSnapshot = {
+  symbol: string;
+  netGex: number;
+  computedAt: Date;
+  ageMs: number;
+  stale: boolean;
+};
+
+/**
+ * Latest persisted net GEX for many symbols in one query. Used by the market
+ * universe table so its Net γ column needs a single request instead of one heavy
+ * `/api/gex/{sym}` dashboard fetch per visible row. Reads the `net_gex` column
+ * directly (the canonical value the dashboard's latest snapshot reflects), one
+ * row per symbol via `distinct on`.
+ */
+export async function getLatestGexSnapshotsForSymbols(
+  symbolsInput: readonly string[],
+  maxAgeMs: number,
+): Promise<LatestGexNetSnapshot[]> {
+  const symbols = Array.from(
+    new Set(
+      symbolsInput.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
+  );
+  if (symbols.length === 0) {
+    return [];
+  }
+  const dbModule = await loadDbModule();
+  if (!dbModule) {
+    return [];
+  }
+  const { pool } = dbModule;
+  try {
+    const result = await pool.query<{
+      symbol: string;
+      computed_at: Date;
+      net_gex: number | string | null;
+    }>(
+      `
+select distinct on (symbol)
+  symbol,
+  computed_at,
+  net_gex::double precision as net_gex
+from gex_snapshots
+where symbol = any($1::text[])
+order by symbol, computed_at desc
+`,
+      [symbols],
+    );
+    const now = Date.now();
+    const out: LatestGexNetSnapshot[] = [];
+    for (const row of result.rows) {
+      const netGex =
+        typeof row.net_gex === "string" ? Number(row.net_gex) : row.net_gex;
+      if (netGex == null || !Number.isFinite(netGex)) {
+        continue;
+      }
+      const computedAt =
+        row.computed_at instanceof Date
+          ? row.computed_at
+          : new Date(row.computed_at);
+      const ageMs = Math.max(0, now - computedAt.getTime());
+      out.push({
+        symbol: row.symbol,
+        netGex,
+        computedAt,
+        ageMs,
+        stale: ageMs > maxAgeMs,
+      });
+    }
+    return out;
+  } catch (error) {
+    logger.debug(
+      { err: error, symbolCount: symbols.length },
+      "Failed to read latest GEX ingest snapshots in bulk",
+    );
+    return [];
+  }
+}
+
 export type MarketDataIngestDiagnostics = {
   configured: boolean;
   providerConfigured: boolean;
@@ -1185,7 +1262,7 @@ type BlockedGexRow = {
   symbol: string;
   dedupe_bucket: string;
   created_at: Date | string;
-  missing_kind: "stock_snapshot" | "option_chain_snapshot";
+  missing_kind: "option_chain_snapshot";
   prerequisite_status: "missing" | "failed";
   last_error: string | null;
   total_count: number | string;
@@ -1203,15 +1280,6 @@ with claimable as (
       or coalesce(candidate.payload->>'dedupeBucket', '') = ''
       or (
         exists (
-          select 1
-          from market_data_ingest_jobs prerequisite
-          where prerequisite.symbol = candidate.symbol
-            and prerequisite.kind = 'stock_snapshot'
-            and prerequisite.status = 'completed'
-            and coalesce(prerequisite.payload->>'dedupeBucket', '') =
-              coalesce(candidate.payload->>'dedupeBucket', '')
-        )
-        and exists (
           select 1
           from market_data_ingest_jobs prerequisite
           where prerequisite.symbol = candidate.symbol
@@ -1243,22 +1311,10 @@ with queued_gex as (
 evaluated as (
   select
     gex.*,
-    stock_completed.id is not null as stock_completed,
     option_completed.id is not null as option_completed,
-    stock_failed.id is not null as stock_failed,
     option_failed.id is not null as option_failed,
-    stock_failed.last_error as stock_failed_error,
     option_failed.last_error as option_failed_error
   from queued_gex gex
-  left join lateral (
-    select id
-    from market_data_ingest_jobs prerequisite
-    where prerequisite.symbol = gex.symbol
-      and prerequisite.kind = 'stock_snapshot'
-      and prerequisite.status = 'completed'
-      and coalesce(prerequisite.payload->>'dedupeBucket', '') = gex.dedupe_bucket
-    limit 1
-  ) stock_completed on true
   left join lateral (
     select id
     from market_data_ingest_jobs prerequisite
@@ -1268,16 +1324,6 @@ evaluated as (
       and coalesce(prerequisite.payload->>'dedupeBucket', '') = gex.dedupe_bucket
     limit 1
   ) option_completed on true
-  left join lateral (
-    select id, last_error
-    from market_data_ingest_jobs prerequisite
-    where prerequisite.symbol = gex.symbol
-      and prerequisite.kind = 'stock_snapshot'
-      and prerequisite.status = 'failed'
-      and coalesce(prerequisite.payload->>'dedupeBucket', '') = gex.dedupe_bucket
-    order by prerequisite.updated_at desc
-    limit 1
-  ) stock_failed on true
   left join lateral (
     select id, last_error
     from market_data_ingest_jobs prerequisite
@@ -1294,21 +1340,14 @@ blocked as (
     symbol,
     dedupe_bucket,
     created_at,
+    'option_chain_snapshot' as missing_kind,
     case
-      when not stock_completed then 'stock_snapshot'
-      else 'option_chain_snapshot'
-    end as missing_kind,
-    case
-      when not stock_completed and stock_failed then 'failed'
-      when stock_completed and not option_completed and option_failed then 'failed'
+      when option_failed then 'failed'
       else 'missing'
     end as prerequisite_status,
-    case
-      when not stock_completed then stock_failed_error
-      else option_failed_error
-    end as last_error
+    option_failed_error as last_error
   from evaluated
-  where not (stock_completed and option_completed)
+  where not option_completed
 )
 select
   symbol,

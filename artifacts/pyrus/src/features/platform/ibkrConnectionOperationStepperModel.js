@@ -412,9 +412,9 @@ export const buildIbkrDeactivateOperationStepper = ({
     },
     detach: {
       detail: clearState
-        ? "Detaching the active bridge runtime override and persisted session handoff."
-        : "Clearing the active bridge runtime and persisted session handoff.",
-      label: clearState ? "Detaching bridge runtime" : "Detaching backend runtime",
+        ? "Disconnecting the active broker runtime override and persisted session handoff."
+        : "Clearing the active broker runtime and persisted session handoff.",
+      label: clearState ? "Disconnecting broker runtime" : "Clearing backend runtime",
     },
     refresh: {
       detail: "Refreshing session, runtime diagnostics, and line usage state.",
@@ -436,8 +436,8 @@ export const buildIbkrDeactivateOperationStepper = ({
     operation: clearState ? "detach-bridge" : "deactivate",
     title: clearState
       ? complete
-        ? "IBKR Bridge Detached"
-        : "Detach IBKR Bridge"
+        ? "IBKR Broker Disconnected"
+        : "Disconnect IBKR Broker"
       : complete
         ? "IBKR Deactivated"
         : "Deactivate IBKR",

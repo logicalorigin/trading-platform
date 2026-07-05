@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   __resetProviderRuntimeConfigCacheForTests,
   getFmpRuntimeConfig,
+  getMassiveOptionsRecency,
   getMassiveRuntimeConfig,
   getMassiveStocksRecency,
 } from "./runtime";
@@ -57,6 +58,22 @@ test("getMassiveStocksRecency memoizes and is reset-able", () => {
   delete process.env["MASSIVE_STOCKS_RECENCY"];
   __resetProviderRuntimeConfigCacheForTests();
   assert.equal(getMassiveStocksRecency(), "realtime"); // default
+});
+
+test("getMassiveOptionsRecency memoizes and is reset-able", () => {
+  process.env["MASSIVE_OPTIONS_RECENCY"] = "delayed";
+  __resetProviderRuntimeConfigCacheForTests();
+  assert.equal(getMassiveOptionsRecency(), "delayed");
+
+  process.env["MASSIVE_OPTIONS_RECENCY"] = "realtime";
+  assert.equal(getMassiveOptionsRecency(), "delayed");
+
+  __resetProviderRuntimeConfigCacheForTests();
+  assert.equal(getMassiveOptionsRecency(), "realtime");
+
+  delete process.env["MASSIVE_OPTIONS_RECENCY"];
+  __resetProviderRuntimeConfigCacheForTests();
+  assert.equal(getMassiveOptionsRecency(), "realtime");
 });
 
 test("returns null when the provider key is absent", () => {

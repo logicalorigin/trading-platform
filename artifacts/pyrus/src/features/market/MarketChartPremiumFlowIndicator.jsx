@@ -147,8 +147,8 @@ export const MarketChartPremiumFlowIndicator = ({
     ? ` · ${displayState.errorMessage}`
     : "";
   const compactStatusLabel =
-    statusLabel === "IBKR snapshot live"
-      ? "IBKR live"
+    statusLabel === "Massive snapshot live"
+      ? "Massive live"
       : statusLabel === "Premium flow"
         ? "Flow"
         : statusLabel === "Snapshot prem"

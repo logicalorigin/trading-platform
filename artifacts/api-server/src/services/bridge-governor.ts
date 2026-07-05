@@ -3,11 +3,7 @@ import { HttpError } from "../lib/errors";
 export type BridgeWorkCategory =
   | "health"
   | "account"
-  | "orders"
-  | "options"
-  | "optionsScanner"
-  | "bars"
-  | "quotes";
+  | "orders";
 
 type CategoryState = {
   active: number;
@@ -60,17 +56,9 @@ export const BRIDGE_GOVERNOR_DEFAULT_CONFIG: Record<
   BridgeWorkCategory,
   BridgeGovernorConfig
 > = {
-  quotes: { concurrency: 8, failureThreshold: 3, backoffMs: 30_000 },
-  bars: { concurrency: 4, failureThreshold: 4, backoffMs: 30_000 },
   health: { concurrency: 1, failureThreshold: 2, backoffMs: 10_000 },
   account: { concurrency: 2, failureThreshold: 2, backoffMs: 15_000 },
   orders: { concurrency: 1, failureThreshold: 4, backoffMs: 2_000 },
-  options: { concurrency: 4, failureThreshold: 3, backoffMs: 45_000 },
-  // The background options-flow scanner runs on its OWN lane so its deep-scan
-  // bursts can never saturate or trip the user-facing `options` circuit (which
-  // gates the Trade page chain). Lower concurrency throttles the scanner's
-  // load; failures here open only this lane's circuit, not the chain's.
-  optionsScanner: { concurrency: 2, failureThreshold: 3, backoffMs: 45_000 },
 };
 
 const overrideConfig: Partial<
@@ -78,23 +66,15 @@ const overrideConfig: Partial<
 > = {};
 
 const state: Record<BridgeWorkCategory, CategoryState> = {
-  quotes: emptyState(),
-  bars: emptyState(),
   health: emptyState(),
   account: emptyState(),
   orders: emptyState(),
-  options: emptyState(),
-  optionsScanner: emptyState(),
 };
 
 const waiters: Record<BridgeWorkCategory, Array<() => void>> = {
-  quotes: [],
-  bars: [],
   health: [],
   account: [],
   orders: [],
-  options: [],
-  optionsScanner: [],
 };
 
 function emptyState(): CategoryState {

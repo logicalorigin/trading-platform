@@ -1877,7 +1877,7 @@ const PositionQuoteCell = ({ row, maskValues }) => {
       valueLabel: `${row?.symbol || row?.underlyingSymbol || "Position"} quote`,
       source: "account positions",
       nextAction:
-        "Check the IBKR quote stream or refresh positions before relying on this valuation.",
+        "Check the broker quote stream or refresh positions before relying on this valuation.",
     },
   );
   return (
@@ -3597,8 +3597,8 @@ export const PositionsPanel = ({
   sourceFilter = "all",
   onSourceFilterChange,
   onJumpToChart,
-  rightRail = "IBKR positions + lots",
-  emptyBody = "Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
+  rightRail = "Positions + lots",
+  emptyBody = "Positions from the broker account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
   maskValues = false,
   isPhone = false,
   showFilters = true,
@@ -3612,7 +3612,7 @@ export const PositionsPanel = ({
   accountId = null,
   environment = "live",
   gatewayTradingReady = false,
-  gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  gatewayTradingMessage = "Broker gateway must be connected before trading.",
   brokerConfigured = false,
   brokerAuthenticated = false,
 }) => {
@@ -3785,7 +3785,7 @@ export const PositionsPanel = ({
   const manageDisabledReason = !gatewayTradingReady
     ? gatewayTradingMessage
     : brokerConfigured && !brokerAuthenticated
-      ? "Authenticate the IBKR bridge before managing live positions."
+      ? "Authenticate your broker session before managing live positions."
       : !accountId
         ? "No broker account is selected."
         : null;
@@ -3930,7 +3930,7 @@ export const PositionsPanel = ({
   const positionsInitialFetchPending = Boolean(
     positionsQueryActivelyFetching && !query.data,
   );
-  // When IBKR is configured but the bridge is detached, the positions query is
+  // When IBKR is configured but the broker session is disconnected, the positions query is
   // disabled (fetchStatus idle), so it would otherwise fall through to the
   // generic "No open positions" copy and mislabel a detached bridge as an empty
   // portfolio. Surface the real reason instead.
@@ -3948,7 +3948,7 @@ export const PositionsPanel = ({
       : openPositionRows.length && !rows.length
         ? "Clear the active position filters to show the fetched broker positions."
       : positionsBridgeDetached
-        ? "The IBKR bridge is detached, so live positions can't be loaded. Reconnect the bridge to see your open positions."
+        ? "The broker session is not connected, so live positions can't be loaded. Reconnect the broker session to see your open positions."
         : emptyBody;
 
   const positionsTablePanel = (

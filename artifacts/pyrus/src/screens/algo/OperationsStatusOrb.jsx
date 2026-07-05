@@ -1,8 +1,9 @@
 import React, { useMemo } from "react";
 import {
   CSS_COLOR,
+  GLOW,
+  RADII,
   T,
-  cssColorAlpha,
   dim,
   fs,
   sp,
@@ -112,7 +113,7 @@ export const OperationsStatusOrb = ({
             padding: sp("2px 6px"),
             border: `1px solid ${CSS_COLOR.border}`,
             background: CSS_COLOR.bg1,
-            borderRadius: dim(999),
+            borderRadius: dim(RADII.pill),
             cursor: "pointer",
             color: CSS_COLOR.textSec,
             fontFamily: T.sans,
@@ -129,7 +130,8 @@ export const OperationsStatusOrb = ({
               height: dim(10),
               borderRadius: "50%",
               background: tone,
-              boxShadow: shouldPulse ? `0 0 6px ${cssColorAlpha(tone, "88")}` : "none",
+              "--ra-glow-tone": tone,
+              boxShadow: shouldPulse ? GLOW.md : "none",
             }}
           />
           <span>{STATUS_LABEL[status]}</span>

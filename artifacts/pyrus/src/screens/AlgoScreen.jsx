@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
@@ -8,10 +8,12 @@ import {
 } from "react";
 import {
   getGetAlgoDeploymentCockpitQueryKey,
+  getGetAccountPositionsQueryKey,
   getGetSignalMonitorProfileQueryKey,
   getGetSignalOptionsAutomationStateQueryKey,
   getGetSignalOptionsPerformanceQueryKey,
   getListAlgoDeploymentsQueryKey,
+  getListExecutionEventsQueryKey,
   getListSignalMonitorEventsQueryKey,
   useGetAccountPositions,
   useCreateAlgoDeployment,
@@ -97,6 +99,7 @@ import {
 import {
   clearAlgoStaExecutionTimeframe,
   publishAlgoStaExecutionTimeframe,
+  publishAlgoStaMtfAlignmentConfig,
   publishAlgoStaMtfTimeframes,
 } from "../features/platform/algoStaExecutionTimeframeStore.js";
 import {
@@ -147,28 +150,24 @@ const ALGO_PRIMARY_FALLBACK_DELAY_MS = 0;
 // the save from being collateral damage until then.)
 const ALGO_SETTINGS_SAVE_TIMEOUT_MS = 25_000;
 const ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS = 300;
-const normalizeAlgoSettingsSaveApiBaseUrl = (value) => {
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:"
-      ? url.toString().replace(/\/+$/u, "")
-      : null;
-  } catch {
-    return null;
-  }
-};
-const ALGO_SETTINGS_SAVE_API_BASE_URL = normalizeAlgoSettingsSaveApiBaseUrl(
-  import.meta.env?.VITE_PROXY_API_TARGET,
-);
+const ALGO_SETTINGS_SAVE_PAUSE_TTL_MS =
+  ALGO_SETTINGS_SAVE_TIMEOUT_MS + ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS + 5_000;
 const ALGO_SETTINGS_SAVE_REQUEST_OPTIONS = Object.freeze({
   timeoutMs: ALGO_SETTINGS_SAVE_TIMEOUT_MS,
-  ...(ALGO_SETTINGS_SAVE_API_BASE_URL
-    ? { baseUrl: ALGO_SETTINGS_SAVE_API_BASE_URL }
-    : {}),
 });
+const AUTH_SESSION_QUERY_KEY = ["auth-session"];
+
+async function readAuthSession({ signal }) {
+  const response = await fetch("/api/auth/session", {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error("Auth session unavailable");
+  }
+  return response.json();
+}
+
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
 const EMPTY_ALGO_DRAFTS = Object.freeze([]);
 const EMPTY_ALGO_EVENTS = Object.freeze([]);
@@ -348,6 +347,7 @@ export const AlgoScreen = ({
   signalMonitorEventsLoaded = false,
   signalMonitorState = null,
   signalMatrixStates = [],
+  realtimeStreamGateReason = null,
   isVisible = false,
   safeQaMode = false,
   onScanNow,
@@ -400,6 +400,17 @@ export const AlgoScreen = ({
   const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const queryClient = useQueryClient();
+  const authSessionQuery = useQuery({
+    queryKey: AUTH_SESSION_QUERY_KEY,
+    queryFn: readAuthSession,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const csrfToken = authSessionQuery.data?.csrfToken || "";
+  const csrfHeaders = useMemo(
+    () => (csrfToken ? { "x-csrf-token": csrfToken } : {}),
+    [csrfToken],
+  );
   const [selectedDraftId, setSelectedDraftId] = useState("");
   const [deploymentName, setDeploymentName] = useState("");
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
@@ -446,13 +457,16 @@ export const AlgoScreen = ({
   const algoLiveDataQueriesEnabled = Boolean(
     isVisible && !criticalApiMutationPaused,
   );
+  const algoRealtimeStreamsEnabled = Boolean(
+    algoLiveDataQueriesEnabled && !realtimeStreamGateReason,
+  );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
     mode: environment || "shadow",
-    enabled: algoLiveDataQueriesEnabled,
+    enabled: algoRealtimeStreamsEnabled,
   });
   const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
-    enabled: algoLiveDataQueriesEnabled,
+    enabled: algoRealtimeStreamsEnabled,
   });
   const [algoPrimaryFallbackReady, setAlgoPrimaryFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
@@ -726,8 +740,23 @@ export const AlgoScreen = ({
   )
     ? signalMonitorState.universeSymbols
     : [];
+  const signalMatrixStateUniverseSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (Array.isArray(signalMatrixStates) ? signalMatrixStates : [])
+            .map((state) =>
+              String(asRecord(state).symbol || "").trim().toUpperCase(),
+            )
+            .filter(Boolean),
+        ),
+      ),
+    [signalMatrixStates],
+  );
   const staSignalUniverseSymbols = signalMonitorUniverseSymbols.length
     ? signalMonitorUniverseSymbols
+    : signalMatrixStateUniverseSymbols.length
+      ? signalMatrixStateUniverseSymbols
     : focusedDeployment?.symbolUniverse || [];
   const signalScanReady = true;
   const signalMatrixRowsAvailable = Boolean(
@@ -784,7 +813,6 @@ export const AlgoScreen = ({
     staActionSnapshot.signals || EMPTY_SIGNAL_OPTIONS_SIGNALS;
   const signalOptionsPositions =
     staActionSnapshot.activePositions || EMPTY_SIGNAL_OPTIONS_POSITIONS;
-  const signalOptionsSourceHealth = staActionSnapshot.sourceHealth || null;
   const cockpitFleet = cockpit?.fleet || null;
   const cockpitReadiness = cockpit?.readiness || null;
   const cockpitKpis = asRecord(cockpit?.kpis);
@@ -1092,7 +1120,12 @@ export const AlgoScreen = ({
     // table (which reads profileDraft directly). Cleared on unmount below.
     publishAlgoStaExecutionTimeframe(staActionSignalTimeframes[0] || "");
     publishAlgoStaMtfTimeframes(staSignalTimeframes);
-  }, [staActionSignalTimeframes, staSignalTimeframes]);
+    publishAlgoStaMtfAlignmentConfig(profileDraft?.entryGate?.mtfAlignment || null);
+  }, [
+    profileDraft?.entryGate?.mtfAlignment,
+    staActionSignalTimeframes,
+    staSignalTimeframes,
+  ]);
   useEffect(
     () => () => {
       clearAlgoStaExecutionTimeframe();
@@ -1176,7 +1209,7 @@ export const AlgoScreen = ({
   };
 
   const updateProfileMutation = useUpdateSignalOptionsExecutionProfile({
-    request: ALGO_SETTINGS_SAVE_REQUEST_OPTIONS,
+    request: { ...ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders },
     mutation: {
       onMutate: (variables) => {
         if (variables?.deploymentId) {
@@ -1236,7 +1269,7 @@ export const AlgoScreen = ({
   });
 
   const updateStrategySettingsMutation = useUpdateAlgoDeploymentStrategySettings({
-    request: ALGO_SETTINGS_SAVE_REQUEST_OPTIONS,
+    request: { ...ALGO_SETTINGS_SAVE_REQUEST_OPTIONS, headers: csrfHeaders },
     mutation: {
       onMutate: () => {
         void queryClient.cancelQueries({
@@ -1288,6 +1321,7 @@ export const AlgoScreen = ({
   });
 
   const createDeploymentMutation = useCreateAlgoDeployment({
+    request: { headers: csrfHeaders },
     mutation: {
       onSuccess: (deployment) => {
         refreshAlgoQueries();
@@ -1309,6 +1343,7 @@ export const AlgoScreen = ({
     },
   });
   const enableDeploymentMutation = useEnableAlgoDeployment({
+    request: { headers: csrfHeaders },
     mutation: {
       onSuccess: (deployment) => {
         refreshAlgoQueries();
@@ -1328,6 +1363,7 @@ export const AlgoScreen = ({
     },
   });
   const pauseDeploymentMutation = usePauseAlgoDeployment({
+    request: { headers: csrfHeaders },
     mutation: {
       onSuccess: (deployment) => {
         refreshAlgoQueries();
@@ -1347,6 +1383,7 @@ export const AlgoScreen = ({
     },
   });
   const setDeploymentModeMutation = useSetAlgoDeploymentMode({
+    request: { headers: csrfHeaders },
     mutation: {
       onSuccess: (deployment) => {
         refreshAlgoQueries();
@@ -1573,11 +1610,33 @@ export const AlgoScreen = ({
       profileDirty && deploymentSignalOptionsBaselineAvailable;
     saveAllInFlightRef.current = true;
     setSaveAllPending(true);
-    const releaseConnectionPause = beginCriticalApiMutationPause();
+    const releaseConnectionPause = beginCriticalApiMutationPause({
+      ttlMs: ALGO_SETTINGS_SAVE_PAUSE_TTL_MS,
+    });
     try {
       void queryClient.cancelQueries({
         queryKey: getListSignalMonitorEventsQueryKey(),
       });
+      void queryClient.cancelQueries({
+        queryKey: getListAlgoDeploymentsQueryKey(),
+      });
+      void queryClient.cancelQueries({
+        queryKey: getListExecutionEventsQueryKey(),
+      });
+      void queryClient.cancelQueries({
+        queryKey: getGetAccountPositionsQueryKey("shadow"),
+      });
+      if (deploymentId) {
+        void queryClient.cancelQueries({
+          queryKey: getGetSignalOptionsAutomationStateQueryKey(deploymentId),
+        });
+        void queryClient.cancelQueries({
+          queryKey: getGetAlgoDeploymentCockpitQueryKey(deploymentId),
+        });
+        void queryClient.cancelQueries({
+          queryKey: getGetSignalOptionsPerformanceQueryKey(deploymentId),
+        });
+      }
       await waitForCriticalApiMutationPauseSettle(
         ALGO_SETTINGS_SAVE_STREAM_DRAIN_MS,
       );
@@ -1976,7 +2035,6 @@ export const AlgoScreen = ({
             visibleSignalRows={visibleSignalRows}
             signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
             signalOptionsCandidates={signalOptionsCandidates}
-            signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             selectedCandidate={selectedCandidate}
             signalOptionsProfile={signalOptionsProfile}

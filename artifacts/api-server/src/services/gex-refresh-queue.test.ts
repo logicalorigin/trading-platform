@@ -379,19 +379,17 @@ test("stale persisted GEX refreshes reuse the stale snapshot bucket across minut
   setNow("2026-06-17T21:40:10.000Z");
   const first = await getGexDashboardData({ underlying: "QQQ" });
   assert.equal(first.isStale, true);
-  await waitForEnqueuedJobs(enqueued, 3);
+  await waitForEnqueuedJobs(enqueued, 2);
 
   __expireGexDashboardCacheForTests("QQQ");
   setNow("2026-06-17T21:42:10.000Z");
   const second = await getGexDashboardData({ underlying: "QQQ" });
   assert.equal(second.isStale, true);
-  await waitForEnqueuedJobs(enqueued, 6);
+  await waitForEnqueuedJobs(enqueued, 4);
 
   assert.deepEqual(
     enqueued.map((input) => input.payload?.dedupeBucket),
     [
-      expectedBucket,
-      expectedBucket,
       expectedBucket,
       expectedBucket,
       expectedBucket,

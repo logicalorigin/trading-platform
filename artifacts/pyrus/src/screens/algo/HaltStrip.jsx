@@ -131,8 +131,9 @@ const compactUnitLabel = (field) => {
 };
 
 const compactInputStyle = ({ invalid, disabled }) => ({
-  height: dim(22),
-  width: "100%",
+  height: dim(20),
+  width: dim(56),
+  flex: "0 0 auto",
   minWidth: 0,
   padding: sp("0 5px"),
   border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
@@ -162,6 +163,7 @@ const CompactSettingInput = ({
       style={{
         display: "flex",
         alignItems: "center",
+        justifyContent: "flex-end",
         gap: sp(2),
         minWidth: 0,
         width: "100%",
@@ -194,6 +196,8 @@ const CompactSettingInput = ({
             fontSize: textSize("micro"),
             lineHeight: 1,
             flex: "0 0 auto",
+            width: dim(20),
+            textAlign: "right",
           }}
         >
           {unitLabel}
@@ -230,7 +234,7 @@ const InlineSwitch = ({
         minWidth: dim(25),
         minHeight: dim(14),
         border: `1px solid ${checked || stateIsOff ? switchTone.border : CSS_COLOR.border}`,
-        borderRadius: dim(7),
+        borderRadius: dim(RADII.md),
         background:
           checked || stateIsOff
             ? cssColorAlpha(switchTone.color, checked ? "22" : "12")
@@ -251,7 +255,7 @@ const InlineSwitch = ({
         style={{
           width: dim(8),
           height: dim(8),
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: switchColor,
           display: "block",
         }}
@@ -287,6 +291,9 @@ const ControlToggleCell = ({
   const invalid =
     !!valueField &&
     isNumericSettingType(valueField.type) &&
+    // An untouched/empty threshold is "not set", not out-of-range — don't flag it red.
+    currentValue != null &&
+    currentValue !== "" &&
     (!Number.isFinite(numericValue) ||
       (valueField.min != null && numericValue < valueField.min) ||
       (valueField.max != null && numericValue > valueField.max));
@@ -317,9 +324,9 @@ const ControlToggleCell = ({
           position: "relative",
           display: "flex",
           flexDirection: "column",
-        gap: sp(2),
-        minHeight: valueField ? dim(42) : dim(22),
-        padding: sp("2px 0 2px 4px"),
+        gap: sp(1),
+        minHeight: valueField ? dim(34) : dim(19),
+        padding: sp("1px 0 1px 4px"),
         minWidth: 0,
         width: "100%",
         color: checked ? tone.color : CSS_COLOR.textMuted,
@@ -335,7 +342,7 @@ const ControlToggleCell = ({
           top: 0,
           bottom: 0,
           width: dim(2),
-          borderRadius: dim(1),
+          borderRadius: dim(RADII.xs),
           background:
             status.state === "active" || status.state === "forced"
               ? tone.color
@@ -381,7 +388,7 @@ const ControlToggleCell = ({
             style={{
               width: dim(5),
               height: dim(5),
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               background: CSS_COLOR.accent,
               flex: "0 0 auto",
             }}
@@ -430,6 +437,9 @@ const CompactStandaloneSettingCell = ({
   const numericValue = Number(currentValue);
   const invalid =
     isNumericSettingType(field.type) &&
+    // An untouched/empty threshold is "not set", not out-of-range — don't flag it red.
+    currentValue != null &&
+    currentValue !== "" &&
     (!Number.isFinite(numericValue) ||
       (field.min != null && numericValue < field.min) ||
       (field.max != null && numericValue > field.max));
@@ -451,9 +461,9 @@ const CompactStandaloneSettingCell = ({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: sp(2),
-          minHeight: dim(42),
-          padding: sp("2px 0"),
+          gap: sp(1),
+          minHeight: dim(36),
+          padding: sp("1px 0"),
           minWidth: 0,
           width: "100%",
           boxSizing: "border-box",
@@ -498,7 +508,7 @@ const CompactStandaloneSettingCell = ({
             style={{
               width: dim(5),
               height: dim(5),
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               background: CSS_COLOR.accent,
               flex: "0 0 auto",
             }}
@@ -578,7 +588,9 @@ export const HaltStrip = ({
             }}
           >
             {focusedDeployment
-              ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
+              ? focusedDeployment.name
+                ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
+                : "Pyrus"
               : "No deployment selected"}
           </span>
         </div>
@@ -598,7 +610,6 @@ export const HaltStrip = ({
       {statusesByGroup.map(({ group, statuses: groupStatuses }, index) => {
         const rollup = groupRollupState(groupStatuses);
         const standaloneFields = getCompactHaltStandaloneFields(group.id);
-        const cellCount = group.controls.length + standaloneFields.length;
         return (
         <section
           key={group.id}
@@ -615,7 +626,7 @@ export const HaltStrip = ({
               alignItems: "center",
               justifyContent: "space-between",
               gap: sp(4),
-              marginBottom: sp(2),
+              marginBottom: sp(1),
               minWidth: 0,
             }}
           >
@@ -642,7 +653,10 @@ export const HaltStrip = ({
             data-testid={`algo-halt-group-${group.id}`}
             className="algo-settings-grid"
             style={{
-              gridTemplateColumns: `repeat(${cellCount}, minmax(0, 1fr))`,
+              // auto-fill (not auto-fit) keeps the column tracks so RISK/QUOTE stay 4-up,
+              // but lone/few-control groups don't stretch their toggles across the row.
+              gridTemplateColumns: `repeat(auto-fill, minmax(${dim(88)}px, 1fr))`,
+              columnGap: sp(3),
             }}
           >
             {group.controls.map((control) => (

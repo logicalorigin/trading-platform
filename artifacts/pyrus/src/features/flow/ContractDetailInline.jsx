@@ -72,9 +72,61 @@ import {
   toneForOptionSide,
 } from "../platform/semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { useValueFlash } from "../../lib/motion.jsx";
 
 
 const OPTION_CHART_TIMEFRAMES = getChartTimeframeOptions("option");
+
+// Item 13, D4 — execution-quality tile with a quick (150ms) tick flash on the
+// raw numeric quote value (fill/bid/ask). Kept as a subcomponent so the hook
+// runs per-tile rather than in the parent map callback.
+const ExecutionQualityTile = ({ item }) => {
+  const flash = useValueFlash(item.flashValue, {
+    enabled: isFiniteNumber(item.flashValue),
+  });
+  return (
+    <AppTooltip
+      content={item.label === "FILL" ? item.tooltip : undefined}
+    >
+      <div
+        data-testid={item.testId}
+        style={{
+          padding: sp("6px 8px"),
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: dim(RADII.xs),
+          minWidth: 0,
+        }}
+      >
+        <div
+          style={{
+            fontSize: fs(8),
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontWeight: FONT_WEIGHTS.regular,
+            marginBottom: sp(2),
+          }}
+        >
+          {item.label}
+        </div>
+        <div
+          className={flash ? `${flash} ra-value-flash--quick` : undefined}
+          style={{
+            fontSize: fs(10),
+            color: item.color,
+            fontFamily: T.sans,
+            fontWeight: FONT_WEIGHTS.regular,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {item.value}
+        </div>
+      </div>
+    </AppTooltip>
+  );
+};
 
 const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
   if (requestFailed) {
@@ -88,14 +140,14 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
     return {
       title: "No option trades in this window",
       detail:
-        "IBKR and Massive returned no bars for this contract and timeframe.",
+        "Massive returned no bars for this contract and timeframe.",
     };
   }
   if (emptyReason === "massive-not-configured") {
     return {
       title: "Option aggregate feed unavailable",
       detail:
-        "IBKR did not return chart bars and the Massive fallback is not configured.",
+        "Massive option aggregates are not configured.",
     };
   }
   if (
@@ -106,14 +158,14 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
     return {
       title: "Option contract lookup unavailable",
       detail:
-        "IBKR did not provide a current contract id. Option aggregates will display when available.",
+        "Massive did not provide a current option contract id. Option aggregates will display when available.",
     };
   }
   if (feedIssue) {
     return {
-      title: "Broker history unavailable",
+      title: "Option metadata unavailable",
       detail:
-        "IBKR option history was unavailable and no fallback option bars were returned.",
+        "Option metadata hydration was degraded and no Massive option bars were returned.",
     };
   }
   return {
@@ -572,7 +624,7 @@ export const ContractDetailInline = ({
         gap: sp(8),
         padding: sp("6px 8px"),
         background: CSS_COLOR.bg1,
-        borderRadius: dim(3),
+        borderRadius: dim(RADII.xs),
       }}
     >
       <span
@@ -689,7 +741,7 @@ export const ContractDetailInline = ({
               fontWeight: FONT_WEIGHTS.regular,
               padding: sp("1px 6px"),
               background: CSS_COLOR.bg1,
-              borderRadius: dim(2),
+              borderRadius: dim(RADII.xs),
             }}
           >
             {evt.type}
@@ -802,16 +854,20 @@ export const ContractDetailInline = ({
             value: `${formatQuotePrice(fillPrice)} ${fillSpread.shortLabel}`,
             color: fillSpread.color,
             testId: "flow-mobile-fill-spread",
+            flashValue: fillPrice,
+            tooltip: fillSpread.label,
           },
           {
             label: "BID",
             value: formatQuotePrice(bidPrice),
             color: CSS_COLOR.textSec,
+            flashValue: bidPrice,
           },
           {
             label: "ASK",
             value: formatQuotePrice(askPrice),
             color: CSS_COLOR.textSec,
+            flashValue: askPrice,
           },
           {
             label: "SPREAD",
@@ -834,46 +890,7 @@ export const ContractDetailInline = ({
             color: flowProviderColor(evt.provider),
           },
         ].map((item) => (
-          <AppTooltip
-            key={item.label}
-            content={item.label === "FILL" ? fillSpread.label : undefined}
-          >
-            <div
-              data-testid={item.testId}
-              style={{
-                padding: sp("6px 8px"),
-                background: CSS_COLOR.bg1,
-                border: `1px solid ${CSS_COLOR.border}`,
-                borderRadius: dim(3),
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: fs(8),
-                  color: CSS_COLOR.textMuted,
-                  fontFamily: T.sans,
-                  fontWeight: FONT_WEIGHTS.regular,
-                  marginBottom: sp(2),
-                }}
-              >
-                {item.label}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(10),
-                  color: item.color,
-                  fontFamily: T.sans,
-                  fontWeight: FONT_WEIGHTS.regular,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {item.value}
-              </div>
-            </div>
-          </AppTooltip>
+          <ExecutionQualityTile key={item.label} item={item} />
         ))}
       </div>
 

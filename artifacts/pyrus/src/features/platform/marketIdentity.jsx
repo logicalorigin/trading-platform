@@ -9,7 +9,7 @@ import {
   Globe2,
   Landmark,
 } from "lucide-react";
-import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, sp, T } from "../../lib/uiTokens";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const EXCHANGE_COUNTRY_BY_KEY = {
@@ -439,7 +439,7 @@ export function MarketIdentityMark({
     resolvedLogoUrl || "",
   );
   const Icon = identity.Icon;
-  const rounded = 999;
+  const rounded = RADII.pill;
 
   useEffect(() => {
     let cancelled = false;

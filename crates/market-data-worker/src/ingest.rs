@@ -7,11 +7,11 @@ use serde_json::Value;
 use sqlx::types::Uuid;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
-use crate::providers::massive::{OptionChainSnapshot, StockSnapshot};
+use crate::providers::massive::OptionChainSnapshot;
 
-const DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 512;
-const MAX_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 2_048;
-const DEFAULT_OPTION_CHAIN_WRITE_THROTTLE_MS: u64 = 20;
+const DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 128;
+const MAX_OPTION_CHAIN_WRITE_BATCH_SIZE: usize = 512;
+const DEFAULT_OPTION_CHAIN_WRITE_THROTTLE_MS: u64 = 75;
 
 fn read_positive_usize_env(name: &str, fallback: usize) -> usize {
     std::env::var(name)
@@ -108,56 +108,6 @@ pub async fn persist_provider_request_log(
     Ok(())
 }
 
-pub async fn persist_stock_snapshot(
-    pool: &PgPool,
-    symbol: &str,
-    provider: &str,
-    snapshot: &StockSnapshot,
-) -> Result<()> {
-    let symbol = symbol.trim().to_uppercase();
-    let instrument_id = ensure_instrument(pool, &symbol, "equity", None).await?;
-
-    sqlx::query(
-        r#"
-        insert into quote_cache (
-          instrument_id,
-          symbol,
-          bid,
-          ask,
-          last,
-          bid_size,
-          ask_size,
-          last_size,
-          change,
-          change_percent,
-          source,
-          as_of,
-          updated_at
-        )
-        values (
-          $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, now()
-        )
-        "#,
-    )
-    .bind(&instrument_id)
-    .bind(&symbol)
-    .bind(snapshot.bid)
-    .bind(snapshot.ask)
-    .bind(snapshot.last)
-    .bind(snapshot.bid_size)
-    .bind(snapshot.ask_size)
-    .bind(snapshot.last_size)
-    .bind(snapshot.change)
-    .bind(snapshot.change_percent)
-    .bind(provider)
-    .bind(snapshot.as_of)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
 pub async fn persist_option_chain_snapshots(
     pool: &PgPool,
     underlying: &str,
@@ -172,9 +122,12 @@ pub async fn persist_option_chain_snapshots(
     let total = unique_snapshots.len();
     let mut persisted = 0usize;
 
+    let mut tx = pool.begin().await?;
+    let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
+    tx.commit().await?;
+
     for batch in unique_snapshots.chunks(batch_size) {
         let mut tx = pool.begin().await?;
-        let underlying_id = ensure_instrument_tx(&mut tx, &symbol, "equity", None).await?;
         let option_instrument_ids = ensure_option_instruments_tx(&mut tx, &symbol, batch).await?;
         let option_contract_ids =
             ensure_option_contracts_tx(&mut tx, underlying_id, &option_instrument_ids, batch)
@@ -214,47 +167,13 @@ fn unique_option_chain_snapshots(snapshots: &[OptionChainSnapshot]) -> Vec<&Opti
         .collect()
 }
 
-async fn ensure_instrument(
-    pool: &PgPool,
-    symbol: &str,
-    asset_class: &str,
-    underlying_symbol: Option<&str>,
-) -> Result<String> {
-    let row = sqlx::query(
-        r#"
-        insert into instruments (
-          symbol,
-          asset_class,
-          name,
-          currency,
-          underlying_symbol,
-          is_active,
-          updated_at
-        )
-        values ($1, $2::asset_class, $1, 'USD', $3, true, now())
-        on conflict (symbol) do update
-        set
-          asset_class = excluded.asset_class,
-          underlying_symbol = coalesce(excluded.underlying_symbol, instruments.underlying_symbol),
-          updated_at = now()
-        returning id::text as id
-        "#,
-    )
-    .bind(symbol)
-    .bind(asset_class)
-    .bind(underlying_symbol)
-    .fetch_one(pool)
-    .await?;
-    Ok(row.try_get("id")?)
-}
-
 async fn ensure_instrument_tx(
     tx: &mut Transaction<'_, Postgres>,
     symbol: &str,
     asset_class: &str,
     underlying_symbol: Option<&str>,
 ) -> Result<Uuid> {
-    let row = sqlx::query(
+    sqlx::query(
         r#"
         insert into instruments (
           symbol,
@@ -266,17 +185,45 @@ async fn ensure_instrument_tx(
           updated_at
         )
         values ($1, $2::asset_class, $1, 'USD', $3, true, now())
-        on conflict (symbol) do update
-        set
-          asset_class = excluded.asset_class,
-          underlying_symbol = coalesce(excluded.underlying_symbol, instruments.underlying_symbol),
-          updated_at = now()
-        returning id
+        on conflict (symbol) do nothing
         "#,
     )
     .bind(symbol)
     .bind(asset_class)
     .bind(underlying_symbol)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        update instruments
+        set
+          asset_class = $2::asset_class,
+          underlying_symbol = coalesce($3, underlying_symbol),
+          is_active = true,
+          updated_at = now()
+        where symbol = $1
+          and (
+            asset_class is distinct from $2::asset_class
+            or ($3 is not null and underlying_symbol is distinct from $3)
+            or is_active is distinct from true
+          )
+        "#,
+    )
+    .bind(symbol)
+    .bind(asset_class)
+    .bind(underlying_symbol)
+    .execute(&mut **tx)
+    .await?;
+
+    let row = sqlx::query(
+        r#"
+        select id
+        from instruments
+        where symbol = $1
+        "#,
+    )
+    .bind(symbol)
     .fetch_one(&mut **tx)
     .await?;
     Ok(row.try_get("id")?)
@@ -297,7 +244,7 @@ async fn ensure_option_instruments_tx(
         .collect();
     let underlying_symbols = vec![underlying_symbol; symbols.len()];
 
-    let rows = sqlx::query(
+    sqlx::query(
         r#"
         with input as (
           select symbol, underlying_symbol
@@ -321,17 +268,51 @@ async fn ensure_option_instruments_tx(
           true,
           now()
         from input
-        on conflict (symbol) do update
-        set
-          asset_class = excluded.asset_class,
-          underlying_symbol = coalesce(excluded.underlying_symbol, instruments.underlying_symbol),
-          is_active = true,
-          updated_at = now()
-        returning id, symbol
+        on conflict (symbol) do nothing
         "#,
     )
     .bind(&symbols)
     .bind(&underlying_symbols)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        with input as (
+          select symbol, underlying_symbol
+          from unnest($1::text[], $2::text[]) as input(symbol, underlying_symbol)
+        )
+        update instruments
+        set
+          asset_class = 'option'::asset_class,
+          underlying_symbol = coalesce(input.underlying_symbol, instruments.underlying_symbol),
+          is_active = true,
+          updated_at = now()
+        from input
+        where instruments.symbol = input.symbol
+          and (
+            instruments.asset_class is distinct from 'option'::asset_class
+            or (
+              input.underlying_symbol is not null
+              and instruments.underlying_symbol is distinct from input.underlying_symbol
+            )
+            or instruments.is_active is distinct from true
+          )
+        "#,
+    )
+    .bind(&symbols)
+    .bind(&underlying_symbols)
+    .execute(&mut **tx)
+    .await?;
+
+    let rows = sqlx::query(
+        r#"
+        select id, symbol
+        from instruments
+        where symbol = any($1::text[])
+        "#,
+    )
+    .bind(&symbols)
     .fetch_all(&mut **tx)
     .await?;
 
@@ -374,7 +355,7 @@ async fn ensure_option_contracts_tx(
         shares_per_contract.push(snapshot.shares_per_contract);
     }
 
-    let rows = sqlx::query(
+    sqlx::query(
         r#"
         with input as (
           select
@@ -426,16 +407,7 @@ async fn ensure_option_contracts_tx(
           true,
           now()
         from input
-        on conflict (massive_ticker) do update
-        set
-          expiration_date = excluded.expiration_date,
-          strike = excluded.strike,
-          "right" = excluded."right",
-          multiplier = excluded.multiplier,
-          shares_per_contract = excluded.shares_per_contract,
-          is_active = true,
-          updated_at = now()
-        returning id, massive_ticker
+        on conflict (massive_ticker) do nothing
         "#,
     )
     .bind(&instrument_ids)
@@ -445,6 +417,78 @@ async fn ensure_option_contracts_tx(
     .bind(&rights)
     .bind(&shares_per_contract)
     .bind(underlying_instrument_id)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        with input as (
+          select
+            option_instrument_id,
+            massive_ticker,
+            expiration_date,
+            strike,
+            contract_right,
+            shares_per_contract
+          from unnest(
+            $1::uuid[],
+            $2::text[],
+            $3::date[],
+            $4::float8[],
+            $5::text[],
+            $6::int4[]
+          ) as input(
+            option_instrument_id,
+            massive_ticker,
+            expiration_date,
+            strike,
+            contract_right,
+            shares_per_contract
+          )
+        )
+        update option_contracts
+        set
+          instrument_id = input.option_instrument_id,
+          underlying_instrument_id = $7::uuid,
+          expiration_date = input.expiration_date,
+          strike = input.strike,
+          "right" = input.contract_right::option_right,
+          multiplier = input.shares_per_contract,
+          shares_per_contract = input.shares_per_contract,
+          is_active = true,
+          updated_at = now()
+        from input
+        where option_contracts.massive_ticker = input.massive_ticker
+          and (
+            option_contracts.instrument_id is distinct from input.option_instrument_id
+            or option_contracts.underlying_instrument_id is distinct from $7::uuid
+            or option_contracts.expiration_date is distinct from input.expiration_date
+            or option_contracts.strike::float8 is distinct from input.strike
+            or option_contracts."right" is distinct from input.contract_right::option_right
+            or option_contracts.multiplier is distinct from input.shares_per_contract
+            or option_contracts.shares_per_contract is distinct from input.shares_per_contract
+            or option_contracts.is_active is distinct from true
+          )
+        "#,
+    )
+    .bind(&instrument_ids)
+    .bind(&massive_tickers)
+    .bind(&expiration_dates)
+    .bind(&strikes)
+    .bind(&rights)
+    .bind(&shares_per_contract)
+    .bind(underlying_instrument_id)
+    .execute(&mut **tx)
+    .await?;
+
+    let rows = sqlx::query(
+        r#"
+        select id, massive_ticker
+        from option_contracts
+        where massive_ticker = any($1::text[])
+        "#,
+    )
+    .bind(&massive_tickers)
     .fetch_all(&mut **tx)
     .await?;
 

@@ -16,10 +16,15 @@ const reactQueryRequire = createRequire(
 
 const readGitValue = (args: string[]): string => {
   try {
-    return execFileSync("git", args, {
+    // `--no-optional-locks` keeps these reads from touching the index lock (so a
+    // concurrent git operation can't make config eval hang), and `timeout` bounds
+    // each call so a slow/locked repo can never stall vite startup. These values
+    // only feed the dev build fingerprint, so failing to "" is always acceptable.
+    return execFileSync("git", ["--no-optional-locks", ...args], {
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: 800,
     }).trim();
   } catch {
     return "";
@@ -78,6 +83,8 @@ const DEFERRED_MODULE_PRELOAD_PATTERNS = [
   /vendor-hls/,
   /vendor-lightweight-charts/,
   /vendor-recharts/,
+  /vendor-three/,
+  /(^|\/)neural-/,
 ];
 
 const isolationMode =
@@ -133,7 +140,7 @@ const isolationHeaders =
 // shrinking the boot overlay's longest blocking wait. Production build only --
 // the dev server serves unbundled modules. The persisted first-screen chunk
 // varies per user and stays on App.tsx's synchronous runtime preload path.
-const CRITICAL_PRELOAD_SOURCE_MODULES = [
+const PRIORITY_PRELOAD_SOURCE_MODULES = [
   "/src/app/AppContent.tsx",
   "/src/features/platform/PlatformApp.jsx",
 ];
@@ -141,7 +148,7 @@ const CRITICAL_PRELOAD_SOURCE_MODULES = [
 function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
   let resolvedBase = "/";
   return {
-    name: "pyrus-critical-modulepreload",
+    name: "pyrus-priority-modulepreload",
     apply: "build",
     configResolved(config) {
       resolvedBase = config.base || "/";
@@ -160,7 +167,7 @@ function criticalChunkModulePreloadPlugin(): import("vite").Plugin {
           const facade = file.facadeModuleId?.replaceAll("\\", "/");
           if (
             facade &&
-            CRITICAL_PRELOAD_SOURCE_MODULES.some((module) =>
+            PRIORITY_PRELOAD_SOURCE_MODULES.some((module) =>
               facade.endsWith(module),
             )
           ) {
@@ -187,6 +194,49 @@ export default defineConfig({
     __PYRUS_BUILD_FINGERPRINT__: JSON.stringify(runtimeBuildFingerprint),
   },
   plugins: [
+    // The IBKR Client Portal gateway popup (served through the API's reverse
+    // proxy at this mount) runs IBKR's SPA, which computes root-absolute URLs
+    // at runtime (e.g. /en/includes/general/gdpr-am.php). Those escape the
+    // subpath mount, land on the dev server, and would otherwise receive the
+    // PYRUS index.html shell — which the gateway page then INJECTS into the
+    // login popup (PYRUS boots inside the popup and hides the login form).
+    // Re-anchor any request whose Referer is inside the gateway mount back
+    // into the mount so it resolves against the gateway instead.
+    {
+      name: "ibkr-gateway-mount-reanchor",
+      configureServer(server) {
+        const MOUNT = "/api/broker-execution/ibkr-portal/gateway";
+        server.middlewares.use((req, res, next) => {
+          const referer = req.headers.referer;
+          const url = req.url || "";
+          if (!referer || url.startsWith(MOUNT)) {
+            next();
+            return;
+          }
+          try {
+            if (new URL(referer).pathname.startsWith(MOUNT)) {
+              // The SPA derives its API base from the page URL's FIRST path
+              // segment (host + "/" + pathname.split("/")[1] + "/"). Under
+              // this mount that segment is "api", so its auth calls come in as
+              // /api/Authenticator when the gateway's real handler is
+              // /sso/Authenticator. Restore the intended "sso" prefix, then
+              // re-anchor under the mount. 307 preserves method + body (302
+              // would turn the credential POST into a bodyless GET).
+              const fixed = url.startsWith("/api/")
+                ? "/sso/" + url.slice("/api/".length)
+                : url;
+              res.statusCode = 307;
+              res.setHeader("Location", MOUNT + fixed);
+              res.end();
+              return;
+            }
+          } catch {
+            // Unparseable Referer — treat as unrelated.
+          }
+          next();
+        });
+      },
+    },
     react(),
     tailwindcss(),
     criticalChunkModulePreloadPlugin(),
@@ -341,6 +391,19 @@ export default defineConfig({
             return "app-runtime";
           }
 
+          // Neural loading-screen engine — only ever reached through the
+          // React.lazy boundary in NeuralCanvas, so keep it (and its runtime
+          // geometry sampler) out of the eager boot path. NeuralBootOverlay and
+          // webglCapability deliberately stay eager (App.tsx imports them) and
+          // are NOT matched here.
+          if (
+            normalizedId.includes("/src/components/neural/neural-core/") ||
+            normalizedId.includes("/src/components/neural/NeuralCanvas") ||
+            normalizedId.includes("/src/lib/neural-geometry")
+          ) {
+            return "neural";
+          }
+
           if (normalizedId.includes("/lib/api-client-react/")) {
             return "api-client";
           }
@@ -382,6 +445,22 @@ export default defineConfig({
             if (packageName === "dexie") {
               // IndexedDB runtime cache; not needed for first paint.
               return "vendor-dexie";
+            }
+
+            // three.js + react-three-fiber (+ fiber's exclusive transitives):
+            // only reachable from the lazy NeuralCanvas. Pin them here so they
+            // never fall into the eager catch-all "vendor" chunk.
+            if (
+              packageName === "three" ||
+              packageName.startsWith("@react-three/") ||
+              packageName === "its-fine" ||
+              packageName === "suspend-react" ||
+              packageName === "react-use-measure" ||
+              packageName === "zustand" ||
+              packageName === "buffer" ||
+              packageName === "base64-js"
+            ) {
+              return "vendor-three";
             }
 
             if (packageName === "lightweight-charts") {
@@ -520,6 +599,8 @@ export default defineConfig({
       "lightweight-charts",
       "d3",
       "hls.js/light",
+      "three",
+      "@react-three/fiber",
     ],
   },
   server: {

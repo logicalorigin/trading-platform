@@ -104,9 +104,6 @@ const baseRuntimeControl = () => ({
     tradingFresh: true,
   },
   flowScanner: { enabled: true, active: true, backendActive: true },
-  bridgeGovernor: {
-    quotes: { active: 2, queued: 0, circuitOpen: false },
-  },
   massive: {
     status: "ok",
     label: "connected",
@@ -208,6 +205,111 @@ test("buildMachineStateDiagramModel surfaces IBKR bridge outage separately from 
   assert.equal(nodeById(model, "api-runtime").status, "healthy");
 });
 
+test("buildMachineStateDiagramModel renders SnapTrade broker connections as broker rows", () => {
+  const model = buildModel({
+    brokerConnections: {
+      connections: [
+        {
+          id: "snaptrade-etrade",
+          provider: "snaptrade",
+          brokerageSlug: "ETRADE",
+          name: "ETRADE",
+          mode: "live",
+          status: "connected",
+          capabilities: ["accounts", "orders", "executions", "execution-ready"],
+          updatedAt: "2026-06-12T11:59:55.000Z",
+        },
+        {
+          id: "snaptrade-ibkr",
+          provider: "snaptrade",
+          brokerageSlug: "INTERACTIVE-BROKERS-FLEX",
+          name: "INTERACTIVE-BROKERS-FLEX",
+          mode: "live",
+          status: "error",
+          capabilities: ["accounts", "orders", "executions"],
+          updatedAt: "2026-06-12T11:59:50.000Z",
+        },
+        {
+          id: "massive-live",
+          provider: "massive",
+          name: "Massive",
+          mode: "live",
+          status: "configured",
+          capabilities: ["quotes"],
+          updatedAt: "2026-06-12T11:59:55.000Z",
+        },
+      ],
+    },
+  });
+
+  const broker = model.groups.masters.find((master) => master.id === "broker");
+  assert.deepEqual(
+    broker.children.map((child) => child.label),
+    ["E*TRADE", "Interactive Brokers"],
+  );
+  assert.equal(nodeById(model, "broker-snaptrade-etrade").status, "healthy");
+  assert.equal(
+    nodeById(model, "broker-snaptrade-interactive-brokers-flex").status,
+    "down",
+  );
+  assert.equal(model.nodes.some((node) => node.id === "ibkr-bridge"), false);
+  assert.equal(broker.status, "down");
+  assert.match(broker.detail, /Interactive Brokers/);
+  assert.ok(edgeById(model, "broker-snaptrade-etrade->account-stream"));
+});
+
+test("buildMachineStateDiagramModel uses SnapTrade account readiness instead of stale legacy streams", () => {
+  const runtimeControl = baseRuntimeControl();
+  runtimeControl.streams = {
+    account: { fresh: false, lastEventAt: STALE_MS },
+    order: { fresh: false, lastEventAt: STALE_MS },
+    tradingFresh: false,
+  };
+
+  const model = buildModel({
+    runtimeControl,
+    brokerConnections: {
+      connections: [
+        {
+          id: "snaptrade-ibkr-flex",
+          provider: "snaptrade",
+          brokerageSlug: "INTERACTIVE-BROKERS-FLEX",
+          name: "INTERACTIVE-BROKERS-FLEX",
+          mode: "live",
+          status: "connected",
+          capabilities: ["accounts", "positions", "read-only"],
+          updatedAt: "2026-06-12T11:59:54.000Z",
+        },
+        {
+          id: "snaptrade-etrade",
+          provider: "snaptrade",
+          brokerageSlug: "ETRADE",
+          name: "ETRADE",
+          mode: "live",
+          status: "connected",
+          capabilities: ["accounts", "positions", "orders", "execution-ready"],
+          updatedAt: "2026-06-12T11:59:55.000Z",
+        },
+      ],
+    },
+  });
+
+  assert.equal(model.summary.status, "healthy");
+  assert.equal(nodeById(model, "account-stream").status, "healthy");
+  assert.match(nodeById(model, "account-stream").detail, /SnapTrade/);
+  assert.equal(nodeById(model, "order-stream").status, "healthy");
+  assert.match(nodeById(model, "order-stream").detail, /SnapTrade/);
+  assert.equal(nodeById(model, "account-view").status, "healthy");
+  assert.equal(
+    edgeById(model, "broker-snaptrade-etrade->account-stream").label,
+    "broker sync",
+  );
+  assert.equal(
+    edgeById(model, "broker-snaptrade-etrade->order-stream").label,
+    "broker orders",
+  );
+});
+
 test("buildMachineStateDiagramModel flags stale account and order streams", () => {
   const runtimeControl = baseRuntimeControl();
   runtimeControl.streams = {
@@ -224,33 +326,50 @@ test("buildMachineStateDiagramModel flags stale account and order streams", () =
   assert.equal(nodeById(model, "account-view").status, "degraded");
 });
 
-test("buildMachineStateDiagramModel flags capacity-limited line pressure", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.lineUsage.total = { used: 95, cap: 100, streamState: "capacity-limited" };
-  runtimeControl.lineUsage.warnings = 2;
-  runtimeControl.lineUsage.pressure = { state: "protected", policy: "shed-background" };
+test("buildMachineStateDiagramModel attributes degraded signal inputs to Signals, not Algo Engine", () => {
+  const latest = baseLatest();
+  latest.snapshots = latest.snapshots.map((snapshot) =>
+    snapshot.subsystem === "automation"
+      ? {
+          ...snapshot,
+          status: "degraded",
+          severity: "warning",
+          summary: "Signal-options automation needs attention",
+          metrics: {
+            workerRunning: true,
+            workerScanEnabled: true,
+            latestScanAgeMs: 4_000,
+            lastScanDurationMs: 16_856,
+            gatewayBlockedCount: 0,
+            failureCount: 0,
+            signalCount: 12_000,
+            freshSignalCount: 30,
+            staleSignalCount: 0,
+            unavailableSignalCount: 2_123,
+            candidateCount: 0,
+          },
+        }
+      : snapshot,
+  );
 
-  const model = buildModel({ runtimeControl });
+  const model = buildModel({ latest });
 
-  assert.equal(model.summary.status, "degraded");
-  assert.equal(nodeById(model, "bridge-governor").status, "degraded");
-  assert.match(nodeById(model, "bridge-governor").detail, /95 of 100/);
+  assert.equal(nodeById(model, "signal-engine").status, "checking");
+  assert.match(nodeById(model, "signal-engine").detail, /2,123 unavailable/);
+  assert.equal(nodeById(model, "algo-engine").status, "healthy");
+  assert.match(nodeById(model, "algo-engine").detail, /0 candidates/);
 });
 
-test("buildMachineStateDiagramModel treats full matched line allocation as healthy", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.lineUsage.total = { used: 200, cap: 200, streamState: "capacity-limited" };
-  runtimeControl.lineUsage.warnings = 0;
-  runtimeControl.lineUsage.pressure = { state: "protected", policy: "options-flow-rotation-allocation" };
-  runtimeControl.lineUsage.drift = {
-    status: "matched",
-    admissionVsBridgeLineDelta: 0,
-  };
+test("buildMachineStateDiagramModel does not render the retired bridge governor bubble", () => {
+  const model = buildModel();
 
-  const model = buildModel({ runtimeControl });
-
-  assert.equal(nodeById(model, "bridge-governor").status, "healthy");
-  assert.match(nodeById(model, "bridge-governor").detail, /200 of 200/);
+  assert.equal(model.nodes.some((node) => node.id === "bridge-governor"), false);
+  assert.equal(
+    model.edges.some(
+      (edge) => edge.from === "bridge-governor" || edge.to === "bridge-governor",
+    ),
+    false,
+  );
 });
 
 test("buildMachineStateDiagramModel uses observed shed admission action", () => {
@@ -341,13 +460,6 @@ test("buildMachineStateDiagramModel treats a paused transport as unknown, not he
   assert.equal(nodeById(model, "diagnostics-stream").status, "unknown");
 });
 
-test("buildMachineStateDiagramModel reads line-usage stream state case-insensitively", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.lineUsage.total = { used: 95, cap: 100, streamState: "Capacity-Limited" };
-  const model = buildModel({ runtimeControl });
-  assert.equal(nodeById(model, "bridge-governor").status, "degraded");
-});
-
 test("buildMachineStateDiagramModel leaves unknown-freshness streams as SourceRead", () => {
   const runtimeControl = baseRuntimeControl();
   runtimeControl.streams = { account: {}, order: {}, tradingFresh: undefined };
@@ -406,21 +518,6 @@ test("buildMachineStateDiagramModel keeps a stuck enabled scanner as checking", 
   assert.equal(nodeById(model, "flow-scanner").status, "checking");
 });
 
-test("buildMachineStateDiagramModel surfaces an open bridge governor circuit", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.bridgeGovernor = {
-    quotes: { active: 0, queued: 4, circuitOpen: true },
-    chains: { active: 1, queued: 0, circuitOpen: false },
-  };
-  const model = buildModel({ runtimeControl });
-  const governor = nodeById(model, "bridge-governor");
-  assert.equal(governor.status, "degraded");
-  assert.match(governor.detail, /circuit open: quotes/);
-  assert.match(governor.detail, /24 of 120/);
-  // Own-telemetry: the broker feed itself stays healthy.
-  assert.equal(nodeById(model, "ibkr-bridge").status, "healthy");
-});
-
 test("buildMachineStateDiagramModel splits live and shadow quote pool statuses", () => {
   const runtimeControl = baseRuntimeControl();
   runtimeControl.lineUsage.shadowAccount = {
@@ -449,17 +546,6 @@ test("buildMachineStateDiagramModel reads browser memory against backend thresho
   });
   // 76% of limit crosses the high threshold (75) mirrored from diagnostics.ts:248.
   assert.equal(nodeById(model, "browser-memory").status, "degraded");
-});
-
-test("buildMachineStateDiagramModel keeps unobserved line admission unknown", () => {
-  const runtimeControl = baseRuntimeControl();
-  runtimeControl.lineUsage = { available: false };
-  runtimeControl.bridgeGovernor = {};
-  const model = buildModel({ runtimeControl });
-  const governor = nodeById(model, "bridge-governor");
-  assert.equal(governor.status, "unknown");
-  assert.equal(governor.evidence, "unknown");
-  assert.match(governor.detail, /governor not observed/);
 });
 
 test("buildMachineStateDiagramModel decays observed evidence after two missed snapshots", () => {
@@ -531,6 +617,8 @@ test("buildMachineStateDiagramModel reflects gex client query health", () => {
 test("buildMachineStateDiagramGroups assigns every node to exactly one master", () => {
   const model = buildModel();
   const childIds = MACHINE_STATE_GROUPS.flatMap((group) => [...group.children]);
+  const brokerGroup = MACHINE_STATE_GROUPS.find((group) => group.id === "broker");
+  assert.equal(brokerGroup?.label, "Broker Feed");
   assert.equal(new Set(childIds).size, childIds.length);
   assert.deepEqual(
     [...childIds].sort(),
@@ -557,37 +645,33 @@ test("buildMachineStateDiagramGroups surfaces a degraded child in its master", (
   assert.equal(edge.status, "down");
 });
 
-test("buildMachineStateDiagramGroups derives the 27 locked master edges", () => {
+test("buildMachineStateDiagramGroups derives the 22 locked master edges", () => {
   const model = buildModel();
-  assert.equal(model.groups.edges.length, 27);
   const ids = model.groups.edges.map((edge) => edge.id);
-  for (const expected of [
-    "broker->account",
-    "broker->algo",
-    "broker->market",
-    "broker->trade",
-    "broker->flow",
-    "broker->gex",
-    "broker->client",
-    "massive->market",
-    "massive->flow",
-    "massive->account",
-    "market->signals",
-    "flow->signals",
-    "signals->algo",
+  assert.deepEqual([...ids].sort(), [
     "account->algo",
-    "algo->trade-mgmt",
+    "account->client",
     "account->trade-mgmt",
-    "market->client",
-    "signals->client",
+    "algo->trade-mgmt",
+    "broker->account",
+    "client->diagnostics",
+    "diagnostics->client",
+    "flow->client",
+    "flow->signals",
     "gex->client",
+    "market->account",
+    "market->client",
+    "market->signals",
+    "massive->account",
+    "massive->flow",
+    "massive->gex",
+    "massive->market",
+    "signals->algo",
+    "signals->client",
+    "trade->client",
     "trade-mgmt->client",
     "trade-mgmt->diagnostics",
-    "diagnostics->client",
-    "client->diagnostics",
-  ]) {
-    assert.ok(ids.includes(expected), `expected master edge ${expected}`);
-  }
+  ].sort());
 });
 
 // --- Database card (persistence sink) ---------------------------------------

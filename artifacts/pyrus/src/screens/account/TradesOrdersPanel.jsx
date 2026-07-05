@@ -101,10 +101,10 @@ export const OrdersPanel = ({
   onCancelOrder,
   cancelPending,
   cancelDisabled = false,
-  cancelDisabledReason = "IB Gateway must be connected before trading.",
+  cancelDisabledReason = "Your broker must be connected before trading.",
   sourceFilter = "all",
   onSourceFilterChange,
-  emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
+  emptyBody = "Working orders update from the broker order stream. Historical rows appear as orders reach a terminal status.",
   maskValues = false,
   isPhone = false,
 }) => {

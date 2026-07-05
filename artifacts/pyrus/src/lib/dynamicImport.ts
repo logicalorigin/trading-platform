@@ -13,6 +13,17 @@ const RETRYABLE_DYNAMIC_IMPORT_PATTERNS = [
 
 const DEFAULT_DYNAMIC_IMPORT_RETRIES = 2;
 const DEFAULT_DYNAMIC_IMPORT_RETRY_DELAY_MS = 250;
+// A dynamic import can stall PENDING forever (never resolves, never rejects)
+// when the chunk request queues behind a saturated per-origin connection pool
+// (open SSE streams + rate limiting) or a hung dev-server transform. A pending
+// import settles neither PreloadableScreen's frameReady nor its loadError path,
+// stranding the boot "first-screen" task at 62% and any Suspense fallback
+// indefinitely. Racing each attempt against a generous timeout converts the
+// stall into a RETRYABLE rejection ("loading chunk … timed out" matches the
+// retryable patterns above), so the existing retry -> reload-once -> degraded
+// error UI chain applies. Generous on purpose: cold dev transforms of large
+// modules legitimately take 20s+.
+const DEFAULT_DYNAMIC_IMPORT_TIMEOUT_MS = 25_000;
 // After a chunk failure triggers a one-time reload, the document is normally
 // replaced long before this elapses. If the reload is blocked or slow (sandboxed
 // view, throttled/backgrounded tab, a reload that re-fails) we reject instead of
@@ -26,6 +37,7 @@ type DynamicImportOptions = {
   retries?: number;
   retryDelayMs?: number;
   reloadOnFailure?: boolean;
+  timeoutMs?: number;
 };
 
 const getDynamicImportErrorMessage = (error: unknown): string => {
@@ -44,6 +56,33 @@ export const isRetryableDynamicImportError = (error: unknown): boolean => {
 
 const wait = (delayMs: number) =>
   new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
+
+const raceWithTimeout = <T,>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> => {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(`Loading chunk ${label} timed out after ${timeoutMs}ms`),
+      );
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+};
 
 const getReloadKey = (label: string) =>
   `${DYNAMIC_IMPORT_RELOAD_KEY_PREFIX}${label || "module"}`;
@@ -85,11 +124,12 @@ export async function retryDynamicImport<T>(
   const retryDelayMs =
     options.retryDelayMs ?? DEFAULT_DYNAMIC_IMPORT_RETRY_DELAY_MS;
   const reloadOnFailure = options.reloadOnFailure ?? true;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DYNAMIC_IMPORT_TIMEOUT_MS;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      const mod = await loader();
+      const mod = await raceWithTimeout(loader(), timeoutMs, label);
       clearReloadGuard(label);
       return mod;
     } catch (error) {

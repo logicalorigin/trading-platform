@@ -1,6 +1,4 @@
-import {
-  useMemo,
-} from "react";
+import { useMemo } from "react";
 import {
   MemoAccountScreen,
   MemoAlgoScreen,
@@ -8,6 +6,7 @@ import {
   MemoDiagnosticsScreen,
   MemoFlowScreen,
   MemoGexScreen,
+  MemoMarketDemoScreen,
   MemoMarketScreen,
   MemoResearchScreen,
   MemoSettingsScreen,
@@ -17,6 +16,7 @@ import {
 
 const SCREEN_IDS = [
   "market",
+  "market-demo",
   "signals",
   "flow",
   "gex",
@@ -38,9 +38,16 @@ export const PlatformScreenRouter = ({
   session,
   environment,
   accounts,
+  // Live-mode account list for the Accounts screen tab strip: real brokerage
+  // accounts exist in mode "live" regardless of the trading environment, so
+  // the per-account tabs must not depend on the environment-driven `accounts`
+  // list above (which is empty in a shadow environment).
+  accountScreenAccounts = accounts,
   primaryAccountId,
   brokerConfigured,
   brokerAuthenticated,
+  massiveStockRealtimeConfigured,
+  marketDataProviderConfigurationReady,
   gatewayTradingReady,
   gatewayTradingMessage,
   watchlistSymbols,
@@ -61,6 +68,8 @@ export const PlatformScreenRouter = ({
   signalMonitorEventsLoaded,
   signalMatrixStates,
   signalMatrixCoverage,
+  signalMatrixUniverse,
+  realtimeStreamGateReason = null,
   marketScreenActive,
   flowScreenActive,
   researchConfigured,
@@ -93,6 +102,7 @@ export const PlatformScreenRouter = ({
   onScreenReadiness,
 }) => {
   const marketDataActive = screen === "market";
+  const marketDemoDataActive = screen === "market-demo";
   const signalsDataActive = screen === "signals";
   const flowDataActive = screen === "flow";
   const gexDataActive = screen === "gex";
@@ -142,6 +152,32 @@ export const PlatformScreenRouter = ({
   switch (screenId) {
     case "market":
       return renderMarketScreen();
+    case "market-demo":
+      return (
+        <MemoMarketDemoScreen
+          sym={sym}
+          marketSymPing={marketSymPing}
+          onSymClick={onSelectSymbol}
+          onChartFocus={onFocusMarketChart}
+          symbols={watchlistSymbols}
+          isVisible={marketDemoDataActive}
+          researchConfigured={researchConfigured}
+          safeQaMode={safeQaMode}
+          stockAggregateStreamingEnabled={
+            stockAggregateStreamingEnabled &&
+            marketDemoDataActive &&
+            !safeQaMode
+          }
+          watchlists={watchlists}
+          onSignalAction={onSignalAction}
+          onScanNow={onScanNow}
+          onToggleMonitor={onToggleMonitor}
+          onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+          onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+          unusualThreshold={marketUnusualThreshold}
+          onReadinessChange={buildReadinessHandler("market-demo")}
+        />
+      );
     case "signals":
       return (
         <MemoSignalsScreen
@@ -149,10 +185,13 @@ export const PlatformScreenRouter = ({
           watchlists={watchlists}
           defaultWatchlist={defaultWatchlist}
           signalMonitorSymbols={
-            signalMonitorDisplaySymbols?.length
-              ? signalMonitorDisplaySymbols
-              : signalMonitorSymbols
+            signalMonitorDataManagedByPlatform
+              ? signalMonitorSymbols
+              : signalMonitorDisplaySymbols?.length
+                ? signalMonitorDisplaySymbols
+                : signalMonitorSymbols
           }
+          signalMatrixUniverse={signalMatrixUniverse}
           signalMonitorProfile={signalMonitorProfile}
           signalMonitorProfileLoading={signalMonitorProfileLoading}
           signalMonitorProfileError={signalMonitorProfileError}
@@ -160,7 +199,9 @@ export const PlatformScreenRouter = ({
           signalMonitorStateLoaded={signalMonitorStateLoaded}
           signalMonitorStateLoading={signalMonitorStateLoading}
           signalMonitorStateError={signalMonitorStateError}
-          signalMonitorDataManagedByPlatform={signalMonitorDataManagedByPlatform}
+          signalMonitorDataManagedByPlatform={
+            signalMonitorDataManagedByPlatform
+          }
           signalMatrixStates={signalMatrixStates}
           signalMatrixCoverage={signalMatrixCoverage}
           signalMonitorEvents={signalMonitorEvents}
@@ -209,8 +250,13 @@ export const PlatformScreenRouter = ({
           accountId={primaryAccountId}
           brokerConfigured={brokerConfigured}
           brokerAuthenticated={brokerAuthenticated}
+          massiveStockRealtimeConfigured={massiveStockRealtimeConfigured}
+          marketDataProviderConfigurationReady={
+            marketDataProviderConfigurationReady
+          }
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
+          signalMonitorProfile={signalMonitorProfile}
           safeQaMode={safeQaMode}
           isVisible={tradeDataActive}
           onReadinessChange={buildReadinessHandler("trade")}
@@ -220,7 +266,7 @@ export const PlatformScreenRouter = ({
       return (
         <MemoAccountScreen
           session={session}
-          accounts={accounts}
+          accounts={accountScreenAccounts}
           selectedAccountId={primaryAccountId}
           environment={environment}
           brokerConfigured={brokerConfigured}
@@ -253,6 +299,7 @@ export const PlatformScreenRouter = ({
           signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           signalMonitorState={signalMonitorState}
           signalMatrixStates={signalMatrixStates}
+          realtimeStreamGateReason={realtimeStreamGateReason}
           isVisible={algoDataActive}
           safeQaMode={safeQaMode}
           onScanNow={onScanNow}

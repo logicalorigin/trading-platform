@@ -43,6 +43,8 @@ import {
   Card,
   DataUnavailableState,
   MicroSparkline,
+  Select,
+  Skeleton,
   StatusPill,
   extractSparklinePoints,
 } from "../components/platform/primitives.jsx";
@@ -86,6 +88,10 @@ import {
 import { formatAppTime } from "../lib/timeZone";
 import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
 import { useViewport } from "../lib/responsive";
+import {
+  classifyRequestHealth,
+  requestHealthTone,
+} from "../lib/requestHealthTone";
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
   SIGNALS_ROW_STATUS,
@@ -534,33 +540,7 @@ const isNestedInteractiveTarget = (event) => {
 const settingsSignature = (settings) => JSON.stringify(settings || {});
 
 function FieldSelect({ label, value, options, onChange, style }) {
-  return (
-    <label
-      style={{
-        display: "inline-grid",
-        gap: sp(4),
-        color: CSS_COLOR.textMuted,
-        fontSize: fs(10),
-        fontWeight: FONT_WEIGHTS.label,
-        letterSpacing: 0,
-        textTransform: "uppercase",
-        ...style,
-      }}
-    >
-      <span>{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange?.(event.target.value)}
-        style={selectStyle}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
+  return <Select label={label} value={value} options={options} onChange={onChange} style={style} />;
 }
 
 function NumberField({ label, value, min, max, step = 1, round = true, onCommit }) {
@@ -1321,8 +1301,8 @@ function CompactSignalBreadthPanel({
                 aria-pressed={selected ? "true" : "false"}
                 onClick={() => onRangeChange?.(option)}
                 style={{
-                  minWidth: dim(30),
-                  minHeight: dim(22),
+                  minWidth: dim(phone ? 44 : 30),
+                  minHeight: dim(phone ? 44 : 22),
                   padding: sp("2px 7px"),
                   border: `1px solid ${selected ? CSS_COLOR.accent : CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.xs),
@@ -1431,6 +1411,8 @@ function SignalsOverviewPanel({
   phone = false,
   summary,
   timeframeSummaries,
+  monitorEnabled = false,
+  stale = false,
 }) {
   const active = Math.max(0, summary?.active || 0);
   const total = Math.max(0, summary?.total || 0);
@@ -1449,6 +1431,17 @@ function SignalsOverviewPanel({
     : pending
       ? CSS_COLOR.amber
       : CSS_COLOR.textDim;
+
+  // Fresh coverage is only "live" (green) when the monitor is on, data is not
+  // stale, and there is at least one fresh signal; otherwise it reads amber
+  // (stale/degraded) or neutral (monitor off / no fresh coverage).
+  const freshTone = requestHealthTone(
+    classifyRequestHealth({
+      off: !monitorEnabled,
+      stale: monitorEnabled && stale,
+      empty: monitorEnabled && !stale && fresh === 0,
+    }),
+  );
 
   // Breadth is a point-in-time aggregate (not a tracked time series), so the
   // Buy/Sell/Net cards visualize current proportions rather than a trend line.
@@ -1476,11 +1469,11 @@ function SignalsOverviewPanel({
       icon: Clock3,
       label: "Fresh",
       value: formatCount(fresh),
-      tone: CSS_COLOR.green,
+      tone: freshTone,
       tooltip: `${formatCount(fresh)} fresh · ${formatCount(aged)} aged`,
       viz: (
         <SignalsSplitBar
-          segments={[{ pct: total ? (fresh / total) * 100 : 0, color: CSS_COLOR.green }]}
+          segments={[{ pct: total ? (fresh / total) * 100 : 0, color: freshTone }]}
         />
       ),
     },
@@ -1588,29 +1581,28 @@ function SignalsOverviewPanel({
 }
 function StatusCell({ row }) {
   const tone = toneForStatus(row.status);
-  const issues = collectDataIssuesFromRecord(
-    {
-      status:
-        row.status === SIGNALS_ROW_STATUS.problem
-          ? row.lastError
-            ? "error"
-            : "unavailable"
-          : row.status === SIGNALS_ROW_STATUS.activeIdle
-            ? "idle"
-          : row.status === SIGNALS_ROW_STATUS.activeStale
-            ? "stale"
-            : row.status,
-      lastError: row.lastError,
-      reason: row.coverageReason,
-      lastEvaluatedAt: row.lastEvaluatedAt,
-    },
-    {
-      valueLabel: `${row.symbol || "Signal"} monitor state`,
-      source: "signals monitor",
-      nextAction:
-        "Review the row detail or rerun the signal scan before relying on this signal state.",
-    },
-  );
+  const issueStatus =
+    row.status === SIGNALS_ROW_STATUS.problem
+      ? row.lastError
+        ? "error"
+        : "unavailable"
+      : null;
+  const issues = issueStatus
+    ? collectDataIssuesFromRecord(
+        {
+          status: issueStatus,
+          lastError: row.lastError,
+          reason: row.coverageReason,
+          lastEvaluatedAt: row.lastEvaluatedAt,
+        },
+        {
+          valueLabel: `${row.symbol || "Signal"} monitor state`,
+          source: "signals monitor",
+          nextAction:
+            "Review the row detail or rerun the signal scan before relying on this signal state.",
+        },
+      )
+    : [];
   return (
     <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(4) }}>
       <DirectionBadge direction={row.direction} stale={row.fresh === false} />
@@ -1631,27 +1623,24 @@ function StatusCell({ row }) {
 
 function CoverageCell({ row }) {
   const tone = toneForStatus(row.status);
-  const issues = collectDataIssuesFromRecord(
-    {
-      status:
-        row.status === SIGNALS_ROW_STATUS.problem
-          ? "unavailable"
-          : row.status === SIGNALS_ROW_STATUS.activeIdle
-            ? "idle"
-          : row.status === SIGNALS_ROW_STATUS.activeStale
-            ? "stale"
-            : row.status,
-      reason: row.coverageReason,
-      lastError: row.lastError,
-      lastEvaluatedAt: row.lastEvaluatedAt,
-    },
-    {
-      valueLabel: `${row.symbol || "Signal"} coverage`,
-      source: "signals monitor",
-      nextAction:
-        "Treat this signal as incomplete until coverage refreshes or the monitor explains the row state.",
-    },
-  );
+  const issueStatus =
+    row.status === SIGNALS_ROW_STATUS.problem ? "unavailable" : null;
+  const issues = issueStatus
+    ? collectDataIssuesFromRecord(
+        {
+          status: issueStatus,
+          reason: row.coverageReason,
+          lastError: row.lastError,
+          lastEvaluatedAt: row.lastEvaluatedAt,
+        },
+        {
+          valueLabel: `${row.symbol || "Signal"} coverage`,
+          source: "signals monitor",
+          nextAction:
+            "Treat this signal as incomplete until coverage refreshes or the monitor explains the row state.",
+        },
+      )
+    : [];
   return (
     <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(4) }}>
       <span
@@ -1770,26 +1759,27 @@ function CompactIntervalCell({
       : sparklineSignalColor || hydrated
         ? "fallback"
         : "pending";
-  const issues = collectDataIssuesFromRecord(
-    {
-      status: problem
-        ? state?.lastError
-          ? "error"
-          : state?.status || "unavailable"
-        : normalizeSignalStatus(state) === "stale"
-          ? "stale"
-          : status,
-      lastError: idle || stale ? null : state?.lastError,
-      lastEvaluatedAt: state?.lastEvaluatedAt,
-      latestBarAt: state?.latestBarAt,
-    },
-    {
-      valueLabel: `${timeframe} signal cell`,
-      source: "signal matrix",
-      nextAction:
-        "Open the signal drilldown before trusting this interval's direction.",
-    },
-  );
+  const issueStatus = problem
+    ? state?.lastError
+      ? "error"
+      : state?.status || "unavailable"
+    : null;
+  const issues = issueStatus
+    ? collectDataIssuesFromRecord(
+        {
+          status: issueStatus,
+          lastError: idle || stale ? null : state?.lastError,
+          lastEvaluatedAt: state?.lastEvaluatedAt,
+          latestBarAt: state?.latestBarAt,
+        },
+        {
+          valueLabel: `${timeframe} signal cell`,
+          source: "signal matrix",
+          nextAction:
+            "Open the signal drilldown before trusting this interval's direction.",
+        },
+      )
+    : [];
   const intervalAge = hasSignalTiming
     ? formatTime(state.currentSignalAt || state.latestBarAt || state.lastEvaluatedAt)
     : MISSING_VALUE;
@@ -3380,6 +3370,7 @@ export default function SignalsScreen({
   signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
   signalMatrixCoverage = null,
+  signalMatrixUniverse = null,
   isVisible = true,
   safeQaMode = false,
   onReadinessChange,
@@ -3568,7 +3559,9 @@ export default function SignalsScreen({
             ? platformManagedSignalData
               ? "platform"
               : "query"
-            : "fallback",
+            : platformManagedSignalData
+              ? "platform-seed"
+              : "fallback",
           states: Array.isArray(value?.states) ? value.states.length : 0,
           universeSymbols: Array.isArray(value?.universeSymbols)
             ? value.universeSymbols.length
@@ -4017,6 +4010,32 @@ export default function SignalsScreen({
     () => summarizeSignalsRows(overviewMetricRows),
     [overviewMetricRows],
   );
+  const displaySummary = useMemo(() => {
+    if (
+      signalsFiltersActive({ query, statusFilter, directionFilter }) ||
+      !signalMonitorDataManagedByPlatform
+    ) {
+      return summary;
+    }
+    const trackedTotal = Math.max(
+      summary.total || 0,
+      Number(signalMatrixUniverse?.resolvedSymbols) || 0,
+      Number(signalMatrixCoverage?.activeScopeSymbols) || 0,
+      Number(signalMonitorProfile?.maxSymbols) || 0,
+    );
+    return trackedTotal > summary.total
+      ? { ...summary, total: trackedTotal }
+      : summary;
+  }, [
+    directionFilter,
+    query,
+    signalMatrixCoverage?.activeScopeSymbols,
+    signalMatrixUniverse?.resolvedSymbols,
+    signalMonitorDataManagedByPlatform,
+    signalMonitorProfile?.maxSymbols,
+    statusFilter,
+    summary,
+  ]);
   const netBias = useMemo(
     () => summarizeSignalsNetBias(overviewMetricRows),
     [overviewMetricRows],
@@ -4086,15 +4105,21 @@ export default function SignalsScreen({
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    Promise.allSettled([
+    const refreshTasks = [
       breadthHistoryQuery.refetch(),
-      profileQuery.refetch(),
-      stateQuery.refetch(),
       eventsQuery.refetch(),
-    ]).finally(() => setRefreshing(false));
+    ];
+    if (!platformManagedSignalData) {
+      refreshTasks.push(
+        profileQuery.refetch(),
+        stateQuery.refetch(),
+      );
+    }
+    Promise.allSettled(refreshTasks).finally(() => setRefreshing(false));
   }, [
     breadthHistoryQuery,
     eventsQuery,
+    platformManagedSignalData,
     profileQuery,
     stateQuery,
   ]);
@@ -4674,8 +4699,10 @@ export default function SignalsScreen({
           compact={compact}
           netBias={netBias}
           phone={phone}
-          summary={summary}
+          summary={displaySummary}
           timeframeSummaries={timeframeSignalSummary}
+          monitorEnabled={Boolean(profile?.enabled)}
+          stale={effectiveStateData?.cacheStatus === "stale"}
         />
 
         <Card
@@ -4873,14 +4900,33 @@ export default function SignalsScreen({
               fill
             />
           ) : loading ? (
-            <DataUnavailableState
-              title="Loading signals"
-              detail="Fetching signal monitor state."
-              loading
-              loadingEndpoint="/api/signal-monitor/state"
-              minHeight={240}
-              fill
-            />
+            <div
+              data-testid="signals-table-loading-skeleton"
+              aria-hidden="true"
+              style={{
+                minHeight: 0,
+                height: "100%",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div
+                  key={index}
+                  style={{
+                    height: dim(phone ? 58 : 56),
+                    flex: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    padding: sp("0 6px"),
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
+                  }}
+                >
+                  <Skeleton width="100%" height={dim(14)} radius={RADII.xs} />
+                </div>
+              ))}
+            </div>
           ) : (
             <div
               data-testid="signals-table-scroll-shell"
@@ -4990,6 +5036,7 @@ export default function SignalsScreen({
                     icon={<ListFilter size={22} strokeWidth={2} />}
                     minHeight={220}
                     fill
+                    standby
                   />
                 }
               />

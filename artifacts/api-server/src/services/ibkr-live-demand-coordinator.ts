@@ -12,6 +12,8 @@ import {
   type MarketDataIntent,
 } from "./market-data-admission";
 
+type OptionQuoteSource = "ibkr" | "massive";
+
 export type IbkrLiveDemandStatus =
   | "live"
   | "stale"
@@ -45,7 +47,7 @@ export type IbkrLiveDemandQuoteState = {
   quoteReason: string | null;
   greeksStatus: IbkrLiveDemandStatus;
   greeksReason: string | null;
-  quote: (QuoteSnapshot & { source?: "ibkr" }) | null;
+  quote: (QuoteSnapshot & { source?: OptionQuoteSource }) | null;
   cacheAgeMs: number | null;
 };
 
@@ -235,7 +237,7 @@ function resolveMissingQuoteState(input: {
 }
 
 function resolveQuoteFreshnessState(
-  quote: QuoteSnapshot & { source?: "ibkr" },
+  quote: QuoteSnapshot & { source?: OptionQuoteSource },
 ): { status: IbkrLiveDemandStatus; reason: string | null } {
   const freshness = String(quote.freshness ?? "").trim();
   if (freshness === "unavailable") {
@@ -251,7 +253,7 @@ function resolveQuoteFreshnessState(
 }
 
 function resolveGreeksState(input: {
-  quote: QuoteSnapshot & { source?: "ibkr" };
+  quote: QuoteSnapshot & { source?: OptionQuoteSource };
   requiresGreeks: boolean;
 }): { status: IbkrLiveDemandStatus; reason: string | null } {
   const quoteState = resolveQuoteFreshnessState(input.quote);
@@ -271,7 +273,7 @@ function resolveGreeksState(input: {
 }
 
 function resolveQuoteState(input: {
-  quote: QuoteSnapshot & { source?: "ibkr" };
+  quote: QuoteSnapshot & { source?: OptionQuoteSource };
   requiresGreeks: boolean;
 }): {
   status: IbkrLiveDemandStatus;

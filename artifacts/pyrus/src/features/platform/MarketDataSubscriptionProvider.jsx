@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetQuoteSnapshotsQueryKey,
@@ -12,14 +12,7 @@ import {
   useStockMinuteAggregateSymbolsVersion,
 } from "../charting/useMassiveStockAggregateStream";
 import { MARKET_PERFORMANCE_SYMBOLS } from "../market/marketReferenceData";
-import {
-  useIbkrQuoteSnapshotStream,
-  usePositionQuoteSnapshotStream,
-} from "./live-streams";
-import {
-  applyPositionQuoteSnapshots,
-  usePositionMarketDataSymbols,
-} from "./positionMarketDataStore";
+import { useIbkrQuoteSnapshotStream } from "./live-streams";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
   BARS_QUERY_DEFAULTS,
@@ -31,6 +24,7 @@ import {
 import { useHydrationGate } from "./hydrationCoordinator";
 import {
   applyRuntimeQuoteSnapshots,
+  applyRuntimeStockAggregateSnapshots,
   syncRuntimeMarketData,
 } from "./runtimeMarketDataModel";
 import { useCriticalApiMutationPause } from "./criticalApiMutationPause.js";
@@ -82,11 +76,11 @@ const SIGNAL_SPARKLINE_SEED_POINT_LIMIT = 48;
 // thinly traded tickers do not get marked fulfilled by the server and then
 // filtered blank before reaching runtime snapshots.
 const SPARKLINE_MIN_VISUAL_POINT_COUNT = 2;
-// Client-side fan-out cap for the signal sparkline seed. Bounded to the server's
-// /api/sparklines/seed DB budget (SPARKLINE_SEED_DB_CONCURRENCY = 2 against a
-// 12-connection pool): 2 concurrent chunk POSTs keep total in-flight DB readers
-// within the safe budget so background seed hydration cannot starve live reads.
-const SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY = 2;
+// Client-side fan-out cap for signal sparkline seed. Historical sparkline
+// backfill is background work and each chunk can still be an expensive `bar_cache`
+// read when the in-memory live edge is cold after a rebuild. Keep one seed POST
+// in flight so this path cannot multiply server-side DB readers.
+const SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY = 1;
 const SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "signal-sparkline-seed",
@@ -98,6 +92,51 @@ const normalizeRuntimeSymbol = (symbol) =>
   String(symbol || "")
     .trim()
     .toUpperCase();
+
+const quoteLooksLive = (quote) => {
+  const transport = String(quote?.transport || "").toLowerCase();
+  const freshness = String(quote?.freshness || "").toLowerCase();
+  const marketDataMode = String(quote?.marketDataMode || "").toLowerCase();
+  if (
+    freshness === "frozen" ||
+    freshness === "delayed" ||
+    freshness === "delayed_frozen" ||
+    freshness === "unavailable" ||
+    marketDataMode === "frozen" ||
+    marketDataMode === "delayed" ||
+    marketDataMode === "unavailable"
+  ) {
+    return false;
+  }
+  return (
+    freshness === "live" ||
+    marketDataMode === "live" ||
+    transport.includes("websocket") ||
+    transport.includes("stream")
+  );
+};
+
+const recordDeliveredRealtimeQuoteSymbols = (quotes = [], setSymbols) => {
+  const incomingSymbols = (quotes || [])
+    .filter(quoteLooksLive)
+    .map((quote) => normalizeRuntimeSymbol(quote?.symbol))
+    .filter(Boolean);
+  if (!incomingSymbols.length) {
+    return;
+  }
+  setSymbols((current) => {
+    const next = new Set(current);
+    incomingSymbols.forEach((symbol) => next.add(symbol));
+    const nextSymbols = Array.from(next).sort();
+    if (
+      nextSymbols.length === current.length &&
+      nextSymbols.every((symbol, index) => symbol === current[index])
+    ) {
+      return current;
+    }
+    return nextSymbols;
+  });
+};
 
 const summarizeSparklineBars = (barsBySymbol = {}) =>
   Object.fromEntries(
@@ -364,10 +403,9 @@ export const MarketDataSubscriptionProvider = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled = false,
-  positionQuoteStreamRuntimeEnabled = quoteStreamRuntimeEnabled,
+  massiveStockRealtimeConfigured = false,
+  marketDataProviderConfigurationReady = false,
   quoteStreamDisabledReason: upstreamQuoteStreamDisabledReason = null,
-  positionQuoteStreamDisabledReason:
-    upstreamPositionQuoteStreamDisabledReason = null,
   quoteStreamCoverageDiagnostics = null,
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
@@ -380,13 +418,18 @@ export const MarketDataSubscriptionProvider = ({
 }) => {
   const queryClient = useQueryClient();
   const criticalApiMutationPaused = useCriticalApiMutationPause();
-  const positionQuoteSymbols = usePositionMarketDataSymbols();
+  const [deliveredRealtimeQuoteSymbols, setDeliveredRealtimeQuoteSymbols] =
+    useState([]);
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
   );
   const watchlistSymbolsKey = useMemo(
     () => (watchlistSymbols || []).join(","),
     [watchlistSymbols],
+  );
+  const streamedQuoteSymbolsKey = useMemo(
+    () => (streamedQuoteSymbols || []).join(","),
+    [streamedQuoteSymbols],
   );
   const activeWatchlistItemsKey = useMemo(
     () =>
@@ -474,6 +517,19 @@ export const MarketDataSubscriptionProvider = ({
     });
     return Object.fromEntries(entries);
   }, [aggregateSparklineSymbols, marketAggregateStoreVersion]);
+  const aggregateRuntimePriceSymbols = useMemo(
+    () =>
+      new Set(
+        [...watchlistSymbols, ...streamedQuoteSymbols]
+          .map(normalizeRuntimeSymbol)
+          .filter(Boolean),
+      ),
+    [streamedQuoteSymbols, watchlistSymbols],
+  );
+  const aggregateRuntimePriceSymbolsKey = useMemo(
+    () => [...aggregateRuntimePriceSymbols].sort().join(","),
+    [aggregateRuntimePriceSymbols],
+  );
   const historySparklineSymbols = useMemo(
     () =>
       requestedSparklineSymbols.filter(
@@ -528,69 +584,54 @@ export const MarketDataSubscriptionProvider = ({
     symbolCount: streamedQuoteSymbols.length,
     eventSourceAvailable,
     upstreamDisabledReason: criticalApiMutationPaused
-      ? "critical-api-mutation"
+      ? "foreground-api-mutation"
       : upstreamQuoteStreamDisabledReason,
   });
-  const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
-    quoteStreamRuntimeEnabled: positionQuoteStreamRuntimeEnabled,
-    symbolCount: positionQuoteSymbols.length,
-    eventSourceAvailable,
-    upstreamDisabledReason: criticalApiMutationPaused
-      ? "critical-api-mutation"
-      : upstreamPositionQuoteStreamDisabledReason,
-  });
   const quoteStreamRuntimeActive = Boolean(!quoteStreamDisabledReason);
-  const positionQuoteStreamRuntimeActive = Boolean(
-    !positionQuoteStreamDisabledReason,
-  );
   const marketAggregateStreamRuntimeActive = Boolean(
     !criticalApiMutationPaused &&
       marketStockAggregateStreamingEnabled &&
       streamedAggregateSymbols.length > 0,
   );
-  const streamCoveredQuoteSymbols = useMemo(() => {
-    const symbols = [
-      ...(quoteStreamRuntimeActive ? streamedQuoteSymbols : []),
-      ...(positionQuoteStreamRuntimeActive ? positionQuoteSymbols : []),
-    ];
-    return new Set(symbols.map(normalizeRuntimeSymbol).filter(Boolean));
-  }, [
-    positionQuoteStreamRuntimeActive,
-    positionQuoteSymbols,
-    quoteStreamRuntimeActive,
-    streamedQuoteSymbols,
-  ]);
   const restQuoteSplit = useMemo(
     () =>
       splitRealtimeAwareRestQuoteSymbols({
         quoteSymbols,
-        streamCoveredSymbols: Array.from(streamCoveredQuoteSymbols),
+        streamCoveredSymbols: deliveredRealtimeQuoteSymbols,
         activeVisibleSymbols: activeVisibleQuoteSymbols,
         realtimeRequired: realtimeQuoteCoverageRequired,
       }),
     [
       activeVisibleQuoteSymbols,
+      deliveredRealtimeQuoteSymbols,
       quoteSymbols,
       realtimeQuoteCoverageRequired,
-      streamCoveredQuoteSymbols,
     ],
   );
-  const restQuoteSymbols = criticalApiMutationPaused
+  const quoteSnapshotFallbackBlocked = Boolean(
+    criticalApiMutationPaused || !marketDataProviderConfigurationReady,
+  );
+  const restQuoteSymbols = quoteSnapshotFallbackBlocked
     ? []
     : restQuoteSplit.restQuoteSymbols;
+  const quoteFallbackDisabledReason = criticalApiMutationPaused
+    ? "foreground-api-mutation"
+    : !marketDataProviderConfigurationReady
+      ? "market-data-config-loading"
+      : null;
   const visibleRealtimeCoverageDiagnostics = useMemo(
     () =>
       buildVisibleRealtimeCoverageDiagnostics({
         activeVisibleSymbols: activeVisibleQuoteSymbols,
-        streamCoveredSymbols: Array.from(streamCoveredQuoteSymbols),
+        streamCoveredSymbols: deliveredRealtimeQuoteSymbols,
         realtimeRequired: realtimeQuoteCoverageRequired,
         disabledReason: quoteStreamDisabledReason,
       }),
     [
       activeVisibleQuoteSymbols,
+      deliveredRealtimeQuoteSymbols,
       quoteStreamDisabledReason,
       realtimeQuoteCoverageRequired,
-      streamCoveredQuoteSymbols,
     ],
   );
   const restQuoteSymbolsKey = useMemo(
@@ -614,14 +655,11 @@ export const MarketDataSubscriptionProvider = ({
         eventSourceAvailable,
         coverage: quoteStreamCoverageDiagnostics,
         activeVisibleCoverage: visibleRealtimeCoverageDiagnostics,
-        restBlockedVisibleSymbols: restQuoteSplit.blockedVisibleSymbols,
-      },
-      positionQuoteStream: {
-        active: positionQuoteStreamRuntimeActive,
-        disabledReason: positionQuoteStreamDisabledReason,
-        requestedSymbols: positionQuoteSymbols,
-        requestedSymbolCount: positionQuoteSymbols.length,
-        eventSourceAvailable,
+        missingRealtimeVisibleSymbols:
+          restQuoteSplit.missingRealtimeVisibleSymbols,
+        deliveredSymbols: deliveredRealtimeQuoteSymbols,
+        deliveredSymbolCount: deliveredRealtimeQuoteSymbols.length,
+        fallbackDisabledReason: quoteFallbackDisabledReason,
       },
       aggregateStream: {
         active: marketAggregateStreamRuntimeActive,
@@ -639,13 +677,12 @@ export const MarketDataSubscriptionProvider = ({
   }, [
     eventSourceAvailable,
     marketAggregateStreamRuntimeActive,
-    positionQuoteStreamDisabledReason,
-    positionQuoteStreamRuntimeActive,
-    positionQuoteSymbols,
     quoteStreamCoverageDiagnostics,
     quoteStreamDisabledReason,
     quoteStreamRuntimeActive,
-    restQuoteSplit.blockedVisibleSymbols,
+    deliveredRealtimeQuoteSymbols,
+    quoteFallbackDisabledReason,
+    restQuoteSplit.missingRealtimeVisibleSymbols,
     aggregateOnlySparklineSymbolSet,
     streamedAggregateSymbols.length,
     streamedQuoteSymbols,
@@ -664,16 +701,6 @@ export const MarketDataSubscriptionProvider = ({
       label: "Market runtime streams",
       detail: `${streamedQuoteSymbols.length}q/${streamedAggregateSymbols.length}a`,
       priority: 3,
-    },
-  );
-  useRuntimeWorkloadFlag(
-    "market:position-quote-stream",
-    Boolean(positionQuoteStreamRuntimeActive),
-    {
-      kind: "stream",
-      label: "Position spot stream",
-      detail: `${positionQuoteSymbols.length}q`,
-      priority: 2,
     },
   );
   useRuntimeWorkloadFlag("market:sparklines", sparklineHistoryEnabled, {
@@ -732,7 +759,7 @@ export const MarketDataSubscriptionProvider = ({
       SPARKLINE_RENDER_POINT_LIMIT,
       historySparklineSymbols,
     ],
-    enabled: sparklineHistoryEnabled,
+    enabled: sparklineHydrationGate.enabled,
     queryFn: () =>
       fetchSparklineSeedInChunks(historySparklineSymbols, {
         chunkSize:
@@ -953,33 +980,62 @@ export const MarketDataSubscriptionProvider = ({
 
   const handleStreamQuotes = useCallback(
     (quotes) => {
+      recordDeliveredRealtimeQuoteSymbols(quotes, setDeliveredRealtimeQuoteSymbols);
       applyRuntimeQuoteSnapshots(quotes, activeWatchlistItems);
     },
     [activeWatchlistItems],
   );
-  const handlePositionStreamQuotes = useCallback(
-    (quotes) => {
-      applyPositionQuoteSnapshots(quotes);
-      applyRuntimeQuoteSnapshots(quotes, activeWatchlistItems);
+  const handleStockAggregate = useCallback(
+    (aggregate) => {
+      const symbol = normalizeRuntimeSymbol(aggregate?.symbol);
+      if (!symbol || !aggregateRuntimePriceSymbols.has(symbol)) {
+        return;
+      }
+      applyRuntimeStockAggregateSnapshots([aggregate], activeWatchlistItems);
     },
-    [activeWatchlistItems],
+    [activeWatchlistItems, aggregateRuntimePriceSymbols],
   );
+
+  useEffect(() => {
+    if (
+      !marketAggregateStreamRuntimeActive ||
+      !aggregateRuntimePriceSymbolsKey
+    ) {
+      return;
+    }
+
+    const aggregates = aggregateRuntimePriceSymbolsKey
+      .split(",")
+      .map((symbol) => getStoredBrokerMinuteAggregates(symbol).at(-1))
+      .filter(Boolean);
+    if (aggregates.length) {
+      applyRuntimeStockAggregateSnapshots(aggregates, activeWatchlistItems);
+    }
+  }, [
+    activeWatchlistItems,
+    aggregateRuntimePriceSymbolsKey,
+    marketAggregateStoreVersion,
+    marketAggregateStreamRuntimeActive,
+  ]);
+
+  useEffect(() => {
+    setDeliveredRealtimeQuoteSymbols([]);
+  }, [
+    quoteStreamRuntimeActive,
+    streamedQuoteSymbolsKey,
+  ]);
 
   useIbkrQuoteSnapshotStream({
     symbols: streamedQuoteSymbols,
     enabled: quoteStreamRuntimeActive,
     onQuotes: handleStreamQuotes,
   });
-  usePositionQuoteSnapshotStream({
-    symbols: positionQuoteSymbols,
-    enabled: positionQuoteStreamRuntimeActive,
-    onQuotes: handlePositionStreamQuotes,
-  });
   useBrokerStockAggregateStream({
     symbols: streamedAggregateSymbols,
     enabled: Boolean(
       marketAggregateStreamRuntimeActive && streamedAggregateSymbols.length > 0,
     ),
+    onAggregate: handleStockAggregate,
   });
 
   const marketDataSyncKey = [

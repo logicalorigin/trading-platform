@@ -208,6 +208,45 @@ test("hysteresis: entrants must clear the entrant rank, members retained to the 
   );
 });
 
+test("duplicate listings collapse to one row per symbol, admissible listing wins", () => {
+  const listings = [
+    // Foreign STK listing sharing a US ticker (LSE Anglo American on AAL) —
+    // both duplicates are admissible; exactly one row may survive or the
+    // symbol-keyed upsert fails with "cannot affect row a second time".
+    listing({
+      symbol: "AAL",
+      name: "ANGLO AMERICAN PLC",
+      type: "STK",
+      primaryExchange: "LSE",
+    }),
+    listing({
+      symbol: "AAL",
+      name: "American Airlines Group, Inc. - Common Stock",
+      type: "CS",
+      primaryExchange: "NASDAQ",
+    }),
+    // Excluded duplicate must not mask the admissible listing, in either order.
+    listing({ symbol: "BBB", primaryExchange: "OTC" }),
+    listing({ symbol: "BBB", primaryExchange: "NYSE" }),
+    listing({ symbol: "CCC", primaryExchange: "NYSE" }),
+    listing({ symbol: "CCC", primaryExchange: "OTC" }),
+  ];
+  const session = [bar("AAL"), bar("BBB"), bar("CCC")];
+  const sessions = Array.from({ length: 6 }, () => session);
+  const rows = computeSignalUniverseRanking({
+    listings,
+    sessions,
+    previousMembers: new Set(),
+  });
+  const symbols = rows.map((row) => row.symbol);
+  assert.equal(new Set(symbols).size, symbols.length);
+  assert.equal(symbols.filter((symbol) => symbol === "AAL").length, 1);
+  const bySymbol = new Map(rows.map((row) => [row.symbol, row]));
+  assert.equal(bySymbol.get("AAL")?.excludedReason, null);
+  assert.equal(bySymbol.get("BBB")?.excludedReason, null);
+  assert.equal(bySymbol.get("CCC")?.excludedReason, null);
+});
+
 test("insufficient trading history is marked, not silently ranked", () => {
   const listings = [listing({ symbol: "AAA" }), listing({ symbol: "NEWIPO" })];
   const fullSession = [bar("AAA"), bar("NEWIPO")];

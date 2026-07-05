@@ -5,8 +5,14 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  getGetSnapTradeAccountPortfolioQueryKey,
+  getGetSnapTradeRecentOrdersQueryKey,
+  useCheckSnapTradeEquityOrderImpact,
   usePlaceOrder,
   usePreviewOrder,
+  useGetSnapTradeRecentOrders,
+  useSearchSnapTradeAccountSymbols,
+  useSubmitSnapTradeEquityOrder,
   useSubmitOrders,
 } from "@workspace/api-client-react";
 import {
@@ -56,6 +62,8 @@ import {
 import { useValueFlash } from "../../lib/motion";
 import { buildSignalOptionsDeviation } from "./automationDeviationModel";
 import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
+import { useSnapTradeExecutionAccountState } from "../broker/snapTradeExecutionAccountStore.js";
+import { buildSnapTradeEquityOrderDraft } from "./snapTradeOrderTicketModel.js";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -84,6 +92,18 @@ const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
 const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 const toneForOrderSide = (side) =>
   toneForDirectionalIntent(side, TRADE_BUY_TONE);
+const AUTH_SESSION_QUERY_KEY = ["auth-session"];
+
+async function readAuthSession({ signal }) {
+  const response = await fetch("/api/auth/session", {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error("Auth session unavailable");
+  }
+  return response.json();
+}
 
 const TicketReadinessStrip = ({ model }) => {
   const tone = readinessToneColor(model?.tone);
@@ -142,8 +162,8 @@ export const TradeOrderTicket = ({
   brokerPositionContextReady = false,
   brokerOrderContextReady = false,
   gatewayTradingReady = false,
-  gatewayTradingMessage = "IB Gateway must be connected before trading.",
-  gatewayTradingBlockReason = "gateway",
+  gatewayTradingMessage = "IBKR Client Portal must be connected before trading.",
+  gatewayTradingBlockReason = "client_portal",
   automationContext = null,
   requestedSide = null,
   requestedNonce = 0,
@@ -279,14 +299,30 @@ export const TradeOrderTicket = ({
     staleTime: 15_000,
     refetchInterval: false,
   });
+  const snapTradeExecutionState = useSnapTradeExecutionAccountState();
+  const snapTradeAccount = snapTradeExecutionState.selectedAccount || null;
+  const snapTradeAccountReady = Boolean(snapTradeAccount?.executionReady);
+  const liveBrokerRoute = ticketIsShares ? "snaptrade" : "ibkr";
+  const snapTradeAuthSessionQuery = useQuery({
+    queryKey: AUTH_SESSION_QUERY_KEY,
+    queryFn: readAuthSession,
+    enabled: Boolean(liveBrokerRoute === "snaptrade" && snapTradeAccountReady),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const snapTradeCsrfToken = snapTradeAuthSessionQuery.data?.csrfToken || "";
+  const snapTradeCsrfHeaders = useMemo(
+    () => (snapTradeCsrfToken ? { "x-csrf-token": snapTradeCsrfToken } : {}),
+    [snapTradeCsrfToken],
+  );
   const liveOrderPayloadReady = ticketIsShares
-    ? Boolean(accountId && slot.ticker)
+    ? Boolean(snapTradeAccountReady && slot.ticker)
     : Boolean(accountId && selectedContractMeta && expInfo.actualDate);
   const gatewayTradingBlocked = !gatewayTradingReady;
   const gatewayTradingBlockedLabel =
     gatewayTradingBlockReason === "streams_stale"
       ? "STREAMS STALE"
-      : "GATEWAY REQUIRED";
+      : "SESSION REQUIRED";
   const placeOrderMutation = usePlaceOrder({
     mutation: {
       onSuccess: (order) => {
@@ -445,6 +481,45 @@ export const TradeOrderTicket = ({
       });
     },
   });
+  const submitSnapTradeOrderMutation = useSubmitSnapTradeEquityOrder({
+    request: { headers: snapTradeCsrfHeaders },
+    mutation: {
+      onSuccess: (result, variables) => {
+        const submittedAccountId = variables?.accountId;
+        if (submittedAccountId) {
+          void queryClient.invalidateQueries({
+            queryKey: getGetSnapTradeAccountPortfolioQueryKey(submittedAccountId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: getGetSnapTradeRecentOrdersQueryKey(submittedAccountId),
+          });
+        }
+        toast.push({
+          kind: "success",
+          title: `Submitted ${ticketInstrumentLabel}`,
+          body: [
+            result?.order?.action,
+            result?.order?.units,
+            result?.order?.symbol,
+            result?.order?.status,
+            result?.order?.brokerageOrderId,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "SnapTrade order rejected",
+          body: error?.message || "SnapTrade rejected the equity order.",
+        });
+      },
+    },
+  });
+  const snapTradeImpactMutation = useCheckSnapTradeEquityOrderImpact({
+    request: { headers: snapTradeCsrfHeaders },
+  });
   const [liveConfirmState, setLiveConfirmState] = useState(null);
   const [liveConfirmPending, setLiveConfirmPending] = useState(false);
   const [liveConfirmError, setLiveConfirmError] = useState(null);
@@ -469,8 +544,76 @@ export const TradeOrderTicket = ({
     normalizeTradingExecutionMode(_initialState.tradeExecutionMode),
   );
   const executionIsShadow = executionMode === "shadow";
+  const liveUsesSnapTrade =
+    !executionIsShadow && liveBrokerRoute === "snaptrade";
+  const snapTradeSymbolSearchText = String(slot.ticker || "")
+    .trim()
+    .toUpperCase();
+  const snapTradeSymbolSearchQuery = useSearchSnapTradeAccountSymbols(
+    snapTradeAccount?.id || "",
+    { query: snapTradeSymbolSearchText },
+    {
+      query: {
+        enabled: Boolean(
+          liveUsesSnapTrade &&
+            snapTradeAccountReady &&
+            snapTradeAccount?.id &&
+            snapTradeSymbolSearchText,
+        ),
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const snapTradeBestSymbol = snapTradeSymbolSearchQuery.data?.bestMatch || null;
+  const snapTradeRecentOrdersQuery = useGetSnapTradeRecentOrders(
+    snapTradeAccount?.id || "",
+    {
+      query: {
+        enabled: Boolean(
+          liveUsesSnapTrade &&
+            snapTradeAccountReady &&
+            snapTradeAccount?.id,
+        ),
+        staleTime: 15_000,
+        retry: false,
+      },
+    },
+  );
+  const snapTradeRecentOrders = snapTradeRecentOrdersQuery.data?.orders || [];
+  const latestSnapTradeOrder = snapTradeRecentOrders[0] || null;
+  const latestSnapTradeOrderStatus =
+    latestSnapTradeOrder?.status ||
+    (snapTradeRecentOrdersQuery.isError
+      ? "ERROR"
+      : snapTradeRecentOrdersQuery.isFetching
+        ? "REFRESHING"
+        : "NO RECENT ORDERS");
+  const latestSnapTradeOrderDetail = latestSnapTradeOrder
+    ? [
+        latestSnapTradeOrder.action,
+        latestSnapTradeOrder.filledQuantity != null &&
+        latestSnapTradeOrder.totalQuantity != null
+          ? `${latestSnapTradeOrder.filledQuantity}/${latestSnapTradeOrder.totalQuantity}`
+          : latestSnapTradeOrder.totalQuantity,
+        latestSnapTradeOrder.symbol || latestSnapTradeOrder.optionTicker,
+        latestSnapTradeOrder.brokerageOrderId,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : snapTradeRecentOrdersQuery.isFetching
+      ? "Updating"
+      : snapTradeRecentOrdersQuery.isError
+        ? "Unavailable"
+        : "Last 24h clear";
+  const snapTradeExecutionAccountLabel =
+    snapTradeAccount?.displayName || "Sync SnapTrade";
   const selectedExecutionLabel = executionIsShadow
     ? "SHADOW"
+    : liveUsesSnapTrade
+      ? snapTradeAccountReady
+        ? "SNAPTRADE LIVE"
+        : "SNAPTRADE SETUP"
     : brokerConfigured
       ? gatewayTradingReady
         ? `IBKR ${environment.toUpperCase()}`
@@ -480,11 +623,17 @@ export const TradeOrderTicket = ({
       : "IBKR REQUIRED";
   const selectedExecutionAccount = executionIsShadow
     ? "shadow"
+    : liveUsesSnapTrade
+      ? snapTradeExecutionAccountLabel
     : brokerConfigured
       ? accountId || MISSING_VALUE
       : MISSING_VALUE;
   const selectedExecutionColor = executionIsShadow
     ? CSS_COLOR.pink
+    : liveUsesSnapTrade
+      ? snapTradeAccountReady
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
     : brokerConfigured
       ? gatewayTradingReady
         ? CSS_COLOR.green
@@ -608,7 +757,24 @@ export const TradeOrderTicket = ({
           );
         })}
       </div>
-      {!gatewayTradingReady && (
+      {!executionIsShadow && liveUsesSnapTrade && !snapTradeAccountReady ? (
+        <div
+          style={{
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 8px"),
+            fontSize: textSize("body"),
+            color: CSS_COLOR.amber,
+            fontFamily: T.sans,
+            lineHeight: 1.35,
+          }}
+        >
+          Sync an execution-ready SnapTrade account in Settings before
+          submitting shares.
+        </div>
+      ) : null}
+      {!executionIsShadow && !liveUsesSnapTrade && !gatewayTradingReady && (
         <div
           style={{
             background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
@@ -928,11 +1094,11 @@ export const TradeOrderTicket = ({
   }, [executionMode]);
 
   useEffect(() => {
-    if (executionMode === "shadow") {
+    if (executionMode === "shadow" || liveUsesSnapTrade) {
       setAttachStopLoss(false);
       setAttachTakeProfit(false);
     }
-  }, [executionMode]);
+  }, [executionMode, liveUsesSnapTrade]);
 
   useEffect(() => {
     setPreviewSnapshot(null);
@@ -966,6 +1132,9 @@ export const TradeOrderTicket = ({
     brokerConfigured,
     brokerAuthenticated,
     automationTicketContext,
+    liveBrokerRoute,
+    snapTradeAccount?.id,
+    snapTradeAccountReady,
   ]);
   const bidFlashClass = useValueFlash(ticketIsShares ? equityPrice : bid);
   const midFlashClass = useValueFlash(ticketReferencePrice);
@@ -980,10 +1149,13 @@ export const TradeOrderTicket = ({
   };
   const lockedReadinessModel = buildTicketReadinessModel({
     executionMode,
+    brokerRoute: liveBrokerRoute,
     gatewayTradingReady,
     brokerConfigured,
     brokerAuthenticated,
     accountId,
+    snapTradeExecutionReady: snapTradeAccountReady,
+    snapTradeExecutionBlockers: snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
     quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
     spreadPct,
@@ -992,7 +1164,8 @@ export const TradeOrderTicket = ({
     submitPending:
       placeOrderMutation.isPending ||
       placeShadowOrderMutation.isPending ||
-      submitOrdersMutation.isPending,
+      submitOrdersMutation.isPending ||
+      submitSnapTradeOrderMutation.isPending,
   });
   const runLiveConfirm = async () => {
     if (!liveConfirmState?.onConfirm) {
@@ -1059,6 +1232,34 @@ export const TradeOrderTicket = ({
     stopPrice,
     fallbackPrice: ticketEntryReferencePrice,
   });
+  const snapTradeOrderDraft = liveUsesSnapTrade
+    ? buildSnapTradeEquityOrderDraft({
+        account: snapTradeAccount,
+        symbol: slot.ticker,
+        side,
+        orderType,
+        tif,
+        quantity: qtyNum,
+        orderPrices,
+      })
+    : { ready: false, reason: "route", body: null };
+  const snapTradeDraftBlockMessage =
+    {
+      snaptrade_account:
+        "Select an execution-ready SnapTrade account in Settings.",
+      symbol: "Select a ticker before submitting a SnapTrade order.",
+      quantity: "Enter a positive share quantity.",
+      price: "Enter a positive limit price.",
+      stop: "Enter a positive stop trigger.",
+    }[snapTradeOrderDraft.reason] ||
+    "The SnapTrade order payload is not ready yet.";
+  const snapTradeDraftButtonLabel =
+    {
+      symbol: "SYMBOL REQUIRED",
+      quantity: "QTY REQUIRED",
+      price: "PRICE REQUIRED",
+      stop: "STOP REQUIRED",
+    }[snapTradeOrderDraft.reason] || "SNAPTRADE BLOCKED";
   const fillPrice = orderPrices.fillPrice;
   const orderTypeLabel = formatTicketOrderType(orderType);
   const cost = fillPrice * qtyNum * ticketMultiplier;
@@ -1187,7 +1388,7 @@ export const TradeOrderTicket = ({
     sellCallIntent.applies && sellCallIntent.strategyIntent === "sell_to_close";
   const shadowAddExposureWarningActive =
     sameShadowContractExposure && !shadowSellToCloseIntent;
-  const orderRequest = liveOrderPayloadReady
+  const orderRequest = !liveUsesSnapTrade && liveOrderPayloadReady
     ? {
         accountId,
         mode: environment,
@@ -1251,7 +1452,7 @@ export const TradeOrderTicket = ({
       ? Number(value).toFixed(digits)
       : MISSING_VALUE;
   const hasAttachedExits =
-    !executionIsShadow && (attachStopLoss || attachTakeProfit);
+    !executionIsShadow && !liveUsesSnapTrade && (attachStopLoss || attachTakeProfit);
   const attachedExitCount = (attachStopLoss ? 1 : 0) + (attachTakeProfit ? 1 : 0);
   const attachedExitLabel =
     attachedExitCount === 2
@@ -1267,8 +1468,11 @@ export const TradeOrderTicket = ({
   ]
     .filter(Boolean)
     .join(" / ");
-  const stopLossExitDisabled = executionIsShadow || !attachStopLoss;
-  const takeProfitExitDisabled = executionIsShadow || !attachTakeProfit;
+  const attachedExitTogglesDisabled = executionIsShadow || liveUsesSnapTrade;
+  const stopLossExitDisabled =
+    attachedExitTogglesDisabled || !attachStopLoss;
+  const takeProfitExitDisabled =
+    attachedExitTogglesDisabled || !attachTakeProfit;
   const restoreAutomationPlan = () => {
     if (!automationTicketContext) {
       return;
@@ -1388,21 +1592,12 @@ export const TradeOrderTicket = ({
     return true;
   };
 
-  const previewOrder = () => {
+  const previewOrder = async () => {
     if (!validateTicket()) {
       return;
     }
 
     if (executionMode === "shadow") {
-      if (gatewayTradingBlocked) {
-        toast.push({
-          kind: "warn",
-          title: "IB Gateway disconnected",
-          body: gatewayTradingMessage,
-        });
-        return;
-      }
-
       if (!shadowExecutionReady || !shadowOrderRequest) {
         toast.push({
           kind: "info",
@@ -1418,11 +1613,135 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    if (liveUsesSnapTrade) {
+      if (!snapTradeCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before previewing a SnapTrade order.",
+        });
+        return;
+      }
+      if (!snapTradeAccount?.id || !snapTradeOrderDraft.ready || !snapTradeOrderDraft.body) {
+        toast.push({
+          kind: "warn",
+          title: "SnapTrade preview blocked",
+          body: snapTradeDraftBlockMessage,
+        });
+        return;
+      }
+      if (snapTradeSymbolSearchQuery.isFetching) {
+        toast.push({
+          kind: "info",
+          title: "Symbol lookup loading",
+          body: "Wait for SnapTrade to resolve this ticker for the selected brokerage account.",
+        });
+        return;
+      }
+      if (snapTradeSymbolSearchQuery.isError) {
+        toast.push({
+          kind: "warn",
+          title: "Symbol lookup failed",
+          body: "SnapTrade could not resolve this ticker for the selected brokerage account.",
+        });
+        return;
+      }
+      if (!snapTradeBestSymbol?.id) {
+        toast.push({
+          kind: "warn",
+          title: "Symbol not tradable",
+          body: "SnapTrade did not return a tradable symbol for this ticker in the selected account.",
+        });
+        return;
+      }
+
+      try {
+        const preview = await snapTradeImpactMutation.mutateAsync({
+          accountId: snapTradeAccount.id,
+          data: {
+            action: snapTradeOrderDraft.body.action,
+            universalSymbolId: snapTradeBestSymbol.id,
+            symbol:
+              snapTradeBestSymbol.symbol ||
+              snapTradeOrderDraft.body.symbol ||
+              slot.ticker,
+            orderType: snapTradeOrderDraft.body.orderType,
+            timeInForce: snapTradeOrderDraft.body.timeInForce,
+            units: snapTradeOrderDraft.body.units ?? null,
+            notionalValue: snapTradeOrderDraft.body.notionalValue ?? null,
+            price: snapTradeOrderDraft.body.price ?? null,
+            stop: snapTradeOrderDraft.body.stop ?? null,
+          },
+        });
+        const previewPrice =
+          preview?.order?.price ??
+          (Number.isFinite(ticketEntryReferencePrice)
+            ? ticketEntryReferencePrice
+            : null);
+        setPreviewSnapshot({
+          accountId: preview?.account?.id || snapTradeAccount.id,
+          resolvedContractId:
+            preview?.order?.universalSymbolId || snapTradeBestSymbol.id,
+          symbol:
+            preview?.order?.symbol ||
+            snapTradeBestSymbol.symbol ||
+            slot.ticker,
+          fillPrice: previewPrice,
+          orderPayload: {
+            route: "SNAPTRADE",
+            action: preview?.order?.action || snapTradeOrderDraft.body.action,
+            side: String(
+              preview?.order?.action || snapTradeOrderDraft.body.action,
+            ).toLowerCase(),
+            orderType:
+              preview?.order?.orderType || snapTradeOrderDraft.body.orderType,
+            timeInForce:
+              preview?.order?.timeInForce ||
+              snapTradeOrderDraft.body.timeInForce,
+            quantity:
+              preview?.order?.units ?? snapTradeOrderDraft.body.units ?? qtyNum,
+            totalQuantity:
+              preview?.order?.units ?? snapTradeOrderDraft.body.units ?? qtyNum,
+            price: previewPrice,
+            stop: preview?.order?.stop ?? snapTradeOrderDraft.body.stop ?? null,
+            tradeId: preview?.trade?.id || null,
+            expiresAt: preview?.trade?.expiresAt || null,
+            estimatedCommission:
+              preview?.impact?.estimatedCommission ?? null,
+            remainingCash: preview?.impact?.remainingCash ?? null,
+          },
+        });
+        toast.push({
+          kind: "success",
+          title: "SnapTrade preview ready",
+          body: [
+            preview?.order?.action || snapTradeOrderDraft.body.action,
+            preview?.order?.units ?? snapTradeOrderDraft.body.units,
+            preview?.order?.symbol ||
+              snapTradeBestSymbol.symbol ||
+              slot.ticker,
+            preview?.trade?.id,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        });
+      } catch (error) {
+        toast.push({
+          kind: "error",
+          title: "SnapTrade preview failed",
+          body:
+            error?.message ||
+            "SnapTrade could not simulate this equity order.",
+        });
+      }
+      return;
+    }
+
     if (!brokerConfigured) {
       toast.push({
         kind: "info",
         title: "IBKR required",
-        body: "Local preview simulation has been removed. Connect the IBKR bridge to preview a live order.",
+        body: "Local preview simulation has been removed. Connect IBKR Client Portal to preview a live order.",
       });
       return;
     }
@@ -1451,6 +1770,31 @@ export const TradeOrderTicket = ({
   };
 
   const submitLiveBrokerOrder = async () => {
+    if (liveUsesSnapTrade) {
+      if (!snapTradeCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before submitting a SnapTrade order.",
+        });
+        return;
+      }
+      if (!snapTradeAccount?.id || !snapTradeOrderDraft.ready || !snapTradeOrderDraft.body) {
+        toast.push({
+          kind: "error",
+          title: "SnapTrade order unavailable",
+          body: snapTradeDraftBlockMessage,
+        });
+        return;
+      }
+
+      await submitSnapTradeOrderMutation.mutateAsync({
+        accountId: snapTradeAccount.id,
+        data: snapTradeOrderDraft.body,
+      });
+      return;
+    }
+
     if (!orderRequest) {
       toast.push({
         kind: "error",
@@ -1467,7 +1811,7 @@ export const TradeOrderTicket = ({
         toast.push({
           kind: "error",
           title: "Attached exits unavailable",
-          body: "The current IBKR bridge did not return a structured TWS order payload for attached exit submission.",
+          body: "The current IBKR broker session did not return a structured order payload for attached exit submission.",
         });
         return;
       }
@@ -1505,11 +1849,85 @@ export const TradeOrderTicket = ({
       return;
     }
 
+    if (liveUsesSnapTrade) {
+      if (!snapTradeAccountReady || !snapTradeAccount?.id) {
+        toast.push({
+          kind: "warn",
+          title: "SnapTrade account required",
+          body: "Sync and select an execution-ready SnapTrade account in Settings before submitting shares.",
+        });
+        return;
+      }
+      if (snapTradeAuthSessionQuery.isPending) {
+        toast.push({
+          kind: "info",
+          title: "Auth session loading",
+          body: "Wait for the app session token before submitting a SnapTrade order.",
+        });
+        return;
+      }
+      if (!snapTradeCsrfToken) {
+        toast.push({
+          kind: "warn",
+          title: "Auth session required",
+          body: "Refresh the app session before submitting a SnapTrade order.",
+        });
+        return;
+      }
+      if (!snapTradeOrderDraft.ready || !snapTradeOrderDraft.body) {
+        toast.push({
+          kind: "warn",
+          title: "SnapTrade order blocked",
+          body: snapTradeDraftBlockMessage,
+        });
+        return;
+      }
+
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
+        detail: `Submit this live SnapTrade equity order through ${snapTradeExecutionAccountLabel}.`,
+        confirmLabel: `${ticketActionLabel} SNAPTRADE ORDER`,
+        confirmTone: selectedSideColor,
+        lines: [
+          { label: "ACCOUNT", value: snapTradeExecutionAccountLabel },
+          { label: "SYMBOL", value: slot.ticker },
+          { label: "ROUTE", value: "SNAPTRADE" },
+          { label: "ASSET", value: "SHARES" },
+          { label: "TYPE", value: orderTypeLabel },
+          { label: "TIF", value: tif },
+          {
+            label: "QTY",
+            value: `${qtyNum || 0} ${ticketQuantityUnit.toUpperCase()}`,
+          },
+          {
+            label:
+              orderType === "STP" || orderType === "STP_LMT"
+                ? "STOP"
+                : orderType === "MKT"
+                  ? "MARK"
+                  : "LIMIT",
+            value:
+              orderType === "STP_LMT"
+                ? stopLimitPriceDisplay
+                : fillPriceDisplay,
+          },
+          {
+            label: isLong ? "EST COST" : "EST CREDIT",
+            value: costDisplay,
+            valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
+          },
+        ],
+        onConfirm: submitLiveBrokerOrder,
+      });
+      return;
+    }
+
     if (!brokerConfigured) {
       toast.push({
         kind: "warn",
         title: "IBKR required",
-        body: "Local order fills are disabled. Connect the IBKR bridge to submit this order.",
+        body: "Local order fills are disabled. Connect IBKR Client Portal to submit this order.",
       });
       return;
     }
@@ -1517,7 +1935,7 @@ export const TradeOrderTicket = ({
     if (gatewayTradingBlocked) {
       toast.push({
         kind: "warn",
-        title: "IB Gateway disconnected",
+        title: "IBKR session unavailable",
         body: gatewayTradingMessage,
       });
       return;
@@ -1527,7 +1945,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "warn",
         title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
       });
       return;
     }
@@ -1636,14 +2054,6 @@ export const TradeOrderTicket = ({
     if (!validateTicket()) {
       return;
     }
-    if (gatewayTradingBlocked) {
-      toast.push({
-        kind: "warn",
-        title: "IB Gateway disconnected",
-        body: gatewayTradingMessage,
-      });
-      return;
-    }
     if (automationAlreadyShadowFilled) {
       toast.push({
         kind: "warn",
@@ -1740,20 +2150,31 @@ export const TradeOrderTicket = ({
         : limitPrice;
   const parentPriceDisabled = orderType === "MKT";
   const qtyPresets = ticketIsShares ? [1, 10, 25, 50, 100] : [1, 3, 5, 10];
-  const isSubmittingOrder =
+  const ibkrSubmitPending =
     placeOrderMutation.isPending || submitOrdersMutation.isPending;
   const previewIsPending =
-    previewOrderMutation.isPending || previewShadowOrderMutation.isPending;
+    previewOrderMutation.isPending ||
+    previewShadowOrderMutation.isPending ||
+    snapTradeImpactMutation.isPending;
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
-    : isSubmittingOrder;
+    : liveUsesSnapTrade
+      ? submitSnapTradeOrderMutation.isPending
+      : ibkrSubmitPending;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
+  const snapTradeAuthLoading =
+    liveUsesSnapTrade &&
+    snapTradeAccountReady &&
+    snapTradeAuthSessionQuery.isPending;
   const ticketReadinessModel = buildTicketReadinessModel({
     executionMode,
+    brokerRoute: liveBrokerRoute,
     gatewayTradingReady,
     brokerConfigured,
     brokerAuthenticated,
     accountId,
+    snapTradeExecutionReady: snapTradeAccountReady,
+    snapTradeExecutionBlockers: snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
     quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
     spreadPct,
@@ -1766,18 +2187,20 @@ export const TradeOrderTicket = ({
   const primarySubmitDisabled = executionIsShadow
     ? placeShadowOrderMutation.isPending ||
       automationAlreadyShadowFilled ||
-      gatewayTradingBlocked ||
       sellCallSubmitBlocked
-    : isSubmittingOrder || gatewayTradingBlocked || sellCallSubmitBlocked;
+    : liveUsesSnapTrade
+      ? submitSnapTradeOrderMutation.isPending ||
+        snapTradeAuthLoading ||
+        !snapTradeCsrfToken ||
+        !snapTradeOrderDraft.ready ||
+        sellCallSubmitBlocked
+      : ibkrSubmitPending || gatewayTradingBlocked || sellCallSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
-    sellCallSubmitBlocked ||
-    (executionIsShadow && gatewayTradingBlocked);
+    sellCallSubmitBlocked;
   const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
-    ? gatewayTradingBlocked
-      ? gatewayTradingBlockedLabel
-      : placeShadowOrderMutation.isPending
+    ? placeShadowOrderMutation.isPending
       ? "FILLING..."
       : automationAlreadyShadowFilled
         ? "SHADOW FILLED"
@@ -1788,9 +2211,21 @@ export const TradeOrderTicket = ({
 	        : shadowAddExposureWarningActive
 	            ? "CONFIRM ADD EXPOSURE"
 	            : `${ticketActionLabel} SHADOW ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay}`
+    : liveUsesSnapTrade
+      ? submitSnapTradeOrderMutation.isPending
+        ? "SUBMITTING..."
+        : !snapTradeAccountReady
+          ? "SNAPTRADE ACCOUNT REQUIRED"
+          : snapTradeAuthLoading
+            ? "AUTH LOADING..."
+            : !snapTradeCsrfToken
+              ? "AUTH SESSION REQUIRED"
+              : !snapTradeOrderDraft.ready
+                ? snapTradeDraftButtonLabel
+                : `${ticketActionLabel} SNAPTRADE ${qtyNum || 0} sh × ${fillPriceDisplay} · ${signedCostDisplay}`
     : gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
-      : isSubmittingOrder
+      : ibkrSubmitPending
       ? "SUBMITTING..."
       : sellCallSubmitBlocked
         ? sellCallIntent.actionLabel
@@ -2024,6 +2459,67 @@ export const TradeOrderTicket = ({
       ) : null}
       {renderExecutionModeControls()}
       <TicketReadinessStrip model={ticketReadinessModel} />
+      {liveUsesSnapTrade ? (
+        <div
+          data-testid="snaptrade-recent-orders-status"
+          style={{
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg0,
+            borderRadius: dim(RADII.xs),
+            padding: sp("5px 7px"),
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.35fr)",
+            gap: sp(7),
+            alignItems: "center",
+            fontFamily: T.sans,
+            minWidth: 0,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
+              }}
+            >
+              RECENT ORDERS
+            </div>
+            <div
+              style={{
+                color: snapTradeRecentOrdersQuery.isError
+                  ? CSS_COLOR.red
+                  : snapTradeRecentOrdersQuery.isFetching
+                    ? CSS_COLOR.amber
+                    : latestSnapTradeOrder
+                      ? CSS_COLOR.green
+                      : CSS_COLOR.textDim,
+                fontSize: fs(10),
+                fontWeight: FONT_WEIGHTS.regular,
+                marginTop: sp(1),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {latestSnapTradeOrderStatus}
+            </div>
+          </div>
+          <div
+            style={{
+              minWidth: 0,
+              color: CSS_COLOR.textSec,
+              fontSize: textSize("body"),
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              textAlign: "right",
+            }}
+          >
+            {latestSnapTradeOrderDetail}
+          </div>
+        </div>
+      ) : null}
       <div style={{ display: "flex", alignItems: "baseline", gap: sp(4) }}>
         <span
           style={{
@@ -2531,7 +3027,7 @@ export const TradeOrderTicket = ({
               type="button"
               aria-label="Toggle stop loss attached exit"
               data-testid="trade-ticket-stop-loss-toggle"
-              disabled={executionIsShadow}
+              disabled={attachedExitTogglesDisabled}
               onClick={() => setAttachStopLoss((value) => !value)}
               style={{
                 border: `1px solid ${attachStopLoss ? CSS_COLOR.red : CSS_COLOR.border}`,
@@ -2542,8 +3038,8 @@ export const TradeOrderTicket = ({
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
                 padding: sp("1px 5px"),
-                cursor: executionIsShadow ? "not-allowed" : "pointer",
-                opacity: executionIsShadow ? 0.45 : 1,
+                cursor: attachedExitTogglesDisabled ? "not-allowed" : "pointer",
+                opacity: attachedExitTogglesDisabled ? 0.45 : 1,
               }}
             >
               {attachStopLoss ? "ON" : "OFF"}
@@ -2598,7 +3094,7 @@ export const TradeOrderTicket = ({
               type="button"
               aria-label="Toggle take profit attached exit"
               data-testid="trade-ticket-take-profit-toggle"
-              disabled={executionIsShadow}
+              disabled={attachedExitTogglesDisabled}
               onClick={() => setAttachTakeProfit((value) => !value)}
               style={{
                 border: `1px solid ${attachTakeProfit ? CSS_COLOR.green : CSS_COLOR.border}`,
@@ -2609,8 +3105,8 @@ export const TradeOrderTicket = ({
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
                 padding: sp("1px 5px"),
-                cursor: executionIsShadow ? "not-allowed" : "pointer",
-                opacity: executionIsShadow ? 0.45 : 1,
+                cursor: attachedExitTogglesDisabled ? "not-allowed" : "pointer",
+                opacity: attachedExitTogglesDisabled ? 0.45 : 1,
               }}
             >
               {attachTakeProfit ? "ON" : "OFF"}
@@ -2878,6 +3374,8 @@ export const TradeOrderTicket = ({
             ? "PREVIEWING..."
             : executionIsShadow
               ? "PREVIEW SHADOW"
+              : liveUsesSnapTrade
+                ? "PREVIEW SNAPTRADE"
               : "PREVIEW IBKR"}
         </button>
         <button

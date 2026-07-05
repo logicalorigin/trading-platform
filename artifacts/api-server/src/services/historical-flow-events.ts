@@ -740,24 +740,48 @@ async function loadStoredHistoricalFlowEvents(input: {
       from: input.from,
       to: input.to,
     });
+    if (windows.length === 0) {
+      return [];
+    }
+
+    // N+1 fix: the old per-window loop issued one pooled query per time bucket
+    // (~50-210 acquisitions per request against a 12-slot pool). Replace it with a
+    // SINGLE range scan spanning [first window start, last window end) using the
+    // same constant filters (underlying, provider) and the same asc(occurredAt)
+    // ordering, then apply the per-window top-N limit in JS. Windows are disjoint
+    // and globally ascending in time, so [windows[0].from, last window .to) covers
+    // every window, and filtering the globally-ordered scan to each window
+    // preserves that window's asc(occurredAt) order — making each window's first-N
+    // rows identical to the old `.orderBy(asc(occurredAt)).limit(perBucketLimit)`
+    // result, and the window-by-window accumulation row-for-row identical. No
+    // global LIMIT is applied: an asc-ordered cap would bias toward the earliest
+    // window and drop later windows' top-N, breaking equivalence.
+    const scannedRows = await db
+      .select()
+      .from(flowEventsTable)
+      .where(
+        and(
+          eq(flowEventsTable.underlyingSymbol, input.underlying),
+          eq(flowEventsTable.provider, input.provider),
+          gte(flowEventsTable.occurredAt, windows[0].from),
+          lt(flowEventsTable.occurredAt, windows[windows.length - 1].to),
+        ),
+      )
+      .orderBy(asc(flowEventsTable.occurredAt));
+
     const rows: Array<typeof flowEventsTable.$inferSelect> = [];
     for (const window of windows) {
       if (rows.length >= sample.rowLimit) {
         break;
       }
-      const bucketRows = await db
-        .select()
-        .from(flowEventsTable)
-        .where(
-          and(
-            eq(flowEventsTable.underlyingSymbol, input.underlying),
-            eq(flowEventsTable.provider, input.provider),
-            gte(flowEventsTable.occurredAt, window.from),
-            lt(flowEventsTable.occurredAt, window.to),
-          ),
-        )
-        .orderBy(asc(flowEventsTable.occurredAt))
-        .limit(Math.min(sample.perBucketLimit, sample.rowLimit - rows.length));
+      const windowFromMs = window.from.getTime();
+      const windowToMs = window.to.getTime();
+      const bucketRows = scannedRows
+        .filter((row) => {
+          const occurredMs = row.occurredAt.getTime();
+          return occurredMs >= windowFromMs && occurredMs < windowToMs;
+        })
+        .slice(0, Math.min(sample.perBucketLimit, sample.rowLimit - rows.length));
       rows.push(...bucketRows);
     }
 
@@ -1049,13 +1073,6 @@ async function hydrateHistoricalFlowSessions(input: {
           to: session.windowTo,
           unusualThreshold: input.unusualThreshold,
           maxDte: input.maxDte,
-          onEvents: async (events) => {
-            await persistHistoricalFlowEvents({
-              underlying: input.underlying,
-              provider: input.provider,
-              events,
-            });
-          },
         });
         const events = Array.isArray(result) ? result : result.events;
         const contractCount = Array.isArray(result) ? 0 : result.contractCount;
@@ -1503,6 +1520,14 @@ export async function listHistoricalFlowEvents(input: {
     }),
   };
 }
+
+// Test-only handles for the N+1 single-range-scan reader and its window planner,
+// so the equivalence test can drive the exact reader and rebuild the identical
+// windows the reader buckets over. Not referenced by production code.
+export const __loadStoredHistoricalFlowEventsForTests = loadStoredHistoricalFlowEvents;
+export const __hydrateHistoricalFlowSessionsForTests = hydrateHistoricalFlowSessions;
+export const __resolveHistoricalFlowSampleWindowsForTests =
+  resolveHistoricalFlowSampleWindows;
 
 export function __resetHistoricalFlowEventsForTests(): void {
   historicalFlowStoreDisabled = false;

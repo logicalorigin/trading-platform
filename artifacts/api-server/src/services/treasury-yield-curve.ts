@@ -1,6 +1,7 @@
 import type { GexProjectionRatesInput } from "./gex-projection";
 
 const TREASURY_YIELD_CURVE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const TREASURY_YIELD_CURVE_UNAVAILABLE_CACHE_TTL_MS = 5 * 60 * 1000;
 const TREASURY_YIELD_CURVE_SOURCE = "treasury_daily_par_yield_curve";
 const TREASURY_YIELD_CURVE_BASE_URL =
   "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml";
@@ -102,14 +103,38 @@ export function parseTreasuryYieldCurveXml(
   };
 }
 
+async function fetchTreasuryYieldCurveMonth(
+  fetchImpl: typeof fetch,
+  url: string,
+  signal?: AbortSignal,
+): Promise<GexProjectionRatesInput> {
+  try {
+    const response = await fetchImpl(url, { signal });
+    if (!response.ok) {
+      return unavailableRates(
+        `Treasury yield curve request failed with ${response.status}.`,
+      );
+    }
+    return parseTreasuryYieldCurveXml(await response.text());
+  } catch (error) {
+    return unavailableRates(
+      error instanceof Error
+        ? error.message
+        : "Treasury yield curve request failed.",
+    );
+  }
+}
+
 export async function fetchTreasuryYieldCurveRates(input: {
   asOf?: Date;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  now?: () => number;
 } = {}): Promise<GexProjectionRatesInput> {
   const now = input.asOf ?? new Date();
+  const nowMs = input.now ?? Date.now;
   const cached = treasuryYieldCurveCache;
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > nowMs()) {
     return cached.value;
   }
 
@@ -118,29 +143,40 @@ export async function fetchTreasuryYieldCurveRates(input: {
     return unavailableRates("Runtime fetch is unavailable.");
   }
 
-  const url =
-    process.env["TREASURY_YIELD_CURVE_URL"] ||
-    defaultTreasuryYieldCurveUrl(now);
-  try {
-    const response = await fetchImpl(url, { signal: input.signal });
-    if (!response.ok) {
-      return unavailableRates(
-        `Treasury yield curve request failed with ${response.status}.`,
-      );
-    }
-    const parsed = parseTreasuryYieldCurveXml(await response.text());
-    treasuryYieldCurveCache = {
-      expiresAt: Date.now() + TREASURY_YIELD_CURVE_CACHE_TTL_MS,
-      value: parsed,
-    };
-    return parsed;
-  } catch (error) {
-    return unavailableRates(
-      error instanceof Error
-        ? error.message
-        : "Treasury yield curve request failed.",
+  const overrideUrl = process.env["TREASURY_YIELD_CURVE_URL"];
+  let result = await fetchTreasuryYieldCurveMonth(
+    fetchImpl,
+    overrideUrl || defaultTreasuryYieldCurveUrl(now),
+    input.signal,
+  );
+  if (result.status === "unavailable" && !overrideUrl && !input.signal?.aborted) {
+    // Early in a month Treasury may not have published current-month rows yet;
+    // retry once with the previous month before giving up.
+    const previousMonth = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+    );
+    result = await fetchTreasuryYieldCurveMonth(
+      fetchImpl,
+      defaultTreasuryYieldCurveUrl(previousMonth),
+      input.signal,
     );
   }
+
+  if (result.status === "unavailable" && input.signal?.aborted) {
+    // The failure came from the caller aborting (e.g. client disconnect), not
+    // from Treasury: return it without poisoning the shared cache.
+    return result;
+  }
+
+  treasuryYieldCurveCache = {
+    expiresAt:
+      nowMs() +
+      (result.status === "ok"
+        ? TREASURY_YIELD_CURVE_CACHE_TTL_MS
+        : TREASURY_YIELD_CURVE_UNAVAILABLE_CACHE_TTL_MS),
+    value: result,
+  };
+  return result;
 }
 
 export function __clearTreasuryYieldCurveCacheForTests(): void {

@@ -480,26 +480,6 @@ const SETTING_FIELD_SECTIONS = [
       },
       {
         slice: "profile",
-        path: "exitPolicy.tightenAtFiveXGivebackPct",
-        label: "5X GIVEBACK %",
-        type: "number",
-        step: 5,
-        min: 0,
-        max: 100,
-        unit: "%",
-      },
-      {
-        slice: "profile",
-        path: "exitPolicy.tightenAtTenXGivebackPct",
-        label: "10X GIVEBACK %",
-        type: "number",
-        step: 5,
-        min: 0,
-        max: 100,
-        unit: "%",
-      },
-      {
-        slice: "profile",
         path: "exitPolicy.earlyExitBars",
         label: "EARLY EXIT BARS",
         type: "number",
@@ -731,32 +711,9 @@ export const SETTINGS_SECTIONS = [
       field("riskCaps.maxDailyLoss", { compactLabel: "Daily Halt" }),
     ],
   },
-  {
-    id: "gates",
-    label: "Gates",
-    defaultOpen: false,
-    summary: [
-      { kind: "field", path: "entryGate.mtfAlignment.enabled", label: "MTF" },
-      {
-        kind: "field",
-        path: "entryGate.mtfAlignment.requiredCount",
-        label: "Count",
-        format: "ofMax",
-      },
-      { kind: "field", path: "entryGate.mtfAlignment.preset", label: "Preset" },
-      { kind: "field", path: "entryGate.mtfAlignment.timeframes", label: "Frames" },
-    ],
-    fields: [
-      field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
-      // Required count resolves to the selected frame count; the selected MTF
-      // chips are the alignment gate.
-      field("entryGate.mtfAlignment.preset", { compactLabel: "MTF Preset" }),
-      field("entryGate.mtfAlignment.timeframes", {
-        compactLabel: "MTF Frames",
-        compactWide: true,
-      }),
-    ],
-  },
+  // MTF gate editor removed: the SIGNAL FRAMES band (EXEC + MTF rows) is the single
+  // source of MTF frame/preset/required-count selection. MTF enable is forced on in
+  // profile normalization; disable MTF by collapsing the MTF row to the exec frame.
   {
     id: "contract",
     label: "Contract",
@@ -821,14 +778,13 @@ export const SETTINGS_SECTIONS = [
     summary: [
       { kind: "field", path: "liquidityGate.maxSpreadPctOfMid", label: "Spread" },
       { kind: "field", path: "liquidityGate.minBid", label: "Bid" },
-      { kind: "field", path: "liquidityGate.requireFreshQuote", label: "Fresh" },
       { kind: "field", path: "fillPolicy.ttlSeconds", label: "TTL" },
     ],
     fields: [
       field("liquidityGate.maxSpreadPctOfMid", { compactLabel: "Max Spread" }),
       field("liquidityGate.minBid", { compactLabel: "Min Bid" }),
-      field("liquidityGate.requireBidAsk", { compactLabel: "Bid/Ask" }),
-      field("liquidityGate.requireFreshQuote", { compactLabel: "Fresh Quote" }),
+      // Bid/ask + fresh-quote require* booleans removed: governed by the Quote halt
+      // toggles (their state is folded into those toggles in profile normalization).
       field("fillPolicy.ttlSeconds", { compactLabel: "TTL" }),
       field("fillPolicy.chaseSteps", { compactLabel: "Chase Ladder", compactWide: true }),
     ],
@@ -852,16 +808,14 @@ export const SETTINGS_SECTIONS = [
           "exitPolicy.earlyExitLossPct",
           "exitPolicy.trailActivationPct",
           "exitPolicy.minLockedGainPct",
-          "exitPolicy.tightenAtFiveXGivebackPct",
-          "exitPolicy.tightenAtTenXGivebackPct",
+          "exitPolicy.trailGivebackPct",
         ],
         fields: [
           field("exitPolicy.hardStopPct", { compactLabel: "Stop" }),
           field("exitPolicy.earlyExitLossPct", { compactLabel: "Early Loss" }),
           field("exitPolicy.trailActivationPct", { compactLabel: "Trail On" }),
           field("exitPolicy.minLockedGainPct", { compactLabel: "Lock" }),
-          field("exitPolicy.tightenAtFiveXGivebackPct", { compactLabel: "5x" }),
-          field("exitPolicy.tightenAtTenXGivebackPct", { compactLabel: "10x" }),
+          field("exitPolicy.trailGivebackPct", { compactLabel: "Cushion" }),
         ],
       },
       {

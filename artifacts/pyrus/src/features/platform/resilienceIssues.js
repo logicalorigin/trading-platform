@@ -12,7 +12,6 @@ export const RESILIENCE_REASON_TEXT = {
   option_chart_stale_fallback: "Showing a cached option chart; the live load failed.",
   list_stale_db_backoff: "Showing a cached list; the database is temporarily backed off.",
   write_backpressure_timeout: "The live stream fell behind and was dropped; reconnecting.",
-  quotes_backoff: "Quotes are temporarily backed off after repeated errors.",
   ibkr_bridge_work_backoff: "The broker bridge is backed off after repeated failures.",
   ibkr_bridge_lane_backoff: "A broker bridge lane is backed off after repeated failures.",
   ibkr_bridge_lane_queue_full: "The broker bridge is saturated and shedding requests.",
@@ -30,7 +29,6 @@ const TRANSIENT_RESILIENCE_REASONS = new Set([
   "ibkr_bridge_lane_backoff",
   "ibkr_bridge_lane_queue_full",
   "ibkr_bridge_lane_timeout",
-  "quotes_backoff",
 ]);
 
 const normalizeReason = (reason) =>

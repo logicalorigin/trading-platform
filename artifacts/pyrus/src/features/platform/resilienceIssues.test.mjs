@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  collectDataIssuesFromRecord,
+} from "./dataIssueModel.js";
+import {
   RESILIENCE_REASON_TEXT,
   collectWidgetIssues,
   humanizeResilienceReason,
@@ -19,6 +22,19 @@ test("collectWidgetIssues surfaces a stale record", () => {
   );
   assert.ok(issues.length >= 1);
   assert.match(issues[0].title, /stale/i);
+});
+
+test("stale issue copy does not imply an old backend snapshot fallback", () => {
+  const issues = collectDataIssuesFromRecord(
+    { status: "stale", lastEvaluatedAt: "2026-06-26T20:00:00.000Z" },
+    { valueLabel: "1m signal cell" },
+  );
+
+  assert.ok(issues.some((issue) => /stale/i.test(issue.title)));
+  assert.equal(
+    issues.some((issue) => /older backend snapshot/i.test(issue.summary || "")),
+    false,
+  );
 });
 
 test("collectWidgetIssues surfaces a degraded record", () => {

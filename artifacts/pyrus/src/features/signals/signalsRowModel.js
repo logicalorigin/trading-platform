@@ -613,7 +613,11 @@ export const resolveSignalMatrixVerdict = ({
   });
   const entries = matrixTimeframes.map((timeframe) => {
     const state = hydratedMatrixStatesByTimeframe?.[timeframe] || null;
-    const direction = getCurrentSignalDirection(state) || null;
+    // Mirror the bot: the verdict counts each cell's LIVE trend (the same source
+    // the backend entry gate trades on, via getMtfGateSignalDirection), not the
+    // stale-latching crossover fallback. This keeps the verdict's direction/regime
+    // from contradicting the MTF-alignment override, which uses the same resolver.
+    const direction = getMtfGateSignalDirection(state) || null;
     const current = isSignalStateCurrent(state);
     const problem = isProblemSignalState(state);
     return {
@@ -628,7 +632,7 @@ export const resolveSignalMatrixVerdict = ({
     };
   });
   const reasonCodes = [];
-  const primaryDirection = getCurrentSignalDirection(primaryState) || null;
+  const primaryDirection = getMtfGateSignalDirection(primaryState) || null;
   const currentComputedEntries = entries.filter(
     (entry) => entry.current && entry.computed && !entry.problem,
   );

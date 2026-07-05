@@ -55,12 +55,34 @@ export function normalizeLegacyAlgoBrandText(value: string): string {
   );
 }
 
-// Walks strings/arrays/objects and renames legacy brand tokens. Uses structural
-// sharing: when a subtree contains no legacy branding it is returned by
-// reference instead of being rebuilt, so clean payloads (the common case on
-// streaming/poll paths) cost a shallow traversal with no allocation. Output is
-// JSON-identical to a full rebuild; callers only ever serialize the result.
+// Renames legacy brand tokens in strings/arrays/objects (including keys). Output
+// is JSON-identical to `value` when nothing matches, and callers only ever
+// serialize the result.
+//
+// Fast path: the recursive walk below allocates per object/array node
+// (`Object.entries(...).map(...)`) and runs a regex per key — on the universe-wide
+// algo/cockpit payloads that showed up as a top event-loop cost in a live CPU
+// profile. The overwhelmingly common case is a payload with NO legacy branding
+// anywhere, so at the ENTRY (not per recursive node) do a single native
+// JSON.stringify + one "ray" scan: if the serialized form has no "ray", the walk
+// would return `value` unchanged, so skip it entirely and return by reference.
+// Dirty payloads (rare; legacy branding is being retired) fall through to the
+// structural walk; non-serializable values (circular ref / BigInt) also fall
+// through, preserving prior behavior.
 export function normalizeLegacyAlgoBranding<T>(value: T): T {
+  if (value && typeof value === "object") {
+    try {
+      if (!LEGACY_BRAND_HINT.test(JSON.stringify(value))) {
+        return value;
+      }
+    } catch {
+      // Non-serializable (circular ref / BigInt): defer to the structural walk.
+    }
+  }
+  return normalizeLegacyAlgoBrandingWalk(value);
+}
+
+function normalizeLegacyAlgoBrandingWalk<T>(value: T): T {
   if (typeof value === "string") {
     return normalizeLegacyAlgoBrandText(value) as T;
   }
@@ -68,7 +90,7 @@ export function normalizeLegacyAlgoBranding<T>(value: T): T {
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const normalized = normalizeLegacyAlgoBranding(item);
+      const normalized = normalizeLegacyAlgoBrandingWalk(item);
       if (normalized !== item) {
         changed = true;
       }
@@ -85,7 +107,7 @@ export function normalizeLegacyAlgoBranding<T>(value: T): T {
   const nextEntries = Object.entries(value as Record<string, unknown>).map(
     ([key, item]) => {
       const nextKey = normalizeLegacyAlgoBrandText(key);
-      const nextItem = normalizeLegacyAlgoBranding(item);
+      const nextItem = normalizeLegacyAlgoBrandingWalk(item);
       if (nextKey !== key || nextItem !== item) {
         changed = true;
       }

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { __marketingShadowDashboardInternalsForTests } from "./marketing-shadow-dashboard";
+import {
+  __marketingShadowDashboardInternalsForTests,
+  normalizeMarketingShadowDashboardInput,
+} from "./marketing-shadow-dashboard";
 
 const { readGenuineDegraded, readGenuineStale, buildWarnings } =
   __marketingShadowDashboardInternalsForTests;
@@ -44,4 +48,28 @@ test("buildWarnings filters out contention markers but keeps real warnings", () 
     { reason: DB_FALLBACK_REASON },
   ]);
   assert.deepEqual(warnings, [DB_FALLBACK_REASON]);
+});
+
+test("marketing dashboard defaults to a bounded equity range unless ALL is explicit", () => {
+  assert.equal(normalizeMarketingShadowDashboardInput({}).equityRange, "1D");
+  assert.equal(
+    normalizeMarketingShadowDashboardInput({ equityRange: "ALL" }).equityRange,
+    "ALL",
+  );
+});
+
+test("marketing dashboard snapshot stages cold DB reads", () => {
+  const source = readFileSync(
+    new URL("./marketing-shadow-dashboard.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function fetchMarketingShadowDashboardSnapshot",
+  );
+  const end = source.indexOf("function signatureForPayload", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.doesNotMatch(block, /Promise\.all/);
 });

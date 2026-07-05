@@ -128,6 +128,10 @@ export type PyrusSignalsDirectionalFeatures = {
   volatilityComponent: number;
   mtfAlignment: number;
   atrPct: number;
+  // Consecutive bars regimeDirection has held its current value (ending at
+  // this bar). Feeds the expected-move-v2 conviction stack ("fresh regime
+  // flip"). Undefined when the caller doesn't supply it.
+  regimeAgeBars?: number;
 };
 
 export type PyrusSignalsEvaluation = {
@@ -143,6 +147,16 @@ export type PyrusSignalsEvaluation = {
   volatilityScore: number[];
   trendDirection: number[];
   regimeDirection: number[];
+  // False when the WMA basis slope was never evaluable (fewer than
+  // basisLength + 5 bars): trendDirection/regimeDirection then still carry
+  // their bullish seed, not a measured trend. Consumers must treat the final
+  // direction as unknown in that case, never as a bullish default (mirrors
+  // resolvePyrusSignalsTrendDirection returning 0).
+  trendBasisComputable: boolean;
+  // Final latched market-structure (CHoCH) direction: 1, -1, or 0 when no
+  // structure break ever latched. A latched value is a real measured
+  // direction even when the WMA basis never warmed up.
+  marketStructureDirection: number;
   structureEvents: PyrusSignalsStructureEvent[];
   signalEvents: PyrusSignalsSignalEvent[];
 };
@@ -963,6 +977,7 @@ export function buildPyrusSignalsDirectionalFeatures(input: {
   adx: number;
   volatilityScore: number;
   atr: number;
+  regimeAgeBars?: number;
 }): PyrusSignalsDirectionalFeatures {
   const current = input.chartBars[input.index];
   const direction = input.direction >= 0 ? 1 : -1;
@@ -1053,6 +1068,9 @@ export function buildPyrusSignalsDirectionalFeatures(input: {
     ),
     mtfAlignment: roundFeature(mtfAlignment),
     atrPct: roundFeature(atrPct),
+    regimeAgeBars: Number.isFinite(input.regimeAgeBars)
+      ? input.regimeAgeBars
+      : undefined,
   };
 }
 
@@ -1064,6 +1082,7 @@ const buildFilterState = (
   adx: number[],
   volatilityScore: number[],
   atrSmoothed: number[],
+  regimeDirectionAge: number[],
 ): PyrusSignalsFilterState => {
   const mtfDirections = [settings.mtf1, settings.mtf2, settings.mtf3].map(
     (mtfTimeframe) =>
@@ -1085,6 +1104,7 @@ const buildFilterState = (
     adx: currentAdx,
     volatilityScore: currentVolatilityScore,
     atr: atrSmoothed[index],
+    regimeAgeBars: regimeDirectionAge[index],
   });
   const currentSessionKey = resolvePyrusSignalsSessionKey(chartBars[index]);
   const mtfPass: [boolean, boolean, boolean] = [
@@ -1171,11 +1191,16 @@ export function evaluatePyrusSignalsSignals(input: {
   );
   const trendDirectionSeries = new Array<number>(chartBars.length).fill(1);
   const regimeDirection = new Array<number>(chartBars.length).fill(1);
+  // Consecutive bars regimeDirection has held its current value, tracked
+  // incrementally alongside regimeDirection below. Feeds the
+  // expected-move-v2 conviction stack ("fresh regime flip").
+  const regimeDirectionAge = new Array<number>(chartBars.length).fill(1);
   const structureEvents: PyrusSignalsStructureEvent[] = [];
   const signalEvents: PyrusSignalsSignalEvent[] = [];
   const medianBarInterval = resolveMedianPositiveBarInterval(chartBars);
 
   let trendDirection = 1;
+  let trendBasisComputable = false;
   let marketStructureDirection = 0;
   let lastSwingHigh = Number.NaN;
   let previousSwingHigh = Number.NaN;
@@ -1250,6 +1275,7 @@ export function evaluatePyrusSignalsSignals(input: {
       Number.isFinite(basis[index]) &&
       Number.isFinite(basis[index - 5])
     ) {
+      trendBasisComputable = true;
       if (basis[index] > basis[index - 5]) {
         trendDirection = 1;
       } else if (basis[index] < basis[index - 5]) {
@@ -1322,6 +1348,11 @@ export function evaluatePyrusSignalsSignals(input: {
     regimeDirection[index] =
       marketStructureDirection !== 0 ? marketStructureDirection : trendDirection;
     const activeRegimeDirection = regimeDirection[index];
+    regimeDirectionAge[index] =
+      previousRegimeDirection != null &&
+      previousRegimeDirection === activeRegimeDirection
+        ? regimeDirectionAge[index - 1] + 1
+        : 1;
     const activeTrendLine =
       activeRegimeDirection === 1 ? lowerBand[index] : upperBand[index];
     const regimeFlipped =
@@ -1388,6 +1419,7 @@ export function evaluatePyrusSignalsSignals(input: {
         adx,
         volatilityScore,
         atrSmoothed,
+        regimeDirectionAge,
       );
       pushStructure(
         bullishChoch ? "bullish_choch" : "bearish_choch",
@@ -1438,6 +1470,8 @@ export function evaluatePyrusSignalsSignals(input: {
     volatilityScore,
     trendDirection: trendDirectionSeries,
     regimeDirection,
+    trendBasisComputable,
+    marketStructureDirection,
     structureEvents,
     signalEvents,
   };

@@ -85,8 +85,10 @@ export const THEMES = {
 
 export const FONT_STACKS = {
   sans: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  data: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  code: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  // Item 13, D1 — the mono "data voice": numerals read as instrument
+  // hardware. Labels stay on `sans`; the contrast is the design (DESIGN.md).
+  data: "'IBM Plex Mono', 'IBM Plex Sans', ui-monospace, SFMono-Regular, Menlo, monospace",
+  code: "'IBM Plex Mono', 'IBM Plex Sans', ui-monospace, SFMono-Regular, Menlo, monospace",
 };
 
 export const TYPOGRAPHY = {
@@ -182,11 +184,13 @@ export const TYPOGRAPHY_SIZES = {
 
 export const RADII = {
   none: 0,
+  // Consolidated three-step scale: 4 (controls/chips), 8 (cards/panels),
+  // pill (fully round). Legacy keys stay so call sites don't churn.
   xs: 4,
-  sm: 6,
-  md: 10,
-  lg: 14,
-  xl: 20,
+  sm: 4,
+  md: 8,
+  lg: 8,
+  xl: 8,
   pill: 999,
 };
 
@@ -210,6 +214,26 @@ export const ELEVATION = {
   md: "var(--ra-elevation-md)",
   lg: "var(--ra-elevation-lg)",
   hover: "var(--ra-elevation-hover)",
+};
+
+/**
+ * GLOW — status-glow box-shadows (design-audit item 13, D2). Glow is a
+ * status channel, never chrome decoration: the semantic aliases key off the
+ * --ra-color-* layer so protan mode and accent presets propagate. For a
+ * custom tone, set `--ra-glow-tone` inline (same idiom as --ra-motion-*)
+ * and use GLOW.sm/md/lg/ring.
+ */
+export const GLOW = {
+  none: "none",
+  sm: "var(--ra-glow-sm)",
+  md: "var(--ra-glow-md)",
+  lg: "var(--ra-glow-lg)",
+  ring: "var(--ra-glow-ring)",
+  live: "var(--ra-glow-live)",
+  stale: "var(--ra-glow-stale)",
+  error: "var(--ra-glow-error)",
+  positive: "var(--ra-glow-positive)",
+  negative: "var(--ra-glow-negative)",
 };
 
 export const MAX_WIDTHS = {

@@ -195,6 +195,7 @@ const MarketChartGridFallback = ({
             {Array.from({ length: 10 }).map((_, barIndex) => (
               <span
                 key={barIndex}
+                className="ra-skeleton"
                 style={{
                   minHeight: dim(18 + ((barIndex * 17 + index * 11) % 72)),
                   borderRadius: dim(RADII.xs),
@@ -1264,7 +1265,7 @@ const MarketScreenInner = ({
                       style={{
                         width: dim(2),
                         height: dim(16),
-                        borderRadius: dim(1),
+                        borderRadius: dim(RADII.xs),
                         background: tc,
                         flexShrink: 0,
                       }}

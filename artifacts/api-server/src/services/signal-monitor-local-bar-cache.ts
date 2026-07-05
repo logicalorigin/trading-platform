@@ -11,7 +11,9 @@ import {
 import {
   loadStoredMarketBars,
   loadStoredMarketBarsForSymbols,
-  persistMarketDataBarsForSymbols,
+  loadStoredMarketBarsForSymbolsSince,
+  onBarCacheRowsChanged,
+  persistMarketDataBarsMixed,
   type MarketDataStoreBarInput,
   type MarketDataStoreTimeframe,
 } from "./market-data-store";
@@ -53,7 +55,12 @@ const TIMEFRAME_MS: Record<SignalMonitorLocalBarCacheTimeframe, number> = {
   "1d": 24 * 60 * 60_000,
 };
 const DEFAULT_MEMORY_RETENTION_MS = 72 * 60 * 60_000;
-const DEFAULT_PERSIST_FLUSH_MS = 1_000;
+const DEFAULT_PERSIST_FLUSH_MS = 5_000;
+// A normal full-universe prefetch is 2,000 symbols * 6 local timeframes * 2
+// sources = 24,000 cells. Keep the default above that footprint so the LRU does
+// not scan-evict the same universe it just loaded and turn every cycle into a
+// cold full read.
+const DEFAULT_STORED_BARS_CACHE_MAX_CELLS = 30_000;
 // Per-aggregate rollups only emit limit:3 buckets of the largest intraday
 // timeframe (1h). The last 3 completed/provisional 1h buckets span at most 3h;
 // floored-bucket alignment can pull a bar up to ~1h older into the oldest kept
@@ -61,7 +68,19 @@ const DEFAULT_PERSIST_FLUSH_MS = 1_000;
 // reproduces the full-history rollup output. Capping the per-aggregate scan to
 // this window keeps it O(recent window) instead of O(72h retained history).
 const ROLLUP_RECENT_WINDOW_MS = TIMEFRAME_MS["1h"] * 3 + TIMEFRAME_MS["1h"];
-const DEFAULT_PERSIST_FLUSH_CONCURRENCY = 5;
+// Background durable reads should yield to foreground/stream DB work during app
+// bring-up. Operators can raise this after measuring their DB/cache headroom.
+const DEFAULT_STORED_BARS_PREFETCH_CONCURRENCY = 1;
+// Bound durable prefetch queries by expected returned rows, not just symbol count.
+// The old fixed 32-symbol cap still allowed slow high-limit `bar_cache` chunks;
+// size batches from `limit` so each DB read stays around this row budget instead.
+const STORED_BARS_PREFETCH_TARGET_ROWS_PER_QUERY = 480;
+// Delta reads (rows strictly after a per-symbol high-water mark) return at most a
+// few rows per symbol regardless of `limit` — their result size is bounded by the
+// high-water filter, not by the per-symbol `limit`. So the row-budget batching
+// used for full reads is irrelevant here; batch deltas wide to coalesce many
+// symbols into a single pooled connection instead of one acquisition per symbol.
+const STORED_BARS_DELTA_SYMBOL_BATCH = 64;
 export function storeSourceNames(): string[] {
   const streamSourceName = isMassiveStocksRealtimeConfigured()
     ? "massive-websocket"
@@ -86,6 +105,31 @@ type StoredBarsPrefetch = {
 };
 const storedBarsPrefetchStore = new AsyncLocalStorage<StoredBarsPrefetch>();
 
+type StoredBarsCacheCell = {
+  baseKey: string;
+  key: string;
+  symbol: string;
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  sourceName: string;
+  limit: number;
+  bars: BrokerBarSnapshot[];
+  highWaterMs: number | null;
+  lastDeltaBucketMs: number | null;
+  deltaDue: boolean;
+  invalidated: boolean;
+  lastAccessMs: number;
+};
+
+const storedBarsCrossCycleCache = new Map<string, StoredBarsCacheCell>();
+const storedBarsCacheKeysByBase = new Map<string, Set<string>>();
+let unsubscribeBarCacheRowsChanged: (() => void) | null = null;
+let storedBarsCacheHitCount = 0;
+let storedBarsCacheMissCount = 0;
+let storedBarsCacheFullReadCount = 0;
+let storedBarsCacheDeltaReadCount = 0;
+let storedBarsCacheInvalidationCount = 0;
+let storedBarsCacheEvictionCount = 0;
+
 const minuteBarsBySymbol = new Map<string, Map<number, CachedBar>>();
 const trackedSymbols = new Set<string>();
 const pendingPersistBars = new Map<string, PendingPersistBar>();
@@ -102,10 +146,19 @@ let lastPersistAt: Date | null = null;
 let lastPersistError: string | null = null;
 let lastPersistErrorAt: Date | null = null;
 let lastEnqueueScannedBarCount = 0;
+let liveAggregatePersistSkipCount = 0;
+let lastLiveAggregatePersistSkippedAt: Date | null = null;
 
-type PersistMarketDataBarsForSymbolsFn = typeof persistMarketDataBarsForSymbols;
-let persistMarketDataBarsForSymbolsOverride: PersistMarketDataBarsForSymbolsFn | null =
+type PersistMarketDataBarsMixedFn = typeof persistMarketDataBarsMixed;
+let persistMarketDataBarsMixedOverride: PersistMarketDataBarsMixedFn | null = null;
+type LoadStoredMarketBarsForSymbolsFn = typeof loadStoredMarketBarsForSymbols;
+let loadStoredMarketBarsForSymbolsOverride: LoadStoredMarketBarsForSymbolsFn | null =
   null;
+type LoadStoredMarketBarsForSymbolsSinceFn =
+  typeof loadStoredMarketBarsForSymbolsSince;
+let loadStoredMarketBarsForSymbolsSinceOverride:
+  | LoadStoredMarketBarsForSymbolsSinceFn
+  | null = null;
 
 function readPositiveIntegerEnv(
   name: string,
@@ -138,13 +191,28 @@ function persistFlushMs(): number {
   );
 }
 
-function persistFlushConcurrency(): number {
+function storedBarsCacheMaxCells(): number {
   return readPositiveIntegerEnv(
-    "PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_FLUSH_CONCURRENCY",
-    DEFAULT_PERSIST_FLUSH_CONCURRENCY,
-    1,
-    32,
+    "PYRUS_SIGNAL_MONITOR_STORED_BARS_CACHE_MAX_CELLS",
+    DEFAULT_STORED_BARS_CACHE_MAX_CELLS,
+    0,
+    100_000,
   );
+}
+
+function storedBarsPrefetchConcurrency(): number {
+  return readPositiveIntegerEnv(
+    "PYRUS_SIGNAL_MONITOR_STORED_BARS_PREFETCH_CONCURRENCY",
+    DEFAULT_STORED_BARS_PREFETCH_CONCURRENCY,
+    1,
+    8,
+  );
+}
+
+function liveAggregatePersistEnabled(): boolean {
+  const raw =
+    process.env["PYRUS_SIGNAL_MONITOR_LOCAL_BAR_CACHE_PERSIST_LIVE_AGGREGATES"];
+  return raw === "1" || raw?.trim().toLowerCase() === "true";
 }
 
 // Bounded-concurrency map: runs `worker` over `items` with at most `limit`
@@ -173,6 +241,29 @@ export async function mapWithConcurrency<T, R>(
     Array.from({ length: bound }, () => runWorker()),
   );
   return results;
+}
+
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+  const normalizedSize = Math.max(1, Math.floor(size || 1));
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += normalizedSize) {
+    chunks.push(items.slice(index, index + normalizedSize));
+  }
+  return chunks;
+}
+
+function storedBarsPrefetchSymbolBatchSize(limit: number): number {
+  const normalizedLimit =
+    Number.isFinite(limit) && limit > 0 ? Math.ceil(limit) : 1;
+  // Floor chosen conservatively (8, not 1): full OHLCV reads carry real per-row
+  // parse cost (see market-data-store.ts:505-510), so we cannot batch as wide as
+  // deltas, but high-`limit` paths must still coalesce at least 8 symbols/query
+  // rather than degrade to one pooled acquisition per symbol. The 480-row budget
+  // still shrinks batches below this only for very high limits.
+  return Math.max(
+    8,
+    Math.floor(STORED_BARS_PREFETCH_TARGET_ROWS_PER_QUERY / normalizedLimit),
+  );
 }
 
 function dateOrNull(value: unknown): Date | null {
@@ -308,6 +399,295 @@ function mergeBarsByTimestamp(
     .slice(-Math.max(1, Math.floor(limit || 1)));
 }
 
+function storedBarsCellBaseKey(input: {
+  symbol: string;
+  timeframe: string;
+  sourceName: string;
+}): string {
+  return [
+    normalizeSymbol(input.symbol),
+    input.timeframe,
+    input.sourceName,
+  ].join("|");
+}
+
+function storedBarsCellKey(input: {
+  symbol: string;
+  timeframe: string;
+  sourceName: string;
+  limit: number;
+}): string {
+  return [
+    storedBarsCellBaseKey(input),
+    Math.max(1, Math.floor(input.limit || 1)),
+  ].join("|");
+}
+
+function evaluatedBucketMs(
+  evaluatedAtMs: number,
+  timeframe: SignalMonitorLocalBarCacheTimeframe,
+): number {
+  const stepMs = TIMEFRAME_MS[timeframe] ?? TIMEFRAME_MS["1m"];
+  return Math.floor(evaluatedAtMs / stepMs) * stepMs;
+}
+
+function highWaterMsForBars(bars: readonly BrokerBarSnapshot[]): number | null {
+  let highWaterMs: number | null = null;
+  for (const bar of bars) {
+    const timestamp = dateOrNull(bar.timestamp);
+    if (!timestamp) {
+      continue;
+    }
+    highWaterMs =
+      highWaterMs == null
+        ? timestamp.getTime()
+        : Math.max(highWaterMs, timestamp.getTime());
+  }
+  return highWaterMs;
+}
+
+function barsThroughEvaluatedAt(
+  bars: readonly BrokerBarSnapshot[],
+  evaluatedAtMs: number,
+  limit: number,
+): BrokerBarSnapshot[] {
+  return bars
+    .filter((bar) => {
+      const timestamp = dateOrNull(bar.timestamp);
+      return Boolean(timestamp && timestamp.getTime() <= evaluatedAtMs);
+    })
+    .slice(-Math.max(1, Math.floor(limit || 1)));
+}
+
+function removeStoredBarsCacheCell(key: string): void {
+  const cell = storedBarsCrossCycleCache.get(key);
+  if (!cell) {
+    return;
+  }
+  storedBarsCrossCycleCache.delete(key);
+  const keys = storedBarsCacheKeysByBase.get(cell.baseKey);
+  keys?.delete(key);
+  if (keys && !keys.size) {
+    storedBarsCacheKeysByBase.delete(cell.baseKey);
+  }
+}
+
+function rememberStoredBarsCacheCell(cell: StoredBarsCacheCell): void {
+  storedBarsCrossCycleCache.set(cell.key, cell);
+  const keys = storedBarsCacheKeysByBase.get(cell.baseKey) ?? new Set<string>();
+  keys.add(cell.key);
+  storedBarsCacheKeysByBase.set(cell.baseKey, keys);
+}
+
+function pruneStoredBarsCache(): void {
+  const maxCells = storedBarsCacheMaxCells();
+  if (maxCells <= 0) {
+    const removed = storedBarsCrossCycleCache.size;
+    storedBarsCrossCycleCache.clear();
+    storedBarsCacheKeysByBase.clear();
+    storedBarsCacheEvictionCount += removed;
+    return;
+  }
+  while (storedBarsCrossCycleCache.size > maxCells) {
+    let oldestKey: string | null = null;
+    let oldestAccessMs = Number.POSITIVE_INFINITY;
+    for (const [key, cell] of storedBarsCrossCycleCache) {
+      if (cell.lastAccessMs < oldestAccessMs) {
+        oldestAccessMs = cell.lastAccessMs;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) {
+      return;
+    }
+    removeStoredBarsCacheCell(oldestKey);
+    storedBarsCacheEvictionCount += 1;
+  }
+}
+
+function writeStoredBarsCacheCell(input: {
+  symbol: string;
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  sourceName: string;
+  limit: number;
+  bars: BrokerBarSnapshot[];
+  evaluatedAtMs: number;
+  deltaBucketMs: number | null;
+}): StoredBarsCacheCell {
+  const symbol = normalizeSymbol(input.symbol);
+  const baseKey = storedBarsCellBaseKey({
+    symbol,
+    timeframe: input.timeframe,
+    sourceName: input.sourceName,
+  });
+  const key = storedBarsCellKey({
+    symbol,
+    timeframe: input.timeframe,
+    sourceName: input.sourceName,
+    limit: input.limit,
+  });
+  const bars = mergeBarsByTimestamp(input.bars, input.limit);
+  const cell: StoredBarsCacheCell = {
+    baseKey,
+    key,
+    symbol,
+    timeframe: input.timeframe,
+    sourceName: input.sourceName,
+    limit: Math.max(1, Math.floor(input.limit || 1)),
+    bars,
+    highWaterMs: highWaterMsForBars(bars),
+    lastDeltaBucketMs: input.deltaBucketMs,
+    deltaDue: false,
+    invalidated: false,
+    lastAccessMs: Date.now(),
+  };
+  removeStoredBarsCacheCell(key);
+  rememberStoredBarsCacheCell(cell);
+  pruneStoredBarsCache();
+  return cell;
+}
+
+function updateStoredBarsCacheCellWithDelta(input: {
+  cell: StoredBarsCacheCell;
+  deltaBars: BrokerBarSnapshot[];
+  deltaBucketMs: number;
+}): StoredBarsCacheCell {
+  const bars = mergeBarsByTimestamp(
+    [...input.cell.bars, ...input.deltaBars],
+    input.cell.limit,
+  );
+  const cell: StoredBarsCacheCell = {
+    ...input.cell,
+    bars,
+    highWaterMs: highWaterMsForBars(bars),
+    lastDeltaBucketMs: input.deltaBucketMs,
+    deltaDue: false,
+    invalidated: false,
+    lastAccessMs: Date.now(),
+  };
+  storedBarsCrossCycleCache.set(cell.key, cell);
+  return cell;
+}
+
+function ensureStoredBarsCacheSubscription(): void {
+  if (unsubscribeBarCacheRowsChanged) {
+    return;
+  }
+  unsubscribeBarCacheRowsChanged = onBarCacheRowsChanged((changes) => {
+    for (const change of changes) {
+      const baseKey = storedBarsCellBaseKey({
+        symbol: change.symbol,
+        timeframe: change.timeframe,
+        sourceName: change.sourceName,
+      });
+      const keys = storedBarsCacheKeysByBase.get(baseKey);
+      if (!keys?.size) {
+        continue;
+      }
+      for (const key of keys) {
+        const cell = storedBarsCrossCycleCache.get(key);
+        if (!cell) {
+          continue;
+        }
+        storedBarsCacheInvalidationCount += 1;
+        if (cell.highWaterMs == null || change.startsAtMs <= cell.highWaterMs) {
+          cell.invalidated = true;
+          cell.deltaDue = false;
+        } else {
+          cell.deltaDue = true;
+        }
+      }
+    }
+  });
+}
+
+function getLoadStoredMarketBarsForSymbols(): LoadStoredMarketBarsForSymbolsFn {
+  return loadStoredMarketBarsForSymbolsOverride ?? loadStoredMarketBarsForSymbols;
+}
+
+function getLoadStoredMarketBarsForSymbolsSince(): LoadStoredMarketBarsForSymbolsSinceFn {
+  return (
+    loadStoredMarketBarsForSymbolsSinceOverride ??
+    loadStoredMarketBarsForSymbolsSince
+  );
+}
+
+type StoredBarsPrefetchLoadInput = {
+  symbols: string[];
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  limit: number;
+  to: Date;
+  sourceName: string;
+};
+
+function mergeLoadedStoredBars(
+  target: Map<string, BrokerBarSnapshot[]>,
+  loaded: Map<string, BrokerBarSnapshot[]>,
+): void {
+  for (const [symbol, bars] of loaded) {
+    target.set(symbol, bars);
+  }
+}
+
+async function loadFullStoredBarsForPrefetch(
+  input: StoredBarsPrefetchLoadInput,
+): Promise<Map<string, BrokerBarSnapshot[]>> {
+  const fullLoader = getLoadStoredMarketBarsForSymbols();
+  const result = new Map<string, BrokerBarSnapshot[]>();
+  for (const symbols of chunkArray(
+    input.symbols,
+    storedBarsPrefetchSymbolBatchSize(input.limit),
+  )) {
+    mergeLoadedStoredBars(
+      result,
+      await fullLoader({
+        symbols,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        to: input.to,
+        assetClass: "equity",
+        outsideRth: true,
+        source: "trades",
+        recentWindowMinutes: 0,
+        sourceName: input.sourceName,
+      }),
+    );
+  }
+  return result;
+}
+
+async function loadDeltaStoredBarsForPrefetch(
+  input: StoredBarsPrefetchLoadInput & { after: Date },
+): Promise<Map<string, BrokerBarSnapshot[]>> {
+  const deltaLoader = getLoadStoredMarketBarsForSymbolsSince();
+  const result = new Map<string, BrokerBarSnapshot[]>();
+  // Deltas batch wide (STORED_BARS_DELTA_SYMBOL_BATCH) rather than by the
+  // limit-based full-read budget: their rows are bounded by the high-water filter,
+  // not by `limit`. Grouping/order/limit/after semantics of each query are
+  // otherwise unchanged — only how many symbols share one query differs.
+  for (const symbols of chunkArray(
+    input.symbols,
+    STORED_BARS_DELTA_SYMBOL_BATCH,
+  )) {
+    mergeLoadedStoredBars(
+      result,
+      await deltaLoader({
+        symbols,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        to: input.to,
+        after: input.after,
+        assetClass: "equity",
+        outsideRth: true,
+        source: "trades",
+        recentWindowMinutes: 0,
+        sourceName: input.sourceName,
+      }),
+    );
+  }
+  return result;
+}
+
 function storeMinuteBar(bar: CachedBar): void {
   const timestamp = dateOrNull(bar.timestamp);
   if (!timestamp) {
@@ -336,6 +716,11 @@ function queuePersist(input: {
   timeframe: MarketDataStoreTimeframe;
   bar: CachedBar;
 }): void {
+  if (!liveAggregatePersistEnabled()) {
+    liveAggregatePersistSkipCount += 1;
+    lastLiveAggregatePersistSkippedAt = new Date();
+    return;
+  }
   const timestamp = dateOrNull(input.bar.timestamp);
   if (!timestamp) {
     return;
@@ -362,14 +747,14 @@ function queuePersist(input: {
   );
 }
 
-function schedulePersistFlush(): void {
+function schedulePersistFlush(delayMs = persistFlushMs()): void {
   if (persistFlushTimer) {
     return;
   }
   persistFlushTimer = setTimeout(() => {
     persistFlushTimer = null;
     void flushPendingPersistBars();
-  }, persistFlushMs());
+  }, delayMs);
   persistFlushTimer.unref?.();
 }
 
@@ -540,6 +925,126 @@ async function readStoredBars(input: {
   return mergeBarsByTimestamp(results.flat(), input.limit);
 }
 
+async function loadStoredBarsForSymbolsForPrefetch(input: {
+  symbols: string[];
+  timeframe: SignalMonitorLocalBarCacheTimeframe;
+  limit: number;
+  to: Date;
+  sourceName: string;
+}): Promise<Map<string, BrokerBarSnapshot[]>> {
+  if (storedBarsCacheMaxCells() <= 0) {
+    storedBarsCacheFullReadCount += 1;
+    return loadFullStoredBarsForPrefetch({
+      symbols: input.symbols,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      to: input.to,
+      sourceName: input.sourceName,
+    });
+  }
+
+  ensureStoredBarsCacheSubscription();
+  const result = new Map<string, BrokerBarSnapshot[]>();
+  const evaluatedAtMs = input.to.getTime();
+  const deltaBucketMs = evaluatedBucketMs(evaluatedAtMs, input.timeframe);
+  const fullReadSymbols: string[] = [];
+  const deltaReadSymbolsByAfter = new Map<number, string[]>();
+  const reusableCellsBySymbol = new Map<string, StoredBarsCacheCell>();
+
+  for (const rawSymbol of input.symbols) {
+    const symbol = normalizeSymbol(rawSymbol);
+    if (!symbol) {
+      continue;
+    }
+    const key = storedBarsCellKey({
+      symbol,
+      timeframe: input.timeframe,
+      sourceName: input.sourceName,
+      limit: input.limit,
+    });
+    const cell = storedBarsCrossCycleCache.get(key);
+    if (!cell || cell.invalidated) {
+      storedBarsCacheMissCount += 1;
+      fullReadSymbols.push(symbol);
+      continue;
+    }
+    cell.lastAccessMs = Date.now();
+    reusableCellsBySymbol.set(symbol, cell);
+    if (
+      cell.highWaterMs != null &&
+      (cell.deltaDue || (cell.lastDeltaBucketMs ?? -1) < deltaBucketMs) &&
+      cell.highWaterMs < evaluatedAtMs
+    ) {
+      const group = deltaReadSymbolsByAfter.get(cell.highWaterMs) ?? [];
+      group.push(symbol);
+      deltaReadSymbolsByAfter.set(cell.highWaterMs, group);
+      continue;
+    }
+    storedBarsCacheHitCount += 1;
+    result.set(
+      symbol,
+      barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+    );
+  }
+
+  if (fullReadSymbols.length) {
+    storedBarsCacheFullReadCount += 1;
+    const loaded = await loadFullStoredBarsForPrefetch({
+      symbols: fullReadSymbols,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      to: input.to,
+      sourceName: input.sourceName,
+    });
+    for (const symbol of fullReadSymbols) {
+      const bars = loaded.get(symbol) ?? [];
+      const cell = writeStoredBarsCacheCell({
+        symbol,
+        timeframe: input.timeframe,
+        sourceName: input.sourceName,
+        limit: input.limit,
+        bars,
+        evaluatedAtMs,
+        deltaBucketMs,
+      });
+      result.set(
+        symbol,
+        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+      );
+    }
+  }
+
+  for (const [afterMs, symbols] of deltaReadSymbolsByAfter) {
+    storedBarsCacheDeltaReadCount += 1;
+    const loaded = await loadDeltaStoredBarsForPrefetch({
+      symbols,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      to: input.to,
+      after: new Date(afterMs),
+      sourceName: input.sourceName,
+    });
+    for (const symbol of symbols) {
+      const existing = reusableCellsBySymbol.get(symbol);
+      if (!existing) {
+        continue;
+      }
+      const cell = updateStoredBarsCacheCellWithDelta({
+        cell: existing,
+        deltaBars: loaded.get(symbol) ?? [],
+        deltaBucketMs,
+      });
+      storedBarsCacheHitCount += 1;
+      result.set(
+        symbol,
+        barsThroughEvaluatedAt(cell.bars, evaluatedAtMs, input.limit),
+      );
+    }
+  }
+
+  return result;
+}
+
 // Prefetch a whole batch's stored bars (symbols × timeframes × sources) in a few
 // set-based queries, then run `fn` with that prefetch active so the per-symbol
 // readStoredBars calls inside serve from it instead of issuing one pooled
@@ -572,29 +1077,27 @@ export async function runWithSignalMonitorStoredBarsPrefetch<T>(
   }
   const sourceNames = storeSourceNames();
   const byTimeframe: StoredBarsPrefetch["byTimeframe"] = new Map();
-  await Promise.all(
-    timeframes.map(async (timeframe) => {
-      const bySource = new Map<string, Map<string, BrokerBarSnapshot[]>>();
-      await Promise.all(
-        sourceNames.map(async (sourceName) => {
-          bySource.set(
-            sourceName,
-            await loadStoredMarketBarsForSymbols({
-              symbols,
-              timeframe,
-              limit: input.limit,
-              to: input.evaluatedAt,
-              assetClass: "equity",
-              outsideRth: true,
-              source: "trades",
-              recentWindowMinutes: 0,
-              sourceName,
-            }),
-          );
+  timeframes.forEach((timeframe) => {
+    byTimeframe.set(timeframe, new Map());
+  });
+  const tasks = timeframes.flatMap((timeframe) =>
+    sourceNames.map((sourceName) => ({ timeframe, sourceName })),
+  );
+  await mapWithConcurrency(
+    tasks,
+    storedBarsPrefetchConcurrency(),
+    async ({ timeframe, sourceName }) => {
+      byTimeframe.get(timeframe)!.set(
+        sourceName,
+        await loadStoredBarsForSymbolsForPrefetch({
+          symbols,
+          timeframe,
+          limit: input.limit,
+          to: input.evaluatedAt,
+          sourceName,
         }),
       );
-      byTimeframe.set(timeframe, bySource);
-    }),
+    },
   );
   return storedBarsPrefetchStore.run(
     {
@@ -617,99 +1120,109 @@ async function flushPendingPersistBars(): Promise<void> {
     return;
   }
   persistFlushInFlight = true;
-  const persist =
-    persistMarketDataBarsForSymbolsOverride ?? persistMarketDataBarsForSymbols;
+  const persist = persistMarketDataBarsMixedOverride ?? persistMarketDataBarsMixed;
   try {
-    // Group by (timeframe, sourceName) — one multi-symbol upsert per group cuts
-    // write round-trips vs one INSERT-set per symbol. A group's bars across ALL
-    // symbols commit or requeue together (the merged upsert is all-or-nothing);
-    // requeue is idempotent so there is no loss or double-count. Bounded
-    // concurrency unchanged. Mutating shared bookkeeping inside the worker is
-    // safe because Node runs each await continuation to completion without
-    // interleaving synchronous work.
-    const groups = new Map<string, PendingPersistBar[]>();
-    pending.forEach((entry) => {
-      const key = [entry.timeframe, entry.sourceName].join(":");
-      const group = groups.get(key) ?? [];
-      group.push(entry);
-      groups.set(key, group);
-    });
-    const groupList = Array.from(groups.values()).filter(
-      (group) => group.length > 0,
-    );
-    let lastError: unknown = null;
-    await mapWithConcurrency(
-      groupList,
-      persistFlushConcurrency(),
-      async (group) => {
-        const first = group[0];
-        if (!first) {
-          return;
-        }
-        const barsBySymbol = new Map<string, MarketDataStoreBarInput[]>();
-        group.forEach((entry) => {
-          const bars = barsBySymbol.get(entry.symbol) ?? [];
-          bars.push({
+    // Merge the whole drained backlog into ONE mixed upsert. The bar_cache conflict
+    // target carries timeframe + source, so a single chunked statement legally spans
+    // every (symbol, timeframe, source) tuple in `pending` — a ≤5000-row flush issues
+    // exactly one bar_cache write (plus the instruments resolution it already needs),
+    // replacing the former one-INSERT-set-per-(timeframe,source) fan-out. Bars are
+    // grouped per (symbol, timeframe, source) so each entry hands the writer the same
+    // normalized bars a per-symbol persist would; the writer returns a per-entry ok
+    // flag and every bar in a not-ok entry is requeued exactly (all-or-nothing per
+    // chunk) with no loss or double-count.
+    type FlushEntry = {
+      symbol: string;
+      timeframe: MarketDataStoreTimeframe;
+      sourceName: string;
+      bars: MarketDataStoreBarInput[];
+      pending: PendingPersistBar[];
+    };
+    const entryByKey = new Map<string, FlushEntry>();
+    for (const entry of pending) {
+      const key = [entry.symbol, entry.timeframe, entry.sourceName].join(":");
+      let flushEntry = entryByKey.get(key);
+      if (!flushEntry) {
+        flushEntry = {
+          symbol: entry.symbol,
+          timeframe: entry.timeframe,
+          sourceName: entry.sourceName,
+          bars: [],
+          pending: [],
+        };
+        entryByKey.set(key, flushEntry);
+      }
+      flushEntry.bars.push({
+        timestamp: entry.bar.timestamp,
+        open: entry.bar.open,
+        high: entry.bar.high,
+        low: entry.bar.low,
+        close: entry.bar.close,
+        volume: entry.bar.volume,
+      });
+      flushEntry.pending.push(entry);
+    }
+    const flushEntries = Array.from(entryByKey.values());
+    const requeueEntry = (flushEntry: FlushEntry) => {
+      flushEntry.pending.forEach((entry) => {
+        pendingPersistBars.set(
+          cacheKey({
+            symbol: entry.symbol,
+            timeframe: entry.timeframe,
+            sourceName: entry.sourceName,
             timestamp: entry.bar.timestamp,
-            open: entry.bar.open,
-            high: entry.bar.high,
-            low: entry.bar.low,
-            close: entry.bar.close,
-            volume: entry.bar.volume,
-          });
-          barsBySymbol.set(entry.symbol, bars);
-        });
-        const requeueGroup = () => {
-          group.forEach((entry) => {
-            pendingPersistBars.set(
+          }),
+          entry,
+        );
+      });
+    };
+
+    let lastError: unknown = null;
+    try {
+      const result = await persist({
+        assetClass: "equity",
+        outsideRth: true,
+        source: "trades",
+        recentWindowMinutes: 0,
+        entries: flushEntries.map((flushEntry) => ({
+          symbol: flushEntry.symbol,
+          timeframe: flushEntry.timeframe,
+          sourceName: flushEntry.sourceName,
+          bars: flushEntry.bars,
+        })),
+      });
+      lastError = result.error;
+      let persistedAny = false;
+      flushEntries.forEach((flushEntry, index) => {
+        if (result.okByIndex[index]) {
+          persistedBarCount += flushEntry.pending.length;
+          flushEntry.pending.forEach((entry) => {
+            persistedBarSignatures.set(
               cacheKey({
                 symbol: entry.symbol,
                 timeframe: entry.timeframe,
                 sourceName: entry.sourceName,
                 timestamp: entry.bar.timestamp,
               }),
-              entry,
+              barSignature(entry.bar),
             );
           });
-        };
-        try {
-          const persisted = await persist({
-            timeframe: first.timeframe,
-            sourceName: first.sourceName,
-            assetClass: "equity",
-            outsideRth: true,
-            source: "trades",
-            recentWindowMinutes: 0,
-            bySymbol: Array.from(barsBySymbol, ([symbol, bars]) => ({
-              symbol,
-              bars,
-            })),
-          });
-          if (persisted) {
-            persistedBarCount += group.length;
-            group.forEach((entry) => {
-              persistedBarSignatures.set(
-                cacheKey({
-                  symbol: entry.symbol,
-                  timeframe: entry.timeframe,
-                  sourceName: entry.sourceName,
-                  timestamp: entry.bar.timestamp,
-                }),
-                barSignature(entry.bar),
-              );
-            });
-            prunePersistedBarSignatures();
-          } else {
-            // A false return is a swallowed DB error or a disabled/backoff store
-            // — requeue the group so the bars retry; never drop them.
-            requeueGroup();
-          }
-        } catch (error) {
-          lastError = error;
-          requeueGroup();
+          persistedAny = true;
+        } else {
+          // A not-ok entry is a failed chunk, a swallowed DB error, or a
+          // disabled/backoff store — requeue its bars so they retry; never drop.
+          requeueEntry(flushEntry);
         }
-      },
-    );
+      });
+      if (persistedAny) {
+        prunePersistedBarSignatures();
+      }
+    } catch (error) {
+      // The mixed writer swallows DB errors, but guard the unexpected: requeue the
+      // whole backlog so nothing is lost.
+      lastError = error;
+      flushEntries.forEach(requeueEntry);
+    }
     if (lastError) {
       lastPersistError =
         lastError instanceof Error ? lastError.message : String(lastError);
@@ -874,18 +1387,36 @@ export function getSignalMonitorLocalBarCacheDiagnostics() {
     lastPersistAgeMs,
     lastPersistError,
     lastPersistErrorAt: lastPersistErrorAt?.toISOString() ?? null,
+    liveAggregatePersistEnabled: liveAggregatePersistEnabled(),
+    liveAggregatePersistSkipCount,
+    lastLiveAggregatePersistSkippedAt:
+      lastLiveAggregatePersistSkippedAt?.toISOString() ?? null,
     memoryRetentionMs: memoryRetentionMs(),
+    storedBarsCache: {
+      maxCells: storedBarsCacheMaxCells(),
+      cellCount: storedBarsCrossCycleCache.size,
+      hitCount: storedBarsCacheHitCount,
+      missCount: storedBarsCacheMissCount,
+      fullReadCount: storedBarsCacheFullReadCount,
+      deltaReadCount: storedBarsCacheDeltaReadCount,
+      invalidationCount: storedBarsCacheInvalidationCount,
+      evictionCount: storedBarsCacheEvictionCount,
+    },
     lastEnqueueScannedBarCount,
   };
 }
 
 export const __signalMonitorLocalBarCacheInternalsForTests = {
   reset(): void {
+    unsubscribeBarCacheRowsChanged?.();
+    unsubscribeBarCacheRowsChanged = null;
     unsubscribeMassiveAggregates?.();
     unsubscribeMassiveAggregates = null;
     subscriptionSignature = "";
     trackedSymbols.clear();
     minuteBarsBySymbol.clear();
+    storedBarsCrossCycleCache.clear();
+    storedBarsCacheKeysByBase.clear();
     pendingPersistBars.clear();
     persistedBarSignatures.clear();
     if (persistFlushTimer) {
@@ -900,21 +1431,43 @@ export const __signalMonitorLocalBarCacheInternalsForTests = {
     lastPersistError = null;
     lastPersistErrorAt = null;
     lastEnqueueScannedBarCount = 0;
-    persistMarketDataBarsForSymbolsOverride = null;
+    liveAggregatePersistSkipCount = 0;
+    lastLiveAggregatePersistSkippedAt = null;
+    storedBarsCacheHitCount = 0;
+    storedBarsCacheMissCount = 0;
+    storedBarsCacheFullReadCount = 0;
+    storedBarsCacheDeltaReadCount = 0;
+    storedBarsCacheInvalidationCount = 0;
+    storedBarsCacheEvictionCount = 0;
+    persistMarketDataBarsMixedOverride = null;
+    loadStoredMarketBarsForSymbolsOverride = null;
+    loadStoredMarketBarsForSymbolsSinceOverride = null;
   },
   ingest(aggregate: MassiveDelayedStockAggregate): void {
     handleMassiveAggregate(aggregate);
   },
-  __setPersistMarketDataBarsForSymbolsForTests(
-    fn: PersistMarketDataBarsForSymbolsFn | null,
+  __setPersistMarketDataBarsMixedForTests(
+    fn: PersistMarketDataBarsMixedFn | null,
   ): void {
-    persistMarketDataBarsForSymbolsOverride = fn;
+    persistMarketDataBarsMixedOverride = fn;
+  },
+  __setLoadStoredMarketBarsForSymbolsForTests(
+    fn: LoadStoredMarketBarsForSymbolsFn | null,
+  ): void {
+    loadStoredMarketBarsForSymbolsOverride = fn;
+  },
+  __setLoadStoredMarketBarsForSymbolsSinceForTests(
+    fn: LoadStoredMarketBarsForSymbolsSinceFn | null,
+  ): void {
+    loadStoredMarketBarsForSymbolsSinceOverride = fn;
   },
   async flushNow(): Promise<void> {
     await flushPendingPersistBars();
   },
   storeSourceNames,
   readMemoryBars,
+  storedBarsPrefetchSymbolBatchSize,
+  STORED_BARS_DELTA_SYMBOL_BATCH,
   get lastEnqueueScannedBarCount(): number {
     return lastEnqueueScannedBarCount;
   },

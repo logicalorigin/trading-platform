@@ -93,9 +93,9 @@ const calendarThemeStyle = () => {
 };
 
 const calendarButtonStyle = (style, isPhone = false, compact = false) => ({
-  width: dim(compact ? 20 : isPhone ? 32 : 24),
-  height: dim(compact ? 20 : isPhone ? 32 : 24),
-  minHeight: dim(compact ? 20 : isPhone ? 32 : 24),
+  width: dim(isPhone ? 44 : compact ? 20 : 24),
+  height: dim(isPhone ? 44 : compact ? 20 : 24),
+  minHeight: dim(isPhone ? 44 : compact ? 20 : 24),
   display: "inline-grid",
   placeItems: "center",
   border: `1px solid ${style.border}`,
@@ -215,9 +215,9 @@ const CalendarViewToggle = ({ value, onChange, calendarStyle, compact = false })
               className="ra-interactive"
               onClick={() => onChange(option.value)}
               style={{
-                height: dim(20),
-                minHeight: dim(20),
-                minWidth: dim(22),
+                height: dim(44),
+                minHeight: dim(44),
+                minWidth: dim(28),
                 padding: sp("0 5px"),
                 border: "none",
                 borderRadius: dim(RADII.pill),
@@ -269,7 +269,7 @@ const MonthCalendarGrid = ({
     ),
   );
 
-  const cellHeight = dim(compact ? 21 : isPhone ? 32 : 44);
+  const cellHeight = dim(isPhone ? 40 : compact ? 21 : 44);
   const monthGridGap = dim(compact ? 0 : 1);
 
   return (

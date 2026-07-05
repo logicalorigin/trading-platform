@@ -1,7 +1,8 @@
 # Plan: Decouple price reads & trading scans from the event-loop pressure signal
 
-**Status:** Stage 1 IMPLEMENTED + verified (2026-06-24, session 7f625e0d) — working-tree, not yet
-committed/deployed. Stage 2 + Track B still open.
+**Status:** Stage 1 IMPLEMENTED + verified (2026-06-24, session 7f625e0d). Stage 2 IMPLEMENTED
+(2026-07, supervisor-wiring audit session) after the CPU x-ray gate was met — see below. Track B
+(root-cause bar_cache read reduction) still open.
 **Date:** 2026-06-24
 **Author:** investigation session 54d65e0d (Stage 1 impl: session 7f625e0d)
 **Related:** `docs/plans/execution-events-saturation-remediation.md`, `docs/plans/db-pool-saturation-index-fix.md`
@@ -78,13 +79,19 @@ Original plan (for reference):
 - **Tests**: `route-admission.test.ts` — assert deferred-analytics is allowed when event-loop
   is high but rss/heap/pool normal; still shed when rss/pool high.
 
-### Stage 2 — Stop scan pauses  *(after CPU x-ray confirms scans aren't the blocker)*
-- **`resource-pressure.ts:561` `isApiResourcePressureHardBlock`**: gate on
-  `snapshot.hardResourceLevel === "high"` (was `resourceLevel`). Keep the
-  `skipDeploymentScans` OR-clause (inert today, harmless).
-- This frees signal-options-worker + overnight-spot-worker scan scheduling.
-- **Gate condition**: only ship after the x-ray shows the event-loop blocker is NOT the
-  scan bodies. Scans hit the DB, so if they ARE part of the clog, keep pausing them.
+### Stage 2 — Stop scan pauses  *(✅ DONE 2026-07 — x-ray gate met)*
+- **`resource-pressure.ts` `isApiResourcePressureHardBlock`**: now gates on
+  `snapshot.hardResourceLevel === "high"` (was `resourceLevel`). The dead
+  `skipDeploymentScans` OR-clause was removed (the neutered caps object it read was
+  deleted in the same audit).
+- This frees signal-options-worker + overnight-spot-worker scan scheduling from
+  event-loop pressure; scans still pause on genuine rss/heap/db-pool exhaustion.
+- **Gate condition MET**: a 30s CPU x-ray (121,609 samples, ELU high) showed the loop
+  blocker is DB row parsing — `_parseRowAsArray` ~20% self-time (driven by the
+  `bar_cache` read firehose, 2.13M rows per `db-rowcount-attribution.json`) plus ~7% GC.
+  The signal-options / overnight-spot scan bodies did NOT appear in the profile, so
+  pausing them never returned loop time. Test updated to assert scans no longer pause
+  on event-loop pressure.
 
 ### Keep unchanged — seatbelts
 - **DB-pool backoff** (transient-postgres-error.ts) — separate mechanism, genuinely firing

@@ -59,7 +59,8 @@ const MetricCard = ({ label, value, title, tone = CSS_COLOR.text, subvalue, isFi
         style={{
           color: tone,
           fontSize: textSize("body"),
-          fontFamily: T.sans,
+          fontFamily: T.data,
+          fontVariantNumeric: "tabular-nums",
           fontWeight: FONT_WEIGHTS.regular,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -120,7 +121,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
         />
       </div>
       <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
-        IBKR Cushion
+        Margin Cushion
       </div>
     </div>
   );
@@ -171,17 +172,17 @@ export const RiskCompactContent = ({
         <MetricCard
           label="Margin Used"
           value={formatAccountMoney(margin.marginUsed, currency, true, maskValues)}
-          title={`IBKR field ${providerFields.marginUsed || "InitMarginReq"}`}
+          title={`Provider field ${providerFields.marginUsed || "InitMarginReq"}`}
         />
         <MetricCard
           label="Available"
           value={formatAccountMoney(margin.marginAvailable, currency, true, maskValues)}
-          title={`IBKR field ${providerFields.marginAvailable || "ExcessLiquidity"}`}
+          title={`Provider field ${providerFields.marginAvailable || "ExcessLiquidity"}`}
         />
         <MetricCard
           label="Maint Margin"
           value={formatAccountMoney(margin.maintenanceMargin, currency, true, maskValues)}
-          title={`IBKR field ${providerFields.maintenanceMargin || "MaintMarginReq"}`}
+          title={`Provider field ${providerFields.maintenanceMargin || "MaintMarginReq"}`}
         />
       </div>
 

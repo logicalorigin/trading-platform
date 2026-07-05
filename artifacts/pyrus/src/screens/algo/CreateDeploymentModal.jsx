@@ -12,6 +12,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { Button } from "../../components/ui/Button.jsx";
+import { Select } from "../../components/platform/primitives.jsx";
 import { ALGO_DEPLOYMENT_KIND } from "./algoHelpers";
 
 const OVERNIGHT_SESSIONS = [
@@ -253,22 +254,21 @@ export const CreateDeploymentModal = ({
         <div style={{ display: "grid", gap: sp(10) }}>
           {!isOvernight ? (
             <Field label="Strategy draft">
-              <select
-                data-testid="create-deployment-draft"
+              <Select
+                selectProps={{ "data-testid": "create-deployment-draft" }}
                 value={selectedDraft?.id || ""}
-                onChange={(event) => setSelectedDraftId?.(event.target.value)}
-                style={fieldStyle}
-              >
-                {candidateDrafts.length === 0 ? (
-                  <option value="">No strategy drafts available</option>
-                ) : null}
-                {candidateDrafts.map((draft) => (
-                  <option key={draft.id} value={draft.id}>
-                    {draft.name} · {draft.mode} · {draft.symbolUniverse.length}{" "}
-                    syms
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => setSelectedDraftId?.(next)}
+                options={[
+                  ...(candidateDrafts.length === 0
+                    ? [{ value: "", label: "No strategy drafts available" }]
+                    : []),
+                  ...candidateDrafts.map((draft) => ({
+                    value: draft.id,
+                    label: `${draft.name} · ${draft.mode} · ${draft.symbolUniverse.length} syms`,
+                  })),
+                ]}
+                style={{ width: "100%" }}
+              />
             </Field>
           ) : null}
 
@@ -332,32 +332,22 @@ export const CreateDeploymentModal = ({
                 }}
               >
                 <Field label="Session">
-                  <select
-                    data-testid="create-deployment-session"
+                  <Select
+                    selectProps={{ "data-testid": "create-deployment-session" }}
                     value={tradingSession}
-                    onChange={(event) => setTradingSession(event.target.value)}
-                    style={fieldStyle}
-                  >
-                    {OVERNIGHT_SESSIONS.map((session) => (
-                      <option key={session.value} value={session.value}>
-                        {session.label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(next) => setTradingSession(next)}
+                    options={OVERNIGHT_SESSIONS}
+                    style={{ width: "100%" }}
+                  />
                 </Field>
                 <Field label="Signal timeframe">
-                  <select
-                    data-testid="create-deployment-timeframe"
+                  <Select
+                    selectProps={{ "data-testid": "create-deployment-timeframe" }}
                     value={signalTimeframe}
-                    onChange={(event) => setSignalTimeframe(event.target.value)}
-                    style={fieldStyle}
-                  >
-                    {OVERNIGHT_TIMEFRAMES.map((timeframe) => (
-                      <option key={timeframe} value={timeframe}>
-                        {timeframe}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(next) => setSignalTimeframe(next)}
+                    options={OVERNIGHT_TIMEFRAMES}
+                    style={{ width: "100%" }}
+                  />
                 </Field>
               </div>
               <span

@@ -140,10 +140,11 @@ test("bridge process actions expose detach label for reachable override without 
   assert.equal(actions.deactivateAction?.queueRemoteShutdown, false);
 });
 
-test("bridge process actions expose managed deactivate only for a managed attached bridge", () => {
+test("bridge process actions expose managed deactivate when desktop helper can tear down a managed attached bridge", () => {
   const actions = resolveIbkrBridgeProcessActions({
     bridgeManagementToken: "management-token-1",
     bridgeRuntimeOverrideActive: true,
+    desktopAgentOnline: true,
     gatewayConnectedForBridge: true,
     runtime: {
       runtimeOverrideActive: true,

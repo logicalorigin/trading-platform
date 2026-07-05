@@ -58,7 +58,7 @@ Other relevant cadences: runtime-control React Query poll 5s
 DiagnosticsScreen.jsx:724-731); backend line-usage refresh 2s
 (ibkr-line-usage.ts:78).
 
-## Master model groups (13) and child sensors (28) — visual structure
+## Master model groups (13) and child sensors (dynamic broker rows) — visual structure
 
 Latest visual refinement (user-confirmed, 2026-06-12): Diagnostics and Client
 are **not** part of the normal bottom data pipeline. Diagnostics renders as a
@@ -99,8 +99,8 @@ names the means (`means: detail`). When an edge has more than one means it
 becomes multiple parallel lines, so a realtime path and a delayed path are never
 collapsed into one. A delayed/historical transport (`fresh: false`) is rendered
 **dashed** and tooltip-tagged `· delayed`, so it reads as a DISTINCT source — the
-canonical case is Flow, served by IBKR realtime (solid) AND Massive ≥15m delayed
-(dashed) on two separate lines. The transport means are derived from the model's
+canonical case is a source with both realtime (solid) and historical/delayed
+(dashed) means on separate lines. The transport means are derived from the model's
 verified edge graph (`machineStateDiagramModel.js`) and the Market Data provider
 table; they are a visual architecture annotation, not a runtime probe.
 
@@ -109,9 +109,9 @@ Admission (action, with pressure level folded into its detail as the why) moved
 to the Client model group ("can my app get data" in one place); API Pressure
 moved to Diagnostics (resource sample). Per-lane connection metrics were
 explicitly NOT faked: backend api/admission metrics are route-aggregates, so
-they live once, on the boundary/consumer rail. **Bridge Governor embedded into
-the Broker Feed card** as its second bubble; its budget edges now emanate from
-the broker card. Status ICONS replace colored dots and corner status words:
+they live once, on the boundary/consumer rail. The retired governor bubble is
+intentionally absent; broker/account/order health stays on the
+broker and account cards. Status ICONS replace colored dots and corner status words:
 healthy ✓, checking ◌, degraded !, down ✕, idle –, unknown ?. The
 position-quotes bubble still carries a live/shadow split in the model, but the
 card renders a single worst-of glyph; the live and shadow line counts are shown
@@ -122,8 +122,8 @@ app's screens — data pours DOWN a funnel from the sources through the domain
 lanes (Market/Trade, Flow, GEX, Signals), then RIGHT into Account & Trading
 where decisions become positions. The old Market Data container was deleted
 and redistributed into the lanes. Earlier batch-2 decisions retained: sources
-as their own cards, Bridge Governor single merged readout below Broker Feed,
-Equities/Options channel split, massive equity quote fallback into Account.
+as their own cards, Equities/Options channel split, massive equity quote
+fallback into Account.
 
 Lane additions: **Trade Chain** bubble (Trade Options Chain line pool — only
 exposed at `lineUsage.pools.visible` in the live payload, NOT top-level;
@@ -139,22 +139,22 @@ consume the gex feature — there is deliberately no gex→signals edge.
 runtime-control poll (no payload timestamp — see Limitations), `client` =
 observed directly in the browser.
 
-### Broker Feed (IBKR) — `broker` (single readout)
-| ibkr-bridge "Broker Feed" | `latest` ibkr snapshot (classifyIbkrSnapshot diagnostics.ts:1959; heartbeat warn 30s :298) | snapshot severity; `connected===false` → down. Strict 24/7 — infrastructure heartbeat, no idle | latest |
+### Broker Feed — `broker` (dynamic broker readouts)
+| Bubble | Sensor | Status rule | Source |
+|---|---|---|---|
+| one row per SnapTrade brokerage (`broker-snaptrade-*`) | `/api/broker-connections` via `useListBrokerConnections`; only non-disconnected SnapTrade broker connections render | `connected` → healthy; `configured` → checking; `error` → down. Detail carries SnapTrade mode, raw status, execution-ready/read-only, and updated age | runtime |
+| fallback `ibkr-bridge "Broker Feed"` | `latest` ibkr snapshot (classifyIbkrSnapshot diagnostics.ts:1959; heartbeat warn 30s :298), used only when no SnapTrade broker connection rows are observed | snapshot severity; `connected===false` → down. Strict 24/7 — infrastructure heartbeat, no idle | latest |
 
 ### Massive Feed — `massive` (single readout)
 | massive-feed "Massive Feed" | `runtimeControl.massive` (merged provider diagnostics; fallback `latest` market-data raw.massive diagnostics.ts:3751) | declared `idle` wins over healthy REST and suppresses the message-age check; otherwise ws/rest/feed statuses + lastError + age > 5s → degraded | runtime |
 
-### Bridge Governor — `governor` (single merged readout, below Broker Feed)
-| bridge-governor "Bridge Governor" | `lineUsage` total/pools/pressure/warnings (ibkr-line-usage.ts:1667) + `runtimeControl.bridgeGovernor` lane circuits (runtimeControlModel.js:1517-1520) | worst of pool state / pressure / warnings>0 / any circuitOpen → degraded; `available:false` and no lanes → unknown. Detail always leads with line use/count | runtime |
-
 ### Account — `account`
 | Bubble | Sensor | Status rule | Source |
 |---|---|---|---|
-| account-stream "Account State" | `runtimeControl.streams.account` (broker-stream freshness, runtimeControlModel.js:1521-1527) | fresh+lastEventAt → healthy/degraded; lastEventAt only → checking; neither → unknown (rule 6) | runtime |
-| order-stream "Order State" | `runtimeControl.streams.order`; served by /api/streams/orders (platform.ts:2978) | same | runtime |
+| account-stream "Account State" | SnapTrade broker connections when any non-disconnected SnapTrade broker row is observed; otherwise `runtimeControl.streams.account` legacy freshness | SnapTrade `accounts`/`positions` capability rows use broker connection status (`connected` healthy, `configured` checking, `error` down); legacy fallback keeps fresh+lastEventAt → healthy/degraded, lastEventAt only → checking, neither → unknown (rule 6) | runtime |
+| order-stream "Order State" | SnapTrade broker connections when any non-disconnected SnapTrade broker row is observed; otherwise `runtimeControl.streams.order` legacy freshness | SnapTrade `orders`/`executions`/`execution-ready` capability rows use broker connection status; if SnapTrade is present but no trading capability is advertised, this row is idle rather than a legacy stream failure | runtime |
 | position-quotes "Position Quotes" (SPLIT bubble) | `lineUsage.accountMonitor` (live half) + `lineUsage.shadowAccount` (shadow half, incl. massiveFallbackLineCount) | per-half pool status; bubble = worst half | runtime |
-| account-view "Account View" | `latest` accounts/orders probe snapshots (visibility failures, diagnostics.ts:3826/3835) + `streams.tradingFresh` (rule 6 gated) | probe severity + failure counts + stale trading → degraded | latest |
+| account-view "Account View" | `latest` accounts/orders probe snapshots (visibility failures, diagnostics.ts:3826/3835) + legacy `streams.tradingFresh` only when SnapTrade broker rows are absent | probe severity + failure counts + stale legacy trading → degraded. In SnapTrade mode, broker connection/readiness evidence supersedes retired IBKR SSE freshness | latest |
 
 ### Market Data — `market`
 Rendered as a single wide **2×2 provider table card** (`MarketDataCard`), not a
@@ -163,8 +163,8 @@ cell shows the verified provider chain (primary → fallback); the Realtime row
 also carries a live status glyph from its diagnostic child node (`market-equities`
 for Realtime Equities, `market-options` for Realtime Options). The Historical row
 has no live sensor, so its cells render muted provider labels with NO fabricated
-health. Verified provider mapping: Realtime Equities = Massive → IBKR; Realtime
-Options = IBKR → Massive; Historical Equities/Options = IBKR → Massive.
+health. Verified provider mapping: Realtime Equities = Massive; Realtime
+Options = Massive; Historical Equities/Options = Massive.
 
 **Trade Chain folded in.** The former `trade` master group (Trade Chain line
 pool, child `trade-chain`) is no longer rendered as a standalone card. It stays
@@ -188,8 +188,8 @@ diagnostics.ts:2378) but different fields — same component cluster, distinct
 sensors:
 | Bubble | Sensor | Status rule | Source |
 |---|---|---|---|
-| signal-engine "Signals" | freshSignalCount / staleSignalCount / latestScanAgeMs | stale>0 → checking | latest |
-| algo-engine "Algo Engine" | snapshot severity + candidateCount / scan duration / gatewayBlockedCount / failureCount + `lineUsage.automation` | blocked or failures > 0 → degraded | latest |
+| signal-engine "Signals" | freshSignalCount / staleSignalCount / unavailableSignalCount / latestScanAgeMs | stale/unavailable inputs → checking, with degraded-input ratio in detail when >=10% | latest |
+| algo-engine "Algo Engine" | workerRunning / scan staleness / active-long-scan / candidateCount / scan duration / gatewayBlockedCount / failureCount + `lineUsage.automation` | gateway blocks, scan failures, stale/long worker scans, or algo line pressure → degraded. Broad automation snapshot severity is not applied here because it also includes signal-input quality owned by the Signals bubble | latest |
 | trade-management "Trade Mgmt" | shadowExitCount / expirationMaintenanceDueCount / orders failureCount | order failures → degraded; expirations due → checking | latest |
 
 ### Diagnostics — `diagnostics`
@@ -228,7 +228,7 @@ telemetry and reads `unknown` when its backing snapshot did not arrive.
 | database-storage "Storage" | `storage` metrics: databaseMb / warningDatabaseMb / storagePressureLevel (diagnostics.ts:2844-2860) | storagePressureLevel `warning` → degraded; else healthy | latest |
 | database-tables "Data Freshness" | `storage` metrics: monitoredTables[] newest/oldest (buildMonitoredStorageTableStats diagnostics.ts:2809) | tables present → healthy; empty/absent → unknown | latest |
 
-## Master model edges (27)
+## Master model edges (26)
 
 Derived by deduping child edges across group boundaries; each traces to real
 code. The renderer treats this as the truth graph, then applies the view-only
@@ -236,16 +236,15 @@ rail rule above before drawing.
 
 | Edge | Label | Code path |
 |---|---|---|
-| broker→account | broker REST/SSE + quote lines | ibkr-account-bridge.ts:27; /api/streams/orders platform.ts:2978; lineUsage account/shadow quote pools |
-| broker→market | quotes/chains | bridge-quote-stream.ts:9 (equities) + bridge-option-quote-stream.ts (options) |
+| broker→account | broker REST/SSE + quote lines | SnapTrade broker rows or fallback broker runtime feed account/order state; /api/streams/orders platform.ts:2978; lineUsage account/shadow quote pools |
 | broker→flow | chains + line budget | options-flow-scanner.ts:36 plus broker line usage |
-| broker→gex | option chains | GEX projection cache queries depend on option-chain fetches |
 | broker→trade | chain line budget | Trade Options Chain pool (`lineUsage.pools.visible`) |
 | broker→algo | algo budget | signal-options-automation.ts:104-106 admission leases |
-| broker→client | pressure/backoff | route-admission inputs derived from broker/governor pressure; hidden unless broker needs attention |
+| broker→client | pressure/backoff | route-admission inputs derived from broker pressure; hidden unless broker needs attention |
 | massive→market | Massive WS | massive-stock-quote-stream.ts:14 |
-| massive→flow | spot fallback | flow scanner spot fallback from Massive provider diagnostics |
-| massive→account | equity quote fallback | EQUITY marks only, live + shadow: live marks tagged source==="massive" (account.ts:2627, non-option branch only) + shadowAccount.massiveFallbackLineCount (ibkr-line-usage.ts:1632). NEVER options — option marks are always bridge option quotes (account.ts:2624-2630) |
+| massive→flow | chains + quotes | flow scanner option-chain/quote source from Massive provider diagnostics |
+| massive→gex | option chains | GEX projection cache queries depend on Massive option-chain fetches |
+| massive→account | equity quote fallback | EQUITY marks only, live + shadow: live marks tagged source==="massive" (account.ts:2627, non-option branch only) + shadowAccount.massiveFallbackLineCount (ibkr-line-usage.ts:1632). |
 | market→account | quote marks | account.ts:5-6 (stock + option quote snapshots → position marks) |
 | market→signals | bars/quotes | signal-monitor.ts:49,73 |
 | flow→signals | flow events | signal-monitor flow-event hydration |
@@ -270,7 +269,7 @@ endpoint idle ∧ neither endpoint stale.
 ### Persistence + convergence buses (orthogonal routing)
 
 All rendered edges are orthogonal (manhattan) and **render-only** — the model graph
-above stays at 27 master edges; the `database` master contributes none.
+above stays at 26 master edges; the `database` master contributes none.
 
 **Database bus** (`buildDatabaseHighway`): every card persists into the Database
 card, so the 9 persistence edges render as ONE tight, non-crossing bus rather than
@@ -289,7 +288,7 @@ the row above and merge into a tight bundle entering Algo's top edge (ordered by
 source-x, non-crossing); Account rises into the bottom edge.
 
 **Pipeline edges** (`VISUAL_FLOW_EDGES` via `edgePath`): the remaining
-broker/massive→Market, Market→Signals/Flow/GEX fan-out, and Algo→Account also route
+Massive→Market, Market→Signals/Flow/GEX fan-out, and Algo→Account also route
 orthogonally through the inter-row gutters. Market fan-out stays column-anchored
 (`marketColumnPortX`) and its gutter legs are disjoint by construction.
 
@@ -315,7 +314,7 @@ the backend already computes:
   Database bus).
 - **Per-lane row counts.** Each Database bus lane shows how many rows that source
   persists, summed from `storage.monitoredTables[].rowEstimate` by owning card
-  (`DB_TABLE_SOURCE`, e.g. market = quote/bar/option-chain/ticker caches). Sources with
+  (`DB_TABLE_SOURCE`, e.g. market = quote/bar/ticker caches). Sources with
   no monitored table carry no count.
 
 Every readout derives from observed telemetry only and is absent (no badge, no count,

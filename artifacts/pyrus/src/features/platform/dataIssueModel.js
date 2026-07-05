@@ -240,7 +240,7 @@ export const collectDataIssuesFromRecord = (recordValue, options = {}) => {
       build({
         severity: "warning",
         title: `Stale ${lowerFirst(valueLabel)}`,
-        summary: `${valueLabel} is from an older backend snapshot.`,
+        summary: `${valueLabel} is stale; use the updated timestamp before acting on it.`,
         reason: reason || freshness || cacheStatus || status || "stale",
       }),
     );

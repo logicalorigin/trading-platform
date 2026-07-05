@@ -53,6 +53,7 @@ type UseHistoricalBarStreamInput = {
   timeframe: string;
   bars?: MarketBar[] | null;
   enabled?: boolean;
+  streamEnabled?: boolean;
   assetClass?: "equity" | "option";
   providerContractId?: string | null;
   outsideRth?: boolean;
@@ -578,29 +579,7 @@ const buildHistoricalBarStreamUrl = (input: {
   ) {
     return null;
   }
-
-  const params = new URLSearchParams({
-    symbol: input.symbol.trim().toUpperCase(),
-    timeframe: streamTimeframe,
-  });
-
-  if (input.assetClass) {
-    params.set("assetClass", input.assetClass);
-  }
-  if (input.providerContractId?.trim()) {
-    params.set("providerContractId", input.providerContractId.trim());
-  }
-  if (typeof input.outsideRth === "boolean") {
-    params.set("outsideRth", String(input.outsideRth));
-  }
-  if (input.source) {
-    params.set("source", input.source);
-  }
-  if (typeof input.priority === "number" && Number.isFinite(input.priority)) {
-    params.set("priority", String(input.priority));
-  }
-
-  return `/api/streams/bars?${params.toString()}`;
+  return null;
 };
 
 const parseHistoricalBarStreamPayload = (
@@ -1255,7 +1234,7 @@ const patchBarsWithLiveQuote = (
   bars: MarketBar[],
   timeframe: string,
   quote: LiveOptionQuoteLike | null,
-  source = "ibkr-option-quote-derived",
+  source = "massive-option-quote-derived",
 ): MarketBar[] => {
   const normalizedBars = normalizeBaseBars(bars, timeframe);
   const quotePrice = resolveLiveQuotePrice(quote);
@@ -1322,6 +1301,15 @@ const patchBarsWithLiveQuote = (
   return nextBars;
 };
 
+// IBKR branding must be earned by a genuinely IBKR-tagged runtime quote; the
+// ticker store carries a mixed vocabulary ("massive", "massive-websocket",
+// "massive-delayed-websocket", "ibkr", "ibkr-websocket-derived", null), so
+// everything non-IBKR patches as massive-derived.
+const resolveEquityQuotePatchSource = (source: unknown): string =>
+  typeof source === "string" && source.startsWith("ibkr")
+    ? "ibkr-stock-quote-derived"
+    : "massive-stock-quote-derived";
+
 const mergePrependableHistoricalBars = ({
   baseBarsReady,
   normalizedBaseBars,
@@ -1376,12 +1364,18 @@ export const usePrependableHistoricalBars = ({
   const [isPrependingOlder, setIsPrependingOlder] = useState(false);
   const activeScopeKeyRef = useRef(scopeKey);
   const inFlightOlderKeyRef = useRef<string | null>(null);
+  const isPrependingOlderRef = useRef(false);
 
   useEffect(() => {
     activeScopeKeyRef.current = scopeKey;
     inFlightOlderKeyRef.current = null;
+    isPrependingOlderRef.current = false;
     setIsPrependingOlder(false);
   }, [scopeKey]);
+
+  useEffect(() => {
+    isPrependingOlderRef.current = isPrependingOlder;
+  }, [isPrependingOlder]);
 
   useEffect(() => {
     if (!enabled || !scopeKey?.trim()) {
@@ -1441,7 +1435,7 @@ export const usePrependableHistoricalBars = ({
         !enabled ||
         !fetchOlderBars ||
         !mergedBars.length ||
-        isPrependingOlder ||
+        isPrependingOlderRef.current ||
         sharedState.hasExhaustedOlderHistory
       ) {
         return 0;
@@ -1481,6 +1475,7 @@ export const usePrependableHistoricalBars = ({
       const lookbackMs = resolvePrependLookbackMs(timeframe, requestedPageSize);
       const fromMs = Math.max(0, toMs - lookbackMs);
       inFlightOlderKeyRef.current = prependKey;
+      isPrependingOlderRef.current = true;
       setIsPrependingOlder(true);
       recordChartHydrationCounter("olderPageFetch", scopeKey);
       if (historyCursor) {
@@ -1640,6 +1635,7 @@ export const usePrependableHistoricalBars = ({
         return Math.max(0, nextState.historicalBars.length - mergedBars.length);
       } finally {
         if (activeScopeKeyRef.current === scopeKey) {
+          isPrependingOlderRef.current = false;
           setIsPrependingOlder(false);
           if (inFlightOlderKeyRef.current === prependKey) {
             inFlightOlderKeyRef.current = null;
@@ -1725,7 +1721,7 @@ export const useBrokerStreamedBars = ({
             aggregatePatchedBars,
             timeframe,
             runtimeQuote,
-            "ibkr-stock-quote-derived",
+            resolveEquityQuotePatchSource(runtimeQuote?.source),
           )
         : aggregatePatchedBars,
     [
@@ -1882,6 +1878,7 @@ export const useHistoricalBarStreamState = ({
   timeframe,
   bars,
   enabled = true,
+  streamEnabled = true,
   assetClass,
   providerContractId,
   outsideRth,
@@ -1914,20 +1911,23 @@ export const useHistoricalBarStreamState = ({
   );
   const streamUrl = useMemo(
     () =>
-      buildHistoricalBarStreamUrl({
-        symbol,
-        timeframe,
-        assetClass,
-        providerContractId,
-        outsideRth,
-        source,
-        priority: streamPriority,
-      }),
+      streamEnabled
+        ? buildHistoricalBarStreamUrl({
+            symbol,
+            timeframe,
+            assetClass,
+            providerContractId,
+            outsideRth,
+            source,
+            priority: streamPriority,
+          })
+        : null,
     [
       assetClass,
       outsideRth,
       providerContractId,
       source,
+      streamEnabled,
       streamPriority,
       symbol,
       timeframe,
@@ -1947,10 +1947,14 @@ export const useHistoricalBarStreamState = ({
       setStreamStatus("deferred");
       return;
     }
+    if (!streamEnabled && fetchLatestBarsRef.current) {
+      setStreamStatus("deferred");
+      return;
+    }
     if (!streamUrl || typeof window === "undefined") {
       setStreamStatus("unsupported");
     }
-  }, [enabled, streamUrl]);
+  }, [enabled, streamEnabled, streamUrl]);
 
   useEffect(() => {
     setStreamedBars((current) => {
@@ -1973,7 +1977,11 @@ export const useHistoricalBarStreamState = ({
   }, [normalizedBaseBars, streamedBarLimit, timeframe]);
 
   useEffect(() => {
-    if (!enabled || !streamUrl || typeof window === "undefined") {
+    if (
+      !enabled ||
+      typeof window === "undefined" ||
+      (!streamUrl && !fetchLatestBarsRef.current)
+    ) {
       return;
     }
 
@@ -1983,7 +1991,8 @@ export const useHistoricalBarStreamState = ({
     let fallbackAttempt = 0;
     let lastFallbackCompletedAt = 0;
     let streamIsLive = false;
-    setStreamStatus("connecting");
+    const fallbackThrottleKey = streamUrl ?? `fallback:${scopeKey}`;
+    setStreamStatus(streamUrl ? "connecting" : "deferred");
 
     const clearFallbackTimer = () => {
       if (fallbackTimer == null) {
@@ -2089,11 +2098,11 @@ export const useHistoricalBarStreamState = ({
       }
 
       const sharedState =
-        liveBarFallbackThrottleByStreamUrl.get(streamUrl) || {
+        liveBarFallbackThrottleByStreamUrl.get(fallbackThrottleKey) || {
           inFlight: null,
           nextAllowedAt: 0,
         };
-      liveBarFallbackThrottleByStreamUrl.set(streamUrl, sharedState);
+      liveBarFallbackThrottleByStreamUrl.set(fallbackThrottleKey, sharedState);
       if (sharedState.inFlight) {
         return sharedState.inFlight;
       }
@@ -2156,27 +2165,32 @@ export const useHistoricalBarStreamState = ({
       }
     };
 
-    const unsubscribe = subscribeLiveBarStream(streamUrl, {
-      priority: streamPriority,
-      onBar: (bar) => {
-        fallbackAttempt = 0;
-        clearFallbackTimer();
-        enqueueStreamBar(bar);
-      },
-      onStatus: (status) => {
-        setStreamStatus(status);
-        streamIsLive = status === "live";
-        if (status === "live" || status === "connecting") {
-          if (status === "live") {
+    const unsubscribe = streamUrl
+      ? subscribeLiveBarStream(streamUrl, {
+          priority: streamPriority,
+          onBar: (bar) => {
             fallbackAttempt = 0;
-          }
-          clearFallbackTimer();
-          return;
-        }
+            clearFallbackTimer();
+            enqueueStreamBar(bar);
+          },
+          onStatus: (status) => {
+            setStreamStatus(status);
+            streamIsLive = status === "live";
+            if (status === "live" || status === "connecting") {
+              if (status === "live") {
+                fallbackAttempt = 0;
+              }
+              clearFallbackTimer();
+              return;
+            }
 
-        scheduleFallback(baseBarsRef.current.length ? undefined : 0);
-      },
-    });
+            scheduleFallback(baseBarsRef.current.length ? undefined : 0);
+          },
+        })
+      : () => {};
+    if (!streamUrl) {
+      scheduleFallback(baseBarsRef.current.length ? undefined : 0);
+    }
 
     return () => {
       active = false;
@@ -2188,6 +2202,7 @@ export const useHistoricalBarStreamState = ({
     enabled,
     instrumentationScope,
     scopeKey,
+    streamEnabled,
     streamUrl,
     streamPriority,
     streamedBarLimit,
@@ -2215,6 +2230,7 @@ export const __chartStreamingTestInternals = {
   normalizeHistoricalBarsPayload,
   normalizeBaseBars,
   patchBarsWithLiveQuote,
+  resolveEquityQuotePatchSource,
   patchBarsWithHistoricalBarStream,
   buildPatchedBarFromHistoricalBarStream,
   buildHistoricalBarStreamSignature,

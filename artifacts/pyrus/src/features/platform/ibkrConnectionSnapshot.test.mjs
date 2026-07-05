@@ -226,11 +226,7 @@ test("carries session bridge health failures through the header runtime snapshot
           streamStateReason: "bridge_unreachable",
           strictReady: false,
           strictReason: "health_error",
-          governor: {
-            health: {
-              lastFailure: "HTTP 530 <none>: error code: 1033",
-            },
-          },
+          lastError: "HTTP 530 <none>: error code: 1033",
         },
       },
     },
@@ -249,8 +245,5 @@ test("carries session bridge health failures through the header runtime snapshot
   assert.equal(ibkr.streamStateReason, "bridge_unreachable");
   assert.equal(ibkr.strictReason, "health_error");
   assert.equal(ibkr.healthErrorCode, "ibkr_bridge_health_backoff");
-  assert.equal(
-    ibkr.governor.health.lastFailure,
-    "HTTP 530 <none>: error code: 1033",
-  );
+  assert.equal(ibkr.lastError, "HTTP 530 <none>: error code: 1033");
 });

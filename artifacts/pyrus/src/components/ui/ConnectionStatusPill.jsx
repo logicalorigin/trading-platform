@@ -71,7 +71,7 @@ export const ConnectionStatusPill = ({
         minWidth: 0,
       }}
     >
-      <StatusPill color={color} dot={false}>
+      <StatusPill color={color} dot={false} glow={meta.active}>
         <PulseDot
           active={meta.active}
           color={color}

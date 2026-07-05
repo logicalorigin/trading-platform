@@ -283,3 +283,67 @@ test("aggregatePyrusSignalsBarsForTimeframe: date is the first 10 chars of ts, O
   assert.equal(agg[1].c, 21);
   assert.equal(agg[1].v, 200);
 });
+
+// --- unwarmed-trend guard (trendBasisComputable / marketStructureDirection) ---
+
+// Steadily falling closes: with enough bars the WMA basis slope is clearly
+// negative, so a warmed evaluation must report a bearish trend.
+const buildDowntrendSeries = (n: number): PyrusSignalsBar[] => {
+  const bars: PyrusSignalsBar[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const base = 200 - i * 0.4;
+    bars.push(mkBar(i, base, base + 0.5, base - 0.5, base));
+  }
+  return bars;
+};
+
+test("trendBasisComputable is false below basisLength + 5 bars (direction seed must not be trusted)", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const bars = buildDowntrendSeries(50); // 50 < basisLength(80) + 5
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: bars,
+    settings,
+    includeProvisionalSignals: false,
+    lastBarClosed: true,
+  });
+  assert.equal(evaluation.trendBasisComputable, false);
+  // The series still carries its bullish seed — which is exactly why callers
+  // must consult trendBasisComputable before trusting it.
+  assert.equal(evaluation.trendDirection[bars.length - 1], 1);
+});
+
+test("trendBasisComputable is true once the basis warms up and a downtrend reads bearish", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const bars = buildDowntrendSeries(200);
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: bars,
+    settings,
+    includeProvisionalSignals: false,
+    lastBarClosed: true,
+  });
+  assert.equal(evaluation.trendBasisComputable, true);
+  assert.equal(evaluation.trendDirection[bars.length - 1], -1);
+});
+
+test("marketStructureDirection reports the latched CHoCH direction", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const bars = buildForminBarBreakoutSeries(); // plants a bullish CHoCH
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: bars,
+    settings,
+    includeProvisionalSignals: true,
+    lastBarClosed: true,
+  });
+  assert.equal(evaluation.marketStructureDirection, 1);
+});
+
+test("marketStructureDirection stays 0 when no structure break ever latched", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars: buildDowntrendSeries(50),
+    settings,
+    includeProvisionalSignals: false,
+    lastBarClosed: true,
+  });
+  assert.equal(evaluation.marketStructureDirection, 0);
+});

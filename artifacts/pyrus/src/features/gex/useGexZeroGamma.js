@@ -277,8 +277,19 @@ export function useGexZeroGamma(ticker, options = {}) {
     retry: 1,
   });
 
-  return useMemo(
+  const overlay = useMemo(
     () => resolveGexZeroGammaOverlay(query.data),
     [query.data],
+  );
+
+  return useMemo(
+    () => ({
+      ...overlay,
+      isError: query.isError,
+      error: query.error ?? null,
+      status: query.error?.status ?? null,
+      refetch: query.refetch,
+    }),
+    [overlay, query.isError, query.error, query.refetch],
   );
 }

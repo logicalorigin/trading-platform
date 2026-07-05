@@ -3,11 +3,10 @@ import { test } from "node:test";
 
 import { isExpectedOptionUpstreamAvailabilityReason } from "./platform";
 
-// Off-hours the IBKR options market is closed, so option expirations/chains come back via
-// the transient-upstream path with these reasons. They are expected data-availability
-// conditions (market data runs 24/7, serving cached/durable/empty), not connection faults,
-// and must NOT raise a degraded warning event (which would surface in readiness
-// degradedReasons). Real connection problems are tracked via broker readiness / governor.
+// Option expirations/chains can come back through transient-upstream paths while
+// provider fetches are unavailable, backed off, or deferred to durable cache. These
+// are expected data-availability conditions, not broker connection faults, and must
+// NOT raise a degraded warning event (which would surface in readiness degradedReasons).
 test("upstream-availability option reasons are treated as expected (no warning)", () => {
   for (const reason of [
     "options_upstream_failure",

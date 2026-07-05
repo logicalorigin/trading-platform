@@ -84,10 +84,31 @@ const IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES = [
   "IBKR_MARKET_DATA_TYPE",
   "IB_GATEWAY_MARKET_DATA_TYPE",
 ];
+const IBKR_CLIENT_PORTAL_BASE_URL_ENV_NAMES = [
+  "IBKR_CLIENT_PORTAL_BASE_URL",
+  "IBKR_CLIENT_PORTAL_URL",
+  "IBKR_BASE_URL",
+  "IBKR_API_BASE_URL",
+  "IB_GATEWAY_URL",
+  "IBKR_GATEWAY_URL",
+];
+const IBKR_BEARER_TOKEN_ENV_NAMES = [
+  "IBKR_BEARER_TOKEN",
+  "IBKR_ACCESS_TOKEN",
+  "IBKR_API_TOKEN",
+];
+const IBKR_COOKIE_ENV_NAMES = [
+  "IBKR_COOKIE",
+  "IBKR_CLIENT_PORTAL_COOKIE",
+  "IBKR_SESSION_COOKIE",
+];
 const IBKR_DEFAULT_ACCOUNT_ENV_NAMES = [
   "IBKR_ACCOUNT_ID",
   "IBKR_DEFAULT_ACCOUNT_ID",
 ];
+const IBKR_EXT_OPERATOR_ENV_NAMES = ["IBKR_EXT_OPERATOR"];
+const IBKR_USERNAME_ENV_NAMES = ["IBKR_USERNAME", "IBKR_CLIENT_PORTAL_USERNAME"];
+const IBKR_PASSWORD_ENV_NAMES = ["IBKR_PASSWORD", "IBKR_CLIENT_PORTAL_PASSWORD"];
 
 function getOptionalEnv(
   names: string[],
@@ -162,10 +183,40 @@ function parseIntegerEnv(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseBooleanEnv(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export function getRuntimeMode(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeMode {
   return env["TRADING_MODE"] === "live" ? "live" : "shadow";
+}
+
+export function getIbkrRuntimeConfig(
+  env: Record<string, string | undefined> = process.env,
+): IbkrRuntimeConfig | null {
+  const baseUrl = getOptionalEnv(IBKR_CLIENT_PORTAL_BASE_URL_ENV_NAMES, env);
+  if (!baseUrl) {
+    return null;
+  }
+
+  return {
+    baseUrl: baseUrl.replace(/\/+$/, ""),
+    bearerToken: getOptionalEnv(IBKR_BEARER_TOKEN_ENV_NAMES, env),
+    cookie: getOptionalEnv(IBKR_COOKIE_ENV_NAMES, env),
+    defaultAccountId: getOptionalEnv(IBKR_DEFAULT_ACCOUNT_ENV_NAMES, env),
+    extOperator: getOptionalEnv(IBKR_EXT_OPERATOR_ENV_NAMES, env),
+    extraHeaders: {},
+    username: getOptionalEnv(IBKR_USERNAME_ENV_NAMES, env),
+    password: getOptionalEnv(IBKR_PASSWORD_ENV_NAMES, env),
+    allowInsecureTls: parseBooleanEnv(env["IBKR_ALLOW_INSECURE_TLS"] ?? null),
+  };
 }
 
 export function getIbkrTwsRuntimeConfig(

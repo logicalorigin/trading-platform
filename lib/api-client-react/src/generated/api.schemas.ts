@@ -121,7 +121,1590 @@ export type BrokerProvider = typeof BrokerProvider[keyof typeof BrokerProvider];
 
 export const BrokerProvider = {
   ibkr: 'ibkr',
+  snaptrade: 'snaptrade',
+  robinhood: 'robinhood',
 } as const;
+
+export type ExecutionDecisionCode = typeof ExecutionDecisionCode[keyof typeof ExecutionDecisionCode];
+
+
+export const ExecutionDecisionCode = {
+  BROKER_SCOPE_READY: 'BROKER_SCOPE_READY',
+  BROKER_SCOPE_MISSING: 'BROKER_SCOPE_MISSING',
+  BROKER_CAPABILITY_READY: 'BROKER_CAPABILITY_READY',
+  BROKER_CAPABILITY_SYNC_REQUIRED: 'BROKER_CAPABILITY_SYNC_REQUIRED',
+  BROKER_CAPABILITY_STALE: 'BROKER_CAPABILITY_STALE',
+  BROKER_CAPABILITY_UNSUPPORTED: 'BROKER_CAPABILITY_UNSUPPORTED',
+  BROKER_ORDER_SHAPE_UNSUPPORTED: 'BROKER_ORDER_SHAPE_UNSUPPORTED',
+  PROVIDER_ELIGIBLE: 'PROVIDER_ELIGIBLE',
+  PROVIDER_RESEARCH_REQUIRED: 'PROVIDER_RESEARCH_REQUIRED',
+  PROVIDER_INSUFFICIENT_CAPABILITY: 'PROVIDER_INSUFFICIENT_CAPABILITY',
+  PROVIDER_UNSUPPORTED: 'PROVIDER_UNSUPPORTED',
+  PROVIDER_SPECIAL_CONNECTOR_REQUIRED: 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED',
+  PROVIDER_COMPLIANCE_REVIEW_REQUIRED: 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED',
+} as const;
+
+export type ExecutionDecisionGateFamily = typeof ExecutionDecisionGateFamily[keyof typeof ExecutionDecisionGateFamily];
+
+
+export const ExecutionDecisionGateFamily = {
+  scope: 'scope',
+  capability: 'capability',
+  provider: 'provider',
+} as const;
+
+export type ExecutionDecisionOutcome = typeof ExecutionDecisionOutcome[keyof typeof ExecutionDecisionOutcome];
+
+
+export const ExecutionDecisionOutcome = {
+  allowed: 'allowed',
+  blocked: 'blocked',
+} as const;
+
+export type ExecutionDecisionSeverity = typeof ExecutionDecisionSeverity[keyof typeof ExecutionDecisionSeverity];
+
+
+export const ExecutionDecisionSeverity = {
+  info: 'info',
+  action_required: 'action_required',
+  blocked: 'blocked',
+  security_blocked: 'security_blocked',
+  provider_limitation: 'provider_limitation',
+} as const;
+
+export type ExecutionDecisionRedactionClass = typeof ExecutionDecisionRedactionClass[keyof typeof ExecutionDecisionRedactionClass];
+
+
+export const ExecutionDecisionRedactionClass = {
+  customer_safe: 'customer_safe',
+  support_safe: 'support_safe',
+  internal_only: 'internal_only',
+} as const;
+
+export type ExecutionCustomerMessageKey = typeof ExecutionCustomerMessageKey[keyof typeof ExecutionCustomerMessageKey];
+
+
+export const ExecutionCustomerMessageKey = {
+  brokerprovidercomplianceReviewRequired: 'broker.provider.complianceReviewRequired',
+  brokerprovidereligible: 'broker.provider.eligible',
+  brokerprovideribkrSpecialConnector: 'broker.provider.ibkrSpecialConnector',
+  brokerproviderinsufficientCapability: 'broker.provider.insufficientCapability',
+  brokerproviderresearchRequired: 'broker.provider.researchRequired',
+  brokerproviderunsupported: 'broker.provider.unsupported',
+  brokerscopeautomationTradingConnectionmissingRequired: 'broker.scope.automationTradingConnection.missingRequired',
+  brokerscopeready: 'broker.scope.ready',
+  capabilityasset_classsingle_leg_optionsunsupported: 'capability.asset_class.single_leg_options.unsupported',
+  capabilitycancel_replaceunsupported: 'capability.cancel_replace.unsupported',
+  capabilityorder_shapeunsupported: 'capability.order_shape.unsupported',
+  capabilityorder_status_streamingunavailable: 'capability.order_status_streaming.unavailable',
+  capabilitypreviewunavailable: 'capability.preview.unavailable',
+  capabilityready: 'capability.ready',
+  capabilitysyncrequired: 'capability.sync.required',
+  capabilitysyncstale: 'capability.sync.stale',
+  capabilityunsupported: 'capability.unsupported',
+  providerdemounsupported: 'provider.demo.unsupported',
+  providerpaperunsupported: 'provider.paper.unsupported',
+  providerread_onlyunsupported: 'provider.read_only.unsupported',
+  providersubmit_onlyunsupported: 'provider.submit_only.unsupported',
+} as const;
+
+/**
+ * Customer-safe execution decision metadata from the backend registry.
+ */
+export interface ExecutionDecisionResponse {
+  decisionCode: ExecutionDecisionCode;
+  gateFamily: ExecutionDecisionGateFamily;
+  outcome: ExecutionDecisionOutcome;
+  customerMessageKey: ExecutionCustomerMessageKey;
+  severity: ExecutionDecisionSeverity;
+  auditEventHint: string;
+  redactionClass: ExecutionDecisionRedactionClass;
+}
+
+export type SnapTradeReadinessStatus = typeof SnapTradeReadinessStatus[keyof typeof SnapTradeReadinessStatus];
+
+
+export const SnapTradeReadinessStatus = {
+  unconfigured: 'unconfigured',
+  research_required: 'research_required',
+  upstream_error: 'upstream_error',
+} as const;
+
+export type IbkrOAuthReadinessStatus = typeof IbkrOAuthReadinessStatus[keyof typeof IbkrOAuthReadinessStatus];
+
+
+export const IbkrOAuthReadinessStatus = {
+  unconfigured: 'unconfigured',
+  approval_required: 'approval_required',
+  research_required: 'research_required',
+} as const;
+
+export interface IbkrOAuthCredentialReadiness {
+  consumerKeyPresent: boolean;
+  signingKeyPresent: boolean;
+  callbackUrlPresent: boolean;
+  thirdPartyApprovalRecorded: boolean;
+}
+
+export type IbkrOAuthHostedConnectRequirementsOauthVersion = typeof IbkrOAuthHostedConnectRequirementsOauthVersion[keyof typeof IbkrOAuthHostedConnectRequirementsOauthVersion];
+
+
+export const IbkrOAuthHostedConnectRequirementsOauthVersion = {
+  oauth1a_third_party: 'oauth1a_third_party',
+} as const;
+
+export interface IbkrOAuthHostedConnectRequirements {
+  oauthVersion: IbkrOAuthHostedConnectRequirementsOauthVersion;
+  localGatewayRequired: boolean;
+  clientPortalGatewayCustomerPath: boolean;
+  approvalRequired: boolean;
+  officialSources: string[];
+}
+
+export type IbkrOAuthReadinessResponseProvider = typeof IbkrOAuthReadinessResponseProvider[keyof typeof IbkrOAuthReadinessResponseProvider];
+
+
+export const IbkrOAuthReadinessResponseProvider = {
+  ibkr_oauth: 'ibkr_oauth',
+} as const;
+
+/**
+ * Sanitized server-side IBKR OAuth readiness. Never includes OAuth consumer keys, signing keys, callback URLs, access tokens, or raw upstream payloads.
+ */
+export interface IbkrOAuthReadinessResponse {
+  provider: IbkrOAuthReadinessResponseProvider;
+  configured: boolean;
+  status: IbkrOAuthReadinessStatus;
+  checkedAt: string;
+  executionDecision: ExecutionDecisionResponse;
+  credentials: IbkrOAuthCredentialReadiness;
+  requirements: IbkrOAuthHostedConnectRequirements;
+  limitations: string[];
+}
+
+export interface SnapTradeCredentialReadiness {
+  clientIdPresent: boolean;
+  apiKeyPresent: boolean;
+}
+
+export interface SnapTradeClientInfoReadiness {
+  reachable: boolean;
+  redirectUriConfigured: boolean | null;
+  canAccessTrades: boolean | null;
+  canAccessHoldings: boolean | null;
+  canAccessAccountHistory: boolean | null;
+  canAccessReferenceData: boolean | null;
+  canAccessPortfolioManagement: boolean | null;
+  canAccessOrders: boolean | null;
+}
+
+export interface SnapTradeBrokerageReadinessSummary {
+  total: number;
+  enabled: number;
+  allowsTrading: number;
+  degradedOrMaintenance: number;
+}
+
+export interface SnapTradeUpstreamReadiness {
+  status: number;
+  code: string;
+  message: string;
+}
+
+export type SnapTradeUserReadinessStatus = typeof SnapTradeUserReadinessStatus[keyof typeof SnapTradeUserReadinessStatus];
+
+
+export const SnapTradeUserReadinessStatus = {
+  not_registered: 'not_registered',
+  registered: 'registered',
+  disabled: 'disabled',
+} as const;
+
+export type SnapTradeUserReadinessNextAction = typeof SnapTradeUserReadinessNextAction[keyof typeof SnapTradeUserReadinessNextAction];
+
+
+export const SnapTradeUserReadinessNextAction = {
+  register_snaptrade_user: 'register_snaptrade_user',
+  configure_redirect_uri: 'configure_redirect_uri',
+  generate_connection_portal: 'generate_connection_portal',
+  manual_review: 'manual_review',
+} as const;
+
+export type SnapTradeConnectionType = typeof SnapTradeConnectionType[keyof typeof SnapTradeConnectionType];
+
+
+export const SnapTradeConnectionType = {
+  read: 'read',
+  trade: 'trade',
+  'trade-if-available': 'trade-if-available',
+} as const;
+
+/**
+ * Request for a short-lived SnapTrade Connection Portal URL. customRedirect is intentionally not accepted from clients.
+ */
+export interface GenerateSnapTradeConnectionPortalBody {
+  /**
+   * Optional SnapTrade brokerage slug. Leave empty to show SnapTrade's brokerage picker.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  broker?: string;
+  /** Existing SnapTrade connection UUID to re-authorize. Only use for reconnect flows. */
+  reconnect?: string;
+  /** Defaults to trade-if-available so supported brokerages can grant trading while unsupported brokerages can still connect read-only. */
+  connectionType?: SnapTradeConnectionType;
+  /** Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted. */
+  immediateRedirect?: boolean;
+  /** Forwarded to SnapTrade. Defaults to true when omitted. */
+  showCloseButton?: boolean;
+  /** Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted. */
+  darkMode?: boolean;
+}
+
+/**
+ * Sanitized current-user SnapTrade custody readiness. Never includes SnapTrade user secrets or provider user ids.
+ */
+export interface SnapTradeUserReadiness {
+  registered: boolean;
+  status: SnapTradeUserReadinessStatus;
+  snapTradeUserIdPresent: boolean;
+  userSecretStored: boolean;
+  registeredAt: string | null;
+  disabledAt: string | null;
+  nextAction: SnapTradeUserReadinessNextAction;
+}
+
+export type SnapTradeUserRegistrationResponseProvider = typeof SnapTradeUserRegistrationResponseProvider[keyof typeof SnapTradeUserRegistrationResponseProvider];
+
+
+export const SnapTradeUserRegistrationResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized result of registering the authenticated app user with SnapTrade. Never includes SnapTrade user secrets or provider user ids.
+ */
+export interface SnapTradeUserRegistrationResponse {
+  provider: SnapTradeUserRegistrationResponseProvider;
+  /** True when a new SnapTrade user credential was created during this request. */
+  created: boolean;
+  user: SnapTradeUserReadiness;
+}
+
+export type SnapTradeConnectionPortalResponseProvider = typeof SnapTradeConnectionPortalResponseProvider[keyof typeof SnapTradeConnectionPortalResponseProvider];
+
+
+export const SnapTradeConnectionPortalResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+export type SnapTradeConnectionPortalResponseConnectionPortalVersion = typeof SnapTradeConnectionPortalResponseConnectionPortalVersion[keyof typeof SnapTradeConnectionPortalResponseConnectionPortalVersion];
+
+
+export const SnapTradeConnectionPortalResponseConnectionPortalVersion = {
+  v4: 'v4',
+} as const;
+
+/**
+ * Short-lived SnapTrade Connection Portal response for the current user. Contains the user-facing redirect URL but never includes SnapTrade userSecret or PYRUS user identifiers.
+ */
+export interface SnapTradeConnectionPortalResponse {
+  provider: SnapTradeConnectionPortalResponseProvider;
+  /** SnapTrade Connection Portal URL. SnapTrade documents this URL as expiring in five minutes. */
+  redirectUri: string;
+  /** SnapTrade Connection Portal session identifier. */
+  sessionId: string;
+  expiresAt: string;
+  requestedConnectionType: SnapTradeConnectionType;
+  connectionPortalVersion: SnapTradeConnectionPortalResponseConnectionPortalVersion;
+  broker: string | null;
+  reconnect: string | null;
+}
+
+export type SnapTradeBrokerageListingAuthorizationTypesItem = {
+  type: string;
+  authType: string | null;
+};
+
+/**
+ * Sanitized SnapTrade brokerage entry from the partner-scoped allowed-brokerages list. Never includes credentials or upstream identifiers.
+ */
+export interface SnapTradeBrokerageListing {
+  /** SnapTrade brokerage slug, for example ETRADE. */
+  slug: string;
+  displayName: string;
+  description: string | null;
+  /** Brokerage homepage URL. */
+  url: string | null;
+  /** True when SnapTrade supports order placement for this brokerage under this app's clientId. */
+  allowsTrading: boolean;
+  enabled: boolean;
+  maintenanceMode: boolean;
+  isDegraded: boolean;
+  allowsFractionalUnits: boolean | null;
+  /** SnapTrade-hosted wordmark logo image URL. */
+  logoUrl: string | null;
+  /** SnapTrade-hosted square logo image URL. */
+  squareLogoUrl: string | null;
+  /** Connection access levels SnapTrade offers for this brokerage, for example trade or read. */
+  authorizationTypes: SnapTradeBrokerageListingAuthorizationTypesItem[];
+}
+
+export type SnapTradeBrokerageListResponseProvider = typeof SnapTradeBrokerageListResponseProvider[keyof typeof SnapTradeBrokerageListResponseProvider];
+
+
+export const SnapTradeBrokerageListResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Partner-scoped SnapTrade brokerage listing, sorted trade-capable first.
+ */
+export interface SnapTradeBrokerageListResponse {
+  provider: SnapTradeBrokerageListResponseProvider;
+  checkedAt: string;
+  brokerages: SnapTradeBrokerageListing[];
+}
+
+export type SnapTradeBrokerageConnectionSyncConnectionProvider = typeof SnapTradeBrokerageConnectionSyncConnectionProvider[keyof typeof SnapTradeBrokerageConnectionSyncConnectionProvider];
+
+
+export const SnapTradeBrokerageConnectionSyncConnectionProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized SnapTrade connection permission type returned by the connection list.
+ */
+export type SnapTradeBrokerageConnectionSyncConnectionConnectionType = typeof SnapTradeBrokerageConnectionSyncConnectionConnectionType[keyof typeof SnapTradeBrokerageConnectionSyncConnectionConnectionType];
+
+
+export const SnapTradeBrokerageConnectionSyncConnectionConnectionType = {
+  read: 'read',
+  trade: 'trade',
+  unknown: 'unknown',
+} as const;
+
+export type SnapTradeBrokerageConnectionSyncConnectionMode = typeof SnapTradeBrokerageConnectionSyncConnectionMode[keyof typeof SnapTradeBrokerageConnectionSyncConnectionMode];
+
+
+export const SnapTradeBrokerageConnectionSyncConnectionMode = {
+  live: 'live',
+} as const;
+
+export type ConnectionStatus = typeof ConnectionStatus[keyof typeof ConnectionStatus];
+
+
+export const ConnectionStatus = {
+  configured: 'configured',
+  connected: 'connected',
+  disconnected: 'disconnected',
+  error: 'error',
+} as const;
+
+/**
+ * Sanitized SnapTrade brokerage connection stored in PYRUS. Never includes SnapTrade user ids, user secrets, or raw upstream payloads.
+ */
+export interface SnapTradeBrokerageConnectionSyncConnection {
+  /** Local PYRUS broker connection id. */
+  id: string;
+  provider: SnapTradeBrokerageConnectionSyncConnectionProvider;
+  /** SnapTrade brokerage authorization id. This is not a credential. */
+  snapTradeConnectionId: string;
+  brokerageSlug: string | null;
+  brokerageName: string;
+  /** Sanitized SnapTrade connection permission type returned by the connection list. */
+  connectionType: SnapTradeBrokerageConnectionSyncConnectionConnectionType;
+  status: ConnectionStatus;
+  tradeEnabled: boolean | null;
+  /** True only when this connection is currently eligible for live order submission. */
+  executionReady: boolean;
+  /** Machine-readable reasons this connection is not currently eligible for live order submission. */
+  executionBlockers: string[];
+  accountCount: number;
+  mode: SnapTradeBrokerageConnectionSyncConnectionMode;
+}
+
+/**
+ * Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage.
+ */
+export type SnapTradeBrokerageConnectionSyncAccountStatus = typeof SnapTradeBrokerageConnectionSyncAccountStatus[keyof typeof SnapTradeBrokerageConnectionSyncAccountStatus] | null;
+
+
+export const SnapTradeBrokerageConnectionSyncAccountStatus = {
+  open: 'open',
+  closed: 'closed',
+  archived: 'archived',
+} as const;
+
+export type SnapTradeBrokerageConnectionSyncAccountMode = typeof SnapTradeBrokerageConnectionSyncAccountMode[keyof typeof SnapTradeBrokerageConnectionSyncAccountMode];
+
+
+export const SnapTradeBrokerageConnectionSyncAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized SnapTrade brokerage account stored in PYRUS. Account display names are redacted before persistence.
+ */
+export interface SnapTradeBrokerageConnectionSyncAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** SnapTrade account id. This is not an account number. */
+  snapTradeAccountId: string;
+  displayName: string;
+  brokerageName: string | null;
+  /** Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage. */
+  status: SnapTradeBrokerageConnectionSyncAccountStatus;
+  baseCurrency: string;
+  /** True only when this account and its connection are currently eligible for live order submission. */
+  executionReady: boolean;
+  /** Machine-readable reasons this account is not currently eligible for live order submission. */
+  executionBlockers: string[];
+  mode: SnapTradeBrokerageConnectionSyncAccountMode;
+  lastSyncedAt: string;
+}
+
+export interface SnapTradeBrokerageConnectionSyncTotals {
+  upstreamConnections: number;
+  upstreamAccounts: number;
+  storedConnections: number;
+  storedAccounts: number;
+}
+
+export type SyncSnapTradeBrokerageConnectionsResponseProvider = typeof SyncSnapTradeBrokerageConnectionsResponseProvider[keyof typeof SyncSnapTradeBrokerageConnectionsResponseProvider];
+
+
+export const SyncSnapTradeBrokerageConnectionsResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized result of syncing the authenticated user's SnapTrade brokerage connections and accounts. Never includes SnapTrade userSecret, PYRUS user ids, full account numbers, or raw upstream payloads.
+ */
+export interface SyncSnapTradeBrokerageConnectionsResponse {
+  provider: SyncSnapTradeBrokerageConnectionsResponseProvider;
+  syncedAt: string;
+  connections: SnapTradeBrokerageConnectionSyncConnection[];
+  accounts: SnapTradeBrokerageConnectionSyncAccount[];
+  totals: SnapTradeBrokerageConnectionSyncTotals;
+}
+
+export type SnapTradeAccountPortfolioAccountMode = typeof SnapTradeAccountPortfolioAccountMode[keyof typeof SnapTradeAccountPortfolioAccountMode];
+
+
+export const SnapTradeAccountPortfolioAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Local account metadata for a synced SnapTrade brokerage account.
+ */
+export interface SnapTradeAccountPortfolioAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** SnapTrade account id. This is not an account number. */
+  snapTradeAccountId: string;
+  displayName: string;
+  baseCurrency: string;
+  mode: SnapTradeAccountPortfolioAccountMode;
+  lastSyncedAt: string | null;
+}
+
+export interface SnapTradeAccountPortfolioBalance {
+  currency: string;
+  cash: number | null;
+  buyingPower: number | null;
+}
+
+export type SnapTradeAccountPortfolioPositionSide = typeof SnapTradeAccountPortfolioPositionSide[keyof typeof SnapTradeAccountPortfolioPositionSide];
+
+
+export const SnapTradeAccountPortfolioPositionSide = {
+  long: 'long',
+  short: 'short',
+  flat: 'flat',
+} as const;
+
+export type SnapTradeAccountPortfolioPositionAssetClass = typeof SnapTradeAccountPortfolioPositionAssetClass[keyof typeof SnapTradeAccountPortfolioPositionAssetClass];
+
+
+export const SnapTradeAccountPortfolioPositionAssetClass = {
+  equity: 'equity',
+  option: 'option',
+  crypto: 'crypto',
+  future: 'future',
+  other: 'other',
+} as const;
+
+export type OptionRight = typeof OptionRight[keyof typeof OptionRight];
+
+
+export const OptionRight = {
+  call: 'call',
+  put: 'put',
+} as const;
+
+export interface OptionContract {
+  ticker: string;
+  underlying: string;
+  expirationDate: string;
+  strike: number;
+  right: OptionRight;
+  multiplier: number;
+  sharesPerContract: number;
+  providerContractId?: string | null;
+  brokerContractId?: string | null;
+}
+
+/**
+ * Normalized SnapTrade position row for account preview and future trading context.
+ */
+export interface SnapTradeAccountPortfolioPosition {
+  snapTradePositionId: string;
+  symbol: string;
+  rawSymbol: string | null;
+  description: string | null;
+  instrumentKind: string;
+  assetClass: SnapTradeAccountPortfolioPositionAssetClass;
+  optionContract: OptionContract | null;
+  quantity: number | null;
+  side: SnapTradeAccountPortfolioPositionSide;
+  price: number | null;
+  averagePurchasePrice: number | null;
+  marketValue: number | null;
+  costBasis: number | null;
+  unrealizedPnl: number | null;
+  currency: string;
+  cashEquivalent: boolean;
+}
+
+export interface SnapTradeAccountPortfolioTotals {
+  cash: number | null;
+  buyingPower: number | null;
+  positionMarketValue: number | null;
+  netLiquidation: number | null;
+  positionCount: number;
+}
+
+export interface SnapTradeAccountPortfolioFreshness {
+  asOf: string | null;
+}
+
+export type GetSnapTradeAccountPortfolioResponseProvider = typeof GetSnapTradeAccountPortfolioResponseProvider[keyof typeof GetSnapTradeAccountPortfolioResponseProvider];
+
+
+export const GetSnapTradeAccountPortfolioResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized SnapTrade balances and positions for one synced account. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+ */
+export interface GetSnapTradeAccountPortfolioResponse {
+  provider: GetSnapTradeAccountPortfolioResponseProvider;
+  syncedAt: string;
+  account: SnapTradeAccountPortfolioAccount;
+  balances: SnapTradeAccountPortfolioBalance[];
+  positions: SnapTradeAccountPortfolioPosition[];
+  totals: SnapTradeAccountPortfolioTotals;
+  dataFreshness: SnapTradeAccountPortfolioFreshness;
+}
+
+/**
+ * Normalized SnapTrade activity row persisted for account history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+ */
+export interface SnapTradeAccountHistoryActivity {
+  id: string;
+  accountId: string;
+  symbol: string | null;
+  rawSymbol: string | null;
+  description: string | null;
+  type: string;
+  optionType: string | null;
+  optionTicker: string | null;
+  tradeDate: string;
+  settlementDate: string | null;
+  quantity: number | null;
+  price: number | null;
+  amount: number | null;
+  fee: number | null;
+  currency: string;
+  externalReferenceId: string | null;
+  optionContract: OptionContract | null;
+}
+
+export interface SnapTradeAccountHistoryBalanceHistory {
+  available: boolean;
+  reason: string | null;
+  pointCount: number;
+}
+
+export interface SnapTradeAccountHistoryBackfill {
+  activitiesFetched: number;
+  activitiesStored: number;
+  balanceSnapshotsFetched: number;
+  balanceSnapshotsStored: number;
+}
+
+export type GetSnapTradeAccountHistoryResponseProvider = typeof GetSnapTradeAccountHistoryResponseProvider[keyof typeof GetSnapTradeAccountHistoryResponseProvider];
+
+
+export const GetSnapTradeAccountHistoryResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountTradeSource];
+
+
+export const AccountTradeSource = {
+  LIVE: 'LIVE',
+  LIVE_ORDER: 'LIVE_ORDER',
+  LIVE_EXECUTION: 'LIVE_EXECUTION',
+  FLEX: 'FLEX',
+  SHADOW: 'SHADOW',
+  SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
+  SNAPTRADE_ACTIVITY: 'SNAPTRADE_ACTIVITY',
+} as const;
+
+/**
+ * Canonical account position type used for filtering and grouping.
+ */
+export type AccountTradePositionType = typeof AccountTradePositionType[keyof typeof AccountTradePositionType];
+
+
+export const AccountTradePositionType = {
+  stock: 'stock',
+  etf: 'etf',
+  option: 'option',
+} as const;
+
+export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof AccountTradeSourceType];
+
+
+export const AccountTradeSourceType = {
+  manual: 'manual',
+  automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
+  watchlist_backtest: 'watchlist_backtest',
+  mixed: 'mixed',
+} as const;
+
+export type AccountTradeOptionRight = typeof AccountTradeOptionRight[keyof typeof AccountTradeOptionRight] | null;
+
+
+export const AccountTradeOptionRight = {
+  call: 'call',
+  put: 'put',
+} as const;
+
+export type AccountTradeSelectedContract = { [key: string]: unknown } | null;
+
+export type AccountTradeOptionContract = { [key: string]: unknown } | null;
+
+export type AccountTradeFilterState = { [key: string]: unknown } | null;
+
+export type AccountTradeMetadata = { [key: string]: unknown };
+
+export interface AccountTrade {
+  id: string;
+  source: AccountTradeSource;
+  accountId: string;
+  symbol: string;
+  side: string;
+  /** Display label for the trade position type. */
+  assetClass: string;
+  /** Canonical account position type used for filtering and grouping. */
+  positionType: AccountTradePositionType;
+  quantity: number;
+  openDate: string | null;
+  closeDate: string | null;
+  avgOpen: number | null;
+  avgClose: number | null;
+  realizedPnl: number | null;
+  realizedPnlPercent: number | null;
+  holdDurationMinutes: number | null;
+  commissions: number | null;
+  currency: string;
+  sourceType?: AccountTradeSourceType;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+  deploymentId?: string | null;
+  deploymentName?: string | null;
+  sourceEventId?: string | null;
+  exitReason?: string | null;
+  selectedContract?: AccountTradeSelectedContract;
+  optionContract?: AccountTradeOptionContract;
+  optionRight?: AccountTradeOptionRight;
+  expirationDate?: string | null;
+  dte?: number | null;
+  strike?: number | null;
+  strikeSlot?: number | null;
+  strikeDistancePct?: number | null;
+  signalPrice?: number | null;
+  filterState?: AccountTradeFilterState;
+  adx?: number | null;
+  mtfDirections?: number[];
+  filterDirection?: number | null;
+  peakPrice?: number | null;
+  mfePercent?: number | null;
+  givebackPercent?: number | null;
+  premiumAtRisk?: number | null;
+  metadata?: AccountTradeMetadata;
+}
+
+export interface JsonObject { [key: string]: unknown }
+
+export interface AccountClosedTradesResponse {
+  accountId: string;
+  currency: string;
+  trades: AccountTrade[];
+  summary: JsonObject;
+  updatedAt: string;
+}
+
+export type AccountHistoryRange = typeof AccountHistoryRange[keyof typeof AccountHistoryRange];
+
+
+export const AccountHistoryRange = {
+  '1D': '1D',
+  '1W': '1W',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  YTD: 'YTD',
+  '1Y': '1Y',
+  ALL: 'ALL',
+} as const;
+
+export type AccountEquityHistoryResponseTerminalPointSource = typeof AccountEquityHistoryResponseTerminalPointSource[keyof typeof AccountEquityHistoryResponseTerminalPointSource] | null;
+
+
+export const AccountEquityHistoryResponseTerminalPointSource = {
+  live_account_summary: 'live_account_summary',
+  persisted_snapshot: 'persisted_snapshot',
+  flex: 'flex',
+  shadow_ledger: 'shadow_ledger',
+  shadow_watchlist_backtest: 'shadow_watchlist_backtest',
+  shadow_options_replay: 'shadow_options_replay',
+  snaptrade_balance_history: 'snaptrade_balance_history',
+} as const;
+
+export type AccountEquityHistoryResponseSourceScope = typeof AccountEquityHistoryResponseSourceScope[keyof typeof AccountEquityHistoryResponseSourceScope] | null;
+
+
+export const AccountEquityHistoryResponseSourceScope = {
+  ledger: 'ledger',
+  manual: 'manual',
+  automation: 'automation',
+  watchlist_backtest: 'watchlist_backtest',
+  signal_options_replay: 'signal_options_replay',
+  runtime_fallback: 'runtime_fallback',
+} as const;
+
+export type AccountEquityPointSource = typeof AccountEquityPointSource[keyof typeof AccountEquityPointSource];
+
+
+export const AccountEquityPointSource = {
+  FLEX: 'FLEX',
+  LOCAL_LEDGER: 'LOCAL_LEDGER',
+  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
+  SHADOW_LEDGER: 'SHADOW_LEDGER',
+  SHADOW_BACKTEST: 'SHADOW_BACKTEST',
+  SHADOW_OPTIONS_REPLAY: 'SHADOW_OPTIONS_REPLAY',
+  SNAPTRADE_BALANCE_HISTORY: 'SNAPTRADE_BALANCE_HISTORY',
+} as const;
+
+export interface AccountEquityPoint {
+  timestamp: string;
+  netLiquidation: number;
+  currency: string;
+  source: AccountEquityPointSource;
+  deposits: number;
+  withdrawals: number;
+  dividends: number;
+  fees: number;
+  /** Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L. */
+  returnPercent: number;
+  /** Benchmark return in percentage points, rebased to the first visible matched point. */
+  benchmarkPercent: number | null;
+}
+
+export interface AccountCashEvent {
+  timestamp: string;
+  type: string;
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+export interface AccountEquityHistoryResponse {
+  accountId: string;
+  range: AccountHistoryRange;
+  currency: string;
+  flexConfigured: boolean;
+  lastFlexRefreshAt: string | null;
+  benchmark: string | null;
+  asOf: string | null;
+  latestSnapshotAt: string | null;
+  isStale: boolean;
+  staleReason: string | null;
+  terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
+  liveTerminalIncluded: boolean;
+  sourceScope?: AccountEquityHistoryResponseSourceScope;
+  selectedSnapshotSource?: string | null;
+  points: AccountEquityPoint[];
+  events: AccountCashEvent[];
+}
+
+/**
+ * Sanitized SnapTrade account history response assembled from activities and beta balance history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.
+ */
+export interface GetSnapTradeAccountHistoryResponse {
+  provider: GetSnapTradeAccountHistoryResponseProvider;
+  syncedAt: string;
+  account: SnapTradeAccountPortfolioAccount;
+  activities: SnapTradeAccountHistoryActivity[];
+  closedTrades: AccountClosedTradesResponse;
+  equityHistory: AccountEquityHistoryResponse;
+  balanceHistory: SnapTradeAccountHistoryBalanceHistory;
+  backfill: SnapTradeAccountHistoryBackfill;
+}
+
+export type SnapTradeEquityOrderAction = typeof SnapTradeEquityOrderAction[keyof typeof SnapTradeEquityOrderAction];
+
+
+export const SnapTradeEquityOrderAction = {
+  BUY: 'BUY',
+  SELL: 'SELL',
+} as const;
+
+export type SnapTradeEquityOrderType = typeof SnapTradeEquityOrderType[keyof typeof SnapTradeEquityOrderType];
+
+
+export const SnapTradeEquityOrderType = {
+  Market: 'Market',
+  Limit: 'Limit',
+  Stop: 'Stop',
+  StopLimit: 'StopLimit',
+} as const;
+
+export type SnapTradeEquityTimeInForce = typeof SnapTradeEquityTimeInForce[keyof typeof SnapTradeEquityTimeInForce];
+
+
+export const SnapTradeEquityTimeInForce = {
+  Day: 'Day',
+  GTC: 'GTC',
+  FOK: 'FOK',
+  IOC: 'IOC',
+} as const;
+
+export type SnapTradeEquityTradingSession = typeof SnapTradeEquityTradingSession[keyof typeof SnapTradeEquityTradingSession];
+
+
+export const SnapTradeEquityTradingSession = {
+  REGULAR: 'REGULAR',
+  EXTENDED: 'EXTENDED',
+} as const;
+
+/**
+ * Local PYRUS request for SnapTrade's equity order-impact endpoint. Uses camelCase locally and is translated to SnapTrade snake_case server-side.
+ */
+export interface SnapTradeEquityOrderImpactBody {
+  action: SnapTradeEquityOrderAction;
+  /** SnapTrade universal symbol id required by the order-impact endpoint. */
+  universalSymbolId: string;
+  /** Optional display/trading symbol for PYRUS response context. */
+  symbol?: string | null;
+  orderType: SnapTradeEquityOrderType;
+  timeInForce: SnapTradeEquityTimeInForce;
+  /** Share quantity. Must be omitted/null when notionalValue is provided. */
+  units?: number | null;
+  /** Notional order value. Only valid for Market + Day orders when supported by the brokerage. */
+  notionalValue?: number | null;
+  /** Required for Limit and StopLimit orders. */
+  price?: number | null;
+  /** Required for Stop and StopLimit orders. */
+  stop?: number | null;
+}
+
+/**
+ * Local PYRUS request for SnapTrade's direct equity order endpoint. confirm=true is required because this can submit a live brokerage order.
+ */
+export interface SnapTradeEquityOrderSubmitBody {
+  /** Must be true to submit the order to SnapTrade and the brokerage. */
+  confirm: boolean;
+  action: SnapTradeEquityOrderAction;
+  /** Brokerage trading symbol. SnapTrade recommends symbol when placing equity orders. */
+  symbol: string;
+  orderType: SnapTradeEquityOrderType;
+  timeInForce: SnapTradeEquityTimeInForce;
+  tradingSession?: SnapTradeEquityTradingSession | null;
+  /** Future GTD support field passed through only when enabled by validation. */
+  expiryDate?: string | null;
+  /** Share quantity. Must be omitted/null when notionalValue is provided. */
+  units?: number | null;
+  /** Notional order value. Only valid for Market + Day orders when supported by the brokerage. */
+  notionalValue?: number | null;
+  /** Required for Limit and StopLimit orders. */
+  price?: number | null;
+  /** Required for Stop and StopLimit orders. */
+  stop?: number | null;
+  /** Optional idempotency/correlation UUID passed through to SnapTrade. */
+  clientOrderId?: string | null;
+}
+
+export type SnapTradeEquityOrderAccountMode = typeof SnapTradeEquityOrderAccountMode[keyof typeof SnapTradeEquityOrderAccountMode];
+
+
+export const SnapTradeEquityOrderAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized local account metadata for a SnapTrade order operation.
+ */
+export interface SnapTradeEquityOrderAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** SnapTrade account id. This is not an account number. */
+  snapTradeAccountId: string;
+  displayName: string;
+  baseCurrency: string;
+  mode: SnapTradeEquityOrderAccountMode;
+  accountStatus: string | null;
+  executionReady: boolean;
+  executionBlockers: string[];
+  lastSyncedAt: string | null;
+}
+
+/**
+ * Sanitized SnapTrade Universal Symbol available for one connected brokerage account.
+ */
+export interface SnapTradeAccountSymbol {
+  /** SnapTrade universal symbol id used by order-impact requests. */
+  id: string;
+  symbol: string;
+  rawSymbol: string | null;
+  description: string | null;
+  currencyCode: string | null;
+  exchangeCode: string | null;
+  exchangeMicCode: string | null;
+  exchangeName: string | null;
+  exchangeSuffix: string | null;
+  securityTypeCode: string | null;
+  securityTypeDescription: string | null;
+}
+
+export type SearchSnapTradeAccountSymbolsResponseProvider = typeof SearchSnapTradeAccountSymbolsResponseProvider[keyof typeof SearchSnapTradeAccountSymbolsResponseProvider];
+
+
+export const SearchSnapTradeAccountSymbolsResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized account-scoped SnapTrade universal-symbol search response. Never includes user secrets, client credentials, raw account numbers, or raw upstream payloads.
+ */
+export interface SearchSnapTradeAccountSymbolsResponse {
+  provider: SearchSnapTradeAccountSymbolsResponseProvider;
+  checkedAt: string;
+  query: string;
+  account: SnapTradeEquityOrderAccount;
+  symbols: SnapTradeAccountSymbol[];
+  bestMatch: SnapTradeAccountSymbol | null;
+}
+
+/**
+ * Sanitized order details accepted by PYRUS and translated to SnapTrade upstream fields.
+ */
+export interface SnapTradeEquityOrderDetails {
+  action: SnapTradeEquityOrderAction;
+  symbol: string | null;
+  universalSymbolId: string | null;
+  orderType: SnapTradeEquityOrderType;
+  timeInForce: SnapTradeEquityTimeInForce;
+  tradingSession: SnapTradeEquityTradingSession | null;
+  units: number | null;
+  notionalValue: number | null;
+  price: number | null;
+  stop: number | null;
+  clientOrderId: string | null;
+}
+
+export interface SnapTradeEquityOrderImpact {
+  remainingCash: number | null;
+  estimatedCommission: number | null;
+  forexFees: number | null;
+}
+
+export interface SnapTradeEquityOrderImpactTrade {
+  id: string;
+  /** SnapTrade order-impact trades expire after approximately five minutes. */
+  expiresAt: string;
+}
+
+export type SnapTradeEquityOrderImpactResponseProvider = typeof SnapTradeEquityOrderImpactResponseProvider[keyof typeof SnapTradeEquityOrderImpactResponseProvider];
+
+
+export const SnapTradeEquityOrderImpactResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized response from SnapTrade's order-impact endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+ */
+export interface SnapTradeEquityOrderImpactResponse {
+  provider: SnapTradeEquityOrderImpactResponseProvider;
+  checkedAt: string;
+  account: SnapTradeEquityOrderAccount;
+  order: SnapTradeEquityOrderDetails;
+  trade: SnapTradeEquityOrderImpactTrade;
+  impact: SnapTradeEquityOrderImpact;
+}
+
+export type SnapTradeEquitySubmittedOrder = SnapTradeEquityOrderDetails & ({
+  brokerageOrderId: string | null;
+  status: string;
+});
+
+export type SnapTradeEquityOrderSubmitResponseProvider = typeof SnapTradeEquityOrderSubmitResponseProvider[keyof typeof SnapTradeEquityOrderSubmitResponseProvider];
+
+
+export const SnapTradeEquityOrderSubmitResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized response from SnapTrade's direct equity order endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+ */
+export interface SnapTradeEquityOrderSubmitResponse {
+  provider: SnapTradeEquityOrderSubmitResponseProvider;
+  submittedAt: string;
+  account: SnapTradeEquityOrderAccount;
+  order: SnapTradeEquitySubmittedOrder;
+}
+
+/**
+ * Sanitized SnapTrade recent-order leg used for post-submit status reconciliation.
+ */
+export interface SnapTradeRecentOrder {
+  brokerageOrderId: string | null;
+  brokerageGroupOrderId: string | null;
+  orderRole: string | null;
+  status: string;
+  symbol: string | null;
+  rawSymbol: string | null;
+  description: string | null;
+  universalSymbolId: string | null;
+  optionSymbolId: string | null;
+  optionTicker: string | null;
+  action: string | null;
+  totalQuantity: number | null;
+  openQuantity: number | null;
+  canceledQuantity: number | null;
+  filledQuantity: number | null;
+  executionPrice: number | null;
+  limitPrice: number | null;
+  stopPrice: number | null;
+  orderType: string | null;
+  timeInForce: string | null;
+  timePlaced: string | null;
+  timeUpdated: string | null;
+  timeExecuted: string | null;
+  expiryDate: string | null;
+}
+
+export type GetSnapTradeRecentOrdersResponseProvider = typeof GetSnapTradeRecentOrdersResponseProvider[keyof typeof GetSnapTradeRecentOrdersResponseProvider];
+
+
+export const GetSnapTradeRecentOrdersResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized SnapTrade realtime recent-order response. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.
+ */
+export interface GetSnapTradeRecentOrdersResponse {
+  provider: GetSnapTradeRecentOrdersResponseProvider;
+  checkedAt: string;
+  account: SnapTradeEquityOrderAccount;
+  orders: SnapTradeRecentOrder[];
+}
+
+export type SnapTradeReadinessResponseProvider = typeof SnapTradeReadinessResponseProvider[keyof typeof SnapTradeReadinessResponseProvider];
+
+
+export const SnapTradeReadinessResponseProvider = {
+  snaptrade: 'snaptrade',
+} as const;
+
+/**
+ * Sanitized server-side SnapTrade readiness. Never includes SnapTrade secrets, client names, raw brokerage lists, or raw upstream payloads.
+ */
+export interface SnapTradeReadinessResponse {
+  provider: SnapTradeReadinessResponseProvider;
+  configured: boolean;
+  status: SnapTradeReadinessStatus;
+  checkedAt: string;
+  executionDecision: ExecutionDecisionResponse;
+  credentials: SnapTradeCredentialReadiness;
+  user: SnapTradeUserReadiness;
+  clientInfo: SnapTradeClientInfoReadiness | null;
+  brokerages: SnapTradeBrokerageReadinessSummary | null;
+  limitations: string[];
+  upstream: SnapTradeUpstreamReadiness | null;
+}
+
+export type RobinhoodReadinessStatus = typeof RobinhoodReadinessStatus[keyof typeof RobinhoodReadinessStatus];
+
+
+export const RobinhoodReadinessStatus = {
+  unconfigured: 'unconfigured',
+  research_required: 'research_required',
+  upstream_error: 'upstream_error',
+} as const;
+
+export type RobinhoodUserReadinessStatus = typeof RobinhoodUserReadinessStatus[keyof typeof RobinhoodUserReadinessStatus];
+
+
+export const RobinhoodUserReadinessStatus = {
+  not_connected: 'not_connected',
+  pending: 'pending',
+  connected: 'connected',
+  disabled: 'disabled',
+} as const;
+
+export type RobinhoodUserReadinessNextAction = typeof RobinhoodUserReadinessNextAction[keyof typeof RobinhoodUserReadinessNextAction];
+
+
+export const RobinhoodUserReadinessNextAction = {
+  start_connect: 'start_connect',
+  complete_authorization: 'complete_authorization',
+  sync_accounts: 'sync_accounts',
+  manual_review: 'manual_review',
+} as const;
+
+/**
+ * Sanitized current-user Robinhood Agentic OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.
+ */
+export interface RobinhoodUserReadiness {
+  connected: boolean;
+  status: RobinhoodUserReadinessStatus;
+  oauthClientRegistered: boolean;
+  refreshTokenStored: boolean;
+  connectedAt: string | null;
+  disabledAt: string | null;
+  nextAction: RobinhoodUserReadinessNextAction;
+}
+
+/**
+ * Live probe of Robinhood's published OAuth authorization-server metadata.
+ */
+export interface RobinhoodOAuthMetadataReadiness {
+  reachable: boolean;
+  authorizationEndpointPresent: boolean | null;
+  tokenEndpointPresent: boolean | null;
+  registrationEndpointPresent: boolean | null;
+  pkceS256Supported: boolean | null;
+}
+
+export type RobinhoodReadinessResponseProvider = typeof RobinhoodReadinessResponseProvider[keyof typeof RobinhoodReadinessResponseProvider];
+
+
+export const RobinhoodReadinessResponseProvider = {
+  robinhood: 'robinhood',
+} as const;
+
+export type RobinhoodReadinessResponsePrerequisites = {
+  credentialEncryptionKeyPresent: boolean;
+  redirectBaseUrlPresent: boolean;
+};
+
+export type RobinhoodReadinessResponseUpstream = {
+  status: number;
+  code: string;
+  message: string;
+} | null;
+
+/**
+ * Sanitized Robinhood Agentic Trading readiness. Never includes tokens or raw upstream payloads.
+ */
+export interface RobinhoodReadinessResponse {
+  provider: RobinhoodReadinessResponseProvider;
+  configured: boolean;
+  status: RobinhoodReadinessStatus;
+  checkedAt: string;
+  executionDecision: ExecutionDecisionResponse;
+  prerequisites: RobinhoodReadinessResponsePrerequisites;
+  user: RobinhoodUserReadiness;
+  oauth: RobinhoodOAuthMetadataReadiness | null;
+  limitations: string[];
+  upstream: RobinhoodReadinessResponseUpstream;
+}
+
+export type RobinhoodConnectResponseProvider = typeof RobinhoodConnectResponseProvider[keyof typeof RobinhoodConnectResponseProvider];
+
+
+export const RobinhoodConnectResponseProvider = {
+  robinhood: 'robinhood',
+} as const;
+
+/**
+ * Robinhood Agentic OAuth authorization start for the current user. The URL opens Robinhood's consent page; tokens are exchanged and stored server-side only.
+ */
+export interface RobinhoodConnectResponse {
+  provider: RobinhoodConnectResponseProvider;
+  authorizationUrl: string;
+  state: string;
+  redirectUri: string;
+  expiresAt: string;
+}
+
+export type RobinhoodConnectionSyncConnectionProvider = typeof RobinhoodConnectionSyncConnectionProvider[keyof typeof RobinhoodConnectionSyncConnectionProvider];
+
+
+export const RobinhoodConnectionSyncConnectionProvider = {
+  robinhood: 'robinhood',
+} as const;
+
+export type RobinhoodConnectionSyncConnectionConnectionKind = typeof RobinhoodConnectionSyncConnectionConnectionKind[keyof typeof RobinhoodConnectionSyncConnectionConnectionKind];
+
+
+export const RobinhoodConnectionSyncConnectionConnectionKind = {
+  agentic_oauth: 'agentic_oauth',
+} as const;
+
+export type RobinhoodConnectionSyncConnectionStatus = typeof RobinhoodConnectionSyncConnectionStatus[keyof typeof RobinhoodConnectionSyncConnectionStatus];
+
+
+export const RobinhoodConnectionSyncConnectionStatus = {
+  connected: 'connected',
+  disconnected: 'disconnected',
+  error: 'error',
+} as const;
+
+export type RobinhoodConnectionSyncConnectionMode = typeof RobinhoodConnectionSyncConnectionMode[keyof typeof RobinhoodConnectionSyncConnectionMode];
+
+
+export const RobinhoodConnectionSyncConnectionMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized Robinhood Agentic OAuth connection stored in PYRUS.
+ */
+export interface RobinhoodConnectionSyncConnection {
+  /** Local PYRUS broker connection id. */
+  id: string;
+  provider: RobinhoodConnectionSyncConnectionProvider;
+  connectionKind: RobinhoodConnectionSyncConnectionConnectionKind;
+  status: RobinhoodConnectionSyncConnectionStatus;
+  executionReady: boolean;
+  executionBlockers: string[];
+  accountCount: number;
+  mode: RobinhoodConnectionSyncConnectionMode;
+}
+
+export type RobinhoodConnectionSyncAccountStatus = typeof RobinhoodConnectionSyncAccountStatus[keyof typeof RobinhoodConnectionSyncAccountStatus] | null;
+
+
+export const RobinhoodConnectionSyncAccountStatus = {
+  open: 'open',
+  closed: 'closed',
+  archived: 'archived',
+} as const;
+
+export type RobinhoodConnectionSyncAccountMode = typeof RobinhoodConnectionSyncAccountMode[keyof typeof RobinhoodConnectionSyncAccountMode];
+
+
+export const RobinhoodConnectionSyncAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized Robinhood account stored in PYRUS. Account display names are redacted before persistence.
+ */
+export interface RobinhoodConnectionSyncAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** Robinhood account identifier as returned by the Trading MCP. May be redacted upstream. */
+  robinhoodAccountId: string;
+  displayName: string;
+  /** True when the account is the dedicated Agentic account. Null means the MCP payload did not identify it. */
+  agentic: boolean | null;
+  status: RobinhoodConnectionSyncAccountStatus;
+  baseCurrency: string;
+  executionReady: boolean;
+  executionBlockers: string[];
+  mode: RobinhoodConnectionSyncAccountMode;
+  lastSyncedAt: string;
+}
+
+export type SyncRobinhoodConnectionsResponseProvider = typeof SyncRobinhoodConnectionsResponseProvider[keyof typeof SyncRobinhoodConnectionsResponseProvider];
+
+
+export const SyncRobinhoodConnectionsResponseProvider = {
+  robinhood: 'robinhood',
+} as const;
+
+export type SyncRobinhoodConnectionsResponseTotals = {
+  upstreamAccounts: number;
+  storedConnections: number;
+  storedAccounts: number;
+};
+
+/**
+ * Sanitized result of syncing the authenticated user's Robinhood Agentic accounts. Never includes tokens, full account numbers, or raw upstream payloads.
+ */
+export interface SyncRobinhoodConnectionsResponse {
+  provider: SyncRobinhoodConnectionsResponseProvider;
+  syncedAt: string;
+  connections: RobinhoodConnectionSyncConnection[];
+  accounts: RobinhoodConnectionSyncAccount[];
+  totals: SyncRobinhoodConnectionsResponseTotals;
+}
+
+export type SchwabReadinessStatus = typeof SchwabReadinessStatus[keyof typeof SchwabReadinessStatus];
+
+
+export const SchwabReadinessStatus = {
+  unconfigured: 'unconfigured',
+  research_required: 'research_required',
+} as const;
+
+export type SchwabUserReadinessStatus = typeof SchwabUserReadinessStatus[keyof typeof SchwabUserReadinessStatus];
+
+
+export const SchwabUserReadinessStatus = {
+  not_connected: 'not_connected',
+  pending: 'pending',
+  connected: 'connected',
+  expired: 'expired',
+  disabled: 'disabled',
+} as const;
+
+export type SchwabUserReadinessNextAction = typeof SchwabUserReadinessNextAction[keyof typeof SchwabUserReadinessNextAction];
+
+
+export const SchwabUserReadinessNextAction = {
+  start_connect: 'start_connect',
+  complete_authorization: 'complete_authorization',
+  sync_accounts: 'sync_accounts',
+  reconnect: 'reconnect',
+  manual_review: 'manual_review',
+} as const;
+
+/**
+ * Sanitized current-user Schwab Trader API OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.
+ */
+export interface SchwabUserReadiness {
+  connected: boolean;
+  status: SchwabUserReadinessStatus;
+  refreshTokenStored: boolean;
+  connectedAt: string | null;
+  /** Schwab refresh tokens hard-expire 7 days after issuance; users must reconnect weekly. */
+  refreshTokenExpiresAt: string | null;
+  disabledAt: string | null;
+  nextAction: SchwabUserReadinessNextAction;
+}
+
+export type SchwabReadinessResponseProvider = typeof SchwabReadinessResponseProvider[keyof typeof SchwabReadinessResponseProvider];
+
+
+export const SchwabReadinessResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SchwabReadinessResponsePrerequisites = {
+  credentialEncryptionKeyPresent: boolean;
+  redirectBaseUrlPresent: boolean;
+  appCredentialsPresent: boolean;
+};
+
+export type SchwabReadinessResponseUpstream = {
+  status: number;
+  code: string;
+  message: string;
+} | null;
+
+/**
+ * Sanitized Schwab Trader API readiness. Never includes tokens, app secrets, or raw upstream payloads.
+ */
+export interface SchwabReadinessResponse {
+  provider: SchwabReadinessResponseProvider;
+  configured: boolean;
+  status: SchwabReadinessStatus;
+  checkedAt: string;
+  executionDecision: ExecutionDecisionResponse;
+  prerequisites: SchwabReadinessResponsePrerequisites;
+  user: SchwabUserReadiness;
+  limitations: string[];
+  upstream: SchwabReadinessResponseUpstream;
+}
+
+export type SchwabConnectResponseProvider = typeof SchwabConnectResponseProvider[keyof typeof SchwabConnectResponseProvider];
+
+
+export const SchwabConnectResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+/**
+ * Schwab Trader API OAuth authorization start for the current user. The URL opens Schwab's consent page; tokens are exchanged and stored server-side only.
+ */
+export interface SchwabConnectResponse {
+  provider: SchwabConnectResponseProvider;
+  authorizationUrl: string;
+  state: string;
+  redirectUri: string;
+  expiresAt: string;
+}
+
+export type SchwabConnectionSyncConnectionProvider = typeof SchwabConnectionSyncConnectionProvider[keyof typeof SchwabConnectionSyncConnectionProvider];
+
+
+export const SchwabConnectionSyncConnectionProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SchwabConnectionSyncConnectionConnectionKind = typeof SchwabConnectionSyncConnectionConnectionKind[keyof typeof SchwabConnectionSyncConnectionConnectionKind];
+
+
+export const SchwabConnectionSyncConnectionConnectionKind = {
+  trader_api_oauth: 'trader_api_oauth',
+} as const;
+
+export type SchwabConnectionSyncConnectionStatus = typeof SchwabConnectionSyncConnectionStatus[keyof typeof SchwabConnectionSyncConnectionStatus];
+
+
+export const SchwabConnectionSyncConnectionStatus = {
+  connected: 'connected',
+  disconnected: 'disconnected',
+  error: 'error',
+} as const;
+
+export type SchwabConnectionSyncConnectionMode = typeof SchwabConnectionSyncConnectionMode[keyof typeof SchwabConnectionSyncConnectionMode];
+
+
+export const SchwabConnectionSyncConnectionMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized Schwab Trader API OAuth connection stored in PYRUS.
+ */
+export interface SchwabConnectionSyncConnection {
+  /** Local PYRUS broker connection id. */
+  id: string;
+  provider: SchwabConnectionSyncConnectionProvider;
+  connectionKind: SchwabConnectionSyncConnectionConnectionKind;
+  status: SchwabConnectionSyncConnectionStatus;
+  executionReady: boolean;
+  executionBlockers: string[];
+  accountCount: number;
+  mode: SchwabConnectionSyncConnectionMode;
+}
+
+export type SchwabConnectionSyncAccountMode = typeof SchwabConnectionSyncAccountMode[keyof typeof SchwabConnectionSyncAccountMode];
+
+
+export const SchwabConnectionSyncAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized Schwab account stored in PYRUS. Account display names are redacted before persistence.
+ */
+export interface SchwabConnectionSyncAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** Schwab account hash value used in place of the account number. */
+  schwabAccountHash: string;
+  displayName: string;
+  /** Schwab account type, e.g. CASH or MARGIN. Null means the upstream payload did not identify it. */
+  accountType: string | null;
+  baseCurrency: string;
+  executionReady: boolean;
+  executionBlockers: string[];
+  mode: SchwabConnectionSyncAccountMode;
+  lastSyncedAt: string;
+}
+
+export type SyncSchwabConnectionsResponseProvider = typeof SyncSchwabConnectionsResponseProvider[keyof typeof SyncSchwabConnectionsResponseProvider];
+
+
+export const SyncSchwabConnectionsResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SyncSchwabConnectionsResponseTotals = {
+  upstreamAccounts: number;
+  storedConnections: number;
+  storedAccounts: number;
+};
+
+/**
+ * Sanitized result of syncing the authenticated user's Schwab Trader API accounts. Never includes tokens, full account numbers, or raw upstream payloads.
+ */
+export interface SyncSchwabConnectionsResponse {
+  provider: SyncSchwabConnectionsResponseProvider;
+  syncedAt: string;
+  connections: SchwabConnectionSyncConnection[];
+  accounts: SchwabConnectionSyncAccount[];
+  totals: SyncSchwabConnectionsResponseTotals;
+}
+
+export type IbkrPortalConnectionStatus = typeof IbkrPortalConnectionStatus[keyof typeof IbkrPortalConnectionStatus];
+
+
+export const IbkrPortalConnectionStatus = {
+  unavailable: 'unavailable',
+  disconnected: 'disconnected',
+  gateway_starting: 'gateway_starting',
+  needs_login: 'needs_login',
+  competing: 'competing',
+  connected: 'connected',
+} as const;
+
+/**
+ * IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.
+ */
+export interface IbkrPortalReadinessResponse {
+  status: IbkrPortalConnectionStatus;
+  gatewayRunning: boolean;
+  authenticated: boolean;
+  selectedAccountId: string | null;
+  accounts: string[];
+  loginPath: string | null;
+  message: string;
+}
+
+/**
+ * IBKR Client Portal gateway login path returned after starting (or reusing) the per-user gateway.
+ */
+export interface IbkrPortalConnectResponse {
+  loginPath: string;
+  status: IbkrPortalConnectionStatus;
+}
+
+/**
+ * Result of stopping the IBKR Client Portal gateway and ending the browser-login session.
+ */
+export interface IbkrPortalDisconnectResponse {
+  ok: boolean;
+}
 
 export type MarketDataProvider = typeof MarketDataProvider[keyof typeof MarketDataProvider];
 
@@ -186,16 +1769,6 @@ export const ResearchProvider = {
   fmp: 'fmp',
 } as const;
 
-export type ConnectionStatus = typeof ConnectionStatus[keyof typeof ConnectionStatus];
-
-
-export const ConnectionStatus = {
-  configured: 'configured',
-  connected: 'connected',
-  disconnected: 'disconnected',
-  error: 'error',
-} as const;
-
 export type AssetClass = typeof AssetClass[keyof typeof AssetClass];
 
 
@@ -213,14 +1786,6 @@ export const AccountPositionTypeFilter = {
   stock: 'stock',
   etf: 'etf',
   option: 'option',
-} as const;
-
-export type OptionRight = typeof OptionRight[keyof typeof OptionRight];
-
-
-export const OptionRight = {
-  call: 'call',
-  put: 'put',
 } as const;
 
 export type OrderSide = typeof OrderSide[keyof typeof OrderSide];
@@ -390,8 +1955,6 @@ export const BarDataSource = {
   midpoint: 'midpoint',
   bid_ask: 'bid_ask',
 } as const;
-
-export interface JsonObject { [key: string]: unknown }
 
 export interface OkResponse {
   ok: boolean;
@@ -631,13 +2194,13 @@ export interface IbkrBridgeActivationPhaseTiming {
 }
 
 export interface IbkrBridgeActivationPhaseDurations {
-  request: IbkrBridgeActivationPhaseTiming;
-  update: IbkrBridgeActivationPhaseTiming;
-  credentials: IbkrBridgeActivationPhaseTiming;
-  gateway: IbkrBridgeActivationPhaseTiming;
-  twoFactor: IbkrBridgeActivationPhaseTiming;
-  bridge: IbkrBridgeActivationPhaseTiming;
-  tunnel: IbkrBridgeActivationPhaseTiming;
+  request?: IbkrBridgeActivationPhaseTiming;
+  update?: IbkrBridgeActivationPhaseTiming;
+  credentials?: IbkrBridgeActivationPhaseTiming;
+  gateway?: IbkrBridgeActivationPhaseTiming;
+  twoFactor?: IbkrBridgeActivationPhaseTiming;
+  bridge?: IbkrBridgeActivationPhaseTiming;
+  tunnel?: IbkrBridgeActivationPhaseTiming;
 }
 
 export type IbkrBridgeActivationTimelineRowId = typeof IbkrBridgeActivationTimelineRowId[keyof typeof IbkrBridgeActivationTimelineRowId];
@@ -1270,7 +2833,6 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   lastError: string | null;
   orderCapability: RuntimeOrderCapabilityDiagnostics;
-  governor: JsonObject;
   streams: JsonObject;
 }
 
@@ -1982,9 +3544,13 @@ export interface BrokerConnection {
   id: string;
   provider: typeof BrokerConnectionProvider[keyof typeof BrokerConnectionProvider];
   name: string;
+  /** Optional SnapTrade brokerage slug for provider connections (e.g. ETRADE). */
+  brokerageSlug?: string;
   mode: EnvironmentMode;
   status: ConnectionStatus;
   capabilities: string[];
+  /** Optional registry-backed execution decision metadata for broker execution surfaces. */
+  executionDecision?: ExecutionDecisionResponse;
   updatedAt: string;
 }
 
@@ -2223,17 +3789,6 @@ export interface Bar {
   ageMs?: number | null;
 }
 
-export interface OptionContract {
-  ticker: string;
-  underlying: string;
-  expirationDate: string;
-  strike: number;
-  right: OptionRight;
-  multiplier: number;
-  sharesPerContract: number;
-  providerContractId?: string | null;
-}
-
 /**
  * @nullable
  */
@@ -2268,6 +3823,12 @@ export interface OptionChainQuote {
   /** @nullable */
   volume: number | null;
   updatedAt: string;
+  /** @nullable */
+  prevClose?: number | null;
+  /** @nullable */
+  change?: number | null;
+  /** @nullable */
+  changePercent?: number | null;
   quoteFreshness?: MarketDataFreshness;
   /** @nullable */
   marketDataMode?: OptionChainQuoteMarketDataMode;
@@ -2277,6 +3838,8 @@ export interface OptionChainQuote {
   dataUpdatedAt?: string | null;
   /** @nullable */
   ageMs?: number | null;
+  /** @nullable */
+  underlyingPrice?: number | null;
 }
 
 export type PositionOpenedAtSource = typeof PositionOpenedAtSource[keyof typeof PositionOpenedAtSource];
@@ -2288,7 +3851,6 @@ export const PositionOpenedAtSource = {
   lot: 'lot',
   flex_open_position: 'flex_open_position',
   flex_snapshot: 'flex_snapshot',
-  expiration_same_day: 'expiration_same_day',
   shadow_position: 'shadow_position',
   automation: 'automation',
   unknown: 'unknown',
@@ -2867,7 +4429,7 @@ export interface FlowEvent {
   basis: FlowEventBasis;
   optionTicker: string;
   /**
-   * Broker contract identifier, when the flow source can map the option to a broker-backed contract.
+   * Market-data contract identifier, typically the OPRA/Massive option ticker.
    * @nullable
    */
   providerContractId: string | null;
@@ -3120,20 +4682,6 @@ export interface AccountsResponse {
   accounts: BrokerAccount[];
 }
 
-export type AccountHistoryRange = typeof AccountHistoryRange[keyof typeof AccountHistoryRange];
-
-
-export const AccountHistoryRange = {
-  '1D': '1D',
-  '1W': '1W',
-  '1M': '1M',
-  '3M': '3M',
-  '6M': '6M',
-  YTD: 'YTD',
-  '1Y': '1Y',
-  ALL: 'ALL',
-} as const;
-
 export type AccountMetricSource = typeof AccountMetricSource[keyof typeof AccountMetricSource];
 
 
@@ -3204,84 +4752,6 @@ export interface AccountSummaryResponse {
   fx: AccountFx;
   badges: JsonObject;
   metrics: AccountSummaryMetrics;
-}
-
-export type AccountEquityPointSource = typeof AccountEquityPointSource[keyof typeof AccountEquityPointSource];
-
-
-export const AccountEquityPointSource = {
-  FLEX: 'FLEX',
-  LOCAL_LEDGER: 'LOCAL_LEDGER',
-  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
-  SHADOW_LEDGER: 'SHADOW_LEDGER',
-  SHADOW_BACKTEST: 'SHADOW_BACKTEST',
-  SHADOW_OPTIONS_REPLAY: 'SHADOW_OPTIONS_REPLAY',
-} as const;
-
-export interface AccountEquityPoint {
-  timestamp: string;
-  netLiquidation: number;
-  currency: string;
-  source: AccountEquityPointSource;
-  deposits: number;
-  withdrawals: number;
-  dividends: number;
-  fees: number;
-  /** Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L. */
-  returnPercent: number;
-  /** Benchmark return in percentage points, rebased to the first visible matched point. */
-  benchmarkPercent: number | null;
-}
-
-export interface AccountCashEvent {
-  timestamp: string;
-  type: string;
-  amount: number;
-  currency: string;
-  source: string;
-}
-
-export type AccountEquityHistoryResponseTerminalPointSource = typeof AccountEquityHistoryResponseTerminalPointSource[keyof typeof AccountEquityHistoryResponseTerminalPointSource] | null;
-
-
-export const AccountEquityHistoryResponseTerminalPointSource = {
-  live_account_summary: 'live_account_summary',
-  persisted_snapshot: 'persisted_snapshot',
-  flex: 'flex',
-  shadow_ledger: 'shadow_ledger',
-  shadow_watchlist_backtest: 'shadow_watchlist_backtest',
-  shadow_options_replay: 'shadow_options_replay',
-} as const;
-
-export type AccountEquityHistoryResponseSourceScope = typeof AccountEquityHistoryResponseSourceScope[keyof typeof AccountEquityHistoryResponseSourceScope] | null;
-
-
-export const AccountEquityHistoryResponseSourceScope = {
-  ledger: 'ledger',
-  manual: 'manual',
-  automation: 'automation',
-  watchlist_backtest: 'watchlist_backtest',
-  signal_options_replay: 'signal_options_replay',
-  runtime_fallback: 'runtime_fallback',
-} as const;
-
-export interface AccountEquityHistoryResponse {
-  accountId: string;
-  range: AccountHistoryRange;
-  currency: string;
-  flexConfigured: boolean;
-  lastFlexRefreshAt: string | null;
-  benchmark: string | null;
-  asOf: string | null;
-  latestSnapshotAt: string | null;
-  isStale: boolean;
-  staleReason: string | null;
-  terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
-  liveTerminalIncluded: boolean;
-  sourceScope?: AccountEquityHistoryResponseSourceScope;
-  selectedSnapshotSource?: string | null;
-  points: AccountEquityPoint[];
-  events: AccountCashEvent[];
 }
 
 export interface AccountAllocationBucket {
@@ -3480,112 +4950,6 @@ export interface AccountPositionsAtDateResponse {
   positions: AccountPositionRow[];
   activity: AccountPositionDateActivity[];
   totals: JsonObject;
-  updatedAt: string;
-}
-
-export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountTradeSource];
-
-
-export const AccountTradeSource = {
-  LIVE: 'LIVE',
-  LIVE_ORDER: 'LIVE_ORDER',
-  LIVE_EXECUTION: 'LIVE_EXECUTION',
-  FLEX: 'FLEX',
-  SHADOW: 'SHADOW',
-  SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
-} as const;
-
-/**
- * Canonical account position type used for filtering and grouping.
- */
-export type AccountTradePositionType = typeof AccountTradePositionType[keyof typeof AccountTradePositionType];
-
-
-export const AccountTradePositionType = {
-  stock: 'stock',
-  etf: 'etf',
-  option: 'option',
-} as const;
-
-export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof AccountTradeSourceType];
-
-
-export const AccountTradeSourceType = {
-  manual: 'manual',
-  automation: 'automation',
-  signal_options_replay: 'signal_options_replay',
-  watchlist_backtest: 'watchlist_backtest',
-  mixed: 'mixed',
-} as const;
-
-export type AccountTradeSelectedContract = { [key: string]: unknown } | null;
-
-export type AccountTradeOptionContract = { [key: string]: unknown } | null;
-
-export type AccountTradeOptionRight = typeof AccountTradeOptionRight[keyof typeof AccountTradeOptionRight] | null;
-
-
-export const AccountTradeOptionRight = {
-  call: 'call',
-  put: 'put',
-} as const;
-
-export type AccountTradeFilterState = { [key: string]: unknown } | null;
-
-export type AccountTradeMetadata = { [key: string]: unknown };
-
-export interface AccountTrade {
-  id: string;
-  source: AccountTradeSource;
-  accountId: string;
-  symbol: string;
-  side: string;
-  /** Display label for the trade position type. */
-  assetClass: string;
-  /** Canonical account position type used for filtering and grouping. */
-  positionType: AccountTradePositionType;
-  quantity: number;
-  openDate: string | null;
-  closeDate: string | null;
-  avgOpen: number | null;
-  avgClose: number | null;
-  realizedPnl: number | null;
-  realizedPnlPercent: number | null;
-  holdDurationMinutes: number | null;
-  commissions: number | null;
-  currency: string;
-  sourceType?: AccountTradeSourceType;
-  strategyLabel?: string | null;
-  candidateId?: string | null;
-  deploymentId?: string | null;
-  deploymentName?: string | null;
-  sourceEventId?: string | null;
-  exitReason?: string | null;
-  selectedContract?: AccountTradeSelectedContract;
-  optionContract?: AccountTradeOptionContract;
-  optionRight?: AccountTradeOptionRight;
-  expirationDate?: string | null;
-  dte?: number | null;
-  strike?: number | null;
-  strikeSlot?: number | null;
-  strikeDistancePct?: number | null;
-  signalPrice?: number | null;
-  filterState?: AccountTradeFilterState;
-  adx?: number | null;
-  mtfDirections?: number[];
-  filterDirection?: number | null;
-  peakPrice?: number | null;
-  mfePercent?: number | null;
-  givebackPercent?: number | null;
-  premiumAtRisk?: number | null;
-  metadata?: AccountTradeMetadata;
-}
-
-export interface AccountClosedTradesResponse {
-  accountId: string;
-  currency: string;
-  trades: AccountTrade[];
-  summary: JsonObject;
   updatedAt: string;
 }
 
@@ -3957,6 +5321,17 @@ export interface GexDashboardResponse {
   source: GexSource;
 }
 
+export interface GexNetSnapshot {
+  symbol: string;
+  netGex: number;
+  computedAt: string;
+  stale: boolean;
+}
+
+export interface GexSnapshotsResponse {
+  snapshots: GexNetSnapshot[];
+}
+
 export type RequestDebugCacheStatus = typeof RequestDebugCacheStatus[keyof typeof RequestDebugCacheStatus] | null;
 
 
@@ -4219,8 +5594,6 @@ export type OptionChartBarsDataSource = typeof OptionChartBarsDataSource[keyof t
 
 
 export const OptionChartBarsDataSource = {
-  'ibkr-history': 'ibkr-history',
-  'mixed-history': 'mixed-history',
   'massive-option-aggregates': 'massive-option-aggregates',
   none: 'none',
 } as const;
@@ -4554,11 +5927,163 @@ export interface SignalQualityKpiDirectionalBreakdown {
   sell: SignalQualityKpiMetrics;
 }
 
+/**
+ * A 10-point score range used for signal-quality outcome audits.
+ */
+export interface SignalQualityScoreRangeBucket {
+  key: string;
+  label: string;
+  min: number | null;
+  max: number | null;
+}
+
+export type SignalQualityScoreBucket = SignalQualityScoreRangeBucket & SignalQualityKpiMetrics;
+
+/**
+ * Signal-time feature diagnostics for outcome alignment. AUC is measured with higher feature values predicting positive directional returns.
+ */
+export interface SignalQualityFeatureSummary {
+  key: string;
+  label: string;
+  count: number;
+  avgValue: number;
+  favorableAvgValue: number;
+  adverseAvgValue: number;
+  pointBiserial: number;
+  auc: number;
+  topQuartile: SignalQualityKpiMetrics;
+  bottomQuartile: SignalQualityKpiMetrics;
+}
+
+export type SignalScoreModelKey = typeof SignalScoreModelKey[keyof typeof SignalScoreModelKey];
+
+
+export const SignalScoreModelKey = {
+  'observed-score': 'observed-score',
+  'sot-outcome-v1': 'sot-outcome-v1',
+  'evidence-weighted-v2': 'evidence-weighted-v2',
+  'trend-confirmation-v2': 'trend-confirmation-v2',
+  'balanced-sot-v2': 'balanced-sot-v2',
+} as const;
+
+/**
+ * Outcome-alignment diagnostics for one scoring methodology. Positive topBucketLiftPercent means the highest populated score bucket beat the lower-score baseline expectancy.
+ */
+export interface SignalScoreModelAlignment {
+  populatedBucketCount: number;
+  topBucketKey: string | null;
+  topBucketSignalCount: number;
+  topBucketExpectancyPercent: number | null;
+  lowerBaselineSignalCount: number;
+  lowerBaselineExpectancyPercent: number | null;
+  topBucketLiftPercent: number;
+  monotonicPairCount: number;
+  inversionCount: number;
+  inversionSeverityPercent: number;
+  alignmentScore: number;
+}
+
+export type SignalScoreModelRecommendationSupportReason = typeof SignalScoreModelRecommendationSupportReason[keyof typeof SignalScoreModelRecommendationSupportReason];
+
+
+export const SignalScoreModelRecommendationSupportReason = {
+  min_observation_count: 'min_observation_count',
+  min_populated_bucket_count: 'min_populated_bucket_count',
+  min_top_bucket_signal_count: 'min_top_bucket_signal_count',
+  min_lower_baseline_signal_count: 'min_lower_baseline_signal_count',
+  min_alignment_score: 'min_alignment_score',
+  coverage_degraded: 'coverage_degraded',
+} as const;
+
+export type SignalScoreCalibrationState = typeof SignalScoreCalibrationState[keyof typeof SignalScoreCalibrationState];
+
+
+export const SignalScoreCalibrationState = {
+  calibrated: 'calibrated',
+  needs_more_data: 'needs_more_data',
+  uncalibrated: 'uncalibrated',
+} as const;
+
+/**
+ * Overall score-formula calibration decision derived from the model recommendation support gates. calibrated means a support-qualified model can be recommended, needs_more_data means sample/support gates are still sparse, and uncalibrated means data support exists but outcome alignment still fails.
+ */
+export interface SignalScoreCalibrationDecision {
+  state: SignalScoreCalibrationState;
+  recommendedModelKey: SignalScoreModelKey | null;
+  candidateModelKey: SignalScoreModelKey | null;
+  supportedModelCount: number;
+  reasons: SignalScoreModelRecommendationSupportReason[];
+}
+
+/**
+ * Observed sample/support values used to gate formula recommendations.
+ */
+export interface SignalScoreModelRecommendationSupportObserved {
+  observationCount: number;
+  populatedBucketCount: number;
+  topBucketSignalCount: number;
+  lowerBaselineSignalCount: number;
+  alignmentScore: number;
+  qualifiedTopBandKey: string | null;
+  qualifiedTopBandSignalCount: number;
+  qualifiedTopBandExpectancyPercent: number | null;
+  qualifiedLowerBaselineSignalCount: number;
+  qualifiedLowerBaselineExpectancyPercent: number | null;
+  qualifiedTopBandLiftPercent: number;
+  qualifiedAlignmentScore: number;
+}
+
+/**
+ * Minimum support gates required before a scoring model can be recommended.
+ */
+export interface SignalScoreModelRecommendationSupportThresholds {
+  minObservationCount: number;
+  minPopulatedBucketCount: number;
+  minTopBucketSignalCount: number;
+  minLowerBaselineSignalCount: number;
+  minAlignmentScore: number;
+}
+
+/**
+ * Recommendation eligibility diagnostics for one scoring methodology. supported=false means one or more sample/alignment gates failed.
+ */
+export interface SignalScoreModelRecommendationSupport {
+  supported: boolean;
+  reasons: SignalScoreModelRecommendationSupportReason[];
+  observed: SignalScoreModelRecommendationSupportObserved;
+  thresholds: SignalScoreModelRecommendationSupportThresholds;
+}
+
+export type SignalScoreModelComparisonByScoreRange = {[key: string]: SignalQualityKpiMetrics};
+
+export interface SignalScoreModelComparison {
+  modelKey: SignalScoreModelKey;
+  byScoreRange: SignalScoreModelComparisonByScoreRange;
+  scoreBuckets: SignalQualityScoreBucket[];
+  alignment: SignalScoreModelAlignment;
+  recommendationSupport: SignalScoreModelRecommendationSupport;
+}
+
+export interface SignalScoreModelComparisonResult {
+  observationCount: number;
+  modelKeys: SignalScoreModelKey[];
+  recommendedModelKey: SignalScoreModelKey | null;
+  calibration: SignalScoreCalibrationDecision;
+  models: SignalScoreModelComparison[];
+}
+
+export type SignalQualityKpiResultByScoreRange = {[key: string]: SignalQualityKpiMetrics};
+
 export type SignalQualityKpiResult = SignalQualityKpiMetrics & {
   horizonBars: number;
   mtfFilteredOutCount: number;
   perSymbol: SignalQualitySymbolBreakdown[];
   byDirection: SignalQualityKpiDirectionalBreakdown;
+  byScoreRange: SignalQualityKpiResultByScoreRange;
+  scoreBuckets: SignalQualityScoreBucket[];
+  scoreRangeBuckets: SignalQualityScoreRangeBucket[];
+  featureSummaries: SignalQualityFeatureSummary[];
+  scoreModelComparisons: SignalScoreModelComparisonResult;
 };
 
 export type SignalQualityResolvedSettingsSignalTimeframe = typeof SignalQualityResolvedSettingsSignalTimeframe[keyof typeof SignalQualityResolvedSettingsSignalTimeframe];
@@ -5155,6 +6680,14 @@ export interface EvaluateSignalMonitorMatrixRequest {
   requestOrigin?: EvaluateSignalMonitorMatrixRequestRequestOrigin;
 }
 
+export type SignalMonitorIndicatorDirection = typeof SignalMonitorIndicatorDirection[keyof typeof SignalMonitorIndicatorDirection];
+
+
+export const SignalMonitorIndicatorDirection = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+} as const;
+
 export interface SignalMonitorSymbolState {
   id: string;
   profileId: string;
@@ -5190,14 +6723,6 @@ export interface SignalMonitorSymbolState {
   /** @nullable */
   actionBlocker?: string | null;
 }
-
-export type SignalMonitorIndicatorDirection = typeof SignalMonitorIndicatorDirection[keyof typeof SignalMonitorIndicatorDirection];
-
-
-export const SignalMonitorIndicatorDirection = {
-  bullish: 'bullish',
-  bearish: 'bearish',
-} as const;
 
 export type SignalMonitorTrendAgeBucket = typeof SignalMonitorTrendAgeBucket[keyof typeof SignalMonitorTrendAgeBucket];
 
@@ -6596,8 +8121,25 @@ to?: string;
 subsystem?: string;
 };
 
-export type RecordIbkrBridgeActivationProgress200 = {
-  ok: boolean;
+export type GetSnapTradeAccountHistoryParams = {
+/**
+ * Optional lower bound for returned closed trades.
+ */
+from?: string;
+/**
+ * Optional upper bound for activity fetch and returned closed trades.
+ */
+to?: string;
+range?: AccountHistoryRange;
+};
+
+export type SearchSnapTradeAccountSymbolsParams = {
+/**
+ * Ticker or security-name substring to search within this account's brokerage-supported symbols.
+ * @minLength 1
+ * @maxLength 80
+ */
+query: string;
 };
 
 export type ListAccountsParams = {
@@ -6729,6 +8271,13 @@ export const GetQuoteSnapshotsTradingSession = {
   overnight: 'overnight',
 } as const;
 
+export type GetGexSnapshotsParams = {
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
+};
+
 export type GetNewsParams = {
 /**
  * Optional ticker to filter articles by symbol.
@@ -6824,15 +8373,15 @@ providerContractId?: string | null;
 outsideRth?: boolean;
 source?: BarDataSource;
 /**
- * Allow Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+ * Allow Massive historical synthesis when cached/provider history is incomplete. Defaults to enabled for equities unless explicitly false.
  */
 allowHistoricalSynthesis?: boolean;
 /**
- * Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
+ * Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
  */
 allowStudyFallback?: boolean;
 /**
- * Limit broker-sourced recent history to this many minutes before falling back to Massive history.
+ * Equity-only broker fallback limit, in minutes, when Massive history is unavailable.
  * @minimum 0
  */
 brokerRecentWindowMinutes?: number;
@@ -6861,7 +8410,7 @@ quoteHydration?: OptionChainQuoteHydration;
 export type GetOptionExpirationsParams = {
 underlying: string;
 /**
- * Optional cap. Omit to discover every expiration IBKR exposes.
+ * Optional cap. Omit to discover every Massive option expiration.
  * @minimum 1
  */
 maxExpirations?: number;
@@ -6929,15 +8478,6 @@ providerContractIds?: string;
 underlying?: string;
 };
 
-export type StreamBarsParams = {
-symbol: string;
-timeframe: BarTimeframe;
-assetClass?: AssetClass;
-providerContractId?: string | null;
-outsideRth?: boolean;
-source?: BarDataSource;
-};
-
 export type StreamOrdersParams = {
 accountId?: string;
 mode?: EnvironmentMode;
@@ -6977,18 +8517,6 @@ symbol?: string;
 providerContractId?: string | null;
 };
 
-export type GetMarketDepthParams = {
-symbol: string;
-accountId?: string;
-assetClass?: AssetClass;
-providerContractId?: string | null;
-exchange?: string | null;
-};
-
-export type GetMarketDepth200 = {
-  depth: JsonObject;
-};
-
 export type GetFootprintsParams = {
 symbol: string;
 assetClass?: AssetClass;
@@ -7014,14 +8542,6 @@ imbalancePercent?: number;
  */
 maxBars?: number;
 sourcePreference?: FootprintSourcePreference;
-};
-
-export type StreamMarketDepthParams = {
-symbol: string;
-accountId?: string;
-assetClass?: AssetClass;
-providerContractId?: string | null;
-exchange?: string | null;
 };
 
 export type StreamAccountsParams = {
@@ -7178,7 +8698,7 @@ minPremium?: number;
  */
 maxDte?: number;
 /**
- * Maximum IBKR option quote lines this request may use.
+ * Maximum option quote subscriptions this request may use.
  * @minimum 1
  * @maximum 150
  */
@@ -7190,15 +8710,15 @@ lineBudget?: number;
  */
 historicalBucketSeconds?: number;
 /**
- * Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+ * Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
  */
 from?: string;
 /**
- * Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+ * Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
  */
 to?: string;
 /**
- * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+ * Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.
  */
 blocking?: boolean;
 /**
@@ -7283,6 +8803,10 @@ environment?: EnvironmentMode;
  */
 symbols?: string;
 /**
+ * Server-resolved symbol universe to stream when exact cells and explicit symbols are not supplied.
+ */
+universe?: StreamSignalMonitorMatrixUniverse;
+/**
  * Comma-separated Signal Matrix timeframes to stream.
  */
 timeframes?: string;
@@ -7293,6 +8817,13 @@ cells?: string;
 clientRole?: StreamSignalMonitorMatrixClientRole;
 requestOrigin?: StreamSignalMonitorMatrixRequestOrigin;
 };
+
+export type StreamSignalMonitorMatrixUniverse = typeof StreamSignalMonitorMatrixUniverse[keyof typeof StreamSignalMonitorMatrixUniverse];
+
+
+export const StreamSignalMonitorMatrixUniverse = {
+  profile: 'profile',
+} as const;
 
 export type StreamSignalMonitorMatrixClientRole = typeof StreamSignalMonitorMatrixClientRole[keyof typeof StreamSignalMonitorMatrixClientRole];
 

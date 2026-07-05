@@ -1213,8 +1213,22 @@ const normalizeProviderContractId = (
   providerContractId: string | null | undefined,
 ): string => providerContractId?.trim?.() || "";
 
+const normalizeOpraOptionTicker = (
+  providerContractId: string | null | undefined,
+): string => {
+  const normalized = String(providerContractId ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  if (!normalized) {
+    return "";
+  }
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : "";
+};
+
 const isOpraOptionTicker = (providerContractId: string | null | undefined): boolean =>
-  /^O:/i.test(String(providerContractId ?? "").trim());
+  Boolean(normalizeOpraOptionTicker(providerContractId));
 
 const normalizeIbkrProviderContractId = (
   providerContractId: string | number | null | undefined,
@@ -1416,14 +1430,15 @@ const optionExpirationKey = (value: unknown): string | null => {
   return null;
 };
 
-const base64UrlEncode = (value: string): string => {
-  const encoded = btoa(value);
-  return encoded.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-};
-
 const structuredOptionProviderContractId = (
   contract: AccountPositionRow["optionContract"] | null | undefined,
 ): string | null => {
+  const explicitTicker =
+    normalizeOpraOptionTicker(contract?.providerContractId) ||
+    normalizeOpraOptionTicker(contract?.ticker);
+  if (explicitTicker) {
+    return explicitTicker;
+  }
   const underlying = String(contract?.underlying ?? "").trim().toUpperCase();
   const expiration = optionExpirationKey(contract?.expirationDate);
   const strike = finiteOptionNumber(contract?.strike);
@@ -1431,21 +1446,12 @@ const structuredOptionProviderContractId = (
   if (!underlying || !expiration || strike === null || !right) {
     return null;
   }
-  const multiplier = Math.trunc(
-    finiteOptionNumber(contract?.multiplier, contract?.sharesPerContract) ?? 100,
-  );
-  return `twsopt:${base64UrlEncode(
-    JSON.stringify({
-      v: 1,
-      u: underlying,
-      e: expiration,
-      s: strike,
-      r: right,
-      x: "SMART",
-      tc: underlying,
-      m: multiplier > 0 ? multiplier : 100,
-    }),
-  )}`;
+  const opraUnderlying = underlying.replace(/[^A-Z0-9]/g, "");
+  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
+  return opraUnderlying
+    ? `O:${opraUnderlying}${opraExpiration}${right}${strikeKey}`
+    : null;
 };
 
 const optionPositionProviderContractId = (
@@ -5947,12 +5953,20 @@ const useQuoteSnapshotStream = ({
     let lastDataAt = Date.now();
     let teardown = false;
 
-    const handleQuotes = (event: MessageEvent<string>) => {
-      // Any quotes frame proves the connection is alive: reset the stall window
-      // and reconnect backoff before inspecting whether the payload is usable.
+    const markStreamActivity = () => {
       lastDataAt = Date.now();
       reconnectAttempt = 0;
       stallMs = QUOTE_STREAM_STALL_BASE_MS;
+    };
+
+    const handleHeartbeat = () => {
+      markStreamActivity();
+    };
+
+    const handleQuotes = (event: MessageEvent<string>) => {
+      // Any quotes frame proves the connection is alive. Heartbeat events cover
+      // legitimately quiet overnight sessions where no quote payload changes.
+      markStreamActivity();
 
       const payload = parseJsonPayload<QuoteStreamPayload>(event.data);
       if (!payload?.quotes?.length) {
@@ -5986,6 +6000,7 @@ const useQuoteSnapshotStream = ({
     const closeSource = () => {
       if (source) {
         source.removeEventListener("quotes", handleQuotes as EventListener);
+        source.removeEventListener("heartbeat", handleHeartbeat as EventListener);
         source.onerror = null;
         source.close();
         source = null;
@@ -6004,6 +6019,7 @@ const useQuoteSnapshotStream = ({
       lastDataAt = Date.now();
       const next = new EventSource(streamUrl);
       next.addEventListener("quotes", handleQuotes as EventListener);
+      next.addEventListener("heartbeat", handleHeartbeat as EventListener);
       next.onerror = () => {
         // CONNECTING (0) means the browser is already auto-retrying; only a
         // terminal CLOSED (2) needs us to rebuild the EventSource ourselves.
@@ -6068,22 +6084,6 @@ export const useIbkrQuoteSnapshotStream = ({
 }) =>
   useQuoteSnapshotStream({
     streamPath: "/api/streams/quotes",
-    symbols,
-    enabled,
-    onQuotes,
-  });
-
-export const usePositionQuoteSnapshotStream = ({
-  symbols,
-  enabled = true,
-  onQuotes,
-}: {
-  symbols: string[];
-  enabled?: boolean;
-  onQuotes?: (quotes: QuoteSnapshot[]) => void;
-}) =>
-  useQuoteSnapshotStream({
-    streamPath: "/api/streams/position-quotes",
     symbols,
     enabled,
     onQuotes,
@@ -6498,6 +6498,7 @@ export const useSignalMonitorMatrixStream = ({
   profileUniverseKey = "",
   enabled = true,
   onStates,
+  onTransportError,
 }: {
   environment?: string | null;
   symbols?: readonly string[];
@@ -6510,11 +6511,19 @@ export const useSignalMonitorMatrixStream = ({
     kind: "bootstrap" | "state-delta",
     payload: SignalMatrixStreamPayload,
   ) => void;
+  // EventSource hides the HTTP status of a failed connect, so real transport
+  // failure can only be inferred from repeated terminal-CLOSED reconnects.
+  // Fires true after 3 consecutive terminal closes, false on the next open.
+  onTransportError?: (errored: boolean) => void;
 }): void => {
   const onStatesRef = useRef(onStates);
   useEffect(() => {
     onStatesRef.current = onStates;
   }, [onStates]);
+  const onTransportErrorRef = useRef(onTransportError);
+  useEffect(() => {
+    onTransportErrorRef.current = onTransportError;
+  }, [onTransportError]);
 
   const symbolsKey = (symbols ?? []).join(",");
   const timeframesKey = (timeframes ?? []).join(",");
@@ -6544,6 +6553,18 @@ export const useSignalMonitorMatrixStream = ({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectAttempt = 0;
     let teardown = false;
+    // Consecutive terminal-CLOSED reconnects since the last successful open.
+    // A real transport failure (route 500, backend down) keeps closing; a
+    // routine blip opens again and resets this.
+    let consecutiveTerminalCloses = 0;
+    let transportErrorPublished = false;
+    const clearTransportError = () => {
+      consecutiveTerminalCloses = 0;
+      if (transportErrorPublished) {
+        transportErrorPublished = false;
+        onTransportErrorRef.current?.(false);
+      }
+    };
 
     const handleStates =
       (kind: "bootstrap" | "state-delta") =>
@@ -6591,6 +6612,14 @@ export const useSignalMonitorMatrixStream = ({
       const next = new EventSource(streamUrl);
       next.addEventListener("bootstrap", handleBootstrap as EventListener);
       next.addEventListener("state-delta", handleDelta as EventListener);
+      next.onopen = () => {
+        // A successful open proves the transport is reachable again — clear any
+        // published transport-error flag and the consecutive-close counter.
+        if (teardown) {
+          return;
+        }
+        clearTransportError();
+      };
       next.onerror = () => {
         // CONNECTING (0) means the browser is already auto-retrying; only a
         // terminal CLOSED (2) needs us to rebuild the EventSource. Terminal
@@ -6601,6 +6630,14 @@ export const useSignalMonitorMatrixStream = ({
         // quote stream (capped exponential backoff, quoteStreamReconnect.ts).
         if (teardown || next.readyState !== EventSource.CLOSED) {
           return;
+        }
+        // Terminal close: infer transport failure once it repeats. The browser
+        // never exposes the HTTP status, so 3 consecutive terminal closes with
+        // no successful open in between is our proxy for "the stream is down".
+        consecutiveTerminalCloses += 1;
+        if (consecutiveTerminalCloses >= 3 && !transportErrorPublished) {
+          transportErrorPublished = true;
+          onTransportErrorRef.current?.(true);
         }
         closeSource();
         if (reconnectTimer != null) {
@@ -6625,6 +6662,9 @@ export const useSignalMonitorMatrixStream = ({
         reconnectTimer = null;
       }
       closeSource();
+      // Disabling or re-keying the stream is not a transport failure — drop any
+      // published error so a fresh connection starts from a clean slate.
+      clearTransportError();
     };
   }, [enabled, profileUniverseKey, streamUrl]);
 };

@@ -43,6 +43,7 @@ import {
 import { WATCHLIST } from "./marketReferenceData";
 import {
   buildEqualTrackWeights,
+  MARKET_GRID_TRACK_SESSION_KEY,
   buildMarketGridResizeHandleKey,
   normalizeMarketGridTrackLayoutState,
   normalizeMarketGridTrackPixels,
@@ -263,6 +264,10 @@ export const MultiChartGrid = ({
   unusualThreshold,
   onChartFlowSnapshotChange,
   onReady,
+  // Session-storage key for persisted column/row resize sizing. Defaults to the
+  // canonical Market-page key; pass a distinct key (e.g. on the demo page) to keep
+  // a second grid instance from sharing/clobbering the real page's saved sizing.
+  trackStateKey = MARKET_GRID_TRACK_SESSION_KEY,
 }) => {
   const gridBodyRef = useRef(null);
   const defaultSymbolsRef = useRef(
@@ -314,7 +319,7 @@ export const MultiChartGrid = ({
   );
   const [gridBodyWidth, setGridBodyWidth] = useState(0);
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
-    migrateMarketGridTrackSessionDefaults(readMarketGridTrackSession()),
+    migrateMarketGridTrackSessionDefaults(readMarketGridTrackSession(trackStateKey)),
   );
   const [chartViewportLayoutRevision, setChartViewportLayoutRevision] =
     useState(0);
@@ -948,8 +953,8 @@ export const MultiChartGrid = ({
   }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncCrosshair, syncTimeframes, slots, mtfView]);
 
   useEffect(() => {
-    writeMarketGridTrackSession(marketGridTrackState);
-  }, [marketGridTrackState]);
+    writeMarketGridTrackSession(marketGridTrackState, trackStateKey);
+  }, [marketGridTrackState, trackStateKey]);
 
   useEffect(() => {
     if (!gridBodyRef.current || typeof ResizeObserver === "undefined") {
@@ -1323,7 +1328,7 @@ export const MultiChartGrid = ({
   ]);
   const focusedLabel =
     phoneGrid
-      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused · ${cfg.count}-chart desktop preset`
+      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused · ${cfg.count} charts`
     : layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
       : `${cfg.count} visible`;
@@ -1533,11 +1538,7 @@ export const MultiChartGrid = ({
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
               <AppTooltip
                 key={key}
-                content={
-                  phoneGrid
-                    ? `${MULTI_CHART_LAYOUTS[key].count}-chart desktop preset; phone shows one focused chart`
-                    : `${MULTI_CHART_LAYOUTS[key].count} charts`
-                }
+                content={`${MULTI_CHART_LAYOUTS[key].count} charts`}
               ><button
                 key={key}
                 onClick={() => setLayout(key)}
@@ -1554,7 +1555,7 @@ export const MultiChartGrid = ({
                   letterSpacing: "0.04em",
                 }}
               >
-                {key}
+                {phoneGrid ? MULTI_CHART_LAYOUTS[key].count : key}
               </button></AppTooltip>
             ))}
           </div>

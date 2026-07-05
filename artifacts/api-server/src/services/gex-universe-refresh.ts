@@ -26,18 +26,16 @@ const DEFAULT_GEX_UNIVERSE_STALE_AFTER_MS = readPositiveIntegerEnv(
 );
 
 const GEX_UNIVERSE_REFRESH_JOB_KINDS = [
-  "stock_snapshot",
   "option_chain_snapshot",
   "gex_snapshot",
 ] as const satisfies readonly MarketDataIngestJobKind[];
 
-const GEX_UNIVERSE_REFRESH_JOB_PRIORITIES: Record<
+const GEX_UNIVERSE_REFRESH_JOB_PRIORITIES: Partial<Record<
   MarketDataIngestJobKind,
   number
-> = {
-  stock_snapshot: 1,
-  option_chain_snapshot: 2,
-  gex_snapshot: 3,
+>> = {
+  option_chain_snapshot: 1,
+  gex_snapshot: 2,
 };
 const GEX_UNIVERSE_PREREQUISITE_FAILURE_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
@@ -657,9 +655,7 @@ function isRecentPermanentPrerequisiteFailure(
 ): boolean {
   const kind = String(row.kind);
   if (
-    kind !== "stock_snapshot" &&
-    kind !== "option_chain_snapshot" &&
-    kind !== "gex_snapshot"
+    kind !== "option_chain_snapshot" && kind !== "gex_snapshot"
   ) {
     return false;
   }
@@ -681,7 +677,6 @@ function isPermanentPrerequisiteFailureMessage(
     return false;
   }
   if (
-    normalized.includes("provider returned no usable stock snapshot") ||
     normalized.includes("provider returned no option-chain snapshots") ||
     normalized.includes("option-chain snapshot truncated") ||
     normalized.includes("massive_api_key or massive_market_data_api_key must be set")
@@ -1009,7 +1004,7 @@ export async function readGexUniverseFallbackSymbols(
           status,
           updated_at
         from market_data_ingest_jobs
-        where kind in ('stock_snapshot', 'option_chain_snapshot')
+        where kind = 'option_chain_snapshot'
         order by symbol, kind, updated_at desc nulls last, created_at desc
       ),
       recently_failed_prerequisite_symbols as (

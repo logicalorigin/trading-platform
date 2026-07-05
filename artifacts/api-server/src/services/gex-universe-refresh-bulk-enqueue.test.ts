@@ -45,10 +45,10 @@ test("non-dry-run universe refresh enqueues all jobs in a single bulk call", asy
   // connection), not one per job.
   assert.equal(calls.length, 1, "expected a single bulk enqueue call");
 
-  // 3 symbols x 3 job kinds (stock_snapshot, option_chain_snapshot,
-  // gex_snapshot) = 9 jobs in the single batch.
+  // 3 symbols x 2 job kinds (option_chain_snapshot, gex_snapshot) = 6 jobs in
+  // the single batch.
   const batch = calls[0]!;
-  assert.equal(batch.length, 9);
+  assert.equal(batch.length, 6);
   for (const symbol of symbols) {
     const kinds = batch
       .filter((job) => job.symbol === symbol)
@@ -57,11 +57,10 @@ test("non-dry-run universe refresh enqueues all jobs in a single bulk call", asy
     assert.deepEqual(kinds, [
       "gex_snapshot",
       "option_chain_snapshot",
-      "stock_snapshot",
     ]);
   }
 
-  assert.equal(result.enqueuedJobCount, 9);
+  assert.equal(result.enqueuedJobCount, 6);
   assert.deepEqual(result.enqueueFailures, []);
 });
 
@@ -92,8 +91,8 @@ test("per-job results map back by index, including failures", async () => {
     },
   );
 
-  // 2 symbols x 3 kinds = 6 jobs; one fails.
-  assert.equal(result.enqueuedJobCount, 5);
+  // 2 symbols x 2 kinds = 4 jobs; one fails.
+  assert.equal(result.enqueuedJobCount, 3);
   assert.equal(result.enqueueFailures.length, 1);
   assert.equal(result.enqueueFailures[0]!.reason, "database_error");
 });

@@ -58,15 +58,20 @@ export function buildSignalMonitorActionability(input: {
   stale: boolean;
   staleBlocker?: string | null;
   freshWindowBars: number;
+  // Outranks stale/age: during a closed/quiet session, rows should read
+  // "market closed" rather than "signal too old" or "data stale".
+  marketClosed?: boolean;
 }): SignalMonitorActionability {
   const directional = input.direction === "buy" || input.direction === "sell";
   const staleBlocker = input.staleBlocker || "data_stale";
   const actionBlocker =
     !directional || !input.signalAt
       ? "no_signal"
-      : input.stale
-        ? staleBlocker
-        : signalMonitorSignalAgeBlocker(input.barsSinceSignal);
+      : input.marketClosed
+        ? "market_closed"
+        : input.stale
+          ? staleBlocker
+          : signalMonitorSignalAgeBlocker(input.barsSinceSignal);
   return {
     fresh: signalMonitorFresh(input),
     actionEligible: actionBlocker == null,

@@ -28,12 +28,12 @@ const numericOptionRow = {
   },
 };
 
-test("account option quote streams subscribe to structured ids and keep numeric aliases", () => {
+test("account option quote streams subscribe to OPRA ids and keep numeric aliases", () => {
   const subscriptionProviderContractIds = optionProviderContractIds(
     numericOptionRow.optionContract,
   );
   assert.equal(subscriptionProviderContractIds.length, 1);
-  assert.match(subscriptionProviderContractIds[0], /^twsopt:/);
+  assert.equal(subscriptionProviderContractIds[0], "O:NVDA260612C00145000");
 
   assert.deepEqual(rowOptionProviderContractIds(numericOptionRow), [
     subscriptionProviderContractIds[0],
@@ -54,20 +54,20 @@ test("account option quote stream groups aggregate into one subscription", () =>
     [
       {
         underlying: "NVDA",
-        providerContractIds: ["twsopt:nvda", "12345"],
+        providerContractIds: ["O:NVDA260612C00145000", "12345"],
       },
       {
         underlying: "TSLA",
-        providerContractIds: ["twsopt:tsla", "12345"],
+        providerContractIds: ["O:TSLA260612P00200000", "12345"],
       },
     ],
     "algo-position-option-quotes",
   );
 
   assert.deepEqual(subscription.providerContractIds, [
-    "twsopt:nvda",
+    "O:NVDA260612C00145000",
     "12345",
-    "twsopt:tsla",
+    "O:TSLA260612P00200000",
   ]);
   assert.equal(subscription.underlying, null);
   assert.equal(subscription.owner, "algo-position-option-quotes:3-contracts");

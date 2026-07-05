@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   AccountSelectionContext,
+  MarketDataProviderConfigurationContext,
   PositionsContext,
   ThemeContext,
   ToastContext,
@@ -14,6 +15,7 @@ export const PlatformProviders = ({
   accounts,
   selectedAccountId,
   onSelectAccount,
+  marketDataProviderConfiguration,
   children,
 }) => {
   const themeValue = useMemo(
@@ -28,13 +30,31 @@ export const PlatformProviders = ({
     }),
     [accounts, onSelectAccount, selectedAccountId],
   );
+  const marketDataProviderConfigurationValue = useMemo(
+    () => ({
+      massiveStockRealtimeConfigured: Boolean(
+        marketDataProviderConfiguration?.massiveStockRealtimeConfigured,
+      ),
+      marketDataProviderConfigurationReady: Boolean(
+        marketDataProviderConfiguration?.marketDataProviderConfigurationReady,
+      ),
+    }),
+    [
+      marketDataProviderConfiguration?.massiveStockRealtimeConfigured,
+      marketDataProviderConfiguration?.marketDataProviderConfigurationReady,
+    ],
+  );
 
   return (
     <ThemeContext.Provider value={themeValue}>
       <ToastContext.Provider value={toastValue}>
         <PositionsContext.Provider value={positionsValue}>
           <AccountSelectionContext.Provider value={accountSelectionValue}>
-            {children}
+            <MarketDataProviderConfigurationContext.Provider
+              value={marketDataProviderConfigurationValue}
+            >
+              {children}
+            </MarketDataProviderConfigurationContext.Provider>
           </AccountSelectionContext.Provider>
         </PositionsContext.Provider>
       </ToastContext.Provider>

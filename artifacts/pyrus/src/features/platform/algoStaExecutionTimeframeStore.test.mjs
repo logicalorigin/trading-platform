@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   publishAlgoStaExecutionTimeframe,
+  publishAlgoStaMtfAlignmentConfig,
   publishAlgoStaMtfTimeframes,
   getAlgoStaExecutionTimeframeForTests,
+  getAlgoStaMtfAlignmentConfigForTests,
   getAlgoStaMtfTimeframesForTests,
   resetAlgoStaExecutionTimeframeForTests,
 } from "./algoStaExecutionTimeframeStore.js";
@@ -42,9 +44,16 @@ test("MTF set: normalizes (trims, drops empty/nullish)", () => {
 test("reset clears BOTH the execution TF and the MTF set", () => {
   publishAlgoStaExecutionTimeframe("5m");
   publishAlgoStaMtfTimeframes(["1m", "5m"]);
+  publishAlgoStaMtfAlignmentConfig({
+    enabled: false,
+    preset: "custom",
+    timeframes: ["1m", "5m"],
+    requiredCount: 2,
+  });
   resetAlgoStaExecutionTimeframeForTests();
   assert.equal(getAlgoStaExecutionTimeframeForTests(), "");
   assert.deepEqual(getAlgoStaMtfTimeframesForTests(), []);
+  assert.equal(getAlgoStaMtfAlignmentConfigForTests(), null);
 });
 
 test("empty MTF set returns a stable empty array reference", () => {
@@ -54,4 +63,29 @@ test("empty MTF set returns a stable empty array reference", () => {
   const b = getAlgoStaMtfTimeframesForTests();
   assert.equal(a, b);
   assert.deepEqual(a, []);
+});
+
+test("MTF config: publish normalizes and preserves value-equal identity", () => {
+  resetAlgoStaExecutionTimeframeForTests();
+  publishAlgoStaMtfAlignmentConfig({
+    enabled: false,
+    preset: " custom ",
+    timeframes: [" 1m ", "", "5m", null],
+    requiredCount: 2.8,
+  });
+  const first = getAlgoStaMtfAlignmentConfigForTests();
+  assert.deepEqual(first, {
+    enabled: false,
+    preset: "custom",
+    timeframes: ["1m", "5m"],
+    requiredCount: 2,
+  });
+
+  publishAlgoStaMtfAlignmentConfig({
+    enabled: false,
+    preset: "custom",
+    timeframes: ["1m", "5m"],
+    requiredCount: 2,
+  });
+  assert.equal(getAlgoStaMtfAlignmentConfigForTests(), first);
 });

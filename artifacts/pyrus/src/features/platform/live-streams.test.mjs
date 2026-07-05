@@ -383,7 +383,7 @@ test("account option quote cache patch matches structured quote aliases for nume
   const providerContractIds =
     __liveStreamsInternalsForTests.optionPositionProviderContractIds(row);
   assert.equal(providerContractIds.length, 2);
-  assert.match(providerContractIds[0], /^twsopt:/);
+  assert.equal(providerContractIds[0], "O:NVDA260612C00145000");
   assert.equal(providerContractIds[1], "12345");
 
   const patched =
@@ -836,4 +836,29 @@ test("signal matrix stream url omits requestOrigin (backend rejects unknown orig
 test("signal matrix stream url is null when no symbols are supplied", () => {
   assert.equal(getSignalMonitorMatrixStreamUrl({ symbols: [] }), null);
   assert.equal(getSignalMonitorMatrixStreamUrl({ symbols: ["", "  "] }), null);
+});
+
+test("signal matrix stream url can request the server profile universe", () => {
+  const url = getSignalMonitorMatrixStreamUrl({
+    environment: "shadow",
+    symbols: [],
+    timeframes: ["1m"],
+    profileUniverse: true,
+  });
+
+  assert.ok(url, "expected a profile-universe stream url without symbols");
+  const params = new URLSearchParams(url.split("?")[1]);
+  assert.equal(params.get("environment"), "shadow");
+  assert.equal(params.get("universe"), "profile");
+  assert.equal(params.get("timeframes"), "1m");
+  assert.equal(params.has("symbols"), false);
+});
+
+test("signal matrix stream forwards payload metadata with states", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /onStatesRef\.current\(payload\.states, kind, payload\)/,
+  );
 });

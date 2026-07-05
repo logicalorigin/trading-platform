@@ -199,7 +199,7 @@ export const TradeStrategyGreeksPanel = ({
             position: "relative",
             height: dim(12),
             background: CSS_COLOR.bg1,
-            borderRadius: dim(2),
+            borderRadius: dim(RADII.xs),
             overflow: "hidden",
           }}
         >
@@ -211,7 +211,7 @@ export const TradeStrategyGreeksPanel = ({
               height: "100%",
               background: color,
               opacity: 0.85,
-              borderRadius: dim(1),
+              borderRadius: dim(RADII.xs),
             }}
           />
           <div

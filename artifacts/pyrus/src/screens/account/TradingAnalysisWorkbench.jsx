@@ -181,8 +181,7 @@ const marketForAssetClass = (assetClass) => {
 };
 
 const sectionCardStyle = (style = {}) => ({
-  border: `1px solid ${CSS_COLOR.border}`,
-  borderRadius: dim(RADII.md),
+  borderTop: `1px solid ${CSS_COLOR.border}`,
   background: CSS_COLOR.bg1,
   minWidth: 0,
   overflow: "hidden",
@@ -283,9 +282,6 @@ const MetricCard = ({ label, value, kind = "number", tone, currency, maskValues,
     <div
       className={["ra-panel-enter", flashClass].filter(Boolean).join(" ")}
       style={{
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
-        background: CSS_COLOR.bg1,
         padding: sp("8px 10px"),
         minWidth: 0,
         display: "grid",
@@ -427,9 +423,7 @@ const InsightsRow = ({ analysis, currency, maskValues, onLensActivate, onTradeSe
             style={{
               flex: `0 0 ${dim(280)}px`,
               minHeight: dim(96),
-              border: `1px solid ${CSS_COLOR.border}`,
               borderLeft: `2px solid ${color}`,
-              borderRadius: dim(RADII.md),
               background: CSS_COLOR.bg2,
               padding: sp("8px 10px"),
               display: "grid",
@@ -1365,7 +1359,7 @@ const ReasonTrace = ({ lifecycleRows, currency, maskValues }) => {
     );
   }
   return (
-    <div style={{ display: "grid", gap: sp(4) }}>
+    <div style={{ display: "grid" }}>
       {rows.map((row) => (
         <div
           key={`${row.key}:${row.at || ""}`}
@@ -1373,9 +1367,7 @@ const ReasonTrace = ({ lifecycleRows, currency, maskValues }) => {
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) auto",
             gap: sp(6),
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            borderRadius: dim(RADII.sm),
-            background: CSS_COLOR.bg0,
+            borderTop: `1px solid ${CSS_COLOR.borderLight}`,
             padding: sp("6px 8px"),
           }}
         >
@@ -1658,7 +1650,7 @@ const TradesView = ({
           <span />
         </div>
       ) : null}
-      <div style={{ border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.md), overflow: "hidden", background: CSS_COLOR.bg1 }}>
+      <div style={{ borderTop: `1px solid ${CSS_COLOR.border}`, overflow: "hidden", background: CSS_COLOR.bg1 }}>
         {pageRows.map((trade) => {
           const tradeId = getAccountTradeId(trade);
           const expanded = Boolean(selectedTradeId && selectedTradeId === tradeId);

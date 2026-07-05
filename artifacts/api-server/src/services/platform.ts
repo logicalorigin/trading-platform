@@ -11,8 +11,9 @@ import {
 } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
-import { monitorEventLoopDelay } from "node:perf_hooks";
+import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import {
+  brokerConnectionsTable,
   db,
   instrumentsTable,
   watchlistItemsTable,
@@ -28,6 +29,8 @@ import {
   getMassiveRuntimeConfig,
   getFmpRuntimeConfig,
   getIgnoredIbkrBridgeRuntimeEnvNames,
+  getMassiveStocksRecency,
+  isMassiveOptionsRealtimeConfigured,
   isMassiveStocksRealtimeConfigured,
   getProviderConfiguration,
   getRuntimeMode,
@@ -59,16 +62,15 @@ import {
   type MarketDataFreshness,
   type PlaceOrderInput,
   type QuoteSnapshot,
+  type SessionStatusSnapshot,
 } from "../providers/ibkr/client";
 import {
   buildPositionQuoteFromSnapshot,
   choosePositionQuote,
   positionReferenceSymbol,
 } from "./account-position-model";
-import {
-  IbkrBridgeClient,
-  type BridgeOrdersResult,
-} from "../providers/ibkr/bridge-client";
+import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 import {
   MassiveMarketDataClient,
   computeUnusualMetrics,
@@ -84,7 +86,6 @@ import {
   type PremiumDistributionSideBasis,
   type PremiumDistributionTimeframe,
   type MassiveAggregateBarsPage,
-  type QuoteSnapshot as MassiveQuoteSnapshot,
   type StockGroupedDailyAggregate,
   type UniverseTicker,
   type UniverseMarket,
@@ -125,7 +126,6 @@ import {
 } from "./flow-universe";
 import { createFlowUniverseOptionabilityVerifier } from "./flow-universe-optionability-verifier";
 import { createFlowUniversePlanner } from "./flow-universe-planner";
-import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
@@ -147,15 +147,8 @@ import {
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   runBridgeWork,
-  type BridgeWorkCategory,
 } from "./bridge-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
-import {
-  clearBridgeOrderReadSuppression,
-  getBridgeOrderReadSuppression,
-  markBridgeOrderReadsSuppressed,
-  shouldProbeBridgeOrderReadSuppression,
-} from "./bridge-order-read-state";
 import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
 import {
   filterClosedBarsForStore,
@@ -1179,13 +1172,20 @@ function holdOptionsFlowScannerBackgroundWork(
   );
 }
 
-function getOptionsFlowScannerSchedulableLineCap(): number {
-  const diagnostics = getMarketDataAdmissionDiagnostics();
-  const staticLineCap =
-    diagnostics.pressure.scannerStaticLineCap ??
-    diagnostics.budget.flowScannerLineCap;
-  const effectiveLineCap = diagnostics.pressure.scannerEffectiveLineCap ?? 0;
-  return Math.max(0, Math.min(staticLineCap, effectiveLineCap));
+function getOptionsFlowScannerSchedulableLineCap(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+  scannerPressure: ReturnType<typeof getOptionsFlowScannerPressureGate> =
+    getOptionsFlowScannerPressureGate(),
+): number {
+  // Massive-backed scanner capacity is an API work budget, not broker-line
+  // admission state. Keep the legacy "line" field names for diagnostics/API
+  // compatibility, but source scheduling from the scanner config directly.
+  return Math.max(
+    0,
+    Math.floor(
+      resolveOptionsFlowScannerEffectiveLineBudget(config, scannerPressure),
+    ),
+  );
 }
 
 const PRESSURE_LEVEL_RANK: Record<ApiResourcePressureLevel, number> = {
@@ -1230,11 +1230,12 @@ function getOptionsFlowScannerPressureGate(
     (driver) => !ignoredScannerDriverKinds.has(driver.kind),
   );
   const level = maxPressureDriverLevel(scannerDrivers);
+  const throttled = level !== "normal";
   return {
     level,
     globalLevel: snapshot.level,
     hardBlocked: false,
-    throttled: false,
+    throttled,
     drivers: scannerDrivers,
     ignoredDrivers,
   };
@@ -1297,40 +1298,21 @@ async function refreshOptionsFlowSessionBlockReason(
     return null;
   }
 
-  try {
-    const { annotatedHealth, fallbackStreamState, healthErrorCode } =
-      await getRuntimeBridgeHealthState();
-    const marketDataMode = String(
-      annotatedHealth?.marketDataMode ??
-        (fallbackStreamState as { marketDataMode?: unknown }).marketDataMode ??
-        "",
-    ).toLowerCase();
-    const normalizedReason = normalizeOptionsFlowSessionBlockReason(
-      annotatedHealth?.strictReason ??
-        annotatedHealth?.streamStateReason ??
-        healthErrorCode ??
-        fallbackStreamState.streamStateReason,
+  const massiveConfig = getMassiveRuntimeConfig();
+  optionsFlowSessionBlockCheckedAt = Date.now();
+  if (!massiveConfig) {
+    optionsFlowSessionBlockReason = "transport-unavailable";
+    return effectiveOptionsFlowSessionBlockReason(
+      optionsFlowSessionBlockReason,
+      config,
     );
-    const reason =
-      marketDataMode === "delayed"
-        ? null
-        : marketDataMode === "frozen"
-          ? "market-data-frozen"
-          : marketDataMode === "delayed_frozen"
-            ? "market-data-delayed-frozen"
-            : normalizedReason;
-    optionsFlowSessionBlockReason = reason;
-    optionsFlowSessionBlockCheckedAt = Date.now();
-    return effectiveOptionsFlowSessionBlockReason(reason, config);
-  } catch (error) {
-    logger.debug(
-      { err: error },
-      "Options flow scanner session guard check skipped",
-    );
-    optionsFlowSessionBlockReason = null;
-    optionsFlowSessionBlockCheckedAt = Date.now();
-    return null;
   }
+
+  // The options flow scanner is Massive-backed. Broker bridge health must not
+  // block Massive scanner scheduling; the scanner transport check owns Massive
+  // realtime/delayed status.
+  optionsFlowSessionBlockReason = null;
+  return null;
 }
 
 function getOptionsFlowScannerBackgroundBlockReason(
@@ -1351,14 +1333,8 @@ function getOptionsFlowScannerBackgroundBlockReason(
   if (sessionBlockReason) {
     return sessionBlockReason;
   }
-  const pressureGate = getOptionsFlowScannerPressureGate(
-    getApiResourcePressureSnapshot(),
-  );
-  if (pressureGate.level === "high") {
-    return "resource-pressure";
-  }
   if (!input.ignoreLineCapacity) {
-    if (getOptionsFlowScannerSchedulableLineCap() <= 0) {
+    if (getOptionsFlowScannerSchedulableLineCap(config) <= 0) {
       return "line-cap-exhausted";
     }
   }
@@ -1405,11 +1381,7 @@ function isBridgeWorkBackoffError(error: unknown): boolean {
 
 function getWatchlistPrewarmBridgeSyncBlockReason(
   health: WatchlistPrewarmBridgeHealth | null | undefined,
-  quotesBackedOff = isBridgeWorkBackedOff("quotes"),
 ): string | null {
-  if (quotesBackedOff) {
-    return "quotes_backoff";
-  }
   if (!health?.strictReady) {
     const reason = health?.strictReason ?? health?.streamStateReason;
     if (reason === "market_session_quiet") {
@@ -1422,11 +1394,9 @@ function getWatchlistPrewarmBridgeSyncBlockReason(
 
 export function __getWatchlistPrewarmBridgeSyncBlockReasonForTests(
   health: Partial<WatchlistPrewarmBridgeHealth> | null | undefined,
-  quotesBackedOff = false,
 ): string | null {
   return getWatchlistPrewarmBridgeSyncBlockReason(
     health as WatchlistPrewarmBridgeHealth | null | undefined,
-    quotesBackedOff,
   );
 }
 
@@ -1470,41 +1440,6 @@ async function syncWatchlistPrewarmBridgeGroups(input: {
       if (!shouldSyncBridgePrewarmGroup(signature, group.state, now)) {
         return;
       }
-      if (isBridgeWorkBackedOff("quotes")) {
-        logger.debug(
-          {
-            blockReason: "quotes_backoff",
-            owner: group.owner,
-            symbolCount: group.symbols.length,
-          },
-          "IBKR bridge watchlist prewarm sync skipped",
-        );
-        return;
-      }
-      const client = getIbkrClient();
-      if (typeof client.prewarmQuoteSubscriptions !== "function") {
-        return;
-      }
-      try {
-        await runBridgeWork(
-          "quotes",
-          () => client.prewarmQuoteSubscriptions(group.symbols, group.owner),
-          { recordFailure: false },
-        );
-      } catch (error) {
-        if (isBridgeWorkBackoffError(error)) {
-          logger.debug(
-            {
-              err: error,
-              owner: group.owner,
-              symbolCount: group.symbols.length,
-            },
-            "IBKR bridge watchlist prewarm sync skipped",
-          );
-          return;
-        }
-        throw error;
-      }
       group.state.signature = signature;
       group.state.syncedAt = Date.now();
     }),
@@ -1517,8 +1452,7 @@ function scheduleIbkrWatchlistPrewarm(
 ) {
   if (
     !getProviderConfiguration().ibkr ||
-    isBridgeWorkBackedOff("health") ||
-    isBridgeWorkBackedOff("quotes")
+    isBridgeWorkBackedOff("health")
   ) {
     return;
   }
@@ -1602,10 +1536,7 @@ function scheduleIbkrWatchlistPrewarm(
       if (sequence !== ibkrWatchlistPrewarmSequence) {
         return;
       }
-      const healthBlockReason = getWatchlistPrewarmBridgeSyncBlockReason(
-        health,
-        false,
-      );
+      const healthBlockReason = getWatchlistPrewarmBridgeSyncBlockReason(health);
       if (healthBlockReason) {
         logger.debug(
           {
@@ -2604,11 +2535,6 @@ function shouldDeferOnDemandFlowRefresh(): string | null {
     return "options_flow_on_demand_saturated";
   }
 
-  const optionsLane = getBridgeGovernorSnapshot().options;
-  if (optionsLane.queued > 0) {
-    return "options_lane_queued";
-  }
-
   return null;
 }
 
@@ -2738,9 +2664,23 @@ const readEventLoopDelayWindowMs = () => ({
   p95: nsToMs(eventLoopDelay.percentile(95)),
 });
 let eventLoopDelayWindowMs = readEventLoopDelayWindowMs();
+// Event-loop UTILIZATION (0..1): the fraction of wall-clock the loop spent active
+// (not idle) over the window. Unlike delay (scheduling latency of the 20ms probe),
+// utilization climbs toward 1.0 when the single price-serving loop is CPU-saturated
+// by many back-to-back medium tasks — the failure mode where delay stays modest
+// (~200-600ms) while a core is pegged at ~90%+ and SSE quote flushes starve.
+// Sampled over the SAME window as the delay reset so both describe one interval.
+let eventLoopUtilizationBaseline = performance.eventLoopUtilization();
+let eventLoopUtilizationWindow = 0;
 const eventLoopDelayWindowTimer = setInterval(() => {
   eventLoopDelayWindowMs = readEventLoopDelayWindowMs();
   eventLoopDelay.reset();
+  const eluNow = performance.eventLoopUtilization();
+  eventLoopUtilizationWindow = performance.eventLoopUtilization(
+    eluNow,
+    eventLoopUtilizationBaseline,
+  ).utilization;
+  eventLoopUtilizationBaseline = eluNow;
 }, EVENT_LOOP_DELAY_WINDOW_MS);
 eventLoopDelayWindowTimer.unref();
 
@@ -2803,9 +2743,7 @@ function serializeOrderReadDebug(error: unknown, timeoutMs: number) {
   };
 }
 
-function getBridgeBackoffRemainingMs(
-  category: "orders" | "options" | "health",
-): number {
+function getBridgeBackoffRemainingMs(category: "orders" | "health"): number {
   return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
 }
 
@@ -2957,148 +2895,33 @@ export async function listOrdersWithResilience(input: {
     | "rejected"
     | "expired";
 }): Promise<ResilientOrdersResponse> {
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   const timeoutMs = orderReadTimeoutMs();
-  const suppression = getBridgeOrderReadSuppression();
-  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
-    void recordOrderReadDegraded({
-      accountId: input.accountId,
-      mode: input.mode,
-      reason: suppression.reason,
-      message:
-        "Skipping open-orders read while the IBKR bridge order endpoint is suppressed.",
-      stale: true,
-      detail: suppression.message,
-    });
-    return {
-      orders: [],
-      degraded: true,
-      reason: suppression.reason,
-      stale: true,
-      debug: {
-        message: suppression.message,
-        code: suppression.reason,
-      },
-    };
-  }
-  const governor = getBridgeGovernorSnapshot().orders;
-  if (isBridgeWorkBackedOff("orders")) {
-    void recordOrderReadDegraded({
-      accountId: input.accountId,
-      mode: input.mode,
-      reason: "orders_backoff",
-      message: "Skipping open-orders read while the IBKR bridge is backed off.",
-      timeoutMs,
-      stale: true,
-      detail: `Bridge order reads are backed off for ${governor.backoffRemainingMs}ms.`,
-    });
-    return {
-      orders: [],
-      degraded: true,
-      reason: "orders_backoff",
-      stale: true,
-      debug: {
-        message: "Bridge order reads are temporarily backed off.",
-        code: "orders_backoff",
-        timeoutMs,
-      },
-    };
-  }
-  if (governor.active > 0 || governor.queued > 0) {
-    void recordOrderReadDegraded({
-      accountId: input.accountId,
-      mode: input.mode,
-      reason: "orders_busy",
-      message: "Skipping open-orders read while another order read is active.",
-      timeoutMs,
-      stale: true,
-      detail: `Bridge order reads are busy (active=${governor.active}, queued=${governor.queued}).`,
-    });
-    return {
-      orders: [],
-      degraded: true,
-      reason: "orders_busy",
-      stale: true,
-      debug: {
-        message: "Bridge order reads are busy; skipping queued read.",
-        code: "orders_busy",
-        timeoutMs,
-      },
-    };
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(
-      new HttpError(504, "IBKR order read timed out.", {
-        code: "orders_timeout",
-        detail: `Order read did not respond within ${timeoutMs}ms.`,
-      }),
-    );
-  }, timeoutMs);
-  timeout.unref?.();
 
   try {
-    const result: BridgeOrdersResult = await runBridgeWork("orders", () =>
-      withTimeout(
-        client.listOrdersWithMeta({
-          accountId: input.accountId,
-          mode: input.mode ?? getRuntimeMode(),
-          status: input.status,
-          signal: controller.signal,
-        }),
-        timeoutMs,
-        () =>
-          new HttpError(504, "IBKR order read timed out.", {
-            code: "orders_timeout",
-            detail: `Order read did not respond within ${timeoutMs}ms.`,
-        }),
-      ),
-    );
-    if (!result.degraded) {
-      clearBridgeOrderReadSuppression("orders_timeout");
-    }
-    if (result.degraded) {
-      void recordOrderReadDegraded({
+    const orders = await withTimeout(
+      client.listOrders({
         accountId: input.accountId,
-        mode: input.mode,
-        reason: result.reason ?? "orders_degraded",
-        message: "Open-orders snapshot timed out; using cached order stream.",
-        timeoutMs: result.timeoutMs,
-        stale: result.stale,
-        detail: result.detail ?? null,
-      });
-    }
+        mode: input.mode ?? getRuntimeMode(),
+        status: input.status,
+      }),
+      timeoutMs,
+      () =>
+        new HttpError(504, "IBKR order read timed out.", {
+          code: "orders_timeout",
+          detail: `Order read did not respond within ${timeoutMs}ms.`,
+        }),
+    );
     return {
-      orders: result.orders,
-      degraded: result.degraded,
-      reason: result.reason,
-      stale: result.stale,
-      debug: result.degraded
-        ? {
-            message:
-              result.detail ||
-              "Open-orders snapshot timed out; using cached order stream.",
-            code: result.reason ?? "orders_degraded",
-            timeoutMs: result.timeoutMs,
-          }
-        : undefined,
+      orders,
     };
   } catch (error) {
     const debug = serializeOrderReadDebug(error, timeoutMs);
-    if (debug.code === "orders_timeout") {
-      markBridgeOrderReadsSuppressed({
-        reason: "orders_timeout",
-        message:
-          "Open-orders reads are paused after the bridge order endpoint did not respond.",
-        ttlMs: 60_000,
-      });
-    }
     void recordOrderReadDegraded({
       accountId: input.accountId,
       mode: input.mode,
       reason: "orders_timeout",
-      message: "IBKR order read timed out before the bridge responded.",
+      message: "IBKR Client Portal order read failed or timed out.",
       timeoutMs,
       stale: false,
       detail: debug.message,
@@ -3110,8 +2933,6 @@ export async function listOrdersWithResilience(input: {
       stale: false,
       debug,
     };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -3281,54 +3102,6 @@ export function getOrderVisibilityProbe(input: {
     orderVisibilityCache.delete(key);
   }
 
-  const suppression = getBridgeOrderReadSuppression();
-  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
-    return {
-      orders: [],
-      degraded: true,
-      stale: true,
-      reason: suppression.reason,
-      debug: {
-        message: suppression.message,
-        code: suppression.reason,
-      },
-      probeOnly: true,
-      cacheStatus: "missing",
-    };
-  }
-
-  const governor = getBridgeGovernorSnapshot().orders;
-  if (isBridgeWorkBackedOff("orders")) {
-    return {
-      orders: [],
-      degraded: true,
-      stale: true,
-      reason: "orders_backoff",
-      debug: {
-        message: "Bridge order reads are temporarily backed off.",
-        code: "orders_backoff",
-        timeoutMs: orderReadTimeoutMs(),
-      },
-      probeOnly: true,
-      cacheStatus: "missing",
-    };
-  }
-  if (governor.active > 0 || governor.queued > 0) {
-    return {
-      orders: [],
-      degraded: true,
-      stale: true,
-      reason: "orders_busy",
-      debug: {
-        message: "Bridge order reads are busy; skipping diagnostic probe.",
-        code: "orders_busy",
-        timeoutMs: orderReadTimeoutMs(),
-      },
-      probeOnly: true,
-      cacheStatus: "missing",
-    };
-  }
-
   return {
     orders: [],
     probeOnly: true,
@@ -3387,7 +3160,6 @@ export async function getRuntimeDiagnostics() {
   const configured = getProviderConfiguration();
   const {
     annotatedHealth,
-    bridgeQuoteDiagnostics,
     fallbackStreamState,
     healthError,
     healthErrorCode,
@@ -3396,9 +3168,7 @@ export async function getRuntimeDiagnostics() {
   } = await getRuntimeBridgeHealthState();
   const memory = process.memoryUsage();
   const resourceCaches = getPlatformResourceDiagnostics();
-  const marketDataStreams = getRuntimeMarketDataDiagnostics({
-    bridgeQuoteDiagnostics,
-  });
+  const marketDataStreams = getRuntimeMarketDataDiagnostics();
   const marketDataIngest = await getRuntimeMarketDataIngestDiagnostics();
   const massiveRuntimeConfig = getMassiveRuntimeConfig();
   const [
@@ -3443,6 +3213,7 @@ export async function getRuntimeDiagnostics() {
       shadowAccountReads: getShadowAccountReadDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),
       eventLoopDelayMs: { ...eventLoopDelayWindowMs },
+      eventLoopUtilization: eventLoopUtilizationWindow,
     },
     providers: {
       massive: getRuntimeMassiveProviderDiagnostics({
@@ -3543,12 +3314,149 @@ export async function getRuntimeDiagnostics() {
         liveActionConfirmationRequired: true,
         diagnosticsMutateOrders: false,
       },
-      governor: getBridgeGovernorSnapshot(),
       streams: {
         ...marketDataStreamsWithIngest,
         massiveStockUniverse: getMassiveStockUniverseStreamDiagnostics(),
         marketDataAdmission: marketDataAdmissionWithScanner,
         marketDataWorkPlan,
+        sse: getSseStreamDiagnostics(),
+      },
+    },
+  };
+}
+
+export async function getRuntimeDiagnosticsCompact() {
+  const bridgeConfig = getIbkrBridgeRuntimeConfig();
+  const bridgeOverride = getIbkrBridgeRuntimeOverride();
+  const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
+  const ignoredBridgeEnvNames = getIgnoredIbkrBridgeRuntimeEnvNames();
+  const configured = getProviderConfiguration();
+  const { annotatedHealth, fallbackStreamState, healthError, healthErrorCode } =
+    await getRuntimeBridgeHealthState();
+  const memory = process.memoryUsage();
+  const massiveRuntimeConfig = getMassiveRuntimeConfig();
+  const marketDataAdmission = getMarketDataAdmissionDiagnostics();
+  const ibkrConfiguredForDiagnostics =
+    configured.ibkr || ibkrRuntime.desktopAgentOnline;
+
+  return {
+    timestamp: new Date(),
+    compact: true,
+    marketDataWorkPlan: {},
+    api: {
+      uptimeMs: Math.round(process.uptime() * 1000),
+      memoryMb: {
+        rss: mb(memory.rss),
+        heapUsed: mb(memory.heapUsed),
+        heapTotal: mb(memory.heapTotal),
+        external: mb(memory.external),
+        arrayBuffers: mb(memory.arrayBuffers),
+      },
+      eventLoopDelayMs: { ...eventLoopDelayWindowMs },
+      eventLoopUtilization: eventLoopUtilizationWindow,
+      resourcePressure: getApiResourcePressureSnapshot(),
+    },
+    providers: {
+      massive: {
+        configured: Boolean(massiveRuntimeConfig),
+        status: massiveRuntimeConfig ? "idle" : "unconfigured",
+      },
+    },
+    signalMonitor: {
+      lastDbFallback: getSignalMonitorDbFallbackDiagnostics(),
+    },
+    storage: getCachedStorageHealthSnapshot(),
+    ibkr: {
+      transport: "tws" as const,
+      configured: ibkrConfiguredForDiagnostics,
+      bridgeUrlConfigured: Boolean(bridgeConfig?.baseUrl),
+      bridgeTokenConfigured: Boolean(bridgeConfig?.apiToken),
+      runtimeOverrideActive: Boolean(bridgeOverride),
+      runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
+      bridgeRuntimeAttached: ibkrRuntime.bridgeRuntimeAttached,
+      bridgeRuntimeStatus: ibkrRuntime.bridgeRuntimeStatus,
+      bridgeRuntimeReason: ibkrRuntime.bridgeRuntimeReason,
+      desktopAgentOnline: ibkrRuntime.desktopAgentOnline,
+      desktopAgentRegistered: ibkrRuntime.desktopAgentRegistered,
+      desktopAgentRegisteredCount: ibkrRuntime.desktopAgentRegisteredCount,
+      desktopAgentCompatibility: ibkrRuntime.desktopAgentCompatibility,
+      desktopAgentCompatible: ibkrRuntime.desktopAgentCompatible,
+      desktopAgentHelperVersion: ibkrRuntime.desktopAgentHelperVersion,
+      desktopAgentKnownBad: ibkrRuntime.desktopAgentKnownBad,
+      desktopAgentExpectedHelperVersion:
+        ibkrRuntime.desktopAgentExpectedHelperVersion,
+      desktopAgentUpgradeRequired: ibkrRuntime.desktopAgentUpgradeRequired,
+      reconnectAvailable: ibkrRuntime.reconnectAvailable,
+      activation: getIbkrBridgeActivationDiagnostics(),
+      ignoredBridgeEnvNames,
+      ignoredBridgeEnvConfigured: ignoredBridgeEnvNames.length > 0,
+      reachable: Boolean(
+        annotatedHealth?.bridgeReachable || annotatedHealth?.connectivityUp,
+      ),
+      healthError,
+      healthErrorCode,
+      healthErrorStatusCode: null,
+      healthErrorDetail: null,
+      healthFresh: annotatedHealth?.healthFresh ?? false,
+      healthAgeMs: annotatedHealth?.healthAgeMs ?? null,
+      stale: annotatedHealth?.stale ?? true,
+      bridgeReachable: annotatedHealth?.bridgeReachable ?? false,
+      socketConnected: annotatedHealth?.socketConnected ?? false,
+      brokerServerConnected: annotatedHealth?.brokerServerConnected ?? false,
+      connectivityUp: annotatedHealth?.connectivityUp ?? false,
+      connectivityReason: annotatedHealth?.connectivityReason ?? null,
+      lastTickleAgeMs: annotatedHealth?.lastTickleAgeMs ?? null,
+      serverConnectivity: annotatedHealth?.serverConnectivity ?? null,
+      lastServerConnectivityAt:
+        annotatedHealth?.lastServerConnectivityAt ?? null,
+      lastServerConnectivityError:
+        annotatedHealth?.lastServerConnectivityError ?? null,
+      accountsLoaded: annotatedHealth?.accountsLoaded ?? false,
+      configuredLiveMarketDataMode:
+        annotatedHealth?.configuredLiveMarketDataMode ?? false,
+      streamFresh: annotatedHealth?.streamFresh ?? false,
+      lastStreamEventAgeMs: annotatedHealth?.lastStreamEventAgeMs ?? null,
+      strictReady: annotatedHealth?.strictReady ?? false,
+      strictReason: annotatedHealth
+        ? annotatedHealth.strictReason
+        : healthErrorCode || healthError
+          ? "health_error"
+          : "health_unavailable",
+      streamState:
+        annotatedHealth?.streamState ?? fallbackStreamState.streamState,
+      streamStateReason:
+        annotatedHealth?.streamStateReason ??
+        fallbackStreamState.streamStateReason,
+      connected:
+        annotatedHealth?.connectivityUp ?? annotatedHealth?.connected ?? false,
+      authenticated: annotatedHealth?.authenticated ?? false,
+      competing: annotatedHealth?.competing ?? false,
+      selectedAccountId: maskAccountId(annotatedHealth?.selectedAccountId),
+      accountCount: annotatedHealth?.accounts?.length ?? 0,
+      connectionTarget: annotatedHealth?.connectionTarget ?? null,
+      sessionMode: annotatedHealth?.sessionMode ?? null,
+      clientId: annotatedHealth?.clientId ?? null,
+      marketDataMode: annotatedHealth?.marketDataMode ?? null,
+      liveMarketDataAvailable: annotatedHealth?.liveMarketDataAvailable ?? null,
+      lastTickleAt: annotatedHealth?.lastTickleAt ?? null,
+      lastRecoveryAttemptAt: annotatedHealth?.lastRecoveryAttemptAt ?? null,
+      lastRecoveryError: annotatedHealth?.lastRecoveryError ?? null,
+      lastError: annotatedHealth?.lastError ?? null,
+      bridgeDiagnostics: annotatedHealth?.diagnostics ?? null,
+      orderCapability: {
+        orderDataVisible: Boolean(
+          annotatedHealth?.healthFresh &&
+            annotatedHealth.connected &&
+            annotatedHealth.authenticated,
+        ),
+        readOnlyModeLikely:
+          typeof annotatedHealth?.lastError === "string" &&
+          /read.?only/i.test(annotatedHealth.lastError),
+        liveActionConfirmationRequired: true,
+        diagnosticsMutateOrders: false,
+      },
+      streams: {
+        marketDataAdmission,
         sse: getSseStreamDiagnostics(),
       },
     },
@@ -3614,6 +3522,7 @@ export function getPlatformResourceDiagnostics() {
       cursorEnabled: isChartHydrationCursorEnabled(),
       dedupeEnabled: isChartHydrationDedupeEnabled(),
       backgroundEnabled: isChartHydrationBackgroundEnabled(),
+      backgroundPersist: getBarsBackgroundPersistDiagnostics(),
       hydration: { ...barsHydrationCounters },
       hydrationBreakdown: {
         byFamily: { ...barsHydrationBreakdown.byFamily },
@@ -3708,72 +3617,197 @@ export async function listBrokerConnections() {
         ? ("error" as const)
         : ("configured" as const);
 
-  return {
-    connections: [
-      {
-        id: "massive-paper",
-        provider: "massive" as const,
-        name: marketDataName,
-        mode: "shadow" as const,
-        status: configured.massive
-          ? ("configured" as const)
-          : ("disconnected" as const),
-        capabilities: marketDataCapabilities,
-        updatedAt: timestamp,
-      },
-      {
-        id: "massive-live",
-        provider: "massive" as const,
-        name: marketDataName,
+  const connections: BrokerConnectionListItem[] = [
+    {
+      id: "massive-paper",
+      provider: "massive" as const,
+      name: marketDataName,
+      mode: "shadow" as const,
+      status: configured.massive
+        ? ("configured" as const)
+        : ("disconnected" as const),
+      capabilities: marketDataCapabilities,
+      updatedAt: timestamp,
+    },
+    {
+      id: "massive-live",
+      provider: "massive" as const,
+      name: marketDataName,
+      mode: "live" as const,
+      status: configured.massive
+        ? ("configured" as const)
+        : ("disconnected" as const),
+      capabilities: marketDataCapabilities,
+      updatedAt: timestamp,
+    },
+    {
+      id: "ibkr-paper",
+      provider: "ibkr" as const,
+      name: ibkrConnectionName,
+      mode: "shadow" as const,
+      status: ibkrStatus,
+      capabilities: [
+        "accounts",
+        "positions",
+        "orders",
+        "executions",
+        "paper-trading",
+      ],
+      updatedAt: timestamp,
+    },
+    {
+      id: "ibkr-live",
+      provider: "ibkr" as const,
+      name: ibkrConnectionName,
+      mode: "live" as const,
+      status: ibkrStatus,
+      capabilities: [
+        "accounts",
+        "positions",
+        "orders",
+        "executions",
+        "live-trading",
+      ],
+      updatedAt: timestamp,
+    },
+    ...(await listSnapTradeBrokerConnections()),
+    ...(await listRobinhoodBrokerConnections()),
+  ];
+
+  return { connections };
+}
+
+type BrokerConnectionListItem = {
+  id: string;
+  provider: "massive" | "ibkr" | "snaptrade" | "robinhood";
+  name: string;
+  brokerageSlug?: string;
+  mode: "shadow" | "live";
+  status: "configured" | "connected" | "disconnected" | "error";
+  capabilities: string[];
+  updatedAt: Date;
+};
+
+const SNAPTRADE_BROKERAGE_CAPABILITY_PREFIX = "snaptrade-brokerage:";
+
+function extractSnapTradeBrokerageSlug(
+  capabilities: string[],
+): string | undefined {
+  for (const capability of capabilities) {
+    if (capability.startsWith(SNAPTRADE_BROKERAGE_CAPABILITY_PREFIX)) {
+      const slug = capability
+        .slice(SNAPTRADE_BROKERAGE_CAPABILITY_PREFIX.length)
+        .trim();
+      if (slug) {
+        return slug;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Reads persisted SnapTrade broker connections so the Settings broker picker can
+ * derive connected state from server truth on initial load (not just after a
+ * manual sync). Degrades to an empty list on any DB error — never throws.
+ */
+async function listSnapTradeBrokerConnections(): Promise<
+  BrokerConnectionListItem[]
+> {
+  try {
+    const rows = await db
+      .select({
+        id: brokerConnectionsTable.id,
+        name: brokerConnectionsTable.name,
+        status: brokerConnectionsTable.status,
+        capabilities: brokerConnectionsTable.capabilities,
+        updatedAt: brokerConnectionsTable.updatedAt,
+      })
+      .from(brokerConnectionsTable)
+      .where(
+        and(
+          eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
+          eq(brokerConnectionsTable.connectionType, "broker"),
+        ),
+      );
+
+    const items: BrokerConnectionListItem[] = [];
+    for (const row of rows) {
+      // Disabled SnapTrade connections are persisted with status "disconnected".
+      if (row.status === "disconnected") {
+        continue;
+      }
+      const capabilities = row.capabilities ?? [];
+      const brokerageSlug = extractSnapTradeBrokerageSlug(capabilities);
+      items.push({
+        id: row.id,
+        provider: "snaptrade" as const,
+        name: brokerageSlug || row.name,
+        brokerageSlug,
         mode: "live" as const,
-        status: configured.massive
-          ? ("configured" as const)
-          : ("disconnected" as const),
-        capabilities: marketDataCapabilities,
-        updatedAt: timestamp,
-      },
-      {
-        id: "ibkr-paper",
-        provider: "ibkr" as const,
-        name: ibkrConnectionName,
-        mode: "shadow" as const,
-        status: ibkrStatus,
-        capabilities: [
-          "accounts",
-          "positions",
-          "orders",
-          "executions",
-          "market-depth",
-          "paper-trading",
-          "quotes",
-          "bars",
-          "options-chain",
-          "stock-stream",
-        ],
-        updatedAt: timestamp,
-      },
-      {
-        id: "ibkr-live",
-        provider: "ibkr" as const,
-        name: ibkrConnectionName,
+        status: row.status,
+        capabilities,
+        updatedAt: row.updatedAt ?? new Date(),
+      });
+    }
+    return items;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "listBrokerConnections: SnapTrade connection read failed; degrading to hardcoded list",
+    );
+    return [];
+  }
+}
+
+/**
+ * Reads persisted Robinhood Agentic broker connections so Settings can derive
+ * connected state from server truth on initial load. Degrades to an empty
+ * list on any DB error — never throws.
+ */
+async function listRobinhoodBrokerConnections(): Promise<
+  BrokerConnectionListItem[]
+> {
+  try {
+    const rows = await db
+      .select({
+        id: brokerConnectionsTable.id,
+        name: brokerConnectionsTable.name,
+        status: brokerConnectionsTable.status,
+        capabilities: brokerConnectionsTable.capabilities,
+        updatedAt: brokerConnectionsTable.updatedAt,
+      })
+      .from(brokerConnectionsTable)
+      .where(
+        and(
+          eq(brokerConnectionsTable.brokerProvider, "robinhood"),
+          eq(brokerConnectionsTable.connectionType, "broker"),
+        ),
+      );
+
+    const items: BrokerConnectionListItem[] = [];
+    for (const row of rows) {
+      if (row.status === "disconnected") {
+        continue;
+      }
+      items.push({
+        id: row.id,
+        provider: "robinhood" as const,
+        name: "Robinhood Agentic",
         mode: "live" as const,
-        status: ibkrStatus,
-        capabilities: [
-          "accounts",
-          "positions",
-          "orders",
-          "executions",
-          "market-depth",
-          "live-trading",
-          "quotes",
-          "bars",
-          "options-chain",
-          "stock-stream",
-        ],
-        updatedAt: timestamp,
-      },
-    ],
-  };
+        status: row.status,
+        capabilities: row.capabilities ?? [],
+        updatedAt: row.updatedAt ?? new Date(),
+      });
+    }
+    return items;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "listBrokerConnections: Robinhood connection read failed; degrading to hardcoded list",
+    );
+    return [];
+  }
 }
 
 export async function listWatchlists() {
@@ -4261,7 +4295,7 @@ export async function listPositions(input: {
   accountId?: string;
   mode?: "shadow" | "live";
 }) {
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   const positions = (
     await client.listPositions({
       accountId: input.accountId,
@@ -4339,9 +4373,15 @@ function requireExplicitOrderActionMode(
   );
 }
 
-type GatewayTradingHealth = Partial<
-  Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>
->;
+type GatewayTradingHealth = {
+  connected?: boolean | null;
+  authenticated?: boolean | null;
+  accountsLoaded?: boolean | null;
+  accounts?: unknown[] | null;
+  selectedAccountId?: string | null;
+  healthFresh?: boolean | null;
+  competing?: boolean | null;
+};
 
 type GatewayTradingReadiness = {
   ready: boolean;
@@ -4363,43 +4403,43 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
   if (!input.configured) {
     return gatewayTradingUnavailable(
       "ibkr_not_configured",
-      "Interactive Brokers is not configured for order routing.",
+      "IBKR Client Portal is not configured for order routing.",
     );
   }
 
   const health = input.health;
   if (!health) {
     return gatewayTradingUnavailable(
-      "bridge_health_unavailable",
-      "IB Gateway trading is unavailable until Gateway health is verified.",
+      "client_portal_unavailable",
+      "IBKR Client Portal trading is unavailable until the broker session is verified.",
     );
   }
 
   if (health.competing === true) {
     return gatewayTradingUnavailable(
       "gateway_competing_session",
-      "IB Gateway is connected, but another session is competing for the broker connection.",
+      "IBKR Client Portal is connected, but another session is competing for the broker connection.",
     );
   }
 
   if (health.healthFresh === false) {
     return gatewayTradingUnavailable(
       "health_stale",
-      "IB Gateway trading is unavailable until Gateway health is current.",
+      "IBKR Client Portal trading is unavailable until broker health is current.",
     );
   }
 
   if (health.connected !== true) {
     return gatewayTradingUnavailable(
       "gateway_socket_disconnected",
-      "IB Gateway is disconnected. Reconnect Gateway before trading.",
+      "IBKR Client Portal is disconnected. Reconnect the broker session before trading.",
     );
   }
 
   if (health.authenticated !== true) {
     return gatewayTradingUnavailable(
       "gateway_login_required",
-      "IB Gateway is connected, but the broker session is not authenticated.",
+      "IBKR Client Portal is connected, but the broker session is not authenticated.",
     );
   }
 
@@ -4410,14 +4450,14 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
   if (!accountsLoaded) {
     return gatewayTradingUnavailable(
       "accounts_unavailable",
-      "IB Gateway is connected, but no broker accounts are loaded yet.",
+      "IBKR Client Portal is connected, but no broker accounts are loaded yet.",
     );
   }
 
   return {
     ready: true,
     reason: null,
-    message: "IB Gateway is connected and ready for trading.",
+    message: "IBKR Client Portal is connected and ready for trading.",
   };
 }
 
@@ -4444,16 +4484,23 @@ export async function assertIbkrGatewayTradingAvailable() {
     );
   }
 
-  let annotatedHealth: GatewayTradingHealth;
+  let session: SessionStatusSnapshot;
   try {
-    annotatedHealth = await getAnnotatedBridgeHealthForTradingGuard(
+    const client = getIbkrClientPortalClient();
+    session = await withTimeout(
+      client.ensureBrokerageSession(),
       gatewayTradingHealthTimeoutMs(),
+      () =>
+        new HttpError(504, "IBKR Client Portal brokerage session check timed out.", {
+          code: "client_portal_health_timeout",
+          detail: "Brokerage session readiness did not respond before the trading guard timeout.",
+        }),
     );
   } catch (error) {
     throwGatewayTradingUnavailable(
       gatewayTradingUnavailable(
-        "bridge_health_unavailable",
-        "IB Gateway trading is unavailable until Gateway health is verified.",
+        "client_portal_unavailable",
+        "IBKR Client Portal trading is unavailable until the broker session is verified.",
       ),
       error,
     );
@@ -4461,7 +4508,14 @@ export async function assertIbkrGatewayTradingAvailable() {
 
   const readiness = resolveIbkrGatewayTradingReadinessForTests({
     configured: true,
-    health: annotatedHealth,
+    health: {
+      connected: session.connected,
+      authenticated: session.authenticated,
+      accountsLoaded: session.accounts.length > 0 || Boolean(session.selectedAccountId),
+      accounts: session.accounts,
+      selectedAccountId: session.selectedAccountId,
+      competing: session.competing,
+    },
   });
   if (!readiness.ready) {
     throwGatewayTradingUnavailable(readiness);
@@ -4470,7 +4524,7 @@ export async function assertIbkrGatewayTradingAvailable() {
 
 async function validateOrderIntentForRouting(
   input: PlaceOrderInput,
-  client: ReturnType<typeof getIbkrClient>,
+  client: ReturnType<typeof getIbkrClientPortalClient>,
 ) {
   if (
     input.assetClass !== "option" ||
@@ -4527,13 +4581,13 @@ async function validateOrderIntentForRouting(
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
   return client.placeOrder(input);
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   await validateOrderIntentForRouting(input, client);
   return client.previewOrder(input);
 }
@@ -4547,7 +4601,7 @@ export async function submitRawOrders(input: {
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
   await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   if (input.parentOrderRequest) {
     await validateOrderIntentForRouting(
       {
@@ -4558,7 +4612,10 @@ export async function submitRawOrders(input: {
       client,
     );
   }
-  return client.submitRawOrders(input);
+  return client.submitRawOrders({
+    accountId: input.accountId,
+    orders: input.ibkrOrders,
+  });
 }
 
 export async function replaceOrder(input: {
@@ -4570,13 +4627,12 @@ export async function replaceOrder(input: {
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
   await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   return client.replaceOrder({
     accountId: input.accountId,
     orderId: input.orderId,
     order: input.order,
     mode: input.mode ?? getRuntimeMode(),
-    confirm: input.confirm,
   });
 }
 
@@ -4591,7 +4647,7 @@ export async function cancelOrder(input: {
   const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
   assertLiveOrderConfirmed(mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
-  const client = getIbkrClient();
+  const client = getIbkrClientPortalClient();
   return client.cancelOrder({
     ...input,
     mode,
@@ -4604,63 +4660,6 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 }
 
 type StockQuoteSnapshotSource = "ibkr" | "massive";
-
-function massiveQuoteToBrokerQuote(
-  quote: MassiveQuoteSnapshot,
-): QuoteSnapshot & {
-  source: Exclude<StockQuoteSnapshotSource, "ibkr">;
-} {
-  const config = getMassiveRuntimeConfig();
-  const source = "massive";
-  const realtimeDelayed = !isMassiveStocksRealtimeConfigured(config);
-  // When the US equity market is fully closed (overnight / weekend / holiday)
-  // there are no live prints, so a massive REST quote is the previous close
-  // frozen in place. Label it "frozen" instead of "live" so the UI does not
-  // present a multi-day-old close as a live tick (the price itself is already
-  // the prior close, stamped with that session's close time in mapStockSnapshot).
-  const marketClosed =
-    resolveUsEquityMarketStatus(new Date()).session.key === "closed";
-  const delayed = realtimeDelayed || marketClosed;
-  return {
-    symbol: quote.symbol,
-    price: quote.price,
-    bid: quote.bid,
-    ask: quote.ask,
-    bidSize: quote.bidSize,
-    askSize: quote.askSize,
-    change: quote.change,
-    changePercent: quote.changePercent,
-    open: quote.open,
-    high: quote.high,
-    low: quote.low,
-    prevClose: quote.prevClose,
-    extendedBaselinePrice: quote.extendedBaselinePrice ?? null,
-    extendedBaselineAt: quote.extendedBaselineAt ?? null,
-    extendedBaselineSource: quote.extendedBaselineSource ?? null,
-    volume: quote.volume,
-    openInterest: null,
-    impliedVolatility: null,
-    delta: null,
-    gamma: null,
-    theta: null,
-    vega: null,
-    updatedAt: quote.updatedAt,
-    providerContractId: null,
-    transport: "massive_rest",
-    delayed,
-    freshness: marketClosed ? "frozen" : realtimeDelayed ? "delayed" : "live",
-    marketDataMode: marketClosed
-      ? "frozen"
-      : realtimeDelayed
-        ? "delayed"
-        : "live",
-    dataUpdatedAt: quote.updatedAt,
-    ageMs: getAgeMs(quote.updatedAt),
-    cacheAgeMs: null,
-    latency: null,
-    source,
-  };
-}
 
 function massiveAggregateToBrokerQuote(
   aggregate: ReturnType<typeof getCurrentStockMinuteAggregates>[number],
@@ -4711,6 +4710,39 @@ function massiveAggregateToBrokerQuote(
     latency: aggregate.latency ?? null,
     source: "massive",
   };
+}
+
+// The Massive websocket only carries last/bid/ask — never prevClose — so
+// day-change context (prevClose, change, changePercent) stays empty and the
+// watchlist renders 0% for every symbol. The day-change context cache is only
+// seeded by quotes that already carry a usable prevClose, which on the realtime
+// path nothing ever does. Seed it from the Massive REST snapshot (which does
+// carry prevClose/open/high/low) for symbols whose context is missing or older
+// than its TTL. Best-effort and fire-and-forget: it adds no latency to the quote
+// response, and the next poll picks up the freshly-seeded baseline. The in-flight
+// guard prevents a fetch stampede while a seed for the same symbols is pending.
+const dayChangeContextSeedInFlight = new Set<string>();
+
+function seedStockQuoteDayChangeContext(symbols: string[]): void {
+  if (!getMassiveRuntimeConfig()) {
+    return;
+  }
+  const needed = getSymbolsNeedingStockQuoteDayChangeContext(symbols).filter(
+    (symbol) => !dayChangeContextSeedInFlight.has(symbol),
+  );
+  if (!needed.length) {
+    return;
+  }
+  needed.forEach((symbol) => dayChangeContextSeedInFlight.add(symbol));
+  void getMassiveClient()
+    .getQuoteSnapshots(needed)
+    .then((snapshots) => {
+      recordStockQuoteDayChangeContexts(snapshots);
+    })
+    .catch(() => {})
+    .finally(() => {
+      needed.forEach((symbol) => dayChangeContextSeedInFlight.delete(symbol));
+    });
 }
 
 function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
@@ -4779,10 +4811,6 @@ const quoteSnapshotInFlight = new Map<
   string,
   Promise<QuoteSnapshotsServiceResponse>
 >();
-const massiveQuoteDayChangeContextInFlight = new Map<
-  string,
-  Promise<Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>>
->();
 let quoteSnapshotCacheTtlMsForTests: number | null = null;
 let quoteSnapshotStaleTtlMsForTests: number | null = null;
 let quoteSnapshotStaleWaitMsForTests: number | null = null;
@@ -4808,95 +4836,15 @@ function quoteSnapshotStaleWaitMs(): number {
   );
 }
 
-function quoteSnapshotHealthTimeoutMs(): number {
-  return positiveIntegerEnv("QUOTE_SNAPSHOT_HEALTH_TIMEOUT_MS", 750);
-}
-
-function quoteSnapshotBridgeFetchTimeoutMs(): number {
-  return positiveIntegerEnv("QUOTE_SNAPSHOT_BRIDGE_FETCH_TIMEOUT_MS", 3_000);
-}
-
-function quoteSnapshotMassiveFallbackTimeoutMs(): number {
-  return positiveIntegerEnv(
-    "QUOTE_SNAPSHOT_MASSIVE_FALLBACK_TIMEOUT_MS",
-    2_000,
-  );
-}
-
-async function refreshMassiveQuoteDayChangeContext(
-  symbols: string[],
-  options: { force?: boolean } = {},
-): Promise<
-  Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>
-> {
-  const normalizedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
-  const missingOrStaleSymbols = options.force
-    ? normalizedSymbols
-    : getSymbolsNeedingStockQuoteDayChangeContext(normalizedSymbols);
-  if (!missingOrStaleSymbols.length || !getMassiveRuntimeConfig()) {
-    return [];
-  }
-
-  const key = missingOrStaleSymbols.join(",");
-  const existing = massiveQuoteDayChangeContextInFlight.get(key);
-  if (existing) {
-    return existing;
-  }
-
-  let request!: Promise<
-    Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>
-  >;
-  request = withTimeout(
-    getMassiveClient().getQuoteSnapshots(missingOrStaleSymbols),
-    quoteSnapshotMassiveFallbackTimeoutMs(),
-    () =>
-      new Error(
-        `Quote snapshot Massive day-change context timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
-      ),
-  )
-    .then((quotes) => {
-      const mapped = quotes.map(massiveQuoteToBrokerQuote);
-      recordStockQuoteDayChangeContexts(mapped);
-      return mapped;
-    })
-    .catch((error): Array<
-      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
-    > => {
-      logger.debug(
-        { err: error, symbols: missingOrStaleSymbols },
-        "Massive quote day-change context refresh failed",
-      );
-      return [];
-    })
-    .finally(() => {
-      if (massiveQuoteDayChangeContextInFlight.get(key) === request) {
-        massiveQuoteDayChangeContextInFlight.delete(key);
-      }
-    });
-
-  massiveQuoteDayChangeContextInFlight.set(key, request);
-  return request;
-}
-
 function quoteSnapshotCacheKey(input: {
   symbols: string[];
-  allowMassiveFallback?: boolean;
   admissionOwner?: string | null;
   admissionIntent?: MarketDataIntent | null;
-  admissionFallbackProvider?: MarketDataFallbackProvider | null;
   tradingSession?: "overnight" | null;
 }): string {
-  const providerMode = isMassiveStocksRealtimeConfigured()
-    ? "massive"
-    : input.allowMassiveFallback === true
-      ? "massive"
-      : "ibkr";
+  const providerMode = getMassiveRuntimeConfig() ? "massive" : "none";
   const ownerKey = input.admissionOwner
-    ? `:${input.admissionOwner}:${input.admissionIntent ?? ""}:${
-        input.admissionFallbackProvider ?? ""
-      }`
+    ? `:${input.admissionOwner}:${input.admissionIntent ?? ""}`
     : "";
   const sessionKey = input.tradingSession ? `:${input.tradingSession}` : "";
   return `${providerMode}:${input.symbols.join(",")}${ownerKey}${sessionKey}`;
@@ -4947,10 +4895,8 @@ async function resolveQuoteSnapshotRequest(
 
 async function getQuoteSnapshotsUncached(input: {
   symbolsList: string[];
-  allowMassiveFallback?: boolean;
   admissionOwner?: string;
   admissionIntent?: MarketDataIntent;
-  admissionFallbackProvider?: MarketDataFallbackProvider;
   ttlMs?: number | null;
   tradingSession?: "overnight" | null;
 }): Promise<QuoteSnapshotsServiceResponse> {
@@ -4968,47 +4914,13 @@ async function getQuoteSnapshotsUncached(input: {
     input.tradingSession !== "overnight" &&
     isMassiveStocksRealtimeConfigured(massiveConfig);
   if (useMassiveRealtimePrimary) {
-    const quotesBySymbol = new Map<
-      string,
-      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
-    >();
-    // Live socket/aggregate quotes are in-memory and already carry the cached
-    // day-change context (prevClose/change via enrichStockQuoteWithDayChangeContext),
-    // so the streamed majority of symbols need no network at all.
-    const socketQuotes = getMassiveRealtimeSocketQuoteSnapshots(symbols);
-    socketQuotes.forEach((quote) => {
-      const symbol = normalizeSymbol(quote.symbol);
-      if (symbol) {
-        quotesBySymbol.set(symbol, quote);
-      }
-    });
-    const liveSymbols = new Set(
-      socketQuotes.map((quote) => normalizeSymbol(quote.symbol)),
+    seedStockQuoteDayChangeContext(symbols);
+    const quotesBySymbol = new Map(
+      getMassiveRealtimeSocketQuoteSnapshots(symbols).map((quote) => [
+        normalizeSymbol(quote.symbol),
+        quote,
+      ]),
     );
-    // Only symbols with NO live quote depend on a synchronous context fetch (it is
-    // their sole source), so block on just those. The previous code awaited a
-    // refresh for ALL requested symbols - including streamed ones that already had
-    // data - which pinned the request (and a scarce pool slot) for seconds on the
-    // upstream REST call and cascaded into API saturation / frozen prices.
-    const missingSymbols = symbols.filter((symbol) => !quotesBySymbol.has(symbol));
-    const fallbackQuotes = missingSymbols.length
-      ? await refreshMassiveQuoteDayChangeContext(missingSymbols, { force: true })
-      : [];
-    fallbackQuotes.forEach((quote) => {
-      const symbol = normalizeSymbol(quote.symbol);
-      if (symbol && !quotesBySymbol.has(symbol)) {
-        quotesBySymbol.set(symbol, quote);
-      }
-    });
-    // Warm the cached day-change context for live symbols whose context went stale
-    // in the BACKGROUND (prevClose is intraday-stable, so a slightly stale baseline
-    // is fine) instead of blocking this response on the upstream refresh.
-    const staleLiveContextSymbols = getSymbolsNeedingStockQuoteDayChangeContext(
-      symbols.filter((symbol) => liveSymbols.has(symbol)),
-    );
-    if (staleLiveContextSymbols.length) {
-      void refreshMassiveQuoteDayChangeContext(staleLiveContextSymbols);
-    }
     const quotes = symbols.flatMap((symbol) => {
       const quote = quotesBySymbol.get(symbol);
       return quote ? [quote] : [];
@@ -5018,106 +4930,75 @@ async function getQuoteSnapshotsUncached(input: {
       quotes,
       transport: quotes[0]?.transport ?? null,
       delayed: quotes.some((quote) => quote.delayed),
-      fallbackUsed: fallbackQuotes.length > 0,
+      fallbackUsed: false,
     };
   }
-  const bridgeClient = getIbkrClient();
-  type BridgeQuoteSnapshotPayload = Awaited<
-    ReturnType<typeof fetchBridgeQuoteSnapshots>
-  >;
-  const [bridgeHealth, payload] = await Promise.all([
-    withTimeout(
-      bridgeClient.getHealth(),
-      quoteSnapshotHealthTimeoutMs(),
-      () =>
-        new Error(
-          `Quote snapshot bridge health timed out after ${quoteSnapshotHealthTimeoutMs()}ms.`,
-        ),
-    ).catch(() => null),
-    withTimeout(
-      fetchBridgeQuoteSnapshots(symbols, {
-        owner: input.admissionOwner,
-        intent: input.admissionIntent,
-        fallbackProvider:
-          input.admissionFallbackProvider ??
-          (input.allowMassiveFallback === true ? "massive" : "cache"),
-        ttlMs: input.ttlMs,
-        tradingSession: input.tradingSession,
-      }),
-      quoteSnapshotBridgeFetchTimeoutMs(),
-      () =>
-        new Error(
-          `Quote snapshot bridge fetch timed out after ${quoteSnapshotBridgeFetchTimeoutMs()}ms.`,
-        ),
-    ).catch((): BridgeQuoteSnapshotPayload => ({ quotes: [] })),
-  ]);
-  const ibkrQuotes = payload.quotes;
-  const ibkrSymbols = new Set(
-    ibkrQuotes.map((quote) => normalizeSymbol(quote.symbol)),
-  );
-  const missingSymbols = symbols.filter((symbol) => !ibkrSymbols.has(symbol));
-  let massiveQuotes: Array<
-    QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
-  > = [];
-
-  if (
-    input.allowMassiveFallback === true &&
-    missingSymbols.length > 0 &&
-    massiveConfig
-  ) {
-    try {
-      massiveQuotes = (
-        await withTimeout(
-          getMassiveClient().getQuoteSnapshots(missingSymbols),
-          quoteSnapshotMassiveFallbackTimeoutMs(),
-          () =>
-            new Error(
-              `Quote snapshot Massive fallback timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
-            ),
-        )
-      ).map(massiveQuoteToBrokerQuote);
-      recordStockQuoteDayChangeContexts(massiveQuotes);
-      massiveQuotes.forEach((quote) => {
-        recordMarketDataFallback({
-          owner: "quote-snapshot",
-          intent: "visible-live",
-          fallbackProvider: "massive",
-          reason: "ibkr_missing_or_not_admitted",
-          instrumentKey: `equity:${quote.symbol}`,
-        });
-      });
-    } catch {
-      massiveQuotes = [];
-    }
+  if (massiveConfig) {
+    const quotes = await fetchMassiveRestStockQuoteSnapshots(symbols);
+    return {
+      quotes,
+      transport: quotes[0]?.transport ?? "massive_rest",
+      delayed: quotes.some((quote) => quote.delayed),
+      fallbackUsed: false,
+    };
   }
-  const quotesBySymbol = new Map<
-    string,
-    QuoteSnapshot & { source: StockQuoteSnapshotSource }
-  >();
-  ibkrQuotes.forEach((quote) => {
-    quotesBySymbol.set(normalizeSymbol(quote.symbol), {
-      ...quote,
-      providerContractId: quote.providerContractId ?? null,
-      source: "ibkr" as const,
-    });
-  });
-  massiveQuotes.forEach((quote) => {
-    const symbol = normalizeSymbol(quote.symbol);
-    if (!quotesBySymbol.has(symbol)) {
-      quotesBySymbol.set(symbol, quote);
-    }
-  });
-  const quotes = symbols.flatMap((symbol) => {
-    const quote = quotesBySymbol.get(symbol);
-    return quote ? [quote] : [];
-  });
-
   return {
-    quotes,
-    transport: quotes[0]?.transport ?? bridgeHealth?.transport ?? null,
-    delayed: quotes.some((quote) => quote.delayed),
-    fallbackUsed: massiveQuotes.length > 0,
+    quotes: [],
+    transport: null,
+    delayed: false,
+    fallbackUsed: false,
   };
+}
+
+async function fetchMassiveRestStockQuoteSnapshots(
+  symbols: string[],
+): Promise<Array<QuoteSnapshot & { source: "massive" }>> {
+  const recency = getMassiveStocksRecency();
+  const delayed = recency === "delayed";
+  const mode = delayed ? "delayed" : "live";
+  return (await getMassiveClient().getQuoteSnapshots(symbols)).map((quote) => {
+    const bid = Number.isFinite(quote.bid) ? quote.bid : 0;
+    const ask = Number.isFinite(quote.ask) ? quote.ask : 0;
+    const price = Number.isFinite(quote.price) ? quote.price : 0;
+    const mark = bid > 0 && ask > 0 ? (bid + ask) / 2 : price;
+    return {
+      symbol: quote.symbol,
+      price,
+      last: price,
+      mark,
+      bid,
+      ask: ask || bid,
+      bidSize: quote.bidSize ?? 0,
+      askSize: quote.askSize ?? 0,
+      change: quote.change,
+      changePercent: quote.changePercent,
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      prevClose: quote.prevClose,
+      extendedBaselinePrice: null,
+      extendedBaselineAt: null,
+      extendedBaselineSource: null,
+      volume: quote.volume,
+      openInterest: null,
+      impliedVolatility: null,
+      delta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+      updatedAt: quote.updatedAt,
+      providerContractId: null,
+      transport: "massive_rest",
+      delayed,
+      freshness: mode,
+      marketDataMode: mode,
+      dataUpdatedAt: quote.updatedAt,
+      ageMs: Math.max(0, Date.now() - quote.updatedAt.getTime()),
+      cacheAgeMs: null,
+      latency: null,
+      source: "massive",
+    };
+  });
 }
 
 function pruneQuoteSnapshotCache(now: number): void {
@@ -5140,13 +5021,10 @@ export async function getQuoteSnapshots(
     .split(",")
     .map((symbol) => normalizeSymbol(symbol))
     .filter(Boolean);
-  const allowMassiveFallback = input.allowMassiveFallback === true;
   const key = quoteSnapshotCacheKey({
     symbols,
-    allowMassiveFallback,
     admissionOwner: input.admissionOwner,
     admissionIntent: input.admissionIntent,
-    admissionFallbackProvider: input.admissionFallbackProvider,
     tradingSession: input.tradingSession,
   });
   const now = Date.now();
@@ -5162,10 +5040,8 @@ export async function getQuoteSnapshots(
 
   const request = getQuoteSnapshotsUncached({
     symbolsList: symbols,
-    allowMassiveFallback,
     admissionOwner: input.admissionOwner,
     admissionIntent: input.admissionIntent,
-    admissionFallbackProvider: input.admissionFallbackProvider,
     ttlMs: input.ttlMs,
     tradingSession: input.tradingSession,
   })
@@ -5320,6 +5196,8 @@ type UniverseLogoRecord = {
 
 const UNIVERSE_LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const UNIVERSE_LOGO_BATCH_LIMIT = 50;
+const UNIVERSE_LOGO_PROVIDER_CONCURRENCY = 4;
+const UNIVERSE_LOGO_PROVIDER_TIMEOUT_MS = 750;
 const TRADINGVIEW_SYMBOL_LOGO_BASE_URL =
   "https://s3-symbol-logo.tradingview.com";
 const TRADINGVIEW_LOGO_SLUGS: Record<string, string> = {
@@ -6983,17 +6861,16 @@ async function awaitWithAbort<T>(
   }
 }
 
-function createBudgetSignal(
+function createAbortBudgetSignal(
   parentSignal: AbortSignal | undefined,
   timeoutMs: number,
+  timeoutMessage: string,
 ) {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => {
       if (!controller.signal.aborted) {
-        controller.abort(
-          new Error(`Ticker search budget exceeded after ${timeoutMs}ms.`),
-        );
+        controller.abort(new Error(timeoutMessage));
       }
     },
     Math.max(1, timeoutMs),
@@ -7017,6 +6894,17 @@ function createBudgetSignal(
       parentSignal?.removeEventListener("abort", abortFromParent);
     },
   };
+}
+
+function createBudgetSignal(
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number,
+) {
+  return createAbortBudgetSignal(
+    parentSignal,
+    timeoutMs,
+    `Ticker search budget exceeded after ${timeoutMs}ms.`,
+  );
 }
 
 function isTickerLikeSearch(query: string) {
@@ -7097,46 +6985,64 @@ async function fetchUniverseLogoRecord(
     };
   }
 
-  const massiveClient = getMassiveRuntimeConfig() ? getMassiveClient() : null;
-  if (massiveClient) {
-    const massiveLogoUrl = await massiveClient.getTickerLogoUrl(
-      normalizedSymbol,
-      signal,
-    );
-    if (massiveLogoUrl) {
-      return {
-        symbol: normalizedSymbol,
-        logoUrl: massiveLogoUrl,
-        source: "massive",
-        assetType: "provider_logo",
-        confidence: 0.65,
-        updatedAt: nowIso,
-      };
-    }
-  }
+  const providerDeadline = Date.now() + UNIVERSE_LOGO_PROVIDER_TIMEOUT_MS;
+  const remainingProviderBudgetMs = () =>
+    Math.max(1, providerDeadline - Date.now());
+  const providerBudget = createAbortBudgetSignal(
+    signal,
+    UNIVERSE_LOGO_PROVIDER_TIMEOUT_MS,
+    `Logo provider budget exceeded after ${UNIVERSE_LOGO_PROVIDER_TIMEOUT_MS}ms.`,
+  );
 
-  const fmpConfig = getFmpRuntimeConfig();
-  if (fmpConfig) {
-    try {
-      const fmpLogoUrl = await new FmpResearchClient(
-        fmpConfig,
-      ).getCompanyLogoUrl(normalizedSymbol);
-      if (fmpLogoUrl) {
+  try {
+    const massiveClient = getMassiveRuntimeConfig() ? getMassiveClient() : null;
+    if (massiveClient && !providerBudget.signal.aborted) {
+      const massiveLogoUrl = await massiveClient.getTickerLogoUrl(
+        normalizedSymbol,
+        providerBudget.signal,
+      );
+      if (massiveLogoUrl) {
         return {
           symbol: normalizedSymbol,
-          logoUrl: fmpLogoUrl,
-          source: "fmp",
+          logoUrl: massiveLogoUrl,
+          source: "massive",
           assetType: "provider_logo",
-          confidence: 0.5,
+          confidence: 0.65,
           updatedAt: nowIso,
         };
       }
-    } catch (error) {
-      logger.debug(
-        { err: error, symbol: normalizedSymbol },
-        "FMP logo lookup failed",
-      );
     }
+
+    const fmpConfig = getFmpRuntimeConfig();
+    if (fmpConfig && !providerBudget.signal.aborted) {
+      try {
+        const fmpLogoUrl = await withTimeout(
+          new FmpResearchClient(fmpConfig).getCompanyLogoUrl(normalizedSymbol),
+          remainingProviderBudgetMs(),
+          () =>
+            new Error(
+              `Logo provider budget exceeded after ${UNIVERSE_LOGO_PROVIDER_TIMEOUT_MS}ms.`,
+            ),
+        );
+        if (fmpLogoUrl) {
+          return {
+            symbol: normalizedSymbol,
+            logoUrl: fmpLogoUrl,
+            source: "fmp",
+            assetType: "provider_logo",
+            confidence: 0.5,
+            updatedAt: nowIso,
+          };
+        }
+      } catch (error) {
+        logger.debug(
+          { err: error, symbol: normalizedSymbol },
+          "FMP logo lookup failed",
+        );
+      }
+    }
+  } finally {
+    providerBudget.dispose();
   }
 
   return {
@@ -7186,8 +7092,10 @@ export async function getUniverseLogos(
     return { logos: [] };
   }
 
-  const logos = await Promise.all(
-    symbols.map((symbol) => getUniverseLogoRecord(symbol, options.signal)),
+  const logos = await mapWithConcurrency(
+    symbols,
+    UNIVERSE_LOGO_PROVIDER_CONCURRENCY,
+    (symbol) => getUniverseLogoRecord(symbol, options.signal),
   );
   return { logos };
 }
@@ -8292,8 +8200,6 @@ type OptionChartBarsResolutionSource =
   | "resolver"
   | "none";
 type OptionChartBarsDataSource =
-  | "ibkr-history"
-  | "mixed-history"
   | "massive-option-aggregates"
   | "none";
 type OptionChartBarsResult = GetBarsResult & {
@@ -8354,11 +8260,6 @@ const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
 };
 const DEFAULT_BARS_LIMIT = 200;
 const BROKER_RECENT_HISTORY_MS = 60 * 60 * 1_000;
-// Live-edge window for OPTION bars: the broker (IBKR) is only queried for the
-// most recent 30 minutes; everything older comes from Massive. Massive option
-// data is ~15m delayed, so 30m leaves ~15m of grace/overlap between the two
-// systems and keeps the broker off the wide historical range it does not need.
-const OPTION_BROKER_LIVE_EDGE_MS = 30 * 60_000;
 const BROKER_HISTORY_STEP_MS: Partial<
   Record<GetBarsInput["timeframe"], number>
 > = {
@@ -8819,7 +8720,22 @@ function mergeBrokerHistoryBars(
 // a small TTL of a few seconds dramatically reduces request volume.
 const BARS_CACHE_TTL_MS = 30_000;
 const BARS_CACHE_STALE_TTL_MS = 10 * 60_000;
-const BARS_CACHE_MAX_ENTRIES = 1_024;
+// Completed (closed-bucket) windows return immutable bars, so they can cache far
+// longer than the live/forming edge. The signal-matrix producer fetches exactly
+// these (quantized `to`); at the 30s live TTL its ~5-min revisits never hit and
+// re-fetched the provider every cycle (esp. after-hours, where `to` is stable) —
+// a dominant driver of the ~0% bars-cache hit rate + provider-fetch/CPU load.
+const BARS_CACHE_COMPLETED_TTL_MS = readPositiveIntegerEnv(
+  "BARS_CACHE_COMPLETED_TTL_MS",
+  10 * 60_000,
+);
+// Working set ≈ universe symbols × timeframes (~3k). A 1024 cap FIFO-evicted
+// entries before their next revisit → eviction-thrash → entries never reused.
+// Size above the working set so completed entries survive to be reused.
+const BARS_CACHE_MAX_ENTRIES = readPositiveIntegerEnv(
+  "BARS_CACHE_MAX_ENTRIES",
+  4_096,
+);
 const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
   "BARS_PROVIDER_BUDGET_MS",
   3_000,
@@ -8842,10 +8758,6 @@ const BARS_SYNTHESIS_ONLY_CACHE_TTL_MS = readPositiveIntegerEnv(
 const BARS_IN_FLIGHT_STALE_MS = readPositiveIntegerEnv(
   "BARS_IN_FLIGHT_STALE_MS",
   Math.max(30_000, BARS_BROKER_BACKFILL_BUDGET_MS * 4),
-);
-const OPTION_HISTORY_REFERENCE_PROVIDER_FRESH_MS = readPositiveIntegerEnv(
-  "OPTION_HISTORY_REFERENCE_PROVIDER_FRESH_MS",
-  15 * 60_000,
 );
 const CHART_HISTORY_CURSOR_TTL_MS = readPositiveIntegerEnv(
   "CHART_HISTORY_CURSOR_TTL_MS",
@@ -8879,6 +8791,91 @@ const barsHydrationCounters = {
   synthesisCacheServed: 0,
   synthesisCacheBypassed: 0,
 };
+const BARS_BACKGROUND_PERSIST_CONCURRENCY_MAX = 4;
+type BarsBackgroundPersistInput = Parameters<typeof persistMarketDataBars>[0];
+type BarsBackgroundPersistWorker = (
+  input: BarsBackgroundPersistInput,
+) => Promise<boolean>;
+const barsBackgroundPersistQueue: BarsBackgroundPersistInput[] = [];
+const barsBackgroundPersistIdleResolvers = new Set<() => void>();
+let barsBackgroundPersistWorker: BarsBackgroundPersistWorker =
+  persistMarketDataBars;
+let barsBackgroundPersistActive = 0;
+let barsBackgroundPersistEnqueued = 0;
+let barsBackgroundPersistCompleted = 0;
+let barsBackgroundPersistFailed = 0;
+let barsBackgroundPersistMaxQueueLength = 0;
+
+function barsBackgroundPersistConcurrency(): number {
+  return Math.max(
+    1,
+    Math.min(
+      BARS_BACKGROUND_PERSIST_CONCURRENCY_MAX,
+      readPositiveIntegerEnv("BARS_BACKGROUND_PERSIST_CONCURRENCY", 1),
+    ),
+  );
+}
+
+function resolveBarsBackgroundPersistIdle(): void {
+  if (barsBackgroundPersistActive > 0 || barsBackgroundPersistQueue.length > 0) {
+    return;
+  }
+  for (const resolve of barsBackgroundPersistIdleResolvers) {
+    resolve();
+  }
+  barsBackgroundPersistIdleResolvers.clear();
+}
+
+function drainBarsBackgroundPersistQueue(): void {
+  const concurrency = barsBackgroundPersistConcurrency();
+  while (
+    barsBackgroundPersistActive < concurrency &&
+    barsBackgroundPersistQueue.length > 0
+  ) {
+    const input = barsBackgroundPersistQueue.shift()!;
+    barsBackgroundPersistActive += 1;
+    void barsBackgroundPersistWorker(input)
+      .then((ok) => {
+        if (ok) {
+          barsBackgroundPersistCompleted += 1;
+        } else {
+          barsBackgroundPersistFailed += 1;
+        }
+      })
+      .catch((error) => {
+        barsBackgroundPersistFailed += 1;
+        logger.warn({ err: error }, "Background bar-cache persist failed");
+      })
+      .finally(() => {
+        barsBackgroundPersistActive -= 1;
+        drainBarsBackgroundPersistQueue();
+        resolveBarsBackgroundPersistIdle();
+      });
+  }
+  resolveBarsBackgroundPersistIdle();
+}
+
+function queueBarsBackgroundPersist(input: BarsBackgroundPersistInput): void {
+  barsBackgroundPersistEnqueued += 1;
+  barsBackgroundPersistQueue.push(input);
+  barsBackgroundPersistMaxQueueLength = Math.max(
+    barsBackgroundPersistMaxQueueLength,
+    barsBackgroundPersistQueue.length,
+  );
+  drainBarsBackgroundPersistQueue();
+}
+
+function getBarsBackgroundPersistDiagnostics() {
+  return {
+    active: barsBackgroundPersistActive,
+    queued: barsBackgroundPersistQueue.length,
+    concurrency: barsBackgroundPersistConcurrency(),
+    enqueued: barsBackgroundPersistEnqueued,
+    completed: barsBackgroundPersistCompleted,
+    failed: barsBackgroundPersistFailed,
+    maxQueueLength: barsBackgroundPersistMaxQueueLength,
+  };
+}
 const barsHydrationBreakdown = {
   byFamily: {} as Record<string, number>,
   byPriority: {} as Record<string, number>,
@@ -9615,20 +9612,6 @@ function delayBarsRetry(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-// The cold-miss stored-first serve in getBarsWithDebug returns slightly-stale stored bars
-// plus a background revalidate — correct for interactive charts (stale-then-fresh), but
-// WRONG for consumers that need the complete provider-topped history in a single response
-// (backtests, signal evaluation). Allow-list the interactive chart UI families only;
-// everything else (backtest, signal-matrix, sparkline, unspecified) stays on the blocking
-// full fetch. Forward-compatible: any new chart-*/option-chart-* family is auto-included,
-// any new data-consumer family is auto-excluded.
-function barsRequestAllowsStaleFirstServe(normalizedFamily: string): boolean {
-  return (
-    normalizedFamily.startsWith("chart-") ||
-    normalizedFamily.startsWith("option-chart-")
-  );
-}
-
 export async function getBarsWithDebug(
   input: GetBarsInput,
   options: GetBarsOptions = {},
@@ -9780,39 +9763,6 @@ export async function getBarsWithDebug(
   const upstreamStartedAt = Date.now();
   barsHydrationCounters.cacheMiss += 1;
 
-  // Cold cache miss. Before blocking on the provider gap-fill (~BARS_PROVIDER_BUDGET_MS),
-  // serve already-stored bars immediately (stamped "warming") and refresh the full
-  // provider-topped result in the background, so first paint isn't gated on a
-  // multi-second upstream fetch. Falls back to the blocking fetch when no stored bars
-  // exist (true cold) or background hydration is disabled (kill switch / pressure).
-  if (
-    isChartHydrationBackgroundEnabled() &&
-    barsRequestAllowsStaleFirstServe(debugContext.family)
-  ) {
-    const storedFirst = await getBarsImpl(sanitizedInput, {
-      ...options,
-      skipProviderHistoryFetch: true,
-    });
-    if (storedFirst.bars.length > 0) {
-      barsHydrationCounters.backgroundRefresh += 1;
-      // Detach the background revalidate from the request signal so it runs to completion
-      // (and populates the cache) even after the response is sent or the client
-      // disconnects — matching the stale-serve background refresh above.
-      refreshBarsCache(key, sanitizedInput, {
-        priority: options.priority,
-        family: debugContext.family,
-      }).catch(() => {});
-      return withBarsDebug(storedFirst, {
-        ...debugContext,
-        cacheStatus: "miss",
-        totalMs: Math.max(0, Date.now() - requestedAt),
-        upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
-        gapFilled: storedFirst.gapFilled,
-        stale: true,
-      });
-    }
-  }
-
   const value = await refreshBarsCache(key, sanitizedInput, options);
 
   return withBarsDebug(value, {
@@ -9848,12 +9798,17 @@ function refreshBarsCache(
         startedInvalidationVersion === barsCacheInvalidationVersion &&
         value.emptyReason !== "broker-history-error"
       ) {
+        const ttlMs = barsCacheTtlMsForInput(input, settledAt);
         barsCache.set(key, {
           input,
           value,
           cachedAt: settledAt,
-          expiresAt: settledAt + BARS_CACHE_TTL_MS,
-          staleExpiresAt: settledAt + BARS_CACHE_STALE_TTL_MS,
+          expiresAt: settledAt + ttlMs,
+          // Keep the stale buffer the same width as the live path; for completed
+          // windows it rides on top of the longer fresh TTL (so the entry is
+          // never pruned while still fresh).
+          staleExpiresAt:
+            settledAt + ttlMs + (BARS_CACHE_STALE_TTL_MS - BARS_CACHE_TTL_MS),
           scopeKey: buildBarsScopeKey(input),
         });
         pruneBarsCache(settledAt);
@@ -9899,6 +9854,27 @@ const BAR_TIMEFRAME_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
   "1month": 30 * 24 * 60 * 60_000,
   "1year": 365 * 24 * 60 * 60_000,
 };
+
+// Pick the cache TTL by DATA MUTABILITY, not by caller. A request whose window
+// ends at/before the current bar boundary returns only CLOSED bars (immutable),
+// so it caches for BARS_CACHE_COMPLETED_TTL_MS; a live/forming-edge request
+// (`to` null or inside the current bucket) keeps the short BARS_CACHE_TTL_MS so
+// the forming bar stays fresh. Keyed on the data, so any consumer of the same
+// (symbol, timeframe, to) entry is served correctly.
+function barsCacheTtlMsForInput(input: GetBarsInput, now: number): number {
+  const to = input.to ? input.to.getTime() : null;
+  if (to === null) {
+    return BARS_CACHE_TTL_MS;
+  }
+  const stepMs = BAR_TIMEFRAME_MS[input.timeframe];
+  if (!stepMs) {
+    return BARS_CACHE_TTL_MS;
+  }
+  const currentBucketStart = Math.floor(now / stepMs) * stepMs;
+  return to <= currentBucketStart
+    ? BARS_CACHE_COMPLETED_TTL_MS
+    : BARS_CACHE_TTL_MS;
+}
 
 const BASE_TIMEFRAME_BY_TIMEFRAME: Record<
   ChartBarTimeframe,
@@ -10321,7 +10297,6 @@ function buildOptionStudyFallbackBar(input: {
 
 async function fetchOptionStudyFallbackBar(input: {
   request: GetBarsInput;
-  bridgeClient: IbkrBridgeClient;
   fallbackTransport: BrokerBarSnapshot["transport"];
 }): Promise<BrokerBarSnapshot | null> {
   const providerContractId = input.request.providerContractId?.trim();
@@ -10473,21 +10448,6 @@ async function getBaseBarsImpl(
   options: GetBarsOptions = {},
 ) {
   throwIfBarsSignalAborted(options.signal);
-  const bridgeClient = getIbkrClient();
-  let bridgeHealthLoaded = false;
-  let bridgeHealth: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>> | null =
-    null;
-  const readBridgeHealth = async () => {
-    if (bridgeHealthLoaded) {
-      return bridgeHealth;
-    }
-    bridgeHealthLoaded = true;
-    bridgeHealth = await awaitWithBarsAbort(
-      bridgeClient.getHealth().catch(() => null),
-      options.signal,
-    );
-    return bridgeHealth;
-  };
   const massiveConfig = getMassiveRuntimeConfig();
   const massiveClient = massiveConfig ? getMassiveClient() : null;
   const massiveProviderIdentity = getMassiveProviderIdentity(massiveConfig);
@@ -10510,181 +10470,15 @@ async function getBaseBarsImpl(
   const historicalSynthesisAvailable = Boolean(
     allowHistoricalSynthesis && input.market !== "futures" && massiveClient,
   );
-  // When Massive can serve equity history, do not fetch IBKR equity bars; the
-  // Massive REST merge + WS forming-bar overlay below own the live edge. Options
-  // and the Massive-unconfigured fallback keep IBKR (historicalSynthesisAvailable
-  // is false in those cases).
-  const useBrokerEquityHistory = !historicalSynthesisAvailable;
   const brokerHistoryMayBeRecentLimited = shouldLimitBrokerHistoryToRecent(
     input,
     {
       historicalSynthesisAvailable,
     },
   );
-  let ibkrBars: Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>> = [];
+  const ibkrBars: BrokerBarSnapshot[] = [];
   let attemptedBrokerHistory = false;
   let brokerHistoryError: unknown = null;
-  const fetchBrokerHistory = async (
-    brokerHistoryInput: GetBarsInput,
-    brokerHistoryOptions: { recoveryMode?: "live-edge" | "full" } = {},
-  ) => {
-    const recoveryMode = brokerHistoryOptions.recoveryMode ?? "live-edge";
-    const fullBrokerRecovery =
-      recoveryMode === "full" &&
-      isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
-    const liveEdgeBrokerBackfill =
-      recoveryMode === "live-edge" &&
-      shouldAttemptBrokerLiveEdgeHistory(options) &&
-      isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
-    const brokerBackfillBudget = fullBrokerRecovery || liveEdgeBrokerBackfill;
-    const brokerHistoryBudgetMs = brokerBackfillBudget
-      ? BARS_BROKER_BACKFILL_BUDGET_MS
-      : BARS_PROVIDER_BUDGET_MS;
-    const fetchBridgeHistory = (exchange?: string | null) =>
-      runIbkrHistoricalRequest(
-        {
-          family: options.family,
-          priority: options.priority,
-          symbol: brokerHistoryInput.symbol,
-          timeframe: brokerHistoryInput.timeframe,
-          providerContractId: brokerHistoryInput.providerContractId,
-          source: brokerHistoryInput.source,
-          exchange,
-          signal: options.signal,
-        },
-        () =>
-          bridgeClient.getHistoricalBars({
-            symbol: brokerHistoryInput.symbol,
-            timeframe: brokerHistoryInput.timeframe as HistoryBarTimeframe,
-            limit: brokerHistoryInput.limit,
-            from: brokerHistoryInput.from,
-            to: brokerHistoryInput.to,
-            assetClass: brokerHistoryInput.assetClass,
-            providerContractId: brokerHistoryInput.providerContractId,
-            outsideRth,
-            source: brokerHistoryInput.source,
-            exchange,
-            signal: options.signal,
-            priority: options.priority,
-          }),
-      );
-
-    const fetchOnce = async () => {
-      const primaryBarsPromise = resolveWithin(
-        fetchBridgeHistory(),
-        brokerHistoryBudgetMs,
-        [],
-        {
-          signal: options.signal,
-          createAbortError: createBarsRequestAbortedError,
-        },
-      );
-      if (!shouldFetchIbkrOvernightHistory(brokerHistoryInput, outsideRth)) {
-        return primaryBarsPromise;
-      }
-
-      const fetchOvernightExchangeBars = (exchange: string) =>
-        resolveWithin(
-          fetchBridgeHistory(exchange)
-            .then(filterIbkrOvernightHistoryBars)
-            .catch(() => []),
-          brokerHistoryBudgetMs,
-          [],
-          {
-            signal: options.signal,
-            createAbortError: createBarsRequestAbortedError,
-          },
-        );
-      const overnightBarsPromise = fetchOvernightExchangeBars(
-        IBKR_OVERNIGHT_EXCHANGE,
-      );
-      const [primaryBars, overnightBars] = await Promise.all([
-        primaryBarsPromise,
-        overnightBarsPromise,
-      ]);
-      const shouldFetchFallbackOvernightExchange =
-        fullBrokerRecovery || !brokerHistoryMayBeRecentLimited;
-      const fallbackOvernightBars =
-        overnightBars.length || !shouldFetchFallbackOvernightExchange
-          ? []
-          : await fetchOvernightExchangeBars(IBKR_OVERNIGHT_FALLBACK_EXCHANGE);
-      return mergeBrokerHistoryBars(
-        primaryBars,
-        markIbkrOvernightHistoryBars(
-          overnightBars.length ? overnightBars : fallbackOvernightBars,
-        ),
-      );
-    };
-
-    const startedAt = Date.now();
-    const bars = await fetchOnce();
-    const elapsedMs = Math.max(0, Date.now() - startedAt);
-    if (
-      brokerBackfillBudget &&
-      bars.length === 0 &&
-      elapsedMs < brokerHistoryBudgetMs - 250
-    ) {
-      await delayBarsRetry(
-        BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS,
-        options.signal,
-      );
-      return fetchOnce();
-    }
-    return bars;
-  };
-
-  if (isBrokerHistoryTimeframe) {
-    throwIfBarsSignalAborted(options.signal);
-    try {
-      const brokerHistoryInput = buildRecentBrokerHistoryInput(
-        input,
-        new Date(),
-        { historicalSynthesisAvailable },
-      );
-      const skipBackgroundBrokerHistory =
-        brokerHistoryMayBeRecentLimited &&
-        !shouldAttemptBrokerLiveEdgeHistory(options);
-      if (
-        brokerHistoryInput &&
-        !skipBackgroundBrokerHistory &&
-        useBrokerEquityHistory
-      ) {
-        attemptedBrokerHistory = true;
-        ibkrBars = await fetchBrokerHistory(brokerHistoryInput, {
-          recoveryMode: "live-edge",
-        });
-      } else if (brokerHistoryMayBeRecentLimited && useBrokerEquityHistory) {
-        // Only a genuine fallback when IBKR was an option but skipped for the
-        // window/background reason. When Massive is the primary equity source
-        // (useBrokerEquityHistory false), skipping IBKR is by design, not a
-        // fallback, so it must not pollute the fallback diagnostics.
-        recordMarketDataFallback({
-          owner: "bars-history",
-          intent: "historical",
-          fallbackProvider: historicalFallbackProvider,
-          reason: skipBackgroundBrokerHistory
-            ? "background_historical_synthesis"
-            : "outside_recent_live_window",
-          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
-        });
-      }
-    } catch (error) {
-      if (error instanceof HttpError && error.code === "bars_request_aborted") {
-        throw error;
-      }
-      if (isIbkrHistoricalAdmissionError(error)) {
-        recordMarketDataFallback({
-          owner: "bars-history",
-          intent: "historical",
-          fallbackProvider: historicalFallbackProvider,
-          reason: "ibkr_historical_admission_rejected",
-          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
-        });
-      }
-      brokerHistoryError = error;
-      ibkrBars = [];
-    }
-  }
   const storedHistoricalBars = allowHistoricalSynthesis
     ? restrictHistoricalSynthesisToBrokerBackfill(
         input,
@@ -10875,7 +10669,7 @@ async function getBaseBarsImpl(
         input.timeframe,
       );
       if (persistableBars.length) {
-        void persistMarketDataBars({
+        queueBarsBackgroundPersist({
           request: persistRequest,
           sourceName: historicalStoreSource,
           bars: persistableBars,
@@ -10885,13 +10679,12 @@ async function getBaseBarsImpl(
     const mergeableMassiveBars = restrictHistoricalSynthesisToBrokerBackfill(
       input,
       massiveBars,
-      ibkrBars,
+      [],
     );
     const merged = new Map<number, BrokerBarSnapshot>();
 
-    // Tag each bar honestly with its actual source so the chart UI / debugging
-    // can tell what came from where. IBKR bars always overwrite Massive bars at
-    // the same timestamp because IBKR is the authoritative live broker feed.
+    // Tag each bar honestly with its actual source so chart UI/debugging can
+    // distinguish durable cache rows from fresh provider rows.
     storedHistoricalBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), bar);
     });
@@ -10909,9 +10702,6 @@ async function getBaseBarsImpl(
         dataUpdatedAt: bar.timestamp,
       });
     });
-    ibkrBars.forEach((bar) => {
-      merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
-    });
     bars = Array.from(merged.values())
       .sort(
         (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
@@ -10921,9 +10711,6 @@ async function getBaseBarsImpl(
     const merged = new Map<number, BrokerBarSnapshot>();
     storedHistoricalBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), bar);
-    });
-    ibkrBars.forEach((bar) => {
-      merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
     });
     bars = Array.from(merged.values())
       .sort(
@@ -10974,45 +10761,6 @@ async function getBaseBarsImpl(
     }
   }
 
-  if (
-    useBrokerEquityHistory &&
-    brokerHistoryMayBeRecentLimited &&
-    isBrokerHistoryTimeframe &&
-    bars.length < desiredBars &&
-    shouldAttemptFullBrokerHistoryRecovery(options)
-  ) {
-    recordMarketDataFallback({
-      owner: "bars-history",
-      intent: "historical",
-      fallbackProvider: "ibkr",
-      reason: "historical_synthesis_underfilled",
-      instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
-    });
-    try {
-      attemptedBrokerHistory = true;
-      const fullBrokerBars = await fetchBrokerHistory(input, {
-        recoveryMode: "full",
-      });
-      if (fullBrokerBars.length) {
-        const merged = new Map<number, BrokerBarSnapshot>();
-        bars.forEach((bar) => {
-          merged.set(bar.timestamp.getTime(), bar);
-        });
-        fullBrokerBars.forEach((bar) => {
-          merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
-        });
-        bars = Array.from(merged.values())
-          .sort(
-            (left, right) =>
-              left.timestamp.getTime() - right.timestamp.getTime(),
-          )
-          .slice(-desiredBars);
-      }
-    } catch (error) {
-      brokerHistoryError = brokerHistoryError ?? error;
-    }
-  }
-
   let emptyReason = bars.length
     ? null
     : resolveBarsEmptyReason({
@@ -11023,11 +10771,9 @@ async function getBaseBarsImpl(
   let studyFallback = false;
 
   if (!bars.length && input.allowStudyFallback) {
-    const fallbackBridgeHealth = await readBridgeHealth();
     const fallbackBar = await fetchOptionStudyFallbackBar({
       request: input,
-      bridgeClient,
-      fallbackTransport: fallbackBridgeHealth?.transport ?? "tws",
+      fallbackTransport: "massive_websocket",
     }).catch(() => null);
 
     if (fallbackBar) {
@@ -11040,7 +10786,7 @@ async function getBaseBarsImpl(
   return decorateBarsResult({
     request: input,
     bars,
-    bridgeHealth,
+    bridgeHealth: null,
     gapFilled,
     emptyReason,
     studyFallback,
@@ -11064,7 +10810,6 @@ type IbkrOptionChainInput = {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -11081,7 +10826,6 @@ type IbkrOptionExpirationsInput = {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   foregroundWaitMs?: number | null;
   signal?: AbortSignal;
@@ -11092,6 +10836,27 @@ type IbkrOptionExpirationDates = Awaited<
 >;
 type OptionChainStrikeCoverage = "fast" | "standard" | "full";
 type OptionChainQuoteHydration = "metadata" | "snapshot";
+
+function shouldYieldOptionChainBatchForPressure(): boolean {
+  const snapshot = getApiResourcePressureSnapshot();
+  if (snapshot.hardResourceLevel !== "normal") {
+    return true;
+  }
+
+  const waiting = snapshot.inputs.dbPoolWaiting ?? 0;
+  if (waiting > 0) {
+    return true;
+  }
+
+  const active = snapshot.inputs.dbPoolActive;
+  const max = snapshot.inputs.dbPoolMax;
+  return (
+    typeof active === "number" &&
+    typeof max === "number" &&
+    max > 0 &&
+    active >= max
+  );
+}
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -11247,7 +11012,7 @@ const OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY = 2;
 const OPTION_CHAIN_PUBLIC_MAX_STRIKES_AROUND_MONEY = 50;
 const OPTION_CHAIN_BATCH_CONCURRENCY = readPositiveIntegerEnv(
   "OPTION_CHAIN_BATCH_CONCURRENCY",
-  3,
+  1,
 );
 const OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS = readNonNegativeIntegerEnv(
   "OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS",
@@ -11333,27 +11098,31 @@ const OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED",
   true,
 );
-const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
+const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 100;
 const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
+const OPTIONS_FLOW_SCANNER_PRESSURE_LINE_BUDGET = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_PRESSURE_LINE_BUDGET",
+  32,
+);
+const OPTIONS_FLOW_SCANNER_PRESSURE_CONCURRENCY = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_PRESSURE_CONCURRENCY",
+  1,
+);
 const OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET",
   OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
-  8,
+  4,
 );
-// Was reverted 8 -> 2 (the 337cb24 bump overwhelmed the shared DB + IB tunnel
-// with concurrent option-chain fetches/writes). Raised to 4 to speed line-budget
-// fill: the IB-tunnel side is now independently capped by the bridge work-scheduler
-// option-meta/option-quotes lanes (work-scheduler.ts), so a higher scanner
-// concurrency parallelizes symbol scans without re-flooding the tunnel. NOTE: this
-// still increases concurrent option-chain DB writes — watch DB pool pressure; dial
-// back via OPTIONS_FLOW_SCANNER_CONCURRENCY (env) if pool contention returns.
+// Keep the background scanner conservative by default. Massive is the market-data
+// source now, but option-chain fetch/transform/cache work still runs through the
+// API process and can burn the main loop during startup and RTH rotation.
 const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 4;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
   OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY,
-  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 4),
+  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 2),
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -11473,6 +11242,8 @@ export function getOptionsFlowRuntimeConfig(): OptionsFlowRuntimeConfig {
 
 export function resolveOptionsFlowScannerEffectiveConcurrency(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+  scannerPressure: ReturnType<typeof getOptionsFlowScannerPressureGate> =
+    getOptionsFlowScannerPressureGate(),
 ): number {
   const configuredConcurrency = Math.max(
     1,
@@ -11481,35 +11252,67 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
       Math.floor(config.scannerConcurrency || 1),
     ),
   );
-  const flowScannerLineCap = Math.max(
+  const pressureAdjustedConcurrency = scannerPressure.throttled
+    ? Math.max(
+        1,
+        Math.min(
+          configuredConcurrency,
+          Math.floor(OPTIONS_FLOW_SCANNER_PRESSURE_CONCURRENCY || 1),
+        ),
+      )
+    : configuredConcurrency;
+  const flowScannerLineCap = getOptionsFlowScannerSchedulableLineCap(
+    config,
+    scannerPressure,
+  );
+  return flowScannerLineCap <= 0 || pressureAdjustedConcurrency <= 0
+    ? 0
+    : Math.max(1, Math.min(pressureAdjustedConcurrency, flowScannerLineCap));
+}
+
+function resolveOptionsFlowScannerEffectiveLineBudget(
+  config: OptionsFlowRuntimeConfig,
+  scannerPressure: ReturnType<typeof getOptionsFlowScannerPressureGate> =
+    getOptionsFlowScannerPressureGate(),
+): number {
+  const configuredLineBudget = Math.max(
     0,
+    Math.floor(config.scannerLineBudget || 0),
+  );
+  if (!scannerPressure.throttled) {
+    return configuredLineBudget;
+  }
+  return Math.max(
+    1,
     Math.min(
-      Math.floor(getOptionsFlowScannerSchedulableLineCap()),
-      Math.max(0, Math.floor(config.scannerLineBudget || 0)),
+      configuredLineBudget,
+      Math.floor(OPTIONS_FLOW_SCANNER_PRESSURE_LINE_BUDGET || 1),
     ),
   );
-  // Note: getOptionsFlowScannerPressureGate hardcodes throttled/hardBlocked to
-  // false, so the old resource-pressure concurrency throttle was a no-op — dropped
-  // here. (The gate is still used for diagnostics in getOptionsFlowScannerDiagnostics.)
-  return flowScannerLineCap <= 0 || configuredConcurrency <= 0
-    ? 0
-    : Math.max(1, Math.min(configuredConcurrency, flowScannerLineCap));
 }
 
 function resolveOptionsFlowScannerTickerSlotCapacity(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+  scannerPressure: ReturnType<typeof getOptionsFlowScannerPressureGate> =
+    getOptionsFlowScannerPressureGate(),
 ): number {
-  if (resolveOptionsFlowScannerEffectiveConcurrency(config) <= 0) {
+  if (
+    resolveOptionsFlowScannerEffectiveConcurrency(config, scannerPressure) <= 0
+  ) {
     return 0;
   }
   const schedulableLineCap = Math.max(
     0,
-    Math.floor(getOptionsFlowScannerSchedulableLineCap()),
+    Math.floor(getOptionsFlowScannerSchedulableLineCap(config, scannerPressure)),
+  );
+  const effectiveLineBudget = resolveOptionsFlowScannerEffectiveLineBudget(
+    config,
+    scannerPressure,
   );
   return Math.max(
     0,
     Math.min(
-      Math.max(0, Math.floor(config.scannerLineBudget || 0)),
+      effectiveLineBudget,
       schedulableLineCap,
     ),
   );
@@ -11518,6 +11321,8 @@ function resolveOptionsFlowScannerTickerSlotCapacity(
 function resolveOptionsFlowScannerPerScanLineBudget(
   config: OptionsFlowRuntimeConfig,
   phaseLineCap: number,
+  scannerPressure: ReturnType<typeof getOptionsFlowScannerPressureGate> =
+    getOptionsFlowScannerPressureGate(),
 ): number {
   const configuredConcurrency = Math.max(
     1,
@@ -11527,16 +11332,19 @@ function resolveOptionsFlowScannerPerScanLineBudget(
     ),
   );
   const effectiveConcurrency =
-    resolveOptionsFlowScannerEffectiveConcurrency(config) ||
+    resolveOptionsFlowScannerEffectiveConcurrency(config, scannerPressure) ||
     configuredConcurrency;
   const schedulableLineCap = Math.max(
     0,
-    Math.floor(getOptionsFlowScannerSchedulableLineCap()),
+    Math.floor(getOptionsFlowScannerSchedulableLineCap(config, scannerPressure)),
   );
   const targetLineBudget = Math.max(
     1,
     Math.min(
-      Math.max(1, Math.floor(config.scannerLineBudget || 1)),
+      Math.max(
+        1,
+        resolveOptionsFlowScannerEffectiveLineBudget(config, scannerPressure),
+      ),
       schedulableLineCap > 0 ? schedulableLineCap : config.scannerLineBudget,
     ),
   );
@@ -11629,9 +11437,16 @@ function syncOptionsFlowScannerEffectiveConcurrency(
 function syncMarketDataAdmissionRuntimeDefaults(
   config: OptionsFlowRuntimeConfig,
 ): void {
+  const scannerPressure = getOptionsFlowScannerPressureGate();
   setMarketDataAdmissionRuntimeDefaults({
-    flowScannerLineBudget: config.scannerLineBudget,
-    flowScannerConcurrency: config.scannerConcurrency,
+    flowScannerLineBudget: resolveOptionsFlowScannerEffectiveLineBudget(
+      config,
+      scannerPressure,
+    ),
+    flowScannerConcurrency: resolveOptionsFlowScannerEffectiveConcurrency(
+      config,
+      scannerPressure,
+    ),
   });
 }
 
@@ -11836,9 +11651,6 @@ const flowUniverseOptionabilityVerifier =
       if (sessionBlockReason) {
         return sessionBlockReason;
       }
-      if (isBridgeWorkBackedOff("options")) {
-        return "options-backoff";
-      }
       const backgroundBlockReason =
         getOptionsFlowScannerBackgroundBlockReason();
       if (backgroundBlockReason) {
@@ -11884,23 +11696,23 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   scanTimeoutMs: () => getOptionsFlowRuntimeConfig().scannerSymbolTimeoutMs,
   snapshotTtlMs: FLOW_EVENTS_CACHE_TTL_MS,
   snapshotStaleTtlMs: OPTIONS_FLOW_SCANNER_SNAPSHOT_STALE_TTL_MS,
-  preferredTransport: "tws",
+  preferredTransport: "massive",
   allowFallbackTransport: false,
   getTransport: async () => {
-    const health = await getIbkrClient()
-      .getHealth()
-      .catch(() => null);
-    return health
-      ? {
-          transport: health.transport,
-          connected: health.connected,
-          configured: health.configured,
-          authenticated: health.authenticated,
-          liveMarketDataAvailable: health.liveMarketDataAvailable,
-          marketDataMode: health.marketDataMode,
-          lastError: health.lastError,
-        }
-      : null;
+    const config = getMassiveRuntimeConfig();
+    const configured = Boolean(config);
+    const realtime = isMassiveOptionsRealtimeConfigured(config);
+    return {
+      transport: "massive",
+      connected: configured,
+      configured,
+      authenticated: configured,
+      liveMarketDataAvailable: realtime,
+      marketDataMode: configured ? (realtime ? "live" : "delayed") : "unknown",
+      lastError: configured
+        ? null
+        : "Massive options market data is not configured.",
+    };
   },
   fetchSymbol: ({
     symbol,
@@ -11923,9 +11735,6 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
       expirationScanCount,
       strikeCoverage,
       bypassBridgeBackoff: false,
-      // Route the background scanner's option work to its own governor lane so a
-      // deep-scan burst can't trip the user-facing `options` circuit / chain.
-      bridgeWorkCategory: "optionsScanner",
       signal,
     }),
   onBatch: (symbols) => {
@@ -12148,11 +11957,19 @@ export function getOptionsFlowLaneSourceSymbols(): {
   const candidateBuiltInSymbols = getFlowScannerPinnedSymbols();
   const candidateWatchlistSymbols = latestWatchlistLaneSymbols;
   const candidatePrioritySymbols = collectFlowScannerPriorityLeaseSymbols();
-  const schedulableLineCap = getOptionsFlowScannerSchedulableLineCap();
-  const tickerSlotCapacity = resolveOptionsFlowScannerTickerSlotCapacity(config);
+  const scannerPressure = getOptionsFlowScannerPressureGate();
+  const schedulableLineCap = getOptionsFlowScannerSchedulableLineCap(
+    config,
+    scannerPressure,
+  );
+  const tickerSlotCapacity = resolveOptionsFlowScannerTickerSlotCapacity(
+    config,
+    scannerPressure,
+  );
   const directScannerLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
     config,
     OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
+    scannerPressure,
   );
   const plannerBatchSize = Math.max(
     0,
@@ -12163,7 +11980,7 @@ export function getOptionsFlowLaneSourceSymbols(): {
   );
   const plannerPerScanLineBudget = directScannerLineBudget;
   const plannerEffectiveConcurrency = Math.max(
-    resolveOptionsFlowScannerEffectiveConcurrency(config),
+    resolveOptionsFlowScannerEffectiveConcurrency(config, scannerPressure),
     tickerSlotCapacity > 0 ? 1 : 0,
   );
   const plannerPlan = flowUniversePlanner.getPlan({
@@ -12464,7 +12281,7 @@ export function startOptionsFlowScanner(): void {
       intervalMs: config.scannerIntervalMs,
       universeMode: config.universeMode,
       universeTargetSize: config.universeSize,
-      preferredTransport: "tws",
+      preferredTransport: "massive",
     },
     "Started options flow scanner",
   );
@@ -12997,7 +12814,7 @@ export async function listAggregateFlowEvents(
       event && typeof event === "object"
         ? (event as Record<string, unknown>).provider
         : null;
-    return provider === "ibkr";
+    return provider === "massive";
   });
   const freshSnapshots = snapshots.filter(
     (snapshot) => snapshot.freshness === "fresh",
@@ -13008,12 +12825,8 @@ export async function listAggregateFlowEvents(
       ? "live"
       : "fallback"
     : "empty";
-  const sourceProvider = hasSnapshotEvents
-    ? "ibkr"
-    : filteredEvents.length && hasStoredEvents
-      ? "massive"
-      : "none";
-  const attemptedProviders: FlowDataProvider[] = ["ibkr", "massive"];
+  const sourceProvider = filteredEvents.length ? "massive" : "none";
+  const attemptedProviders: FlowDataProvider[] = ["massive"];
 
   return {
     events: filteredEvents,
@@ -13586,12 +13399,10 @@ export function getOptionsFlowScannerDiagnostics() {
   const limitingReason =
     backgroundBlockedReason === "live-warmup"
       ? "startup-protected"
-      : backgroundBlockedReason === "resource-pressure"
-        ? "api-pressure-gate"
-        : backgroundBlockedReason;
+      : backgroundBlockedReason;
   const effectiveConcurrency = backgroundBlockedReason
     ? 0
-    : resolveOptionsFlowScannerEffectiveConcurrency(config);
+    : resolveOptionsFlowScannerEffectiveConcurrency(config, scannerPressure);
   const deepScanner = optionsFlowScanner.getDiagnostics();
   const coverage = getOptionsFlowUniverseCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
@@ -13601,9 +13412,9 @@ export function getOptionsFlowScannerDiagnostics() {
     admissionBudget,
   );
   const schedulableFlowScannerLineCap =
-    getOptionsFlowScannerSchedulableLineCap();
+    getOptionsFlowScannerSchedulableLineCap(config, scannerPressure);
   const scannerTargetLineBudget = Math.min(
-    config.scannerLineBudget,
+    resolveOptionsFlowScannerEffectiveLineBudget(config, scannerPressure),
     schedulableFlowScannerLineCap,
   );
   const seedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
@@ -13661,7 +13472,7 @@ export function getOptionsFlowScannerDiagnostics() {
           ? lastSkippedReason
           : effectiveFlowScannerLineCap <= 0 ||
               schedulableFlowScannerLineCap <= 0
-            ? "protected-trade-options-chain-demand"
+            ? "massive-scanner-budget-exhausted"
             : eligibleOptionableTickerCount <= activeTickerSlotCount
               ? "insufficient-eligible-tickers"
               : deepQueueBacklog > 0 || deepScanner.draining || deepScanner.activeCount > 0
@@ -13676,7 +13487,6 @@ export function getOptionsFlowScannerDiagnostics() {
       level: resourcePressure.level,
       drivers: resourcePressure.drivers,
       inputs: resourcePressure.inputs,
-      caps: resourcePressure.caps,
     },
     scannerPressure,
     scannerMode: "direct-rotation",
@@ -13789,6 +13599,12 @@ export function __normalizeOptionsFlowSessionBlockReasonForTests(
   return normalizeOptionsFlowSessionBlockReason(reason);
 }
 
+export async function __refreshOptionsFlowSessionBlockReasonForTests(): Promise<
+  string | null
+> {
+  return refreshOptionsFlowSessionBlockReason();
+}
+
 export function __queueOptionsFlowScannerRefreshForTests(input: {
   underlying: string;
   scannerRequest: OptionsFlowScannerRequest;
@@ -13849,6 +13665,14 @@ export function __resetOptionChainCachesForTests(input?: {
   flowScannerContractRotationOffsets.clear();
   barsCache.clear();
   barsInFlight.clear();
+  barsBackgroundPersistQueue.length = 0;
+  barsBackgroundPersistIdleResolvers.clear();
+  barsBackgroundPersistWorker = persistMarketDataBars;
+  barsBackgroundPersistActive = 0;
+  barsBackgroundPersistEnqueued = 0;
+  barsBackgroundPersistCompleted = 0;
+  barsBackgroundPersistFailed = 0;
+  barsBackgroundPersistMaxQueueLength = 0;
   barsCacheInvalidationVersion = 0;
   chartHistoryCursors.clear();
   Object.keys(barsHydrationCounters).forEach((key) => {
@@ -13884,6 +13708,24 @@ export const __platformBarsCacheTestInternals = {
   shouldFetchHistoricalSynthesisForRecentCoverage,
   shouldUsePassiveQuietSessionRecentCoverageTolerance,
   resolveRecentCoverageStaleToleranceMs,
+  getBarsBackgroundPersistDiagnostics,
+  queueBarsBackgroundPersistForTests: queueBarsBackgroundPersist,
+  setBarsBackgroundPersistWorkerForTests(
+    worker: BarsBackgroundPersistWorker | null,
+  ) {
+    barsBackgroundPersistWorker = worker ?? persistMarketDataBars;
+  },
+  waitForBarsBackgroundPersistIdleForTests(): Promise<void> {
+    if (
+      barsBackgroundPersistActive === 0 &&
+      barsBackgroundPersistQueue.length === 0
+    ) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      barsBackgroundPersistIdleResolvers.add(resolve);
+    });
+  },
 };
 
 export const __platformTickerSearchTestInternals = {
@@ -13895,7 +13737,6 @@ export const __platformQuoteSnapshotTestInternals = {
   resetQuoteSnapshotCache() {
     quoteSnapshotCache.clear();
     quoteSnapshotInFlight.clear();
-    massiveQuoteDayChangeContextInFlight.clear();
     quoteSnapshotCacheTtlMsForTests = null;
     quoteSnapshotStaleTtlMsForTests = null;
     quoteSnapshotStaleWaitMsForTests = null;
@@ -13911,10 +13752,10 @@ export const __platformQuoteSnapshotTestInternals = {
       typeof input.staleTtlMs === "number"
         ? Math.max(0, input.staleTtlMs)
         : null;
-    quoteSnapshotStaleWaitMsForTests =
-      typeof input.staleWaitMs === "number"
-        ? Math.max(0, input.staleWaitMs)
-        : null;
+      quoteSnapshotStaleWaitMsForTests =
+        typeof input.staleWaitMs === "number"
+          ? Math.max(0, input.staleWaitMs)
+          : null;
   },
 };
 
@@ -14163,146 +14004,12 @@ function mapMassiveOptionBarsToBrokerBars(input: {
   }));
 }
 
-function optionBarsHavePositiveVolume(
-  bars: readonly BrokerBarSnapshot[],
-): boolean {
-  return bars.some((bar) => Number.isFinite(bar.volume) && bar.volume > 0);
-}
-
-function barTimestampMs(bar: {
-  timestamp: Date | string | number;
-}): number | null {
-  const value =
-    bar.timestamp instanceof Date
-      ? bar.timestamp.getTime()
-      : new Date(bar.timestamp).getTime();
-  return Number.isFinite(value) ? value : null;
-}
-
 type OptionChartMassiveBarsResult = {
   bars: BrokerBarSnapshot[];
   page: MassiveAggregateBarsPage;
   cursorSignature: string;
   cursorExhausted: boolean;
 };
-
-function mergeIbkrAndMassiveOptionBars(input: {
-  ibkrBars: readonly BrokerBarSnapshot[];
-  massiveBars: readonly BrokerBarSnapshot[];
-  limit?: number;
-}): { bars: BrokerBarSnapshot[]; gapFilled: boolean } {
-  if (!input.massiveBars.length) {
-    return {
-      bars: input.ibkrBars.map(decorateIbkrHistoryBar),
-      gapFilled: false,
-    };
-  }
-
-  const desiredBars = Math.max(
-    input.limit ?? Math.max(input.ibkrBars.length, input.massiveBars.length),
-    1,
-  );
-  const massiveByTimestamp = new Map<number, BrokerBarSnapshot>();
-  input.massiveBars.forEach((bar) => {
-    const timestampMs = barTimestampMs(bar);
-    if (timestampMs !== null) {
-      massiveByTimestamp.set(timestampMs, bar);
-    }
-  });
-
-  const merged = new Map<number, BrokerBarSnapshot>();
-  input.massiveBars.forEach((bar) => {
-    const timestampMs = barTimestampMs(bar);
-    if (timestampMs !== null) {
-      merged.set(timestampMs, bar);
-    }
-  });
-  input.ibkrBars.forEach((bar) => {
-    const timestampMs = barTimestampMs(bar);
-    if (timestampMs === null) {
-      return;
-    }
-    const massiveBar = massiveByTimestamp.get(timestampMs);
-    const massiveVolume = massiveBar?.volume;
-    const shouldUseMassiveVolume =
-      (!Number.isFinite(bar.volume) || bar.volume <= 0) &&
-      Number.isFinite(massiveVolume) &&
-      (massiveVolume ?? 0) > 0;
-    const volume =
-      shouldUseMassiveVolume && massiveVolume !== undefined
-        ? massiveVolume
-        : bar.volume;
-    merged.set(timestampMs, {
-      ...decorateIbkrHistoryBar(bar),
-      volume,
-    });
-  });
-
-  const bars = Array.from(merged.values())
-    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
-    .slice(-desiredBars);
-  return {
-    bars,
-    gapFilled: bars.some((bar) => bar.source === "massive-option-aggregates"),
-  };
-}
-
-function shouldFetchMassiveOptionBarsForIbkrResult(input: {
-  bars: readonly BrokerBarSnapshot[];
-  timeframe: GetBarsInput["timeframe"];
-  limit?: number;
-  from?: Date;
-  to?: Date;
-}): boolean {
-  if (!input.bars.length) {
-    return false;
-  }
-  const desiredBars = Math.max(input.limit ?? DEFAULT_BARS_LIMIT, 1);
-  if (input.bars.length < desiredBars) {
-    return true;
-  }
-  if (!optionBarsHavePositiveVolume(input.bars)) {
-    return true;
-  }
-
-  const stepMs = BAR_TIMEFRAME_MS[input.timeframe] ?? 0;
-  if (!stepMs) {
-    return false;
-  }
-  const oldestMs = resolveBrokerBarTimestampMs(getOldestBar(input.bars));
-  const newestMs = resolveNewestBarTimestampMs(input.bars);
-  const toleranceMs = Math.max(stepMs * 2, 1_000);
-  if (
-    input.from &&
-    oldestMs !== null &&
-    oldestMs - input.from.getTime() > toleranceMs
-  ) {
-    return true;
-  }
-  if (
-    input.to &&
-    newestMs !== null &&
-    input.to.getTime() - newestMs > toleranceMs
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function shouldPreferReferenceOptionHistory(input: {
-  to?: Date;
-  nowMs?: number;
-}): boolean {
-  const toMs = input.to?.getTime();
-  if (!Number.isFinite(toMs)) {
-    return false;
-  }
-  return (
-    (input.nowMs ?? Date.now()) - (toMs as number) >=
-    OPTION_HISTORY_REFERENCE_PROVIDER_FRESH_MS
-  );
-}
 
 async function fetchOptionChartMassiveBars(input: {
   underlying: string;
@@ -14402,16 +14109,6 @@ async function fetchOptionChartMassiveBars(input: {
   };
 }
 
-async function tryFetchOptionChartMassiveBars(
-  input: Parameters<typeof fetchOptionChartMassiveBars>[0],
-): Promise<OptionChartMassiveBarsResult | null> {
-  try {
-    return await fetchOptionChartMassiveBars(input);
-  } catch {
-    return null;
-  }
-}
-
 function mergeMassiveOptionSnapshotIntoIbkrContract(
   contract: IbkrOptionChainContracts[number],
   snapshot: MassiveOptionChainContract,
@@ -14485,18 +14182,6 @@ async function hydrateOptionChainWithMassiveSnapshots(input: {
     );
     return input.contracts;
   }
-}
-
-function isIbkrOptionHistoryFeedIssue(input: {
-  barsResult: GetBarsResult | null;
-  error: unknown;
-}): boolean {
-  if (input.error) {
-    return true;
-  }
-
-  const emptyReason = input.barsResult?.emptyReason ?? null;
-  return emptyReason === "broker-history-error";
 }
 
 function normalizePublicOptionChainStrikeWindow(
@@ -14856,6 +14541,151 @@ function sliceOptionChainContractsForRequest(
   );
 }
 
+function isMassiveOptionsDelayed(
+  config: NonNullable<ReturnType<typeof getMassiveRuntimeConfig>>,
+): boolean {
+  return !isMassiveOptionsRealtimeConfigured(config);
+}
+
+function mapMassiveOptionChainContractToPlatformContract(
+  snapshot: MassiveOptionChainContract,
+  delayed: boolean,
+): IbkrOptionChainContracts[number] | null {
+  const ticker =
+    normalizeMassiveOptionTicker(snapshot.contract.ticker) ??
+    buildMassiveOptionTicker({
+      underlying: snapshot.contract.underlying,
+      expirationDate: snapshot.contract.expirationDate,
+      strike: snapshot.contract.strike,
+      right: snapshot.contract.right,
+    });
+  if (!ticker) {
+    return null;
+  }
+
+  const updatedAt = snapshot.updatedAt;
+  return {
+    contract: {
+      ticker,
+      underlying: normalizeSymbol(snapshot.contract.underlying),
+      expirationDate: snapshot.contract.expirationDate,
+      strike: snapshot.contract.strike,
+      right: snapshot.contract.right,
+      multiplier: snapshot.contract.multiplier,
+      sharesPerContract: snapshot.contract.sharesPerContract,
+      providerContractId: ticker,
+      brokerContractId: null,
+    },
+    bid: snapshot.bid,
+    ask: snapshot.ask,
+    last: snapshot.last,
+    mark: snapshot.mark,
+    impliedVolatility: snapshot.impliedVolatility,
+    delta: snapshot.delta,
+    gamma: snapshot.gamma,
+    theta: snapshot.theta,
+    vega: snapshot.vega,
+    openInterest: snapshot.openInterest,
+    volume: snapshot.volume,
+    updatedAt,
+    quoteFreshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    quoteUpdatedAt: updatedAt,
+    dataUpdatedAt: updatedAt,
+    ageMs: getAgeMs(updatedAt),
+    underlyingPrice: snapshot.underlyingPrice,
+    prevClose: snapshot.prevClose,
+    change: snapshot.change,
+    changePercent: snapshot.changePercent,
+  } as IbkrOptionChainContracts[number] & {
+    prevClose: number | null;
+    change: number | null;
+    changePercent: number | null;
+  };
+}
+
+async function fetchMassiveOptionChainContracts(
+  input: IbkrOptionChainInput,
+): Promise<IbkrOptionChainContracts> {
+  const config = getMassiveRuntimeConfig();
+  if (!config) {
+    throw new HttpError(503, "Massive options market data is not configured.", {
+      code: "massive_options_not_configured",
+      detail: "Set one of MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
+    });
+  }
+
+  const snapshots = await getMassiveClient().getOptionChain({
+    underlying: input.underlying,
+    expirationDate: input.expirationDate,
+    contractType: input.contractType,
+    signal: input.signal,
+  });
+  const delayed = isMassiveOptionsDelayed(config);
+  const contracts = snapshots
+    .map((snapshot) =>
+      mapMassiveOptionChainContractToPlatformContract(snapshot, delayed),
+    )
+    .filter(
+      (contract): contract is IbkrOptionChainContracts[number] =>
+        contract !== null,
+    );
+  const normalizedInput = normalizeIbkrOptionChainInput(input);
+  return sliceOptionChainContractsForRequest(contracts, normalizedInput, {
+    centerPrice:
+      normalizedInput.underlyingSpotPrice ??
+      readOptionChainUnderlyingPrice(contracts) ??
+      null,
+  });
+}
+
+function utcDayStart(date = new Date()): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
+async function fetchMassiveOptionExpirationDates(
+  input: IbkrOptionExpirationsInput,
+): Promise<IbkrOptionExpirationDates> {
+  const config = getMassiveRuntimeConfig();
+  if (!config) {
+    throw new HttpError(503, "Massive options market data is not configured.", {
+      code: "massive_options_not_configured",
+      detail: "Set one of MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
+    });
+  }
+
+  const contracts = await getMassiveClient().getHistoricalOptionContracts({
+    underlying: input.underlying,
+    expirationDateGte: utcDayStart(),
+    limit: 1_000,
+    maxPages: Math.max(
+      1,
+      Math.min(
+        50,
+        typeof input.maxExpirations === "number" && input.maxExpirations > 0
+          ? Math.ceil(input.maxExpirations / 4) + 2
+          : 20,
+      ),
+    ),
+    signal: input.signal,
+  });
+  const expirations = Array.from(
+    new Map(
+      contracts
+        .map((contract) => contract.expirationDate)
+        .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+        .filter((date) => date.getTime() >= utcDayStart().getTime())
+        .map((date) => [date.toISOString().slice(0, 10), date] as const),
+    ).values(),
+  ).sort((left, right) => left.getTime() - right.getTime());
+
+  return typeof input.maxExpirations === "number" && input.maxExpirations > 0
+    ? expirations.slice(0, Math.floor(input.maxExpirations))
+    : expirations;
+}
+
 function isUnderlyingResolutionError(error: unknown): boolean {
   if (!(error instanceof HttpError)) {
     return false;
@@ -14886,6 +14716,7 @@ function isTransientOptionUpstreamError(error: unknown): boolean {
   if (
     error.code === "ibkr_bridge_request_timeout" ||
     error.code === "ibkr_bridge_health_timeout" ||
+    error.code === "massive_options_request_timeout" ||
     error.code === "upstream_request_failed"
   ) {
     return true;
@@ -14944,13 +14775,12 @@ function recordOptionUpstreamBackoff(
   );
 }
 
-// Reasons that reflect the IBKR options upstream being temporarily unavailable rather
-// than a genuine degradation — e.g. off-hours when the options market is closed, the
-// upstream request fails / backs off / a refresh is deferred and served from durable
-// cache. Market data legitimately runs 24/7, so these are expected data-availability
-// conditions, not connection faults, and must not raise a degraded WARNING. Genuine
-// conditions ("successful but empty", stale-degraded) still warn, and real connection
-// problems are tracked via broker readiness and the bridge governor.
+// Reasons that reflect the options market-data provider being temporarily unavailable
+// rather than a genuine degradation — e.g. the upstream request fails / backs off /
+// a refresh is deferred and served from durable cache. These are expected
+// data-availability conditions, not broker connection faults, and must not raise a
+// degraded WARNING. Genuine conditions ("successful but empty", stale-degraded)
+// still warn.
 const EXPECTED_OPTION_UPSTREAM_AVAILABILITY_REASONS = new Set([
   "options_upstream_failure",
   "options_backoff",
@@ -15008,10 +14838,78 @@ function optionRequestAbortReason(signal?: AbortSignal): unknown {
   return signal?.reason ?? new Error("Option metadata request aborted.");
 }
 
+function createOptionRequestTimeoutError(timeoutMs: number): HttpError {
+  return new HttpError(
+    504,
+    `Option metadata request timed out after ${timeoutMs}ms.`,
+    {
+      code: "massive_options_request_timeout",
+      detail:
+        "Massive option metadata did not respond before the configured request budget.",
+    },
+  );
+}
+
 function throwIfOptionRequestAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw optionRequestAbortReason(signal);
   }
+}
+
+function runOptionRequestWithTimeout<T>(
+  input: { signal?: AbortSignal; timeoutMs?: number },
+  task: (signal?: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const timeoutMs =
+    typeof input.timeoutMs === "number" &&
+    Number.isFinite(input.timeoutMs) &&
+    input.timeoutMs > 0
+      ? Math.max(1, Math.floor(input.timeoutMs))
+      : null;
+  if (timeoutMs === null) {
+    return task(input.signal);
+  }
+  if (input.signal?.aborted) {
+    return Promise.reject(optionRequestAbortReason(input.signal));
+  }
+
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abortFromParent);
+    };
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const abortWith = (reason: unknown) => {
+      if (!controller.signal.aborted) {
+        controller.abort(reason);
+      }
+      finish(() => reject(reason));
+    };
+    const abortFromParent = () =>
+      abortWith(optionRequestAbortReason(input.signal));
+    const timeout = setTimeout(
+      () => abortWith(createOptionRequestTimeoutError(timeoutMs)),
+      timeoutMs,
+    );
+    timeout.unref?.();
+    input.signal?.addEventListener("abort", abortFromParent, { once: true });
+
+    Promise.resolve()
+      .then(() => task(controller.signal))
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+  });
 }
 
 function waitForOptionChainRetry(
@@ -15344,25 +15242,6 @@ async function getCachedIbkrOptionChainWithDebug(
     };
   }
 
-  if (
-    !cached &&
-    !normalizedInput.bypassBridgeBackoff &&
-    isBridgeWorkBackedOff("options")
-  ) {
-    return {
-      contracts: [],
-      debug: {
-        cacheStatus: "miss",
-        totalMs: Math.max(0, Date.now() - requestedAt),
-        upstreamMs: null,
-        stale: true,
-        degraded: true,
-        reason: "options_backoff",
-        backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
-      },
-    };
-  }
-
   if (inFlight) {
     try {
       const contracts = await inFlight;
@@ -15446,40 +15325,22 @@ function refreshOptionChainCache(
 
   const promise = (async () => {
     try {
-      const bridgeWorkOptions = {
-        bypassBackoff: input.bypassBridgeBackoff === true,
-        recordFailure: input.recordBridgeFailure !== false,
-        signal: input.signal,
-      };
-      const bridgeWorkCategory = input.bridgeWorkCategory ?? "options";
-      let ibkrValue = await runBridgeWork(
-        bridgeWorkCategory,
-        () => getIbkrClient().getOptionChain(input),
-        bridgeWorkOptions,
+      let value = await runOptionRequestWithTimeout(input, (signal) =>
+        fetchMassiveOptionChainContracts({ ...input, signal }),
       );
       const emptyRetryDelaysMs =
         input.emptyRetryDelaysMs ?? OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS;
-      if (!ibkrValue.length && shouldRetryEmptyOptionChain(input)) {
+      if (!value.length && shouldRetryEmptyOptionChain(input)) {
         for (const delayMs of emptyRetryDelaysMs) {
           await waitForOptionChainRetry(delayMs, input.signal);
-          ibkrValue = await runBridgeWork(
-            bridgeWorkCategory,
-            () => getIbkrClient().getOptionChain(input),
-            bridgeWorkOptions,
+          value = await runOptionRequestWithTimeout(input, (signal) =>
+            fetchMassiveOptionChainContracts({ ...input, signal }),
           );
-          if (ibkrValue.length) {
+          if (value.length) {
             break;
           }
         }
       }
-      const value =
-        input.quoteHydration === "metadata" &&
-        input.allowDelayedSnapshotHydration !== false
-          ? await hydrateOptionChainWithMassiveSnapshots({
-              request: input,
-              contracts: ibkrValue,
-            })
-          : ibkrValue;
       const settledAt = Date.now();
       if (value.length > 0) {
         const cacheWindows = resolveOptionChainCacheWindows(input);
@@ -15493,10 +15354,7 @@ function refreshOptionChainCache(
         });
         void persistDurableOptionChain({
           contracts: value,
-          source:
-            input.quoteHydration === "metadata"
-              ? "ibkr-metadata"
-              : "ibkr-snapshot",
+          source: "massive",
           asOf: new Date(settledAt),
         });
       } else if (!optionChainCache.has(key)) {
@@ -15684,27 +15542,6 @@ async function getCachedIbkrOptionExpirationsWithDebug(
     );
   }
 
-  if (
-    !cached &&
-    !input.bypassBridgeBackoff &&
-    isBridgeWorkBackedOff("options")
-  ) {
-    return (
-      durable ?? {
-        expirations: [],
-        debug: {
-          cacheStatus: "miss",
-          totalMs: Math.max(0, Date.now() - requestedAt),
-          upstreamMs: null,
-          stale: true,
-          degraded: true,
-          reason: "options_backoff",
-          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
-        },
-      }
-    );
-  }
-
   if (inFlight) {
     try {
       if (foregroundWaitMs !== null) {
@@ -15762,6 +15599,10 @@ async function getCachedIbkrOptionExpirationsWithDebug(
         };
       }
       if (isTransientOptionUpstreamError(error)) {
+        const backoffRemainingMs = getOptionUpstreamBackoffRemainingMs(
+          "expiration",
+          key,
+        );
         return {
           expirations: [],
           debug: {
@@ -15770,11 +15611,8 @@ async function getCachedIbkrOptionExpirationsWithDebug(
             upstreamMs: null,
             stale: true,
             degraded: true,
-            reason:
-              !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
-                ? "options_backoff"
-                : "options_upstream_failure",
-            backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+            reason: "options_upstream_failure",
+            backoffRemainingMs,
           },
         };
       }
@@ -15829,6 +15667,10 @@ async function getCachedIbkrOptionExpirationsWithDebug(
       };
     }
     if (isTransientOptionUpstreamError(error)) {
+      const backoffRemainingMs = getOptionUpstreamBackoffRemainingMs(
+        "expiration",
+        key,
+      );
       return {
         expirations: [],
         debug: {
@@ -15837,11 +15679,8 @@ async function getCachedIbkrOptionExpirationsWithDebug(
           upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
           stale: true,
           degraded: true,
-          reason:
-            !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
-              ? "options_backoff"
-              : "options_upstream_failure",
-          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+          reason: "options_upstream_failure",
+          backoffRemainingMs,
         },
       };
     }
@@ -15869,14 +15708,8 @@ function refreshOptionExpirationCache(
 
   const promise = (async () => {
     try {
-      const value = await runBridgeWork(
-        input.bridgeWorkCategory ?? "options",
-        () => getIbkrClient().getOptionExpirations(input),
-        {
-          bypassBackoff: input.bypassBridgeBackoff === true,
-          recordFailure: input.recordBridgeFailure !== false,
-          signal: input.signal,
-        },
+      const value = await runOptionRequestWithTimeout(input, (signal) =>
+        fetchMassiveOptionExpirationDates({ ...input, signal }),
       );
       const settledAt = Date.now();
       if (value.length > 0) {
@@ -15910,7 +15743,6 @@ export async function getOptionChainWithDebug(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -15956,7 +15788,7 @@ export async function getOptionChainWithDebug(input: {
       reason: optionChain.debug.reason,
       message:
         optionChain.debug.reason === "options_successful_empty"
-          ? "IBKR returned an empty option chain."
+          ? "Massive returned an empty option chain."
           : "Option chain is degraded or stale.",
     });
   }
@@ -15980,7 +15812,6 @@ export async function getOptionChain(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   timeoutMs?: number;
   emptyRetryDelaysMs?: readonly number[];
@@ -15999,7 +15830,6 @@ export async function batchOptionChains(input: {
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -16034,10 +15864,30 @@ export async function batchOptionChains(input: {
     contracts: IbkrOptionChainContracts;
     debug: RequestDebugMetadata;
     error: string | null;
+    pressureDeferred?: boolean;
   };
+  const buildPressureDeferredBatchResult = (
+    expirationDate: Date,
+  ): BatchOptionChainFetchResult => ({
+    expirationDate,
+    contracts: [],
+    error: null,
+    pressureDeferred: true,
+    debug: {
+      cacheStatus: "miss",
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: null,
+      degraded: true,
+      reason: "options_batch_deferred_pressure",
+    },
+  });
   const fetchBatchExpiration = async (
     expirationDate: Date,
   ): Promise<BatchOptionChainFetchResult> => {
+    if (shouldYieldOptionChainBatchForPressure()) {
+      return buildPressureDeferredBatchResult(expirationDate);
+    }
+
     try {
       throwIfOptionRequestAborted(input.signal);
       const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
@@ -16051,7 +15901,6 @@ export async function batchOptionChains(input: {
         quoteHydration: input.quoteHydration,
         allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
         recordBridgeFailure: input.recordBridgeFailure,
-        bridgeWorkCategory: input.bridgeWorkCategory,
         bypassBridgeBackoff: input.bypassBridgeBackoff,
         signal: input.signal,
         timeoutMs: input.timeoutMs,
@@ -16086,6 +15935,16 @@ export async function batchOptionChains(input: {
   const finalizeBatchResult = (
     entry: BatchOptionChainFetchResult,
   ): BatchOptionChainResult => {
+    if (entry.pressureDeferred) {
+      return {
+        expirationDate: entry.expirationDate,
+        status: "empty",
+        contracts: [],
+        error: null,
+        debug: entry.debug,
+      };
+    }
+
     if (entry.error) {
       return {
         expirationDate: entry.expirationDate,
@@ -16110,7 +15969,7 @@ export async function batchOptionChains(input: {
         underlying,
         expirationDate: entry.expirationDate,
         reason: resultDebug.reason ?? "options_successful_empty",
-        message: "IBKR returned an empty option-chain batch result.",
+        message: "Massive returned an empty option-chain batch result.",
       });
     }
 
@@ -16120,7 +15979,7 @@ export async function batchOptionChains(input: {
       contracts: entry.contracts,
       error: entry.contracts.length
         ? null
-        : "IBKR returned an empty option chain.",
+        : "Massive returned an empty option chain.",
       debug: resultDebug,
     };
   };
@@ -16132,16 +15991,27 @@ export async function batchOptionChains(input: {
   );
 
   for (const entry of fetchResults) {
-    if (entry.error || entry.contracts.length > 0) {
+    if (entry.error || entry.pressureDeferred || entry.contracts.length > 0) {
       continue;
     }
     for (const delayMs of input.emptyRetryDelaysMs ?? OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
+      if (shouldYieldOptionChainBatchForPressure()) {
+        const pressureDeferred = buildPressureDeferredBatchResult(
+          entry.expirationDate,
+        );
+        entry.contracts = pressureDeferred.contracts;
+        entry.debug = pressureDeferred.debug;
+        entry.error = pressureDeferred.error;
+        entry.pressureDeferred = true;
+        break;
+      }
       await waitForOptionChainRetry(delayMs, input.signal);
       const retry = await fetchBatchExpiration(entry.expirationDate);
       entry.contracts = retry.contracts;
       entry.debug = retry.debug;
       entry.error = retry.error;
-      if (entry.error || entry.contracts.length > 0) {
+      entry.pressureDeferred = retry.pressureDeferred;
+      if (entry.error || entry.pressureDeferred || entry.contracts.length > 0) {
         break;
       }
     }
@@ -16182,7 +16052,6 @@ export async function getOptionExpirationsWithDebug(input: {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   foregroundWaitMs?: number | null;
   signal?: AbortSignal;
@@ -16194,7 +16063,6 @@ export async function getOptionExpirationsWithDebug(input: {
     underlying: input.underlying,
     maxExpirations: input.maxExpirations,
     recordBridgeFailure: input.recordBridgeFailure,
-    bridgeWorkCategory: input.bridgeWorkCategory,
     bypassBridgeBackoff: input.bypassBridgeBackoff,
     foregroundWaitMs: input.foregroundWaitMs,
     signal: input.signal,
@@ -16257,7 +16125,7 @@ export async function getOptionExpirationsWithDebug(input: {
       reason: optionExpirations.debug.reason,
       message:
         optionExpirations.debug.reason === "option_expirations_successful_empty"
-          ? "IBKR returned no option expirations."
+          ? "Massive returned no option expirations."
           : "Option expirations are degraded or stale.",
     });
   }
@@ -16279,7 +16147,6 @@ export async function getOptionExpirations(input: {
   underlying: string;
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   bypassBridgeBackoff?: boolean;
   timeoutMs?: number;
 }): Promise<GetOptionExpirationsResult> {
@@ -16366,8 +16233,8 @@ export async function resolveOptionContractWithDebug(input: {
       errorMessage: providerContractId
         ? null
         : match
-          ? "IBKR returned the option contract without a provider contract id."
-          : "IBKR did not return a matching option contract for this expiration, side, and strike.",
+          ? "Massive returned the option contract without an OPRA ticker."
+          : "Massive did not return a matching option contract for this expiration, side, and strike.",
       debug: {
         ...debug,
         cacheStatus: debug.cacheStatus,
@@ -16438,20 +16305,13 @@ export async function getOptionChartBarsWithDebug(input: {
   const expirationDate = input.expirationDate;
   const strike = Number(input.strike);
   const right = input.right;
-  const providedOptionTicker = normalizeMassiveOptionTicker(input.optionTicker);
-  const skipBrokerContractResolution = Boolean(
+  const providedOptionTicker =
+    normalizeMassiveOptionTicker(input.optionTicker) ??
+    normalizeMassiveOptionTicker(input.providerContractId);
+  const skipMetadataResolution = Boolean(
     input.skipBrokerContractResolution && providedOptionTicker,
   );
-  const rawProvidedProviderContractId =
-    typeof input.providerContractId === "string"
-      ? input.providerContractId.trim()
-      : "";
-  const providedProviderContractId =
-    rawProvidedProviderContractId &&
-    rawProvidedProviderContractId !== "null" &&
-    rawProvidedProviderContractId !== "undefined"
-      ? rawProvidedProviderContractId
-      : null;
+  const providedProviderContractId = providedOptionTicker;
   const outsideRth = Boolean(input.outsideRth);
   const baseResult = {
     underlying,
@@ -16513,9 +16373,7 @@ export async function getOptionChartBarsWithDebug(input: {
         returnedCount: value.bars.length,
         degraded:
           debug.degraded ??
-          (value.dataSource !== "ibkr-history" ||
-            value.feedIssue ||
-            value.bars.length === 0),
+          (value.feedIssue || value.bars.length === 0),
         reason: debug.reason ?? value.emptyReason ?? null,
         stale: debug.stale,
         ageMs: debug.ageMs,
@@ -16643,34 +16501,6 @@ export async function getOptionChartBarsWithDebug(input: {
     );
   };
 
-  const referenceOptionTicker =
-    providedOptionTicker ??
-    buildMassiveOptionTicker({
-      underlying,
-      expirationDate,
-      strike,
-      right,
-    });
-  if (
-    massiveConfig &&
-    referenceOptionTicker &&
-    !(input.preferCursor && input.historyCursor) &&
-    shouldPreferReferenceOptionHistory({ to: input.to, nowMs: requestedAt })
-  ) {
-    try {
-      return await fetchReferenceOptionChartBars({
-        optionTicker: referenceOptionTicker,
-        feedIssue: false,
-        debugReason: "reference_option_history_preferred",
-      });
-    } catch (error) {
-      logger.debug(
-        { err: error, underlying, optionTicker: referenceOptionTicker },
-        "Reference option history preference failed; falling back to IBKR path",
-      );
-    }
-  }
-
   const resolveFromOptionChain = async () => {
     const chain = await getCachedIbkrOptionChainWithDebug({
       underlying,
@@ -16694,7 +16524,7 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   };
 
-  if (!providerContractId && !skipBrokerContractResolution) {
+  if (!providerContractId && !skipMetadataResolution) {
     try {
       await resolveFromOptionChain();
     } catch (error) {
@@ -16702,7 +16532,7 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   }
 
-  if (!providerContractId && !chainError && !skipBrokerContractResolution) {
+  if (!providerContractId && !chainError && !skipMetadataResolution) {
     const resolved = await resolveOptionContractWithDebug({
       underlying,
       expirationDate,
@@ -16716,51 +16546,9 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   }
 
-  let ibkrBarsResult: GetBarsResult | null = null;
-  let ibkrBarsDebug: RequestDebugMetadata | null = null;
-  let ibkrBarsError: unknown = null;
-  // Broker live edge: only ask IBKR for the most recent 30m of option bars and
-  // let Massive serve everything older (it is ~15m delayed; 30m leaves grace).
-  // shouldFetchMassiveOptionBarsForIbkrResult sees the original (older) input.from
-  // and so still pulls Massive to cover the pre-edge range, which the merge fills
-  // in behind the live IBKR bars.
-  const optionBrokerLiveEdgeFromMs = Date.now() - OPTION_BROKER_LIVE_EDGE_MS;
-  const optionBrokerWindowIntersectsLiveEdge =
-    (input.to?.getTime() ?? Date.now()) >= optionBrokerLiveEdgeFromMs;
-  const ibkrOptionFrom =
-    input.from && input.from.getTime() > optionBrokerLiveEdgeFromMs
-      ? input.from
-      : new Date(optionBrokerLiveEdgeFromMs);
-  if (providerContractId && optionBrokerWindowIntersectsLiveEdge) {
-    try {
-      const { debug, ...barsResult } = await getBarsWithDebug(
-        {
-          symbol: underlying,
-          timeframe: input.timeframe,
-          limit: input.limit,
-          from: ibkrOptionFrom,
-          to: input.to,
-          assetClass: "option",
-          providerContractId,
-          source: "midpoint",
-          outsideRth,
-          allowHistoricalSynthesis: false,
-          allowStudyFallback: false,
-        },
-        {
-          family: "option-chart-bars",
-          priority: 6,
-        },
-      );
-      ibkrBarsResult = barsResult;
-      ibkrBarsDebug = debug;
-    } catch (error) {
-      ibkrBarsError = error;
-    }
-  }
-
   const massiveOptionTicker =
     providedOptionTicker ??
+    normalizeMassiveOptionTicker(providerContractId) ??
     normalizeMassiveOptionTicker(contract?.ticker) ??
     buildMassiveOptionTicker({
       underlying,
@@ -16768,155 +16556,18 @@ export async function getOptionChartBarsWithDebug(input: {
       strike: contract?.strike ?? strike,
       right: contract?.right ?? right,
     });
-
-  if (ibkrBarsResult?.bars.length) {
-    const desiredOptionBars = Math.max(
-      input.limit ?? DEFAULT_BARS_LIMIT,
-      ibkrBarsResult.bars.length,
-    );
-    const shouldFetchMassiveBars = Boolean(
-      massiveConfig &&
-        massiveOptionTicker &&
-        shouldFetchMassiveOptionBarsForIbkrResult({
-          bars: ibkrBarsResult.bars,
-          timeframe: input.timeframe,
-          limit: input.limit,
-          from: input.from,
-          to: input.to,
-        }),
-    );
-    const massiveBarsResult = shouldFetchMassiveBars
-      ? await tryFetchOptionChartMassiveBars({
-          underlying,
-          expirationDate,
-          strike,
-          right,
-          optionTicker: massiveOptionTicker as string,
-          providerContractId,
-          timeframe: input.timeframe,
-          limit: desiredOptionBars,
-          from: input.from,
-          to: input.to,
-          historyCursor: input.historyCursor,
-          preferCursor: input.preferCursor,
-          outsideRth,
-          delayed: massiveOptionBarsDelayed,
-        })
-      : null;
-    const merged = massiveBarsResult
-      ? mergeIbkrAndMassiveOptionBars({
-          ibkrBars: ibkrBarsResult.bars,
-          massiveBars: massiveBarsResult.bars,
-          limit: desiredOptionBars,
-        })
-      : {
-          bars: ibkrBarsResult.bars.map(decorateIbkrHistoryBar),
-          gapFilled: false,
-        };
-    const bars = merged.bars;
-    const latestBar = getLatestBar(bars);
-    const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
-    const dataSource: OptionChartBarsDataSource = merged.gapFilled
-      ? "mixed-history"
-      : "ibkr-history";
-    const historySource = merged.gapFilled
-      ? "mixed-option-history"
-      : (ibkrBarsResult.historySource ?? "ibkr-history");
-    const historyPage = merged.gapFilled
-      ? buildBarsHistoryPage({
-          request: {
-            symbol: underlying,
-            timeframe: input.timeframe,
-            limit: input.limit,
-            from: input.from,
-            to: input.to,
-            assetClass: "option",
-            providerContractId,
-            outsideRth,
-            source: "midpoint",
-          },
-          bars,
-          provider: historySource,
-          exhaustedBefore:
-            massiveBarsResult?.cursorExhausted ??
-            ibkrBarsResult.historyPage.exhaustedBefore,
-          ...buildMassiveHistoryPageMetadata(
-            massiveBarsResult?.page,
-            massiveBarsResult?.cursorSignature,
-          ),
-        })
-      : ibkrBarsResult.historyPage;
-    const stale =
-      (ibkrBarsDebug as RequestDebugMetadata | null)?.stale ??
-      (chainDebug as RequestDebugMetadata | null)?.stale;
-    return finish(
-      {
-        ...baseResult,
-        ...ibkrBarsResult,
-        bars,
-        gapFilled: ibkrBarsResult.gapFilled || merged.gapFilled,
-        optionTicker: massiveOptionTicker,
-        contract,
-        providerContractId,
-        resolutionSource,
-        dataSource,
-        emptyReason: null,
-        feedIssue: false,
-        delayed: merged.gapFilled
-          ? bars.some((bar) => bar.delayed)
-          : ibkrBarsResult.delayed,
-        freshness: merged.gapFilled
-          ? normalizeFreshness({
-              freshness: latestBar?.freshness,
-              marketDataMode: latestBar?.marketDataMode,
-              delayed: latestBar?.delayed,
-            })
-          : ibkrBarsResult.freshness,
-        marketDataMode: merged.gapFilled
-          ? (latestBar?.marketDataMode ?? ibkrBarsResult.marketDataMode)
-          : ibkrBarsResult.marketDataMode,
-        dataUpdatedAt: merged.gapFilled
-          ? dataUpdatedAt
-          : ibkrBarsResult.dataUpdatedAt,
-        ageMs: merged.gapFilled
-          ? getAgeMs(dataUpdatedAt)
-          : ibkrBarsResult.ageMs,
-        historySource,
-        historyPage,
-      },
-      {
-        cacheStatus:
-          (ibkrBarsDebug as RequestDebugMetadata | null)?.cacheStatus ??
-          (chainDebug as RequestDebugMetadata | null)?.cacheStatus ??
-          "miss",
-        upstreamMs:
-          (ibkrBarsDebug as RequestDebugMetadata | null)?.upstreamMs ??
-          (chainDebug as RequestDebugMetadata | null)?.upstreamMs ??
-          null,
-        stale: stale,
-        ageMs:
-          (ibkrBarsDebug as RequestDebugMetadata | null)?.ageMs ??
-          (chainDebug as RequestDebugMetadata | null)?.ageMs,
-        degraded: Boolean(stale),
-        reason: (ibkrBarsDebug as RequestDebugMetadata | null)?.stale
-          ? "stale_ibkr_option_history_cache"
-          : (chainDebug as RequestDebugMetadata | null)?.stale
-            ? "stale_option_chain_cache"
-            : null,
-      },
-    );
+  if (!providerContractId && massiveOptionTicker) {
+    providerContractId = massiveOptionTicker;
+    if (resolutionSource === "none") {
+      resolutionSource = providedOptionTicker ? "provided" : "resolver";
+    }
   }
 
-  const feedIssue =
-    !skipBrokerContractResolution &&
-    (isIbkrOptionHistoryFeedIssue({
-      barsResult: ibkrBarsResult,
-      error: ibkrBarsError,
-    }) ||
-      Boolean(
-        !providerContractId &&
-          (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
-      ));
+  const feedIssue = Boolean(
+    !skipMetadataResolution &&
+      !contract &&
+      (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
+  );
 
   if (!massiveOptionTicker) {
     return finish(
@@ -16984,42 +16635,6 @@ export async function getHistoricalOptionTrades(input: {
   signal?: AbortSignal;
 }): Promise<OptionTradePrint[]> {
   return getMassiveClient().getOptionTradePrints(input);
-}
-
-export async function getMarketDepth(input: {
-  accountId?: string;
-  symbol: string;
-  assetClass?: "equity" | "option";
-  providerContractId?: string | null;
-  exchange?: string | null;
-}) {
-  const health = await getBridgeHealthForSession({
-    waitForInitialRefresh: false,
-    waitForStaleRefresh: false,
-  });
-  if (
-    !health ||
-    health.connected !== true ||
-    health.authenticated !== true ||
-    health.healthFresh === false
-  ) {
-    throw new HttpError(503, "IBKR market depth is unavailable.", {
-      code: "ibkr_market_depth_unavailable",
-      detail:
-        "Market depth requires a fresh authenticated IBKR bridge session. Massive realtime stock quotes remain available without IBKR.",
-    });
-  }
-
-  const client = getIbkrClient();
-  return {
-    depth: await client.getMarketDepth({
-      accountId: input.accountId,
-      symbol: normalizeSymbol(input.symbol),
-      assetClass: input.assetClass,
-      providerContractId: input.providerContractId,
-      exchange: input.exchange,
-    }),
-  };
 }
 
 function selectFlowScannerExpirationDates(input: {
@@ -17314,7 +16929,7 @@ function normalizeContractMarketDataMode(
 
 function applyHistoricalBarsToFlowScannerContract(
   candidate: IbkrOptionChainContracts[number],
-  barsResult: GetBarsResultWithDebug | null,
+  barsResult: Pick<GetBarsResult, "bars" | "freshness" | "marketDataMode"> | null,
 ): FlowScannerContract {
   const bars = barsResult?.bars ?? [];
   const latestBar = getLatestBar(bars);
@@ -17413,44 +17028,45 @@ async function hydrateFlowScannerContractsFromHistoricalBars(input: {
   let missingCount = 0;
   let errorCount = 0;
   let marketDataMode: string | null = null;
-  const priority = input.scanPhase === "manual" ? 6 : 4;
   const contracts = await mapWithConcurrency(
     input.candidates,
     OPTIONS_FLOW_HISTORICAL_CONCURRENCY,
     async (candidate) => {
-      const providerContractId = candidate.contract.providerContractId ?? null;
-      if (!providerContractId) {
+      const optionTicker =
+        normalizeMassiveOptionTicker(candidate.contract.ticker) ??
+        normalizeMassiveOptionTicker(candidate.contract.providerContractId) ??
+        buildMassiveOptionTicker({
+          underlying: candidate.contract.underlying || input.underlying,
+          expirationDate: candidate.contract.expirationDate,
+          strike: candidate.contract.strike,
+          right: candidate.contract.right,
+        });
+      if (!optionTicker) {
         missingCount += 1;
         return candidate;
       }
 
       try {
-        const barsResult = await getBarsWithDebug(
-          {
-            symbol: input.underlying,
-            timeframe: "1m",
-            limit: 5,
-            assetClass: "option",
-            providerContractId,
-            outsideRth: false,
-            source: "midpoint",
-            allowHistoricalSynthesis: false,
-            allowStudyFallback: false,
-          },
-          {
-            family: "option-flow-history",
-            priority,
-            signal: input.signal,
-          },
-        );
+        const barsResult = await getOptionChartBarsWithDebug({
+          underlying: candidate.contract.underlying || input.underlying,
+          expirationDate: candidate.contract.expirationDate,
+          strike: candidate.contract.strike,
+          right: candidate.contract.right,
+          optionTicker,
+          providerContractId: optionTicker,
+          skipBrokerContractResolution: true,
+          timeframe: "1m",
+          limit: 5,
+          outsideRth: false,
+        });
         if (barsResult.bars.length > 0) {
           returnedCount += 1;
           marketDataMode ??= barsResult.marketDataMode ?? null;
         } else {
           missingCount += 1;
-          if (barsResult.emptyReason === "broker-history-error") {
+          if (barsResult.emptyReason === "massive-history-error") {
             errorCount += 1;
-            firstError ??= "broker-history-error";
+            firstError ??= "massive-history-error";
           }
         }
         return applyHistoricalBarsToFlowScannerContract(candidate, barsResult);
@@ -18035,7 +17651,7 @@ export async function listFlowEvents(input: {
   const cacheKey = `${underlying}:${limit}:${
     unusualThreshold ?? "default"
   }:${flowEventsFilterCacheKey(filters)}:${
-    scannerRequest.allowMassiveFallback ? "massive-fallback" : "ibkr-only"
+    scannerRequest.allowMassiveFallback ? "massive-fallback" : "scanner-only"
   }:${scannerRequest.lineBudget}`;
   const requestedAt = Date.now();
   let cached = flowEventsCache.get(cacheKey);
@@ -18325,10 +17941,9 @@ async function listFlowEventsUncached(input: {
   expirationScanCount?: number;
   strikeCoverage?: OptionChainStrikeCoverage;
   bypassBridgeBackoff?: boolean;
-  bridgeWorkCategory?: BridgeWorkCategory;
   signal?: AbortSignal;
 }): Promise<FlowEventsResult> {
-  // Derive IBKR flow from option-chain snapshots. These are not consolidated
+  // Derive active-flow context from Massive option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
   // labels them as active/unusual contracts rather than verified sweeps.
   let contracts: FlowScannerContracts = [];
@@ -18351,8 +17966,9 @@ async function listFlowEventsUncached(input: {
   let ibkrAdmissionBridgeMismatchCount = 0;
   let ibkrMarketDataMode: string | null = null;
   let underlyingSpotPrice: number | null = null;
-  let underlyingSpotSource: "massive" | "ibkr" | null = null;
+  let underlyingSpotSource: "massive" | null = null;
   let massiveError: string | null = null;
+  let massiveFallbackUsed = false;
   const scanPhase = input.scanPhase ?? "manual";
   const expirationScanCount =
     Number.isFinite(input.expirationScanCount) &&
@@ -18385,12 +18001,11 @@ async function listFlowEventsUncached(input: {
     underlyingSpotSource,
   });
 
-  attemptedProviders.push("ibkr");
+  attemptedProviders.push("massive");
   try {
     const expirationsResult = await getCachedIbkrOptionExpirationsWithDebug({
       underlying: input.underlying,
       recordBridgeFailure: true,
-      bridgeWorkCategory: input.bridgeWorkCategory,
       bypassBridgeBackoff: input.bypassBridgeBackoff === true,
       timeoutMs: getOptionsFlowRuntimeConfig().scannerMetadataTimeoutMs,
       signal: input.signal,
@@ -18429,7 +18044,6 @@ async function listFlowEventsUncached(input: {
         quoteHydration: "metadata",
         allowDelayedSnapshotHydration: false,
         recordBridgeFailure: true,
-        bridgeWorkCategory: input.bridgeWorkCategory,
         bypassBridgeBackoff: input.bypassBridgeBackoff === true,
         timeoutMs: getOptionsFlowRuntimeConfig().scannerMetadataTimeoutMs,
         signal: input.signal,
@@ -18533,7 +18147,7 @@ async function listFlowEventsUncached(input: {
     }
   } catch (error) {
     ibkrError = getErrorMessage(error);
-    ibkrReason = "options_flow_ibkr_error";
+    ibkrReason = "options_flow_massive_error";
     ibkrStatus = "error";
     contracts = [];
   }
@@ -18568,13 +18182,12 @@ async function listFlowEventsUncached(input: {
   const ibkrUnderlyingPrice = readOptionChainUnderlyingPrice(contracts);
   if (ibkrUnderlyingPrice !== null) {
     underlyingSpotPrice = ibkrUnderlyingPrice;
-    underlyingSpotSource = "ibkr";
+    underlyingSpotSource = "massive";
   }
 
-  // IBKR snapshots now include OPRA volume (field 7762) and option open
-  // interest (field 7638), so flow events can rank by real traded premium.
-  // Require both a marked contract and non-zero day volume to filter out the
-  // inactive long tail.
+  // Massive snapshots include OPRA day volume and option open interest, so flow
+  // events can rank by real traded premium. Require both a marked contract and
+  // non-zero day volume to filter out the inactive long tail.
   const candidateEvents = qualifiedContracts.map((c) => {
     const mark = c.mark ?? 0;
     const mid = ((c.bid ?? 0) + (c.ask ?? 0)) / 2;
@@ -18652,7 +18265,7 @@ async function listFlowEventsUncached(input: {
     return {
       id: `${c.contract.ticker}-${occurredAt.getTime()}`,
       underlying: normalizeSymbol(c.contract.underlying),
-      provider: "ibkr" as const,
+      provider: "massive" as const,
       basis: "snapshot" as const,
       optionTicker: c.contract.ticker,
       providerContractId: c.contract.providerContractId ?? null,
@@ -18679,7 +18292,7 @@ async function listFlowEventsUncached(input: {
       distancePercent,
       confidence: "snapshot_activity" as const,
       sourceBasis: "snapshot_activity" as const,
-      exchange: "IBKR",
+      exchange: "Massive",
       side,
       sentiment,
       tradeConditions: [] as string[],
@@ -18708,7 +18321,7 @@ async function listFlowEventsUncached(input: {
     return {
       events,
       source: flowSource({
-        provider: "ibkr",
+        provider: "massive",
         status: "live",
         attemptedProviders,
         unusualThreshold: input.unusualThreshold ?? 1,
@@ -18719,12 +18332,8 @@ async function listFlowEventsUncached(input: {
     };
   }
 
-  if (
-    input.allowMassiveFallback === true &&
-    getMassiveRuntimeConfig() &&
-    !attemptedProviders.includes("massive")
-  ) {
-    attemptedProviders.push("massive");
+  if (input.allowMassiveFallback === true && getMassiveRuntimeConfig()) {
+    massiveFallbackUsed = true;
     try {
       const massiveCandidateLimit = hasNarrowFlowFilters(input.filters)
         ? Math.min(
@@ -18776,9 +18385,9 @@ async function listFlowEventsUncached(input: {
   return {
     events: [],
     source: flowSource({
-      provider: ibkrLoadedEmptySnapshot ? "ibkr" : "none",
+      provider: ibkrLoadedEmptySnapshot ? "massive" : "none",
       status: errorMessage ? "error" : "empty",
-      fallbackUsed: attemptedProviders.includes("massive"),
+      fallbackUsed: massiveFallbackUsed,
       attemptedProviders,
       errorMessage,
       unusualThreshold: input.unusualThreshold ?? 1,

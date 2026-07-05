@@ -34,15 +34,15 @@ test("deactivation stepper keeps command label while shutdown is running", () =>
   assert.equal(model.activity?.id, "desktop");
 });
 
-test("detach bridge stepper does not claim Gateway deactivation", () => {
+test("disconnect broker stepper does not claim Gateway deactivation", () => {
   const model = buildIbkrDeactivateOperationStepper({
     variant: "clear-state",
     detach: "complete",
     refresh: "complete",
-    message: "IBKR bridge detached.",
+    message: "IBKR broker disconnected.",
   });
 
-  assert.equal(model.title, "IBKR Bridge Detached");
+  assert.equal(model.title, "IBKR Broker Disconnected");
   assert.equal(model.operation, "detach-bridge");
   assert.deepEqual(
     model.steps.map((step) => step.id),

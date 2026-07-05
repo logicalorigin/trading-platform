@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -9,6 +10,8 @@ import {
   resolveAttentionSeverity,
   resolveHeaderScanWave,
 } from "./AlgoLivePage.jsx";
+
+const source = readFileSync(new URL("./AlgoLivePage.jsx", import.meta.url), "utf8");
 
 test("algo header does not show warning for info-only options session pause", () => {
   const attentionSeverity = resolveAttentionSeverity([
@@ -130,6 +133,20 @@ test("signal cycle display can follow the STA table snapshot without changing sc
   assert.equal(stages[1].count, 191);
   assert.equal(stages[1].detail, "191 table-visible STA rows");
   assert.equal(stages[2].count, 12);
+});
+
+test("AlgoLivePage keeps hooks before the empty-state return", () => {
+  const emptyStateReturnIndex = source.indexOf("if (showEmptyOperationsState)");
+  assert.ok(emptyStateReturnIndex > 0, "empty-state return exists");
+  const beforeEmptyReturn = source.slice(0, emptyStateReturnIndex);
+  const afterEmptyReturn = source.slice(emptyStateReturnIndex);
+
+  assert.match(beforeEmptyReturn, /const effectiveMtfAlignmentConfig = useMemo/);
+  assert.match(beforeEmptyReturn, /const cockpitStageItemsForDisplay = useMemo/);
+  assert.match(beforeEmptyReturn, /const liveIndicatorMetrics = useMemo/);
+  assert.doesNotMatch(afterEmptyReturn, /const effectiveMtfAlignmentConfig = useMemo/);
+  assert.doesNotMatch(afterEmptyReturn, /const cockpitStageItemsForDisplay = useMemo/);
+  assert.doesNotMatch(afterEmptyReturn, /const liveIndicatorMetrics = useMemo/);
 });
 
 test("STA MTF config uses the configured draft timeframe set for table and KPI consumers", () => {

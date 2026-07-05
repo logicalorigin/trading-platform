@@ -51,13 +51,15 @@ export const normalizeMarketGridTrackPixels = (
   );
 };
 
-export const readMarketGridTrackSession = () => {
+export const readMarketGridTrackSession = (
+  sessionKey = MARKET_GRID_TRACK_SESSION_KEY,
+) => {
   try {
     if (typeof window === "undefined" || !window.sessionStorage) {
       return {};
     }
 
-    const raw = window.sessionStorage.getItem(MARKET_GRID_TRACK_SESSION_KEY);
+    const raw = window.sessionStorage.getItem(sessionKey);
     if (raw) {
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : {};
@@ -69,11 +71,14 @@ export const readMarketGridTrackSession = () => {
   }
 };
 
-export const writeMarketGridTrackSession = (nextState) => {
+export const writeMarketGridTrackSession = (
+  nextState,
+  sessionKey = MARKET_GRID_TRACK_SESSION_KEY,
+) => {
   try {
     if (typeof window === "undefined" || !window.sessionStorage) return;
     window.sessionStorage.setItem(
-      MARKET_GRID_TRACK_SESSION_KEY,
+      sessionKey,
       JSON.stringify(nextState || {}),
     );
     window.sessionStorage.removeItem(LEGACY_MARKET_GRID_CARD_SIZE_SESSION_KEY);

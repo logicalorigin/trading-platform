@@ -6,7 +6,10 @@ import {
   useGetQuoteSnapshots,
 } from "@workspace/api-client-react";
 import { useUserPreferences } from "../preferences/useUserPreferences";
-import { useAccountSelection } from "../platform/platformContexts.jsx";
+import {
+  useAccountSelection,
+  useMarketDataProviderConfiguration,
+} from "../platform/platformContexts.jsx";
 import { useAccountSection } from "../platform/useAccountSection.js";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
 import {
@@ -71,6 +74,10 @@ export const useChartPositionOverlays = ({
 } => {
   const { preferences } = useUserPreferences();
   const { selectedAccountId } = useAccountSelection();
+  const {
+    massiveStockRealtimeConfigured,
+    marketDataProviderConfigurationReady,
+  } = useMarketDataProviderConfiguration();
   const [accountSection] = useAccountSection();
   const surfaceKind = chartContext?.surfaceKind ?? null;
   const globalEnabled = preferences.trading.showPositionLines;
@@ -158,6 +165,9 @@ export const useChartPositionOverlays = ({
   const runtimeMark = finiteNumber(
     runtimeQuote?.price ?? runtimeQuote?.last ?? runtimeQuote?.mark,
   );
+  const quoteSnapshotFallbackEnabled = Boolean(
+    marketDataProviderConfigurationReady && !massiveStockRealtimeConfigured,
+  );
 
   const quoteQuery = useGetQuoteSnapshots(
     { symbols: symbol || "__none__" },
@@ -167,7 +177,13 @@ export const useChartPositionOverlays = ({
           "/api/quotes/snapshot",
           { symbols: symbol || "__none__" },
         ],
-        enabled: Boolean(enabled && !isOption && symbol && runtimeMark == null),
+        enabled: Boolean(
+          quoteSnapshotFallbackEnabled &&
+            enabled &&
+            !isOption &&
+            symbol &&
+            runtimeMark == null,
+        ),
         staleTime: 60_000,
         refetchInterval: false,
         retry: false,

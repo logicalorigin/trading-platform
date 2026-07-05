@@ -48,6 +48,14 @@ const normalizeSignalDirection = (value) => {
   return normalized === "buy" || normalized === "sell" ? normalized : "";
 };
 
+const normalizeHydrationSource = (state) =>
+  String(state?.displayHydrationSource || "").trim().toLowerCase();
+
+const isLiveHydrationSource = (state) => {
+  const source = normalizeHydrationSource(state);
+  return source === "stream-delta" || source === "stream-bootstrap";
+};
+
 export const readSignalMatrixStateActivityMs = (state) =>
   Math.max(
     timestampMs(state?.currentSignalAt),
@@ -143,16 +151,40 @@ export const preferSignalMatrixCellState = (current, candidate) => {
     return candidateSignalMs > currentSignalMs ? candidate : current;
   }
 
+  const currentRank = signalMatrixStateRank(current);
+  const candidateRank = signalMatrixStateRank(candidate);
+  const currentRenderable = currentRank >= 3;
+  const candidateRenderable = candidateRank >= 3;
+  const currentLive = isLiveHydrationSource(current);
+  const candidateLive = isLiveHydrationSource(candidate);
+
+  if (
+    currentRenderable &&
+    !candidateRenderable &&
+    !candidateLive
+  ) {
+    return current;
+  }
+  if (
+    candidateRenderable &&
+    !currentRenderable &&
+    !currentLive
+  ) {
+    return candidate;
+  }
+
   const currentActivity = readSignalMatrixStateActivityMs(current);
   const candidateActivity = readSignalMatrixStateActivityMs(candidate);
   if (candidateActivity !== currentActivity) {
     return candidateActivity > currentActivity ? candidate : current;
   }
 
-  const currentRank = signalMatrixStateRank(current);
-  const candidateRank = signalMatrixStateRank(candidate);
   if (candidateRank !== currentRank) {
     return candidateRank > currentRank ? candidate : current;
+  }
+
+  if (currentLive !== candidateLive) {
+    return candidateLive ? candidate : current;
   }
 
   return equivalentSignalMatrixCellState(current, candidate) ? current : candidate;

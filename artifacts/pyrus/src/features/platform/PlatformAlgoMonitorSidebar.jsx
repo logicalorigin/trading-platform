@@ -36,6 +36,7 @@ import {
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
+  GLOW,
   MISSING_VALUE,
   RADII,
   T,
@@ -61,6 +62,7 @@ import {
   resolveSignalScoreBreakdown,
   resolveStableStaActionSnapshot,
   normalizeSignalOptionsMtfTimeframes,
+  staRowPassesMtfAlignment,
   isMarketIdleSignalRecord,
   signalActionLabel,
   signalOptionsActionColor,
@@ -82,6 +84,7 @@ import {
 } from "./algoMonitorFreshness";
 import {
   useAlgoStaExecutionTimeframe,
+  useAlgoStaMtfAlignmentConfig,
   useAlgoStaMtfTimeframes,
 } from "./algoStaExecutionTimeframeStore.js";
 import { useAlgoDeploymentFocus } from "./algoDeploymentFocusStore.js";
@@ -253,6 +256,9 @@ const signalTimestampMs = (signal) =>
 const rowActivityTimestampMs = (row) =>
   Math.max(
     signalTimestampMs(row.signal),
+    timestampMs(row.signal?.latestBarAt),
+    timestampMs(row.signal?.updatedAt),
+    timestampMs(row.signal?.lastEvaluatedAt),
     timestampMs(row.candidate?.signalAt),
     timestampMs(row.candidate?.updatedAt),
     latestTimelineMs(row.candidate),
@@ -394,7 +400,7 @@ const signalActionStatusMeta = (signal, candidate, blocker) => {
       normalized.includes("filled") ||
       normalized.includes("available")
     ) {
-      return { label, tone: CSS_COLOR.green, Icon: CheckCircle2 };
+      return { label, tone: CSS_COLOR.green, Icon: CheckCircle2, ready: true };
     }
     return {
       label,
@@ -475,6 +481,19 @@ export const buildAlgoMonitorStaSignalRows = ({
     signalActionTimeframes,
     universeSymbols,
   });
+
+export const filterAlgoMonitorStaSignalRowsForTable = ({
+  signals = [],
+  signalMatrixBySymbol = {},
+  mtfAlignmentConfig = null,
+} = {}) =>
+  (Array.isArray(signals) ? signals : []).filter((signal) =>
+    staRowPassesMtfAlignment(
+      { signal },
+      signalMatrixBySymbol,
+      mtfAlignmentConfig,
+    ),
+  );
 
 export const resolveAlgoMonitorActionSignalTimeframes = ({
   signalActionTimeframe = "",
@@ -608,6 +627,9 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
           lineHeight: 1,
           overflow: "hidden",
           whiteSpace: "nowrap",
+          ...(statusMeta.ready
+            ? { "--ra-glow-tone": tone, boxShadow: GLOW.sm }
+            : null),
         }}
       >
         <VerdictGlyph
@@ -668,6 +690,7 @@ const SignalActionMetaCell = ({
       {label}
     </span>
     <span
+      title={typeof value === "string" ? value : undefined}
       style={{
         minWidth: 0,
         color: tone,
@@ -697,7 +720,7 @@ const SignalActionRow = ({
     activityMs > 0
       ? formatRelativeTimeShort(new Date(activityMs).toISOString())
       : MISSING_VALUE;
-  const setupDetail = signalActionSetupDetail(candidate) || "Candidate waiting on scan";
+  const setupDetail = signalActionSetupDetail(candidate) || "Awaiting scan";
   const tooltipDetail = [
     activityMs > 0 ? activityLabel : null,
     setupDetail,
@@ -719,12 +742,14 @@ const SignalActionRow = ({
     signal.timeframe,
     candidate.timeframe,
     asRecord(candidate.signal).timeframe,
+    Array.isArray(timeframes) ? timeframes[0] : null,
+    DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe,
   );
   const primarySignalState = signalPrimaryStateForMatrix(signal);
   const resolvedSignalStatesByTimeframe = hydrateSignalMatrixProfileTimeframe({
     matrixStatesByTimeframe: signalStatesByTimeframe || {},
     primaryState: primarySignalState,
-    profileTimeframe: signal.timeframe || "5m",
+    profileTimeframe: signalTimeframe,
     includePrimaryFallback: false,
   });
 
@@ -776,17 +801,17 @@ const SignalActionRow = ({
             <StrategyTag candidate={candidate} signal={signal} />
             <span
               style={{
+                flexShrink: 0,
                 color: CSS_COLOR.text,
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.medium,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
               }}
             >
               {symbol || MISSING_VALUE}
             </span>
             <span
+              title={actionLabel}
               style={{
                 minWidth: 0,
                 color: direction.tone,
@@ -803,7 +828,9 @@ const SignalActionRow = ({
           <span
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(44px, 0.7fr) minmax(58px, 1fr) minmax(58px, 1fr)",
+              // Score holds a 4-5 char value ("32.8".."100.0") + the longest label,
+              // so it needs more room than TF/Age (whose "1m"/"1d" values leave slack).
+              gridTemplateColumns: "minmax(52px, 0.6fr) minmax(52px, 0.8fr) minmax(72px, 1.3fr)",
               gap: sp(3),
               minWidth: 0,
             }}
@@ -845,6 +872,7 @@ const SignalActionRow = ({
               style={{ minWidth: dim(36), gap: sp(4), flex: "0 0 auto" }}
             />
             <span
+              title={setupDetail}
               style={{
                 minWidth: 0,
                 overflow: "hidden",
@@ -1118,6 +1146,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   isVisible = true,
   dataEnabled = isVisible,
   externalStreamFreshness = null,
+  realtimeStreamGateReason = null,
   environment = "shadow",
   signalMatrixStates = [],
   signalActionTimeframe = "",
@@ -1162,6 +1191,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     Number.isFinite(value) ? formatPct(value, digits) : MISSING_VALUE;
   const activeStaExecutionTimeframe = useAlgoStaExecutionTimeframe();
   const activeStaMtfTimeframes = useAlgoStaMtfTimeframes();
+  const activeStaMtfAlignmentConfig = useAlgoStaMtfAlignmentConfig();
   const externalStreamHydratesDeployment = isAlgoStreamFreshnessForDeployment(
     externalStreamFreshness,
     deploymentId,
@@ -1171,7 +1201,10 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     mode: focusedDeployment?.mode || mode,
     eventLimit: 20,
     enabled: Boolean(
-      queryEnabled && deploymentId && !externalStreamHydratesDeployment,
+      queryEnabled &&
+        deploymentId &&
+        !externalStreamHydratesDeployment &&
+        !realtimeStreamGateReason,
     ),
   });
   const streamFreshness = externalStreamHydratesDeployment
@@ -1320,21 +1353,52 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       signalMatrixStates,
     ],
   );
-  const sidebarSq = useMemo(
-    () => buildSignalIndicatorMetrics(staSignalRows),
-    [staSignalRows],
-  );
-  const sidebarSqHasSignals = sidebarSq.signalCount > 0;
-  const signalActionRows = useMemo(() => {
-    return buildAlgoMonitorSignalActionRows({
-      signals: staSignalRows,
-      candidates: signalOptionsCandidates,
-    });
-  }, [signalOptionsCandidates, staSignalRows]);
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates, displaySignalTimeframes),
     [displaySignalTimeframes, signalMatrixStates],
   );
+  const sidebarMtfAlignmentConfig = useMemo(() => {
+    const source =
+      activeStaMtfAlignmentConfig ??
+      automationState?.profile?.entryGate?.mtfAlignment ??
+      focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment ??
+      null;
+    const hasLiveMtfSelection =
+      Array.isArray(activeStaMtfTimeframes) && activeStaMtfTimeframes.length > 0;
+    if (!source && !hasLiveMtfSelection) return null;
+    return {
+      ...(source || {}),
+      timeframes: displaySignalTimeframes,
+      requiredCount: Math.max(1, displaySignalTimeframes.length),
+      enabled: source?.enabled !== false,
+    };
+  }, [
+    activeStaMtfAlignmentConfig,
+    activeStaMtfTimeframes,
+    automationState?.profile?.entryGate?.mtfAlignment,
+    displaySignalTimeframes,
+    focusedDeployment?.config?.signalOptions?.entryGate?.mtfAlignment,
+  ]);
+  const staTableSignalRows = useMemo(
+    () =>
+      filterAlgoMonitorStaSignalRowsForTable({
+        signals: staSignalRows,
+        signalMatrixBySymbol,
+        mtfAlignmentConfig: sidebarMtfAlignmentConfig,
+      }),
+    [signalMatrixBySymbol, sidebarMtfAlignmentConfig, staSignalRows],
+  );
+  const sidebarSq = useMemo(
+    () => buildSignalIndicatorMetrics(staTableSignalRows),
+    [staTableSignalRows],
+  );
+  const sidebarSqHasSignals = sidebarSq.signalCount > 0;
+  const signalActionRows = useMemo(() => {
+    return buildAlgoMonitorSignalActionRows({
+      signals: staTableSignalRows,
+      candidates: signalOptionsCandidates,
+    });
+  }, [signalOptionsCandidates, staTableSignalRows]);
   const signalMatrixHydrationSplit = useMemo(
     () =>
       splitAlgoMonitorSignalRowsByMatrixHydration({
@@ -1387,7 +1451,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   });
   const latestEventTime = latestEvent?.occurredAt
     ? formatRelativeTimeShort(latestEvent.occurredAt)
-    : "no execution events";
+    : "no events";
   const recordDetail = [
     winRate != null ? `${formatPctValue(winRate, 0)} win` : null,
     profitFactor != null ? `PF ${profitFactor.toFixed(2)}` : null,
@@ -1431,7 +1495,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         {
           label: "Exposure",
           value: formatMoneyValue(openPremium, 0),
-          detail: `${openSymbols}/${maxOpenSymbols ?? "?"} symbols`,
+          detail: `${openSymbols}/${maxOpenSymbols ?? "?"} syms`,
           tone: openPremium != null && openPremium > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec,
           icon: Wallet,
         },
@@ -1615,11 +1679,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
                   ))}
                 </select>
               ) : (
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+                <span title={focusedDeploymentName} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
                   {focusedDeploymentName}
                 </span>
               )}
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              <span title={`${String(focusedDeployment?.mode || mode).toUpperCase()} · ${focusedDeployment?.providerAccountId || "shadow"}`} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
                 {String(focusedDeployment?.mode || mode).toUpperCase()} · {focusedDeployment?.providerAccountId || "shadow"}
               </span>
             </div>

@@ -6,6 +6,11 @@ import { pool } from "@workspace/db";
 import { __signalMonitorInternalsForTests } from "./signal-monitor";
 
 const evaluatedAt = new Date("2026-06-09T15:00:00.000Z");
+// Pin trading-day semantics: blocker assertions (signal_too_old/data_stale)
+// must not flip to market_closed when the suite runs on a holiday/weekend.
+__signalMonitorInternalsForTests.setSignalMonitorQuietMarketSessionNowForTests(
+  false,
+);
 const routeSource = readFileSync(
   new URL("../routes/signal-monitor.ts", import.meta.url),
   "utf8",
@@ -88,6 +93,47 @@ test("signal matrix stream status uses a source bootstrap state, not fallback", 
   assert.match(statusTypeBlock, /"bootstrap"/);
   assert.match(statusBlock, /const state = available \? "open" : "unavailable";/);
   assert.match(statusBlock, /sourceState/);
+});
+
+test("signal matrix stream coverage avoids full aggregate diagnostics on delta flushes", () => {
+  const coverageStart = serviceSource.indexOf(
+    "export function buildSignalMonitorMatrixStreamCoverage",
+  );
+  const coverageEnd = serviceSource.indexOf(
+    "export function buildSignalMonitorMatrixStreamBootstrapEvent",
+    coverageStart,
+  );
+  assert.notEqual(coverageStart, -1);
+  assert.notEqual(coverageEnd, -1);
+  const coverageBlock = serviceSource.slice(coverageStart, coverageEnd);
+
+  assert.match(coverageBlock, /getSignalMonitorMatrixStreamCoverageStatus\(\)/);
+  assert.doesNotMatch(coverageBlock, /getSignalMonitorMatrixStreamStatus\(/);
+  assert.doesNotMatch(coverageBlock, /getStockAggregateStreamDiagnostics\(/);
+});
+
+test("signal matrix coverage-status helper restores delayed semantics without full diagnostics", () => {
+  const helperStart = serviceSource.indexOf(
+    "function getSignalMonitorMatrixStreamCoverageStatus",
+  );
+  const helperEnd = serviceSource.indexOf(
+    "export function buildSignalMonitorMatrixStreamCoverage",
+    helperStart,
+  );
+  assert.notEqual(helperStart, -1);
+  assert.notEqual(helperEnd, -1);
+  const helperBlock = serviceSource.slice(helperStart, helperEnd);
+
+  // Perf win preserved: the coverage path must not fall back to the full
+  // diagnostics/status helpers to derive delayed-ness.
+  assert.doesNotMatch(helperBlock, /getSignalMonitorMatrixStreamStatus\(/);
+  assert.doesNotMatch(helperBlock, /getStockAggregateStreamDiagnostics\(/);
+  // Uses the O(1) active-source accessor instead.
+  assert.match(helperBlock, /getActiveStockAggregateStreamSource\(\)/);
+  // Restored semantics: delayed when EITHER the preferred source or the active
+  // provider is the delayed websocket feed.
+  assert.match(helperBlock, /source === "massive-delayed-websocket"/);
+  assert.match(helperBlock, /activeProvider === "massive-delayed-websocket"/);
 });
 
 test("signal matrix persistence failures update DB fallback diagnostics", () => {
@@ -226,6 +272,40 @@ test("signal matrix stream scope treats exact cells as authoritative", () => {
     { symbol: "AAPL", timeframe: "1m" },
     { symbol: "AAPL", timeframe: "5m" },
   ]);
+});
+
+test("signal matrix stream scope indexes exact-cell timeframes by symbol", () => {
+  const scope =
+    __signalMonitorInternalsForTests.normalizeSignalMonitorMatrixStreamScope({
+      environment: "shadow",
+      cells: [
+        { symbol: "aapl", timeframe: "5m" },
+        { symbol: "AAPL", timeframe: "1m" },
+        { symbol: "MSFT", timeframe: "15m" },
+      ] as never,
+    });
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.signalMonitorMatrixStreamTimeframesForSymbol(
+      scope,
+      "aapl",
+    ),
+    ["1m", "5m"],
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.signalMonitorMatrixStreamTimeframesForSymbol(
+      scope,
+      "MSFT",
+    ),
+    ["15m"],
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.signalMonitorMatrixStreamTimeframesForSymbol(
+      scope,
+      "TSLA",
+    ),
+    [],
+  );
 });
 
 test("signal matrix stream scope resolves profile universe when no explicit symbols are supplied", async () => {

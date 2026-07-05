@@ -59,9 +59,6 @@ import {
   buildTickerFlowFromEvents,
 } from "../features/flow/flowAnalytics";
 import { flowProviderColor } from "../features/flow/flowPresentation";
-import {
-  bridgeRuntimeMessage,
-} from "../features/platform/bridgeRuntimeModel";
 import { flowScannerModeUsesMarketUniverse } from "../features/platform/marketFlowScannerConfig";
 import { ensureTradeTickerInfo } from "../features/platform/runtimeTickerStore";
 import { normalizeTickerSymbol } from "../features/platform/tickerIdentity";
@@ -114,6 +111,7 @@ import {
   joinMotionClasses,
   motionRowStyle,
   motionVars,
+  useListMotionKeys,
 } from "../lib/motion";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import {
@@ -2331,6 +2329,16 @@ const FlowOverviewPanel = ({
   }, [filtered, showDeferredPanels]);
 
   const visibleFlowRows = filtered.slice(0, rowsPerPage);
+  // Item 13, D4 — one-shot directional row flash (8% buy/sell wash) when a new
+  // print lands on the tape. Keyed by event id; only freshly-arrived rows flash.
+  const flowTapeMotionKeys = useListMotionKeys(visibleFlowRows);
+  const newFlowTapeIds = useMemo(
+    () =>
+      new Set(
+        flowTapeMotionKeys.filter((entry) => entry.isNew).map((entry) => entry.key),
+      ),
+    [flowTapeMotionKeys],
+  );
   const denseRows = density === "compact";
   const orderedOptionalColumns = columnOrder
     .map((columnId) => FLOW_COLUMN_BY_ID.get(columnId))
@@ -2493,23 +2501,8 @@ const FlowOverviewPanel = ({
     [dteBuckets],
   );
 
-  const ibkrLoginRequired =
-    Boolean(session?.configured?.ibkr) &&
-    !session?.ibkrBridge?.authenticated &&
-    !providerSummary.providers.includes("massive");
-  const flowDisplayLabel =
-    !hasLiveFlow && ibkrLoginRequired
-      ? "IBKR login required"
-      : providerSummary.label === "IBKR snapshot live" &&
-          session?.ibkrBridge?.liveMarketDataAvailable === false
-        ? "IBKR delayed"
-        : providerSummary.label;
-  const flowDisplayColor =
-    !hasLiveFlow && ibkrLoginRequired
-      ? CSS_COLOR.amber
-      : flowDisplayLabel === "IBKR delayed"
-        ? CSS_COLOR.amber
-        : providerSummary.color;
+  const flowDisplayLabel = providerSummary.label;
+  const flowDisplayColor = providerSummary.color;
   const displayableFlowError = getDisplayableFlowError(providerSummary);
   const feedStateLabel = (() => {
     if (livePaused) return "Paused";
@@ -2532,21 +2525,19 @@ const FlowOverviewPanel = ({
   const emptyFlowDetail =
     flowStatus === "loading"
       ? "Waiting on current options activity snapshots for the tracked symbols."
-      : ibkrLoginRequired
-        ? bridgeRuntimeMessage(session)
-        : displayableFlowError
+      : displayableFlowError
           ? displayableFlowError
           : flowScannerSessionQuiet
             ? "Regular options flow is quiet outside the active market session."
             : providerSummary?.coverage?.coverageHealth === "lagging"
               ? "Broad scanner coverage is behind the active-session target."
             : providerSummary.fallbackUsed
-              ? "IBKR returned no active snapshot flow and the Massive trade fallback was empty."
+              ? "Massive returned no active snapshot flow and the trade fallback was empty."
               : providerSummaryHasTransientFlowState(providerSummary)
-                ? "The scanner is rotating through the broad universe; the latest transient bridge response did not produce a completed flow snapshot."
+                ? "The scanner is rotating through the broad universe; the latest transient scanner response did not produce a completed flow snapshot."
                 : flowScannerCoverageActive
                   ? "The scanner is active, but the latest hydrated batch did not contain prints that match the current scanner settings."
-                : "IBKR returned no active snapshot flow for the tracked symbols.";
+                : "Massive returned no active snapshot flow for the tracked symbols.";
   const flowDataIssues = combineDataIssues(
     collectDataIssuesFromRecord(
       {
@@ -3139,7 +3130,7 @@ const FlowOverviewPanel = ({
                 alignItems: "center",
                 gap: sp(2),
                 padding: sp("0px 4px"),
-                borderRadius: dim(2),
+                borderRadius: dim(RADII.xs),
                 border: `1px solid ${cssColorMix(CSS_COLOR.cyan, 25)}`,
                 background: `${cssColorMix(CSS_COLOR.cyan, 8)}`,
                 color: CSS_COLOR.cyan,
@@ -3275,7 +3266,7 @@ const FlowOverviewPanel = ({
                   width: dim(4),
                   height: dim(9),
                   transform: "translateX(-50%)",
-                  borderRadius: dim(1),
+                  borderRadius: dim(RADII.xs),
                   background: fillSpreadMeta.color,
                   boxShadow: `0 0 0 1px ${CSS_COLOR.bg0}`,
                 }}
@@ -3639,10 +3630,19 @@ const FlowOverviewPanel = ({
         : pinned || event.golden
           ? CSS_COLOR.amber
           : executionMeta.color;
+      const isNewRow = newFlowTapeIds.has(event.id);
+      const rowFlashClass = isNewRow
+        ? event.side === "BUY"
+          ? "ra-row-flash-buy"
+          : event.side === "SELL"
+            ? "ra-row-flash-sell"
+            : null
+        : null;
       return {
         className: joinMotionClasses(
           "ra-interactive",
           (selected || pinned) && "ra-focus-rail",
+          rowFlashClass,
         ),
         onClick: () =>
           setSelectedEvt((previous) =>
@@ -3686,7 +3686,7 @@ const FlowOverviewPanel = ({
         },
       };
     },
-    [denseRows, onJumpToTrade, pinnedEventId, selectedEvt?.id],
+    [denseRows, newFlowTapeIds, onJumpToTrade, pinnedEventId, selectedEvt?.id],
   );
 
   const filterPanel = (
@@ -3875,7 +3875,7 @@ const FlowOverviewPanel = ({
                   alignItems: "center",
                   gap: sp(3),
                   padding: sp("3px 7px"),
-                  borderRadius: dim(3),
+                  borderRadius: dim(RADII.xs),
                   border: `1px solid ${
                     activeScanId === scan.id ? CSS_COLOR.accent : CSS_COLOR.border
                   }`,
@@ -4202,7 +4202,7 @@ const FlowOverviewPanel = ({
             <span
               style={{
                 ...mobileChipStyle(cpColor, { fill: true, strong: true }),
-                borderRadius: dim(3),
+                borderRadius: dim(RADII.xs),
                 maxWidth: "46vw",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -4463,6 +4463,69 @@ const FlowOverviewPanel = ({
       ) : null}
     </div>
   );
+  const flowTapeLoading = flowStatus === "loading" && !flowEvents.length;
+  const clearFlowTapeFilters = () =>
+    updateFlowTapeFilters({
+      filter: "all",
+      minPrem: 0,
+      includeQuery: "",
+      excludeQuery: "",
+      symbol: null,
+    });
+  const flowTapeLoadingSkeleton = (
+    <div
+      aria-hidden="true"
+      data-testid="flow-tape-skeleton"
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(2),
+        padding: sp("6px 10px"),
+        overflow: "hidden",
+      }}
+    >
+      {Array.from({ length: 14 }).map((_, index) => (
+        <div
+          key={index}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            height: dim(denseRows ? 34 : 42),
+            flexShrink: 0,
+          }}
+        >
+          <Skeleton width={dim(56)} height={dim(10)} />
+          <Skeleton width={dim(44)} height={dim(10)} />
+          <Skeleton width="16%" height={dim(10)} />
+          <Skeleton width={dim(50)} height={dim(10)} style={{ marginLeft: "auto" }} />
+          <Skeleton width={dim(40)} height={dim(10)} />
+        </div>
+      ))}
+    </div>
+  );
+  const flowClearFiltersAction = flowEventsFilteredOut ? (
+    <button
+      type="button"
+      onClick={clearFlowTapeFilters}
+      style={{
+        padding: sp("4px 12px"),
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.pill),
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textSec,
+        fontSize: textSize("body"),
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.02em",
+        cursor: "pointer",
+      }}
+    >
+      Clear filters
+    </button>
+  ) : undefined;
   const shouldRenderDeferredPanels = showDeferredPanels;
   useEffect(() => {
     onReadinessChange?.({
@@ -4552,7 +4615,7 @@ const FlowOverviewPanel = ({
                 alignItems: "center",
                 gap: sp(4),
                 padding: sp("2px 6px"),
-                borderRadius: dim(3),
+                borderRadius: dim(RADII.xs),
                 border: `1px solid ${cssColorAlpha(feedStateColor, "30")}`,
                 background: cssColorAlpha(feedStateColor, "12"),
                 color: feedStateColor,
@@ -5017,9 +5080,19 @@ const FlowOverviewPanel = ({
                           </div>
                         ) : null}
                       </>
+                    ) : flowTapeLoading ? (
+                      flowTapeLoadingSkeleton
                     ) : (
-                      <div style={{ padding: sp(12) }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          minHeight: 0,
+                          display: "flex",
+                          padding: sp(12),
+                        }}
+                      >
                         <DataUnavailableState
+                          fill
                           title={
                             flowEventsFilteredOut
                               ? "No prints match Flow filters"
@@ -5034,6 +5107,7 @@ const FlowOverviewPanel = ({
                               ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
                               : emptyFlowDetail
                           }
+                          action={flowClearFiltersAction}
                         />
                       </div>
                     )
@@ -5044,20 +5118,37 @@ const FlowOverviewPanel = ({
                         columns={flowTapeTableColumns}
                         data={visibleFlowRows}
                         emptyState={
-                          <div style={{ padding: sp(12) }}>
-                            <DataUnavailableState
-                              title={
-                                flowEvents.length
-                                  ? "No prints match this scanner"
-                                  : "No live options activity"
-                              }
-                              detail={
-                                flowEvents.length
-                                  ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
-                                  : emptyFlowDetail
-                              }
-                            />
-                          </div>
+                          flowTapeLoading ? (
+                            flowTapeLoadingSkeleton
+                          ) : (
+                            <div
+                              style={{
+                                flex: 1,
+                                minHeight: 0,
+                                display: "flex",
+                                padding: sp(12),
+                              }}
+                            >
+                              <DataUnavailableState
+                                fill
+                                title={
+                                  flowEventsFilteredOut
+                                    ? "No prints match Flow filters"
+                                    : flowEvents.length
+                                    ? "No prints match this scanner"
+                                    : "No live options activity"
+                                }
+                                detail={
+                                  flowEventsFilteredOut
+                                    ? "Clear include/exclude tickers, presets, minimum premium, or flow-type filters to show the live feed."
+                                    : flowEvents.length
+                                    ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
+                                    : emptyFlowDetail
+                                }
+                                action={flowClearFiltersAction}
+                              />
+                            </div>
+                          )
                         }
                         getCellProps={(columnId) => ({
                           style: getTapeCellStyle(columnId),
@@ -5616,7 +5707,7 @@ const FlowOverviewPanel = ({
                       alignItems: "center",
                       gap: sp(3),
                       padding: sp("2px 6px"),
-                      borderRadius: dim(3),
+                      borderRadius: dim(RADII.xs),
                       background: cssColorAlpha(item.color, "12"),
                       border: `1px solid ${cssColorAlpha(item.color, "25")}`,
                       color: item.color,
@@ -5889,7 +5980,7 @@ const FlowOverviewPanel = ({
                         style={{
                           display: "flex",
                           height: dim(8),
-                          borderRadius: dim(2),
+                          borderRadius: dim(RADII.xs),
                           overflow: "hidden",
                           background: CSS_COLOR.bg1,
                           width: `${barWidth}%`,
@@ -6085,7 +6176,7 @@ const FlowOverviewPanel = ({
                 marginTop: sp(2),
                 padding: sp("3px 6px"),
                 background: CSS_COLOR.bg1,
-                borderRadius: dim(3),
+                borderRadius: dim(RADII.xs),
                 fontSize: textSize("body"),
                 fontFamily: T.sans,
                 color: CSS_COLOR.textDim,
@@ -6210,7 +6301,7 @@ const FlowOverviewPanel = ({
                         style={{
                           display: "flex",
                           height: dim(4),
-                          borderRadius: dim(2),
+                          borderRadius: dim(RADII.xs),
                           overflow: "hidden",
                           background: CSS_COLOR.bg1,
                         }}
@@ -6352,7 +6443,7 @@ const FlowOverviewPanel = ({
                       style={{
                         display: "flex",
                         height: dim(7),
-                        borderRadius: dim(2),
+                        borderRadius: dim(RADII.xs),
                         overflow: "hidden",
                         background: CSS_COLOR.bg1,
                         width: `${barWidth}%`,

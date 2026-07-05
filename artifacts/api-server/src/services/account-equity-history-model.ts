@@ -28,7 +28,12 @@ export type AccountEquityHistorySeedPoint = {
   timestamp: Date;
   netLiquidation: number;
   currency: string;
-  source: "FLEX" | "LOCAL_LEDGER" | "SHADOW_LEDGER" | "IBKR_ACCOUNT_SUMMARY";
+  source:
+    | "FLEX"
+    | "LOCAL_LEDGER"
+    | "SHADOW_LEDGER"
+    | "IBKR_ACCOUNT_SUMMARY"
+    | "SNAPTRADE_BALANCE_HISTORY";
   deposits: number;
   withdrawals: number;
   dividends: number;

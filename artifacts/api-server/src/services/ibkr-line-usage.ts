@@ -2,38 +2,23 @@ import {
   IbkrBridgeClient,
   type BridgeLaneDiagnosticsSnapshot,
 } from "../providers/ibkr/bridge-client";
-import type {
-  IbkrMarketDataDesiredGeneration,
-  IbkrMarketDataGenerationStatus,
-} from "@workspace/ibkr-contracts";
 import { normalizeSymbol } from "../lib/values";
-import {
-  getBridgeGovernorConfigSnapshot,
-  getBridgeGovernorSnapshot,
-} from "./bridge-governor";
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
-import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import { getMassiveStockQuoteStreamDiagnostics } from "./massive-stock-quote-stream";
 import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
 import {
   getMarketDataAdmissionDiagnostics,
   setMarketDataAdmissionBridgeLineBudget,
-  subscribeMarketDataLeaseChanges,
   type MarketDataLease,
 } from "./market-data-admission";
 import { getRuntimeMassiveProviderDiagnostics } from "./platform-market-data-diagnostics";
 import { buildMarketDataWorkPlan } from "./market-data-work-planner";
-import { buildIbkrSidecarDesiredGeneration } from "./ibkr-sidecar-generation";
 import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
   getOptionsFlowScannerDiagnostics,
 } from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
-import {
-  IbkrAsyncSidecarClient,
-  type IbkrAsyncSidecarMarketDataClient,
-} from "./ibkr-async-sidecar-client";
 
 type CachedBridgeLaneDiagnostics = {
   fetchedAt: number;
@@ -42,23 +27,6 @@ type CachedBridgeLaneDiagnostics = {
 };
 
 type BridgeLaneDiagnosticsClient = Pick<IbkrBridgeClient, "getLaneDiagnostics">;
-type BridgeGenerationApplyClient = BridgeLaneDiagnosticsClient &
-  Partial<Pick<IbkrBridgeClient, "applyMarketDataGeneration">>;
-type AsyncSidecarGenerationApplyClient = Pick<
-  IbkrAsyncSidecarMarketDataClient,
-  "applyMarketDataGeneration"
->;
-type GenerationApplyTarget = "disabled" | "tws-bridge" | "ib-async-sidecar";
-type GenerationApplyResult = {
-  status: IbkrMarketDataGenerationStatus | null;
-  error: string | null;
-  target: GenerationApplyTarget;
-  enabled: boolean;
-  pending: boolean;
-  generationId: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-};
 type DriftGroup = {
   owner: string | null;
   intent: string | null;
@@ -73,11 +41,6 @@ const BRIDGE_LANE_USAGE_CACHE_MS = 2_000;
 const DEFAULT_BRIDGE_LANE_USAGE_TIMEOUT_MS = 1_500;
 const PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT = 2;
 const PERSISTENT_BRIDGE_ONLY_GRACE_MS = 10_000;
-const DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS = 30_000;
-const DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS = 30_000;
-const MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS = 30_000;
-const DEFAULT_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS = 2_000;
-const LINE_USAGE_GENERATION_COORDINATOR_LEASE_CHANGE_DEBOUNCE_MS = 50;
 type PersistentLineObservation = {
   lineId: string;
   firstSeenAt: string;
@@ -88,61 +51,14 @@ let cachedBridgeLaneDiagnostics: CachedBridgeLaneDiagnostics | null = null;
 let bridgeLaneDiagnosticsPromise: Promise<CachedBridgeLaneDiagnostics> | null = null;
 let bridgeLaneDiagnosticsStartedAt = 0;
 let bridgeLaneDiagnosticsRequestId = 0;
-let marketDataGenerationApplyInFlight:
-  | {
-      key: string;
-      target: GenerationApplyTarget;
-      generationId: string;
-      startedAt: number;
-      sequence: number;
-      promise: Promise<GenerationApplyResult>;
-    }
-  | null = null;
-let latestMarketDataGenerationApply: (GenerationApplyResult & {
-  key: string;
-  completedAtMs: number | null;
-}) | null = null;
-let latestMarketDataGenerationStatusByTarget: Partial<
-  Record<GenerationApplyTarget, IbkrMarketDataGenerationStatus>
-> = {};
-let marketDataGenerationApplySequence = 0;
-let lineUsageGenerationCoordinatorTimer: ReturnType<typeof setInterval> | null =
-  null;
-let lineUsageGenerationCoordinatorInFlight: Promise<unknown> | null = null;
-let lineUsageGenerationCoordinatorRequestedTimer: ReturnType<typeof setTimeout> | null =
-  null;
-let lineUsageGenerationCoordinatorRerunRequested = false;
-let lineUsageGenerationCoordinatorUnsubscribe: (() => void) | null = null;
 const bridgeOnlyLineObservations = new Map<string, PersistentLineObservation>();
 const apiOnlyLineObservations = new Map<string, PersistentLineObservation>();
 let bridgeLaneDiagnosticsClientFactory: () => BridgeLaneDiagnosticsClient = () =>
   new IbkrBridgeClient();
-let asyncSidecarClientFactory: () => AsyncSidecarGenerationApplyClient = () =>
-  new IbkrAsyncSidecarClient({
-    requestTimeoutMs: asyncSidecarGenerationApplyTimeoutMs(),
-  });
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function readTruthyEnv(name: string): boolean {
-  const raw = process.env[name]?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
-function readFalseyEnv(name: string): boolean {
-  const raw = process.env[name]?.trim().toLowerCase();
-  return raw === "0" || raw === "false" || raw === "no" || raw === "off";
-}
-
-function shouldApplyMarketDataGeneration(): boolean {
-  return !readFalseyEnv("IBKR_MARKET_DATA_GENERATION_APPLY_ENABLED");
-}
-
-function shouldRouteMarketDataGenerationToAsyncSidecar(): boolean {
-  return readTruthyEnv("IBKR_ASYNC_SIDECAR_ROUTING_ENABLED");
 }
 
 function bridgeLaneUsageTimeoutMs(): number {
@@ -154,27 +70,6 @@ function bridgeLaneUsageTimeoutMs(): number {
 
 function bridgeLaneUsageStaleInFlightMs(): number {
   return Math.max(30_000, bridgeLaneUsageTimeoutMs() * 4);
-}
-
-function marketDataGenerationApplyTimeoutMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS",
-    DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS,
-  );
-}
-
-function asyncSidecarGenerationApplyTimeoutMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS",
-    DEFAULT_ASYNC_SIDECAR_GENERATION_APPLY_TIMEOUT_MS,
-  );
-}
-
-function lineUsageGenerationCoordinatorIntervalMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS",
-    DEFAULT_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS,
-  );
 }
 
 function getErrorMessage(error: unknown): string {
@@ -356,45 +251,6 @@ function buildBridgeLineIds(subscriptions: Record<string, unknown>): Set<string>
     },
   );
   return result;
-}
-
-function isGenerationLineBridgeOwned(
-  line: IbkrMarketDataGenerationStatus["lines"][number],
-): boolean {
-  return (
-    line.state === "desired" ||
-    line.state === "subscribing" ||
-    line.state === "live"
-  );
-}
-
-function buildSubscriptionsFromGenerationStatus(input: {
-  status: IbkrMarketDataGenerationStatus;
-  fallback: Record<string, unknown>;
-}): Record<string, unknown> {
-  const activeLines = input.status.lines.filter(isGenerationLineBridgeOwned);
-  const activeEquitySymbols = activeLines
-    .filter((line) => line.assetClass === "equity" && line.contract.symbol)
-    .map((line) => normalizeSymbol(line.contract.symbol ?? ""))
-    .filter(Boolean)
-    .sort();
-  const activeOptionProviderContractIds = activeLines
-    .filter(
-      (line) =>
-        line.assetClass === "option" && line.contract.providerContractId,
-    )
-    .map((line) => line.contract.providerContractId?.trim() ?? "")
-    .filter(Boolean)
-    .sort();
-
-  return {
-    ...input.fallback,
-    activeQuoteSubscriptions: activeLines.length,
-    activeEquitySubscriptions: activeEquitySymbols.length,
-    activeOptionSubscriptions: activeOptionProviderContractIds.length,
-    activeEquitySymbols,
-    activeOptionProviderContractIds,
-  };
 }
 
 function classifyLineDrift(input: {
@@ -827,369 +683,6 @@ function buildWarmupCoverage(input: {
   };
 }
 
-function buildSidecarGenerationComparison(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-  bridgeGenerationStatus: IbkrMarketDataGenerationStatus | null;
-}) {
-  if (!input.bridgeGenerationStatus) {
-    return {
-      status: "unknown" as const,
-      desiredLineCount: input.desiredGeneration.summary.desiredLineCount,
-      bridgeLineCount: null,
-      matchedLineCount: null,
-      desiredOnlyLineCount: null,
-      bridgeOnlyLineCount: null,
-      desiredOnlyLineSample: [],
-      bridgeOnlyLineSample: [],
-      reason: "bridge_generation_status_unavailable",
-    };
-  }
-
-  const desiredLineIds = new Set(
-    input.desiredGeneration.desiredLines.map((line) => line.lineKey),
-  );
-  const bridgeLineIds = new Set(
-    input.bridgeGenerationStatus.lines
-      .filter(isGenerationLineBridgeOwned)
-      .map((line) => line.lineKey),
-  );
-  const matchedLineIds = new Set(
-    Array.from(desiredLineIds).filter((lineId) => bridgeLineIds.has(lineId)),
-  );
-  const desiredOnlyLineIds = new Set(
-    Array.from(desiredLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
-  );
-  const bridgeOnlyLineIds = new Set(
-    Array.from(bridgeLineIds).filter((lineId) => !desiredLineIds.has(lineId)),
-  );
-  const status =
-    desiredOnlyLineIds.size > 0 && bridgeOnlyLineIds.size > 0
-      ? "mixed"
-      : desiredOnlyLineIds.size > 0
-        ? "desired_missing"
-        : bridgeOnlyLineIds.size > 0
-          ? "bridge_extra"
-          : "matched";
-
-  return {
-    status,
-    desiredLineCount: desiredLineIds.size,
-    bridgeLineCount: bridgeLineIds.size,
-    matchedLineCount: matchedLineIds.size,
-    desiredOnlyLineCount: desiredOnlyLineIds.size,
-    bridgeOnlyLineCount: bridgeOnlyLineIds.size,
-    desiredOnlyLineSample: lineDriftSample(desiredOnlyLineIds),
-    bridgeOnlyLineSample: lineDriftSample(bridgeOnlyLineIds),
-    reason:
-      status === "matched"
-        ? "desired_generation_matches_bridge_live_lines"
-        : "desired_generation_differs_from_bridge_live_lines",
-  };
-}
-
-async function applyBridgeMarketDataGeneration(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-}): Promise<{
-  status: IbkrMarketDataGenerationStatus | null;
-  error: string | null;
-  target: GenerationApplyTarget;
-}> {
-  const client = bridgeLaneDiagnosticsClientFactory() as BridgeGenerationApplyClient;
-  if (typeof client.applyMarketDataGeneration !== "function") {
-    return { status: null, error: null, target: "tws-bridge" };
-  }
-
-  try {
-    return {
-      status: await resolveMarketDataGenerationApplyWithin(
-        client.applyMarketDataGeneration(input.desiredGeneration),
-        marketDataGenerationApplyTimeoutMs(),
-        "tws-bridge",
-      ),
-      error: null,
-      target: "tws-bridge",
-    };
-  } catch (error) {
-    return {
-      status: null,
-      error: getErrorMessage(error),
-      target: "tws-bridge",
-    };
-  }
-}
-
-async function applyAsyncSidecarMarketDataGeneration(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-}): Promise<{
-  status: IbkrMarketDataGenerationStatus | null;
-  error: string | null;
-  target: GenerationApplyTarget;
-}> {
-  const timeoutMs = asyncSidecarGenerationApplyTimeoutMs();
-  try {
-    return {
-      status: await resolveMarketDataGenerationApplyWithin(
-        asyncSidecarClientFactory().applyMarketDataGeneration(
-          input.desiredGeneration,
-        ),
-        timeoutMs,
-        "ib-async-sidecar",
-      ),
-      error: null,
-      target: "ib-async-sidecar",
-    };
-  } catch (error) {
-    return {
-      status: latestMarketDataGenerationStatusForTarget("ib-async-sidecar"),
-      error: getErrorMessage(error),
-      target: "ib-async-sidecar",
-    };
-  }
-}
-
-function resolveMarketDataGenerationApplyWithin<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  target: GenerationApplyTarget,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(
-        new Error(
-          `IBKR market-data generation apply to ${target} timed out after ${timeoutMs}ms.`,
-        ),
-      );
-    }, timeoutMs);
-    timeout.unref?.();
-    promise.then(
-      (value) => {
-        clearTimeout(timeout);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    );
-  });
-}
-
-async function applyMarketDataGeneration(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-  routeToAsyncSidecar: boolean;
-}): Promise<GenerationApplyResult> {
-  const startedAt = new Date().toISOString();
-  const generationId = input.desiredGeneration.generationId;
-  if (!shouldApplyMarketDataGeneration()) {
-    return {
-      status: null,
-      error: null,
-      target: "disabled",
-      enabled: false,
-      pending: false,
-      generationId,
-      startedAt,
-      completedAt: new Date().toISOString(),
-    };
-  }
-
-  const result = input.routeToAsyncSidecar
-    ? await applyAsyncSidecarMarketDataGeneration(input)
-    : await applyBridgeMarketDataGeneration(input);
-  return {
-    ...result,
-    enabled: true,
-    pending: false,
-    generationId,
-    startedAt,
-    completedAt: new Date().toISOString(),
-  };
-}
-
-function marketDataGenerationApplyKey(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-  routeToAsyncSidecar: boolean;
-}): {
-  key: string;
-  target: GenerationApplyTarget;
-} {
-  const target = input.routeToAsyncSidecar ? "ib-async-sidecar" : "tws-bridge";
-  return {
-    key: `${target}:${input.desiredGeneration.generationId}`,
-    target,
-  };
-}
-
-function rememberMarketDataGenerationStatus(result: GenerationApplyResult): void {
-  if (result.status) {
-    latestMarketDataGenerationStatusByTarget[result.target] = result.status;
-  }
-}
-
-function latestMarketDataGenerationStatusForTarget(
-  target: GenerationApplyTarget,
-): IbkrMarketDataGenerationStatus | null {
-  return latestMarketDataGenerationStatusByTarget[target] ?? null;
-}
-
-function scheduleMarketDataGenerationApply(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-  routeToAsyncSidecar: boolean;
-}): GenerationApplyResult {
-  if (!shouldApplyMarketDataGeneration()) {
-    return {
-      status: null,
-      error: null,
-      target: "disabled",
-      enabled: false,
-      pending: false,
-      generationId: input.desiredGeneration.generationId,
-      startedAt: null,
-      completedAt: null,
-    };
-  }
-
-  const now = Date.now();
-  const { key, target } = marketDataGenerationApplyKey(input);
-  if (
-    latestMarketDataGenerationApply?.error &&
-    latestMarketDataGenerationApply.target === target &&
-    latestMarketDataGenerationApply.completedAtMs !== null &&
-    now - latestMarketDataGenerationApply.completedAtMs <
-      MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS
-  ) {
-    return latestMarketDataGenerationApply;
-  }
-  if (latestMarketDataGenerationApply?.key === key) {
-    const retryAfterError =
-      Boolean(latestMarketDataGenerationApply.error) &&
-      latestMarketDataGenerationApply.completedAtMs !== null &&
-      now - latestMarketDataGenerationApply.completedAtMs >=
-        MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS;
-    if (!retryAfterError) {
-      return latestMarketDataGenerationApply;
-    }
-  }
-
-  if (marketDataGenerationApplyInFlight) {
-    return {
-      status: latestMarketDataGenerationStatusForTarget(
-        marketDataGenerationApplyInFlight.target,
-      ),
-      error: null,
-      target: marketDataGenerationApplyInFlight.target,
-      enabled: true,
-      pending: true,
-      generationId: marketDataGenerationApplyInFlight.generationId,
-      startedAt: new Date(marketDataGenerationApplyInFlight.startedAt).toISOString(),
-      completedAt: null,
-    };
-  }
-
-  const startedAt = now;
-  const sequence = (marketDataGenerationApplySequence += 1);
-  const promise = applyMarketDataGeneration(input).then((result) => {
-    if (sequence === marketDataGenerationApplySequence) {
-      rememberMarketDataGenerationStatus(result);
-      latestMarketDataGenerationApply = {
-        ...result,
-        key,
-        completedAtMs: Date.now(),
-      };
-    }
-    return result;
-  });
-  marketDataGenerationApplyInFlight = {
-    key,
-    target,
-    generationId: input.desiredGeneration.generationId,
-    startedAt,
-    sequence,
-    promise,
-  };
-  void promise.finally(() => {
-    if (
-      marketDataGenerationApplyInFlight?.key === key &&
-      marketDataGenerationApplyInFlight.sequence === sequence
-    ) {
-      marketDataGenerationApplyInFlight = null;
-    }
-  });
-
-  return {
-    status: latestMarketDataGenerationStatusForTarget(target),
-    error: null,
-    target,
-    enabled: true,
-    pending: true,
-    generationId: input.desiredGeneration.generationId,
-    startedAt: new Date(startedAt).toISOString(),
-    completedAt: null,
-  };
-}
-
-function readMarketDataGenerationApplyState(input: {
-  desiredGeneration: IbkrMarketDataDesiredGeneration;
-  routeToAsyncSidecar: boolean;
-}): GenerationApplyResult {
-  if (!shouldApplyMarketDataGeneration()) {
-    return {
-      status: null,
-      error: null,
-      target: "disabled",
-      enabled: false,
-      pending: false,
-      generationId: input.desiredGeneration.generationId,
-      startedAt: null,
-      completedAt: null,
-    };
-  }
-
-  const now = Date.now();
-  const { key, target } = marketDataGenerationApplyKey(input);
-  if (marketDataGenerationApplyInFlight) {
-    return {
-      status: latestMarketDataGenerationStatusForTarget(
-        marketDataGenerationApplyInFlight.target,
-      ),
-      error: null,
-      target: marketDataGenerationApplyInFlight.target,
-      enabled: true,
-      pending: true,
-      generationId: marketDataGenerationApplyInFlight.generationId,
-      startedAt: new Date(
-        marketDataGenerationApplyInFlight.startedAt,
-      ).toISOString(),
-      completedAt: null,
-    };
-  }
-
-  if (
-    latestMarketDataGenerationApply?.error &&
-    latestMarketDataGenerationApply.target === target &&
-    latestMarketDataGenerationApply.completedAtMs !== null &&
-    now - latestMarketDataGenerationApply.completedAtMs <
-      MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS
-  ) {
-    return latestMarketDataGenerationApply;
-  }
-
-  if (latestMarketDataGenerationApply?.key === key) {
-    return latestMarketDataGenerationApply;
-  }
-
-  return {
-    status: latestMarketDataGenerationStatusForTarget(target),
-    error: null,
-    target,
-    enabled: true,
-    pending: true,
-    generationId: input.desiredGeneration.generationId,
-    startedAt: null,
-    completedAt: null,
-  };
-}
-
 function buildLineUsagePolicy(input: {
   admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>;
   bridgeLineBudget: number | null;
@@ -1248,6 +741,7 @@ function buildLineAllocation(input: {
 
   return {
     activeLineCount,
+    grossActiveLineCount: readNumber(admission.grossActiveLineCount),
     activeEquityLineCount: readNumber(admission.activeEquityLineCount),
     routineEquityLineCount: readNumber(admission.routineEquityLineCount),
     optionSupportEquityLineCount: readNumber(
@@ -1405,22 +899,22 @@ function buildLineUtilizationAudit(input: {
     Boolean(admission.optionsFlowScanner.scannerPressure?.throttled) &&
     Number(admission.optionsFlowScanner.lineUtilization?.effectiveConcurrency) <= 1 &&
     scannerWorkActive;
+  const brokerBudgetedAdmissionLineCount =
+    readNumber(admission.pressure?.activeLineCount) ?? admission.activeLineCount;
   const admissionVsBridgeLineDelta =
     input.driftReconciliation.status === "unknown"
       ? input.bridgeActiveLineCount === null
         ? null
-        : admission.activeLineCount - input.bridgeActiveLineCount
+        : brokerBudgetedAdmissionLineCount - input.bridgeActiveLineCount
       : input.driftReconciliation.apiLineCount -
         input.driftReconciliation.bridgeLineCount;
   const topLimitingReason =
-    admission.optionsFlowScanner.backgroundBlockedReason === "resource-pressure"
-      ? "api-pressure-gate"
-      : scannerThrottledHighPressure
-        ? "scanner-throttled-high-pressure"
-        : idleToTargetLineCount === 0 && scannerReclaimableLineCount > 0
-          ? "scanner-filling-unused-capacity"
-          : idleToTargetLineCount === 0
-            ? "target-filled"
+    scannerThrottledHighPressure
+      ? "scanner-throttled-high-pressure"
+      : idleToTargetLineCount === 0 && scannerReclaimableLineCount > 0
+        ? "scanner-filling-unused-capacity"
+        : idleToTargetLineCount === 0
+          ? "target-filled"
       : bridgeRemainingLineCount === 0
         ? "bridge-budget-full"
         : input.driftReconciliation.status === "unknown"
@@ -1443,7 +937,8 @@ function buildLineUtilizationAudit(input: {
 
   return {
     targetLineCount: admission.budget.targetFillLines,
-    admissionActiveLineCount: admission.activeLineCount,
+    admissionActiveLineCount: brokerBudgetedAdmissionLineCount,
+    admissionGrossActiveLineCount: readNumber(admission.grossActiveLineCount),
     idleToTargetLineCount,
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
@@ -1510,9 +1005,7 @@ function buildAccountMonitorLineUsage(input: {
   };
 }
 
-async function buildIbkrLineUsageSnapshot(options: {
-  scheduleGenerationApply: boolean;
-}) {
+async function buildIbkrLineUsageSnapshot() {
   ensureIbkrLaneRuntimeOverridesLoaded();
   const bridge = await getCachedBridgeLaneDiagnostics();
   let subscriptions =
@@ -1529,7 +1022,6 @@ async function buildIbkrLineUsageSnapshot(options: {
     ...getMarketDataAdmissionDiagnostics(),
     optionsFlowScanner,
   };
-  const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const massiveStockQuotes = getMassiveStockQuoteStreamDiagnostics();
   const signalMonitorLocalBars = getSignalMonitorLocalBarCacheDiagnostics();
@@ -1557,49 +1049,6 @@ async function buildIbkrLineUsageSnapshot(options: {
     drift: initialDriftReconciliation,
     stockAggregates,
   });
-  const sidecarDesiredGeneration = buildIbkrSidecarDesiredGeneration({
-    admission,
-    generatedAt: initialMarketDataWorkPlan.generatedAt,
-  });
-  const routeToAsyncSidecar = shouldRouteMarketDataGenerationToAsyncSidecar();
-  const generationApply = options.scheduleGenerationApply
-    ? scheduleMarketDataGenerationApply({
-        desiredGeneration: sidecarDesiredGeneration,
-        routeToAsyncSidecar,
-      })
-    : readMarketDataGenerationApplyState({
-        desiredGeneration: sidecarDesiredGeneration,
-        routeToAsyncSidecar,
-      });
-  const bridgeGenerationStatus =
-    generationApply.status ??
-    bridge.value?.marketDataGeneration ??
-    null;
-  const sidecarHealthStatus = !routeToAsyncSidecar
-    ? "disabled"
-    : generationApply.pending
-      ? "checking"
-      : generationApply.error
-        ? "unhealthy"
-        : generationApply.status
-          ? "ok"
-          : "unknown";
-  if (bridgeGenerationStatus) {
-    subscriptions = buildSubscriptionsFromGenerationStatus({
-      status: bridgeGenerationStatus,
-      fallback: subscriptions,
-    });
-    bridgeActiveLines = readNumber(subscriptions.activeQuoteSubscriptions);
-    bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
-    if (
-      bridge.value &&
-      generationApply.target === "tws-bridge" &&
-      generationApply.status
-    ) {
-      bridge.value.marketDataGeneration = generationApply.status;
-      bridge.value.subscriptions = subscriptions;
-    }
-  }
   const warmup = buildWarmupCoverage({
     admission,
     subscriptions,
@@ -1609,7 +1058,6 @@ async function buildIbkrLineUsageSnapshot(options: {
     admission,
     subscriptions,
     bridgeDiagnosticsAvailable: Boolean(bridge.value),
-    settling: generationApply.pending,
   });
   const allocation = buildLineAllocation({
     admission,
@@ -1664,10 +1112,7 @@ async function buildIbkrLineUsageSnapshot(options: {
           ? null
           : Math.max(0, bridgeLineBudget - bridgeActiveLines),
     },
-    governor: getBridgeGovernorSnapshot(),
-    governorConfig: getBridgeGovernorConfigSnapshot(),
     streams: {
-      quoteStreams,
       optionQuoteStreams,
       massiveStockQuotes,
       stockAggregates,
@@ -1688,112 +1133,11 @@ async function buildIbkrLineUsageSnapshot(options: {
       reconciliation: driftReconciliation,
     },
     marketDataWorkPlan,
-    sidecar: {
-      diagnosticsOnly: !routeToAsyncSidecar,
-      routingEnabled: routeToAsyncSidecar,
-      applyEnabled: generationApply.enabled,
-      applyTarget: generationApply.target,
-      applyError: generationApply.error,
-      applyPending: generationApply.pending,
-      applyGenerationId: generationApply.generationId,
-      applyStartedAt: generationApply.startedAt,
-      applyCompletedAt: generationApply.completedAt,
-      lastError: generationApply.error,
-      health: {
-        status: sidecarHealthStatus,
-        lastError: generationApply.error,
-        checkedAt: generationApply.completedAt ?? generationApply.startedAt,
-      },
-      desiredGeneration: sidecarDesiredGeneration,
-      bridgeGenerationStatus,
-      comparison: buildSidecarGenerationComparison({
-        desiredGeneration: sidecarDesiredGeneration,
-        bridgeGenerationStatus,
-      }),
-    },
   };
 }
 
 export async function getIbkrLineUsageSnapshot() {
-  return buildIbkrLineUsageSnapshot({ scheduleGenerationApply: false });
-}
-
-export async function runIbkrLineUsageGenerationCoordinatorOnce() {
-  return buildIbkrLineUsageSnapshot({ scheduleGenerationApply: true });
-}
-
-export function startIbkrLineUsageGenerationCoordinator(): () => void {
-  if (lineUsageGenerationCoordinatorTimer) {
-    return stopIbkrLineUsageGenerationCoordinator;
-  }
-
-  const requestRun = (delayMs = 0) => {
-    if (!lineUsageGenerationCoordinatorTimer) {
-      return;
-    }
-    if (lineUsageGenerationCoordinatorInFlight) {
-      lineUsageGenerationCoordinatorRerunRequested = true;
-      return;
-    }
-    if (lineUsageGenerationCoordinatorRequestedTimer) {
-      return;
-    }
-    lineUsageGenerationCoordinatorRequestedTimer = setTimeout(() => {
-      lineUsageGenerationCoordinatorRequestedTimer = null;
-      run();
-    }, Math.max(0, delayMs));
-    lineUsageGenerationCoordinatorRequestedTimer.unref?.();
-  };
-
-  function run() {
-    if (lineUsageGenerationCoordinatorInFlight) {
-      lineUsageGenerationCoordinatorRerunRequested = true;
-      return;
-    }
-    const task = runIbkrLineUsageGenerationCoordinatorOnce()
-      .catch(() => null)
-      .finally(() => {
-        if (lineUsageGenerationCoordinatorInFlight === task) {
-          lineUsageGenerationCoordinatorInFlight = null;
-          if (lineUsageGenerationCoordinatorRerunRequested) {
-            lineUsageGenerationCoordinatorRerunRequested = false;
-            requestRun(0);
-          }
-        }
-      });
-    lineUsageGenerationCoordinatorInFlight = task;
-  }
-
-  lineUsageGenerationCoordinatorTimer = setInterval(
-    run,
-    lineUsageGenerationCoordinatorIntervalMs(),
-  );
-  lineUsageGenerationCoordinatorTimer.unref?.();
-  lineUsageGenerationCoordinatorUnsubscribe = subscribeMarketDataLeaseChanges((event) => {
-    if (event.lease.lineIds.length === 0) {
-      return;
-    }
-    requestRun(LINE_USAGE_GENERATION_COORDINATOR_LEASE_CHANGE_DEBOUNCE_MS);
-  });
-  run();
-  return stopIbkrLineUsageGenerationCoordinator;
-}
-
-export function stopIbkrLineUsageGenerationCoordinator(): void {
-  if (lineUsageGenerationCoordinatorTimer) {
-    clearInterval(lineUsageGenerationCoordinatorTimer);
-    lineUsageGenerationCoordinatorTimer = null;
-  }
-  if (lineUsageGenerationCoordinatorRequestedTimer) {
-    clearTimeout(lineUsageGenerationCoordinatorRequestedTimer);
-    lineUsageGenerationCoordinatorRequestedTimer = null;
-  }
-  if (lineUsageGenerationCoordinatorUnsubscribe) {
-    lineUsageGenerationCoordinatorUnsubscribe();
-    lineUsageGenerationCoordinatorUnsubscribe = null;
-  }
-  lineUsageGenerationCoordinatorRerunRequested = false;
-  lineUsageGenerationCoordinatorInFlight = null;
+  return buildIbkrLineUsageSnapshot();
 }
 
 export function __setIbkrLineUsageBridgeClientFactoryForTests(
@@ -1803,24 +1147,11 @@ export function __setIbkrLineUsageBridgeClientFactoryForTests(
   __resetIbkrLineUsageForTests();
 }
 
-export function __setIbkrLineUsageAsyncSidecarClientFactoryForTests(
-  factory: (() => AsyncSidecarGenerationApplyClient) | null,
-): void {
-  asyncSidecarClientFactory =
-    factory ?? (() => new IbkrAsyncSidecarClient());
-  __resetIbkrLineUsageForTests();
-}
-
 export function __resetIbkrLineUsageForTests(): void {
-  stopIbkrLineUsageGenerationCoordinator();
-  marketDataGenerationApplySequence += 1;
   cachedBridgeLaneDiagnostics = null;
   bridgeLaneDiagnosticsPromise = null;
   bridgeLaneDiagnosticsStartedAt = 0;
   bridgeLaneDiagnosticsRequestId += 1;
-  marketDataGenerationApplyInFlight = null;
-  latestMarketDataGenerationApply = null;
-  latestMarketDataGenerationStatusByTarget = {};
   bridgeOnlyLineObservations.clear();
   apiOnlyLineObservations.clear();
 }

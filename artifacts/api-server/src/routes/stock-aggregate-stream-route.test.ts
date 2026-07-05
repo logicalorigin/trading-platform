@@ -42,3 +42,33 @@ test("SSE snapshot yield cadence is a bounded positive constant", () => {
     `yield cadence ${cadence} should be a small positive batch size`,
   );
 });
+
+test("quote stream refreshes snapshots after quiet websocket periods", () => {
+  const handler = routeSource("/streams/quotes");
+
+  assert.match(
+    source,
+    /const QUOTE_STREAM_SNAPSHOT_REFRESH_MS = Math\.max\(/,
+    "quote stream snapshot refresh interval is defined",
+  );
+  assert.match(
+    handler,
+    /setInterval\(\(\) => \{/,
+    "quote stream should have a periodic snapshot refresh loop",
+  );
+  assert.match(
+    handler,
+    /payloadAgeMs < QUOTE_STREAM_SNAPSHOT_REFRESH_MS/,
+    "quote stream should skip snapshot refresh while live payloads are recent",
+  );
+  assert.match(
+    handler,
+    /refreshSnapshot\("Quote snapshot refresh failed"\)/,
+    "quote stream should fetch a snapshot when websocket payloads are quiet",
+  );
+  assert.match(
+    handler,
+    /clearInterval\(snapshotRefreshTimer\)/,
+    "quote stream should clear the refresh interval on cleanup",
+  );
+});

@@ -383,10 +383,9 @@ const AppHeaderInner = ({
             >
               <div
                 style={{
-                  flex: "0 0 auto",
-                  maxWidth: `min(58vw, ${dim(220)}px)`,
+                  flex: "0 1 auto",
+                  maxWidth: `min(70vw, ${dim(260)}px)`,
                   minWidth: 0,
-                  overflow: "hidden",
                 }}
               >
                 <HeaderStatusClusterComponent
@@ -510,7 +509,7 @@ const AppHeaderInner = ({
                 justifySelf: "start",
               }}
             >
-              {SCREENS.map((screen) => {
+              {SCREENS.filter((screen) => !screen.hidden).map((screen) => {
                 const isIconized = ICONIZED_SCREEN_IDS.has(screen.id);
                 return (
                   <button
@@ -528,7 +527,7 @@ const AppHeaderInner = ({
                     aria-current={activeScreen === screen.id ? "page" : undefined}
                     style={{
                       ...motionVars({ accent: CSS_COLOR.accent }),
-                      padding: isIconized ? sp("2px 4px") : sp("2px 5px"),
+                      padding: isIconized ? sp("7px 4px") : sp("7px 5px"),
                       minHeight: dim(22),
                       fontSize: textSize("body"),
                       fontWeight: FONT_WEIGHTS.medium,

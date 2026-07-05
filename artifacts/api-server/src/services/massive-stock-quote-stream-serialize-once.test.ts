@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { __resetProviderRuntimeConfigCacheForTests } from "../lib/runtime";
 import {
+  getCurrentMassiveStockQuoteSnapshots,
   subscribeMassiveStockQuoteSnapshots,
   __massiveStockQuoteStreamInternalsForTests as internals,
 } from "./massive-stock-quote-stream";
@@ -87,4 +88,23 @@ test("quote fan-out keeps distinct symbol-subsets separate", () => {
 
   unsubA();
   unsubB();
+});
+
+test("current Massive quote snapshots are websocket-cache only", () => {
+  enableMassive();
+
+  assert.deepEqual(
+    getCurrentMassiveStockQuoteSnapshots(["SPY"]),
+    [],
+    "without websocket messages there is no Massive quote snapshot fallback",
+  );
+
+  internals.handleWebSocketMessage({ ev: "T", sym: "SPY", p: 734.56, t: Date.now() });
+
+  const quotes = getCurrentMassiveStockQuoteSnapshots(["SPY"]);
+  assert.equal(quotes.length, 1);
+  assert.equal(quotes[0]?.symbol, "SPY");
+  assert.equal(quotes[0]?.price, 734.56);
+  assert.equal(quotes[0]?.transport, "massive_websocket");
+  assert.equal(quotes[0]?.freshness, "live");
 });

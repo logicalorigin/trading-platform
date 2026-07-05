@@ -8,6 +8,9 @@ use std::collections::BTreeSet;
 /// Maximum age (in seconds) of the underlying spot/chain data before the GEX
 /// snapshot is considered stale. There is no existing freshness threshold in
 /// this crate, so we pick a conservative default for a live trading UI.
+/// Worker-side ingest staleness gate; intentionally differs from the API's
+/// serve-gate (60s, `gex.ts` `GEX_SNAPSHOT_MAX_AGE_MS`) and the live-recompute
+/// `isStale` threshold (15min).
 const GEX_STALE_AFTER_SECS: i64 = 120;
 
 /// Derive whether the data backing this GEX snapshot is stale based on the age
@@ -32,6 +35,19 @@ fn is_gex_data_stale(
 }
 
 const LOAD_LATEST_OPTION_SNAPSHOTS_SQL: &str = r#"
+with underlying as (
+    select id
+    from instruments
+    where symbol = $1
+    limit 1
+),
+latest_chain as (
+    select max(snap.as_of) as as_of
+    from option_chain_latest snap
+    join underlying
+      on underlying.id = snap.underlying_instrument_id
+    where snap.source = 'massive'
+)
 select
     snap.option_contract_id,
     snap.bid::float8 as bid,
@@ -53,13 +69,20 @@ select
     contract."right"::text as right,
     contract.multiplier,
     contract.shares_per_contract
-from option_chain_latest snap
-join instruments underlying on underlying.id = snap.underlying_instrument_id
-join option_contracts contract on contract.id = snap.option_contract_id
-where underlying.symbol = $1
-  and snap.source = 'massive'
+from underlying
+join latest_chain
+  on latest_chain.as_of is not null
+join option_contracts contract
+  on contract.underlying_instrument_id = underlying.id
+join option_chain_latest snap
+  on snap.option_contract_id = contract.id
+ and snap.underlying_instrument_id = underlying.id
+ and snap.source = 'massive'
+where contract.is_active = true
+  and contract.expiration_date >= current_date
+  and snap.as_of >= latest_chain.as_of - interval '5 seconds'
 order by contract.expiration_date asc, contract.strike asc
-"#;
+	"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum OptionRight {
@@ -381,16 +404,16 @@ fn build_gex_payload(
                 "providerContractId": contract.provider_contract_id,
                 "gamma": contract.gamma.unwrap_or_default(),
                 "delta": contract.delta.unwrap_or_default(),
-                "theta": contract.theta.unwrap_or_default(),
-                "vega": contract.vega.unwrap_or_default(),
+                "theta": contract.theta,
+                "vega": contract.vega,
                 "openInterest": contract.open_interest.unwrap_or_default(),
                 "impliedVol": contract.implied_volatility.unwrap_or_default(),
                 "bid": contract.bid.unwrap_or_default(),
                 "ask": contract.ask.unwrap_or_default(),
-                "mark": contract.mark.unwrap_or_default(),
+                "mark": contract.mark,
                 "multiplier": contract.multiplier,
                 "sharesPerContract": contract.shares_per_contract,
-                "volume": contract.volume.unwrap_or_default(),
+                "volume": contract.volume,
                 "updatedAt": contract.updated_at.map(|date| date.to_rfc3339()),
                 "quoteFreshness": quote_freshness,
                 "marketDataMode": market_data_mode
@@ -472,9 +495,6 @@ fn normalize_payload_provider(source: &str) -> Option<String> {
     let normalized = source.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return None;
-    }
-    if normalized.contains("massive") {
-        return Some("massive".to_string());
     }
     if normalized.contains("massive") {
         return Some("massive".to_string());

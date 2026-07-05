@@ -378,7 +378,13 @@ test("compareSignalScoreModels rejects top-band lift when the full score ladder 
       maePercent: -0.3,
     })),
   ];
-  const comparison = compareSignalScoreModels(observations, ["observed-score"]);
+  // Pin the top band to the sparse 5-signal top bucket so this exercises the
+  // FULL-LADDER inversion gate specifically: the tiny top band looks good, yet
+  // the inverted full ladder must still reject the model. (The default top band
+  // is now a robust fraction of observations -- see the dedicated test below.)
+  const comparison = compareSignalScoreModels(observations, ["observed-score"], {
+    minTopBucketSignalCount: 5,
+  });
   const [model] = comparison.models;
 
   assert.ok(
@@ -389,6 +395,61 @@ test("compareSignalScoreModels rejects top-band lift when the full score ladder 
   assert.equal(comparison.calibration.state, "uncalibrated");
   assert.equal(model.recommendationSupport.supported, false);
   assert.ok(model.recommendationSupport.reasons.includes("min_alignment_score"));
+});
+
+test("compareSignalScoreModels measures the qualified top band over a robust fraction, not a sparse sliver", () => {
+  // 1,000 signals where a tiny top-score sliver looks great but the broad top
+  // band is poor -- the exact shape that made the legacy fixed-5 top band select
+  // the wrong model out-of-sample.
+  const observations = [
+    ...Array.from({ length: 10 }, (_, index) => ({
+      symbol: `SLIVER${index}`,
+      direction: "long" as const,
+      score: 92,
+      realizedReturnPercent: 2,
+      mfePercent: 2.4,
+      maePercent: -0.2,
+    })),
+    ...Array.from({ length: 190 }, (_, index) => ({
+      symbol: `HIGH${index}`,
+      direction: "long" as const,
+      score: 70,
+      realizedReturnPercent: -1,
+      mfePercent: 0.3,
+      maePercent: -1.4,
+    })),
+    ...Array.from({ length: 800 }, (_, index) => ({
+      symbol: `BASE${index}`,
+      direction: "long" as const,
+      score: 40,
+      realizedReturnPercent: 0.1,
+      mfePercent: 0.6,
+      maePercent: -0.4,
+    })),
+  ];
+  // Legacy sparse top band: the 10-signal sliver dominates -> spuriously positive.
+  const sparse = compareSignalScoreModels(observations, ["observed-score"], {
+    minTopBucketSignalCount: 5,
+  });
+  assert.ok(
+    sparse.models[0].recommendationSupport.observed.qualifiedTopBandSignalCount <=
+      10,
+  );
+  assert.ok(
+    sparse.models[0].recommendationSupport.observed.qualifiedTopBandLiftPercent >
+      0,
+  );
+  // Robust default: the qualified band spans ~20% of observations, so the poor
+  // high band shows through and the sliver can no longer carry the recommendation.
+  const robust = compareSignalScoreModels(observations, ["observed-score"]);
+  assert.ok(
+    robust.models[0].recommendationSupport.observed.qualifiedTopBandSignalCount >=
+      200,
+  );
+  assert.ok(
+    robust.models[0].recommendationSupport.observed.qualifiedTopBandLiftPercent <
+      0,
+  );
 });
 
 test("compareSignalScoreModels marks adequate but misaligned samples uncalibrated", () => {
@@ -800,4 +861,172 @@ test("scoreFromSignalFilterState routes directionalFeatures to the SOT-outcome m
     }),
     69.9,
   );
+});
+
+test("model recommendation breaks statistical lift ties on full-bucket alignment", () => {
+  const { sortScoreModelCandidates } = __signalQualityKpisInternalsForTests;
+  const model = (key: string, qLift: number, align: number, bandN = 1000) =>
+    ({
+      modelKey: key,
+      alignment: { alignmentScore: align },
+      recommendationSupport: {
+        observed: {
+          qualifiedAlignmentScore: qLift,
+          qualifiedTopBandSignalCount: bandN,
+        },
+      },
+    }) as never;
+  // Within the 0.05pp noise margin (observed h26 gap was 0.003pp): the
+  // better-ALIGNED model must win even with a hair-lower lift.
+  const tied = [
+    model("noisy-lift-winner", 0.762, 0.116),
+    model("better-aligned", 0.759, 1.031),
+  ].sort(sortScoreModelCandidates);
+  assert.equal((tied[0] as { modelKey: string }).modelKey, "better-aligned");
+  // Outside the margin, lift still decides.
+  const clear = [
+    model("small-lift", 0.2, 5),
+    model("big-lift", 0.9, 0.1),
+  ].sort(sortScoreModelCandidates);
+  assert.equal((clear[0] as { modelKey: string }).modelKey, "big-lift");
+});
+
+test("scoreSignalWithModel computes expected-move-v1 from the frozen formula", () => {
+  const { scoreSignalWithModel } = __signalQualityKpisInternalsForTests;
+  const observation = (directionalFeatures: Record<string, number>) => ({
+    symbol: "CAL",
+    direction: "long" as const,
+    directionalFeatures,
+    realizedReturnPercent: 0,
+    mfePercent: 0,
+    maePercent: 0,
+  });
+
+  // Hand-computed: atr=max(0.9,0.02)=0.9, vr=max(1.8,0.25)=1.8.
+  // volatilityRegime=5*clamp(log2(1.5),-2,3.5)=2.9248125...
+  // volumeParticipation=3*clamp(log2(1.8),-2,7)=2.5439907...
+  // momentum=0.6*clamp(1.5,-8,8)+0.5*clamp(1.0/0.9,-8,8)=0.9+0.5555...=1.4556
+  // reversionTilt=4*(0.5-clamp(0.3,0,1))=0.8
+  // raw=42+2.9248+3.0+1.4556+0.8=50.1804 -> rounds to 50.2.
+  const score = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 2.0,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 1.0,
+    }),
+    "expected-move-v1",
+  );
+  assert.equal(score, 50.2);
+
+  // Null gate: missing atrPct returns null even though rangePosition20 and
+  // volumeRatio20 are present.
+  const gated = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      volumeRatio20: 2.0,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 1.0,
+    }),
+    "expected-move-v1",
+  );
+  assert.equal(gated, null);
+
+  // Tail caps: extreme vol/volume must not keep buying score (the extreme-vol
+  // tail is adversely selected on realized return). atr=10 -> log2(16.67)=4.06
+  // clamps to 2.2 (vol=11); vr=100 -> log2=6.64 clamps to 4 (vol part=12);
+  // momentum 0, rp20 0.5 -> tilt 0. raw=42+11+12=65.
+  const capped = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.5,
+      atrPct: 10,
+      volumeRatio20: 100,
+      riskAdjustedMomentum: 0,
+      shortMomentumPct: 0,
+    }),
+    "expected-move-v1",
+  );
+  assert.equal(capped, 65);
+});
+
+test("scoreSignalWithModel computes expected-move-v2 (v1 raw + conviction bonus) from the frozen formula", () => {
+  const { scoreSignalWithModel } = __signalQualityKpisInternalsForTests;
+  const observation = (directionalFeatures: Record<string, number>) => ({
+    symbol: "CAL",
+    direction: "long" as const,
+    directionalFeatures,
+    realizedReturnPercent: 0,
+    mfePercent: 0,
+    maePercent: 0,
+  });
+
+  // Hand-computed: atr=max(0.9,0.02)=0.9, vr=max(12,0.25)=12.
+  // volatilityRegime=5*clamp(log2(1.5),-2,2.2)=2.924813
+  // volumeParticipation=3*clamp(log2(12),-2,4)=3*3.584963=10.754888
+  // momentum=0.6*1.5+0.5*(3.0/0.9)=0.9+1.666667=2.566667
+  // reversionTilt=4*(0.5-0.3)=0.8
+  // raw=42+2.924813+10.754888+2.566667+0.8=59.046368
+  // conviction: vspike (vr=12>=10), fresh (regimeAgeBars=2<=3),
+  // thrust (3.0/0.9=3.333>=3) -> 4+9+9+8=30
+  // v2 = clamp(59.046368+30, 5, 99) rounded 1dp = 89.0
+  const withFreshRegime = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 12,
+      regimeAgeBars: 2,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 3.0,
+    }),
+    "expected-move-v2",
+  );
+  assert.equal(withFreshRegime, 89.0);
+
+  // Same vector but no regimeAgeBars (absent -> fresh=false): conviction
+  // drops to vspike(4) + spike&&thrust(9) = 13. raw unchanged (59.046368).
+  // v2 = clamp(59.046368+13, 5, 99) rounded 1dp = 72.0
+  const withoutRegimeAge = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 12,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 3.0,
+    }),
+    "expected-move-v2",
+  );
+  assert.equal(withoutRegimeAge, 72.0);
+
+  // A vector that stays under the v1 test's key ("expected-move-v1") must be
+  // unaffected: v1 stays byte-identical (no conviction added) even though
+  // its volumeRatio20 (2.0) is far below the vspike threshold.
+  const v1Unchanged = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 2.0,
+      regimeAgeBars: 1,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 1.0,
+    }),
+    "expected-move-v1",
+  );
+  assert.equal(v1Unchanged, 50.2);
+
+  // Default/active model key resolves to v2 (the same vector under
+  // "expected-move-v2" with volumeRatio20 below the spike threshold yields
+  // conviction 0, so it matches v1's output exactly).
+  const activeDefault = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 2.0,
+      regimeAgeBars: 1,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 1.0,
+    }),
+    "expected-move-v2",
+  );
+  assert.equal(activeDefault, 50.2);
 });

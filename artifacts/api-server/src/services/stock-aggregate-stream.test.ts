@@ -6,7 +6,6 @@ import { resolvePreferredStockAggregateStreamSource } from "./stock-aggregate-st
 test("stock aggregate stream prefers Massive realtime when available", () => {
   assert.equal(
     resolvePreferredStockAggregateStreamSource({
-      ibkrConfigured: true,
       massiveDelayedConfigured: true,
       massiveRealtimeConfigured: true,
     }),
@@ -17,7 +16,6 @@ test("stock aggregate stream prefers Massive realtime when available", () => {
 test("stock aggregate stream does not wait on configured IBKR when delayed Massive is available", () => {
   assert.equal(
     resolvePreferredStockAggregateStreamSource({
-      ibkrConfigured: true,
       massiveDelayedConfigured: true,
       massiveRealtimeConfigured: false,
     }),
@@ -25,21 +23,19 @@ test("stock aggregate stream does not wait on configured IBKR when delayed Massi
   );
 });
 
-test("stock aggregate stream falls back to IBKR-derived aggregates only without Massive", () => {
+test("stock aggregate stream reports unavailable without Massive", () => {
   assert.equal(
     resolvePreferredStockAggregateStreamSource({
-      ibkrConfigured: true,
       massiveDelayedConfigured: false,
       massiveRealtimeConfigured: false,
     }),
-    "ibkr-websocket-derived",
+    "none",
   );
 });
 
 test("stock aggregate stream reports unavailable when no provider is configured", () => {
   assert.equal(
     resolvePreferredStockAggregateStreamSource({
-      ibkrConfigured: false,
       massiveDelayedConfigured: false,
       massiveRealtimeConfigured: false,
     }),

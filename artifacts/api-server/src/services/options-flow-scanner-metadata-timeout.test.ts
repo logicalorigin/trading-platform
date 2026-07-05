@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 
 import { HttpError } from "../lib/errors";
+import { __resetProviderRuntimeConfigCacheForTests } from "../lib/runtime";
 import {
   OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   __resetOptionChainCachesForTests,
   __runOptionsFlowScannerOnceForTests,
   __resolveOptionsFlowScannerTargetTickerSlotsForTests,
-  __setIbkrBridgeClientFactoryForTests,
+  __setMassiveMarketDataClientFactoryForTests,
   getOptionsFlowRuntimeConfig,
   getOptionsFlowScannerDiagnostics,
   resetOptionsFlowRuntimeOverrides,
@@ -15,11 +16,18 @@ import {
 } from "./platform";
 import {
   __resetBridgeGovernorForTests,
-  getBridgeGovernorSnapshot,
 } from "./bridge-governor";
 
+const ORIGINAL_MASSIVE_API_KEY = process.env["MASSIVE_API_KEY"];
+
 afterEach(() => {
-  __setIbkrBridgeClientFactoryForTests(null);
+  __setMassiveMarketDataClientFactoryForTests(null);
+  if (ORIGINAL_MASSIVE_API_KEY === undefined) {
+    delete process.env["MASSIVE_API_KEY"];
+  } else {
+    process.env["MASSIVE_API_KEY"] = ORIGINAL_MASSIVE_API_KEY;
+  }
+  __resetProviderRuntimeConfigCacheForTests();
   resetOptionsFlowRuntimeOverrides();
   __resetBridgeGovernorForTests();
   __resetOptionChainCachesForTests({ resetFlowScanner: false });
@@ -35,44 +43,44 @@ test("options flow scanner defaults scan each worker's budget", () => {
     runtimeConfig.scannerMetadataTimeoutMs,
     OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   );
-  assert.equal(runtimeConfig.scannerBatchSize, 8);
-  assert.equal(diagnostics.lineBudget, 200);
-  assert.equal(diagnostics.lineUtilization.scannerTargetLineBudget, 200);
-  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 8);
-  assert.equal(diagnostics.seedLineBudget, 25);
-  assert.equal(diagnostics.expandedLineBudget, 25);
-  assert.equal(diagnostics.lineUtilization.effectiveDeepLineBudget, 25);
-  assert.equal(diagnostics.lineUtilization.perTickerLiveContractLimit, 25);
+  assert.equal(runtimeConfig.scannerBatchSize, 4);
+  assert.equal(diagnostics.lineBudget, 100);
+  assert.equal(diagnostics.lineUtilization.scannerTargetLineBudget, 100);
+  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 2);
+  assert.equal(diagnostics.seedLineBudget, 50);
+  assert.equal(diagnostics.expandedLineBudget, 50);
+  assert.equal(diagnostics.lineUtilization.effectiveDeepLineBudget, 50);
+  assert.equal(diagnostics.lineUtilization.perTickerLiveContractLimit, 50);
   assert.equal(
     __resolveOptionsFlowScannerTargetTickerSlotsForTests({
-      scannerTargetLineBudget: 200,
-      perTickerLineBudget: 25,
+      scannerTargetLineBudget: 100,
+      perTickerLineBudget: 50,
       eligibleOptionableTickerCount: 741,
     }),
-    8,
+    2,
   );
 });
 
-test("options flow scanner metadata failures trip the options circuit quickly", async () => {
-  const observedTimeouts: number[] = [];
+test("options flow scanner metadata timeouts abort Massive requests", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-options-test-key";
+  __resetProviderRuntimeConfigCacheForTests();
 
-  __setIbkrBridgeClientFactoryForTests(
+  const observedAbortReasons: unknown[] = [];
+
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
-        async getHealth() {
-          return {
-            transport: "tws",
-            configured: true,
-            connected: true,
-            authenticated: true,
-            liveMarketDataAvailable: true,
-            marketDataMode: "live",
-          };
-        },
-        async getOptionExpirations(input: { timeoutMs?: number }) {
-          observedTimeouts.push(input.timeoutMs ?? 0);
-          throw new HttpError(504, "scanner metadata timeout", {
-            code: "ibkr_bridge_request_timeout",
+        async getHistoricalOptionContracts(input: { signal?: AbortSignal }) {
+          if (!input.signal) {
+            throw new Error("expected Massive option metadata signal");
+          }
+          return await new Promise<never>((_resolve, reject) => {
+            input.signal?.addEventListener("abort", () => {
+              observedAbortReasons.push(input.signal?.reason);
+              reject(input.signal?.reason);
+            }, {
+              once: true,
+            });
           });
         },
       }) as never,
@@ -96,6 +104,10 @@ test("options flow scanner metadata failures trip the options circuit quickly", 
     phase: "seed",
   });
 
-  assert.deepEqual(observedTimeouts, [1_234, 1_234, 1_234]);
-  assert.equal(getBridgeGovernorSnapshot().options.circuitOpen, true);
+  assert.equal(observedAbortReasons.length, 3);
+  for (const reason of observedAbortReasons) {
+    assert.ok(reason instanceof HttpError);
+    assert.equal(reason.statusCode, 504);
+    assert.equal(reason.code, "massive_options_request_timeout");
+  }
 });

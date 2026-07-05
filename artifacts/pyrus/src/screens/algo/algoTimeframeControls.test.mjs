@@ -9,24 +9,31 @@ import {
 } from "./algoTimeframeControls.js";
 import { getSettingFieldByPath } from "./algoSettingsFields.js";
 
-test("algo rail MTF normalization does not inject the execution frame", () => {
+test("algo rail MTF normalization includes the execution frame", () => {
   assert.deepEqual(
     normalizeAlgoAlignedMtfTimeframes(["1m"], "5m"),
-    ["1m"],
+    ["1m", "5m"],
+  );
+  assert.deepEqual(
+    normalizeAlgoAlignedMtfTimeframes(["5m"], "1m"),
+    ["1m", "5m"],
   );
 });
 
-test("algo rail execution timeframe patch accepts 2m", () => {
-  assert.deepEqual(buildAlgoExecutionTimeframePatch("2m"), {
+test("algo rail execution timeframe patch accepts 2m when MTF is already aligned", () => {
+  assert.deepEqual(buildAlgoExecutionTimeframePatch("2m", undefined, ["1m", "2m", "5m"]), {
     signalTimeframe: "2m",
   });
 });
 
-test("algo rail execution timeframe patch leaves MTF selection unchanged", () => {
+test("algo rail execution timeframe patch adds the execution frame to MTF", () => {
   assert.deepEqual(
     buildAlgoExecutionTimeframePatch("15m", "5m", ["1m", "5m"], 2),
     {
       signalTimeframe: "15m",
+      timeframes: ["1m", "5m", "15m"],
+      preset: "custom",
+      requiredCount: 3,
     },
   );
 });
@@ -45,12 +52,27 @@ test("algo rail MTF removing a frame lowers required count to the selection", ()
   );
 });
 
-test("algo rail MTF toggle can remove the execution frame from MTF selection", () => {
+test("algo rail MTF toggle cannot remove the execution frame from MTF selection", () => {
   assert.deepEqual(
     buildAlgoMtfTimeframeTogglePatch({
       selectedTimeframes: ["1m", "5m"],
       timeframe: "5m",
       executionTimeframe: "5m",
+    }),
+    {
+      timeframes: ["1m", "5m"],
+      preset: "custom",
+      requiredCount: 2,
+    },
+  );
+});
+
+test("algo rail MTF toggle can leave a 1:1 execution selection", () => {
+  assert.deepEqual(
+    buildAlgoMtfTimeframeTogglePatch({
+      selectedTimeframes: ["1m", "5m"],
+      timeframe: "5m",
+      executionTimeframe: "1m",
     }),
     {
       timeframes: ["1m"],

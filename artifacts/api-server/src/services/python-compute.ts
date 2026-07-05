@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { logger } from "../lib/logger";
@@ -21,6 +22,7 @@ export type PythonComputeDiagnostics = {
   startedAt: string | null;
   lastError: string | null;
   restartCount: number;
+  reusedExisting: boolean;
   laneId?: PythonComputeLaneId;
   label?: string;
   jobTypes?: PythonComputeJobType[];
@@ -79,12 +81,14 @@ type RuntimeDeps = {
   spawnProcess?: typeof spawn;
   fetch?: typeof fetch;
   delay?: (ms: number) => Promise<void>;
+  probePortOpen?: (host: string, port: number, timeoutMs?: number) => Promise<boolean>;
   laneDefinition?: PythonComputeLaneDefinition;
 };
 
 const DEFAULT_PORT = 18_768;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 const DEFAULT_GLOBAL_MAX_ACTIVE_JOBS = 6;
+const MAX_CONSECUTIVE_RESTARTS = 10;
 
 type PythonComputeLaneTemplate = {
   id: PythonComputeLaneId;
@@ -294,6 +298,7 @@ export function routePythonComputeJobType(
 
 export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
+  private startPromise: Promise<PythonComputeDiagnostics> | null = null;
   private diagnostics: PythonComputeDiagnostics;
   private stopping = false;
   private reprobing = false;
@@ -301,6 +306,11 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
   private readonly delayFn: (ms: number) => Promise<void>;
+  private readonly probePortOpenFn: (
+    host: string,
+    port: number,
+    timeoutMs?: number,
+  ) => Promise<boolean>;
   private readonly laneId: PythonComputeLaneId;
   private readonly label: string;
   private readonly jobTypes: PythonComputeJobType[];
@@ -311,6 +321,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     this.spawnProcess = deps.spawnProcess ?? spawn;
     this.fetchFn = deps.fetch ?? fetch;
     this.delayFn = deps.delay ?? delay;
+    this.probePortOpenFn = deps.probePortOpen ?? defaultProbePortOpen;
     this.laneId = laneDefinition?.id ?? "risk";
     this.label = laneDefinition?.label ?? "Python compute";
     this.jobTypes = laneDefinition?.jobTypes ?? [
@@ -329,6 +340,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       startedAt: null,
       lastError: null,
       restartCount: 0,
+      reusedExisting: false,
       laneId: this.laneId,
       label: this.label,
       jobTypes: [...this.jobTypes],
@@ -355,6 +367,36 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     if (this.child) {
       return this.getDiagnostics();
     }
+    // Coalesce concurrent starts: startInner() awaits probes before spawning,
+    // so two callers racing through that window would otherwise both pass the
+    // null-child guard and double-spawn (orphaning the first child).
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+    this.startPromise = this.startInner().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  private async startInner(): Promise<PythonComputeDiagnostics> {
+    const existingProbe = await this.probeHealthOnce();
+    if (existingProbe.ok) {
+      this.diagnostics.status = "healthy";
+      this.diagnostics.lastError = null;
+      this.diagnostics.pid = null;
+      this.diagnostics.reusedExisting = true;
+      this.diagnostics.restartCount = 0;
+      return this.getDiagnostics();
+    }
+
+    if (await this.probePortOpenFn(this.config.host, this.config.port)) {
+      this.markDegraded(
+        `Python compute port ${this.config.port} is already in use, but /health was not a compatible ${this.laneId} pyrus-compute response: ${existingProbe.error ?? "unknown health failure"}`,
+      );
+      return this.getDiagnostics();
+    }
+
     if (!existsSync(resolve(this.config.cwd, "pyproject.toml"))) {
       this.markDegraded(`Python compute root is missing: ${this.config.cwd}`);
       return this.getDiagnostics();
@@ -363,6 +405,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     this.stopping = false;
     this.diagnostics.status = "starting";
     this.diagnostics.lastError = null;
+    this.diagnostics.reusedExisting = false;
     this.diagnostics.startedAt = new Date().toISOString();
     const child = this.spawnProcess(
       "uv",
@@ -403,10 +446,16 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       );
     });
     child.once("error", (error) => {
+      if (this.child !== child) {
+        return; // a newer child owns the slot
+      }
       this.child = null;
       this.markDegraded(error.message);
     });
     child.once("exit", (code, signal) => {
+      if (this.child !== child) {
+        return; // a newer child owns the slot
+      }
       this.child = null;
       this.diagnostics.pid = null;
       if (this.stopping) {
@@ -422,6 +471,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     try {
       await this.waitForHealth();
       this.diagnostics.status = "healthy";
+      this.diagnostics.restartCount = 0;
       logger.info(
         {
           pid: this.diagnostics.pid,
@@ -439,7 +489,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     request: PythonComputeJobRequest,
     timeoutMs = 10_000,
   ): Promise<PythonComputeJobAccepted> {
-    await this.ensureHealthy();
+    await this.ensureHealthy(timeoutMs);
     return this.fetchJson<PythonComputeJobAccepted>(
       "/jobs",
       {
@@ -455,7 +505,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   }
 
   async getJob(jobId: string, timeoutMs = 10_000): Promise<PythonComputeJobResult> {
-    await this.ensureHealthy();
+    await this.ensureHealthy(timeoutMs);
     return this.fetchJson<PythonComputeJobResult>(
       `/jobs/${encodeURIComponent(jobId)}`,
       { method: "GET" },
@@ -464,7 +514,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   }
 
   async cancelJob(jobId: string, timeoutMs = 10_000): Promise<PythonComputeJobResult> {
-    await this.ensureHealthy();
+    await this.ensureHealthy(timeoutMs);
     return this.fetchJson<PythonComputeJobResult>(
       `/jobs/${encodeURIComponent(jobId)}/cancel`,
       { method: "POST" },
@@ -505,14 +555,29 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       this.child = null;
     }
     this.diagnostics.pid = null;
+    this.diagnostics.reusedExisting = false;
     this.diagnostics.status = this.config.enabled ? "stopped" : "disabled";
   }
 
-  private async ensureHealthy(): Promise<void> {
-    const diagnostics = await this.start();
-    if (diagnostics.status !== "healthy") {
+  private async ensureHealthy(maxWaitMs?: number): Promise<void> {
+    // Bound a cold/crash-looping start by the caller's own timeout budget
+    // instead of the full startupTimeoutMs (default 15s). The coalesced start
+    // keeps running in the background so the next call can reuse it.
+    const startPromise = this.start();
+    if (maxWaitMs != null && this.diagnostics.status !== "healthy") {
+      const outcome = await Promise.race([
+        startPromise.then(() => "settled" as const),
+        this.delayFn(maxWaitMs).then(() => "timeout" as const),
+      ]);
+      if (outcome === "timeout") {
+        throw new Error(`Python compute not healthy within ${maxWaitMs}ms`);
+      }
+    } else {
+      await startPromise;
+    }
+    if (this.diagnostics.status !== "healthy") {
       throw new Error(
-        `Python compute service is ${diagnostics.status}: ${diagnostics.lastError ?? "unavailable"}`,
+        `Python compute service is ${this.diagnostics.status}: ${this.diagnostics.lastError ?? "unavailable"}`,
       );
     }
   }
@@ -566,10 +631,19 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       if (!response.ok) {
         return { ok: false, error: `health returned ${response.status}` };
       }
-      const body = (await response.json()) as { ok?: unknown };
-      return body.ok === true
+      const body = (await response.json()) as {
+        ok?: unknown;
+        service?: unknown;
+        lane?: unknown;
+      };
+      return body.ok === true &&
+        body.service === "pyrus-compute" &&
+        body.lane === this.laneId
         ? { ok: true, error: null }
-        : { ok: false, error: "health response was not ok" };
+        : {
+            ok: false,
+            error: `health response was not ${this.laneId} pyrus-compute`,
+          };
     } catch (error) {
       return {
         ok: false,
@@ -584,6 +658,13 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
     const deadline = Date.now() + this.config.startupTimeoutMs;
     let lastError = "health probe did not run";
     while (Date.now() < deadline) {
+      // Fail fast if the child died during startup (its exit handler nulls the
+      // slot) instead of burning the whole startup window on dead probes.
+      if (!this.stopping && !this.child && this.diagnostics.startedAt) {
+        throw new Error(
+          `Python compute exited during startup: ${this.diagnostics.lastError ?? "unknown"}`,
+        );
+      }
       const probe = await this.probeHealthOnce();
       if (probe.ok) {
         return;
@@ -618,6 +699,7 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       ) {
         this.diagnostics.status = "healthy";
         this.diagnostics.lastError = null;
+        this.diagnostics.restartCount = 0;
         logger.info(
           { pid: this.diagnostics.pid, port: this.config.port },
           "Python compute service recovered",
@@ -639,6 +721,16 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       return;
     }
     this.diagnostics.restartCount += 1;
+    // Give up after a run of consecutive failures (the count resets whenever
+    // the lane goes healthy): stay degraded and let the per-request JS
+    // fallbacks carry the load instead of crash-looping forever.
+    if (this.diagnostics.restartCount > MAX_CONSECUTIVE_RESTARTS) {
+      logger.warn(
+        { restartCount: this.diagnostics.restartCount, laneId: this.laneId },
+        "Python compute restart cap reached; staying degraded",
+      );
+      return;
+    }
     const backoffMs = Math.min(
       30_000,
       1_000 * 2 ** Math.min(this.diagnostics.restartCount, 5),
@@ -649,6 +741,31 @@ export class PythonComputeRuntime implements PythonComputeRuntimeLike {
       });
     }, backoffMs).unref();
   }
+}
+
+async function defaultProbePortOpen(
+  host: string,
+  port: number,
+  timeoutMs = 500,
+): Promise<boolean> {
+  return await new Promise<boolean>((resolveProbe) => {
+    const socket = createConnection({ host, port });
+    socket.unref();
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      resolveProbe(false);
+    }, timeoutMs);
+    timeout.unref();
+    socket.once("connect", () => {
+      clearTimeout(timeout);
+      socket.end();
+      resolveProbe(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timeout);
+      resolveProbe(false);
+    });
+  });
 }
 
 type StopPythonComputeChildProcessDeps = {

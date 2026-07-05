@@ -15,6 +15,9 @@ const testDir = mkdtempSync(join(tmpdir(), "pyrus-conn-audit-"));
 const previousDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
 process.env["PYRUS_FLIGHT_RECORDER_DIR"] = testDir;
 
+const { flushRuntimeFlightRecorderBuffersSync } = await import(
+  "./runtime-flight-recorder"
+);
 const {
   recordConnectionAuditEvent,
   recordConnectionLiveState,
@@ -23,6 +26,7 @@ const {
 } = await import("./ibkr-connection-audit");
 
 after(() => {
+  flushRuntimeFlightRecorderBuffersSync();
   if (previousDir) {
     process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousDir;
   } else {
@@ -75,6 +79,7 @@ test("correlates a full multi-actor connect into one attempt", () => {
     assert(actors.has(actor as never), `missing actor ${actor}`);
   }
   // running documents written
+  flushRuntimeFlightRecorderBuffersSync();
   assert(existsSync(join(testDir, "ibkr-connection-current.json")));
   assert(existsSync(join(testDir, "ibkr-connection-audit.md")));
   assert(

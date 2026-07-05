@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   estimateBarOverlayWidth,
   getChartBarSpacing,
+  resolveGuardedAutoHydrationProgrammaticRange,
   resolveBarSpacing,
   resolveFootprintCandleWidth,
 } from "./ResearchChartSurface";
@@ -136,6 +137,73 @@ test("right price scale updates use the default pane", () => {
   );
   assert.match(surfaceSource, /priceScale\("right"\)\.setAutoScale/);
   assert.match(surfaceSource, /priceScale\("right"\)\.applyOptions/);
+});
+
+test("auto-hydration guards stale programmatic logical ranges after interval changes", () => {
+  const currentRange = { from: 0, to: 359 };
+  assert.deepEqual(
+    resolveGuardedAutoHydrationProgrammaticRange({
+      source: "programmatic",
+      autoHydration: true,
+      currentRange,
+      nextRange: { from: -358, to: 1 },
+      barCount: 360,
+    }),
+    currentRange,
+  );
+  assert.deepEqual(
+    resolveGuardedAutoHydrationProgrammaticRange({
+      source: "programmatic",
+      autoHydration: true,
+      currentRange: null,
+      defaultRange: currentRange,
+      nextRange: { from: -358, to: 1 },
+      barCount: 360,
+    }),
+    currentRange,
+  );
+
+  assert.equal(
+    resolveGuardedAutoHydrationProgrammaticRange({
+      source: "user",
+      autoHydration: true,
+      currentRange,
+      nextRange: { from: -358, to: 1 },
+      barCount: 360,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveGuardedAutoHydrationProgrammaticRange({
+      source: "programmatic",
+      autoHydration: false,
+      currentRange,
+      nextRange: { from: -358, to: 1 },
+      barCount: 360,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveGuardedAutoHydrationProgrammaticRange({
+      source: "programmatic",
+      autoHydration: true,
+      currentRange: { from: 0, to: 359 },
+      nextRange: { from: 0, to: 359 },
+      barCount: 1800,
+    }),
+    null,
+  );
+});
+
+test("chart control pointer events do not mark viewport user intent", () => {
+  assert.match(
+    surfaceSource,
+    /const handleNativePointerDown = \(event: globalThis\.PointerEvent\) => \{\s*if \(isChartControlEventTarget\(event\.target\)\) \{\s*return;\s*\}/s,
+  );
+  assert.match(
+    surfaceSource,
+    /const handleRootWheelCapture = \(event: WheelEvent<HTMLDivElement>\) => \{\s*if \(isChartControlEventTarget\(event\.target\)\) \{\s*return;\s*\}/s,
+  );
 });
 
 test("GEX projection center dots use the same x clamp as cone paths", () => {

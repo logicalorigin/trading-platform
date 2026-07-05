@@ -1,11 +1,15 @@
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 
-const isOpraOptionTicker = (value) =>
-  /^O:/i.test(String(value ?? "").trim());
+const normalizeOpraOptionTicker = (value) => {
+  const normalized = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!normalized) return "";
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : "";
+};
 
 const normalizedProviderContractId = (value) => {
   const text = String(value || "").trim();
-  return text && !isOpraOptionTicker(text) ? text : "";
+  return text && !normalizeOpraOptionTicker(text) ? text : "";
 };
 
 const optionRightCode = (value) => {
@@ -24,6 +28,12 @@ const optionExpirationKey = (value) => {
 };
 
 export const structuredOptionProviderContractId = (contract) => {
+  const explicitTicker =
+    normalizeOpraOptionTicker(contract?.providerContractId) ||
+    normalizeOpraOptionTicker(contract?.ticker);
+  if (explicitTicker) {
+    return explicitTicker;
+  }
   const underlying = String(contract?.underlying || "").trim().toUpperCase();
   const expiration = optionExpirationKey(contract?.expirationDate);
   const strike = Number(contract?.strike);
@@ -31,21 +41,12 @@ export const structuredOptionProviderContractId = (contract) => {
   if (!underlying || !expiration || !Number.isFinite(strike) || !right) {
     return "";
   }
-  const multiplier = Number(contract?.multiplier ?? contract?.sharesPerContract ?? 100);
-  const payload = {
-    v: 1,
-    u: underlying,
-    e: expiration,
-    s: strike,
-    r: right,
-    x: "SMART",
-    tc: underlying,
-    m: Number.isFinite(multiplier) && multiplier > 0 ? Math.trunc(multiplier) : 100,
-  };
-  return `twsopt:${btoa(JSON.stringify(payload))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "")}`;
+  const opraUnderlying = underlying.replace(/[^A-Z0-9]/g, "");
+  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
+  return opraUnderlying
+    ? `O:${opraUnderlying}${opraExpiration}${right}${strikeKey}`
+    : "";
 };
 
 const primaryOptionProviderContractId = (contract) =>

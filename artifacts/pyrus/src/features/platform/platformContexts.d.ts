@@ -36,3 +36,11 @@ export type AccountSelectionContextValue = {
 
 export const AccountSelectionContext: Context<AccountSelectionContextValue>;
 export const useAccountSelection: () => AccountSelectionContextValue;
+
+export type MarketDataProviderConfigurationContextValue = {
+  massiveStockRealtimeConfigured: boolean;
+  marketDataProviderConfigurationReady: boolean;
+};
+
+export const MarketDataProviderConfigurationContext: Context<MarketDataProviderConfigurationContextValue>;
+export const useMarketDataProviderConfiguration: () => MarketDataProviderConfigurationContextValue;

@@ -21,9 +21,11 @@ const HeaderChevron = ({ open }) => (
 );
 
 const labelStyle = {
-  color: CSS_COLOR.textDim,
+  // Section anchor: outranks field labels (9px textSec) by size + color so the
+  // panel chunks into sections at a glance instead of reading as one flat wall.
+  color: CSS_COLOR.textSec,
   fontFamily: T.sans,
-  fontSize: textSize("caption"),
+  fontSize: textSize("bodyStrong"),
   fontWeight: FONT_WEIGHTS.emphasis,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
@@ -32,7 +34,7 @@ const labelStyle = {
 const helperStyle = {
   color: CSS_COLOR.textMuted,
   fontFamily: T.sans,
-  fontSize: textSize("micro"),
+  fontSize: textSize("caption"),
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -60,8 +62,8 @@ export const SettingsSectionHeader = ({
           gap: sp(4),
           width: "100%",
           padding: 0,
-          paddingBottom: sp(4),
-          marginBottom: sp(3),
+          paddingBottom: sp(3),
+          marginBottom: sp(2),
           border: "none",
           borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
           background: "transparent",
@@ -94,9 +96,9 @@ export const SettingsSectionHeader = ({
         alignItems: "baseline",
         justifyContent: "space-between",
         gap: sp(4),
-        paddingBottom: sp(4),
+        paddingBottom: sp(3),
         borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-        marginBottom: sp(3),
+        marginBottom: sp(2),
         minWidth: 0,
       }}
     >

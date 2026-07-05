@@ -63,6 +63,15 @@ export const ACCOUNT_VALUE_MASK = "****";
 export const maskAccountValue = (value, maskValues = false) =>
   maskValues ? ACCOUNT_VALUE_MASK : value;
 
+// Account identifiers must never render in full (Security Requirement: mask
+// account identifiers in the UI). Show only the last four characters behind a
+// dot prefix, e.g. "••••1234".
+export const maskAccountId = (id) => {
+  const raw = id == null ? "" : String(id).trim();
+  if (!raw) return MISSING_VALUE;
+  return `••••${raw.slice(-4)}`;
+};
+
 export const formatAccountMoney = (
   value,
   currency = "USD",
@@ -625,6 +634,7 @@ export const Panel = ({
   onRetry,
   minHeight = 0,
   noPad = false,
+  fillBody = false,
   compact = false,
   className,
 }) => (
@@ -711,7 +721,15 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(compact ? 4 : 6) }}>
+    <div
+      style={{
+        flex: fillBody ? "1 1 auto" : "0 1 auto",
+        display: fillBody ? "flex" : undefined,
+        flexDirection: fillBody ? "column" : undefined,
+        minHeight: 0,
+        padding: noPad ? 0 : sp(compact ? 4 : 6),
+      }}
+    >
       {loading ? (
         <div style={{ display: "grid", gap: sp(8) }}>
           <ContainerLoadingStatus

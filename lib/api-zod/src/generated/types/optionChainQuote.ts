@@ -29,6 +29,12 @@ export interface OptionChainQuote {
   /** @nullable */
   volume: number | null;
   updatedAt: Date;
+  /** @nullable */
+  prevClose?: number | null;
+  /** @nullable */
+  change?: number | null;
+  /** @nullable */
+  changePercent?: number | null;
   quoteFreshness?: MarketDataFreshness;
   /** @nullable */
   marketDataMode?: OptionChainQuoteMarketDataMode;
@@ -38,4 +44,6 @@ export interface OptionChainQuote {
   dataUpdatedAt?: Date | null;
   /** @nullable */
   ageMs?: number | null;
+  /** @nullable */
+  underlyingPrice?: number | null;
 }

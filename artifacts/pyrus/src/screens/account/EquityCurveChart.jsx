@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
 } from "react";
 import {
   AreaSeries,
@@ -209,6 +210,9 @@ const EquityCurveChartInner = ({
   const benchmarkSeriesMapRef = useRef(new Map());
   const dataRef = useRef([]);
   dataRef.current = data;
+  // D4 hydrate cross-fade: one-shot fade when the first series data paints.
+  // Latches true and stays on (the .ra-chart-hydrate animation runs once).
+  const [hasHydrated, setHasHydrated] = useState(false);
 
   useLayoutEffect(() => {
     if (!containerRef.current) return undefined;
@@ -300,6 +304,7 @@ const EquityCurveChartInner = ({
       mainSeriesRef.current.setData(seriesData);
       if (seriesData.length) {
         chart.timeScale().fitContent();
+        setHasHydrated(true);
       }
     }
   }, [accentColor, chartMode, currency, data, maskValues]);
@@ -414,6 +419,7 @@ const EquityCurveChartInner = ({
   return (
     <div
       ref={containerRef}
+      className={hasHydrated ? "ra-chart-hydrate" : undefined}
       style={{ width: "100%", height: dim(height) }}
     />
   );

@@ -64,12 +64,13 @@ export type OptionContractSnapshot = {
   multiplier: number;
   sharesPerContract: number;
   providerContractId?: string | null;
+  brokerContractId?: string | null;
 };
 
 export type BrokerAccountSnapshot = {
   id: string;
   providerAccountId: string;
-  provider: "ibkr";
+  provider: "ibkr" | "snaptrade";
   mode: RuntimeMode;
   displayName: string;
   currency: string;
@@ -439,6 +440,7 @@ export type OptionChainContract = {
     multiplier: number;
     sharesPerContract: number;
     providerContractId: string | null;
+    brokerContractId?: string | null;
   };
   bid: number | null;
   ask: number | null;
@@ -452,6 +454,9 @@ export type OptionChainContract = {
   openInterest: number | null;
   volume: number | null;
   updatedAt: Date;
+  prevClose?: number | null;
+  change?: number | null;
+  changePercent?: number | null;
   quoteFreshness?: MarketDataFreshness;
   marketDataMode?: IbkrMarketDataMode | null;
   quoteUpdatedAt?: Date | null;

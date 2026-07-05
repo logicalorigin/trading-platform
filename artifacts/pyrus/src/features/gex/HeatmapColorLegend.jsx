@@ -1,4 +1,4 @@
-import { CSS_COLOR, cssColorMix, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const Swatch = ({ color, label }) => (
   <span
@@ -34,7 +34,7 @@ const GradientStrip = ({ from, via, to }) => (
       background: `linear-gradient(90deg, ${from} 0%, ${via} 50%, ${to} 100%)`,
       border: `1px solid ${CSS_COLOR.border}`,
       display: "inline-block",
-      borderRadius: dim(2),
+      borderRadius: dim(RADII.xs),
     }}
   />
 );

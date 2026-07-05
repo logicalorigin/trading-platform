@@ -103,7 +103,6 @@ const activeRequestFamilies = new Set([
   "flow-tape-visible",
   "option-chart-visible",
   "trade-option-chain",
-  "trade-option-chain-batch",
   "signal-matrix",
   "signals-row-chart",
   "trade-visible",
@@ -124,6 +123,16 @@ const deferredRequestFamilies = new Set([
   "background",
   "analytics",
   "scanner",
+  "trade-option-chain-batch",
+]);
+const massiveLiveDataPaths = new Set([
+  "/options/chart-bars",
+  "/options/chains",
+  "/options/expirations",
+  "/flow/events",
+  "/flow/events/aggregate",
+  "/flow/premium-distribution",
+  "/flow/universe",
 ]);
 
 function normalizeRouteRequestContext(
@@ -262,6 +271,13 @@ export function classifyApiRoute(input: {
     return "decorative";
   }
 
+  // Sparkline seed is background hydration even when the client marks the row
+  // visible. Live chart rows use /bars; this route can be shed under finite
+  // resource pressure instead of competing with protected/live reads.
+  if (path === "/sparklines/seed") {
+    return "deferred-analytics";
+  }
+
   if (
     method === "GET" &&
     mode === "live" &&
@@ -284,7 +300,7 @@ export function classifyApiRoute(input: {
     return "live-data";
   }
 
-  if (path === "/options/quotes" || path === "/market-depth") {
+  if (path === "/options/quotes") {
     return "live-data";
   }
 
@@ -335,23 +351,23 @@ export function classifyApiRoute(input: {
     return "active-screen";
   }
 
-  if (
-    path === "/bars" ||
-    path === "/bars/batch" ||
-    path === "/options/chart-bars" ||
-    path === "/options/chains" ||
-    path === "/options/expirations" ||
-    path === "/flow/events" ||
-    path === "/flow/events/aggregate" ||
-    path === "/flow/premium-distribution" ||
-    path === "/flow/universe"
-  ) {
+  if (path === "/bars" || path === "/bars/batch") {
     if (isVisibleRouteRequestContext(routeContext)) {
       return "active-screen";
     }
     if (isDeferredRouteRequestContext(routeContext)) {
       return "deferred-analytics";
     }
+  }
+
+  if (massiveLiveDataPaths.has(path)) {
+    if (isVisibleRouteRequestContext(routeContext)) {
+      return "active-screen";
+    }
+    if (isDeferredRouteRequestContext(routeContext)) {
+      return "deferred-analytics";
+    }
+    return "live-data";
   }
 
   if (
@@ -468,10 +484,11 @@ export function apiRouteAdmissionMiddleware(
   res.setHeader("X-Pyrus-Route-Class", admission.routeClass);
   // Pressure-Level = the level that governed admission (hardResourceLevel).
   res.setHeader("X-Pyrus-Pressure-Level", admission.pressureLevel);
-  // Resource-Level stays the full resourceLevel (incl. event loop) for
-  // display/telemetry — the UI still sees true server pressure even though
-  // admission no longer sheds on the event-loop component.
-  res.setHeader("X-Pyrus-Resource-Level", pressure.resourceLevel);
+  // Resource-Level is consumed by the app as an actionable route/admission
+  // signal, so keep it aligned with Pressure-Level. Preserve the wider
+  // event-loop-inclusive resource signal under a diagnostic-only name.
+  res.setHeader("X-Pyrus-Resource-Level", admission.pressureLevel);
+  res.setHeader("X-Pyrus-Observed-Resource-Level", pressure.resourceLevel);
   res.setHeader("X-Pyrus-Admission-Action", admission.action);
   if (admission.qaMode) {
     res.setHeader("X-Pyrus-QA-Mode", admission.qaMode);

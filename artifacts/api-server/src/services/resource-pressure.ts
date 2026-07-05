@@ -10,17 +10,6 @@ export type ApiResourcePressureDriver = {
   score: number | null;
 };
 
-export type ApiResourcePressureCaps = {
-  signalOptions: {
-    maintenanceOnly: boolean;
-    skipDeploymentScans: boolean;
-    signalRefreshAllowed: boolean;
-    actionScansAllowed: boolean;
-    positionMarksAllowed: boolean;
-    watchlistPrewarmAllowed: boolean;
-  };
-};
-
 export type ApiResourcePressureSnapshot = {
   // Display/telemetry pressure: rss + heap + local DB pool + client + cache.
   // Request latency is intentionally EXCLUDED so a slow external (broker/shadow)
@@ -49,7 +38,6 @@ export type ApiResourcePressureSnapshot = {
     drivers: ApiResourcePressureDriver[];
     activeLongScanCount: number | null;
   };
-  caps: ApiResourcePressureCaps;
   inputs: {
     rssMb: number | null;
     apiHeapUsedPercent: number | null;
@@ -277,13 +265,6 @@ export function resolveApiRssPressureThresholds(
   return { ...FALLBACK_API_RSS_PRESSURE_THRESHOLDS };
 }
 
-export function resolveApiRssHardBlockMb(
-  memoryLimitMb = readCgroupMemoryLimitMb(),
-): number {
-  void memoryLimitMb;
-  return Number.POSITIVE_INFINITY;
-}
-
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   if (value === null) return "normal";
   if (value >= API_ROUTE_LATENCY_HIGH_MS) return "high";
@@ -368,46 +349,6 @@ function cappedDriverDetail(
   return rawLevel === cappedLevel ? rawLevel : `${rawLevel} capped at ${cappedLevel}`;
 }
 
-export function getApiResourcePressureCaps(
-  level: ApiResourcePressureLevel = currentSnapshot.level,
-): ApiResourcePressureCaps {
-  switch (level) {
-    case "high":
-      return {
-        signalOptions: {
-          maintenanceOnly: false,
-          skipDeploymentScans: false,
-          signalRefreshAllowed: true,
-          actionScansAllowed: true,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: true,
-        },
-      };
-    case "watch":
-      return {
-        signalOptions: {
-          maintenanceOnly: false,
-          skipDeploymentScans: false,
-          signalRefreshAllowed: true,
-          actionScansAllowed: true,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: true,
-        },
-      };
-    default:
-      return {
-        signalOptions: {
-          maintenanceOnly: false,
-          skipDeploymentScans: false,
-          signalRefreshAllowed: true,
-          actionScansAllowed: true,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: true,
-        },
-      };
-  }
-}
-
 function buildSnapshot(
   inputs: ApiResourcePressureSnapshot["inputs"],
 ): ApiResourcePressureSnapshot {
@@ -463,30 +404,30 @@ function buildSnapshot(
   );
   // Actual server saturation: memory + event-loop + local DB pool exhaustion.
   // Request latency is excluded so a slow external (broker) route can't freeze
-  // signal/action work. Only RSS (true container-memory exhaustion) is an
-  // INSTANT hard-block — waiting ~30s on a climbing RSS risks an OOM/restart, so
-  // it must gate immediately. heap and dbPool are noisy 15s-spaced point samples
-  // (a fully-used pool with a transient 2-deep queue is normal fan-out, not
-  // sustained saturation), so they go through the SAME 2-sample hysteresis as
-  // event-loop: a single blip caps at "watch" and only sustained (≥2 consecutive
-  // samples ≈ 30s) saturation reaches "high". This de-flaps the trading gate
-  // without weakening the genuine-stress response.
-  const immediateResourceLevel = rssLevel;
+  // signal/action work. rss, heap and dbPool are noisy 15s-spaced point samples,
+  // so they all go through the SAME 2-sample hysteresis as event-loop: a single
+  // blip caps at "watch" and only sustained (≥2 consecutive samples ≈ 30s)
+  // saturation reaches "high". rss previously instant-tripped high on a single
+  // sample to pre-empt a container OOM, but the container does not die from our
+  // RSS — it recycles on a fixed ~6h infra schedule while memory stays calm
+  // (oom_kill=0, ~5.6/16GB peak) — so a benign RSS bump must not single-sample-
+  // freeze trading. A sustained RSS climb (a genuine leak) still sheds via the
+  // hysteresis. See the 2026-07 supervisor-wiring audit.
   const rawResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel, eventLoopLevel);
   const resourceLevel = applyResourceLevelHysteresis(resourceLevelHysteresis, {
     rawLevel: rawResourceLevel,
-    immediateHigh: immediateResourceLevel === "high",
+    immediateHigh: false,
   });
   // Finite-resource saturation only (no event-loop delay): drives the
   // consequential user-facing sheds so a busy event loop — a symptom, not a
-  // finite resource — can't 429-freeze prices. immediateHigh stays tied to rss
-  // (the only instant hard-block); heap/pool keep the 2-sample hysteresis.
+  // finite resource — can't 429-freeze prices. rss/heap/pool all go through the
+  // 2-sample hysteresis (no instant trip), so one noisy sample can't freeze.
   const rawHardResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel);
   const hardResourceLevel = applyResourceLevelHysteresis(
     hardResourceLevelHysteresis,
     {
       rawLevel: rawHardResourceLevel,
-      immediateHigh: immediateResourceLevel === "high",
+      immediateHigh: false,
     },
   );
 
@@ -586,8 +527,6 @@ function buildSnapshot(
       drivers: scannerDrivers,
       activeLongScanCount: inputs.automationActiveLongScanCount,
     },
-    // Trading caps gate on server saturation (resourceLevel), not request latency.
-    caps: getApiResourcePressureCaps(resourceLevel),
     inputs: { ...inputs },
   };
 }
@@ -649,19 +588,19 @@ export function getApiResourcePressureSnapshot(): ApiResourcePressureSnapshot {
   return currentSnapshot;
 }
 
-// NOTE: this intentionally gates on `resourceLevel` (event-loop INCLUSIVE), NOT
-// the new `hardResourceLevel` field — despite the similar name. The scan-pause
-// decouple is Stage 2, gated behind a CPU x-ray confirming scans aren't the loop
-// blocker; until then background scans still pause on event-loop pressure. Only
-// the user-facing price/quote route-admission shed moved to hardResourceLevel in
-// Stage 1. See docs/plans/event-loop-pressure-decouple-price-path.md.
+// Gates on `hardResourceLevel` (finite-resource exhaustion: rss/heap/db-pool),
+// NOT `resourceLevel` — so a busy event loop (a SYMPTOM, not a finite resource)
+// no longer pauses trading scans. This is Stage 2 of the event-loop-pressure
+// decouple: a 30s CPU x-ray (2026-07, ELU high) confirmed the loop blocker is DB
+// row parsing (`_parseRowAsArray` ~20% self-time, driven by the bar_cache read
+// firehose) and GC — NOT the deployment-scan bodies, which never appeared in the
+// profile. Pausing scans therefore did not return loop time (self-defeating), so
+// scans now pause only when a finite resource (pool/memory) is genuinely
+// exhausted. See docs/plans/event-loop-pressure-decouple-price-path.md.
 export function isApiResourcePressureHardBlock(
   snapshot: ApiResourcePressureSnapshot = currentSnapshot,
 ): boolean {
-  return (
-    snapshot.resourceLevel === "high" ||
-    snapshot.caps.signalOptions.skipDeploymentScans === true
-  );
+  return snapshot.hardResourceLevel === "high";
 }
 
 export function __resetApiResourcePressureForTests(): void {

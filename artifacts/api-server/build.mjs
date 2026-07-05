@@ -14,13 +14,15 @@ async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
 
-  await esbuild({
+  const startedAt = Date.now();
+  const result = await esbuild({
     entryPoints: [path.resolve(artifactDir, "src/index.ts")],
     platform: "node",
     bundle: true,
     format: "esm",
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
+    metafile: true,
     logLevel: "info",
     // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
     // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.
@@ -117,6 +119,12 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+
+  const elapsedMs = Date.now() - startedAt;
+  const moduleCount = result.metafile
+    ? Object.keys(result.metafile.inputs).length
+    : 0;
+  console.log(`[api-build] bundled ${moduleCount} modules in ${elapsedMs}ms`);
 }
 
 buildAll().catch((err) => {

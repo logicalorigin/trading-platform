@@ -36,6 +36,7 @@ const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000"
 const supervisorTakeoverGraceMs = Number(
   process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
 );
+const MARKET_DATA_WORKER_SHUTDOWN_GRACE_MS = 5_000;
 const API_NODE_MAX_OLD_SPACE_MB = "2560";
 const WEB_NODE_MAX_OLD_SPACE_MB = "1536";
 // PYRUS_REPLIT_RUN is a tag set by dev:replit. It is not authority to
@@ -52,6 +53,14 @@ let lifecyclePhase = "initializing";
 let apiChild = null;
 let webChild = null;
 let workerChild = null;
+// In-place API reload (agent-driven, SIGUSR2): rebuild + restart the API child
+// WITHOUT tearing down the supervisor, so the Replit preview (anchored to this
+// supervisor process) and the web dev server stay attached and just reflect the
+// new backend. `reloadInProgress` makes the fatal-exit watcher ignore the
+// intentional API exit during a reload; `resolveFatalExit` is the running-phase
+// teardown trigger that real (unexpected) child crashes still fire.
+let reloadInProgress = false;
+let resolveFatalExit = null;
 const children = new Set();
 
 function writeLifecycleEvent(event, detail = {}) {
@@ -147,10 +156,12 @@ function processRssMb(pid) {
   }
 }
 
-// System-wide memory (all processes, not just ours) so a container replacement
-// under memory pressure is attributable from the heartbeat trail: per-process
-// RSS alone missed the 2026-07-03 incident because no single process crossed
-// its own threshold while the box as a whole ran out.
+// System-wide memory (all processes, not just ours), surfaced in the heartbeat
+// trail + get_supervisor_state. NOTE: the 2026-07-03 "container replacement under
+// memory pressure" this was added for was later shown to be a fixed ~6h infra
+// microVM recycle, not a memory kill (oom_kill=0, ~5.6/16GB peak) — so this is
+// telemetry, useful for attributing a *future* eviction vs an infra recycle, not
+// evidence the box runs out of memory. See the 2026-07 supervisor-wiring audit.
 function systemMemorySnapshotMb() {
   try {
     const meminfo = readFileSync("/proc/meminfo", "utf8");
@@ -333,6 +344,14 @@ function readProcessCommand(pid) {
   }
 }
 
+function readProcessCwd(pid) {
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return "";
+  }
+}
+
 function pidIsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -411,6 +430,15 @@ function formatDurationMs(value) {
   return `${Math.round(value / 1000)}s`;
 }
 
+// Tenths-of-a-second formatter for launch/reload metrics, where sub-second
+// resolution actually matters (formatDurationMs rounds to whole seconds and is
+// reused by the supervisor-age messages, so it stays as-is).
+function formatLaunchMs(value) {
+  if (!Number.isFinite(value)) return "unknown";
+  if (value < 1000) return `${Math.round(value)}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
 function checkDuplicateReplitStartOnly() {
   const lockState = readSupervisorLock();
   if (lockState.state !== "valid") {
@@ -464,14 +492,15 @@ async function waitForSupervisorToExit(pid, timeoutMs) {
   return !isLiveSupervisorPid(pid);
 }
 
-async function requestSupervisorHandoff(ownerPid) {
+async function requestSupervisorHandoff(ownerPid, { requestMessage = null } = {}) {
   const graceMs =
     Number.isFinite(supervisorTakeoverGraceMs) && supervisorTakeoverGraceMs >= 0
       ? supervisorTakeoverGraceMs
       : 20_000;
 
   console.warn(
-    `[pyrus-dev] another PYRUS dev supervisor is already running as PID ${ownerPid}; requesting controlled handoff so this Replit workflow owns the app without overlapping API/web processes.`,
+    requestMessage ||
+      `[pyrus-dev] another PYRUS dev supervisor is already running as PID ${ownerPid}; requesting controlled handoff so this Replit workflow owns the app without overlapping API/web processes.`,
   );
   writeLifecycleEvent("supervisor-handoff-requested", { ownerPid });
 
@@ -551,11 +580,10 @@ async function acquireSupervisorLock() {
 
     if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
       const ageMs = supervisorLockAgeMs(lockState.lock);
-      console.warn(
-        `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; treating this as an intentional Run-button restart and requesting controlled handoff.`,
-      );
       writeLifecycleEvent("duplicate-start-handoff", { ownerPid, ageMs });
-      await requestSupervisorHandoff(ownerPid);
+      await requestSupervisorHandoff(ownerPid, {
+        requestMessage: `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; treating this as an intentional Run-button restart and requesting controlled handoff to this workflow without overlapping API/web processes.`,
+      });
       continue;
     }
 
@@ -650,6 +678,96 @@ function processGroupId(pid) {
   } catch {
     return null;
   }
+}
+
+function pathIsInRepo(candidatePath) {
+  return (
+    candidatePath === repoRoot ||
+    candidatePath.startsWith(`${repoRoot}${path.sep}`)
+  );
+}
+
+function isMarketDataWorkerCommand(command) {
+  return (
+    command.includes("pnpm run market-data-worker:run") ||
+    command.includes("scripts/run-market-data-worker.mjs run -p market-data-worker -- run") ||
+    command.includes("cargo run -p market-data-worker -- run") ||
+    command.includes("target/debug/market-data-worker run")
+  );
+}
+
+function staleMarketDataWorkerGroups() {
+  let entries;
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return [];
+  }
+
+  const currentPgid = processGroupId(process.pid);
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+
+    const command = readProcessCommand(pid);
+    if (!isMarketDataWorkerCommand(command)) continue;
+    if (!pathIsInRepo(readProcessCwd(pid))) continue;
+
+    const pgid = processGroupId(pid);
+    if (!Number.isInteger(pgid) || pgid <= 0 || pgid === currentPgid) {
+      continue;
+    }
+
+    const group = groups.get(pgid) || { pgid, pids: [], commands: [] };
+    group.pids.push(pid);
+    group.commands.push(command);
+    groups.set(pgid, group);
+  }
+  return [...groups.values()];
+}
+
+function signalProcessGroup(pgid, signal) {
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (error) {
+    return error?.code === "ESRCH";
+  }
+}
+
+async function reapStaleMarketDataWorkers() {
+  if (!runningInsideReplitWorkflow && !forceSupervisorTakeover) {
+    return;
+  }
+
+  const groups = staleMarketDataWorkerGroups();
+  if (groups.length === 0) return;
+
+  const detail = groups.map((group) => ({
+    pgid: group.pgid,
+    pids: group.pids,
+  }));
+  console.warn(
+    `[pyrus-dev] reaping ${groups.length} stale market-data worker process group${groups.length === 1 ? "" : "s"} before starting this workflow's worker: ${detail
+      .map((group) => `${group.pgid}[${group.pids.join(",")}]`)
+      .join(" ")}`,
+  );
+  writeLifecycleEvent("stale-market-data-worker-reap-start", { groups: detail });
+
+  for (const group of groups) signalProcessGroup(group.pgid, "SIGTERM");
+  await delay(MARKET_DATA_WORKER_SHUTDOWN_GRACE_MS);
+
+  const stillAlive = staleMarketDataWorkerGroups().filter((group) =>
+    groups.some((candidate) => candidate.pgid === group.pgid),
+  );
+  for (const group of stillAlive) signalProcessGroup(group.pgid, "SIGKILL");
+
+  writeLifecycleEvent("stale-market-data-worker-reap-complete", {
+    groups: detail,
+    killedGroups: stillAlive.map((group) => group.pgid),
+  });
 }
 
 function apiPortOwnerStatus(apiRootPid) {
@@ -757,8 +875,103 @@ async function waitForApi(childExit, apiRootPid) {
   throw new Error(`API did not become healthy at ${apiHealthUrl}: ${lastError}`);
 }
 
+// Non-blocking observability probe: resolves with ms-from-launch the first time
+// the web (vite) dev server answers an HTTP request, or null if it never does
+// within the window. This NEVER gates startup — web readiness is intentionally
+// not on the startup blocking path; the probe only lets the launch summary attribute
+// where the seconds went from the supervisor's point of view.
+async function probeWebReady(startedAt) {
+  const url = `http://127.0.0.1:${webPort}/`;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (shuttingDown) return null;
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(1500) });
+      return Date.now() - startedAt;
+    } catch {
+      // Listener not up yet (or request aborted); keep polling.
+    }
+    await delay(500);
+  }
+  return null;
+}
+
+// Running-phase supervision: a child exit resolves `resolveFatalExit` (→ teardown)
+// so real crashes still surface — EXCEPT an intentional in-place API reload, which
+// `reloadInProgress` masks so the supervisor and the attached preview survive.
+function watchFatalExit(name, exitP, { reloadable = false } = {}) {
+  exitP.then((result) => {
+    if (shuttingDown) return;
+    if (reloadable && reloadInProgress) return;
+    if (resolveFatalExit) resolveFatalExit({ name, ...result });
+  });
+}
+
+// Agent-driven backend reload (SIGUSR2): rebuild + restart ONLY the API child in
+// place. The supervisor never exits, so the Replit preview (anchored to this
+// process) and the web dev server stay attached and just reflect the new bundle.
+async function reloadApiInPlace() {
+  if (shuttingDown) return;
+  if (reloadInProgress) {
+    console.warn("[pyrus-dev] SIGUSR2 ignored: an API reload is already in progress");
+    return;
+  }
+  if (!apiChild) {
+    console.warn("[pyrus-dev] SIGUSR2 ignored: no API child to reload");
+    return;
+  }
+  reloadInProgress = true;
+  const reloadStartedAt = Date.now();
+  lifecyclePhase = "api-reloading";
+  writeLifecycleEvent("api-reload-start", { childPid: apiChild.pid || null });
+  console.log(
+    "[pyrus-dev] SIGUSR2: reloading API in place (rebuild + restart); supervisor + web preview stay attached",
+  );
+  try {
+    const old = apiChild;
+    const oldExit = exitPromise("API", old);
+    killChild(old, "SIGTERM");
+    const stopped = await Promise.race([
+      oldExit.then(() => true),
+      delay(supervisorTakeoverGraceMs).then(() => false),
+    ]);
+    if (!stopped) {
+      killChild(old, "SIGKILL");
+      await delay(1000);
+    }
+    const api = spawnService(
+      "API",
+      ["--filter", "@workspace/api-server", "run", "dev"],
+      apiServiceEnv(),
+    );
+    apiChild = api;
+    const apiExit = exitPromise("API", api);
+    watchFatalExit("API", apiExit, { reloadable: true });
+    await waitForApi(apiExit, api.pid);
+    lifecyclePhase = "running";
+    const reloadMs = Date.now() - reloadStartedAt;
+    writeLifecycleEvent("api-reload-complete", {
+      childPid: api.pid || null,
+      durationMs: reloadMs,
+    });
+    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+    console.log(
+      `[pyrus-dev] API reload complete and healthy in ${formatLaunchMs(reloadMs)}; preview now reflects the new code`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writeLifecycleEvent("api-reload-failed", { message });
+    console.error(`[pyrus-dev] API reload failed: ${message}`);
+    reloadInProgress = false;
+    await shutdown(1);
+    return;
+  }
+  reloadInProgress = false;
+}
+
 process.once("SIGINT", () => void shutdown(130));
 process.once("SIGTERM", () => void shutdown(143));
+process.on("SIGUSR2", () => void reloadApiInPlace());
 process.on("SIGHUP", ignoreWorkflowHangup);
 process.once("exit", removeSupervisorLock);
 
@@ -801,6 +1014,14 @@ try {
   startLifecycleHeartbeat();
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
+  // Phase-duration instrumentation: measured from the moment this supervisor owns
+  // the lock and begins spawning services, so the numbers reflect launch cost (not
+  // time spent waiting to hand off a previous supervisor).
+  const launchStartedAt = Date.now();
+  let apiHealthyMs = null;
+  let workerStartedMs = null;
+  let webReadyMs = null;
+
   lifecyclePhase = "api-starting";
   const api = spawnService(
     "API",
@@ -824,8 +1045,24 @@ try {
   );
   webChild = web;
   const webExit = exitPromise("PYRUS web", web);
-  writeLifecycleEvent("web-started", { childPid: web.pid || null });
+  writeLifecycleEvent("web-started", {
+    childPid: web.pid || null,
+    sinceLaunchMs: Date.now() - launchStartedAt,
+  });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+
+  // Observe (without gating) when vite first serves, so the launch summary can
+  // attribute web readiness from the supervisor's point of view.
+  probeWebReady(launchStartedAt)
+    .then((ms) => {
+      if (ms === null) return;
+      webReadyMs = ms;
+      console.log(
+        `[pyrus-dev] web dev server ready in ${formatLaunchMs(ms)} (from launch)`,
+      );
+      writeLifecycleEvent("web-ready", { durationMs: ms });
+    })
+    .catch(() => {});
 
   // Wait for the API to become healthy, but fail fast if the web child dies
   // during the boot window — exitWatchers below is not assembled until after the
@@ -842,12 +1079,17 @@ try {
     await shutdown(result.code ?? (result.signal ? 1 : 0));
   }
   lifecyclePhase = "api-healthy";
-  writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
+  apiHealthyMs = Date.now() - launchStartedAt;
+  writeLifecycleEvent("api-healthy", {
+    childPid: api.pid || null,
+    durationMs: apiHealthyMs,
+  });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
   let workerExit = null;
   const workerStartup = resolveMarketDataWorkerStartup();
   if (workerStartup.start) {
+    await reapStaleMarketDataWorkers();
     lifecyclePhase = "worker-starting";
     const worker = spawnService(
       "market-data worker",
@@ -856,7 +1098,11 @@ try {
     );
     workerChild = worker;
     workerExit = exitPromise("market-data worker", worker);
-    writeLifecycleEvent("worker-started", { childPid: worker.pid || null });
+    workerStartedMs = Date.now() - launchStartedAt;
+    writeLifecycleEvent("worker-started", {
+      childPid: worker.pid || null,
+      durationMs: workerStartedMs,
+    });
     flightRecorder.writeHeartbeat(currentFlightHeartbeat());
   } else {
     lifecyclePhase = "worker-skipped";
@@ -870,13 +1116,38 @@ try {
   }
 
   lifecyclePhase = "running";
+  const totalMs = Date.now() - launchStartedAt;
+  const summaryParts = [
+    `api ${apiHealthyMs === null ? "?" : formatLaunchMs(apiHealthyMs)} to healthy`,
+    webReadyMs === null ? "web still starting" : `web ${formatLaunchMs(webReadyMs)}`,
+    workerStartup.start
+      ? `worker +${formatLaunchMs(Math.max(0, (workerStartedMs ?? totalMs) - (apiHealthyMs ?? 0)))}`
+      : "worker skipped",
+  ];
+  console.log(
+    `[pyrus-dev] launch ready in ${formatLaunchMs(totalMs)} — ${summaryParts.join(", ")}`,
+  );
+  writeLifecycleEvent("launch-ready", {
+    totalMs,
+    apiHealthyMs,
+    webReadyMs,
+    workerStartedMs,
+    workerSkipped: !workerStartup.start,
+  });
   flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
-  const exitWatchers = [apiExit, webExit];
-  if (workerExit) {
-    exitWatchers.push(workerExit);
-  }
-  const firstExit = await Promise.race(exitWatchers);
+  // The first UNEXPECTED child exit tears the supervisor down (surfacing the
+  // crash). An intentional in-place API reload (SIGUSR2 → reloadApiInPlace) is
+  // masked by `reloadInProgress` and re-arms its own watcher, so a backend reload
+  // does NOT reach here and the supervisor + preview survive it.
+  const firstExit = await new Promise((resolve) => {
+    resolveFatalExit = resolve;
+    watchFatalExit("API", apiExit, { reloadable: true });
+    watchFatalExit("PYRUS web", webExit);
+    if (workerExit) {
+      watchFatalExit("market-data worker", workerExit);
+    }
+  });
   const code = firstExit.code ?? (firstExit.signal ? 1 : 0);
   console.error(
     `[pyrus-dev] ${firstExit.name} exited: code=${firstExit.code ?? "null"} signal=${firstExit.signal ?? "null"}`,

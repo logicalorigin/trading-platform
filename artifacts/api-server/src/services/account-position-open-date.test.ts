@@ -206,13 +206,13 @@ test("missing quote and broker market price do not fabricate mark from average p
   );
 });
 
-test("manual option positions demand structured IBKR quote ids and alias numeric conids", () => {
+test("manual option positions demand OPRA quote ids and alias numeric conids", () => {
   const demandProviderContractIds =
     __accountPositionInternalsForTests.optionQuoteDemandProviderContractIdsForPosition(
       manualNvdaPosition,
     );
   assert.equal(demandProviderContractIds.length, 1);
-  assert.match(demandProviderContractIds[0], /^twsopt:/);
+  assert.equal(demandProviderContractIds[0], "O:NVDA260612C00145000");
 
   const aliasProviderContractIds =
     __accountPositionInternalsForTests.optionQuoteProviderContractIdsForPosition(

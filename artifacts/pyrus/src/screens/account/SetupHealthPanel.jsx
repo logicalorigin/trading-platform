@@ -1,4 +1,4 @@
-import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, GLOW, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   IbkrConnectionLane,
@@ -32,7 +32,8 @@ const StatusRow = ({ label, ok, detail }) => (
         height: 7,
         borderRadius: dim(RADII.pill),
         background: ok ? CSS_COLOR.green : CSS_COLOR.amber,
-        boxShadow: ok ? `0 0 8px ${CSS_COLOR.green}` : "none",
+        "--ra-glow-tone": ok ? CSS_COLOR.green : CSS_COLOR.amber,
+        boxShadow: ok ? GLOW.md : GLOW.sm,
         marginTop: sp(3),
       }}
     />
@@ -77,7 +78,7 @@ export const SetupHealthPanel = ({
   return (
     <Panel
       title="Setup & Health"
-      subtitle="Bridge connectivity, Flex status, schema readiness, and snapshot recording"
+      subtitle="Broker connection health, Flex status, schema readiness, and snapshot recording"
       rightRail={health?.flexConfigured ? "Flex configured" : "Flex setup required"}
       loading={healthQuery.isLoading}
       error={healthQuery.error}
@@ -105,9 +106,9 @@ export const SetupHealthPanel = ({
         <div style={{ display: "grid", gap: sp(5) }}>
           <div style={{ display: "grid", gap: sp(4) }}>
             <StatusRow
-              label="Bridge connected"
+              label="IBKR connected"
               ok={Boolean(brokerConfigured && brokerAuthenticated)}
-              detail={brokerAuthenticated ? "IBKR bridge session authenticated" : "Bridge unavailable or not authenticated"}
+              detail={brokerAuthenticated ? "IBKR session authenticated" : "IBKR session unavailable or not authenticated"}
             />
             <div
               style={{
@@ -119,7 +120,7 @@ export const SetupHealthPanel = ({
             >
               <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
               <IbkrConnectionLane
-                label="IB Gateway"
+                label="IBKR Gateway"
                 connection={twsConnection}
                 onReconnect={requestIbkrReconnect}
               />

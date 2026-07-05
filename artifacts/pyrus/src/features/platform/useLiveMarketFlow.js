@@ -680,7 +680,7 @@ export const useLiveMarketFlow = (
       appliedUnusualThresholdConsistent = appliedThresholdCounts.size === 1;
     }
 
-    let label = "No IBKR flow";
+    let label = "No Massive flow";
     let color = CSS_COLOR.textMuted;
     if (scannerLoading) {
       label = "Loading flow";
@@ -688,12 +688,12 @@ export const useLiveMarketFlow = (
     } else if (providerSet.has("ibkr") && providerSet.has("massive")) {
       label = "Mixed sources";
       color = CSS_COLOR.amber;
-    } else if (providerSet.has("ibkr")) {
-      label = "IBKR snapshot live";
-      color = CSS_COLOR.accent;
     } else if (providerSet.has("massive")) {
-      label = "Massive trade fallback";
+      label = fallbackUsed ? "Massive trade fallback" : "Massive snapshot live";
       color = CSS_COLOR.cyan;
+    } else if (providerSet.has("ibkr")) {
+      label = "Legacy snapshot live";
+      color = CSS_COLOR.accent;
     } else if (failures.length || erroredSource) {
       label = "Flow source error";
       color = CSS_COLOR.red;

@@ -49,7 +49,7 @@ const SCREEN_ICONS = {
 };
 
 const buildScreenCommands = (handleSetScreen) =>
-  SCREENS.map((screen) => ({
+  SCREENS.filter((screen) => !screen.hidden).map((screen) => ({
     id: `screen:${screen.id}`,
     label: `Go to ${screen.label}`,
     hint: "Screen",

@@ -16,4 +16,5 @@ export const AccountTradeSource = {
   FLEX: 'FLEX',
   SHADOW: 'SHADOW',
   SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
+  SNAPTRADE_ACTIVITY: 'SNAPTRADE_ACTIVITY',
 } as const;

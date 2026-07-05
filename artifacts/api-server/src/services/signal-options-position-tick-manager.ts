@@ -42,11 +42,13 @@ type SubscribeDemand = (
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ) => () => void;
 
+type OptionQuoteSource = "ibkr" | "massive";
+
 type ManageQuote = (input: {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
   position: SignalOptionsPosition;
-  quote: QuoteSnapshot & { source?: "ibkr" };
+  quote: QuoteSnapshot & { source?: OptionQuoteSource };
   pyrusSignalsSettings?: Record<string, unknown> | null;
   recentEvents?: ExecutionEvent[];
   now?: Date;
@@ -81,7 +83,7 @@ type Runtime = {
   requiresGreeks: boolean;
   pyrusSignalsSettings: Record<string, unknown> | null;
   recentEvents: ExecutionEvent[];
-  pendingQuote: (QuoteSnapshot & { source?: "ibkr" }) | null;
+  pendingQuote: (QuoteSnapshot & { source?: OptionQuoteSource }) | null;
   processing: boolean;
   unsubscribe: () => void;
 };
@@ -148,8 +150,8 @@ async function defaultLoadPyrusSignalsSettings(
 function matchingQuote(input: {
   payload: OptionQuoteSnapshotPayload;
   providerContractId: string;
-}): (QuoteSnapshot & { source?: "ibkr" }) | null {
-  let matched: (QuoteSnapshot & { source?: "ibkr" }) | null = null;
+}): (QuoteSnapshot & { source?: OptionQuoteSource }) | null {
+  let matched: (QuoteSnapshot & { source?: OptionQuoteSource }) | null = null;
   for (const quote of input.payload.quotes) {
     if (compactString(quote.providerContractId) === input.providerContractId) {
       matched = quote;

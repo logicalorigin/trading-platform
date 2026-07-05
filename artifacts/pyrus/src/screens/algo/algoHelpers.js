@@ -173,8 +173,6 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     trailActivationPct: 35,
     minLockedGainPct: 15,
     trailGivebackPct: 20,
-    tightenAtFiveXGivebackPct: 30,
-    tightenAtTenXGivebackPct: 15,
     progressiveTrailEnabled: true,
     progressiveTrailSteps: SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
     wireGreekTrail: {
@@ -387,6 +385,8 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   invalid_position_mark: "marking",
   no_contract_for_strike_slot: "contract_resolution",
   no_expiration_in_dte_window: "contract_resolution",
+  option_chain_stale: "contract_resolution",
+  option_strike_off_money: "contract_resolution",
   option_chain_backoff: "contract_resolution",
   option_expiration_backoff: "contract_resolution",
   historical_option_bars_unavailable: "contract_resolution",
@@ -414,7 +414,6 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   bridge_unavailable: "gateway",
   live_market_data_not_configured: "gateway",
   market_session_quiet: "gateway",
-  bear_regime_gate_failed: "signal_policy",
   mtf_not_aligned: "signal_policy",
   inverse_put_blocked: "signal_policy",
   entry_gate_failed: "signal_policy",
@@ -423,6 +422,13 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   candidate_resolution_failed: "signal_policy",
   signal_age_unavailable: "signal_policy",
   signal_too_old: "signal_policy",
+  // Data-freshness blockers are feed/session conditions (like
+  // market_session_quiet above), not policy verdicts on the signal itself —
+  // keeping them out of signal_policy preserves the stale-vs-aged distinction
+  // the backend actionability logic enforces.
+  data_stale: "gateway",
+  market_idle: "gateway",
+  market_closed: "gateway",
 };
 
 export const asRecord = (value) =>
@@ -660,7 +666,7 @@ export const staRowPassesMtfAlignment = (
     matrixStatesByTimeframe: signalMatrixBySymbol?.[symbolUpper] || {},
     signalDirection: normalizeStaRowSignalDirection(signalRecord.direction),
     timeframes,
-    requiredCount: timeframes.length || mtfAlignmentConfig?.requiredCount,
+    requiredCount: numberFrom(mtfAlignmentConfig?.requiredCount, timeframes.length),
     enabled: mtfAlignmentConfig?.enabled !== false,
   });
   return !(result.applicable && !result.aligned);
@@ -778,26 +784,17 @@ export const buildStaSignalMatrixRows = ({
       ) {
         return null;
       }
-      // Trend-first, mirroring the shared resolver (getCurrentSignalDirection)
-      // and the backend entry gate (getTrendDirectionsForSymbol). The cell's
-      // LIVE trend is the direction the bot trades on; the sparse crossover
-      // (currentSignalDirection) only fills in when no trend is authored. A
-      // binary-active cell that is in-trend but has no recorded crossover used
-      // to be dropped here (the inverse of the canonical resolver), which hid
-      // real rows. We keep it shown; "tradeable right now" stays gated by
-      // fresh/actionEligible below (which still require a crossover signalAt).
-      const direction =
-        normalizeTrendSignalDirection(stateRecord.trendDirection) ||
-        normalizeTrendSignalDirection(
-          asRecord(stateRecord.indicatorSnapshot).trendDirection,
-        ) ||
-        staSignalDirectionOrNull(
-          stateRecord.currentSignalDirection || stateRecord.direction,
-        );
+      const direction = staSignalDirectionOrNull(
+        stateRecord.currentSignalDirection || stateRecord.direction,
+      );
       const signalAt =
         staIsoStringOrNull(stateRecord.currentSignalAt) ??
         staIsoStringOrNull(stateRecord.signalAt);
-      if (!direction) {
+      const latestBarAt =
+        staIsoStringOrNull(stateRecord.latestBarAt) ??
+        staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??
+        signalAt;
+      if (!direction || !latestBarAt) {
         return null;
       }
 
@@ -832,10 +829,7 @@ export const buildStaSignalMatrixRows = ({
       // Actionability is backend-authored (SSE matrix stream + REST both
       // carry it). A state without the fields is ineligible by default —
       // the safe direction; no client-side age inference remains.
-      const actionBlocker =
-        normalizeMatchKey(stateRecord.actionBlocker) ||
-        (!direction ? "no_signal" : null) ||
-        (!signalAt ? "signal_age_unavailable" : null);
+      const actionBlocker = normalizeMatchKey(stateRecord.actionBlocker) || null;
       const actionEligible =
         stateRecord.actionEligible === true && Boolean(direction && signalAt);
 
@@ -849,6 +843,12 @@ export const buildStaSignalMatrixRows = ({
         symbol,
         timeframe,
         direction,
+        trendDirection:
+          normalizeTrendSignalDirection(stateRecord.trendDirection) ||
+          normalizeTrendSignalDirection(
+            asRecord(stateRecord.indicatorSnapshot).trendDirection,
+          ) ||
+          null,
         signalAt,
         currentSignalAt: signalAt,
         signalPrice: signalClose,
@@ -861,19 +861,15 @@ export const buildStaSignalMatrixRows = ({
         currentSignalPrice: signalLevelPrice,
         currentPrice,
         latestBarClose: latestBarClose ?? currentPrice,
-        latestBarAt:
-          staIsoStringOrNull(stateRecord.latestBarAt) ??
-          staIsoStringOrNull(stateRecord.lastEvaluatedAt) ??
-          signalAt,
+        latestBarAt,
         barsSinceSignal,
         fresh,
         actionEligible,
         actionBlocker: actionEligible ? null : actionBlocker,
         status,
-        // Live SSE deltas carry mtfDirections/adx under indicatorSnapshot.filterState
-        // (signalMatrixSnapshotCache preserves indicatorSnapshot); a stored snapshot
-        // may instead hold it top-level. Source either, else the score falls to its
-        // all-defaults fallback (the "every row is 46.4" bug).
+        // Live SSE deltas carry mtfDirections/adx under indicatorSnapshot.filterState.
+        // Stored rows may instead hold it top-level. Source either, else the score
+        // falls to its all-defaults fallback (the "every row is 46.4" bug).
         filterState: Object.keys(asRecord(stateRecord.filterState)).length
           ? asRecord(stateRecord.filterState)
           : Object.keys(
@@ -886,10 +882,8 @@ export const buildStaSignalMatrixRows = ({
     })
     .filter(Boolean)
     .sort((left, right) => {
-      // Crossover rows order by signal time; trend-only rows (no crossover, so
-      // no signalAt) fall back to bar recency so they don't all collapse to 0.
-      const leftTime = Date.parse(left.signalAt || left.latestBarAt || "") || 0;
-      const rightTime = Date.parse(right.signalAt || right.latestBarAt || "") || 0;
+      const leftTime = Date.parse(left.signalAt || "") || 0;
+      const rightTime = Date.parse(right.signalAt || "") || 0;
       return rightTime - leftTime;
     });
 };
@@ -1038,7 +1032,9 @@ export const buildVisibleSignalRows = ({
 
   return Array.from(collapsedByCell.values()).sort(
     (left, right) =>
-      signalRowSignalTimestampMs(right) - signalRowSignalTimestampMs(left),
+      signalRowSignalTimestampMs(right) - signalRowSignalTimestampMs(left) ||
+      signalRowActivityTimestampMs(right) - signalRowActivityTimestampMs(left) ||
+      normalizeMatchToken(left.symbol).localeCompare(normalizeMatchToken(right.symbol)),
   );
 };
 
@@ -1249,9 +1245,14 @@ export const signalActionLabel = (signal, action) => {
   const actionRecord = asRecord(action);
   const direction = signalRecord.direction || actionRecord.signalDirection;
   const optionAction = actionRecord.optionAction;
+  // Direction voice is LONG/SHORT; the instrument (call/put contract) is
+  // implementation detail — buy_call/buy_put map onto it rather than echoing
+  // the enum.
+  if (optionAction === "buy_call") return "LONG";
+  if (optionAction === "buy_put") return "SHORT";
   if (optionAction) return formatEnumLabel(optionAction).toUpperCase();
-  if (direction === "sell") return "BUY PUT";
-  if (direction === "buy") return "BUY CALL";
+  if (direction === "sell") return "SHORT";
+  if (direction === "buy") return "LONG";
   return MISSING_VALUE;
 };
 
@@ -1633,7 +1634,15 @@ export const resolveSignalMove = (
         : MISSING_VALUE,
     };
   }
-  const value = currentPrice - signalPrice;
+  // Direction-adjust so a favorable move reads positive regardless of side: a
+  // sell/short signal profits when price falls. This matches the score's and the
+  // KPI pipeline's direction-signed convention so the Move column is comparable to
+  // the score (the raw price path stays visible in auditDetail below).
+  const moveDirection = String(
+    record.direction || candidateRecord.direction || "buy",
+  ).toLowerCase();
+  const moveDirectionSign = moveDirection === "sell" ? -1 : 1;
+  const value = (currentPrice - signalPrice) * moveDirectionSign;
   const pct = (value / signalPrice) * 100;
   const signalLevelPrice = signalBasis.signalLevelPrice ?? null;
   const levelDetail = signalLevelPrice
@@ -1686,7 +1695,9 @@ export const resolveSignalDayMove = (tickerSnapshot = null) => {
 const scoreReasonLabel = (reason) =>
   formatEnumLabel(reason)
     .replace(/^Mtf\b/, "MTF")
-    .replace(/\bAdx\b/, "ADX");
+    .replace(/\bAdx\b/, "ADX")
+    .replace(/^Sot Outcome$/, "SOT outcome")
+    .replace(/\bSot\b/g, "SOT");
 
 const mtfFrameCount = (mtfDirections) => Math.max(1, mtfDirections.length);
 
@@ -1702,6 +1713,240 @@ const mtfAlignmentReason = (mtfDirections, mtfMatches) => {
   return null;
 };
 
+const ACTIVE_SIGNAL_SCORE_MODEL_VERSION = "expected-move-v2";
+const SOT_BALANCED_SCORE_MAX = 74.9;
+const SOT_OUTCOME_SCORE_MAX_CLIENT = 69.9;
+const TREND_CONFIRMATION_SCORE_MAX_CLIENT = 89.9;
+const EXPECTED_MOVE_SCORE_MAX_CLIENT = 99;
+
+const featureNumber = (features, key, fallback = 0) => {
+  const value = finiteNumberOrNull(asRecord(features)[key]);
+  return value == null ? fallback : value;
+};
+
+const roundScoreComponent = (value) => Number(value.toFixed(1));
+// Mirrors roundTo(value, 1) in the backend signal-quality-kpis.ts exactly.
+const roundScoreTo1 = (value) => Math.round(value * 10) / 10;
+
+// balanced-sot-v2 -- mirrors scoreFromBalancedSotFeatures in the backend
+// signal-quality-kpis.ts (the calibrated active model, recommended by the
+// multi-day 1-3 trading-day calibration on the 15m base): 72% SOT reversion +
+// 28% trend-confirmation, an extension penalty above the 75th range
+// percentile, and volume-expansion support.
+const resolveBalancedSotScore = (filterState, entryQuality = null) => {
+  const directionalFeatures = asRecord(
+    asRecord(filterState).directionalFeatures,
+  );
+  const rangePosition20 = finiteNumberOrNull(
+    directionalFeatures.rangePosition20,
+  );
+  if (rangePosition20 == null) {
+    return null;
+  }
+
+  const clampedRange = clampMetric(rangePosition20, 0, 1);
+  const mtfAlignment = clampMetric(
+    featureNumber(directionalFeatures, "mtfAlignment"),
+    -1.5,
+    3,
+  );
+  const adxComponent = clampMetric(
+    featureNumber(directionalFeatures, "adxComponent"),
+    -1,
+    2.5,
+  );
+  const volatilityComponent = clampMetric(
+    featureNumber(directionalFeatures, "volatilityComponent"),
+    -0.5,
+    1,
+  );
+  const shortMomentum = clampMetric(
+    featureNumber(directionalFeatures, "shortMomentumPct") / 3,
+    -2,
+    2,
+  );
+  const riskAdjustedMomentum = clampMetric(
+    featureNumber(directionalFeatures, "riskAdjustedMomentum") / 4,
+    -2,
+    2,
+  );
+  const volumeExpansion = clampMetric(
+    featureNumber(directionalFeatures, "volumeExpansion"),
+    -1,
+    2,
+  );
+
+  // scoreFromDirectionalFeatures (sot-outcome-v1) mirror.
+  const reversion = roundScoreTo1(
+    clampMetric(
+      50 +
+        (0.5 - clampedRange) * 45 +
+        -mtfAlignment * 3 +
+        -adxComponent * 4 +
+        volatilityComponent * 8 +
+        -shortMomentum * 2 +
+        -riskAdjustedMomentum * 2,
+      20,
+      SOT_OUTCOME_SCORE_MAX_CLIENT,
+    ),
+  );
+  // scoreFromTrendConfirmationFeatures mirror.
+  const confirmation = roundScoreTo1(
+    clampMetric(
+      50 +
+        (clampedRange - 0.5) * 28 +
+        mtfAlignment * 5 +
+        adxComponent * 4 +
+        shortMomentum * 2.5 +
+        riskAdjustedMomentum * 2 +
+        volumeExpansion * 3 +
+        volatilityComponent * 2,
+      20,
+      TREND_CONFIRMATION_SCORE_MAX_CLIENT,
+    ),
+  );
+  const extensionPenalty =
+    rangePosition20 > 0.75 ? (rangePosition20 - 0.75) * 24 : 0;
+  const volumeSupport = volumeExpansion * 1.5;
+  const score = roundScoreTo1(
+    clampMetric(
+      reversion * 0.72 + confirmation * 0.28 - extensionPenalty + volumeSupport,
+      20,
+      SOT_BALANCED_SCORE_MAX,
+    ),
+  );
+  const tier = score >= 60 ? "high" : score < 40 ? "low" : "standard";
+  const reasons = [
+    "balanced_sot_v2",
+    rangePosition20 <= 0.5 ? "range_reversion_support" : "extension_risk",
+    mtfAlignment >= 1 ? "mtf_confirmation" : null,
+    volumeExpansion > 0 ? "volume_expansion_support" : null,
+  ].filter(Boolean);
+  const entryQualityRecord = asRecord(entryQuality);
+  return {
+    tier,
+    score,
+    liquidityTier: String(entryQualityRecord.liquidityTier || "standard"),
+    reasons,
+    reasonLabels: reasons.slice(0, 3).map(scoreReasonLabel),
+    components: {
+      reversion: roundScoreComponent(reversion * 0.72),
+      confirmation: roundScoreComponent(confirmation * 0.28),
+      extensionPenalty: roundScoreComponent(-extensionPenalty),
+      volumeSupport: roundScoreComponent(volumeSupport),
+      total: score,
+    },
+    raw: {
+      ...directionalFeatures,
+      modelVersion: "balanced-sot-v2",
+      entryQualityScore: finiteNumberOrNull(entryQualityRecord.score),
+      entryQualityTier: entryQualityRecord.tier ?? null,
+    },
+    label: `Balanced \u00b7 ${score.toFixed(1)}`,
+  };
+};
+
+// expected-move-v2 -- mirrors scoreFromExpectedMoveV2Features in the backend
+// signal-quality-kpis.ts (the calibrated active model as of 2026-07):
+// direction proved unpredictable at the 26-bar horizon (directional features
+// sign-flip across timeframes/directions) while move magnitude is robustly
+// predictable, so this ranks EXPECTED MOVE (volatility regime + volume
+// participation + ATR-scaled momentum) with a mild reversion tilt from range
+// position, plus a conviction bonus stack on top of the raw expected-move-v1
+// score. Conviction conditions mined from 15.6k observations with temporal
+// 70/30 split; survivors (train lift >=1.5x AND test >=1.25x in >=4/6
+// TF-direction cells): volume spike >=10x, spike+fresh regime flip (<=3
+// bars), spike+>=3-ATR thrust; held-out 90+ band P(top-decile MFE) =
+// 0.38-0.41 (2.4-3.5x base) at 1.9-9.3% population.
+const resolveExpectedMoveScore = (filterState, entryQuality = null) => {
+  const directionalFeatures = asRecord(
+    asRecord(filterState).directionalFeatures,
+  );
+  const rangePosition20 = finiteNumberOrNull(
+    directionalFeatures.rangePosition20,
+  );
+  const atrPct = finiteNumberOrNull(directionalFeatures.atrPct);
+  const volumeRatio20 = finiteNumberOrNull(directionalFeatures.volumeRatio20);
+  if (rangePosition20 == null || atrPct == null || volumeRatio20 == null) {
+    return null;
+  }
+
+  const atr = Math.max(atrPct, 0.02);
+  const vr = Math.max(volumeRatio20, 0.25);
+  const riskAdjustedMomentum = featureNumber(
+    directionalFeatures,
+    "riskAdjustedMomentum",
+  );
+  const shortMomentumPct = featureNumber(
+    directionalFeatures,
+    "shortMomentumPct",
+  );
+
+  // Tail caps at 2.2/4 (not 3.5/7): the extreme-vol tail is adversely
+  // selected on realized return (halted/gapping names) -- beyond ~4.6x median
+  // volatility, more vol must not buy more score.
+  const volatilityRegime = 5.0 * clampMetric(Math.log2(atr / 0.6), -2, 2.2);
+  const volumeParticipation = 3.0 * clampMetric(Math.log2(vr), -2, 4);
+  const momentum =
+    0.6 * clampMetric(riskAdjustedMomentum, -8, 8) +
+    0.5 * clampMetric(shortMomentumPct / atr, -8, 8);
+  const reversionTilt = 4.0 * (0.5 - clampMetric(rangePosition20, 0, 1));
+  // Conviction bonus stack (expected-move-v2): added to the raw score before
+  // the single clamp+round below -- mirrors expectedMoveConvictionBonus in
+  // the backend signal-quality-kpis.ts.
+  const regimeAgeBars = finiteNumberOrNull(directionalFeatures.regimeAgeBars);
+  const volumeSpike = volumeRatio20 >= 10;
+  const freshRegime = regimeAgeBars != null && regimeAgeBars <= 3;
+  const thrust = shortMomentumPct / atr >= 3;
+  const conviction =
+    (volumeSpike ? 4 : 0) +
+    (volumeSpike && freshRegime ? 9 : 0) +
+    (volumeSpike && thrust ? 9 : 0) +
+    (volumeSpike && freshRegime && thrust ? 8 : 0);
+  const score = roundScoreTo1(
+    clampMetric(
+      42 +
+        volatilityRegime +
+        volumeParticipation +
+        momentum +
+        reversionTilt +
+        conviction,
+      5,
+      EXPECTED_MOVE_SCORE_MAX_CLIENT,
+    ),
+  );
+  const tier = score >= 60 ? "high" : score < 40 ? "low" : "standard";
+  const reasons = [
+    "expected_move_v2",
+    rangePosition20 <= 0.5 ? "range_reversion_support" : "extension_risk",
+    volumeRatio20 >= 1 ? "volume_expansion_support" : null,
+    conviction >= 13 ? "ignition" : null,
+  ].filter(Boolean);
+  const entryQualityRecord = asRecord(entryQuality);
+  return {
+    tier,
+    score,
+    liquidityTier: String(entryQualityRecord.liquidityTier || "standard"),
+    reasons,
+    reasonLabels: reasons.slice(0, 3).map(scoreReasonLabel),
+    components: {
+      volatilityRegime: roundScoreComponent(volatilityRegime),
+      volumeParticipation: roundScoreComponent(volumeParticipation),
+      momentum: roundScoreComponent(momentum),
+      reversionTilt: roundScoreComponent(reversionTilt),
+      conviction: roundScoreComponent(conviction),
+      total: score,
+    },
+    raw: {
+      ...directionalFeatures,
+      modelVersion: ACTIVE_SIGNAL_SCORE_MODEL_VERSION,
+      entryQualityScore: finiteNumberOrNull(entryQualityRecord.score),
+      entryQualityTier: entryQualityRecord.tier ?? null,
+    },
+    label: `Expected move \u00b7 ${score.toFixed(1)}`,
+  };
+};
+
 export const resolveSignalScoreBreakdown = ({
   signal,
   candidate,
@@ -1711,6 +1956,11 @@ export const resolveSignalScoreBreakdown = ({
   const candidateRecord = asRecord(candidate);
   const signalRecord = asRecord(signal ?? candidateRecord.signal);
   const quality = asRecord(candidateRecord.signalQuality);
+  const filterState = asRecord(signalRecord.filterState);
+  const outcomeScore = resolveExpectedMoveScore(filterState, quality);
+  if (outcomeScore) {
+    return outcomeScore;
+  }
   if (Object.keys(quality).length) {
     const score = finiteNumberOrNull(quality.score);
     return {
@@ -1727,7 +1977,6 @@ export const resolveSignalScoreBreakdown = ({
     };
   }
 
-  const filterState = asRecord(signalRecord.filterState);
   const direction = String(
     candidateRecord.direction || signalRecord.direction || "buy",
   ).toLowerCase();
@@ -2012,6 +2261,10 @@ export const mergeSignalOptionsProfile = (source) => {
     liquidityGate: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.liquidityGate,
       ...asRecord(rawProfile.liquidityGate),
+      // require* controls removed; gate governed by the Quote halt toggles. Force on so a
+      // stale stored false can't strand the gate (state is folded into the toggles below).
+      requireBidAsk: true,
+      requireFreshQuote: true,
     },
     entryGate: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate,
@@ -2019,6 +2272,9 @@ export const mergeSignalOptionsProfile = (source) => {
       mtfAlignment: {
         ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment,
         ...asRecord(asRecord(rawProfile.entryGate).mtfAlignment),
+        // MTF enable toggles removed; MTF is governed by the SIGNAL FRAMES selection.
+        // Force on so it can't strand; disable MTF by collapsing to the single exec frame.
+        enabled: true,
       },
     },
     fillPolicy: {
@@ -2040,10 +2296,20 @@ export const mergeSignalOptionsProfile = (source) => {
     entryHaltControls: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryHaltControls,
       ...asRecord(rawProfile.entryHaltControls),
+      // MTF quick-toggle removed; MTF governed by the SIGNAL FRAMES selection. Force on.
+      mtfAlignmentEnabled: true,
     },
     liquidityHaltControls: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.liquidityHaltControls,
       ...asRecord(rawProfile.liquidityHaltControls),
+      // Fold the removed liquidityGate.require* duplicates into the kept Quote toggles so
+      // the effective gate is preserved (active iff both the old setting and toggle were on).
+      bidAskRequiredEnabled:
+        asRecord(rawProfile.liquidityGate).requireBidAsk !== false &&
+        asRecord(rawProfile.liquidityHaltControls).bidAskRequiredEnabled !== false,
+      freshQuoteRequiredEnabled:
+        asRecord(rawProfile.liquidityGate).requireFreshQuote !== false &&
+        asRecord(rawProfile.liquidityHaltControls).freshQuoteRequiredEnabled !== false,
     },
     positionHaltControls: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.positionHaltControls,
@@ -2065,7 +2331,12 @@ export const mergeSignalOptionsProfile = (source) => {
     ...mtfAlignment,
     timeframes: mtfTimeframes,
     preset: normalizeSignalOptionsMtfPreset(mtfAlignment.preset),
-    requiredCount: Math.max(1, mtfTimeframes.length),
+    requiredCount: boundedNumberFrom(
+      mtfAlignment.requiredCount,
+      mtfTimeframes.length,
+      1,
+      mtfTimeframes.length,
+    ),
   };
 
   if (parameters.executionMode === "signal_options") {
@@ -2203,6 +2474,7 @@ const buildLiveSignalMoveMetrics = (observations, signalCountOverride = null) =>
     Number.isFinite(signalCountOverride) && signalCountOverride >= 0
       ? signalCountOverride
       : observationCount;
+  const moveTimeline = buildAverageMoveTimeline(observations);
   if (observationCount === 0) {
     return {
       signalCount,
@@ -2225,6 +2497,7 @@ const buildLiveSignalMoveMetrics = (observations, signalCountOverride = null) =>
       maePct: null,
       avgMfePercent: null,
       avgMaePercent: null,
+      moveTimeline,
     };
   }
   const moves = observations.map((observation) => observation.movePercent);
@@ -2273,7 +2546,34 @@ const buildLiveSignalMoveMetrics = (observations, signalCountOverride = null) =>
     maePct: avgMaePercent,
     avgMfePercent,
     avgMaePercent,
+    moveTimeline,
   };
+};
+
+const buildAverageMoveTimeline = (observations) => {
+  const byBar = new Map();
+  for (const observation of observations) {
+    const timeline = Array.isArray(observation.moveTimeline)
+      ? observation.moveTimeline
+      : [];
+    for (const point of timeline) {
+      const bar = Number(point?.bar);
+      const movePercent = Number(point?.movePercent);
+      if (!Number.isInteger(bar) || bar <= 0 || !Number.isFinite(movePercent)) {
+        continue;
+      }
+      const bucket = byBar.get(bar) ?? [];
+      bucket.push(movePercent);
+      byBar.set(bar, bucket);
+    }
+  }
+  return [...byBar.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([bar, values]) => ({
+      bar,
+      observationCount: values.length,
+      avgMovePercent: values.reduce((sum, value) => sum + value, 0) / values.length,
+    }));
 };
 
 const sparklineBarHigh = (point) => {
@@ -2367,6 +2667,41 @@ const resolveSignalExcursionMetrics = ({
   };
 };
 
+const resolveSignalMoveTimeline = ({
+  record,
+  snapshot,
+  signalPrice,
+  direction,
+  maxBars,
+}) => {
+  const signalAtMs = Date.parse(record.signalAt ?? record.currentSignalAt ?? "");
+  if (!Number.isFinite(signalAtMs) || signalPrice <= 0) return [];
+  const limit =
+    Number.isInteger(maxBars) && maxBars > 0
+      ? Math.min(50, maxBars)
+      : 10;
+  const bars = sparklineBarsForSignal(snapshot, record)
+    .map((bar) => ({
+      timeMs: sparklineBarTimestampMs(bar),
+      close: sparklineBarClose(bar),
+    }))
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.timeMs) &&
+        entry.timeMs > signalAtMs &&
+        Number.isFinite(entry.close),
+    )
+    .sort((left, right) => left.timeMs - right.timeMs)
+    .slice(0, limit);
+  return bars.map((entry, index) => {
+    const rawPct = ((entry.close - signalPrice) / signalPrice) * 100;
+    return {
+      bar: index + 1,
+      movePercent: direction === "sell" ? -rawPct : rawPct,
+    };
+  });
+};
+
 // Signal-indicator KPIs computed from the live signal rows already on the page
 // (directional move since each signal). This keeps the header cards fed by the
 // same Signal Matrix / STA rows the user is looking at.
@@ -2377,9 +2712,30 @@ const resolveScoreBucketKey = (scoreBreakdown) => {
     : "unknown";
 };
 
+export const SIGNAL_SCORE_RANGE_BUCKETS = [
+  { key: "90-100", label: "90-100", min: 90, max: 100 },
+  { key: "80-90", label: "80-90", min: 80, max: 90 },
+  { key: "70-80", label: "70-80", min: 70, max: 80 },
+  { key: "60-70", label: "60-70", min: 60, max: 70 },
+  { key: "50-60", label: "50-60", min: 50, max: 60 },
+  { key: "40-50", label: "40-50", min: 40, max: 50 },
+  { key: "30-40", label: "30-40", min: 30, max: 40 },
+  { key: "20-30", label: "20-30", min: 20, max: 30 },
+  { key: "10-20", label: "10-20", min: 10, max: 20 },
+  { key: "0-10", label: "0-10", min: 0, max: 10 },
+];
+
+const resolveScoreRangeBucketKey = (scoreBreakdown) => {
+  const score = finiteNumberOrNull(asRecord(scoreBreakdown).score);
+  if (score == null) return "unknown";
+  const clamped = Math.min(100, Math.max(0, score));
+  const lower = clamped >= 100 ? 90 : Math.floor(clamped / 10) * 10;
+  return `${lower}-${lower + 10}`;
+};
+
 export const buildSignalIndicatorMetrics = (
   signalRows,
-  { tickerSnapshotsBySymbol = null } = {},
+  { tickerSnapshotsBySymbol = null, timelineBars = 10 } = {},
 ) => {
   const rows = Array.isArray(signalRows) ? signalRows : [];
   const observations = [];
@@ -2397,23 +2753,48 @@ export const buildSignalIndicatorMetrics = (
     low: [],
     unknown: [],
   };
+  const observationsByScoreRange = Object.fromEntries(
+    SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [bucket.key, []]),
+  );
+  observationsByScoreRange.unknown = [];
+  const observationsByScoreRangeDirection = Object.fromEntries(
+    SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [
+      bucket.key,
+      { buy: [], sell: [] },
+    ]),
+  );
+  observationsByScoreRangeDirection.unknown = { buy: [], sell: [] };
   const signalCountsByScoreBucket = {
     high: 0,
     standard: 0,
     low: 0,
     unknown: 0,
   };
+  const signalCountsByScoreRange = Object.fromEntries(
+    SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [bucket.key, 0]),
+  );
+  signalCountsByScoreRange.unknown = 0;
+  const signalCountsByScoreRangeDirection = Object.fromEntries(
+    SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [
+      bucket.key,
+      { buy: 0, sell: 0 },
+    ]),
+  );
+  signalCountsByScoreRangeDirection.unknown = { buy: 0, sell: 0 };
   for (const row of rows) {
     const record = asRecord(row);
     // Count every row into its score bucket (incl. directionless rows) so the
     // per-bucket signalCounts sum to the overall (All) signalCount = rows.length.
     const scoreBucket = resolveScoreBucketKey(record.scoreBreakdown);
     signalCountsByScoreBucket[scoreBucket] += 1;
+    const scoreRangeBucket = resolveScoreRangeBucketKey(record.scoreBreakdown);
+    signalCountsByScoreRange[scoreRangeBucket] += 1;
     const symbol = String(record.symbol || "").trim().toUpperCase();
     const snapshot = asRecord(tickerSnapshotsBySymbol?.[symbol]);
     const direction = String(record.direction || "").toLowerCase();
     if (direction !== "buy" && direction !== "sell") continue;
     signalCountsByDirection[direction] += 1;
+    signalCountsByScoreRangeDirection[scoreRangeBucket][direction] += 1;
     const signalPrice = resolveSignalEquityBasisPrice(record).price;
     const current = resolveDisplayCurrentPrice(record, snapshot);
     const currentPrice =
@@ -2437,11 +2818,80 @@ export const buildSignalIndicatorMetrics = (
       movePercent: directionalMove,
       mfePercent: persistedExcursion?.mfePercent ?? null,
       maePercent: persistedExcursion?.maePercent ?? null,
+      moveTimeline: resolveSignalMoveTimeline({
+        record,
+        snapshot,
+        signalPrice,
+        direction,
+        maxBars: timelineBars,
+      }),
     };
     observations.push(observation);
     observationsByDirection[direction].push(observation);
     observationsByScoreBucket[scoreBucket].push(observation);
+    observationsByScoreRange[scoreRangeBucket].push(observation);
+    observationsByScoreRangeDirection[scoreRangeBucket][direction].push(
+      observation,
+    );
   }
+
+  const byScoreRange = {
+    ...Object.fromEntries(
+      SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [
+        bucket.key,
+        buildLiveSignalMoveMetrics(
+          observationsByScoreRange[bucket.key],
+          signalCountsByScoreRange[bucket.key],
+        ),
+      ]),
+    ),
+    unknown: buildLiveSignalMoveMetrics(
+      observationsByScoreRange.unknown,
+      signalCountsByScoreRange.unknown,
+    ),
+  };
+  const byScoreRangeDirection = {
+    ...Object.fromEntries(
+      SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => [
+        bucket.key,
+        {
+          buy: buildLiveSignalMoveMetrics(
+            observationsByScoreRangeDirection[bucket.key].buy,
+            signalCountsByScoreRangeDirection[bucket.key].buy,
+          ),
+          sell: buildLiveSignalMoveMetrics(
+            observationsByScoreRangeDirection[bucket.key].sell,
+            signalCountsByScoreRangeDirection[bucket.key].sell,
+          ),
+        },
+      ]),
+    ),
+    unknown: {
+      buy: buildLiveSignalMoveMetrics(
+        observationsByScoreRangeDirection.unknown.buy,
+        signalCountsByScoreRangeDirection.unknown.buy,
+      ),
+      sell: buildLiveSignalMoveMetrics(
+        observationsByScoreRangeDirection.unknown.sell,
+        signalCountsByScoreRangeDirection.unknown.sell,
+      ),
+    },
+  };
+  const scoreBuckets = [
+    ...SIGNAL_SCORE_RANGE_BUCKETS.map((bucket) => ({
+      ...bucket,
+      ...(byScoreRange[bucket.key] ?? {}),
+      byDirection: byScoreRangeDirection[bucket.key],
+    })),
+    {
+      key: "unknown",
+      label: "Unknown",
+      min: null,
+      max: null,
+      ...(byScoreRange.unknown ?? {}),
+      byDirection: byScoreRangeDirection.unknown,
+    },
+  ].filter((bucket) => bucket.signalCount > 0 || bucket.key !== "unknown");
 
   return {
     ...buildLiveSignalMoveMetrics(observations, rows.length),
@@ -2473,8 +2923,12 @@ export const buildSignalIndicatorMetrics = (
         signalCountsByScoreBucket.unknown,
       ),
     },
+    byScoreRange,
+    byScoreRangeDirection,
+    scoreBuckets,
+    scoreRangeBuckets: SIGNAL_SCORE_RANGE_BUCKETS,
     mtfFilteredOutCount: 0,
-    horizonBars: null,
+    horizonBars: Number.isFinite(Number(timelineBars)) ? Number(timelineBars) : null,
     perSymbol: [],
     source: "live",
   };
@@ -2864,6 +3318,23 @@ export const formatDteLabel = (expirationDate, now = new Date()) => {
   return days >= 0 ? `${days}DTE` : `${Math.abs(days)}d exp`;
 };
 
+// Numeric days-to-expiry from a contract expiration date, sharing the same
+// parser/UTC-floor as formatDteLabel so the Contract column and DTE-aware
+// thresholds stay consistent. Returns null when the expiration can't be parsed.
+export const resolveDteDays = (expirationDate, now = new Date()) => {
+  const expiration = parseExpirationDate(expirationDate);
+  const current = now instanceof Date ? now : new Date(now);
+  if (!expiration || Number.isNaN(current.getTime())) return null;
+  const currentDate = new Date(
+    Date.UTC(
+      current.getUTCFullYear(),
+      current.getUTCMonth(),
+      current.getUTCDate(),
+    ),
+  );
+  return Math.round((expiration.getTime() - currentDate.getTime()) / 86_400_000);
+};
+
 export const formatContractProviderLabel = (contract) => {
   const record = asRecord(contract);
   const providerContractId = firstText(record.providerContractId, record.conid);
@@ -3090,8 +3561,6 @@ export const PROFILE_NUMBER_FIELDS = [
   ["exitPolicy", "trailActivationPct", "Trail activates %", 5],
   ["exitPolicy", "minLockedGainPct", "Minimum locked gain %", 5],
   ["exitPolicy", "trailGivebackPct", "Trail giveback %", 5],
-  ["exitPolicy", "tightenAtFiveXGivebackPct", "5x giveback %", 5],
-  ["exitPolicy", "tightenAtTenXGivebackPct", "10x giveback %", 5],
   ["exitPolicy", "earlyExitBars", "Early exit bars", 1],
   ["exitPolicy", "earlyExitLossPct", "Early exit loss %", 1],
   ["exitPolicy", "overnightMinGainPct", "Overnight min gain %", 1],
@@ -3180,15 +3649,8 @@ export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
     id: "signal",
     label: "Signal",
     controls: [
-      {
-        id: "mtfAlignment",
-        section: "entryHaltControls",
-        key: "mtfAlignmentEnabled",
-        label: "MTF alignment",
-        title:
-          "Blocks entries when multi-timeframe alignment is below the configured count.",
-        reasons: ["mtf_not_aligned"],
-      },
+      // MTF alignment quick-toggle removed: MTF is governed by the SIGNAL FRAMES
+      // selection (its enable flag is forced on in profile normalization).
       {
         id: "inversePutBlocklist",
         section: "entryHaltControls",

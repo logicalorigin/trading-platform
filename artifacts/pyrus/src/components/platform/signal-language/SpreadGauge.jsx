@@ -21,15 +21,39 @@ export const resolveSpreadWidthFraction = ({ bid, ask, mid }) => {
   return Math.max(0, (askValue - bidValue) / midValue);
 };
 
-export const spreadGaugeTone = (widthFraction) => {
+// Long-dated (LEAP) options structurally quote wider than weeklies, so the fixed
+// tight/wide bands flag every long-dated contract red. Widen the bands roughly
+// linearly with tenor (capped) so a normal long-dated spread reads "warn" not
+// "sell". Short-dated (<= baseline) is unchanged: scale 1 -> identical behavior.
+const SPREAD_DTE_BASELINE_DAYS = 21;
+const SPREAD_DTE_MAX_SCALE = 4;
+export const spreadThresholdScaleForDte = (dte) => {
+  const days = Number(dte);
+  if (!Number.isFinite(days) || days <= SPREAD_DTE_BASELINE_DAYS) return 1;
+  return Math.min(
+    SPREAD_DTE_MAX_SCALE,
+    1 + (days - SPREAD_DTE_BASELINE_DAYS) / 110,
+  );
+};
+
+export const spreadGaugeTone = (widthFraction, dte) => {
   const value = finiteNumber(widthFraction);
   if (value == null) return getTone("dim");
-  if (value < SPREAD_TIGHT_PCT) return getTone("buy");
-  if (value <= SPREAD_WIDE_PCT) return getTone("warn");
+  const scale = spreadThresholdScaleForDte(dte);
+  if (value < SPREAD_TIGHT_PCT * scale) return getTone("buy");
+  if (value <= SPREAD_WIDE_PCT * scale) return getTone("warn");
   return getTone("sell");
 };
 
-export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 }) => {
+export const SpreadGauge = ({
+  bid,
+  ask,
+  mid,
+  widthPct,
+  dte,
+  width = 48,
+  height = 6,
+}) => {
   const bidValue = finiteNumber(bid);
   const askValue = finiteNumber(ask);
   const midValue = finiteNumber(mid) ?? (
@@ -41,7 +65,7 @@ export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 })
 
   const spreadFraction =
     finiteNumber(widthPct) ?? resolveSpreadWidthFraction({ bid, ask, mid: midValue });
-  const tone = spreadGaugeTone(spreadFraction);
+  const tone = spreadGaugeTone(spreadFraction, dte);
   const markerPct = Math.max(
     0,
     Math.min(1, (midValue - bidValue) / Math.max(askValue - bidValue, 0.000001)),

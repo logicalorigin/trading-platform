@@ -89,3 +89,52 @@ test("actionability requires a directional signal, current data, and young age",
     "signal_age_unavailable",
   );
 });
+
+test("marketClosed outranks stale and age blockers, but not no_signal", () => {
+  const base = {
+    direction: "buy",
+    signalAt: new Date("2026-06-12T16:25:00.000Z"),
+    barsSinceSignal: 1,
+    stale: false,
+    freshWindowBars: 3,
+  };
+  assert.equal(
+    buildSignalMonitorActionability({ ...base, marketClosed: true })
+      .actionBlocker,
+    "market_closed",
+  );
+  assert.equal(
+    buildSignalMonitorActionability({ ...base, marketClosed: true })
+      .actionEligible,
+    false,
+  );
+  assert.equal(
+    buildSignalMonitorActionability({
+      ...base,
+      marketClosed: true,
+      barsSinceSignal: 9,
+    }).actionBlocker,
+    "market_closed",
+  );
+  assert.equal(
+    buildSignalMonitorActionability({
+      ...base,
+      marketClosed: true,
+      stale: true,
+    }).actionBlocker,
+    "market_closed",
+  );
+  assert.equal(
+    buildSignalMonitorActionability({
+      ...base,
+      marketClosed: true,
+      direction: null,
+    }).actionBlocker,
+    "no_signal",
+  );
+  assert.deepEqual(buildSignalMonitorActionability(base), {
+    fresh: true,
+    actionEligible: true,
+    actionBlocker: null,
+  });
+});

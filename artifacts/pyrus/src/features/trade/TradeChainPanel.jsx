@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
 import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
+import { Select } from "../../components/platform/primitives.jsx";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -50,6 +51,7 @@ import {
   joinMotionClasses,
   motionRowStyle,
   motionVars,
+  useValueFlash,
 } from "../../lib/motion";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -370,6 +372,61 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
   );
 });
 
+// Item 13, D4 — one option-chain quote cell. Extracted so the per-cell tick
+// flash hook runs per component (not in the parent map callback). Only the
+// price columns (bid/ask/last) flash — the highest-signal live values — so a
+// full row is at most 3 active flash hooks per side.
+const ChainCell = ({
+  row,
+  column,
+  held,
+  side,
+  sideColor,
+  staleSide,
+  cellHeatAlpha,
+  sideFreshness,
+}) => {
+  const flashValue = column.type === "price" ? row[column.key] : null;
+  const flash = useValueFlash(flashValue, {
+    enabled: isFiniteNumber(flashValue),
+  });
+  return (
+    <AppTooltip
+      content={`${column.label} / ${formatFreshnessLabel(sideFreshness)}`}
+    >
+      <span
+        className={flash ? `${flash} ra-value-flash--quick` : undefined}
+        style={{
+          padding: sp("0 6px"),
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: side === "C" ? "flex-end" : "flex-start",
+          background:
+            cellHeatAlpha > 0 ? rgba(sideColor, cellHeatAlpha) : "transparent",
+          color: staleSide
+            ? CSS_COLOR.textDim
+            : column.type === "volume"
+              ? CSS_COLOR.textSec
+              : column.type === "price"
+                ? sideColor
+                : held && column.heldAware
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.textSec,
+          opacity: staleSide ? 0.72 : 1,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
+          fontFamily: T.sans,
+          textAlign: side === "C" ? "right" : "left",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatCellValue(row, column, held)}
+      </span>
+    </AppTooltip>
+  );
+};
+
 const ChainSideRows = forwardRef(function ChainSideRows({
   side,
   entries,
@@ -456,38 +513,17 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 const cellHeatAlpha =
                   cellHeatIntensity > 0 ? 0.04 + cellHeatIntensity * 0.24 : 0;
                 return (
-                <AppTooltip key={column.key} content={`${column.label} / ${formatFreshnessLabel(
-                    sideFreshness,
-                  )}`}><span
-                  key={column.key}
-                  style={{
-                    padding: sp("0 6px"),
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: side === "C" ? "flex-end" : "flex-start",
-                    background:
-                      cellHeatAlpha > 0 ? rgba(sideColor, cellHeatAlpha) : "transparent",
-                    color:
-                      staleSide
-                        ? CSS_COLOR.textDim
-                        : column.type === "volume"
-                          ? CSS_COLOR.textSec
-                          : column.type === "price"
-                            ? sideColor
-                            : held && column.heldAware
-                              ? CSS_COLOR.amber
-                              : CSS_COLOR.textSec,
-                    opacity: staleSide ? 0.72 : 1,
-                    fontSize: textSize("caption"),
-                    fontWeight: FONT_WEIGHTS.regular,
-                    fontFamily: T.sans,
-                    textAlign: side === "C" ? "right" : "left",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {formatCellValue(row, column, held)}
-                </span></AppTooltip>
+                  <ChainCell
+                    key={column.key}
+                    row={row}
+                    column={column}
+                    held={held}
+                    side={side}
+                    sideColor={sideColor}
+                    staleSide={staleSide}
+                    cellHeatAlpha={cellHeatAlpha}
+                    sideFreshness={sideFreshness}
+                  />
                 );
               })}
             </div>
@@ -953,33 +989,19 @@ export const TradeChainPanel = ({
         >
           OPTIONS CHAIN
         </span>
-        <select
+        <Select
           value={expInfo.value}
-          onChange={(event) => {
-            if (event.target.value) {
-              onChangeExp(event.target.value);
+          onChange={(next) => {
+            if (next) {
+              onChangeExp(next);
             }
           }}
+          options={fallbackExpirationOptions.map((expiration) => ({
+            value: expiration.value,
+            label: `${expiration.label} / ${expiration.dte}d`,
+          }))}
           disabled={!hasExpirationOptions}
-          style={{
-            background: CSS_COLOR.bg1,
-            border: `1px solid ${CSS_COLOR.border}`,
-            color: hasExpirationOptions ? CSS_COLOR.text : CSS_COLOR.textDim,
-            fontSize: textSize("caption"),
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
-            cursor: hasExpirationOptions ? "pointer" : "default",
-            padding: sp("2px 6px"),
-            borderRadius: dim(3),
-            outline: "none",
-          }}
-        >
-          {fallbackExpirationOptions.map((expiration) => (
-            <option key={expiration.value} value={expiration.value}>
-              {expiration.label} / {expiration.dte}d
-            </option>
-          ))}
-        </select>
+        />
         <label
           style={{
             display: "inline-flex",
@@ -999,29 +1021,15 @@ export const TradeChainPanel = ({
           />
           Heatmap
         </label>
-        <select
-          aria-label="Option chain strike coverage"
+        <Select
+          ariaLabel="Option chain strike coverage"
           value={String(chainCoverageValue)}
-          onChange={(event) => onChangeChainCoverage?.(event.target.value)}
-          style={{
-            background: CSS_COLOR.bg1,
-            border: `1px solid ${CSS_COLOR.border}`,
-            color: CSS_COLOR.textSec,
-            fontSize: textSize("caption"),
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
-            cursor: onChangeChainCoverage ? "pointer" : "default",
-            padding: sp("2px 6px"),
-            borderRadius: dim(3),
-            outline: "none",
-          }}
-        >
-          {chainCoverageOptions.map((option) => (
-            <option key={String(option)} value={String(option)}>
-              {option === "all" ? "All strikes" : `${option} each side`}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => onChangeChainCoverage?.(next)}
+          options={chainCoverageOptions.map((option) => ({
+            value: String(option),
+            label: option === "all" ? "All strikes" : `${option} each side`,
+          }))}
+        />
         <span style={{ flex: 1 }} />
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
         <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>

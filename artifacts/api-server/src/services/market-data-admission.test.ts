@@ -7,6 +7,7 @@ import {
   getMarketDataAdmissionDiagnostics,
   getMarketDataLeasesSnapshot,
   recordMarketDataAdmissionIbkrPressure,
+  setMarketDataAdmissionBridgeLineBudget,
   setMarketDataAdmissionRuntimeDefaults,
   type MarketDataIntent,
   type MarketDataLineRequest,
@@ -75,7 +76,7 @@ test("equity lease refresh preserves newly supplied provider contract id", () =>
   assert.equal(leases[0].providerContractId, "740517233");
 });
 
-test("flow scanner cap is derived from active protected demand", () => {
+test("Massive flow scanner cap is independent of active protected demand", () => {
   __resetMarketDataAdmissionForTests();
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
@@ -91,7 +92,7 @@ test("flow scanner cap is derived from active protected demand", () => {
   assert.equal(visibleUsage.label, "Trade Options Chain");
 });
 
-test("flow scanner cap uses live Trade Options Chain demand", () => {
+test("Massive flow scanner cap is not reduced by live Trade Options Chain demand", () => {
   __resetMarketDataAdmissionForTests();
 
   admitMarketDataLeases({
@@ -108,7 +109,7 @@ test("flow scanner cap uses live Trade Options Chain demand", () => {
   assert.equal(diagnostics.lineAllocation.tradeOptionsChainReserveLineCount, 65);
   assert.equal(diagnostics.lineAllocation.optionReserveLineCount, 65);
   assert.ok(flowScannerUsage);
-  assert.equal(flowScannerUsage.effectiveMaxLines, 135);
+  assert.equal(flowScannerUsage.effectiveMaxLines, 200);
 });
 
 const protectedLanePreemptionCases: Array<{
@@ -145,7 +146,7 @@ const protectedLanePreemptionCases: Array<{
 ];
 
 protectedLanePreemptionCases.forEach((scenario) => {
-  test(`${scenario.name} demand preempts flow scanner leases`, () => {
+  test(`${scenario.name} demand does not consume Massive scanner budget`, () => {
     __resetMarketDataAdmissionForTests();
 
     const scanner = admitMarketDataLeases({
@@ -168,13 +169,19 @@ protectedLanePreemptionCases.forEach((scenario) => {
 
     assert.equal(protectedDemand.rejected.length, 0);
     assert.equal(protectedDemand.admitted.length, 70);
-    assert.equal(protectedDemand.demoted.length, 70);
+    assert.equal(protectedDemand.demoted.length, 0);
     assert.equal(diagnostics[scenario.activeLineField], 70);
-    assert.equal(diagnostics.activeLineCount, 200);
+    assert.equal(diagnostics.activeLineCount, 70);
+    assert.equal(diagnostics.grossActiveLineCount, 70);
+    assert.equal(diagnostics.totalLeaseLineCount, 270);
+    assert.equal(diagnostics.flowScannerContractCount, 200);
+    assert.equal(diagnostics.pressure.activeLineCount, 70);
+    assert.equal(diagnostics.pressure.grossActiveLineCount, 70);
+    assert.equal(diagnostics.pressure.flowScannerContractCount, 200);
     assert.equal(diagnostics.lineAllocation.optionReserveLineCount, 70);
     assert.ok(flowScannerUsage);
-    assert.equal(flowScannerUsage.chargedLineCount, 130);
-    assert.equal(flowScannerUsage.effectiveMaxLines, 130);
+    assert.equal(flowScannerUsage.chargedLineCount, 200);
+    assert.equal(flowScannerUsage.effectiveMaxLines, 200);
     assert.equal(flowScannerUsage.remainingLineCount, 0);
   });
 });
@@ -273,7 +280,7 @@ const concreteDemandPreemptionCases: Array<{
 ];
 
 concreteDemandPreemptionCases.forEach((scenario) => {
-  test(`${scenario.name} preempts saturated flow scanner demand`, () => {
+  test(`${scenario.name} coexists with saturated Massive scanner demand`, () => {
     __resetMarketDataAdmissionForTests();
 
     const scanner = admitMarketDataLeases({
@@ -297,18 +304,24 @@ concreteDemandPreemptionCases.forEach((scenario) => {
 
     assert.equal(priorityDemand.rejected.length, 0);
     assert.equal(priorityDemand.admitted.length, scenario.requests.length);
-    assert.equal(priorityDemand.demoted.length, lineDemand);
+    assert.equal(priorityDemand.demoted.length, 0);
     assert.equal(diagnostics[scenario.activeLineField], lineDemand);
-    assert.equal(diagnostics.activeLineCount, 200);
+    assert.equal(diagnostics.activeLineCount, lineDemand);
+    assert.equal(diagnostics.grossActiveLineCount, lineDemand);
+    assert.equal(diagnostics.totalLeaseLineCount, 200 + lineDemand);
+    assert.equal(diagnostics.flowScannerContractCount, 200);
+    assert.equal(diagnostics.pressure.activeLineCount, lineDemand);
+    assert.equal(diagnostics.pressure.grossActiveLineCount, lineDemand);
+    assert.equal(diagnostics.pressure.flowScannerContractCount, 200);
     assert.equal(diagnostics.lineAllocation.protectedPriorityLineCount, lineDemand);
     assert.ok(flowScannerUsage);
-    assert.equal(flowScannerUsage.chargedLineCount, 200 - lineDemand);
-    assert.equal(flowScannerUsage.effectiveMaxLines, 200 - lineDemand);
+    assert.equal(flowScannerUsage.chargedLineCount, 200);
+    assert.equal(flowScannerUsage.effectiveMaxLines, 200);
     assert.equal(flowScannerUsage.remainingLineCount, 0);
   });
 });
 
-test("new Trade Options Chain demand grows by demoting scanner when protected lanes already exist", () => {
+test("new Trade Options Chain demand grows without demoting Massive scanner", () => {
   __resetMarketDataAdmissionForTests();
 
   admitMarketDataLeases({
@@ -346,20 +359,32 @@ test("new Trade Options Chain demand grows by demoting scanner when protected la
   const after = getMarketDataAdmissionDiagnostics();
   const additionalTradeLineCount = admittedLineCount(additionalTradeDemand.admitted);
 
-  assert.equal(before.activeLineCount, 200);
-  assert.equal(scanner.admitted.length, before.flowScannerChargedLineCount);
   assert.equal(
-    scanner.rejected.length,
-    before.lineAllocation.protectedPriorityLineCount,
+    before.grossActiveLineCount,
+    before.pressure.activeLineCount,
   );
+  assert.equal(
+    before.totalLeaseLineCount,
+    200 + before.pressure.activeLineCount,
+  );
+  assert.equal(before.flowScannerContractCount, 200);
+  assert.equal(before.activeLineCount, before.pressure.activeLineCount);
+  assert.ok(before.pressure.activeLineCount > 0);
+  assert.equal(scanner.admitted.length, 200);
+  assert.equal(scanner.rejected.length, 0);
   assert.equal(additionalTradeDemand.rejected.length, 0);
   assert.equal(additionalTradeDemand.admitted.length, 3);
-  assert.equal(additionalTradeDemand.demoted.length, additionalTradeLineCount);
-  assert.equal(after.activeLineCount, 200);
+  assert.equal(additionalTradeDemand.demoted.length, 0);
   assert.equal(
-    after.flowScannerChargedLineCount,
-    before.flowScannerChargedLineCount - additionalTradeLineCount,
+    after.grossActiveLineCount,
+    before.grossActiveLineCount + additionalTradeLineCount,
   );
+  assert.equal(
+    after.pressure.activeLineCount,
+    before.pressure.activeLineCount + additionalTradeLineCount,
+  );
+  assert.equal(after.activeLineCount, after.pressure.activeLineCount);
+  assert.equal(after.flowScannerChargedLineCount, before.flowScannerChargedLineCount);
   assert.equal(
     after.visibleLineCount,
     before.visibleLineCount + additionalTradeLineCount,
@@ -368,6 +393,40 @@ test("new Trade Options Chain demand grows by demoting scanner when protected la
     after.lineAllocation.protectedPriorityLineCount,
     before.lineAllocation.protectedPriorityLineCount + additionalTradeLineCount,
   );
+});
+
+test("Massive flow scanner ignores broker bridge line budget", () => {
+  __resetMarketDataAdmissionForTests();
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 250,
+    flowScannerConcurrency: 1,
+  });
+  setMarketDataAdmissionBridgeLineBudget(5, Date.now());
+
+  const scanner = admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: optionRequests("SPY", 100),
+    fallbackProvider: "none",
+  });
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+
+  assert.equal(scanner.rejected.length, 0);
+  assert.equal(scanner.admitted.length, 100);
+  assert.equal(diagnostics.budget.bridgeLineBudget, 5);
+  assert.equal(diagnostics.budget.flowScannerLineCap, 250);
+  assert.equal(diagnostics.flowScannerChargedLineCount, 100);
+  assert.equal(diagnostics.flowScannerContractCount, 100);
+  assert.equal(diagnostics.activeLineCount, 0);
+  assert.equal(diagnostics.grossActiveLineCount, 0);
+  assert.equal(diagnostics.totalLeaseLineCount, 100);
+  assert.equal(diagnostics.activeOptionLineCount, 0);
+  assert.equal(diagnostics.pressure.activeLineCount, 0);
+  assert.equal(diagnostics.pressure.grossActiveLineCount, 0);
+  assert.equal(diagnostics.pressure.flowScannerContractCount, 100);
+  assert.equal(diagnostics.lineAllocation.activeLineCount, 0);
+  assert.equal(diagnostics.lineAllocation.scannerLineCount, 100);
+  assert.equal(diagnostics.pressure.state, "normal");
 });
 
 test("account monitor demand preempts execution automation group lines", () => {
@@ -449,7 +508,7 @@ test("execution and automation share priority without preempting each other", ()
   assert.equal(diagnostics.activeLineCount, 200);
 });
 
-test("IBKR pressure sheds half of charged flow scanner lines once", () => {
+test("IBKR pressure does not shed Massive flow scanner lines", () => {
   __resetMarketDataAdmissionForTests();
   const observedAt = Date.now();
   setMarketDataAdmissionRuntimeDefaults({
@@ -483,23 +542,23 @@ test("IBKR pressure sheds half of charged flow scanner lines once", () => {
   const diagnostics = getMarketDataAdmissionDiagnostics();
 
   assert.equal(diagnostics.accountMonitorLineCount, 1);
-  assert.equal(diagnostics.pressure.ibkrPressure?.policy, "scanner-shed-damping");
+  assert.equal(diagnostics.pressure.ibkrPressure?.policy, "broker-pressure-observed");
   assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountBefore, 10);
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 5);
-  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountAfter, 5);
-  assert.equal(diagnostics.pressure.ibkrPressure?.demotedLeaseCount, 5);
-  assert.equal(diagnostics.pressure.ibkrPressure?.dampingActive, true);
+  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineTarget, 10);
+  assert.equal(diagnostics.pressure.ibkrPressure?.scannerLineCountAfter, 10);
+  assert.equal(diagnostics.pressure.ibkrPressure?.demotedLeaseCount, 0);
+  assert.equal(diagnostics.pressure.ibkrPressure?.dampingActive, false);
   assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
-  assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
-  assert.equal(diagnostics.pressure.scannerPressureDampingActive, true);
-  assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
+  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
+  assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+  assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
+  assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
   assert.equal(diagnostics.poolUsageRanking[0]?.id, "flow-scanner");
-  assert.equal(diagnostics.poolUsageRanking[0]?.recentIbkrPressureShed, true);
-  assert.equal(demoted.length, 5);
+  assert.equal(diagnostics.poolUsageRanking[0]?.recentIbkrPressureShed, false);
+  assert.equal(demoted.length, 0);
 });
 
-test("IBKR pressure damps scanner refill without changing configured cap", () => {
+test("IBKR pressure leaves Massive scanner refill capacity alone", () => {
   __resetMarketDataAdmissionForTests();
   const observedAt = Date.now();
   setMarketDataAdmissionRuntimeDefaults({
@@ -538,18 +597,24 @@ test("IBKR pressure damps scanner refill without changing configured cap", () =>
 
   assert.equal(refill.rejected.length, 0);
   assert.equal(refill.admitted.length, 5);
-  assert.equal(refill.demoted.length, 5);
+  assert.equal(refill.demoted.length, 0);
   assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
-  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
-  assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
-  assert.equal(diagnostics.pressure.scannerPressureDampingActive, true);
-  assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
+  assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
+  assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+  assert.equal(diagnostics.pressure.scannerPressureDampingActive, false);
+  assert.equal(diagnostics.pressure.scannerChargedLineCount, 15);
 });
 
-test("IBKR pressure leaves configured flow scanner env overrides unchanged", () => {
+test("legacy IBKR flow scanner env does not cap Massive scanner budget", () => {
   __resetMarketDataAdmissionForTests();
-  const previous = process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+  const previousLegacy = process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+  const previousMassive = process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
   process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = "50";
+  delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 20,
+    flowScannerConcurrency: 1,
+  });
   try {
     admitMarketDataLeases({
       owner: "flow-scanner:SPY",
@@ -569,26 +634,61 @@ test("IBKR pressure leaves configured flow scanner env overrides unchanged", () 
     });
     const diagnostics = getMarketDataAdmissionDiagnostics();
 
-    assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 50);
-    assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 5);
-    assert.equal(diagnostics.pressure.scannerPressureLineCap, 5);
-    assert.equal(diagnostics.pressure.scannerChargedLineCount, 5);
+    assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 20);
+    assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 20);
+    assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+    assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
   } finally {
-    if (previous === undefined) {
+    if (previousLegacy === undefined) {
       delete process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
     } else {
-      process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = previous;
+      process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = previousLegacy;
+    }
+    if (previousMassive === undefined) {
+      delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+    } else {
+      process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = previousMassive;
     }
   }
 });
 
-test("IBKR pressure damping expires and restores scanner capacity", () => {
+test("Massive flow scanner env controls Massive scanner budget", () => {
+  __resetMarketDataAdmissionForTests();
+  const previous = process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+  process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = "50";
+  try {
+    admitMarketDataLeases({
+      owner: "flow-scanner:SPY",
+      intent: "flow-scanner-live",
+      requests: Array.from({ length: 10 }, (_, index) => ({
+        assetClass: "option",
+        symbol: "SPY",
+        providerContractId: `SPY-C-${index}`,
+      })),
+      fallbackProvider: "none",
+    });
+    const diagnostics = getMarketDataAdmissionDiagnostics();
+
+    assert.equal(diagnostics.pressure.scannerConfiguredLineCap, 50);
+    assert.equal(diagnostics.pressure.scannerEffectiveLineCap, 50);
+    assert.equal(diagnostics.pressure.scannerPressureLineCap, null);
+    assert.equal(diagnostics.pressure.scannerChargedLineCount, 10);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+    } else {
+      process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = previous;
+    }
+  }
+});
+
+test("IBKR pressure observation does not create scanner damping", () => {
   __resetMarketDataAdmissionForTests();
   const originalDateNow = Date.now;
-  const previous = process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+  const previous = process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
   let now = new Date("2026-06-18T12:00:00.000Z").getTime();
   Date.now = () => now;
-  process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = "50";
+  process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = "50";
   try {
     admitMarketDataLeases({
       owner: "flow-scanner:SPY",
@@ -609,12 +709,12 @@ test("IBKR pressure damping expires and restores scanner capacity", () => {
     const active = getMarketDataAdmissionDiagnostics();
 
     assert.equal(active.pressure.scannerConfiguredLineCap, 50);
-    assert.equal(active.pressure.scannerEffectiveLineCap, 5);
-    assert.equal(active.pressure.scannerPressureLineCap, 5);
-    assert.equal(active.pressure.scannerPressureDampingActive, true);
-    assert.equal(active.pressure.ibkrPressure?.dampingActive, true);
+    assert.equal(active.pressure.scannerEffectiveLineCap, 50);
+    assert.equal(active.pressure.scannerPressureLineCap, null);
+    assert.equal(active.pressure.scannerPressureDampingActive, false);
+    assert.equal(active.pressure.ibkrPressure?.dampingActive, false);
     assert.equal(active.poolUsageRanking[0]?.id, "flow-scanner");
-    assert.equal(active.poolUsageRanking[0]?.recentIbkrPressureShed, true);
+    assert.equal(active.poolUsageRanking[0]?.recentIbkrPressureShed, false);
 
     now += 60_001;
     const expired = getMarketDataAdmissionDiagnostics();
@@ -629,9 +729,9 @@ test("IBKR pressure damping expires and restores scanner capacity", () => {
   } finally {
     Date.now = originalDateNow;
     if (previous === undefined) {
-      delete process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES;
+      delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
     } else {
-      process.env.IBKR_MARKET_DATA_FLOW_SCANNER_LINES = previous;
+      process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = previous;
     }
   }
 });

@@ -25,17 +25,20 @@ test("snapshot path no longer block-refreshes day-change context for all symbols
 test("snapshot path warms stale live-symbol context in the background (fire-and-forget)", () => {
   assert.match(
     source,
-    /void refreshMassiveQuoteDayChangeContext\(staleLiveContextSymbols\);/,
+    /seedStockQuoteDayChangeContext\(symbols\);/,
   );
 });
 
-test("snapshot path only blocks on genuinely missing symbols", () => {
-  assert.match(
-    source,
-    /const missingSymbols = symbols\.filter\(\(symbol\) => !quotesBySymbol\.has\(symbol\)\);/,
-  );
-  assert.match(
-    source,
-    /await refreshMassiveQuoteDayChangeContext\(missingSymbols, \{ force: true \}\)/,
+test("snapshot path does not mask missing Massive realtime quotes with historical fallbacks", () => {
+  assert.doesNotMatch(source, /loadStoredBarQuoteSnapshots/);
+  assert.doesNotMatch(source, /QUOTE_SNAPSHOT_STORED_BAR_FALLBACK_SOURCE/);
+  assert.doesNotMatch(source, /const missingSymbols = symbols\.filter/);
+  const realtimeBranch = source.match(
+    /if \(useMassiveRealtimePrimary\) \{[\s\S]*?return \{\s*quotes,[\s\S]*?fallbackUsed: false,\s*\};\s*\}/,
+  )?.[0] ?? "";
+  assert.ok(realtimeBranch, "Massive realtime quote snapshot branch is missing");
+  assert.doesNotMatch(
+    realtimeBranch,
+    /fetchMassiveRestStockQuoteSnapshots|getMassiveClient\(\)\.getQuoteSnapshots/,
   );
 });

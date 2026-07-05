@@ -76,17 +76,14 @@ const formatScannerReason = (reason) => {
   if (!reason) {
     return null;
   }
-  if (reason === "line-cap-exhausted") {
-    return "no scanner lines available";
-  }
-  if (reason === "protected-trade-options-chain-demand") {
-    return `${TRADE_OPTIONS_CHAIN_LABEL} active demand`;
+  if (
+    reason === "line-cap-exhausted" ||
+    reason === "massive-scanner-budget-exhausted"
+  ) {
+    return "Massive scanner budget unavailable";
   }
   if (reason === "scanner-refill-needed") {
     return "scanner refill needed";
-  }
-  if (reason === "resource-pressure") {
-    return "resource pressure";
   }
   if (reason === "live-warmup") {
     return "live data warming";
@@ -96,6 +93,12 @@ const formatScannerReason = (reason) => {
   }
   if (reason === "transport-unavailable") {
     return "transport unavailable";
+  }
+  if (reason === "massive-not-configured") {
+    return "Massive options not configured";
+  }
+  if (reason === "massive-not-connected") {
+    return "Massive options unavailable";
   }
   if (reason === "market-data-not-live") {
     return "market data not live";
@@ -107,6 +110,36 @@ const formatScannerReason = (reason) => {
     return "delayed frozen market data";
   }
   return String(reason).replace(/[-_]+/g, " ");
+};
+
+// Non-fatal reasons the flow scanner is idle-gated on: it is waiting/warming,
+// not live. With 0 active lines these must NOT paint the LINE lane green — a
+// scanner "waiting: scanner refill needed" is amber (pending) or idle, never
+// healthy. `market-session-quiet` is genuinely idle; the others are pending.
+const FLOW_SCANNER_NON_FATAL_IDLE_GATE_REASONS = new Set([
+  "scanner-refill-needed",
+  "live-warmup",
+  "market-session-quiet",
+]);
+
+const resolveFlowScannerIdleGateReason = (admission) => {
+  const scanner = admission?.optionsFlowScanner;
+  if (!scanner || typeof scanner !== "object") {
+    return null;
+  }
+  const candidates = [
+    scanner.lineUtilization?.shortfallReason,
+    scanner.backgroundBlockedReason,
+    scanner.sessionBlockReason,
+    scanner.coverage?.degradedReason,
+    scanner.lastSkippedReason,
+  ];
+  for (const reason of candidates) {
+    if (FLOW_SCANNER_NON_FATAL_IDLE_GATE_REASONS.has(reason)) {
+      return reason;
+    }
+  }
+  return null;
 };
 
 const formatFlowSnapshotCount = (snapshotCount) =>
@@ -480,9 +513,6 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     const shortfallReason = scanner.lineUtilization?.shortfallReason;
     if (shortfallReason) {
       const shortfallLabel = formatScannerReason(shortfallReason);
-      if (shortfallReason === "protected-trade-options-chain-demand") {
-        return `paused: ${shortfallLabel}`;
-      }
       return `waiting: ${shortfallLabel}`;
     }
     const snapshotCount = Number(scanner.deepScanner?.snapshotCount);
@@ -499,16 +529,13 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return `warming live data${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
     }
     if (blockedReason === "line-cap-exhausted") {
-      return "paused: no scanner lines available";
+      return "paused: Massive scanner budget unavailable";
     }
     if (
       blockedReason === "market-data-frozen" ||
       blockedReason === "market-data-delayed-frozen"
     ) {
       return `paused: ${formatScannerReason(blockedReason)}`;
-    }
-    if (blockedReason === "resource-pressure") {
-      return "degraded: resource pressure";
     }
     if (blockedReason === "market-session-quiet") {
       const coverageDetail = formatFlowScannerCoverageDetail(scannerCoverage);
@@ -524,7 +551,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     const skipReason = scanner.lastSkippedReason;
     if (skipReason) {
       if (skipReason === "line-cap-exhausted") {
-        return "paused: no scanner lines available";
+        return "paused: Massive scanner budget unavailable";
       }
       return `skipped: ${formatScannerReason(skipReason)}`;
     }
@@ -612,8 +639,8 @@ const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
   // The data-LINE indicator reflects line-capacity health, not stream quietness.
   // A "stalled"/"degraded"/"backoff" STREAM (e.g. quiet/after-hours, no recent
   // quotes) is NOT a line-capacity problem and must not paint the lines amber.
-  // Flag capacity-limited only on a genuine IBKR line shed (subscriptions
-  // actually rejected/paced); plain full or a quiet stream stays healthy/green.
+  // Flag capacity-limited only on a legacy broker line shed; plain full or a
+  // quiet stream stays healthy/green.
   const degraded = admission?.pressure?.recentIbkrPressureShed === true;
   const available = Number.isFinite(used) || Number.isFinite(cap);
   const streamState = bridgeLineUsageState(used, cap, degraded);
@@ -786,8 +813,7 @@ const normalizeLinePressure = (admission) => {
     optionReserveLineCount: firstFiniteNumber(pressure.optionReserveLineCount),
     protectedPriorityLineCount: firstFiniteNumber(pressure.protectedPriorityLineCount),
     usableRemainingLineCount,
-    // Genuine capacity pressure: set when IBKR actually rejected/paced
-    // subscriptions and the scanner was shed. Distinct from mere full utilization,
+    // Legacy genuine capacity pressure. Distinct from mere full utilization,
     // this is the signal that should flag the data-lines indicator amber.
     recentIbkrPressureShed: pressure.recentIbkrPressureShed === true,
   };
@@ -1273,7 +1299,14 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
   const shadowAccount = normalizeShadowAccountLineUsage(admission, lineUsageSnapshot);
-  const totalUsed = firstFiniteNumber(admission.activeLineCount);
+  const totalUsed = firstFiniteNumber(
+    admission.pressure?.activeLineCount,
+    admission.activeLineCount,
+  );
+  const grossActiveLineCount = firstFiniteNumber(
+    admission.grossActiveLineCount,
+    admission.pressure?.grossActiveLineCount,
+  );
   const totalCap = firstFiniteNumber(budget.maxLines);
   const accountSnapshotDetails =
     lineUsageSnapshot?.accountMonitor &&
@@ -1394,11 +1427,21 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       Number.isFinite(displayAvailable) && Number.isFinite(displayActive)
         ? Math.max(0, Number(displayAvailable) - Number(displayActive))
         : null;
-    const streamState = lineUsageState(
-      rawUsed,
-      effectiveCap ?? cap,
-      warnings > 0 && id === "flow-scanner",
-    );
+    const flowScannerIdleGateReason =
+      id === "flow-scanner" ? resolveFlowScannerIdleGateReason(admission) : null;
+    // A flow scanner with 0 active lines but a non-fatal idle gate is waiting,
+    // not live — force a non-green tone (idle for a quiet session, amber-pending
+    // for warmup/refill) instead of lineUsageState's ratio==0 "healthy".
+    const streamState =
+      flowScannerIdleGateReason && !(rawUsed > 0)
+        ? flowScannerIdleGateReason === "market-session-quiet"
+          ? "market-closed"
+          : "capacity-limited"
+        : lineUsageState(
+            rawUsed,
+            effectiveCap ?? cap,
+            warnings > 0 && id === "flow-scanner",
+          );
     const row = {
       id,
       label:
@@ -1450,8 +1493,9 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
 
   const total = {
     id: "total",
-    label: "Total app",
+    label: "IBKR budgeted",
     used: totalUsed,
+    grossActiveLineCount,
     cap: totalCap,
     free: totalFree,
     displayActive: totalUsed,
@@ -1460,8 +1504,8 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     strict: false,
     source: "diagnostics",
     legacyNormalized: false,
-    streamState: lineUsageState(admission.activeLineCount, budget.maxLines, warnings > 0),
-    tone: lineUsageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
+    streamState: lineUsageState(totalUsed, budget.maxLines, warnings > 0),
+    tone: lineUsageTone(totalUsed, budget.maxLines, warnings > 0),
   };
   rows.push(total);
   const demandSummary = `${formatRuntimeCount(total.used)} of ${formatRuntimeCount(total.cap)}`;
@@ -1558,10 +1602,6 @@ export const buildRuntimeControlSnapshot = ({
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
     lineUsage,
     massive,
-    bridgeGovernor:
-      runtimeDiagnostics?.ibkr?.governor ||
-      lineUsageSnapshot?.governor ||
-      null,
     streams: {
       account: {
         kind: "account",

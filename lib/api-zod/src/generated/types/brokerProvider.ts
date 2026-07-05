@@ -11,4 +11,6 @@ export type BrokerProvider = typeof BrokerProvider[keyof typeof BrokerProvider];
 
 export const BrokerProvider = {
   ibkr: 'ibkr',
+  snaptrade: 'snaptrade',
+  robinhood: 'robinhood',
 } as const;

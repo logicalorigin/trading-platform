@@ -8,13 +8,6 @@ import {
   type BridgeLaneDiagnosticsSnapshot,
   type BridgeLaneSettingsRequest,
 } from "../providers/ibkr/bridge-client";
-import {
-  getBridgeGovernorConfigSnapshot,
-  resetBridgeGovernorOverrides,
-  setBridgeGovernorOverrides,
-  type BridgeGovernorConfig,
-  type BridgeWorkCategory,
-} from "./bridge-governor";
 import { verifyIbkrBridgeManagementToken } from "./ibkr-bridge-runtime";
 import {
   getOptionsFlowLaneSourceSymbols,
@@ -107,7 +100,6 @@ export type IbkrLaneArchitectureSnapshot = {
   };
   memberships: LaneMembership[];
   state: {
-    apiGovernor: unknown;
     optionsFlow: unknown;
     flowCoverage: unknown;
     bridge: BridgeLaneDiagnosticsState | null;
@@ -117,9 +109,6 @@ export type IbkrLaneArchitectureSnapshot = {
 
 type PersistedLaneOverrides = {
   version: 1;
-  apiGovernor?: Partial<
-    Record<BridgeWorkCategory, Partial<BridgeGovernorConfig>>
-  >;
   optionsFlow?: Partial<OptionsFlowRuntimeConfig>;
   updatedAt?: string;
 };
@@ -154,16 +143,6 @@ const overrideFile =
   process.env["PYRUS_IBKR_LANE_OVERRIDE_FILE"]?.trim() ||
   join(tmpdir(), "pyrus", "ibkr-lane-overrides.json");
 
-const governorCategories = [
-  "health",
-  "account",
-  "orders",
-  "options",
-  "optionsScanner",
-  "bars",
-  "quotes",
-] as const satisfies BridgeWorkCategory[];
-const governorKeys = ["concurrency", "failureThreshold", "backoffMs"] as const;
 const schedulerKeys = [
   "concurrency",
   "timeoutMs",
@@ -191,15 +170,6 @@ const laneLabels: Record<IbkrDataLaneId, string> = {
   "historical-bars": "Historical Bars",
   "account-control": "Account Control",
   "orders-control": "Orders Control",
-};
-
-const governorLimits: Record<
-  keyof BridgeGovernorConfig,
-  { min: number; max: number; unit?: string }
-> = {
-  concurrency: { min: 1, max: 8 },
-  failureThreshold: { min: 1, max: 10 },
-  backoffMs: { min: 1_000, max: 300_000, unit: "ms" },
 };
 
 const schedulerLimits: Record<
@@ -266,14 +236,6 @@ function pickRecordFields(
   );
 }
 
-function isGovernorCategory(value: string): value is BridgeWorkCategory {
-  return governorCategories.includes(value as BridgeWorkCategory);
-}
-
-function isGovernorKey(value: string): value is keyof BridgeGovernorConfig {
-  return governorKeys.includes(value as keyof BridgeGovernorConfig);
-}
-
 function clampNumber(value: unknown, min: number, max: number): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
   if (!Number.isFinite(parsed)) {
@@ -331,7 +293,6 @@ function cleanPersistedOverrides(value: unknown): PersistedLaneOverrides {
   const record = safeRecord(value);
   return {
     version: 1,
-    apiGovernor: safeRecord(record.apiGovernor) as PersistedLaneOverrides["apiGovernor"],
     optionsFlow: safeRecord(record.optionsFlow) as PersistedLaneOverrides["optionsFlow"],
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
   };
@@ -374,11 +335,7 @@ function persistOverrides(): void {
 }
 
 function applyPersistedOverrides(): void {
-  resetBridgeGovernorOverrides();
   resetOptionsFlowRuntimeOverrides();
-  if (persistedOverrides.apiGovernor) {
-    setBridgeGovernorOverrides(persistedOverrides.apiGovernor);
-  }
   if (persistedOverrides.optionsFlow) {
     setOptionsFlowRuntimeOverrides(persistedOverrides.optionsFlow);
   }
@@ -398,32 +355,6 @@ function formatLabel(value: string): string {
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/[-_]/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function buildGovernorControls(): LaneControl[] {
-  const snapshot = getBridgeGovernorConfigSnapshot();
-  return governorCategories.flatMap((category) =>
-    governorKeys.map((key) => {
-      const config = snapshot[category];
-      const limits = governorLimits[key];
-      const source = controlSource(config.sources[key]);
-      return {
-	        id: `api.governor.${category}.${key}`,
-	        label: `${category === "bars" ? "Legacy Bars" : formatLabel(category)} ${formatLabel(key)}`,
-	        group: "API Governor",
-        layer: "platform",
-        kind: "number",
-        value: config[key],
-        defaultValue: config.defaults[key],
-        source,
-        overridden: source === "override",
-        min: limits.min,
-        max: limits.max,
-        step: 1,
-        unit: limits.unit,
-      };
-    }),
-  );
 }
 
 function buildOptionsFlowControls(): LaneControl[] {
@@ -873,13 +804,6 @@ function buildNodes(
       label: "PYRUS Platform",
       nodes: [
         {
-          id: "api-governor",
-          label: "API Governor",
-          layer: "platform",
-          status: "normal",
-          summary: "Controls request concurrency and backoff before bridge calls.",
-        },
-        {
           id: "flow-universe",
           label: "Flow Universe",
           layer: "platform",
@@ -981,28 +905,6 @@ function applyOverrideValue(
   bridgeUpdate: BridgeLaneSettingsRequest,
 ): void {
   const parts = id.split(".");
-  if (parts[0] === "api" && parts[1] === "governor") {
-    const [, , category, key] = parts;
-    if (!isGovernorCategory(category) || !isGovernorKey(key)) {
-      throw new HttpError(400, `Unknown governor lane control: ${id}`, {
-        code: "invalid_ibkr_lane_override",
-      });
-    }
-    persistedOverrides.apiGovernor ??= {};
-    persistedOverrides.apiGovernor[category] ??= {};
-    if (value === null || value === undefined || value === "") {
-      delete persistedOverrides.apiGovernor[category]?.[key];
-      return;
-    }
-    const limits = governorLimits[key];
-    persistedOverrides.apiGovernor[category]![key] = clampNumber(
-      value,
-      limits.min,
-      limits.max,
-    );
-    return;
-  }
-
   if (parts[0] === "api" && parts[1] === "flow") {
     const key = parts[2] as keyof OptionsFlowRuntimeConfig;
     if (!(key in getOptionsFlowRuntimeConfigSnapshot().defaults)) {
@@ -1059,19 +961,6 @@ function applyOverrideValue(
 }
 
 function pruneEmptyOverrides(): void {
-  for (const [category, config] of Object.entries(
-    persistedOverrides.apiGovernor ?? {},
-  )) {
-    if (!config || Object.keys(config).length === 0) {
-      delete persistedOverrides.apiGovernor?.[category as BridgeWorkCategory];
-    }
-  }
-  if (
-    persistedOverrides.apiGovernor &&
-    Object.keys(persistedOverrides.apiGovernor).length === 0
-  ) {
-    delete persistedOverrides.apiGovernor;
-  }
   if (
     persistedOverrides.optionsFlow &&
     Object.keys(persistedOverrides.optionsFlow).length === 0
@@ -1086,7 +975,6 @@ export async function getIbkrLaneArchitecture(): Promise<IbkrLaneArchitectureSna
   const lanePolicy = getIbkrLanePolicySnapshot();
   const memberships = await buildLaneMemberships(bridge);
   const controls = [
-    ...buildGovernorControls(),
     ...buildOptionsFlowControls(),
     ...buildBridgeControls(bridge),
   ];
@@ -1100,8 +988,7 @@ export async function getIbkrLaneArchitecture(): Promise<IbkrLaneArchitectureSna
     layers: buildNodes(bridge, bridgeError, memberships),
     edges: [
       { from: "flow-universe", to: "flow-scanner", label: "symbol batches" },
-      { from: "flow-scanner", to: "api-governor", label: "governed requests" },
-      { from: "api-governor", to: "bridge-runtime", label: "bridge URL/token" },
+      { from: "flow-scanner", to: "bridge-runtime", label: "metadata requests" },
       { from: "bridge-runtime", to: "bridge-scheduler", label: "HTTP calls" },
       { from: "bridge-scheduler", to: "subscription-budget", label: "lane queues" },
       { from: "subscription-budget", to: "ib-gateway", label: "TWS market data lines" },
@@ -1114,7 +1001,6 @@ export async function getIbkrLaneArchitecture(): Promise<IbkrLaneArchitectureSna
     },
     memberships,
     state: {
-      apiGovernor: getBridgeGovernorConfigSnapshot(),
       optionsFlow: getOptionsFlowRuntimeConfigSnapshot(),
       flowCoverage: getOptionsFlowUniverseCoverage(),
       bridge: compactBridgeLaneDiagnostics(bridge),

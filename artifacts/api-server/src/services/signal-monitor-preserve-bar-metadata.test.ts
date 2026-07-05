@@ -223,3 +223,32 @@ test("an older incoming signal cannot displace a newer stored signal (invariant 
     "2026-06-23T21:30:00.000Z",
   );
 });
+
+test("a preserved signal row takes the candidate's freshly measured trend (trend rides with the bars, not the identity)", () => {
+  // Live symptom this guards against: sell-crossover rows stayed "bullish" all
+  // day because the preserve path pinned trend_direction to the stored value
+  // while lastEvaluatedAt kept advancing — so bearish MTF confluence never
+  // formed and put entries were impossible.
+  const existing = existingRow({ trendDirection: "bullish" });
+  const candidate = candidateRow({ trendDirection: "bearish" });
+
+  const merged = merge(existing as never, candidate as never);
+  assert.ok(merged, "fresh bar should produce a merged write row");
+  // Fresh measurement wins over the stale stored trend...
+  assert.equal(merged?.trendDirection, "bearish");
+  // ...while signal identity is still the preserved stored signal.
+  assert.equal(merged?.currentSignalDirection, "sell");
+  assert.equal(
+    (merged?.currentSignalAt as Date)?.toISOString(),
+    "2026-06-23T17:50:00.000Z",
+  );
+});
+
+test("a candidate with no trend measurement falls back to the stored trend on the preserved row", () => {
+  const existing = existingRow({ trendDirection: "bearish" });
+  const candidate = candidateRow({ trendDirection: null });
+
+  const merged = merge(existing as never, candidate as never);
+  assert.ok(merged, "fresh bar should produce a merged write row");
+  assert.equal(merged?.trendDirection, "bearish");
+});

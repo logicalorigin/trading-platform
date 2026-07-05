@@ -11,10 +11,10 @@ import {
   getSseEmitCounters,
 } from "./sse-stream-diagnostics";
 
-// Loosely re-typed test hook: handleQuoteSnapshot only reads symbol/price/bid/
-// ask/volume off each quote, so a minimal literal is enough to drive one live
-// aggregate broadcast without building a full QuoteSnapshot.
-const ingestQuote = __stockAggregateStreamTestInternals.handleQuoteSnapshot as unknown as (
+// Loosely re-typed test hook: the Massive quote handler only reads symbol/price/
+// bid/ask/volume off each quote, so a minimal literal is enough to drive one
+// live aggregate broadcast without building a full provider payload.
+const ingestQuote = __stockAggregateStreamTestInternals.handleMassiveQuoteSnapshot as unknown as (
   payload: {
     quotes: Array<{
       symbol: string;

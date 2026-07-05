@@ -16,16 +16,6 @@ const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
     drivers: [],
     activeLongScanCount: null,
   },
-  caps: {
-    signalOptions: {
-      maintenanceOnly: false,
-      skipDeploymentScans: false,
-      signalRefreshAllowed: true,
-      actionScansAllowed: true,
-      positionMarksAllowed: true,
-      watchlistPrewarmAllowed: true,
-    },
-  },
   inputs: {
     rssMb: null,
     apiHeapUsedPercent: null,

@@ -170,7 +170,6 @@ function compactLineUsageSnapshot(
   const drift = asJsonRecord(root["drift"]);
   const driftReconciliation = asJsonRecord(drift["reconciliation"]);
   const marketDataWorkPlan = asJsonRecord(root["marketDataWorkPlan"]);
-  const sidecar = asJsonRecord(root["sidecar"]);
 
   return {
     updatedAt: root["updatedAt"],
@@ -182,6 +181,7 @@ function compactLineUsageSnapshot(
         "budget",
         "pressure",
         "activeLineCount",
+        "grossActiveLineCount",
         "reserveLineCount",
         "usableRemainingLineCount",
         "activeEquityLineCount",
@@ -248,10 +248,7 @@ function compactLineUsageSnapshot(
         ]),
       },
     },
-    governor: root["governor"],
-    governorConfig: root["governorConfig"],
     streams: {
-      quoteStreams: compactStreamDiagnostics(streams["quoteStreams"]),
       optionQuoteStreams: compactStreamDiagnostics(streams["optionQuoteStreams"]),
       massiveStockQuotes: compactStreamDiagnostics(streams["massiveStockQuotes"]),
       stockAggregates: compactStreamDiagnostics(streams["stockAggregates"]),
@@ -336,20 +333,6 @@ function compactLineUsageSnapshot(
       scanner: marketDataWorkPlan["scanner"],
       totals: marketDataWorkPlan["totals"],
     },
-    sidecar: pickJsonRecord(sidecar, [
-      "diagnosticsOnly",
-      "routingEnabled",
-      "applyEnabled",
-      "applyTarget",
-      "applyError",
-      "applyPending",
-      "applyGenerationId",
-      "applyStartedAt",
-      "applyCompletedAt",
-      "lastError",
-      "health",
-      "comparison",
-    ]),
   };
 }
 

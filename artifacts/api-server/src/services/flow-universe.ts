@@ -779,7 +779,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
             symbol,
             market: "stocks",
             eligible: true,
-            source: "ibkr",
+            source: "massive",
             metadata: {
               selectionSource: "flow_universe",
               selectedAt: selectedAt.toISOString(),
@@ -861,7 +861,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       });
 
       if (!selected.length) {
-        throw new Error("No eligible IBKR-optionable symbols found for flow universe.");
+        throw new Error("No eligible Massive-optionable symbols found for flow universe.");
       }
 
       const persistenceDegradedReason = await persistSelection(selected, refreshedAt);
@@ -954,7 +954,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         .values({
           symbol,
           market: "stocks",
-          source: "ibkr",
+          source: "massive",
           lastScannedAt: observedAt,
           lastFlowAt: hasEvents ? observedAt : null,
           flowScore: flowScore.toString(),

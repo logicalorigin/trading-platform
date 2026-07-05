@@ -408,6 +408,19 @@ test("shadow account positions use immediate stale cache strategy", () => {
   assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
 });
 
+test("open shadow positions helper serves stale cache immediately", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function readOpenShadowPositionsForSourceCached");
+  const end = source.indexOf("async function readShadowOrdersByFillOrderId", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const block = source.slice(start, end);
+  assert.match(block, /allowStale:\s*shadowReadCacheValueHasRows/);
+  assert.match(block, /staleStrategy:\s*"immediate"/);
+  assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
+});
+
 test("shadow account positions pressure path does not start a full refresh", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const start = source.indexOf("export async function getShadowAccountPositions");
@@ -436,4 +449,40 @@ test("shadow reusable position caches gate stale reuse on resource pressure", ()
     source,
     /getApiResourcePressureSnapshot\(\)\.level !== "high"/,
   );
+});
+
+test("shared dashboard fills+orders read serves stale immediately at the derived TTL", () => {
+  // Regression: this shared full fills+orders scan backs equity-history,
+  // positions, closed-trades, and cash-activity. Under a saturated DB pool the
+  // default "wait" strategy blocked each stale miss ~1.5s before serving the same
+  // cached value. It must serve stale immediately (background refresh) and use the
+  // wider derived-read TTL so the heavy scan recomputes less often. Trading logic
+  // reads the uncached readShadowFillsWithOrders, so this cannot serve stale P&L
+  // into an order path.
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("function readShadowDashboardFillsWithOrders");
+  const end = source.indexOf("async function readShadowFillsForOrderIds", start);
+  assert.notEqual(start, -1, "Missing readShadowDashboardFillsWithOrders");
+  assert.notEqual(end, -1, "Missing function boundary after dashboard fills read");
+  const block = source.slice(start, end);
+
+  assert.match(block, /"dashboard:fills-with-orders"/);
+  assert.match(block, /staleStrategy:\s*"immediate"/);
+  assert.match(block, /ttlMs:\s*SHADOW_DERIVED_READ_CACHE_TTL_MS/);
+  assert.doesNotMatch(block, /staleStrategy:\s*"never"/);
+});
+
+test("shadow trade diagnostics uses shared stale-immediate read cache", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function computeShadowTradeDiagnostics");
+  const end = source.indexOf("\nasync function getShadowTradeEquityEvents", start);
+  assert.notEqual(start, -1, "Missing computeShadowTradeDiagnostics");
+  assert.notEqual(end, -1, "Missing function boundary after diagnostics");
+  const body = source.slice(start, end);
+
+  assert.match(body, /withShadowReadCache\(/);
+  assert.match(body, /`trade-diagnostics:\$\{range\}`/);
+  assert.match(body, /staleStrategy:\s*"immediate"/);
+  assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS/);
+  assert.match(body, /SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS/);
 });

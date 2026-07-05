@@ -258,12 +258,25 @@ export function computeSignalUniverseRanking(input: {
     dollarVolume: number;
     volatility: number;
   }> = [];
+  // Multiple active listings can share a normalized ticker (foreign listings
+  // on a US ticker, STK/ETF catalog variants of one fund), and the rankings
+  // table is keyed by symbol — duplicate symbols in one upsert command fail
+  // with "ON CONFLICT DO UPDATE cannot affect row a second time". Collapse to
+  // one listing per symbol; an admissible listing beats an excluded duplicate
+  // so a foreign/OTC variant can never mask the real one.
+  const exclusionBySymbol = new Map<string, string | null>();
   for (const listing of input.listings) {
     const symbol = normalizeSymbol(listing.symbol).toUpperCase();
     if (!symbol) {
       continue;
     }
     const excludedReason = classifySignalUniverseExclusion(listing);
+    const existing = exclusionBySymbol.get(symbol);
+    if (existing === undefined || (existing !== null && excludedReason === null)) {
+      exclusionBySymbol.set(symbol, excludedReason);
+    }
+  }
+  for (const [symbol, excludedReason] of exclusionBySymbol) {
     if (excludedReason) {
       rows.push({
         symbol,

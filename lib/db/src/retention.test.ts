@@ -13,12 +13,17 @@ import {
   shadowPositionMarksTable,
   shadowPositionsTable,
   signalMonitorBreadthSnapshotsTable,
+  signalMonitorEventsTable,
+  signalMonitorProfilesTable,
+  signalMonitorSymbolStatesTable,
 } from "./index";
 import {
   pruneBalanceSnapshots,
   pruneClosedShadowPositionMarks,
+  pruneInactiveSignalMonitorSymbolStates,
   pruneShadowBalanceSnapshots,
   pruneSignalMonitorBreadthSnapshots,
+  pruneSignalMonitorEvents,
   resolveSnapshotRetentionConfig,
   runAllSnapshotRetention,
 } from "./retention";
@@ -46,7 +51,7 @@ after(async () => {
 });
 beforeEach(async () => {
   await testDb.client.exec(
-    "truncate table balance_snapshots, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots restart identity cascade",
+    "truncate table balance_snapshots, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
   );
 });
 
@@ -316,6 +321,99 @@ test("shadow_balance_snapshots: prunes old live rows per source, never simulatio
   assert.equal(await bySource("watchlist_backtest"), 1); // untouched
 });
 
+async function seedSignalMonitorProfile(): Promise<string> {
+  const [profile] = await db
+    .insert(signalMonitorProfilesTable)
+    .values({ environment: "shadow" })
+    .returning({ id: signalMonitorProfilesTable.id });
+  return profile!.id;
+}
+
+async function insertSignalEvent(opts: {
+  profileId: string;
+  symbol: string;
+  signalAt: Date;
+  close?: string | null;
+}): Promise<void> {
+  await db.insert(signalMonitorEventsTable).values({
+    profileId: opts.profileId,
+    eventKey: `${opts.symbol}:5m:buy:${opts.signalAt.toISOString()}`,
+    environment: "shadow",
+    symbol: opts.symbol,
+    timeframe: "5m",
+    direction: "buy",
+    signalAt: opts.signalAt,
+    close: opts.close === undefined ? "100" : opts.close,
+  });
+}
+
+test("signal_monitor_events: prunes old rows, always keeps newest trusted event per cell", async () => {
+  const profileId = await seedSignalMonitorProfile();
+  // AAPL/5m: two old trusted + one recent trusted. The old rows are prunable
+  // because the recent row is the cell's latest trusted event.
+  await insertSignalEvent({ profileId, symbol: "AAPL", signalAt: daysAgo(200) });
+  await insertSignalEvent({ profileId, symbol: "AAPL", signalAt: daysAgo(150) });
+  await insertSignalEvent({ profileId, symbol: "AAPL", signalAt: daysAgo(10) });
+  // TSLA/5m: ONLY ancient events. The newest TRUSTED one (300d) must survive as
+  // the cell's canonical signal identity; the newer untrusted row (250d, no
+  // close) has no latest-per-cell reader and is pruned.
+  await insertSignalEvent({ profileId, symbol: "TSLA", signalAt: daysAgo(300) });
+  await insertSignalEvent({
+    profileId,
+    symbol: "TSLA",
+    signalAt: daysAgo(250),
+    close: null,
+  });
+
+  const run = await pruneSignalMonitorEvents({
+    retentionDays: 120,
+    now: NOW,
+    dryRun: false,
+  });
+  assert.equal(run.deleted, 3);
+  const rows = await db.select().from(signalMonitorEventsTable);
+  assert.deepEqual(
+    rows
+      .map(
+        (row) =>
+          `${row.symbol}:${Math.round(
+            (NOW.getTime() - row.signalAt.getTime()) / 86_400_000,
+          )}`,
+      )
+      .sort(),
+    ["AAPL:10", "TSLA:300"],
+  );
+});
+
+test("signal_monitor_symbol_states: prunes stale inactive rows, never active rows", async () => {
+  const profileId = await seedSignalMonitorProfile();
+  const insertState = async (
+    symbol: string,
+    active: boolean,
+    updatedAt: Date,
+  ) => {
+    await db.insert(signalMonitorSymbolStatesTable).values({
+      profileId,
+      symbol,
+      timeframe: "5m",
+      active,
+      updatedAt,
+    });
+  };
+  await insertState("AAPL", true, daysAgo(400)); // active: kept regardless of age
+  await insertState("TSLA", false, daysAgo(200)); // stale inactive: pruned
+  await insertState("NVDA", false, daysAgo(10)); // recent inactive: kept
+
+  const run = await pruneInactiveSignalMonitorSymbolStates({
+    retentionDays: 90,
+    now: NOW,
+    dryRun: false,
+  });
+  assert.equal(run.deleted, 1);
+  const rows = await db.select().from(signalMonitorSymbolStatesTable);
+  assert.deepEqual(rows.map((row) => row.symbol).sort(), ["AAPL", "NVDA"]);
+});
+
 test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => {
   const defaults = resolveSnapshotRetentionConfig({});
   assert.deepEqual(defaults, {
@@ -323,6 +421,8 @@ test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => 
     balanceSnapshotDays: 180,
     shadowBalanceSnapshotDays: 180,
     shadowPositionMarkDays: 180,
+    signalMonitorEventDays: 120,
+    signalMonitorInactiveStateDays: 90,
     batchSize: 5_000,
   });
 
@@ -347,6 +447,8 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
       "shadow_balance_snapshots",
       "shadow_position_marks",
       "signal_monitor_breadth_snapshots",
+      "signal_monitor_events",
+      "signal_monitor_symbol_states",
     ],
   );
   assert.ok(results.every((r) => r.dryRun === true && r.deleted === 0));

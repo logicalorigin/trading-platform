@@ -1,9 +1,11 @@
 import React, { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
-import { motionVars } from "../../lib/motion.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, GLOW, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { motionVars, useValueFlash } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
 import { ContainerLoadingStatus } from "./ContainerLoadingStatus.jsx";
+import { useViewport } from "../../lib/responsive";
 
 const readSparklineValue = (point) => {
   if (typeof point === "number" && Number.isFinite(point)) {
@@ -805,6 +807,7 @@ export const StatusPill = ({
   color = CSS_COLOR.textMuted,
   dot = true,
   variant = "solid",
+  glow = false,
 }) => (
   <span
     style={{
@@ -819,6 +822,9 @@ export const StatusPill = ({
       letterSpacing: 0,
       whiteSpace: "nowrap",
       ...resolveBadgeVariantSurface({ variant, color, solidPercent: 7 }),
+      // Item 13, D2 — glow is a status channel: a soft halo in the pill's
+      // own semantic tone, only when the caller says the state has earned it.
+      ...(glow ? { "--ra-glow-tone": color, boxShadow: GLOW.sm } : null),
     }}
   >
     {dot ? (
@@ -905,6 +911,103 @@ export const MetricChip = ({
   </AppMetricTooltip>
 );
 
+/**
+ * StatTile — the one canonical KPI/stat tile: an uppercase label (with an
+ * optional trailing `info` node), a mono tabular-numeral value in `tone`, and
+ * an optional `sub` line. Consolidates the per-screen tile dialects (GEX
+ * MetricTile, Account MetricCard, Algo Cell, …) so every metric reads in one
+ * "data voice" (DESIGN.md). Layout knobs cover the existing looks:
+ *   align   — "start" (default) | "center" (GEX metric bar)
+ *   divider — right hairline divider for edge-to-edge metric bars
+ *   viz     — optional node rendered under `sub` (split bars, dots, sparkline)
+ *   info    — trailing node beside the label (e.g. a glossary tooltip icon)
+ */
+export const StatTile = ({
+  label,
+  value,
+  sub,
+  tone = CSS_COLOR.text,
+  info = null,
+  icon = null,
+  viz = null,
+  align = "start",
+  divider = false,
+  minWidth = 108,
+  title,
+  style = {},
+  testId,
+  flashValue = null,
+}) => {
+  const centered = align === "center";
+  // Item 13, D4 — opt-in tick feedback: pass the raw numeric behind `value`
+  // as `flashValue` and the tile flashes up/down on change (one-shot).
+  const flashClassName = useValueFlash(flashValue, {
+    enabled: flashValue != null,
+  });
+  const body = (
+    <div
+      data-testid={testId}
+      style={{
+        minWidth: dim(minWidth),
+        flex: `1 1 ${dim(minWidth)}`,
+        padding: sp("10px 8px"),
+        borderRight: divider ? `1px solid ${CSS_COLOR.border}` : undefined,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: centered ? "center" : "flex-start",
+        justifyContent: "center",
+        textAlign: centered ? "center" : "left",
+        gap: sp(3),
+        ...style,
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          color: CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+        }}
+      >
+        {icon}
+        {label}
+        {info}
+      </span>
+      <span
+        className={flashClassName || undefined}
+        style={{
+          color: tone,
+          fontFamily: T.data,
+          fontSize: fs(16),
+          fontWeight: FONT_WEIGHTS.emphasis,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.05,
+        }}
+      >
+        {value}
+      </span>
+      {sub ? (
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            lineHeight: 1.3,
+          }}
+        >
+          {sub}
+        </span>
+      ) : null}
+      {viz}
+    </div>
+  );
+  return title ? <AppTooltip content={title}>{body}</AppTooltip> : body;
+};
+
 export const SeverityRail = ({ tone = CSS_COLOR.textDim, style = {} }) => (
   <span
     aria-hidden="true"
@@ -974,6 +1077,7 @@ export const DataUnavailableState = ({
   action,
   fill = false,
   minHeight = 72,
+  standby = false,
 }) => {
   const variantToneFn = DATA_STATE_VARIANT_TONES[variant];
   const variantTone = variantToneFn ? variantToneFn() : null;
@@ -1001,7 +1105,11 @@ export const DataUnavailableState = ({
   return (
     <div
       role={variant === "error" ? "alert" : undefined}
-      className="ra-panel-enter"
+      // Item 13, D5 — `standby` renders idle as radar-on-standby, not
+      // absence: a barely-visible static dot grid behind the copy. Use for
+      // surfaces that are intentionally sleeping (monitor off, market
+      // closed), not for errors or loading.
+      className={standby ? "ra-panel-enter ra-standby-grid" : "ra-panel-enter"}
       style={{
         width: "100%",
         height: fill ? "100%" : "auto",
@@ -1011,7 +1119,11 @@ export const DataUnavailableState = ({
         justifyContent: "center",
         padding: sp("16px 18px"),
         textAlign: "center",
-        background: accentBg,
+        // background shorthand would clobber the standby dot-grid
+        // background-image, so standby uses backgroundColor instead.
+        ...(standby
+          ? { backgroundColor: CSS_COLOR.bg1 }
+          : { background: accentBg }),
         border: `1px dashed ${accentBorder}`,
         borderRadius: dim(RADII.md),
         color: CSS_COLOR.textMuted,
@@ -1170,6 +1282,7 @@ export const SegmentedControl = ({
   const containerRef = useRef(null);
   const buttonRefs = useRef(new Map());
   const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
+  const isPhone = useViewport().flags.isPhone;
 
   const normalizedOptions = options.map((option) =>
     typeof option === "string" ? { value: option, label: option } : option,
@@ -1256,6 +1369,7 @@ export const SegmentedControl = ({
               position: "relative",
               zIndex: 1,
               height: dim(22),
+              minHeight: isPhone ? dim(44) : undefined,
               padding: sp("0 10px"),
               borderRadius: dim(RADII.pill),
               border: "none",
@@ -1429,6 +1543,160 @@ export const TextField = ({
 };
 
 /**
+ * Select — the one canonical dropdown. Mirrors TextField's shell (label +
+ * .ra-textfield ring wrapper + helper line + sm/md sizing) around a native
+ * <select>, so config dropdowns read identically to text inputs and every
+ * screen stops rolling its own inputStyle() select. Native <select> is kept
+ * deliberately: it gives the OS picker on touch (the 44px mobile goal comes
+ * for free) plus built-in keyboard + a11y that a custom popover would have to
+ * re-earn.
+ *
+ *   options: string[] | { value, label, disabled? }[]
+ *   value / onChange(nextValue): controlled; onChange receives the raw value.
+ *   placeholder: renders a disabled leading option when value is empty.
+ *   size: "sm" (28px, default) | "md" (32px).
+ *
+ * The chevron is decorative (pointer-events:none) so clicks fall through to
+ * the native control. The bare <select> paints no border/ring of its own —
+ * the wrapper's :focus-within ring covers it.
+ */
+export const Select = ({
+  value,
+  onChange,
+  options,
+  placeholder,
+  label,
+  hint,
+  error,
+  size = "sm",
+  disabled = false,
+  required = false,
+  id,
+  ariaLabel,
+  className,
+  style,
+  selectProps,
+}) => {
+  const hasError = Boolean(error);
+  const helperText = hasError ? error : hint;
+  const heightPx = size === "md" ? 32 : 28;
+  const normalizedOptions = (options ?? []).map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
+  return (
+    <label
+      htmlFor={id}
+      className={className}
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: sp(3),
+        fontFamily: T.sans,
+        ...style,
+      }}
+    >
+      {label ? (
+        <span
+          style={{
+            fontSize: textSize("label"),
+            color: CSS_COLOR.textMuted,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            fontWeight: FONT_WEIGHTS.medium,
+          }}
+        >
+          {label}
+          {required ? (
+            <span aria-hidden="true" style={{ color: CSS_COLOR.red, marginLeft: sp(2) }}>
+              *
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      <span
+        className={hasError ? "ra-textfield ra-textfield--error" : "ra-textfield"}
+        style={{
+          position: "relative",
+          display: "inline-flex",
+          alignItems: "center",
+          height: dim(heightPx),
+          borderRadius: dim(RADII.sm),
+          background: CSS_COLOR.bg2,
+          border: `1px solid transparent`,
+          color: disabled ? CSS_COLOR.textMuted : CSS_COLOR.text,
+          opacity: disabled ? 0.6 : 1,
+          minWidth: 0,
+        }}
+      >
+        <select
+          {...selectProps}
+          id={id}
+          value={value ?? ""}
+          onChange={(event) => onChange?.(event.target.value)}
+          disabled={disabled}
+          required={required}
+          aria-label={ariaLabel}
+          aria-invalid={hasError || undefined}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: "100%",
+            border: "none",
+            background: "transparent",
+            outline: "none",
+            color: "inherit",
+            fontSize: textSize("control"),
+            fontFamily: T.sans,
+            fontWeight: FONT_WEIGHTS.medium,
+            padding: sp("0 28px 0 10px"),
+            appearance: "none",
+            WebkitAppearance: "none",
+            MozAppearance: "none",
+            cursor: disabled ? "not-allowed" : "pointer",
+            ...(selectProps?.style ?? {}),
+          }}
+        >
+          {placeholder ? (
+            <option value="" disabled>
+              {placeholder}
+            </option>
+          ) : null}
+          {normalizedOptions.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label ?? option.value}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          size={14}
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            right: sp(8),
+            color: CSS_COLOR.textMuted,
+            pointerEvents: "none",
+            flexShrink: 0,
+          }}
+        />
+      </span>
+      {helperText ? (
+        <span
+          role={hasError ? "alert" : undefined}
+          style={{
+            fontSize: textSize("caption"),
+            color: hasError ? CSS_COLOR.red : CSS_COLOR.textMuted,
+            letterSpacing: "0.01em",
+            lineHeight: 1.4,
+          }}
+        >
+          {helperText}
+        </span>
+      ) : null}
+    </label>
+  );
+};
+
+/**
  * Skeleton — animated placeholder for loading content.
  *
  * variant: "shimmer" (default) — solid base + sweeping highlight via the
@@ -1472,6 +1740,128 @@ export const Skeleton = ({
 );
 
 /**
+ * ChartSkeleton — fixed-height placeholder that reads as "a chart is coming".
+ *
+ * A bordered, rounded surface box holding dim axis rails (a left price-axis
+ * gutter with short tick bars + a bottom time-axis line) and a row of vertical
+ * bar silhouettes at deterministic, index-derived heights (no Math.random).
+ * Bars shimmer via the shared `ra-skeleton-shimmer` class; under
+ * prefers-reduced-motion the shimmer stops but the solid low-opacity bars still
+ * read as a static placeholder. Purely presentational — no data props.
+ *
+ * height: numeric px for the box (default 220). fill=true fills the parent
+ * panel instead (height:100% / minHeight:0). bars: count of silhouettes,
+ * clamped to 12–24.
+ */
+export const ChartSkeleton = ({
+  height = 220,
+  fill = false,
+  bars = 18,
+  className = "",
+  style = {},
+  ...rest
+}) => {
+  const barCount = Math.max(12, Math.min(24, Math.round(bars)));
+  const barHeights = useMemo(
+    () =>
+      Array.from({ length: barCount }, (_, i) => {
+        // Deterministic pseudo-organic profile derived from the index — two
+        // out-of-phase sines so neighbouring bars vary without Math.random.
+        const wave =
+          Math.sin(i * 1.1) * 0.5 + Math.sin(i * 0.37 + 1) * 0.32;
+        return Math.round(34 + ((wave + 0.82) / 1.64) * 54); // ~34%..88%
+      }),
+    [barCount],
+  );
+  return (
+    <div
+      aria-hidden="true"
+      className={className}
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        gap: sp(2),
+        boxSizing: "border-box",
+        width: "100%",
+        height: fill ? "100%" : dim(height),
+        minHeight: fill ? 0 : undefined,
+        padding: sp(3),
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.md),
+        overflow: "hidden",
+        ...style,
+      }}
+      {...rest}
+    >
+      {/* Left price-axis gutter: short horizontal tick bars, evenly spread. */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          paddingBottom: sp(3),
+          flex: "0 0 auto",
+        }}
+      >
+        {Array.from({ length: 4 }, (_, i) => (
+          <span
+            key={i}
+            className="ra-skeleton-shimmer"
+            style={{
+              display: "block",
+              width: dim(18),
+              height: dim(4),
+              opacity: 0.4,
+              borderRadius: dim(RADII.xs),
+            }}
+          />
+        ))}
+      </div>
+      {/* Plot area: bar silhouettes aligned to a bottom time-axis line. */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            alignItems: "flex-end",
+            gap: sp(1),
+          }}
+        >
+          {barHeights.map((h, i) => (
+            <span
+              key={i}
+              className="ra-skeleton-shimmer"
+              style={{
+                display: "block",
+                flex: 1,
+                minWidth: 0,
+                height: `${h}%`,
+                opacity: 0.5,
+                borderRadius: dim(RADII.xs),
+              }}
+            />
+          ))}
+        </div>
+        {/* Bottom time-axis line. */}
+        <span
+          className="ra-skeleton-shimmer"
+          style={{
+            display: "block",
+            width: "100%",
+            height: dim(2),
+            marginTop: sp(2),
+            opacity: 0.4,
+            borderRadius: dim(RADII.xs),
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+/**
  * surfaceStyle — single source of truth for the card/panel surface recipe.
  * (SYS-04) `Card`, `SurfacePanel`, and — incrementally, during per-screen
  * polish passes — the ~71 hand-rolled `bg1` surfaces all derive their
@@ -1484,18 +1874,20 @@ export const Skeleton = ({
  * Returns a plain style object; spread it first, then layer component-specific
  * keys (padding, transition, layout) and caller overrides on top.
  */
+// Item 13, D3 — elevation by luminance, not boxes: surfaces separate via the
+// bg1 luminance step + a 1px lit top edge instead of a border stroke. The
+// `border` option is retained for call-site compat but no longer draws a
+// stroke; elevated surfaces get ELEVATION.sm (which already includes the top
+// edge), flat ones get --ra-edge-top.
 export const surfaceStyle = ({
   radius = RADII.md,
-  border = "default",
+  border = "default", // eslint-disable-line no-unused-vars -- legacy option, strokes retired by D3
   elevated = false,
 } = {}) => ({
   background: CSS_COLOR.bg1,
-  border:
-    border === "none"
-      ? "none"
-      : `1px solid ${border === "light" ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
+  border: "none",
   borderRadius: dim(radius),
-  ...(elevated ? { boxShadow: ELEVATION.sm } : null),
+  boxShadow: elevated ? ELEVATION.sm : "var(--ra-edge-top)",
   overflow: "hidden",
 });
 
@@ -1771,7 +2163,7 @@ export const ScoreBar = ({
           left: Math.max(0, Math.min(width - 2, valuePos - 1)),
           width: 2,
           background: tone,
-          borderRadius: 1,
+          borderRadius: RADII.xs,
         }}
       />
       {showNumber ? (
@@ -1815,6 +2207,7 @@ export const InlineFilterBar = ({
   right,
   dataTestId,
 }) => {
+  const isPhone = useViewport().flags.isPhone;
   const selected = new Set(selectedChipIds);
   const toggleChip = (chipId) => {
     if (mode === "multi") {
@@ -1878,6 +2271,9 @@ export const InlineFilterBar = ({
               data-selected={isSelected ? "true" : "false"}
               onClick={() => toggleChip(chip.id)}
               style={{
+                display: isPhone ? "inline-flex" : undefined,
+                alignItems: isPhone ? "center" : undefined,
+                minHeight: isPhone ? dim(44) : undefined,
                 padding: sp("2px 8px"),
                 borderRadius: dim(RADII.pill),
                 border: `1px solid ${isSelected ? CSS_COLOR.accent : CSS_COLOR.border}`,

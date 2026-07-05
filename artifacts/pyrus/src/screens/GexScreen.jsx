@@ -39,7 +39,11 @@ import {
   getGexHeatmapCellValue,
   hasGexHeatmapCellValue,
 } from "../features/gex/gexHeatmapModel.js";
-import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
+import { Card, DataUnavailableState, SegmentedControl, Select, StatTile } from "../components/platform/primitives.jsx";
+import {
+  classifyRequestHealth,
+  requestHealthTone,
+} from "../lib/requestHealthTone.js";
 import {
   SortableColumnHeaderCell,
   TableHeaderDndContext,
@@ -73,6 +77,7 @@ import {
   CSS_COLOR,
   cssColorMix,
   ELEVATION,
+  FONT_STACKS,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -243,40 +248,6 @@ const fieldStyle = {
   outline: "none",
 };
 
-export const SegmentControl = ({ value, options, onChange }) => (
-  <div
-    style={{
-      display: "inline-flex",
-      background: CSS_COLOR.bg0,
-      border: "none",
-    }}
-  >
-    {options.map((option) => {
-      const active = option.value === value;
-      return (
-        <button
-          key={option.value}
-          type="button"
-          className="ra-touch-target"
-          onClick={() => onChange(option.value)}
-          style={{
-            padding: sp("6px 9px"),
-            border: 0,
-            borderRight: `1px solid ${CSS_COLOR.border}`,
-            background: active ? CSS_COLOR.accentDim : "transparent",
-            color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            cursor: "pointer",
-          }}
-        >
-          {option.label}
-        </button>
-      );
-    })}
-  </div>
-);
-
 export const SectionTitle = ({ children, right }) => (
   <div
     style={{
@@ -312,59 +283,29 @@ export const SectionTitle = ({ children, right }) => (
   </div>
 );
 
-const MetricTile = ({ label, value, sub, color = CSS_COLOR.text, glossaryKey }) => (
-  <div
-    style={{
-      minWidth: dim(112),
-      flex: "1 1 112px",
-      padding: sp("10px 8px"),
-      borderRight: `1px solid ${CSS_COLOR.border}`,
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      textAlign: "center",
-      gap: sp(3),
-    }}
-  >
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        color: CSS_COLOR.textDim,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-      }}
-    >
-      {label}
-      {glossaryKey ? (
+const MetricTile = ({
+  label,
+  value,
+  sub,
+  color = CSS_COLOR.text,
+  glossaryKey,
+  flashValue = null,
+}) => (
+  <StatTile
+    label={label}
+    value={value}
+    sub={sub}
+    tone={color}
+    align="center"
+    divider
+    minWidth={112}
+    flashValue={flashValue}
+    info={
+      glossaryKey ? (
         <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
-      ) : null}
-    </span>
-    <span
-      style={{
-        color,
-        fontFamily: T.sans,
-        fontSize: fs(16),
-        fontWeight: FONT_WEIGHTS.emphasis,
-        lineHeight: 1,
-      }}
-    >
-      {value}
-    </span>
-    <span
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-      }}
-    >
-      {sub}
-    </span>
-  </div>
+      ) : null
+    }
+  />
 );
 
 const MetaLine = ({ label, value }) => (
@@ -543,13 +484,61 @@ const SectionHeading = ({ title }) => (
 );
 
 
-const HeatmapCard = ({ rows, spot }) => {
+const HeatmapCard = ({ rows, spot, callWall, putWall, zeroGamma }) => {
   const [expanded, setExpanded] = useState(false);
   const model = useMemo(() => buildGexHeatmapModel(rows, spot), [rows, spot]);
   const displayStrikes = useMemo(
     () => [...model.strikes].sort((left, right) => right - left),
     [model.strikes],
   );
+  // Per-strike net GEX (sum of the row's cell values) for the magnitude ladder.
+  const strikeNet = useMemo(() => {
+    const map = new Map();
+    let max = 0;
+    model.strikes.forEach((strike) => {
+      const cells = model.cellMap.get(strike);
+      let net = 0;
+      if (cells) cells.forEach((value) => { net += value; });
+      map.set(strike, net);
+      max = Math.max(max, Math.abs(net));
+    });
+    return { map, max };
+  }, [model]);
+  // Nearest strike to a reference price (spot / zero-gamma flip) for anchoring.
+  const nearestStrike = (reference) => {
+    if (!isFiniteNumber(reference) || !model.strikes.length) return null;
+    let best = null;
+    let bestDistance = Infinity;
+    model.strikes.forEach((strike) => {
+      const distance = Math.abs(strike - reference);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = strike;
+      }
+    });
+    return best;
+  };
+  const spotStrike = useMemo(
+    () => nearestStrike(spot),
+    [spot, model.strikes],
+  );
+  const zeroGammaStrike = useMemo(
+    () => nearestStrike(zeroGamma),
+    [zeroGamma, model.strikes],
+  );
+  // Semantic marker for a strike: call/put wall (exact strikes) or zero-gamma flip.
+  const strikeMarker = (strike) => {
+    if (isFiniteNumber(callWall) && Math.abs(strike - callWall) < 0.01) {
+      return { tone: GEX_BULLISH_TONE, title: "Call wall" };
+    }
+    if (isFiniteNumber(putWall) && Math.abs(strike - putWall) < 0.01) {
+      return { tone: GEX_BEARISH_TONE, title: "Put wall" };
+    }
+    if (zeroGammaStrike != null && strike === zeroGammaStrike) {
+      return { tone: CSS_COLOR.amber, title: "Zero gamma" };
+    }
+    return null;
+  };
   const focusedStrikes = useMemo(() => {
     const spotIndex = displayStrikes.findIndex((strike) => strike <= spot);
     const centerIndex = spotIndex === -1 ? displayStrikes.length - 1 : spotIndex;
@@ -644,15 +633,85 @@ const HeatmapCard = ({ rows, spot }) => {
             <tbody>
               {visibleStrikes.map((strike) => (
                 <tr key={strike}>
-                  <td
-                    style={{
-                      ...heatmapStrikeCellStyle,
-                      fontVariantNumeric: "tabular-nums",
-                      color: Math.abs(strike - spot) < 0.5 ? CSS_COLOR.cyan : CSS_COLOR.textSec,
-                    }}
-                  >
-                    {formatHeatmapStrikeLabel(strike)}
-                  </td>
+                  {(() => {
+                    const isSpot = spotStrike != null && strike === spotStrike;
+                    const marker = strikeMarker(strike);
+                    const net = strikeNet.map.get(strike) || 0;
+                    const magnitude = strikeNet.max
+                      ? Math.min(50, (Math.abs(net) / strikeNet.max) * 50)
+                      : 0;
+                    const bullish = net >= 0;
+                    return (
+                      <td
+                        style={{
+                          ...heatmapStrikeCellStyle,
+                          fontFamily: FONT_STACKS.data,
+                          fontVariantNumeric: "tabular-nums",
+                          boxShadow: isSpot
+                            ? `inset 2px 0 0 ${CSS_COLOR.cyan}`
+                            : undefined,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "stretch",
+                            gap: dim(3),
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "flex-end",
+                              gap: sp(4),
+                            }}
+                          >
+                            {marker ? (
+                              <span
+                                title={marker.title}
+                                style={{
+                                  width: dim(5),
+                                  height: dim(5),
+                                  borderRadius: "50%",
+                                  background: marker.tone,
+                                  flexShrink: 0,
+                                }}
+                              />
+                            ) : null}
+                            <span
+                              style={{
+                                color: isSpot ? CSS_COLOR.cyan : CSS_COLOR.textSec,
+                              }}
+                            >
+                              {formatHeatmapStrikeLabel(strike)}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              position: "relative",
+                              height: dim(2),
+                              background: cssColorMix(CSS_COLOR.border, 55),
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                bottom: 0,
+                                left: bullish ? "50%" : `${50 - magnitude}%`,
+                                width: `${magnitude}%`,
+                                background: bullish
+                                  ? GEX_BULLISH_TONE
+                                  : GEX_BEARISH_TONE,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                    );
+                  })()}
                   {model.expirations.map((expiration) => {
                     const hasValue = hasGexHeatmapCellValue(
                       model,
@@ -858,13 +917,13 @@ const SignalsCard = ({ signals }) => (
 
 const formatFlowClassificationDetail = (source) => {
   if (!source) {
-    return "Squeeze scoring waits for IBKR-backed flow context instead of using neutral placeholders.";
+    return "Squeeze scoring waits for Massive-backed flow context instead of using neutral placeholders.";
   }
 
   const rawCount = Number(source.flowEventCount || 0);
   const classifiedCount = Number(source.classifiedFlowEventCount || 0);
   if (rawCount <= 0) {
-    return "No IBKR-backed option flow context is available for the current GEX window.";
+    return "No Massive-backed option flow context is available for the current GEX window.";
   }
 
   const coverage =
@@ -872,7 +931,7 @@ const formatFlowClassificationDetail = (source) => {
       ? source.flowClassificationCoverage
       : classifiedCount / rawCount;
   const basis = source.flowClassificationBasisCounts || {};
-  return `${classifiedCount}/${rawCount} IBKR-backed flow events classified (${Math.round(
+  return `${classifiedCount}/${rawCount} Massive-backed flow events classified (${Math.round(
     coverage * 100,
   )}%). Quote-match ${Number(basis.quoteMatch || 0)}, tick-test ${Number(
     basis.tickTest || 0,
@@ -966,11 +1025,11 @@ const SqueezeCard = ({ squeeze, source }) => {
               fontSize: textSize("caption"),
             }}
           >
-            Flow factors are waiting for IBKR-backed flow context.
+            Flow factors are waiting for Massive-backed flow context.
           </div>
         ) : (
           <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-            IBKR-backed flow events: {displayedClassifiedFlowCount}/{displayedRawFlowCount} classified
+            Massive-backed flow events: {displayedClassifiedFlowCount}/{displayedRawFlowCount} classified
           </div>
         )}
         <div style={{ display: "grid", gap: sp(6) }}>
@@ -1481,6 +1540,15 @@ export default function GexScreen({
     () => resolveHeadlineZeroGamma(metrics, zeroGammaQuery.data),
     [metrics, zeroGammaQuery.data],
   );
+  const zeroGammaStatus = zeroGammaQuery.status;
+  const zeroGammaTransient =
+    zeroGammaStatus === 429 ||
+    (zeroGammaStatus >= 500 && zeroGammaStatus < 600);
+  const zeroGammaHealthStatus = classifyRequestHealth({
+    error: !zeroGammaTransient,
+    rateLimited: zeroGammaStatus === 429,
+    degraded: zeroGammaTransient && zeroGammaStatus !== 429,
+  });
   const displayMetrics = useMemo(
     () => (metrics ? { ...metrics, zeroGamma: headlineZeroGamma } : null),
     [headlineZeroGamma, metrics],
@@ -1556,22 +1624,15 @@ export default function GexScreen({
   );
   const filtersControl = (
     <>
-      <select
+      <Select
         value={expirationFilter}
-        onChange={(event) => setExpirationFilter(event.target.value)}
-        style={{
-          ...fieldStyle,
-          minWidth: dim(156),
-          padding: sp("0 8px"),
-        }}
-      >
-        {expirationOptions.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <SegmentControl
+        onChange={setExpirationFilter}
+        options={expirationOptions}
+        ariaLabel="Expiration filter"
+        style={{ minWidth: dim(156) }}
+      />
+      <SegmentedControl
+        ariaLabel="GEX series"
         value={series}
         onChange={setSeries}
         options={[
@@ -1579,7 +1640,8 @@ export default function GexScreen({
           { value: "callput", label: "Call/Put" },
         ]}
       />
-      <SegmentControl
+      <SegmentedControl
+        ariaLabel="GEX view"
         value={view}
         onChange={setView}
         options={[
@@ -1763,19 +1825,19 @@ export default function GexScreen({
             <ConcentrationTile
               label="0DTE Exp"
               value={concentration.zeroDTE}
-              color={CSS_COLOR.amber}
+              color={CSS_COLOR.text}
               glossaryKey="concentration0dte"
             />
             <ConcentrationTile
               label="Weekly Exp"
               value={concentration.weekly}
-              color={CSS_COLOR.cyan}
+              color={CSS_COLOR.text}
               glossaryKey="concentrationWeekly"
             />
             <ConcentrationTile
               label="Monthly Exp"
               value={concentration.monthly}
-              color={CSS_COLOR.purple}
+              color={CSS_COLOR.text}
               glossaryKey="concentrationMonthly"
             />
           </div>
@@ -1814,7 +1876,7 @@ export default function GexScreen({
           <DataUnavailableState
             loading
             title={`Loading GEX for ${ticker}`}
-            detail="Waiting for quote, expiration, and IBKR option-chain snapshots."
+            detail="Waiting for quote, expiration, and Massive option-chain snapshots."
             loadingWaitItems={[
               {
                 id: "gex-chain",
@@ -1850,6 +1912,7 @@ export default function GexScreen({
                 sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "—"}`}
                 color={toneForNetGex(metrics.netGex)}
                 glossaryKey="netGex"
+                flashValue={metrics.netGex}
               />
               <MetricTile
                 label="Call GEX"
@@ -1857,6 +1920,7 @@ export default function GexScreen({
                 sub={`${fmtNumber(metrics.callOi)} OI`}
                 color={GEX_CALL_TONE}
                 glossaryKey="callGex"
+                flashValue={metrics.callGex}
               />
               <MetricTile
                 label="Put GEX"
@@ -1864,13 +1928,15 @@ export default function GexScreen({
                 sub={`${fmtNumber(metrics.putOi)} OI`}
                 color={CSS_COLOR.red}
                 glossaryKey="putGex"
+                flashValue={metrics.putGex}
               />
               <MetricTile
                 label="Total GEX"
                 value={fmtCurrency(metrics.totalGex)}
                 sub={`${fmtNumber(metrics.callOi + metrics.putOi)} OI`}
-                color={CSS_COLOR.cyan}
+                color={CSS_COLOR.text}
                 glossaryKey="totalGex"
+                flashValue={metrics.totalGex}
               />
               <MetricTile
                 label="Call Wall"
@@ -1899,10 +1965,32 @@ export default function GexScreen({
               />
             </Card>
 
+            {zeroGammaQuery.isError ? (
+              <DataUnavailableState
+                variant={zeroGammaTransient ? "warning" : "error"}
+                tone={requestHealthTone(zeroGammaHealthStatus)}
+                title="Zero-gamma flip unavailable"
+                detail={
+                  zeroGammaQuery.error?.message ||
+                  "The zero-gamma flip level could not be loaded from the provider."
+                }
+                minHeight={64}
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => zeroGammaQuery.refetch?.()}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            ) : null}
+
             {coverageRatio < 0.5 ? (
               <DataUnavailableState
                 title="Greek/OI coverage is partial"
-                detail={`${coverage.withGamma}/${coverage.usable} IBKR contracts have gamma and ${coverage.withOpenInterest}/${coverage.usable} have open interest. Charts render from available fields.`}
+                detail={`${coverage.withGamma}/${coverage.usable} Massive contracts have gamma and ${coverage.withOpenInterest}/${coverage.usable} have open interest. Charts render from available fields.`}
               />
             ) : null}
 
@@ -1950,7 +2038,13 @@ export default function GexScreen({
               </div>
             ) : null}
 
-            <HeatmapCard rows={filteredRows} spot={spot} />
+            <HeatmapCard
+              rows={filteredRows}
+              spot={spot}
+              callWall={metrics.callWall}
+              putWall={metrics.putWall}
+              zeroGamma={displayMetrics.zeroGamma}
+            />
 
             <div
               style={{

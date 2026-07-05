@@ -13,9 +13,7 @@ import {
   ResearchChartWidgetSidebar,
   resolveResearchChartFramePlacement,
 } from "../charting/ResearchChartFrame";
-import {
-  rollupMarketBars,
-} from "../charting/timeframeRollups";
+import { rollupMarketBars } from "../charting/timeframeRollups";
 import {
   filterFlowEventsForChartLookbackWindow,
   mergeFlowEventFeeds,
@@ -81,7 +79,10 @@ import {
 import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
 import { resolveSignalFrameState } from "../platform/signalFrameState";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
-import { useGexProjectionConeOverlay } from "../gex/useGexProjection.js";
+import {
+  GEX_PROJECTION_MODE_SNAPSHOT,
+  useGexProjectionConeOverlay,
+} from "../gex/useGexProjection.js";
 import {
   filterFlowEventsForChartDisplay,
   useFlowTapeFilterState,
@@ -116,6 +117,7 @@ export const TradeEquityPanel = ({
   searchContent,
   workspaceChart = null,
   onWorkspaceChartChange,
+  onHydrationStateChange,
   referenceLines = [],
   signalMonitorProfile = null,
   showSignalFrameBorder = true,
@@ -127,7 +129,7 @@ export const TradeEquityPanel = ({
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
   gexProjectionEnabled = true,
-  gexProjectionMode = "active",
+  gexProjectionMode = GEX_PROJECTION_MODE_SNAPSHOT,
   gexOverlay = null,
   positionOverlaysEnabled = true,
 }) => {
@@ -146,19 +148,16 @@ export const TradeEquityPanel = ({
   const flowTapeFilters = useFlowTapeFilterState({
     subscribe: shouldMergeTradeFlowStore,
   });
-  const effectiveFlowEvents = useMemo(
-    () => {
-      const providedFlowEvents = Array.isArray(flowEvents) ? flowEvents : [];
-      if (!shouldMergeTradeFlowStore) {
-        return providedFlowEvents;
-      }
-      return mergeFlowEventFeeds(
-        tradeFlowSnapshot.events || [],
-        providedFlowEvents,
-      );
-    },
-    [flowEvents, shouldMergeTradeFlowStore, tradeFlowSnapshot.events],
-  );
+  const effectiveFlowEvents = useMemo(() => {
+    const providedFlowEvents = Array.isArray(flowEvents) ? flowEvents : [];
+    if (!shouldMergeTradeFlowStore) {
+      return providedFlowEvents;
+    }
+    return mergeFlowEventFeeds(
+      tradeFlowSnapshot.events || [],
+      providedFlowEvents,
+    );
+  }, [flowEvents, shouldMergeTradeFlowStore, tradeFlowSnapshot.events]);
   const chartDisplayFlowEvents = useMemo(
     () =>
       shouldMergeTradeFlowStore
@@ -175,7 +174,8 @@ export const TradeEquityPanel = ({
     subscribeToUpdates: showSignalFrameBorder,
   });
   const signalFrameState = useMemo(
-    () => (showSignalFrameBorder ? resolveSignalFrameState(signalState, T) : null),
+    () =>
+      showSignalFrameBorder ? resolveSignalFrameState(signalState, T) : null,
     [showSignalFrameBorder, signalState],
   );
   const gexProjection = useGexProjectionConeOverlay(ticker, {
@@ -208,7 +208,9 @@ export const TradeEquityPanel = ({
     }),
   );
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() =>
-    resolvePersistedPyrusSignalsSettings(_initialState.tradeEquityPyrusSignalsSettings),
+    resolvePersistedPyrusSignalsSettings(
+      _initialState.tradeEquityPyrusSignalsSettings,
+    ),
   );
   const lastAlgoPyrusSignalsSettingsRef = useRef(null);
   const lastAlgoSignalTimeframeRef = useRef(null);
@@ -244,7 +246,9 @@ export const TradeEquityPanel = ({
     );
   }, [signalMonitorProfile]);
   useEffect(() => {
-    const nextAlgoTimeframe = normalizeChartTimeframe(signalMonitorProfile?.timeframe);
+    const nextAlgoTimeframe = normalizeChartTimeframe(
+      signalMonitorProfile?.timeframe,
+    );
     if (!nextAlgoTimeframe) {
       return;
     }
@@ -324,21 +328,19 @@ export const TradeEquityPanel = ({
               scopeKey: chartHydrationScopeKey,
               metric: "barsRequestMs",
               request: () =>
-                getBarsRequest({
-                  symbol: ticker,
-                  timeframe: requestPolicy.baseTimeframe,
-                  limit: requestPolicy.baseLimit,
-                  outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
-                  source: "trades",
-                  allowHistoricalSynthesis: true,
-                  brokerRecentWindowMinutes:
-                    requestPolicy.brokerRecentWindowMinutes,
-                },
-                buildBarsRequestOptions(
-                  requestPriority,
-                  "chart-warmup",
+                getBarsRequest(
+                  {
+                    symbol: ticker,
+                    timeframe: requestPolicy.baseTimeframe,
+                    limit: requestPolicy.baseLimit,
+                    outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
+                    source: "trades",
+                    allowHistoricalSynthesis: true,
+                    brokerRecentWindowMinutes:
+                      requestPolicy.brokerRecentWindowMinutes,
+                  },
+                  buildBarsRequestOptions(requestPriority, "chart-warmup"),
                 ),
-              ),
             }),
           ...BARS_QUERY_DEFAULTS,
         });
@@ -427,20 +429,21 @@ export const TradeEquityPanel = ({
         scopeKey: chartHydrationScopeKey,
         metric: "barsRequestMs",
         request: () =>
-          getBarsRequest({
-            symbol: ticker,
-            timeframe: rollupBaseTimeframe,
-            limit: baseRequestedLimit,
-            outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
-            source: "trades",
-            allowHistoricalSynthesis: true,
-            brokerRecentWindowMinutes: baseBrokerRecentWindowMinutes,
-          },
-          buildBarsRequestOptions(
-            BARS_REQUEST_PRIORITY.active,
-            "chart-visible",
+          getBarsRequest(
+            {
+              symbol: ticker,
+              timeframe: rollupBaseTimeframe,
+              limit: baseRequestedLimit,
+              outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
+              source: "trades",
+              allowHistoricalSynthesis: true,
+              brokerRecentWindowMinutes: baseBrokerRecentWindowMinutes,
+            },
+            buildBarsRequestOptions(
+              BARS_REQUEST_PRIORITY.active,
+              "chart-visible",
+            ),
           ),
-        ),
       });
       void writeCachedChartBars(barsRuntimeCacheKey, payload, {
         ticker,
@@ -561,6 +564,8 @@ export const TradeEquityPanel = ({
       !prewarmFavoriteTimeframesEnabled ||
       !historicalDataEnabled ||
       !barsQuery.data?.bars?.length ||
+      barsQuery.fetchStatus === "fetching" ||
+      progressiveBars.requestedLimit < progressiveBars.targetLimit ||
       !chartFavoriteTimeframes.length
     ) {
       return;
@@ -585,11 +590,14 @@ export const TradeEquityPanel = ({
     );
   }, [
     barsQuery.data?.bars?.length,
+    barsQuery.fetchStatus,
     chartHydrationScopeKey,
     chartFavoriteTimeframes,
     historicalDataEnabled,
     prewarmFavoriteTimeframesEnabled,
     prewarmFavoriteTimeframe,
+    progressiveBars.requestedLimit,
+    progressiveBars.targetLimit,
     tf,
   ]);
   const prependableBars = usePrependableHistoricalBars({
@@ -624,27 +632,29 @@ export const TradeEquityPanel = ({
               scopeKey: chartHydrationScopeKey,
               metric: "prependRequestMs",
               request: () =>
-                getBarsRequest({
-                  symbol: ticker,
-                  timeframe: rollupBaseTimeframe,
-                  limit,
-                  from: fromIso,
-                  to: toIso,
-                  outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
-                  source: "trades",
-                  allowHistoricalSynthesis: true,
-                  historyCursor: historyCursor || undefined,
-                  preferCursor: historyCursor && preferCursor ? true : undefined,
-                  brokerRecentWindowMinutes,
-                },
-                buildBarsRequestOptions(
-                  BARS_REQUEST_PRIORITY.active,
-                  "chart-backfill",
+                getBarsRequest(
+                  {
+                    symbol: ticker,
+                    timeframe: rollupBaseTimeframe,
+                    limit,
+                    from: fromIso,
+                    to: toIso,
+                    outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
+                    source: "trades",
+                    allowHistoricalSynthesis: true,
+                    historyCursor: historyCursor || undefined,
+                    preferCursor:
+                      historyCursor && preferCursor ? true : undefined,
+                    brokerRecentWindowMinutes,
+                  },
+                  buildBarsRequestOptions(
+                    BARS_REQUEST_PRIORITY.active,
+                    "chart-backfill",
+                  ),
                 ),
-              ),
             }),
-            ...BARS_QUERY_DEFAULTS,
-          });
+          ...BARS_QUERY_DEFAULTS,
+        });
 
         return normalizeChartBarsPagePayload(payload, {
           context: "trade-equity-prepend",
@@ -712,6 +722,37 @@ export const TradeEquityPanel = ({
     () => mergeChartBarsByTime(hydratedBaseBars, streamedChartBars),
     [hydratedBaseBars, streamedChartBars],
   );
+  const primaryChartFullWindowReady = Boolean(
+    historicalDataEnabled &&
+      ticker &&
+      baseBarsReady &&
+      bars.length &&
+      progressiveBars.requestedLimit >= progressiveBars.targetLimit,
+  );
+  useEffect(() => {
+    onHydrationStateChange?.({
+      ticker,
+      timeframe: tf,
+      role: effectiveChartHydrationRole,
+      ready: primaryChartFullWindowReady,
+      baseBarsReady,
+      renderedBarCount: bars.length,
+      requestedLimit: progressiveBars.requestedLimit,
+      targetLimit: progressiveBars.targetLimit,
+      fetchStatus: barsQuery.fetchStatus,
+    });
+  }, [
+    bars.length,
+    barsQuery.fetchStatus,
+    baseBarsReady,
+    effectiveChartHydrationRole,
+    onHydrationStateChange,
+    primaryChartFullWindowReady,
+    progressiveBars.requestedLimit,
+    progressiveBars.targetLimit,
+    tf,
+    ticker,
+  ]);
   const displayPriceFallbackQuery = useDisplayChartPriceFallbackBars({
     symbol: ticker,
     enabled: Boolean(
@@ -790,8 +831,10 @@ export const TradeEquityPanel = ({
   const hasBrokerLiveBar =
     latestBarSource === "ibkr-websocket-derived" ||
     latestBarSource === "ibkr-stock-quote-derived" ||
+    latestBarSource === "massive-stock-quote-derived" ||
     latestBarSource.startsWith("ibkr-websocket-derived:") ||
-    latestBarSource.startsWith("ibkr-stock-quote-derived:");
+    latestBarSource.startsWith("ibkr-stock-quote-derived:") ||
+    latestBarSource.startsWith("massive-stock-quote-derived:");
   const barsStatus = !bars.length
     ? barsQuery.isPending || barsQuery.fetchStatus === "fetching"
       ? "loading"
@@ -799,14 +842,11 @@ export const TradeEquityPanel = ({
     : stockAggregateStreamingEnabled && hasBrokerLiveBar
       ? "live"
       : baseBarsCacheStale
-      ? "stale"
-      : "live";
+        ? "stale"
+        : "live";
   const chartWindowFlowEvents = useMemo(
     () =>
-      filterFlowEventsForChartLookbackWindow(
-        chartDisplayFlowEvents || [],
-        tf,
-      ),
+      filterFlowEventsForChartLookbackWindow(chartDisplayFlowEvents || [], tf),
     [chartDisplayFlowEvents, tf],
   );
   const chartEventConversion = useFlowChartEventConversion(
@@ -838,12 +878,11 @@ export const TradeEquityPanel = ({
       tf,
     ],
   });
-  const previousClose =
-    Number.isFinite(tickerInfo?.prevClose)
-      ? tickerInfo.prevClose
-      : bars.length > 1
-        ? (bars[bars.length - 2]?.c ?? null)
-        : null;
+  const previousClose = Number.isFinite(tickerInfo?.prevClose)
+    ? tickerInfo.prevClose
+    : bars.length > 1
+      ? (bars[bars.length - 2]?.c ?? null)
+      : null;
   const displayPrice = resolveDisplayChartPrice({
     quotePrice: tickerInfo?.price,
     canonicalBars: displayPriceFallbackQuery.data?.bars,
@@ -870,13 +909,18 @@ export const TradeEquityPanel = ({
   const equityChartStatus =
     equityChartSourceState.label || describeBrokerChartStatus(barsStatus, tf);
   const equityChartSource =
-    equityChartSourceState.sourceLabel || describeBrokerChartSource(latestBar?.source);
+    equityChartSourceState.sourceLabel ||
+    describeBrokerChartSource(latestBar?.source);
   const callFlows = chartEvents.filter((event) => {
-    const right = String(event.metadata?.cp || event.metadata?.right || "").toUpperCase();
+    const right = String(
+      event.metadata?.cp || event.metadata?.right || "",
+    ).toUpperCase();
     return right === "C" || right === "CALL";
   }).length;
   const putFlows = chartEvents.filter((event) => {
-    const right = String(event.metadata?.cp || event.metadata?.right || "").toUpperCase();
+    const right = String(
+      event.metadata?.cp || event.metadata?.right || "",
+    ).toUpperCase();
     return right === "P" || right === "PUT";
   }).length;
   const toggleIndicator = (indicatorId) => {
@@ -886,15 +930,18 @@ export const TradeEquityPanel = ({
         : [...current, indicatorId],
     );
   };
-  const handleChangeTimeframe = useCallback((timeframe) => {
-    const nextTimeframe = normalizeChartTimeframe(timeframe);
-    if (!nextTimeframe || nextTimeframe === tf) {
-      return;
-    }
-    setTf(nextTimeframe);
-    setIntervalChangeRevision((revision) => revision + 1);
-    onWorkspaceChartChange?.({ timeframe: nextTimeframe });
-  }, [onWorkspaceChartChange, tf]);
+  const handleChangeTimeframe = useCallback(
+    (timeframe) => {
+      const nextTimeframe = normalizeChartTimeframe(timeframe);
+      if (!nextTimeframe || nextTimeframe === tf) {
+        return;
+      }
+      setTf(nextTimeframe);
+      setIntervalChangeRevision((revision) => revision + 1);
+      onWorkspaceChartChange?.({ timeframe: nextTimeframe });
+    },
+    [onWorkspaceChartChange, tf],
+  );
 
   useEffect(() => {
     persistState({

@@ -1117,6 +1117,7 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
     arrayBuffersMb: numeric(memory["arrayBuffers"]),
     eventLoopP95Ms: numeric(eventLoopDelay["p95"]),
     eventLoopMaxMs: numeric(eventLoopDelay["max"]),
+    eventLoopUtilization: numeric(apiRuntime["eventLoopUtilization"]),
     activeDiagnosticsClients: subscribers.size,
   };
 }
@@ -1751,17 +1752,6 @@ function isStaleBridgeTunnelError(input: {
   );
 }
 
-function ibkrGovernorLastFailure(ibkrRaw: JsonRecord): string | null {
-  const governor = asJsonRecord(ibkrRaw["governor"]);
-  for (const lane of ["health", "account", "quotes", "orders", "options"]) {
-    const failure = textValue(asJsonRecord(governor[lane])["lastFailure"]);
-    if (failure) {
-      return failure;
-    }
-  }
-  return null;
-}
-
 function buildIbkrDiagnosticEvents(
   ibkrRaw: JsonRecord,
   metrics: JsonRecord,
@@ -1781,7 +1771,6 @@ function buildIbkrDiagnosticEvents(
   const healthErrorDetail = textValue(ibkrRaw["healthErrorDetail"]);
   const healthErrorCode = textValue(ibkrRaw["healthErrorCode"]);
   const healthErrorStatusCode = numeric(ibkrRaw["healthErrorStatusCode"]);
-  const healthGovernorFailure = ibkrGovernorLastFailure(ibkrRaw);
   const runtimeLastError = textValue(ibkrRaw["lastError"]);
   const recoveryError = textValue(ibkrRaw["lastRecoveryError"]);
   const liveMarketDataAvailable = ibkrRaw["liveMarketDataAvailable"];
@@ -1826,10 +1815,10 @@ function buildIbkrDiagnosticEvents(
     const healthBackoff =
       /backoff|backed off/i.test(`${healthErrorCode ?? ""} ${healthError}`);
     const diagnosticHealthMessage =
-      healthBackoff && healthGovernorFailure ? healthGovernorFailure : healthError;
+      healthBackoff && runtimeLastError ? runtimeLastError : healthError;
     const diagnosticHealthDetail =
-      healthBackoff && healthGovernorFailure
-        ? healthGovernorFailure
+      healthBackoff && runtimeLastError
+        ? runtimeLastError
         : healthErrorDetail;
     const staleTunnel = isStaleBridgeTunnelError({
       message: diagnosticHealthMessage,
@@ -1849,7 +1838,7 @@ function buildIbkrDiagnosticEvents(
           )
         : compactErrorMessage(healthError, healthErrorDetail),
       dimensions:
-        healthBackoff && healthGovernorFailure
+        healthBackoff && runtimeLastError
           ? {
               healthError,
               healthErrorCode,
@@ -2051,6 +2040,10 @@ function buildProbeMetrics(probes: JsonRecord): {
       accountCount: numeric(accountProbe["count"]) ?? 0,
       positionCount: numeric(positionProbe["count"]) ?? 0,
       visibilityFailures: accountFailures,
+      positionProbeProvider: positionProbe["provider"] ?? null,
+      positionProbeReason: positionProbe["reason"] ?? null,
+      skippedLegacyBridgeProbe:
+        positionProbe["skippedLegacyBridgeProbe"] === true,
       lastError: accountProbe["error"] ?? positionProbe["error"] ?? null,
     },
     orders: {
@@ -2738,6 +2731,7 @@ function buildResourcePressureMetrics(
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
     eventLoopDelayP95Ms: numeric(api["eventLoopP95Ms"]),
+    eventLoopUtilization: numeric(api["eventLoopUtilization"]),
     dbPoolActive: dbPool.active,
     dbPoolWaiting: dbPool.waiting,
     dbPoolMax: dbPool.max,
@@ -2814,7 +2808,6 @@ function buildResourcePressureMetrics(
       textValue(browserMemory["confidence"]),
     dominantDrivers,
     apiResourcePressure: resourcePressure,
-    pressureCaps: resourcePressure.caps,
     browserObservedAt: latest?.observedAt ?? null,
     latestClientAt: latest?.observedAt ?? null,
     activeDiagnosticsClients: subscribers.size,

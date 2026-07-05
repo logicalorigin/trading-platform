@@ -41,13 +41,22 @@ const buildMtfSelectionPatch = (timeframes) => {
   };
 };
 
+const normalizeOptionalExecutionTimeframe = (value) => {
+  const timeframe = String(value || "").trim();
+  return STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe) ? timeframe : "";
+};
+
 export const normalizeAlgoAlignedMtfTimeframes = (
   selectedTimeframes,
   executionTimeframe,
   fallback = SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
 ) => {
-  void executionTimeframe;
-  return normalizeAlgoMtfTimeframes(selectedTimeframes, fallback);
+  const normalized = normalizeAlgoMtfTimeframes(selectedTimeframes, fallback);
+  const execution = normalizeOptionalExecutionTimeframe(executionTimeframe);
+  if (!execution || normalized.includes(execution)) {
+    return normalized;
+  }
+  return orderedMtfTimeframes([...normalized, execution]);
 };
 
 export const normalizeAlgoMtfRequiredCount = (
@@ -63,18 +72,36 @@ export const buildAlgoExecutionTimeframePatch = (
   fallback,
   selectedTimeframes,
 ) => {
-  void selectedTimeframes;
   const signalTimeframe = normalizeAlgoExecutionTimeframe(timeframe, fallback);
-  return { signalTimeframe };
+  const currentMtfTimeframes = normalizeAlgoMtfTimeframes(selectedTimeframes);
+  const alignedMtfTimeframes = normalizeAlgoAlignedMtfTimeframes(
+    currentMtfTimeframes,
+    signalTimeframe,
+    currentMtfTimeframes,
+  );
+  if (alignedMtfTimeframes.length === currentMtfTimeframes.length) {
+    return { signalTimeframe };
+  }
+  return {
+    signalTimeframe,
+    ...buildMtfSelectionPatch(alignedMtfTimeframes),
+  };
 };
 
 export const buildAlgoMtfTimeframeTogglePatch = ({
   selectedTimeframes,
   timeframe,
+  executionTimeframe,
 }) => {
-  const current = normalizeAlgoMtfTimeframes(selectedTimeframes);
+  const current = normalizeAlgoAlignedMtfTimeframes(
+    selectedTimeframes,
+    executionTimeframe,
+  );
   const normalizedTimeframe = String(timeframe || "").trim();
   if (!SIGNAL_OPTIONS_MTF_TIMEFRAMES.includes(normalizedTimeframe)) {
+    return buildMtfSelectionPatch(current);
+  }
+  if (normalizedTimeframe === normalizeOptionalExecutionTimeframe(executionTimeframe)) {
     return buildMtfSelectionPatch(current);
   }
 

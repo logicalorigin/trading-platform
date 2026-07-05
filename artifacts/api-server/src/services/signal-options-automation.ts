@@ -60,6 +60,7 @@ import {
   getSignalMonitorStoredState,
   getSignalMonitorTimeframeMs,
   isSignalMonitorBarEvaluationEnabled,
+  isSignalMonitorQuietMarketSessionNow,
   loadSignalMonitorCompletedBars,
   signalMonitorCompletedBarsQueryTo,
   resolveSignalMonitorTimeframe,
@@ -116,6 +117,7 @@ import {
   releaseMarketDataLeases,
   type MarketDataAdmissionResult,
 } from "./market-data-admission";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
@@ -2278,6 +2280,7 @@ function buildSignalOptionsSignalSnapshot(input: {
     barsSinceSignal,
     stale: (status ?? "ok").toLowerCase() !== "ok",
     freshWindowBars: optionalFiniteNumber(input.freshWindowBars) ?? 0,
+    marketClosed: isSignalMonitorQuietMarketSessionNow(),
   });
   return {
     profileId: input.state.profileId,
@@ -3238,6 +3241,65 @@ type SignalOptionsLegacyContractSelection = {
   fallbackReason: string | null;
   greekSelection?: SignalOptionsGreekContractSelection | null;
 };
+
+// Entries are near-the-money (slot picker is +/-2 of ATM, strikesAroundMoney<=3).
+// A selected strike further than this many strike-steps from the live underlying
+// means the chain we picked from did not bracket the money (a stale or
+// mis-centered chain), so the selection must be rejected rather than filled. This
+// is the guardrail that would have blocked the DIA 471P @ spot ~521.8 entry: a
+// stale 5-strike chain (467-471) clamped the slot picker to a deep-OTM strike.
+const SIGNAL_OPTIONS_MAX_STRIKE_STEPS_FROM_SPOT = 6;
+// Fallback bound when the chain is too thin to derive a strike step.
+const SIGNAL_OPTIONS_FALLBACK_MAX_STRIKE_MONEYNESS_PCT = 0.05;
+
+export function signalOptionsStrikeStepSize(
+  strikes: readonly number[],
+): number | null {
+  const sorted = Array.from(
+    new Set(strikes.filter((value) => Number.isFinite(value))),
+  ).sort((left, right) => left - right);
+  if (sorted.length < 2) {
+    return null;
+  }
+  const gaps: number[] = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const gap = sorted[index]! - sorted[index - 1]!;
+    if (gap > 0) {
+      gaps.push(gap);
+    }
+  }
+  if (!gaps.length) {
+    return null;
+  }
+  gaps.sort((left, right) => left - right);
+  return gaps[Math.floor(gaps.length / 2)]!;
+}
+
+// True when `strike` is close enough to `spot` to be a plausible near-ATM entry,
+// measured in strike-steps so it scales across high- and low-priced underlyings.
+export function signalOptionsStrikeWithinMoneyness(input: {
+  strike: number | null;
+  spot: number | null;
+  strikes: readonly number[];
+}): boolean {
+  const { strike, spot, strikes } = input;
+  if (
+    strike == null ||
+    spot == null ||
+    !Number.isFinite(strike) ||
+    !Number.isFinite(spot) ||
+    spot <= 0
+  ) {
+    // Not enough information to judge — do not block on a guardrail we can't apply.
+    return true;
+  }
+  const step = signalOptionsStrikeStepSize(strikes);
+  const maxDistance =
+    step != null
+      ? step * SIGNAL_OPTIONS_MAX_STRIKE_STEPS_FROM_SPOT
+      : spot * SIGNAL_OPTIONS_FALLBACK_MAX_STRIKE_MONEYNESS_PCT;
+  return Math.abs(strike - spot) <= maxDistance;
+}
 
 function selectSignalOptionsLegacyContractPlanFromChain(input: {
   contracts: SignalOptionsOptionQuote[];
@@ -4316,6 +4378,276 @@ function roundScore(value: number) {
   return Number(value.toFixed(1));
 }
 
+const SIGNAL_OPTIONS_ACTIVE_SCORE_MODEL_VERSION = "expected-move-v2";
+const SIGNAL_OPTIONS_BALANCED_SCORE_MAX = 74.9;
+const SIGNAL_OPTIONS_SOT_OUTCOME_SCORE_MAX = 69.9;
+const SIGNAL_OPTIONS_TREND_CONFIRMATION_SCORE_MAX = 89.9;
+const SIGNAL_OPTIONS_EXPECTED_MOVE_SCORE_MAX = 99;
+// Mirrors roundTo(value, 1) in signal-quality-kpis.ts exactly (the drift test
+// asserts byte-equality with scoreSignalWithModel, so the rounding must match).
+function roundScoreTo1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function signalOptionsFeatureNumber(
+  features: Record<string, unknown>,
+  key: string,
+  fallback = 0,
+): number {
+  return finiteNumber(features[key]) ?? fallback;
+}
+
+function resolveSignalOptionsBalancedSotQuality(input: {
+  filterState: Record<string, unknown>;
+  liquidityTier: SignalOptionsEntryQuality["liquidityTier"];
+  premiumAtRisk: number | null;
+  adx: number | null;
+  mtfMatches: number;
+  mtfDirections: number[];
+  spreadPctOfMid: number | null;
+  bullishRegime: boolean;
+}): SignalOptionsEntryQuality | null {
+  const directionalFeatures = asRecord(input.filterState.directionalFeatures);
+  const rangePosition20 = finiteNumber(directionalFeatures.rangePosition20);
+  if (rangePosition20 == null) {
+    return null;
+  }
+
+  // balanced-sot-v2 -- mirrors scoreFromBalancedSotFeatures in
+  // signal-quality-kpis.ts (the drift test locks them together): 72% SOT
+  // reversion + 28% trend-confirmation, an extension penalty above the 75th
+  // range percentile, and volume-expansion support. Recommended by the
+  // multi-day (1-3 trading day) calibration on the 15m base, where it is the
+  // only model that stays supported at every horizon.
+  const clampedRange = clampNumber(rangePosition20, 0, 1);
+  const mtfAlignment = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "mtfAlignment"),
+    -1.5,
+    3,
+  );
+  const adxComponent = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "adxComponent"),
+    -1,
+    2.5,
+  );
+  const volatilityComponent = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "volatilityComponent"),
+    -0.5,
+    1,
+  );
+  const shortMomentum = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "shortMomentumPct") / 3,
+    -2,
+    2,
+  );
+  const riskAdjustedMomentum = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "riskAdjustedMomentum") / 4,
+    -2,
+    2,
+  );
+  const volumeExpansion = clampNumber(
+    signalOptionsFeatureNumber(directionalFeatures, "volumeExpansion"),
+    -1,
+    2,
+  );
+
+  // scoreFromDirectionalFeatures (sot-outcome-v1) mirror.
+  const reversion = roundScoreTo1(
+    clampNumber(
+      50 +
+        (0.5 - clampedRange) * 45 +
+        -mtfAlignment * 3 +
+        -adxComponent * 4 +
+        volatilityComponent * 8 +
+        -shortMomentum * 2 +
+        -riskAdjustedMomentum * 2,
+      20,
+      SIGNAL_OPTIONS_SOT_OUTCOME_SCORE_MAX,
+    ),
+  );
+  // scoreFromTrendConfirmationFeatures mirror.
+  const confirmation = roundScoreTo1(
+    clampNumber(
+      50 +
+        (clampedRange - 0.5) * 28 +
+        mtfAlignment * 5 +
+        adxComponent * 4 +
+        shortMomentum * 2.5 +
+        riskAdjustedMomentum * 2 +
+        volumeExpansion * 3 +
+        volatilityComponent * 2,
+      20,
+      SIGNAL_OPTIONS_TREND_CONFIRMATION_SCORE_MAX,
+    ),
+  );
+  const extensionPenalty =
+    rangePosition20 > 0.75 ? (rangePosition20 - 0.75) * 24 : 0;
+  const volumeSupport = volumeExpansion * 1.5;
+  const score = roundScoreTo1(
+    clampNumber(
+      reversion * 0.72 + confirmation * 0.28 - extensionPenalty + volumeSupport,
+      20,
+      SIGNAL_OPTIONS_BALANCED_SCORE_MAX,
+    ),
+  );
+  const tier = score >= 60 ? "high" : score < 40 ? "low" : "standard";
+  const reasons = [
+    "balanced_sot_v2",
+    rangePosition20 <= 0.5 ? "range_reversion_support" : "extension_risk",
+    mtfAlignment >= 1 ? "mtf_confirmation" : null,
+    volumeExpansion > 0 ? "volume_expansion_support" : null,
+    input.liquidityTier === "strong"
+      ? "strong_liquidity"
+      : input.liquidityTier === "weak"
+        ? "weak_liquidity"
+        : null,
+    input.premiumAtRisk != null && input.premiumAtRisk > 0
+      ? "risk_sized"
+      : null,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  return {
+    tier,
+    liquidityTier: input.liquidityTier,
+    score,
+    reasons,
+    components: {
+      reversion: roundScore(reversion * 0.72),
+      confirmation: roundScore(confirmation * 0.28),
+      extensionPenalty: roundScore(-extensionPenalty),
+      volumeSupport: roundScore(volumeSupport),
+      total: score,
+    },
+    raw: {
+      ...directionalFeatures,
+      premiumAtRisk: input.premiumAtRisk,
+      modelVersion: "balanced-sot-v2",
+    },
+    adx: input.adx,
+    mtfMatches: input.mtfMatches,
+    mtfDirections: input.mtfDirections,
+    spreadPctOfMid: input.spreadPctOfMid,
+    bullishRegime: input.bullishRegime,
+  };
+}
+
+// expected-move-v2 -- mirrors scoreFromExpectedMoveV2Features in
+// signal-quality-kpis.ts (the drift test locks them together): ranks
+// EXPECTED MOVE magnitude -- volatility regime (log ATR), volume
+// participation (log volume ratio), and ATR-scaled momentum -- with a mild
+// reversion tilt from range position, plus a conviction bonus stack on top
+// of the raw expected-move-v1 score. Direction proved unpredictable at this
+// horizon (directional features sign-flip across timeframes) while move
+// magnitude is robustly predictable, so the score targets expected move
+// rather than directional edge. Conviction conditions mined from 15.6k
+// observations with temporal 70/30 split; survivors (train lift >=1.5x AND
+// test >=1.25x in >=4/6 TF-direction cells): volume spike >=10x,
+// spike+fresh regime flip (<=3 bars), spike+>=3-ATR thrust; held-out 90+
+// band P(top-decile MFE) = 0.38-0.41 (2.4-3.5x base) at 1.9-9.3% population.
+function resolveSignalOptionsExpectedMoveQuality(input: {
+  filterState: Record<string, unknown>;
+  liquidityTier: SignalOptionsEntryQuality["liquidityTier"];
+  premiumAtRisk: number | null;
+  adx: number | null;
+  mtfMatches: number;
+  mtfDirections: number[];
+  spreadPctOfMid: number | null;
+  bullishRegime: boolean;
+}): SignalOptionsEntryQuality | null {
+  const directionalFeatures = asRecord(input.filterState.directionalFeatures);
+  const rangePosition20 = finiteNumber(directionalFeatures.rangePosition20);
+  const atrPct = finiteNumber(directionalFeatures.atrPct);
+  const volumeRatio20 = finiteNumber(directionalFeatures.volumeRatio20);
+  if (rangePosition20 == null || atrPct == null || volumeRatio20 == null) {
+    return null;
+  }
+
+  const atr = Math.max(atrPct, 0.02);
+  const vr = Math.max(volumeRatio20, 0.25);
+  const riskAdjustedMomentum = signalOptionsFeatureNumber(
+    directionalFeatures,
+    "riskAdjustedMomentum",
+  );
+  const shortMomentumPct = signalOptionsFeatureNumber(
+    directionalFeatures,
+    "shortMomentumPct",
+  );
+
+  // Tail caps at 2.2/4 (not 3.5/7): the extreme-vol tail is adversely
+  // selected on realized return (halted/gapping names) -- beyond ~4.6x median
+  // volatility, more vol must not buy more score.
+  const volatilityRegime = 5.0 * clampNumber(Math.log2(atr / 0.6), -2, 2.2);
+  const volumeParticipation = 3.0 * clampNumber(Math.log2(vr), -2, 4);
+  const momentum =
+    0.6 * clampNumber(riskAdjustedMomentum, -8, 8) +
+    0.5 * clampNumber(shortMomentumPct / atr, -8, 8);
+  const reversionTilt = 4.0 * (0.5 - clampNumber(rangePosition20, 0, 1));
+  // Conviction bonus stack (expected-move-v2): added to the raw score before
+  // the single clamp+round below -- see expectedMoveConvictionBonus in
+  // signal-quality-kpis.ts for the byte-locked mirror.
+  const regimeAgeBars = finiteNumber(directionalFeatures.regimeAgeBars);
+  const volumeSpike = volumeRatio20 >= 10;
+  const freshRegime = regimeAgeBars != null && regimeAgeBars <= 3;
+  const thrust = shortMomentumPct / atr >= 3;
+  const conviction =
+    (volumeSpike ? 4 : 0) +
+    (volumeSpike && freshRegime ? 9 : 0) +
+    (volumeSpike && thrust ? 9 : 0) +
+    (volumeSpike && freshRegime && thrust ? 8 : 0);
+  const score = roundScoreTo1(
+    clampNumber(
+      42 +
+        volatilityRegime +
+        volumeParticipation +
+        momentum +
+        reversionTilt +
+        conviction,
+      5,
+      SIGNAL_OPTIONS_EXPECTED_MOVE_SCORE_MAX,
+    ),
+  );
+  const tier = score >= 60 ? "high" : score < 40 ? "low" : "standard";
+  const reasons = [
+    "expected_move_v2",
+    rangePosition20 <= 0.5 ? "range_reversion_support" : "extension_risk",
+    volumeRatio20 >= 1 ? "volume_expansion_support" : null,
+    conviction >= 13 ? "ignition" : null,
+    input.liquidityTier === "strong"
+      ? "strong_liquidity"
+      : input.liquidityTier === "weak"
+        ? "weak_liquidity"
+        : null,
+    input.premiumAtRisk != null && input.premiumAtRisk > 0
+      ? "risk_sized"
+      : null,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  return {
+    tier,
+    liquidityTier: input.liquidityTier,
+    score,
+    reasons,
+    components: {
+      volatilityRegime: roundScore(volatilityRegime),
+      volumeParticipation: roundScore(volumeParticipation),
+      momentum: roundScore(momentum),
+      reversionTilt: roundScore(reversionTilt),
+      conviction: roundScore(conviction),
+      total: score,
+    },
+    raw: {
+      ...directionalFeatures,
+      premiumAtRisk: input.premiumAtRisk,
+      modelVersion: SIGNAL_OPTIONS_ACTIVE_SCORE_MODEL_VERSION,
+    },
+    adx: input.adx,
+    mtfMatches: input.mtfMatches,
+    mtfDirections: input.mtfDirections,
+    spreadPctOfMid: input.spreadPctOfMid,
+    bullishRegime: input.bullishRegime,
+  };
+}
+
 function signalOptionsConfiguredMtfTimeframes(
   profile: SignalOptionsExecutionProfile,
 ): SignalOptionsMtfTimeframe[] {
@@ -4434,10 +4766,13 @@ function mtfFrameCount(mtfDirections: number[]) {
 }
 
 function requiredSignalOptionsMtfCount(
-  _value: unknown,
+  value: unknown,
   mtfDirections: number[],
 ) {
-  return mtfFrameCount(mtfDirections);
+  const frames = mtfFrameCount(mtfDirections);
+  const configured = finiteNumber(value);
+  if (configured == null) return frames;
+  return Math.max(1, Math.min(frames, Math.round(configured)));
 }
 
 function signalOptionsMtfAlignmentScore(
@@ -4631,6 +4966,20 @@ function classifySignalOptionsEntryQuality(input: {
         : spreadPctOfMid >= 30
           ? "weak"
           : "standard";
+  const expectedMoveQuality = resolveSignalOptionsExpectedMoveQuality({
+    filterState,
+    liquidityTier,
+    premiumAtRisk,
+    adx: adx ?? null,
+    mtfMatches,
+    mtfDirections,
+    spreadPctOfMid: spreadPctOfMid ?? null,
+    bullishRegime,
+  });
+  if (expectedMoveQuality) {
+    return expectedMoveQuality;
+  }
+
   const reasons: string[] = [];
   const mtfAlignmentScore = signalOptionsMtfAlignmentScore(
     mtfDirections,
@@ -6574,6 +6923,11 @@ async function reconcileActivePositionsWithShadowLedger(input: {
   positions: SignalOptionsPosition[];
   events: ExecutionEvent[];
   deploymentId?: string;
+  // Optional pre-built shadow index. When a caller has already built the index
+  // from the IDENTICAL events (e.g. buildStatePayload), pass it here to skip a
+  // redundant batched shadow_positions/orders/fills rebuild. All other callers
+  // omit it and fall back to building it below.
+  shadowIndex?: SignalOptionsShadowIndex;
 }) {
   const ledgerPositions = input.deploymentId
     ? await recoverActivePositionsFromShadowLedger({
@@ -6587,7 +6941,8 @@ async function reconcileActivePositionsWithShadowLedger(input: {
   if (!positions.length) {
     return positions;
   }
-  const shadowIndex = await buildSignalOptionsShadowIndex(input.events);
+  const shadowIndex =
+    input.shadowIndex ?? (await buildSignalOptionsShadowIndex(input.events));
   return reconcileActivePositionsWithShadowLinks(positions, shadowIndex);
 }
 
@@ -8169,12 +8524,12 @@ function buildCockpitAttention(input: {
       symbol: null,
       summary: marketSessionQuiet
         ? "Options session is closed."
-        : "Market data readiness is blocking scans.",
+        : "Broker account readiness is blocking scans.",
       detail: input.readiness.message,
       occurredAt: new Date().toISOString(),
       action: marketSessionQuiet
         ? "Signal-options scans will resume when the regular options session opens."
-        : "Start or repair the IBKR bridge/data mode before running signal-options scans.",
+        : "Start or repair the IBKR account/order bridge before running signal-options scans.",
     });
   }
 
@@ -9505,6 +9860,7 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
 function buildSignalOptionsPerformanceFallbackFromSnapshot(input: {
   deploymentId: string;
   snapshot: SignalOptionsDashboardSnapshot;
+  reason?: string;
 }) {
   const payload = buildSignalOptionsPerformanceFromInputs({
     deploymentId: input.deploymentId,
@@ -9521,12 +9877,14 @@ function buildSignalOptionsPerformanceFallbackFromSnapshot(input: {
   return withSignalOptionsCacheMetadata(payload, {
     cachedAt: input.snapshot.cachedAt,
     cacheStatus: "stale",
-    reason: "signal_options_performance_dashboard_cache_fallback",
+    reason:
+      input.reason ?? "signal_options_performance_dashboard_cache_fallback",
   });
 }
 
 function buildSignalOptionsPerformanceColdPressureFallback(input: {
   deploymentId: string;
+  reason?: string;
 }) {
   const generatedAt = new Date().toISOString();
   const payload = {
@@ -9576,43 +9934,44 @@ function buildSignalOptionsPerformanceColdPressureFallback(input: {
   return withSignalOptionsCacheMetadata(payload, {
     cachedAt: generatedAt,
     cacheStatus: "stale",
-    reason: "signal_options_performance_cold_cache_only_fallback",
+    reason:
+      input.reason ?? "signal_options_performance_cold_cache_only_fallback",
   });
 }
 
-export async function getSignalOptionsPerformance(input: {
+function shouldServeSignalOptionsPerformancePressureFallback(): boolean {
+  return getApiResourcePressureSnapshot().level !== "normal";
+}
+
+async function buildSignalOptionsPerformancePressureFallback(input: {
   deploymentId: string;
-  cacheMode?: SignalOptionsDashboardCacheMode;
 }) {
-  const cacheMode = input.cacheMode ?? "normal";
-  const cached = readSignalOptionsCachedPayload(
-    signalOptionsPerformanceCache,
-    input.deploymentId,
-    cacheMode,
-  );
-  if (cached) {
-    return cached;
-  }
-  if (cacheMode === "cache-only") {
-    try {
-      const snapshot = await getSignalOptionsDashboardSnapshot({
-        deploymentId: input.deploymentId,
-        cacheMode: "cache-only",
-        view: "summary",
-      });
-      return buildSignalOptionsPerformanceFallbackFromSnapshot({
-        deploymentId: input.deploymentId,
-        snapshot,
-      });
-    } catch (error) {
-      if (!(error instanceof HttpError)) {
-        throw error;
-      }
-    }
-    return buildSignalOptionsPerformanceColdPressureFallback({
+  try {
+    const snapshot = await getSignalOptionsDashboardSnapshot({
       deploymentId: input.deploymentId,
+      cacheMode: "cache-only",
+      view: "summary",
     });
+    return buildSignalOptionsPerformanceFallbackFromSnapshot({
+      deploymentId: input.deploymentId,
+      snapshot,
+      reason: "signal_options_performance_pressure_cache_fallback",
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) {
+      throw error;
+    }
   }
+  return buildSignalOptionsPerformanceColdPressureFallback({
+    deploymentId: input.deploymentId,
+    reason: "signal_options_performance_pressure_cold_fallback",
+  });
+}
+
+function startSignalOptionsPerformanceRefresh(input: {
+  deploymentId: string;
+  cacheMode: SignalOptionsDashboardCacheMode;
+}) {
   const inFlight = readSignalOptionsDashboardInFlight(
     signalOptionsPerformanceInFlight,
     input.deploymentId,
@@ -9623,12 +9982,18 @@ export async function getSignalOptionsPerformance(input: {
   }
 
   const work = (async () => {
-    const { deployment, profile, events, state } =
-      await getSignalOptionsDashboardSnapshot({
-        ...input,
-        cacheMode,
-        view: "full",
-      });
+    const deployment = await getDeploymentOrThrow(input.deploymentId);
+    const profile = resolveDeploymentProfile(deployment);
+    const events = await listDeploymentEvents(
+      deployment.id,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    const state = await buildStatePayload({
+      deployment,
+      profile,
+      events,
+      view: "summary",
+    });
     const shadowTradeDiagnostics = await computeShadowTradeDiagnostics({
       range: "1M",
     });
@@ -9670,6 +10035,54 @@ export async function getSignalOptionsPerformance(input: {
     startedAt: Date.now(),
   });
   return work;
+}
+
+export async function getSignalOptionsPerformance(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+}) {
+  const cacheMode = input.cacheMode ?? "normal";
+  const cached = readSignalOptionsCachedPayload(
+    signalOptionsPerformanceCache,
+    input.deploymentId,
+    cacheMode,
+  );
+  if (cached) {
+    return cached;
+  }
+  if (cacheMode === "cache-only") {
+    try {
+      const snapshot = await getSignalOptionsDashboardSnapshot({
+        deploymentId: input.deploymentId,
+        cacheMode: "cache-only",
+        view: "summary",
+      });
+      return buildSignalOptionsPerformanceFallbackFromSnapshot({
+        deploymentId: input.deploymentId,
+        snapshot,
+      });
+    } catch (error) {
+      if (!(error instanceof HttpError)) {
+        throw error;
+      }
+    }
+    return buildSignalOptionsPerformanceColdPressureFallback({
+      deploymentId: input.deploymentId,
+    });
+  }
+  if (shouldServeSignalOptionsPerformancePressureFallback()) {
+    void startSignalOptionsPerformanceRefresh({
+      deploymentId: input.deploymentId,
+      cacheMode,
+    }).catch(() => {});
+    return buildSignalOptionsPerformancePressureFallback({
+      deploymentId: input.deploymentId,
+    });
+  }
+  return startSignalOptionsPerformanceRefresh({
+    deploymentId: input.deploymentId,
+    cacheMode,
+  });
 }
 
 function formatEnumReason(value: string) {
@@ -9768,6 +10181,9 @@ async function buildStatePayload(input: {
     positions: eventActivePositions,
     events: activeSignalEventsBeforeReconciliation,
     deploymentId: input.deployment.id,
+    // Reuse the index built just above from the identical events instead of
+    // letting reconcile rebuild it (saves the duplicate batched shadow queries).
+    shadowIndex,
   });
   const activeSignalEvents = filterOrphanPositionMarkEvents(
     activeSignalEventsBeforeReconciliation,
@@ -9933,6 +10349,12 @@ type SignalOptionsDashboardSnapshot = {
   cachedAt: string;
   expiresAt: number;
   staleExpiresAt: number;
+  // Set only on the value RETURNED by a cold rebuild in THIS request (never on
+  // the object stored in cache). Its signals were just read by buildStatePayload
+  // via listSignalOptionsSignalSnapshots, so the post-snapshot live-signal
+  // refresh can skip a redundant re-read. Cache hits leave this unset so their
+  // stale signals are still refreshed.
+  freshlyBuilt?: boolean;
 };
 
 type SignalOptionsDashboardCandidate =
@@ -10328,7 +10750,9 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
     if (deployment.id !== input.deploymentId) {
       signalOptionsDashboardCache.set(input.deploymentId, snapshot);
     }
-    return snapshot;
+    // Cache stores the clean snapshot; the returned value flags that its signals
+    // were just read so the state path can skip the redundant refresh (fix B).
+    return { ...snapshot, freshlyBuilt: true };
   })();
   work
     .catch(() => {})
@@ -10380,6 +10804,16 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
     });
   }
 
+  // Normal-mode polls also serve a non-expired cached snapshot (fix C) — same
+  // 15s freshness check the cache-only branch uses. Positions/risk may be up to
+  // 15s stale (the same staleness the pressure path already serves), but the
+  // state path still runs the live-signal refresh on top of this cache hit
+  // (freshlyBuilt is unset here), so signals stay live.
+  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
+  if (cached && cached.expiresAt > now) {
+    return cached;
+  }
+
   const inFlight = readSignalOptionsDashboardInFlight(
     signalOptionsSummaryDashboardInFlight,
     input.deploymentId,
@@ -10427,7 +10861,9 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
     if (deployment.id !== input.deploymentId) {
       signalOptionsSummaryDashboardCache.set(input.deploymentId, snapshot);
     }
-    return snapshot;
+    // Cache stores the clean snapshot; the returned value flags that its signals
+    // were just read so the state path can skip the redundant refresh (fix B).
+    return { ...snapshot, freshlyBuilt: true };
   })();
   work.catch(() => {}).finally(() => {
     signalOptionsSummaryDashboardInFlight.delete(input.deploymentId);
@@ -10464,6 +10900,14 @@ async function withFreshSignalOptionsStateSignals(
     input.cacheMode === "cache-only" &&
     input.refreshSignalsFromMonitorState !== true
   ) {
+    return snapshot.state;
+  }
+
+  // A snapshot rebuilt during THIS request already read live signals moments ago
+  // (buildStatePayload → listSignalOptionsSignalSnapshots with the same options),
+  // so re-reading them here is redundant (fix B). A cache HIT is never
+  // freshlyBuilt, so its stale signals still fall through to the refresh below.
+  if (snapshot.freshlyBuilt === true) {
     return snapshot.state;
   }
 
@@ -11262,8 +11706,14 @@ async function refreshActivePosition(input: {
     ...stop,
     enforcementSource: input.enforcementSource ?? "automation_scan",
   };
+  // Overnight risk exits normally only matter when no premium stop fired. ALSO compute
+  // them when the SOLE stop reason is a (shadow-able) wire_structure_break, so an
+  // independent overnight risk exit is never dropped while the wire break is held in
+  // shadow. For every other stop reason the condition is unchanged (overnight stays
+  // null), so non-wire behavior is byte-for-byte identical.
   const overnight =
-    !stop.exitReason && isLiveOvernightExitWindow(markAt)
+    (!stop.exitReason || stop.exitReason === "wire_structure_break") &&
+    isLiveOvernightExitWindow(markAt)
       ? computeOvernightPositionExit({
           entryPrice: input.position.entryPrice,
           peakPrice,
@@ -11272,7 +11722,29 @@ async function refreshActivePosition(input: {
           signalQuality: input.position.signalQuality ?? null,
         })
       : null;
-  const exitReason = stop.exitReason ?? overnight?.exitReason ?? null;
+  // Shadow-first wire trail: until the enforce flag is set, a wire_structure_break is
+  // recorded as telemetry (position.lastWireTrail.structureBreak) but does NOT place a
+  // live exit. It is the ONLY exit reason gated this way — every legacy hard-stop /
+  // trail / early reason takes precedence in computeSignalOptionsPositionStop, and an
+  // independent overnight risk exit still fires via the ?? fallback below (so shadowing
+  // the wire break can never suppress a real risk exit). A miswired wire price therefore
+  // cannot force a real close during validation.
+  const wireBreakShadowed =
+    stop.exitReason === "wire_structure_break" &&
+    !isSignalOptionsWireTrailEnforceEnabled();
+  const exitReason =
+    (wireBreakShadowed ? null : stop.exitReason) ?? overnight?.exitReason ?? null;
+  if (wireBreakShadowed) {
+    logger.debug?.(
+      {
+        positionId: input.position.id,
+        symbol: input.position.symbol,
+        wireTrail: stopPayload.wireTrail,
+        overnightFallbackExit: overnight?.exitReason ?? null,
+      },
+      "Signal-options wire_structure_break held in shadow (enforce flag off); no wire exit placed",
+    );
+  }
   let exitPrice =
     liquidity.bid != null && liquidity.mid != null
       ? Number(
@@ -11955,6 +12427,30 @@ async function resolveSignalOptionsCandidateContract(input: {
       orderPlan = null;
     }
   }
+  // Guardrails (money path): never open a live entry off a stale option chain,
+  // and never fill a strike far from the live underlying. Both are how the DIA
+  // 471P @ spot ~521.8 deep-OTM entry slipped through — a stale 5-strike chain
+  // (467-471) that the legacy slot picker clamped to.
+  let guardrailReason: string | null = null;
+  if (selectedQuote) {
+    if (asRecord(chain.debug).stale === true) {
+      guardrailReason = "option_chain_stale";
+      selectedQuote = null;
+      orderPlan = null;
+    } else if (
+      !signalOptionsStrikeWithinMoneyness({
+        strike: finiteNumber(asRecord(selectedQuote.contract).strike),
+        spot: input.candidate.signalPrice,
+        strikes: chainContracts.map(
+          (quote) => finiteNumber(asRecord(quote.contract).strike) ?? Number.NaN,
+        ),
+      })
+    ) {
+      guardrailReason = "option_strike_off_money";
+      selectedQuote = null;
+      orderPlan = null;
+    }
+  }
   if (!selectedQuote) {
     const contractSelectionPayload =
       signalOptionsContractSelectionPayload(contractSelection, {
@@ -11974,10 +12470,12 @@ async function resolveSignalOptionsCandidateContract(input: {
       contractSelectionPayload,
       chainDebug: chain.debug,
       chainAttempts,
-      reason: signalOptionsNoContractResolutionReason({
-        greekSelection,
-        chainBackoff,
-      }),
+      reason:
+        guardrailReason ??
+        signalOptionsNoContractResolutionReason({
+          greekSelection,
+          chainBackoff,
+        }),
       detail: {
         selectedExpiration: selectedExpirationPayload,
         chainDebug: chain.debug,
@@ -13939,12 +14437,48 @@ function buildSignalOptionsWireContext(input: {
   };
 }
 
+// Wire-trail live integration gates. The live wire-context loader historically
+// piggybacked on isSignalMonitorBarEvaluationEnabled() — a flag built for
+// historical/backfill bar evaluation — which left the WIRE TRAIL permanently inert
+// in the default runtime (wireContext always null => every wire branch dead while
+// telemetry still wrote enabled:true/active:false). These dedicated flags decouple it:
+//   *_WIRE_TRAIL_LIVE     load live wire context per held position (the data source;
+//                         runs the signal-monitor bar pipeline, so it carries cost).
+//   *_WIRE_TRAIL_ENFORCE  place real exits on wire_structure_break. When OFF, a wire
+//                         break is recorded as telemetry but NOT order-placed
+//                         (shadow-first). Both default OFF, so default behavior and the
+//                         legacy stop/trail/overnight exits are byte-for-byte unchanged.
+function truthyWireTrailEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function isSignalOptionsWireTrailLiveContextEnabled(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): boolean {
+  return truthyWireTrailEnv(
+    env["PYRUS_SIGNAL_OPTIONS_WIRE_TRAIL_LIVE"] ??
+      env["SIGNAL_OPTIONS_WIRE_TRAIL_LIVE"],
+  );
+}
+
+export function isSignalOptionsWireTrailEnforceEnabled(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): boolean {
+  return truthyWireTrailEnv(
+    env["PYRUS_SIGNAL_OPTIONS_WIRE_TRAIL_ENFORCE"] ??
+      env["SIGNAL_OPTIONS_WIRE_TRAIL_ENFORCE"],
+  );
+}
+
 async function loadSignalOptionsWireContextForPosition(input: {
   position: SignalOptionsPosition;
   evaluatedAt: Date;
   pyrusSignalsSettings: Record<string, unknown>;
 }): Promise<SignalOptionsWireContext | null> {
-  if (!isSignalMonitorBarEvaluationEnabled()) {
+  // Decoupled from the backfill bar-evaluation gate: loading live wire context now
+  // requires its own opt-in, so enabling the wire trail no longer flips historical
+  // discovery behavior (and vice versa).
+  if (!isSignalOptionsWireTrailLiveContextEnabled()) {
     return null;
   }
   const completedBars = await loadSignalMonitorCompletedBars({
@@ -17829,6 +18363,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   isSignalOptionsSignalAgeActionable,
   classifySignalOptionsSkipReason,
   signalOptionsEffectiveMtfTimeframes,
+  requiredSignalOptionsMtfCount,
   latestSignalDate,
   findSignalOptionsQuoteForContract,
   mergeSignalOptionsCandidate,
@@ -17837,6 +18372,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   deriveActivePositions,
   recoverActivePositionsFromShadowLedgerRows,
   reconcileActivePositionsWithShadowLinks,
+  reconcileActivePositionsWithShadowLedger,
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,
   stateSignalOptionsEvents,
@@ -17903,4 +18439,5 @@ export const __signalOptionsAutomationInternalsForTests = {
   isHistoricalOptionEntryBarTimely,
   readGreekSmokeInteger,
   shouldCloseBackfillPositionAtExpiration,
+  shouldServeSignalOptionsPerformancePressureFallback,
 };

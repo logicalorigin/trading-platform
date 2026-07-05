@@ -13,7 +13,6 @@ import {
   listSignalOptionsAutomationState,
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
 type Unsubscribe = () => void;
 
 export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
@@ -53,17 +52,8 @@ const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
 
 export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
-  // Gate on resourceLevel (rss/heap/event-loop/db-pool), NOT level: level folds
-  // in request-latency p95, so a slow broker route (esp. with IBKR off) or a
-  // single transient db-pool waiter falsely sheds the cockpit's heavy sections
-  // and flaps the KPIs. resourceLevel reflects genuine server saturation.
-  const level =
-    typeof pressure === "object" && pressure !== null && "resourceLevel" in pressure
-      ? (pressure as { resourceLevel?: unknown }).resourceLevel
-      : typeof pressure === "object" && pressure !== null && "level" in pressure
-        ? (pressure as { level?: unknown }).level
-        : pressure;
-  return level === "high";
+  void pressure;
+  return false;
 }
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
@@ -139,15 +129,6 @@ export async function fetchAlgoCockpitStreamPayload(
   input: AlgoCockpitStreamInput = {},
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
-  if (shouldUsePrimaryOnlyAlgoCockpitPayload(getApiResourcePressureSnapshot())) {
-    // Under genuine saturation serve the primary-only payload (phase:"primary").
-    // Do NOT relabel it phase:"full": the client treats a "full" payload as
-    // algoFullFresh and disables the HTTP cockpit refetch, so the degraded
-    // payload (cockpit/performance/profile null) would never repopulate and the
-    // KPIs stay blanked. Keeping phase:"primary" lets the HTTP poll catch up.
-    return fetchAlgoCockpitPrimaryPayload(input, stream);
-  }
-
   const target = await resolveAlgoCockpitTarget(input);
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([

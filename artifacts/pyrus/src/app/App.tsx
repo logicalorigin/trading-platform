@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import LogoLoader from "../components/LogoLoader";
+import NeuralBootOverlay from "../components/neural/NeuralBootOverlay";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { readInitialPlatformScreen } from "../features/platform/initialPlatformScreen";
@@ -102,6 +103,11 @@ function App({ bootLoaderElapsedMs = null }: AppProps) {
       <Suspense fallback={<AppShellFallback bootLoaderElapsedMs={bootLoaderElapsedMs} />}>
         <AppContent bootLoaderElapsedMs={bootLoaderElapsedMs} />
       </Suspense>
+      {/* First-load neural opener: an opaque overlay ABOVE the mounting app
+          (so boot progress can reach `complete`) that forms the PYRUS logo and
+          parts to reveal the app. No-ops on reduced-motion / no-WebGL / repeat
+          loads — the Suspense BrandLoader above handles those. */}
+      <NeuralBootOverlay bootLoaderElapsedMs={bootLoaderElapsedMs} />
     </PlatformErrorBoundary>
   );
 }

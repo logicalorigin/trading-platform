@@ -8,11 +8,11 @@
 import type { IbkrBridgeActivationPhaseTiming } from './ibkrBridgeActivationPhaseTiming';
 
 export interface IbkrBridgeActivationPhaseDurations {
-  request: IbkrBridgeActivationPhaseTiming;
-  update: IbkrBridgeActivationPhaseTiming;
-  credentials: IbkrBridgeActivationPhaseTiming;
-  gateway: IbkrBridgeActivationPhaseTiming;
-  twoFactor: IbkrBridgeActivationPhaseTiming;
-  bridge: IbkrBridgeActivationPhaseTiming;
-  tunnel: IbkrBridgeActivationPhaseTiming;
+  request?: IbkrBridgeActivationPhaseTiming;
+  update?: IbkrBridgeActivationPhaseTiming;
+  credentials?: IbkrBridgeActivationPhaseTiming;
+  gateway?: IbkrBridgeActivationPhaseTiming;
+  twoFactor?: IbkrBridgeActivationPhaseTiming;
+  bridge?: IbkrBridgeActivationPhaseTiming;
+  tunnel?: IbkrBridgeActivationPhaseTiming;
 }

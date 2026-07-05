@@ -19,14 +19,13 @@
       ],
       "project": ["src/**/*.ts", "scripts/**/*.mjs"]
     },
-    "artifacts/ibkr-bridge": {
-      "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
-      "project": "src/**/*.ts",
-      "ignoreDependencies": ["ws", "@types/ws"]
-    },
     "artifacts/backtest-worker": {
       "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
+    },
+    "artifacts/mcp-server": {
+      "entry": ["src/index.ts", "build.mjs", "src/**/*.test.mjs"],
+      "project": ["src/**/*.ts"]
     },
     "artifacts/pyrus": {
       "entry": [

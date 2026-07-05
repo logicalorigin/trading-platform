@@ -4,17 +4,21 @@
 // saved config > profile defaults), loads a rolling stored-bar window for a
 // bounded slice of the symbol universe, post-filters the backtested signals
 // through the signal-options MTF-alignment gate, and computes the eight
-// signal-quality KPIs (delegated to computeSignalQualityKpis). Runs inline in
-// the request handler with an ephemeral cache keyed by
-// (deploymentId, settingsHash, asOfDay): short TTL, in-flight dedupe,
-// stale-while-recompute. No persistence table and no job queue (v1).
+// signal-quality KPIs (delegated to computeSignalQualityKpis). The normal GET
+// route returns a materialized snapshot; explicit refresh/background work owns
+// the expensive full-universe bar-cache sweep.
 import { createHash } from "node:crypto";
-import { algoDeploymentsTable, db } from "@workspace/db";
+import { appendFileSync } from "node:fs";
+import {
+  algoDeploymentsTable,
+  db,
+  signalQualityKpiSnapshotsTable,
+} from "@workspace/db";
 import {
   resolvePreviousUsEquitySessionClose,
   resolveUsEquityMarketStatus,
 } from "@workspace/market-calendar";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   resolvePyrusSignalsSignalSettings,
   type PyrusSignalsBar,
@@ -48,7 +52,8 @@ const MAX_SYMBOLS = 2000;
 // Load bars in set-based lateral chunks instead of one DB round-trip per symbol.
 // The KPI compute itself is still globally serialized below.
 const BAR_FETCH_CHUNK_SIZE = 20;
-const BAR_FETCH_CONCURRENCY = 3;
+const BAR_FETCH_TIMEOUT_RETRY_CHUNK_SIZE = 5;
+const BAR_FETCH_CONCURRENCY = 1;
 // Bound cold full-universe sweeps. Scaled ~4x with MAX_SYMBOLS (500 -> 2000) so the 0.98
 // coverage gate stays reachable; chunks not started inside this budget time out and block
 // recommendations. A cold 2000-symbol calibration can take up to this long.
@@ -59,11 +64,6 @@ const BAR_FETCH_HARD_BUDGET_MS = 480_000;
 const KPI_COMPUTE_CONCURRENCY = 1;
 const MIN_CALIBRATION_SYMBOL_COVERAGE_RATIO = 0.98;
 const MAX_CALIBRATION_SYMBOL_TIMEOUT_RATIO = 0.01;
-
-const CACHE_TTL_MS = 60_000;
-// Recompute kicked off in the background may serve slightly older data for this
-// long before it is considered too stale to serve at all.
-const CACHE_HARD_MAX_AGE_MS = 5 * 60_000;
 
 type StrategySignalTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
 const STRATEGY_SIGNAL_TIMEFRAMES: readonly StrategySignalTimeframe[] = [
@@ -134,6 +134,7 @@ export type SignalQualityDraftOverride = {
   signalTimeframe?: unknown;
   timeHorizon?: unknown;
   outcomeHorizonBars?: unknown;
+  outcomeTimeframe?: unknown;
   bosConfirmation?: unknown;
   chochAtrBuffer?: unknown;
   chochBodyExpansionAtr?: unknown;
@@ -146,6 +147,12 @@ export type ResolvedStrategySignalSettings = {
   // Outcome-measurement window (bars forward) used only for signal-quality
   // KPIs. Independent of timeHorizon (the engine swing-pivot lookback).
   outcomeHorizonBars: number;
+  // Measurement timeframe the KPI/calibration pipeline evaluates on. KPI-only:
+  // it never feeds the live signal-monitor profile (whose timeframe the
+  // strategy-settings PATCH updates alongside signalTimeframe), so changing it
+  // re-anchors score calibration without touching what the deployment trades.
+  // Defaults to signalTimeframe, keeping unset deployments byte-identical.
+  outcomeTimeframe: StrategySignalTimeframe;
   bosConfirmation: (typeof PYRUS_BOS_CONFIRMATIONS)[number];
   chochAtrBuffer: number;
   chochBodyExpansionAtr: number;
@@ -241,10 +248,19 @@ export function resolveDeploymentSignalSettings(input: {
     ),
   );
 
+  // KPI-only measurement timeframe (same precedence chain as signalTimeframe;
+  // falls back to signalTimeframe so unset deployments are unchanged).
+  const outcomeTimeframe =
+    timeframeFromValue(draft.outcomeTimeframe) ??
+    timeframeFromValue(parameters.outcomeTimeframe) ??
+    timeframeFromValue(pyrusSignalsSettings.outcomeTimeframe) ??
+    signalTimeframe;
+
   return {
     signalTimeframe,
     timeHorizon,
     outcomeHorizonBars,
+    outcomeTimeframe,
     bosConfirmation,
     chochAtrBuffer: boundedNumber(
       pick(
@@ -356,9 +372,9 @@ function expectedSignalQualityLatestBarAt(input: {
   return new Date(Math.floor(input.now.getTime() / timeframeMs) * timeframeMs);
 }
 
-function isSignalQualityQuietMarketSession(now: Date): boolean {
+function isSignalQualityStrictLiveSession(now: Date): boolean {
   const status = resolveUsEquityMarketStatus(now);
-  return status.session.key === "closed" || !status.calendarDay?.tradingDay;
+  return status.session.key === "rth" && status.calendarDay?.tradingDay === true;
 }
 
 function signalQualityBarWindowFresh(input: {
@@ -383,7 +399,7 @@ function signalQualityBarWindowFresh(input: {
   ) {
     return true;
   }
-  if (!isSignalQualityQuietMarketSession(input.now)) {
+  if (isSignalQualityStrictLiveSession(input.now)) {
     return false;
   }
   const staleWindowMs = signalQualityLatestBarStaleWindowMs(input.timeframe);
@@ -406,11 +422,83 @@ function latestBarAtForLoadedBars(loaded: readonly SymbolBars[]): Date | null {
   return latestMs == null ? null : new Date(latestMs);
 }
 
+async function latestBarCacheStartsAtForTimeframe(
+  timeframe: StrategySignalTimeframe,
+): Promise<Date | null | undefined> {
+  try {
+    const result = await db.execute(sql`
+      select starts_at
+      from bar_cache
+      where timeframe = ${timeframe}
+        and source = ${BAR_CACHE_SOURCE}
+      order by starts_at desc
+      limit 1
+    `);
+    const row = result.rows[0] as { starts_at?: Date | string } | undefined;
+    if (!row?.starts_at) {
+      return null;
+    }
+    return row.starts_at instanceof Date
+      ? row.starts_at
+      : new Date(row.starts_at);
+  } catch (error) {
+    logger.warn(
+      { error, timeframe },
+      "signal-quality KPI latest bar preflight failed; loading timeframe",
+    );
+    return undefined;
+  }
+}
+
 type SymbolBars = {
   symbol: string;
   bars: PyrusSignalsBar[];
   timedOut: boolean;
 };
+
+type LoadSymbolBarsOnce = (
+  symbols: string[],
+  timeframe: StrategySignalTimeframe,
+  from: Date,
+  limit: number,
+) => Promise<SymbolBars[]>;
+
+function timedOutSymbolBars(symbols: readonly string[]): SymbolBars[] {
+  return symbols.map((symbol) => ({ symbol, bars: [], timedOut: true }));
+}
+
+function isStatementTimeoutError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const maybeError = current as {
+      cause?: unknown;
+      code?: unknown;
+      message?: unknown;
+    };
+    if (maybeError.code === "57014") {
+      return true;
+    }
+    if (
+      String(maybeError.message ?? "")
+        .toLowerCase()
+        .includes("statement timeout")
+    ) {
+      return true;
+    }
+    current = maybeError.cause;
+  }
+  return false;
+}
+
+function shouldRetryBarLoadChunk(
+  error: unknown,
+  symbolCount: number,
+): boolean {
+  return (
+    symbolCount > BAR_FETCH_TIMEOUT_RETRY_CHUNK_SIZE &&
+    isStatementTimeoutError(error)
+  );
+}
 
 function chunkArray<T>(values: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -425,7 +513,7 @@ function chunkArray<T>(values: readonly T[], size: number): T[][] {
 // latest MAX_BARS_PER_SYMBOL bars at-or-after the window start. No upper bound
 // -- the rolling window always ends at "now", and adding `starts_at <= now`
 // defeats the index and times out (de-risk finding).
-async function loadSymbolBarsChunk(
+async function loadSymbolBarsChunkOnce(
   symbols: string[],
   timeframe: StrategySignalTimeframe,
   from: Date,
@@ -438,70 +526,118 @@ async function loadSymbolBarsChunk(
     symbols.map((symbol) => sql`${symbol}`),
     sql`, `,
   );
-  try {
-    const result = await db.execute(sql`
-      select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
-      from unnest(array[${symbolValues}]::text[]) as s(symbol)
-      cross join lateral (
-        select symbol, starts_at, open, high, low, close, volume
-        from bar_cache
-        where symbol = s.symbol
-          and timeframe = ${timeframe}
-          and source = ${BAR_CACHE_SOURCE}
-          and starts_at >= ${from}
-        order by starts_at desc
-        limit ${limit}
-      ) b
-    `);
-    type BarRow = {
-      symbol: string;
-      starts_at: Date | string;
-      open: string | number;
-      high: string | number;
-      low: string | number;
-      close: string | number;
-      volume: string | number;
-    };
-    const rows = result.rows as BarRow[];
-    const barsBySymbol = new Map<string, PyrusSignalsBar[]>(
-      symbols.map((symbol) => [symbol, []]),
-    );
-    for (const row of rows) {
-      const symbol = String(row.symbol ?? "").trim().toUpperCase();
-      const bars = barsBySymbol.get(symbol);
-      if (!bars) {
-        continue;
-      }
-      const timestamp =
-        row.starts_at instanceof Date ? row.starts_at : new Date(row.starts_at);
-      const time = Math.floor(timestamp.getTime() / 1000);
-      bars.push({
-        time,
-        ts: timestamp.toISOString(),
-        o: Number(row.open),
-        h: Number(row.high),
-        l: Number(row.low),
-        c: Number(row.close),
-        v: Number(row.volume),
-      });
+  const result = await db.execute(sql`
+    select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+    from unnest(array[${symbolValues}]::text[]) as s(symbol)
+    cross join lateral (
+      select symbol, starts_at, open, high, low, close, volume
+      from bar_cache
+      where symbol = s.symbol
+        and timeframe = ${timeframe}
+        and source = ${BAR_CACHE_SOURCE}
+        and starts_at >= ${from}
+      order by starts_at desc
+      limit ${limit}
+    ) b
+  `);
+  type BarRow = {
+    symbol: string;
+    starts_at: Date | string;
+    open: string | number;
+    high: string | number;
+    low: string | number;
+    close: string | number;
+    volume: string | number;
+  };
+  const rows = result.rows as BarRow[];
+  const barsBySymbol = new Map<string, PyrusSignalsBar[]>(
+    symbols.map((symbol) => [symbol, []]),
+  );
+  for (const row of rows) {
+    const symbol = String(row.symbol ?? "").trim().toUpperCase();
+    const bars = barsBySymbol.get(symbol);
+    if (!bars) {
+      continue;
     }
-    // Keep the SQL on the indexed per-symbol desc-scan path; the cross-symbol
-    // result order is irrelevant because each symbol is sorted locally here.
-    return symbols.map((symbol) => ({
-      symbol,
-      bars: (barsBySymbol.get(symbol) ?? []).sort(
-        (left, right) => left.time - right.time,
-      ),
-      timedOut: false,
-    }));
+    const timestamp =
+      row.starts_at instanceof Date ? row.starts_at : new Date(row.starts_at);
+    const time = Math.floor(timestamp.getTime() / 1000);
+    bars.push({
+      time,
+      ts: timestamp.toISOString(),
+      o: Number(row.open),
+      h: Number(row.high),
+      l: Number(row.low),
+      c: Number(row.close),
+      v: Number(row.volume),
+    });
+  }
+  // Keep the SQL on the indexed per-symbol desc-scan path; the cross-symbol
+  // result order is irrelevant because each symbol is sorted locally here.
+  return symbols.map((symbol) => ({
+    symbol,
+    bars: (barsBySymbol.get(symbol) ?? []).sort(
+      (left, right) => left.time - right.time,
+    ),
+    timedOut: false,
+  }));
+}
+
+async function loadSymbolBarsChunk(
+  symbols: string[],
+  timeframe: StrategySignalTimeframe,
+  from: Date,
+  limit: number,
+  deadlineMs = Number.POSITIVE_INFINITY,
+  loadOnce: LoadSymbolBarsOnce = loadSymbolBarsChunkOnce,
+): Promise<SymbolBars[]> {
+  if (!symbols.length) {
+    return [];
+  }
+  try {
+    return await loadOnce(symbols, timeframe, from, limit);
   } catch (error) {
-    // A statement timeout for a chunk must not fail the whole request; record
-    // it in coverage metadata and continue with the rest.
+    if (shouldRetryBarLoadChunk(error, symbols.length) && Date.now() < deadlineMs) {
+      logger.warn(
+        {
+          error,
+          symbolCount: symbols.length,
+          retryChunkSize: BAR_FETCH_TIMEOUT_RETRY_CHUNK_SIZE,
+          timeframe,
+        },
+        "signal-quality KPI bar load timed out; retrying smaller symbol chunks",
+      );
+      const retryChunks = chunkArray(
+        symbols,
+        BAR_FETCH_TIMEOUT_RETRY_CHUNK_SIZE,
+      );
+      const retryResults: SymbolBars[][] = [];
+      // Keep retries sequential so a timeout recovery does not increase DB fanout.
+      for (const chunk of retryChunks) {
+        if (Date.now() >= deadlineMs) {
+          retryResults.push(timedOutSymbolBars(chunk));
+          continue;
+        }
+        try {
+          retryResults.push(await loadOnce(chunk, timeframe, from, limit));
+        } catch (retryError) {
+          logger.warn(
+            { error: retryError, symbolCount: chunk.length, timeframe },
+            "signal-quality KPI bar load failed for retry symbol chunk",
+          );
+          retryResults.push(timedOutSymbolBars(chunk));
+        }
+      }
+      return retryResults.flat();
+    }
+
+    // A chunk failure must not fail the whole request; record it in coverage
+    // metadata and continue with the rest.
     logger.warn(
       { error, symbolCount: symbols.length, timeframe },
       "signal-quality KPI bar load failed for symbol chunk",
     );
-    return symbols.map((symbol) => ({ symbol, bars: [], timedOut: true }));
+    return timedOutSymbolBars(symbols);
   }
 }
 
@@ -514,14 +650,12 @@ async function loadBarsForSymbols(
   const chunks = chunkArray(symbols, BAR_FETCH_CHUNK_SIZE);
   const chunkResults: SymbolBars[][] = [];
   let cursor = 0;
-  const timedOutChunk = (chunk: readonly string[]): SymbolBars[] =>
-    chunk.map((symbol) => ({ symbol, bars: [], timedOut: true }));
   async function worker() {
     while (cursor < chunks.length) {
       const index = cursor;
       cursor += 1;
       if (Date.now() >= deadlineMs) {
-        chunkResults[index] = timedOutChunk(chunks[index]);
+        chunkResults[index] = timedOutSymbolBars(chunks[index]);
         continue;
       }
       chunkResults[index] = await loadSymbolBarsChunk(
@@ -529,6 +663,7 @@ async function loadBarsForSymbols(
         timeframe,
         from,
         MAX_BARS_PER_SYMBOL,
+        deadlineMs,
       );
     }
   }
@@ -673,6 +808,18 @@ function settingsHash(
     .slice(0, 16);
 }
 
+function errorHasPostgresCode(error: unknown, code: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const maybeError = current as { cause?: unknown; code?: unknown };
+    if (maybeError.code === code) {
+      return true;
+    }
+    current = maybeError.cause;
+  }
+  return false;
+}
+
 async function resolveDeploymentContext(deploymentId: string) {
   const [deployment] = await db
     .select()
@@ -733,7 +880,7 @@ async function computeResponse(
   const symbols = selectSignalQualitySymbols(universe);
   const truncatedSymbolUniverse = universe.length > symbols.length;
 
-  const requestedTimeframe = settings.signalTimeframe;
+  const requestedTimeframe = settings.outcomeTimeframe;
   const previewTimeframe = previewTimeframeFor(requestedTimeframe);
   const from = new Date(now.getTime() - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const barFetchDeadlineMs = Date.now() + BAR_FETCH_HARD_BUDGET_MS;
@@ -754,6 +901,26 @@ async function computeResponse(
   let loaded: SymbolBars[] = [];
   for (const timeframe of fallbackChain) {
     resolvedTimeframe = timeframe;
+    const latestPreflightBarAt =
+      await latestBarCacheStartsAtForTimeframe(timeframe);
+    if (
+      latestPreflightBarAt !== undefined &&
+      !signalQualityBarWindowFresh({
+        timeframe,
+        latestBarAt: latestPreflightBarAt,
+        now,
+      })
+    ) {
+      logger.info(
+        {
+          timeframe,
+          latestBarAt: latestPreflightBarAt?.toISOString() ?? null,
+          requestedTimeframe,
+        },
+        "signal-quality KPI skipping stale bar-cache timeframe",
+      );
+      continue;
+    }
     loaded = symbols.length
       ? await loadBarsForSymbols(symbols, timeframe, from, barFetchDeadlineMs)
       : [];
@@ -813,6 +980,10 @@ async function computeResponse(
     truncatedSymbolUniverse,
     usedTimeframeFallback: resolvedTimeframe !== previewTimeframe,
   };
+  // Env-gated raw-observation dump for offline score-model calibration/audit
+  // tooling (JSONL, one observation per line, settings header per batch). The
+  // pure KPI module exposes only the callback; this layer owns the IO.
+  const observationDumpPath = process.env.SIGNAL_QUALITY_OBSERVATION_DUMP_PATH;
   const rawKpis = computeSignalQualityKpis({
     settings: toPyrusSettings(settings),
     barsBySymbol,
@@ -821,6 +992,22 @@ async function computeResponse(
     sourceStrategy: deployment.strategyId,
     sourceProfile: deployment.mode,
     sourceTimeframe: resolvedTimeframe,
+    onObservations: observationDumpPath
+      ? (observations) => {
+          appendFileSync(
+            observationDumpPath,
+            [
+              JSON.stringify({
+                header: true,
+                resolvedTimeframe,
+                outcomeHorizonBars: settings.outcomeHorizonBars,
+                count: observations.length,
+              }),
+              ...observations.map((observation) => JSON.stringify(observation)),
+            ].join("\n") + "\n",
+          );
+        }
+      : undefined,
   });
   const kpis = applySignalQualityCalibrationCoverageGate(
     rawKpis,
@@ -838,12 +1025,88 @@ async function computeResponse(
   };
 }
 
-type CacheEntry = {
-  response: SignalQualityKpiResponse;
-  storedAtMs: number;
-};
+let computeSignalQualityResponse = computeResponse;
 
-const responseCache = new Map<string, CacheEntry>();
+function buildEmptyKpiMetrics() {
+  return {
+    signalCount: 0,
+    avgDirectionalMovePercent: 0,
+    correctnessPercent: 0,
+    expectancyPercent: 0,
+    payoffRatio: 0,
+    avgMfePercent: 0,
+    avgMaePercent: 0,
+    consistencyStdDevPercent: 0,
+  };
+}
+
+function buildSnapshotPendingKpis(
+  horizonBars: number,
+): SignalQualityKpiResult {
+  const emptyMetrics = buildEmptyKpiMetrics();
+  return {
+    ...emptyMetrics,
+    horizonBars,
+    mtfFilteredOutCount: 0,
+    perSymbol: [],
+    byDirection: {
+      buy: buildEmptyKpiMetrics(),
+      sell: buildEmptyKpiMetrics(),
+    },
+    byScoreRange: {},
+    scoreBuckets: [],
+    scoreRangeBuckets: [],
+    featureSummaries: [],
+    scoreModelComparisons: {
+      observationCount: 0,
+      modelKeys: [],
+      recommendedModelKey: null,
+      calibration: {
+        state: "needs_more_data",
+        recommendedModelKey: null,
+        candidateModelKey: null,
+        supportedModelCount: 0,
+        reasons: ["min_observation_count"],
+      },
+      models: [],
+    },
+  };
+}
+
+function buildSnapshotPendingResponse(input: {
+  deploymentId: string;
+  now: Date;
+  settings: ResolvedStrategySignalSettings;
+  mtf: SignalQualityMtfConfig;
+  universe: readonly string[];
+  symbols: readonly string[];
+}): SignalQualityKpiResponse {
+  const previewTimeframe = previewTimeframeFor(input.settings.outcomeTimeframe);
+  return {
+    deploymentId: input.deploymentId,
+    asOfDay: asOfDay(input.now),
+    settings: input.settings,
+    mtf: input.mtf,
+    kpis: buildSnapshotPendingKpis(input.settings.outcomeHorizonBars),
+    coverage: {
+      requestedTimeframe: input.settings.outcomeTimeframe,
+      resolvedTimeframe: previewTimeframe,
+      requestedWindowDays: ROLLING_WINDOW_DAYS,
+      windowStart: null,
+      windowEnd: null,
+      requestedSymbolCount: input.universe.length,
+      evaluatedSymbolCount: input.symbols.length,
+      symbolsWithBars: 0,
+      symbolsTimedOut: 0,
+      barsPerSymbolCap: MAX_BARS_PER_SYMBOL,
+      totalBars: 0,
+      truncatedSymbolUniverse: input.universe.length > input.symbols.length,
+      usedTimeframeFallback: previewTimeframe !== input.settings.outcomeTimeframe,
+    },
+    generatedAt: input.now.toISOString(),
+  };
+}
+
 const inFlight = new Map<string, Promise<SignalQualityKpiResponse>>();
 let activeKpiComputes = 0;
 const kpiComputeQueue: Array<() => void> = [];
@@ -883,10 +1146,26 @@ function cacheKey(
   return `${deploymentId}:${hash}:${day}`;
 }
 
-export async function getDeploymentSignalQualityKpis(input: {
+type ResolvedSignalQualityRequest = {
+  deploymentId: string;
+  draft: SignalQualityDraftOverride | undefined;
+  now: Date;
+  deployment: DeploymentSignalQualityContext["deployment"];
+  profile: DeploymentSignalQualityContext["profile"];
+  settings: ResolvedStrategySignalSettings;
+  mtf: SignalQualityMtfConfig;
+  universe: string[];
+  symbols: string[];
+  settingsHash: string;
+  day: string;
+  key: string;
+};
+
+async function resolveSignalQualityRequest(input: {
   deploymentId: string;
   draft?: SignalQualityDraftOverride;
-}): Promise<SignalQualityKpiResponse> {
+  now?: Date;
+}): Promise<ResolvedSignalQualityRequest> {
   const deploymentId = String(input.deploymentId ?? "").trim();
   if (!deploymentId) {
     throw new HttpError(400, "Missing deploymentId.", {
@@ -894,11 +1173,7 @@ export async function getDeploymentSignalQualityKpis(input: {
     });
   }
 
-  // The cache key needs the resolved settings, but resolving them requires a DB
-  // read. To keep the cache cheap while honoring (deploymentId, settingsHash,
-  // asOfDay), resolve settings first (cheap relative to bar loading + KPI math),
-  // then key the heavy work.
-  const now = new Date();
+  const now = input.now ?? new Date();
   const { deployment, profile } = await resolveDeploymentContext(deploymentId);
   const settings = resolveDeploymentSignalSettings({
     deploymentConfig: deployment.config,
@@ -907,50 +1182,195 @@ export async function getDeploymentSignalQualityKpis(input: {
     draft: input.draft,
   });
   const mtf = resolveMtfConfig(deployment.config);
-  const universe = selectSignalQualitySymbols(
-    normalizeSignalQualityUniverse(deployment.symbolUniverse),
-  );
-  const key = cacheKey(
+  const universe = normalizeSignalQualityUniverse(deployment.symbolUniverse);
+  const symbols = selectSignalQualitySymbols(universe);
+  const hash = settingsHash(settings, mtf, symbols);
+  const day = asOfDay(now);
+  return {
     deploymentId,
-    settingsHash(settings, mtf, universe),
-    asOfDay(now),
-  );
+    draft: input.draft,
+    now,
+    deployment,
+    profile,
+    settings,
+    mtf,
+    universe,
+    symbols,
+    settingsHash: hash,
+    day,
+    key: cacheKey(deploymentId, hash, day),
+  };
+}
 
-  const cached = responseCache.get(key);
-  const ageMs = cached ? now.getTime() - cached.storedAtMs : Infinity;
-  if (cached && ageMs < CACHE_TTL_MS) {
-    return cached.response;
+function signalQualityKpiResponseFromSnapshot(
+  value: unknown,
+): SignalQualityKpiResponse | null {
+  const record = asRecord(value);
+  if (
+    typeof record.deploymentId !== "string" ||
+    typeof record.asOfDay !== "string" ||
+    typeof record.generatedAt !== "string" ||
+    !record.settings ||
+    !record.mtf ||
+    !record.kpis ||
+    !record.coverage
+  ) {
+    return null;
   }
+  return record as unknown as SignalQualityKpiResponse;
+}
 
-  // In-flight dedupe: concurrent callers for the same key share one computation.
-  const existing = inFlight.get(key);
-  if (existing) {
-    if (cached && ageMs < CACHE_HARD_MAX_AGE_MS) {
-      return cached.response;
+async function readSignalQualityKpiSnapshot(
+  request: ResolvedSignalQualityRequest,
+): Promise<SignalQualityKpiResponse | null> {
+  try {
+    const [snapshot] = await db
+      .select({ response: signalQualityKpiSnapshotsTable.response })
+      .from(signalQualityKpiSnapshotsTable)
+      .where(
+        and(
+          eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId),
+          eq(signalQualityKpiSnapshotsTable.settingsHash, request.settingsHash),
+          eq(signalQualityKpiSnapshotsTable.asOfDay, request.day),
+        ),
+      )
+      .limit(1);
+    const exact = signalQualityKpiResponseFromSnapshot(snapshot?.response);
+    if (exact || request.draft) {
+      return exact;
     }
+
+    const [latestSameDay] = await db
+      .select({ response: signalQualityKpiSnapshotsTable.response })
+      .from(signalQualityKpiSnapshotsTable)
+      .where(
+        and(
+          eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId),
+          eq(signalQualityKpiSnapshotsTable.asOfDay, request.day),
+        ),
+      )
+      .orderBy(desc(signalQualityKpiSnapshotsTable.generatedAt))
+      .limit(1);
+    const sameDay = signalQualityKpiResponseFromSnapshot(
+      latestSameDay?.response,
+    );
+    if (sameDay) {
+      return sameDay;
+    }
+
+    const [latestDeploymentSnapshot] = await db
+      .select({ response: signalQualityKpiSnapshotsTable.response })
+      .from(signalQualityKpiSnapshotsTable)
+      .where(eq(signalQualityKpiSnapshotsTable.deploymentId, request.deploymentId))
+      .orderBy(desc(signalQualityKpiSnapshotsTable.generatedAt))
+      .limit(1);
+    return signalQualityKpiResponseFromSnapshot(
+      latestDeploymentSnapshot?.response,
+    );
+  } catch (error) {
+    if (errorHasPostgresCode(error, "42P01")) {
+      logger.warn(
+        { error },
+        "signal-quality KPI snapshot table missing; returning pending response",
+      );
+      return null;
+    }
+    throw error;
+  }
+}
+
+function dateOrNow(value: string): Date {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+async function writeSignalQualityKpiSnapshot(
+  request: ResolvedSignalQualityRequest,
+  response: SignalQualityKpiResponse,
+): Promise<void> {
+  const calibration = response.kpis.scoreModelComparisons.calibration;
+  const row = {
+    deploymentId: request.deploymentId,
+    settingsHash: request.settingsHash,
+    asOfDay: request.day,
+    generatedAt: dateOrNow(response.generatedAt),
+    resolvedTimeframe: response.coverage.resolvedTimeframe,
+    calibrationState: calibration.state,
+    recommendedModelKey: calibration.recommendedModelKey,
+    evaluatedSymbolCount: response.coverage.evaluatedSymbolCount,
+    symbolsWithBars: response.coverage.symbolsWithBars,
+    symbolsTimedOut: response.coverage.symbolsTimedOut,
+    response: response as unknown as Record<string, unknown>,
+    updatedAt: new Date(),
+  };
+  await db
+    .insert(signalQualityKpiSnapshotsTable)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [
+        signalQualityKpiSnapshotsTable.deploymentId,
+        signalQualityKpiSnapshotsTable.settingsHash,
+        signalQualityKpiSnapshotsTable.asOfDay,
+      ],
+      set: {
+        generatedAt: row.generatedAt,
+        resolvedTimeframe: row.resolvedTimeframe,
+        calibrationState: row.calibrationState,
+        recommendedModelKey: row.recommendedModelKey,
+        evaluatedSymbolCount: row.evaluatedSymbolCount,
+        symbolsWithBars: row.symbolsWithBars,
+        symbolsTimedOut: row.symbolsTimedOut,
+        response: row.response,
+        updatedAt: row.updatedAt,
+      },
+    });
+}
+
+export async function getDeploymentSignalQualityKpis(input: {
+  deploymentId: string;
+  draft?: SignalQualityDraftOverride;
+}): Promise<SignalQualityKpiResponse> {
+  const request = await resolveSignalQualityRequest(input);
+  const snapshot = await readSignalQualityKpiSnapshot(request);
+  if (snapshot) {
+    return snapshot;
+  }
+  return buildSnapshotPendingResponse({
+    deploymentId: request.deploymentId,
+    now: request.now,
+    settings: request.settings,
+    mtf: request.mtf,
+    universe: request.universe,
+    symbols: request.symbols,
+  });
+}
+
+export async function refreshDeploymentSignalQualityKpiSnapshot(input: {
+  deploymentId: string;
+  draft?: SignalQualityDraftOverride;
+}): Promise<SignalQualityKpiResponse> {
+  const request = await resolveSignalQualityRequest(input);
+  // In-flight dedupe: concurrent callers for the same key share one computation.
+  const existing = inFlight.get(request.key);
+  if (existing) {
     return existing;
   }
 
   const work = runQueuedKpiCompute(() =>
-    computeResponse(deploymentId, input.draft, now, { deployment, profile }),
+    computeSignalQualityResponse(request.deploymentId, request.draft, request.now, {
+      deployment: request.deployment,
+      profile: request.profile,
+    }),
   )
-    .then((response) => {
-      responseCache.set(key, { response, storedAtMs: Date.now() });
+    .then(async (response) => {
+      await writeSignalQualityKpiSnapshot(request, response);
       return response;
     })
     .finally(() => {
-      inFlight.delete(key);
+      inFlight.delete(request.key);
     });
-  inFlight.set(key, work);
+  inFlight.set(request.key, work);
 
-  // Stale-while-recompute: serve the stale entry immediately if it is still
-  // within the hard max age; otherwise wait for the fresh computation.
-  if (cached && ageMs < CACHE_HARD_MAX_AGE_MS) {
-    work.catch((error) => {
-      logger.warn({ error, deploymentId }, "signal-quality KPI recompute failed");
-    });
-    return cached.response;
-  }
   return work;
 }
 
@@ -963,6 +1383,21 @@ export const __signalQualityKpisServiceInternalsForTests = {
   signalQualityCalibrationCoverageGate,
   applySignalQualityCalibrationCoverageGate,
   selectSignalQualitySymbols,
+  isStatementTimeoutError,
+  shouldRetryBarLoadChunk,
+  loadSymbolBarsChunk,
+  buildSnapshotPendingResponse,
+  readSignalQualityKpiSnapshot,
+  writeSignalQualityKpiSnapshot,
+  __setComputeResponseForTests: (
+    next: typeof computeSignalQualityResponse,
+  ): (() => void) => {
+    const previous = computeSignalQualityResponse;
+    computeSignalQualityResponse = next;
+    return () => {
+      computeSignalQualityResponse = previous;
+    };
+  },
   runQueuedKpiCompute,
   getKpiComputeQueueSnapshot: () => ({
     active: activeKpiComputes,

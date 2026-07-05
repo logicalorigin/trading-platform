@@ -54,22 +54,21 @@ export function splitRealtimeAwareRestQuoteSymbols({
   const streamCoveredSet = new Set(uniqueNormalizedSymbols(streamCoveredSymbols));
   const activeVisibleSet = new Set(uniqueNormalizedSymbols(activeVisibleSymbols));
   const restQuoteSymbols = [];
-  const blockedVisibleSymbols = [];
+  const missingRealtimeVisibleSymbols = [];
 
   uniqueNormalizedSymbols(quoteSymbols).forEach((symbol) => {
     if (streamCoveredSet.has(symbol)) {
       return;
     }
     if (realtimeRequired && activeVisibleSet.has(symbol)) {
-      blockedVisibleSymbols.push(symbol);
-      return;
+      missingRealtimeVisibleSymbols.push(symbol);
     }
     restQuoteSymbols.push(symbol);
   });
 
   return {
     restQuoteSymbols,
-    blockedVisibleSymbols,
+    missingRealtimeVisibleSymbols,
   };
 }
 

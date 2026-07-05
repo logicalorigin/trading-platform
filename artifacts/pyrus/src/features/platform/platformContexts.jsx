@@ -21,3 +21,10 @@ export const AccountSelectionContext = createContext({
   setSelectedAccountId: () => {},
 });
 export const useAccountSelection = () => useContext(AccountSelectionContext);
+
+export const MarketDataProviderConfigurationContext = createContext({
+  massiveStockRealtimeConfigured: false,
+  marketDataProviderConfigurationReady: false,
+});
+export const useMarketDataProviderConfiguration = () =>
+  useContext(MarketDataProviderConfigurationContext);

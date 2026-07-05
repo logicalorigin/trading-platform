@@ -76,7 +76,7 @@ test("watchlist quote rotation reports pinned overflow instead of expanding the 
   assert.equal(batch.rotatingSymbols.length, 0);
 });
 
-test("active visible quote symbols are not moved to REST when realtime is required", () => {
+test("active visible quote symbols get snapshot bootstrap while realtime coverage is still missing", () => {
   const split = splitRealtimeAwareRestQuoteSymbols({
     quoteSymbols: ["SPY", "AAPL", "MSFT", "NVDA"],
     streamCoveredSymbols: ["SPY", "AAPL"],
@@ -84,8 +84,8 @@ test("active visible quote symbols are not moved to REST when realtime is requir
     realtimeRequired: true,
   });
 
-  assert.deepEqual(split.restQuoteSymbols, ["NVDA"]);
-  assert.deepEqual(split.blockedVisibleSymbols, ["MSFT"]);
+  assert.deepEqual(split.restQuoteSymbols, ["MSFT", "NVDA"]);
+  assert.deepEqual(split.missingRealtimeVisibleSymbols, ["MSFT"]);
 });
 
 test("active visible quote coverage reports missing realtime stream symbols", () => {

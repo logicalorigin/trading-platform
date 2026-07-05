@@ -28,6 +28,9 @@ import {
   useGetAccountPositionsAtDate,
   useGetAccountRisk,
   useGetAccountSummary,
+  useGetSnapTradeAccountHistory,
+  useGetSnapTradeAccountPortfolio,
+  useGetSnapTradeRecentOrders,
   useGetFlexHealth,
   useTestFlexToken,
 } from "@workspace/api-client-react";
@@ -53,12 +56,11 @@ import { useToast } from "../features/platform/platformContexts.jsx";
 import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { LoadingSpinner, SegmentedControl } from "../components/platform/primitives.jsx";
+import { LoadingSpinner } from "../components/platform/primitives.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
-import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -87,6 +89,7 @@ import {
   normalizeAccountRange,
 } from "./account/accountRanges";
 import {
+  EmptyState,
   Panel,
   Pill,
   formatAccountMoney,
@@ -108,9 +111,16 @@ import {
   buildSafeQaPortfolioExposureFixture,
   getSafeQaInitialQueryOptions,
 } from "./account/accountSafeQaFixtures.js";
-import { useAccountSection } from "../features/platform/useAccountSection.js";
+import { useAccountTab } from "../features/platform/useAccountTab.js";
+import { AccountTabs } from "./account/AccountTabs.jsx";
 import TodaySnapshotPanel from "./account/TodaySnapshotPanel.jsx";
 import { OrdersPanel } from "./account/TradesOrdersPanel.jsx";
+import {
+  buildIdleAccountQuery,
+  buildProviderAccountQuery,
+  buildSnapTradeAccountPanelData,
+  resolveAccountProviderScope,
+} from "./account/snapTradeAccountPanelModel.js";
 import { AccountHeroBlock } from "./account/AccountHeroBlock";
 import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
 import PositionsPanel, {
@@ -411,7 +421,6 @@ const AccountPanelSuspenseFallback = ({
       alignContent: "start",
       gap: sp(6),
       padding: sp("10px 12px"),
-      border: `1px solid ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.sm),
       background: CSS_COLOR.bg1,
       color: CSS_COLOR.textSec,
@@ -590,11 +599,6 @@ const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
   return environment === "shadow" ? "shadow" : "live";
 };
 
-const ACCOUNT_SECTION_OPTIONS = [
-  { value: "real", label: "Real" },
-  { value: "shadow", label: "Shadow" },
-];
-
 const AccountSectionTransitionStatus = ({ compact = false }) => {
   const { transitioning, targetSection } = useAccountSectionTransitionSnapshot();
   if (!transitioning || !targetSection) {
@@ -626,76 +630,6 @@ const AccountSectionTransitionStatus = ({ compact = false }) => {
       <LoadingSpinner size={14} color={tone} />
       {label}
     </span>
-  );
-};
-
-const AccountSectionStrip = ({
-  compact = false,
-  onSectionIntent,
-  section,
-  setSection,
-  shadowMode = false,
-}) => {
-  const activeTone = shadowMode ? CSS_COLOR.pink : CSS_COLOR.green;
-  return (
-    <section
-      data-testid="account-section-strip"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: sp(8),
-        minWidth: 0,
-        minHeight: dim(compact ? 26 : 30),
-        padding: sp("0 3px"),
-        overflow: "hidden",
-      }}
-    >
-      <AppTooltip content="Switch between live broker account and shadow account">
-        <div
-          data-testid="account-section-tabs"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            minWidth: 0,
-            flex: "0 0 auto",
-          }}
-        >
-          <SegmentedControl
-            options={ACCOUNT_SECTION_OPTIONS}
-            value={section}
-            onChange={setSection}
-            onOptionIntent={onSectionIntent}
-            ariaLabel="Account section"
-            buttonTestId="account-section"
-          />
-        </div>
-      </AppTooltip>
-      <div
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: sp(6),
-          minWidth: 0,
-          flex: "1 1 auto",
-          overflow: "hidden",
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            width: dim(6),
-            height: dim(6),
-            borderRadius: dim(RADII.pill),
-            background: activeTone,
-            boxShadow: `0 0 0 3px ${cssColorMix(activeTone, 14)}`,
-            flex: "0 0 auto",
-          }}
-        />
-        <AccountSectionTransitionStatus compact={compact} />
-      </div>
-    </section>
   );
 };
 
@@ -991,12 +925,11 @@ const ShadowWatchlistBacktestPanel = ({
 const AccountScreenInner = ({
   session,
   accounts = [],
-  selectedAccountId,
   environment,
   brokerConfigured,
   brokerAuthenticated,
   gatewayTradingReady = false,
-  gatewayTradingMessage = "IBKR Client Portal must be connected before trading.",
+  gatewayTradingMessage = "Connect your broker before trading.",
   safeQaMode = false,
   isVisible = false,
   onJumpToTrade,
@@ -1041,8 +974,30 @@ const AccountScreenInner = ({
   const viewport = useViewport();
   const accountIsPhone = viewport.flags.isPhone || accountElementFlags.isPhone;
   const accountIsNarrow = viewport.flags.isNarrow || accountElementFlags.isNarrow;
-  const [accountSection, setAccountSection] = useAccountSection();
-  const [settledAccountSection, setSettledAccountSection] = useState(accountSection);
+  // The account tab strip subsumes the old real/shadow SegmentedControl AND
+  // account selection: tab id is "all" (cross-account aggregate) | <account.id>
+  // | "shadow". It owns this state locally rather than reading the header's
+  // selected-account prop, so it is the primary in-page account selector.
+  const [accountTabRaw, setAccountTab] = useAccountTab();
+  const accountTab = useMemo(() => {
+    if (accountTabRaw === "all" || accountTabRaw === "shadow") {
+      return accountTabRaw;
+    }
+    // A persisted account-id tab that is no longer in the live list (or a list
+    // that has not loaded yet) falls back to the "All" aggregate.
+    return accounts.some((account) => account.id === accountTabRaw)
+      ? accountTabRaw
+      : "all";
+  }, [accountTabRaw, accounts]);
+  const activeAccount = useMemo(
+    () => accounts.find((account) => account.id === accountTab) || null,
+    [accountTab, accounts],
+  );
+  const accountProviderScope = useMemo(
+    () => resolveAccountProviderScope({ accountTab, accounts }),
+    [accountTab, accounts],
+  );
+  const [settledAccountTab, setSettledAccountTab] = useState(accountTab);
 
   useEffect(() => {
     writeAccountWorkspaceDefault("accountRange", range);
@@ -1066,10 +1021,10 @@ const AccountScreenInner = ({
   }, [orderTab]);
 
   useEffect(() => {
-    if (accountSection === "shadow" && orderTab === "working") {
+    if (accountTab === "shadow" && orderTab === "working") {
       setOrderTab("history");
     }
-  }, [accountSection, orderTab]);
+  }, [accountTab, orderTab]);
 
   useEffect(() => {
     const listener = () => {
@@ -1094,8 +1049,21 @@ const AccountScreenInner = ({
     );
   }, []);
 
-  const activeAccountId = selectedAccountId || "combined";
-  const shadowMode = accountSection === "shadow";
+  // "all" and "shadow" both resolve to the server "combined" cross-account
+  // aggregate for activeAccountId; a specific account tab resolves to its id.
+  // accountRequestId then swaps in the shadow ledger for the shadow tab.
+  const activeAccountId =
+    accountTab === "all" || accountTab === "shadow" ? "combined" : accountTab;
+  const shadowMode = accountTab === "shadow";
+  const selectedSnapTradeAccount =
+    !shadowMode && accountProviderScope === "snaptrade" && activeAccountId !== "combined"
+      ? activeAccount
+      : null;
+  const snapTradeAccountPanelsEnabled = Boolean(
+    isVisible && !safeQaMode && selectedSnapTradeAccount?.id,
+  );
+  const genericAccountProviderScope =
+    accountProviderScope === "snaptrade" ? null : accountProviderScope;
   const effectiveOrderTab =
     shadowMode && orderTab === "working" ? "history" : orderTab;
   const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
@@ -1112,29 +1080,35 @@ const AccountScreenInner = ({
     (date) => retainPreviousAccountDateData(accountRequestId, date),
     [accountRequestId],
   );
-  const realAccountRoutesAvailable = Boolean(
+  const ibkrAccountRoutesAvailable = Boolean(
     !safeQaMode &&
       brokerConfigured &&
       brokerAuthenticated &&
-      activeAccountId,
+      activeAccountId &&
+      genericAccountProviderScope !== null,
   );
-  const inactiveAccountSection = shadowMode
-    ? realAccountRoutesAvailable
-      ? "real"
+  // The opposite-mode tab to keep warm: from shadow, prewarm the live "All"
+  // aggregate; from any live tab, prewarm shadow.
+  const inactiveAccountTab = shadowMode
+    ? ibkrAccountRoutesAvailable
+      ? "all"
       : null
     : "shadow";
-  const realAccountDataEnabled = Boolean(
+  const genericRealAccountDataEnabled = Boolean(
     isVisible &&
       !safeQaMode &&
       !shadowMode &&
-      realAccountRoutesAvailable &&
+      ibkrAccountRoutesAvailable &&
       accountRequestId,
   );
-  const accountQueriesEnabled = Boolean(
+  const genericAccountQueriesEnabled = Boolean(
     isVisible &&
       !safeQaMode &&
       accountRequestId &&
-      (shadowMode || realAccountDataEnabled),
+      (shadowMode || genericRealAccountDataEnabled),
+  );
+  const accountQueriesEnabled = Boolean(
+    genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled,
   );
   const modeParams = useMemo(
     () => ({
@@ -1142,7 +1116,10 @@ const AccountScreenInner = ({
     }),
     [environment, shadowMode],
   );
-  const positionManagementAccountId = shadowMode ? null : selectedAccountId;
+  // Live position management needs a single concrete account; the "All"
+  // aggregate ("combined") and shadow tabs have no manageable broker account.
+  const positionManagementAccountId =
+    shadowMode || activeAccountId === "combined" ? null : activeAccountId;
   const positionManagementGatewayReady = Boolean(!shadowMode && gatewayTradingReady);
   const positionManagementGatewayMessage = shadowMode
     ? "Shadow positions cannot be managed with live broker orders."
@@ -1154,7 +1131,11 @@ const AccountScreenInner = ({
     }),
     [modeParams],
   );
-  const shadowSourceLabel = shadowMode ? "Shadow Ledger" : "Flex";
+  const accountSourceLabel = snapTradeAccountPanelsEnabled
+    ? "SnapTrade"
+    : shadowMode
+      ? "Shadow Ledger"
+      : "Flex";
   const accountDataParams = useMemo(
     () => ({ ...modeParams }),
     [modeParams],
@@ -1294,10 +1275,14 @@ const AccountScreenInner = ({
       ).queryKey,
     [accountRequestId, performanceCalendarParams],
   );
-  const getAccountSectionRequest = useCallback(
-    (section) => {
-      const nextShadowMode = section === "shadow";
-      const nextAccountId = nextShadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
+  const getAccountTabRequest = useCallback(
+    (tab) => {
+      const nextShadowMode = tab === "shadow";
+      const nextAccountId = nextShadowMode
+        ? SHADOW_ACCOUNT_ID
+        : tab === "all"
+          ? "combined"
+          : tab;
       if (!nextAccountId) {
         return null;
       }
@@ -1311,22 +1296,32 @@ const AccountScreenInner = ({
         assetClass: accountPositionTypeParam(assetFilter),
       };
     },
-    [activeAccountId, assetFilter, environment, orderTab],
+    [assetFilter, environment, orderTab],
   );
   const inactiveAccountPageRequest = useMemo(
     () =>
-      inactiveAccountSection
-        ? getAccountSectionRequest(inactiveAccountSection)
+      inactiveAccountTab
+        ? getAccountTabRequest(inactiveAccountTab)
         : null,
-    [getAccountSectionRequest, inactiveAccountSection],
+    [getAccountTabRequest, inactiveAccountTab],
   );
-  const prefetchAccountSectionLiveQueries = useCallback(
-    (section) => {
-      if (!accountQueriesEnabled || !section) {
+  const prefetchAccountTabLiveQueries = useCallback(
+    (tab) => {
+      if (!isVisible || safeQaMode || !tab) {
         return;
       }
-      const target = getAccountSectionRequest(section);
+      const target = getAccountTabRequest(tab);
       if (!target) {
+        return;
+      }
+      const targetProviderScope = resolveAccountProviderScope({
+        accountTab: tab,
+        accounts,
+      });
+      if (targetProviderScope === "snaptrade") {
+        return;
+      }
+      if (targetProviderScope !== "shadow" && !genericAccountQueriesEnabled) {
         return;
       }
 
@@ -1382,13 +1377,20 @@ const AccountScreenInner = ({
         queryClient.prefetchQuery(options);
       });
     },
-    [accountQueriesEnabled, getAccountSectionRequest, queryClient],
+    [
+      accounts,
+      genericAccountQueriesEnabled,
+      getAccountTabRequest,
+      isVisible,
+      queryClient,
+      safeQaMode,
+    ],
   );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(
-    realAccountDataEnabled,
+    genericRealAccountDataEnabled,
   );
   const accountPageStreamEnabled = Boolean(
-    isVisible && accountQueriesEnabled,
+    isVisible && genericAccountQueriesEnabled,
   );
   const accountPageStreamFreshness = useAccountPageSnapshotStream({
     accountId: accountRequestId,
@@ -1407,8 +1409,8 @@ const AccountScreenInner = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: accountPageStreamEnabled,
   });
-  const accountSectionPending = Boolean(
-    isVisible && accountSection !== settledAccountSection,
+  const accountTabPending = Boolean(
+    isVisible && accountTab !== settledAccountTab,
   );
   const accountTimingStagesRef = useRef(new Set());
   useEffect(() => {
@@ -1467,7 +1469,7 @@ const AccountScreenInner = ({
   const inactiveAccountPrewarmEnabled = Boolean(
     isVisible &&
       accountQueriesEnabled &&
-      inactiveAccountSection &&
+      inactiveAccountTab &&
       accountPrimaryReady &&
       (!inactiveAccountPageStreamEnabled || inactiveAccountPrewarmFallbackReady) &&
       !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
@@ -1490,27 +1492,27 @@ const AccountScreenInner = ({
     if (!inactiveAccountPrewarmEnabled) {
       return undefined;
     }
-    prefetchAccountSectionLiveQueries(inactiveAccountSection);
+    prefetchAccountTabLiveQueries(inactiveAccountTab);
     return undefined;
   }, [
     inactiveAccountPrewarmEnabled,
-    inactiveAccountSection,
-    prefetchAccountSectionLiveQueries,
+    inactiveAccountTab,
+    prefetchAccountTabLiveQueries,
   ]);
   useEffect(() => {
     if (!inactiveAccountPrewarmEnabled) {
       return undefined;
     }
     const timer = window.setInterval(() => {
-      prefetchAccountSectionLiveQueries(inactiveAccountSection);
+      prefetchAccountTabLiveQueries(inactiveAccountTab);
     }, ACCOUNT_SWITCH_KEEP_WARM_MS);
     return () => {
       window.clearInterval(timer);
     };
   }, [
     inactiveAccountPrewarmEnabled,
-    inactiveAccountSection,
-    prefetchAccountSectionLiveQueries,
+    inactiveAccountTab,
+    prefetchAccountTabLiveQueries,
   ]);
   const accountRuntimeControl = useRuntimeControlSnapshot({
     enabled: Boolean(
@@ -1608,19 +1610,62 @@ const AccountScreenInner = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
+  const snapTradePortfolioQuery = useGetSnapTradeAccountPortfolio(
+    selectedSnapTradeAccount?.id || "",
+    {
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: liveRefreshInterval,
+        enabled: snapTradeAccountPanelsEnabled,
+      },
+    },
+  );
+  const snapTradeRecentOrdersQuery = useGetSnapTradeRecentOrders(
+    selectedSnapTradeAccount?.id || "",
+    {
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: liveRefreshInterval,
+        enabled: Boolean(
+          snapTradeAccountPanelsEnabled &&
+            (activatedAccountPanels.orders || activatedAccountPanels.tradingAnalysis),
+        ),
+      },
+    },
+  );
+  const snapTradeHistoryParams = useMemo(
+    () => ({
+      from: performanceCalendarParams.from,
+      range,
+    }),
+    [performanceCalendarParams.from, range],
+  );
+  const snapTradeHistoryQuery = useGetSnapTradeAccountHistory(
+    selectedSnapTradeAccount?.id || "",
+    snapTradeHistoryParams,
+    {
+      query: {
+        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+        staleTime: ACCOUNT_HISTORY_STALE_MS,
+        refetchInterval: false,
+        retry: false,
+        enabled: snapTradeAccountPanelsEnabled,
+      },
+    },
+  );
   const primaryAccountRestQueriesEnabled = Boolean(
-    accountQueriesEnabled &&
+    genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
         (accountPrimaryFallbackReady &&
           !accountPageStreamFreshness.accountPrimaryFresh)),
   );
   const liveAccountQueriesEnabled = Boolean(
-    accountQueriesEnabled &&
+    genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
         (accountLiveFallbackReady && !accountPageStreamFreshness.accountLiveFresh)),
   );
   const derivedAccountQueriesEnabled = Boolean(
-    accountQueriesEnabled &&
+    genericAccountQueriesEnabled &&
       (!accountPageStreamEnabled ||
         (accountDerivedFallbackReady && !accountPageStreamFreshness.accountDerivedFresh)),
   );
@@ -1628,18 +1673,18 @@ const AccountScreenInner = ({
   const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
   const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
-    accountQueriesEnabled && accountDerivedReady,
+    genericAccountQueriesEnabled && accountDerivedReady,
   );
   const todayPanelQueriesEnabled = Boolean(
     liveAccountQueriesEnabled && activatedAccountPanels.today,
   );
   const tradingAnalysisQueriesEnabled = Boolean(
-    accountQueriesEnabled && accountDerivedReady,
+    genericAccountQueriesEnabled && accountDerivedReady,
   );
   const ordersPanelQueriesEnabled = Boolean(
     primaryAccountRestQueriesEnabled,
   );
-  const positionsRestQueriesEnabled = Boolean(accountQueriesEnabled);
+  const positionsRestQueriesEnabled = Boolean(genericAccountQueriesEnabled);
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",
@@ -1672,7 +1717,12 @@ const AccountScreenInner = ({
     query: {
       staleTime: 15_000,
       refetchInterval: healthRefreshInterval,
-      enabled: Boolean(isVisible && !shadowMode && !safeQaMode),
+      enabled: Boolean(
+        isVisible &&
+          !shadowMode &&
+          !safeQaMode &&
+          genericAccountProviderScope !== null,
+      ),
       retry: false,
     },
   });
@@ -1802,7 +1852,7 @@ const AccountScreenInner = ({
       query: {
         staleTime: ACCOUNT_HISTORY_STALE_MS,
         retry: false,
-        enabled: Boolean(accountQueriesEnabled && activeEquityInspectionDate),
+        enabled: Boolean(genericAccountQueriesEnabled && activeEquityInspectionDate),
         placeholderData: retainPreviousDateData(activeEquityInspectionDate),
       },
     },
@@ -1937,28 +1987,38 @@ const AccountScreenInner = ({
       },
   });
   const sectionSwitching = Boolean(
-    accountSectionPending && summaryQuery.isPlaceholderData,
+    accountTabPending &&
+      !snapTradeAccountPanelsEnabled &&
+      summaryQuery.isPlaceholderData,
   );
   useEffect(() => {
     if (!isVisible) {
-      setSettledAccountSection(accountSection);
+      setSettledAccountTab(accountTab);
+      return;
+    }
+    if (snapTradeAccountPanelsEnabled) {
+      setSettledAccountTab(accountTab);
       return;
     }
     if (summaryQuery.data && !summaryQuery.isPlaceholderData) {
-      setSettledAccountSection(accountSection);
+      setSettledAccountTab(accountTab);
     }
   }, [
-    accountSection,
+    accountTab,
     isVisible,
+    snapTradeAccountPanelsEnabled,
     summaryQuery.data,
     summaryQuery.isPlaceholderData,
   ]);
   useEffect(() => {
+    // The shared transition store colors the loading pill by "shadow" vs a live
+    // word; collapse any live tab id (all/<account>) to "live" so the pill never
+    // renders a raw account id.
     setAccountSectionTransitionSnapshot({
       transitioning: sectionSwitching,
-      targetSection: sectionSwitching ? accountSection : null,
+      targetSection: sectionSwitching ? (shadowMode ? "shadow" : "live") : null,
     });
-  }, [accountSection, sectionSwitching]);
+  }, [shadowMode, sectionSwitching]);
   useEffect(
     () => () => {
       setAccountSectionTransitionSnapshot({
@@ -1976,6 +2036,67 @@ const AccountScreenInner = ({
       placeholderData: retainPreviousData,
     },
   });
+  const snapTradePanelData = useMemo(
+    () =>
+      selectedSnapTradeAccount && snapTradePortfolioQuery.data
+        ? buildSnapTradeAccountPanelData({
+            account: selectedSnapTradeAccount,
+            portfolio: snapTradePortfolioQuery.data,
+            recentOrders: snapTradeRecentOrdersQuery.data,
+            history: snapTradeHistoryQuery.data,
+            orderTab: effectiveOrderTab,
+            range,
+          })
+        : null,
+    [
+      effectiveOrderTab,
+      range,
+      selectedSnapTradeAccount,
+      snapTradeHistoryQuery.data,
+      snapTradePortfolioQuery.data,
+      snapTradeRecentOrdersQuery.data,
+    ],
+  );
+  const summaryQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.summary)
+    : summaryQuery;
+  const equityQueryForPanel = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.equityHistory)
+    : equityQuery;
+  const intradayPnlQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildIdleAccountQuery(snapTradePanelData?.equityHistory)
+    : intradayPnlQuery;
+  const allocationQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.allocation)
+    : allocationQuery;
+  const positionsQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradePortfolioQuery, snapTradePanelData?.positions)
+    : positionsQuery;
+  const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildIdleAccountQuery(snapTradePanelData?.positionsAtDate)
+    : positionsAtDateQuery;
+  const tradesQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.closedTrades)
+    : tradesQuery;
+  const performanceCalendarTradesQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.closedTrades)
+    : performanceCalendarTradesQuery;
+  const performanceCalendarEquityQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradeHistoryQuery, snapTradePanelData?.equityHistory)
+    : performanceCalendarEquityQuery;
+  const snapTradeOrdersPanelData =
+    snapTradeAccountPanelsEnabled && snapTradeRecentOrdersQuery.data
+      ? snapTradePanelData?.orders
+      : undefined;
+  const ordersQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(snapTradeRecentOrdersQuery, snapTradeOrdersPanelData)
+    : ordersQuery;
+  const riskQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildIdleAccountQuery(null)
+    : riskQuery;
+  const cashQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildIdleAccountQuery(snapTradePanelData?.cash)
+    : cashQuery;
   useRuntimeAccountHistoryCache({
     enabled: Boolean(equityHistoryQueriesEnabled && range !== "1D"),
     queryClient,
@@ -2189,12 +2310,12 @@ const AccountScreenInner = ({
   ]);
 
   const currency =
-    summaryQuery.data?.currency ||
-    equityQuery.data?.currency ||
-    cashQuery.data?.currency ||
+    summaryQueryForDisplay.data?.currency ||
+    equityQueryForPanel.data?.currency ||
+    cashQueryForDisplay.data?.currency ||
     accounts[0]?.currency ||
     "USD";
-  const displaySummaryData = summaryQuery.data;
+  const displaySummaryData = summaryQueryForDisplay.data;
   const displaySummaryDayPnlMetric = displaySummaryData?.metrics?.dayPnl;
   const displaySummaryDayPnlMarketDate = useMemo(
     () => accountMetricMarketDate(displaySummaryDayPnlMetric),
@@ -2224,48 +2345,58 @@ const AccountScreenInner = ({
     return netLiquidation - totalPnl;
   }, [displaySummaryData]);
   const openAccountPositions = useMemo(
-    () => getOpenPositionRows(positionsQuery.data?.positions || []),
-    [positionsQuery.data],
+    () => getOpenPositionRows(positionsQueryForDisplay.data?.positions || []),
+    [positionsQueryForDisplay.data],
   );
   const livePositionsDayPnl = useMemo(
     () =>
       livePositionsDayPnlMetric({
-        positionsResponse: positionsQuery.data,
+        positionsResponse: positionsQueryForDisplay.data,
         fallbackMetric: displaySummaryData?.metrics?.dayPnl,
-        tradesResponse: performanceCalendarTradesQuery.data,
+        tradesResponse: performanceCalendarTradesQueryForDisplay.data,
         currency,
       }),
     [
       currency,
       displaySummaryData?.metrics?.dayPnl,
-      performanceCalendarTradesQuery.data,
-      positionsQuery.data,
+      performanceCalendarTradesQueryForDisplay.data,
+      positionsQueryForDisplay.data,
     ],
   );
   const livePositionNetLiquidation = useMemo(
     () =>
       livePositionsNetLiquidation(
-        positionsQuery.data,
+        positionsQueryForDisplay.data,
         displaySummaryData?.metrics?.netLiquidation?.value,
       ),
-    [displaySummaryData?.metrics?.netLiquidation?.value, positionsQuery.data],
+    [
+      displaySummaryData?.metrics?.netLiquidation?.value,
+      positionsQueryForDisplay.data,
+    ],
   );
   const equityQueryForDisplay = useMemo(
     () =>
       equityQueryWithLivePositionsTerminal({
-        query: equityQuery,
+        query: equityQueryForPanel,
         netLiquidation: livePositionNetLiquidation,
         currency,
-        updatedAt: positionsQuery.data?.updatedAt || displaySummaryData?.updatedAt,
+        updatedAt:
+          positionsQueryForDisplay.data?.updatedAt || displaySummaryData?.updatedAt,
       }),
     [
       currency,
       displaySummaryData?.updatedAt,
-      equityQuery,
+      equityQueryForPanel,
       livePositionNetLiquidation,
-      positionsQuery.data?.updatedAt,
+      positionsQueryForDisplay.data?.updatedAt,
     ],
   );
+  const accountAnalysisQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? tradesQueryForDisplay
+    : accountAnalysisQuery;
+  const accountAnalysisTradesForDisplay = snapTradeAccountPanelsEnabled
+    ? tradesQueryForDisplay.data?.trades || []
+    : accountAnalysisTrades;
   const accountOptionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(openAccountPositions),
     [openAccountPositions],
@@ -2275,10 +2406,11 @@ const AccountScreenInner = ({
     [accountRequestId],
   );
   const accountLiveOptionQuotesEnabled = Boolean(
-    accountQueriesEnabled && accountPrimaryReady,
+    (genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled) &&
+      accountPrimaryReady,
   );
   const shadowAutomationAudit = useMemo(() => {
-    const orders = ordersQuery.data?.orders || [];
+    const orders = ordersQueryForDisplay.data?.orders || [];
     return {
       automationPositions: openAccountPositions.filter(
         (position) => position.sourceType === "automation",
@@ -2293,15 +2425,18 @@ const AccountScreenInner = ({
       backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
       manualOrders: orders.filter((order) => order.sourceType === "manual").length,
     };
-  }, [openAccountPositions, ordersQuery.data]);
+  }, [openAccountPositions, ordersQueryForDisplay.data]);
   const { tradesData: returnsCalendarTradesData, equityPoints: returnsCalendarEquityPoints } =
     useMemo(
       () =>
         resolveReturnsCalendarData({
-          performanceCalendarTradesData: performanceCalendarTradesQuery.data,
-          performanceCalendarEquityData: performanceCalendarEquityQuery.data,
+          performanceCalendarTradesData: performanceCalendarTradesQueryForDisplay.data,
+          performanceCalendarEquityData: performanceCalendarEquityQueryForDisplay.data,
         }),
-      [performanceCalendarEquityQuery.data, performanceCalendarTradesQuery.data],
+      [
+        performanceCalendarEquityQueryForDisplay.data,
+        performanceCalendarTradesQueryForDisplay.data,
+      ],
     );
   const handleCancelOrder = async (order) => {
     if (!gatewayTradingReady) {
@@ -2334,11 +2469,11 @@ const AccountScreenInner = ({
     if (!accountActivePrefetchEnabled) {
       return;
     }
-    prefetchAccountSectionLiveQueries(accountSection);
+    prefetchAccountTabLiveQueries(accountTab);
   }, [
     accountActivePrefetchEnabled,
-    accountSection,
-    prefetchAccountSectionLiveQueries,
+    accountTab,
+    prefetchAccountTabLiveQueries,
   ]);
 
   return (
@@ -2389,15 +2524,15 @@ const AccountScreenInner = ({
         >
           <AccountHeroBlock
             summary={displaySummaryData}
-            equityHistory={equityQuery.data}
+            equityHistory={equityQueryForPanel.data}
             benchmarkHistories={{
               SPY: spyBenchmarkQuery.data,
               QQQ: qqqBenchmarkQuery.data,
               DJIA: djiaBenchmarkQuery.data,
             }}
-            positionsResponse={positionsQuery.data}
-            tradesResponse={tradesQuery.data}
-            cashResponse={cashQuery.data}
+            positionsResponse={positionsQueryForDisplay.data}
+            tradesResponse={tradesQueryForDisplay.data}
+            cashResponse={cashQueryForDisplay.data}
             range={range}
             currency={currency}
             maskValues={maskAccountValues}
@@ -2406,13 +2541,25 @@ const AccountScreenInner = ({
           />
         </DeferredPanelSuspense>
 
-        <AccountSectionStrip
-          compact={accountIsPhone}
-          onSectionIntent={prefetchAccountSectionLiveQueries}
-          section={accountSection}
-          setSection={setAccountSection}
-          shadowMode={shadowMode}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
+          <AccountTabs
+            accounts={accounts}
+            activeTabId={accountTab}
+            onSelectTab={setAccountTab}
+            onTabIntent={prefetchAccountTabLiveQueries}
+            accountIsPhone={accountIsPhone}
+            maskValues={maskAccountValues}
+          />
+          <AccountSectionTransitionStatus compact={accountIsPhone} />
+        </div>
 
         <div
           className="ra-panel-enter ra-account-overview-grid"
@@ -2458,16 +2605,22 @@ const AccountScreenInner = ({
               ]}
             >
               <LazyPortfolioExposurePanel
-                allocationQuery={allocationQuery}
-                riskQuery={riskQuery}
-                positionsResponse={positionsQuery.data}
+                allocationQuery={allocationQueryForDisplay}
+                riskQuery={riskQueryForDisplay}
+                positionsResponse={positionsQueryForDisplay.data}
                 currency={currency}
                 subtitle={
                   shadowMode
-                    ? `${shadowSourceLabel} holdings, risk, and concentration`
+                    ? `${accountSourceLabel} holdings, risk, and concentration`
+                    : snapTradeAccountPanelsEnabled
+                      ? "SnapTrade holdings, risk, and concentration"
                     : undefined
                 }
-                rightRail={shadowMode ? shadowSourceLabel : undefined}
+                rightRail={
+                  shadowMode || snapTradeAccountPanelsEnabled
+                    ? accountSourceLabel
+                    : undefined
+                }
                 maskValues={maskAccountValues}
                 isPhone={accountIsPhone}
               />
@@ -2504,19 +2657,23 @@ const AccountScreenInner = ({
                 onRangeChange={setRange}
                 currency={currency}
                 accentColor={shadowMode ? CSS_COLOR.pink : CSS_COLOR.green}
-                rightRail={shadowMode ? shadowSourceLabel : undefined}
-                sourceLabel={shadowSourceLabel}
+                rightRail={
+                  shadowMode || snapTradeAccountPanelsEnabled
+                    ? accountSourceLabel
+                    : undefined
+                }
+                sourceLabel={accountSourceLabel}
                 maskValues={maskAccountValues}
                 currentNetLiquidation={livePositionNetLiquidation}
                 activeInspectionDate={activeEquityInspectionDate}
                 pinnedInspectionDate={pinnedEquityDate}
                 onHoverInspectionDate={setHoveredEquityDate}
                 onPinInspectionDate={setPinnedEquityDate}
-                dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountSection}`}
+                dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountTab}`}
                 compact
               />
               <PositionsAtDateInspector
-                query={positionsAtDateQuery}
+                query={positionsAtDateQueryForDisplay}
                 activeDate={activeEquityInspectionDate}
                 pinnedDate={pinnedEquityDate}
                 currentPositionsCount={openAccountPositions.length}
@@ -2534,7 +2691,7 @@ const AccountScreenInner = ({
           title="Current Positions"
         >
           <PositionsPanel
-            query={positionsQuery}
+            query={positionsQueryForDisplay}
             currency={currency}
             assetFilter={assetFilter}
             onAssetFilterChange={setAssetFilter}
@@ -2580,8 +2737,8 @@ const AccountScreenInner = ({
             ]}
           >
             <TodaySnapshotPanel
-              positionsQuery={positionsQuery}
-              intradayQuery={intradayPnlQuery}
+              positionsQuery={positionsQueryForDisplay}
+              intradayQuery={intradayPnlQueryForDisplay}
               currency={currency}
               maskValues={maskAccountValues}
               liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
@@ -2615,10 +2772,10 @@ const AccountScreenInner = ({
             ]}
           >
             <LazyTradingAnalysisWorkbench
-              query={accountAnalysisQuery}
-              trades={accountAnalysisTrades}
-              allTrades={accountAnalysisTrades}
-              orders={ordersQuery.data?.orders || []}
+              query={accountAnalysisQueryForDisplay}
+              trades={accountAnalysisTradesForDisplay}
+              allTrades={accountAnalysisTradesForDisplay}
+              orders={ordersQueryForDisplay.data?.orders || []}
               positions={openAccountPositions}
               filters={tradeFilters}
               dispatchFilters={dispatchTradeFilters}
@@ -2655,14 +2812,18 @@ const AccountScreenInner = ({
             ]}
           >
             <OrdersPanel
-              query={ordersQuery}
+              query={ordersQueryForDisplay}
               tab={effectiveOrderTab}
               onTabChange={setOrderTab}
               currency={currency}
               onCancelOrder={handleCancelOrder}
               cancelPending={cancelOrderMutation.isPending}
-              cancelDisabled={!gatewayTradingReady}
-              cancelDisabledReason={gatewayTradingMessage}
+              cancelDisabled={snapTradeAccountPanelsEnabled || !gatewayTradingReady}
+              cancelDisabledReason={
+                snapTradeAccountPanelsEnabled
+                  ? "SnapTrade order cancellation is handled outside this panel."
+                  : gatewayTradingMessage
+              }
               sourceFilter="all"
               emptyBody={
                 shadowMode
@@ -2698,7 +2859,7 @@ const AccountScreenInner = ({
               ]}
             >
               <LazyCashFundingPanel
-                query={cashQuery}
+                query={cashQueryForDisplay}
                 currency={currency}
                 maskValues={maskAccountValues}
               />
@@ -2716,7 +2877,7 @@ const AccountScreenInner = ({
                 <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
                   <Pill tone="pink">Shadow</Pill>
                   <Pill tone="green">Cash only</Pill>
-                  <Pill tone="cyan">IBKR Pro Fixed fees</Pill>
+                  <Pill tone="cyan">Fixed fees</Pill>
                 </div>
                 <div
                   style={{
@@ -2734,7 +2895,7 @@ const AccountScreenInner = ({
                         true,
                         maskAccountValues,
                       )}`}
-                  {". "}Manual tickets and signal-options automation write to this account without touching IBKR paper.
+                  {". "}Manual tickets and signal-options automation write to this account without touching your live broker account.
                 </div>
                 <div
                   className="ra-hide-scrollbar"
@@ -2773,6 +2934,13 @@ const AccountScreenInner = ({
                   ))}
                 </div>
               </div>
+            </Panel>
+          ) : snapTradeAccountPanelsEnabled ? (
+            <Panel title="SnapTrade Account" rightRail="Provider scoped" minHeight={130}>
+              <EmptyState
+                title="SnapTrade account connected"
+                body="Portfolio balances, positions, and recent orders are loaded through SnapTrade for this selected account."
+              />
             </Panel>
           ) : (
             <DeferredPanelSuspense

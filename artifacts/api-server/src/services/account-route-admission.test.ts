@@ -13,6 +13,17 @@ test("real account routes are blocked when IBKR is unconfigured", () => {
   );
 });
 
+test("real account routes are admitted when SnapTrade accounts are present", () => {
+  assert.equal(
+    shouldAdmitAccountRoute({
+      accountId: "U24762790",
+      ibkrConfigured: false,
+      snapTradeAccountsPresent: true,
+    }),
+    true,
+  );
+});
+
 test("shadow account routes remain available when IBKR is unconfigured", () => {
   assert.equal(
     shouldAdmitAccountRoute({ accountId: "shadow", ibkrConfigured: false }),

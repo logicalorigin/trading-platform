@@ -16,6 +16,7 @@ import {
   resolveSignalScoreBreakdown,
   signalActionLabel,
   signalFreshnessLabel,
+  staRowPassesMtfAlignment,
   STRATEGY_SIGNAL_TIMEFRAMES,
 } from "./algoHelpers.js";
 
@@ -169,6 +170,99 @@ test("visible signal rows use pushed Signal Matrix execution timeframe before op
   assert.equal(rows[0].currentSignalClose, 545.5);
 });
 
+test("STA display gate keeps same-frame 1:1 signals visible when trend lags", () => {
+  assert.equal(
+    staRowPassesMtfAlignment(
+      {
+        symbol: "CCJ",
+        timeframe: "1m",
+        direction: "sell",
+        signalAt: "2026-06-26T18:16:00.000Z",
+      },
+      {
+        CCJ: {
+          "1m": {
+            trendDirection: "bullish",
+            currentSignalDirection: "sell",
+            status: "ok",
+            active: true,
+          },
+        },
+      },
+      {
+        enabled: true,
+        timeframes: ["1m"],
+        requiredCount: 1,
+      },
+    ),
+    true,
+  );
+});
+
+test("visible signal rows keep 1:1 directional matrix cells without crossover timestamps", () => {
+  const rows = buildVisibleSignalRows({
+    universeSymbols: ["AIYY", "QQQ", "EMPTY"],
+    signalTimeframes: ["1m"],
+    signalActionTimeframes: ["1m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-1m",
+        symbol: "AIYY",
+        timeframe: "1m",
+        status: "ok",
+        active: true,
+        fresh: false,
+        currentSignalDirection: "buy",
+        currentSignalAt: null,
+        latestBarAt: "2026-06-27T00:07:00.000Z",
+        latestBarClose: 17.25,
+        lastEvaluatedAt: "2026-06-27T00:07:45.087Z",
+        trendDirection: "bullish",
+        actionEligible: false,
+        actionBlocker: "no_signal",
+      },
+      {
+        profileId: "profile-1m",
+        symbol: "QQQ",
+        timeframe: "1m",
+        status: "ok",
+        active: true,
+        fresh: true,
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-27T00:06:00.000Z",
+        latestBarAt: "2026-06-27T00:07:00.000Z",
+        latestBarClose: 706.14,
+        actionEligible: true,
+        actionBlocker: null,
+      },
+      {
+        profileId: "profile-1m",
+        symbol: "EMPTY",
+        timeframe: "1m",
+        status: "ok",
+        active: true,
+        fresh: false,
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        latestBarAt: "2026-06-27T00:07:00.000Z",
+        trendDirection: "bullish",
+        actionEligible: false,
+        actionBlocker: "no_signal",
+      },
+    ],
+  });
+
+  assert.equal(rows.length, 2);
+  const trendOnlyRow = rows.find((row) => row.symbol === "AIYY");
+  assert.equal(trendOnlyRow.direction, "buy");
+  assert.equal(trendOnlyRow.signalAt, null);
+  assert.equal(trendOnlyRow.currentSignalAt, null);
+  assert.equal(trendOnlyRow.latestBarAt, "2026-06-27T00:07:00.000Z");
+  assert.equal(trendOnlyRow.actionEligible, false);
+  assert.equal(trendOnlyRow.actionBlocker, "no_signal");
+  assert.equal(rows.some((row) => row.symbol === "EMPTY"), false);
+});
+
 test("visible signal rows are signal-driven and do not preserve the universe cap", () => {
   const symbols = Array.from(
     { length: 500 },
@@ -192,6 +286,11 @@ test("visible signal rows are signal-driven and do not preserve the universe cap
         currentSignalAt: noSignal
           ? null
           : `2026-06-11T16:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        trendDirection: noSignal
+          ? "bullish"
+          : index % 2 === 0
+            ? "bullish"
+            : "bearish",
         currentSignalPrice: noSignal ? null : 500 + index,
         currentSignalClose: noSignal ? null : 500.25 + index,
         latestBarAt: `2026-06-11T17:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -462,6 +561,92 @@ test("signal indicator metrics split by score bucket and bucket counts sum to Al
   assert.equal(metrics.byScoreBucket.high.correctnessPercent, 100);
   // Unknown bucket has a directionless row only -> no observations.
   assert.equal(metrics.byScoreBucket.unknown.observationCount, 0);
+});
+
+test("signal indicator metrics split scores into 10-point ranges and average move timelines", () => {
+  const signalAt = "2026-06-22T14:30:00.000Z";
+  const metrics = buildSignalIndicatorMetrics(
+    [
+      {
+        symbol: "AAPL",
+        direction: "buy",
+        signalAt,
+        currentSignalClose: 100,
+        latestBarClose: 106,
+        scoreBreakdown: { score: 82.3, tier: "high" },
+        sparkBars: [
+          { timestamp: "2026-06-22T14:30:00.000Z", close: 100 },
+          { timestamp: "2026-06-22T14:35:00.000Z", close: 103 },
+          { timestamp: "2026-06-22T14:40:00.000Z", close: 106 },
+        ],
+      },
+      {
+        symbol: "MSFT",
+        direction: "sell",
+        signalAt,
+        currentSignalClose: 200,
+        latestBarClose: 190,
+        scoreBreakdown: { score: 87.9, tier: "high" },
+        sparkBars: [
+          { timestamp: "2026-06-22T14:35:00.000Z", close: 194 },
+          { timestamp: "2026-06-22T14:40:00.000Z", close: 190 },
+        ],
+      },
+      {
+        symbol: "NVDA",
+        direction: "buy",
+        signalAt,
+        currentSignalClose: 50,
+        latestBarClose: 51,
+        scoreBreakdown: { score: 55, tier: "standard" },
+        sparkBars: [
+          { timestamp: "2026-06-22T14:35:00.000Z", close: 51 },
+        ],
+      },
+      {
+        symbol: "SQQQ",
+        direction: null,
+        scoreBreakdown: { score: 100, tier: "high" },
+      },
+      {
+        symbol: "NOPE",
+        direction: null,
+      },
+    ],
+    { timelineBars: 2 },
+  );
+
+  assert.equal(metrics.byScoreRange["80-90"].signalCount, 2);
+  assert.equal(metrics.byScoreRange["80-90"].observationCount, 2);
+  assert.equal(metrics.byScoreRange["50-60"].signalCount, 1);
+  assert.equal(metrics.byScoreRange["90-100"].signalCount, 1);
+  assert.equal(metrics.byScoreRange.unknown.signalCount, 1);
+  assert.equal(metrics.byScoreRangeDirection["80-90"].buy.signalCount, 1);
+  assert.equal(metrics.byScoreRangeDirection["80-90"].sell.signalCount, 1);
+  assert.equal(metrics.byScoreRangeDirection["50-60"].buy.signalCount, 1);
+  assert.equal(metrics.byScoreRangeDirection["50-60"].sell.signalCount, 0);
+  assert.equal(metrics.byScoreRangeDirection["90-100"].buy.signalCount, 0);
+  assert.equal(metrics.scoreBuckets[1].byDirection.buy.signalCount, 1);
+  assert.equal(metrics.scoreBuckets[1].byDirection.sell.signalCount, 1);
+
+  const highTimeline = metrics.byScoreRange["80-90"].moveTimeline;
+  assert.deepEqual(
+    highTimeline.map((point) => ({
+      bar: point.bar,
+      observationCount: point.observationCount,
+      avgMovePercent: Number(point.avgMovePercent.toFixed(2)),
+    })),
+    [
+      { bar: 1, observationCount: 2, avgMovePercent: 3 },
+      { bar: 2, observationCount: 2, avgMovePercent: 5.5 },
+    ],
+  );
+  assert.deepEqual(
+    metrics.scoreBuckets
+      .filter((bucket) => bucket.signalCount > 0)
+      .map((bucket) => bucket.key),
+    ["90-100", "80-90", "50-60", "unknown"],
+  );
 });
 
 test("signal indicator metrics calculate excursion from timestamped spark bars", () => {
@@ -833,6 +1018,42 @@ test("visible signal rows keep matrix action rows and ignore unmatched received 
   );
 });
 
+test("visible signal rows order by signal time before matrix activity", () => {
+  const rows = buildVisibleSignalRows({
+    universeSymbols: ["AAPU", "AISP"],
+    signalActionTimeframes: ["5m"],
+    signalMatrixStates: [
+      {
+        profileId: "profile-5m",
+        symbol: "AAPU",
+        timeframe: "5m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-06-25T23:15:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        lastEvaluatedAt: "2026-06-25T23:20:03.434Z",
+        fresh: true,
+        status: "ok",
+      },
+      {
+        profileId: "profile-5m",
+        symbol: "AISP",
+        timeframe: "5m",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-06-24T19:20:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        lastEvaluatedAt: "2026-06-25T23:28:19.971Z",
+        fresh: false,
+        status: "ok",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => row.symbol),
+    ["AAPU", "AISP"],
+  );
+});
+
 test("STA selected execution timeframe keeps the matrix row over newer received history", () => {
   const rows = buildVisibleSignalRows({
     includeSignalHistory: true,
@@ -1050,9 +1271,12 @@ test("STA signal age display uses elapsed time even when bar age is present", ()
   assert.equal(age.freshnessPct, 75);
 });
 
-test("Signal action labels stay long-options only", () => {
-  assert.equal(signalActionLabel({ direction: "buy" }, null), "BUY CALL");
-  assert.equal(signalActionLabel({ direction: "sell" }, null), "BUY PUT");
+test("Signal action labels use the LONG/SHORT direction voice (long-options only)", () => {
+  // Direction voice is LONG/SHORT; the instrument (long call / long put) is
+  // implementation detail. buy_call/buy_put map onto the same voice so the
+  // labels stay long-premium only — no sell-to-open wording can appear.
+  assert.equal(signalActionLabel({ direction: "buy" }, null), "LONG");
+  assert.equal(signalActionLabel({ direction: "sell" }, null), "SHORT");
   assert.equal(
     signalActionLabel(null, {
       signalDirection: "sell",
@@ -1060,7 +1284,7 @@ test("Signal action labels stay long-options only", () => {
       orderSide: "buy",
       orderIntent: "open_long_option",
     }),
-    "BUY PUT",
+    "SHORT",
   );
 });
 
@@ -1275,6 +1499,31 @@ test("resolveSignalMove returns the signed percent from signal fire price to cur
   // A drop below the fire price reads negative.
   const down = resolveSignalMove({ signalPrice: 500 }, { price: 480 }, null);
   assert.equal(down.label, "-4.0%");
+});
+
+test("resolveSignalMove direction-adjusts the move so a short's favorable drop reads positive", () => {
+  // Sell/short signal: a drop below the fire price is FAVORABLE, so Move reads
+  // positive — matching the score's / KPI's direction-signed convention.
+  const favorable = resolveSignalMove(
+    { signalPrice: 500, direction: "sell" },
+    { price: 480 },
+    null,
+  );
+  assert.equal(favorable.label, "+4.0%");
+  assert.equal(favorable.detail, "+20.00");
+  // A rise above the fire price is adverse for a short -> negative.
+  const adverse = resolveSignalMove(
+    { signalPrice: 500, direction: "sell" },
+    { price: 525 },
+    null,
+  );
+  assert.equal(adverse.label, "-5.0%");
+  // Buy signals are unchanged (directionSign +1).
+  assert.equal(
+    resolveSignalMove({ signalPrice: 500, direction: "buy" }, { price: 525 }, null)
+      .label,
+    "+5.0%",
+  );
 });
 
 test("resolveSignalMove shows the missing-value placeholder when no fire reference price is available", () => {
@@ -1501,6 +1750,81 @@ test("resolveSignalScoreBreakdown drops signal-age scoring and rescales to 0-100
     },
   });
   assert.equal(aged.score, fresh.score);
+});
+
+test("resolveSignalScoreBreakdown uses calibrated expected-move-v2 features before entry quality", () => {
+  const baseQuality = {
+    score: 95,
+    tier: "high",
+    liquidityTier: "strong",
+    reasons: ["mtf_full_alignment", "adx_confirmed"],
+    components: { total: 95 },
+  };
+  const extended = resolveSignalScoreBreakdown({
+    signal: {
+      direction: "buy",
+      filterState: {
+        directionalFeatures: {
+          rangePosition20: 0.95,
+          mtfAlignment: 3,
+          adxComponent: 2,
+          volatilityComponent: -0.2,
+          shortMomentumPct: 4,
+          riskAdjustedMomentum: 3,
+          atrPct: 0.9,
+          volumeRatio20: 1.8,
+        },
+      },
+    },
+    candidate: {
+      direction: "buy",
+      signalQuality: baseQuality,
+    },
+  });
+  const lessExtended = resolveSignalScoreBreakdown({
+    signal: {
+      direction: "buy",
+      filterState: {
+        directionalFeatures: {
+          rangePosition20: 0.25,
+          mtfAlignment: 0,
+          adxComponent: -0.5,
+          volatilityComponent: 0.8,
+          shortMomentumPct: -1,
+          riskAdjustedMomentum: -0.5,
+          atrPct: 0.3,
+          volumeRatio20: 0.6,
+        },
+      },
+    },
+    candidate: {
+      direction: "buy",
+      signalQuality: baseQuality,
+    },
+  });
+
+  // expected-move-v2: both vectors' volumeRatio20 (1.8 and 0.6) are below
+  // the vspike (>=10) conviction threshold, so conviction=0 and the v2
+  // scores match the v1 raw formula exactly.
+  // extended (atrPct 0.9, volumeRatio20 1.8 -> strong expected move) with
+  // rangePosition 0.95 (reversionTilt=4*(0.5-0.95)=-1.8):
+  // volatilityRegime=5*log2(1.5)=2.9, volumeParticipation=3*log2(1.8)=2.5,
+  // momentum=0.6*3+0.5*(4/0.9)=4.0 -> 42+2.9+2.5+4.0-1.8=49.7 (standard).
+  // Less-extended (atrPct 0.3, volumeRatio20 0.6 -> calm/below-average
+  // volume, small expected move) with rangePosition 0.25
+  // (reversionTilt=4*0.25=1.0): volatilityRegime=5*log2(0.5)=-5,
+  // volumeParticipation=3*log2(0.6)=-2.2, momentum=0.6*-0.5+0.5*(-1/0.3)=-2.0
+  // -> 42-5-2.2-2.0+1.0=33.8 (low).
+  assert.equal(extended.score, 49.7);
+  assert.equal(extended.tier, "standard");
+  assert.equal(extended.raw.modelVersion, "expected-move-v2");
+  assert.equal(extended.raw.entryQualityScore, 95);
+  assert.ok(extended.score > lessExtended.score);
+  assert.equal(lessExtended.score, 33.8);
+  assert.equal(lessExtended.tier, "low");
+  assert.ok(lessExtended.reasons.includes("expected_move_v2"));
+  assert.ok(lessExtended.reasons.includes("range_reversion_support"));
+  assert.match(lessExtended.label, /^Expected move · /);
 });
 
 test("buildVisibleSignalRows lifts indicatorSnapshot.filterState so the score isn't the 46.4 fallback", () => {

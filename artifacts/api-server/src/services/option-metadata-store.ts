@@ -12,9 +12,11 @@ import {
 import {
   algoDeploymentsTable,
   db,
+  getPostgresDiagnosticContext,
   instrumentsTable,
   optionChainLatestTable,
   optionContractsTable,
+  runWithPostgresDiagnosticContext,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
@@ -24,6 +26,7 @@ import {
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import type { OptionChainContract } from "../providers/ibkr/client";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 
 type DurableOptionMetadataCounters = {
   freshHit: number;
@@ -31,6 +34,8 @@ type DurableOptionMetadataCounters = {
   miss: number;
   writeSuccess: number;
   writeFailure: number;
+  writeSkippedPressure: number;
+  writeSkippedConcurrency: number;
   disabled: number;
   prunedRows: number;
 };
@@ -58,6 +63,8 @@ const counters: DurableOptionMetadataCounters = {
   miss: 0,
   writeSuccess: 0,
   writeFailure: 0,
+  writeSkippedPressure: 0,
+  writeSkippedConcurrency: 0,
   disabled: 0,
   prunedRows: 0,
 };
@@ -96,8 +103,42 @@ const OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS = readPositiveIntegerEnv(
   "OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS",
   5 * 60_000,
 );
+const OPTION_METADATA_WRITE_MAX_CONCURRENCY = readPositiveIntegerEnv(
+  "OPTION_METADATA_WRITE_MAX_CONCURRENCY",
+  1,
+);
+const OPTION_METADATA_WRITE_BATCH_SIZE = readPositiveIntegerEnv(
+  "OPTION_METADATA_WRITE_BATCH_SIZE",
+  128,
+);
 
 let nextOptionMetadataDecisionPruneAtMs = 0;
+const optionMetadataInstrumentIdCache = new Map<string, string>();
+let activeOptionMetadataWrites = 0;
+
+function runWithOptionMetadataContext<T>(
+  workloadFamily: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (getPostgresDiagnosticContext()) {
+    return fn();
+  }
+  // Await `fn()` INSIDE the diagnostic scope — see runWithMarketDataStoreContext
+  // in market-data-store.ts. The lazy drizzle thenable must be resolved while the
+  // background context is active, or the query fires as null-context.
+  return runWithPostgresDiagnosticContext(
+    { routeClass: "background", workloadFamily },
+    async () => fn(),
+  );
+}
+
+export function __resetOptionMetadataInstrumentCacheForTests(): void {
+  optionMetadataInstrumentIdCache.clear();
+}
+
+export function __getOptionMetadataInstrumentCacheSizeForTests(): number {
+  return optionMetadataInstrumentIdCache.size;
+}
 
 function isDurableOptionMetadataEnvDisabled(): boolean {
   const value = process.env["OPTION_METADATA_DISABLED"]?.trim().toLowerCase();
@@ -106,6 +147,40 @@ function isDurableOptionMetadataEnvDisabled(): boolean {
 
 function isDurableOptionMetadataDisabled(): boolean {
   return isDurableOptionMetadataEnvDisabled();
+}
+
+function shouldSkipDurableOptionMetadataWriteForPressure(): boolean {
+  const snapshot = getApiResourcePressureSnapshot();
+  if (snapshot.hardResourceLevel !== "normal") {
+    return true;
+  }
+  const active = snapshot.inputs.dbPoolActive;
+  const waiting = snapshot.inputs.dbPoolWaiting ?? 0;
+  const max = snapshot.inputs.dbPoolMax;
+  return (
+    waiting > 0 ||
+    (active !== null && max !== null && max > 0 && active >= max)
+  );
+}
+
+function shouldContinueDurableOptionMetadataWrite(): boolean {
+  if (!shouldSkipDurableOptionMetadataWriteForPressure()) {
+    return true;
+  }
+  counters.writeSkippedPressure += 1;
+  return false;
+}
+
+function claimDurableOptionMetadataWriteSlot(): boolean {
+  if (activeOptionMetadataWrites >= OPTION_METADATA_WRITE_MAX_CONCURRENCY) {
+    return false;
+  }
+  activeOptionMetadataWrites += 1;
+  return true;
+}
+
+function releaseDurableOptionMetadataWriteSlot(): void {
+  activeOptionMetadataWrites = Math.max(0, activeOptionMetadataWrites - 1);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -294,6 +369,23 @@ function buildMassiveOptionTicker(input: {
   return `O:${underlying}${yy}${mm}${dd}${side}${strike}`;
 }
 
+function normalizeOpraOptionTicker(value: unknown): string | null {
+  const normalized =
+    typeof value === "string"
+      ? value.trim().toUpperCase().replace(/\s+/g, "")
+      : "";
+  if (!normalized) {
+    return null;
+  }
+
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : null;
+}
+
+function isOpraOptionTicker(value: unknown): boolean {
+  return normalizeOpraOptionTicker(value) !== null;
+}
+
 function normalizeContractInput(contract: OptionChainContract): {
   underlying: string;
   massiveTicker: string;
@@ -335,46 +427,107 @@ function normalizeContractInput(contract: OptionChainContract): {
   };
 }
 
-async function ensureInstrument(input: {
+type OptionMetadataInstrumentInput = {
   symbol: string;
   assetClass: "equity" | "option";
   name?: string | null;
   underlyingSymbol?: string | null;
-}): Promise<string | null> {
+};
+
+type SavedOptionContract = {
+  contract: OptionChainContract;
+  id: string;
+  underlyingInstrumentId: string;
+};
+
+async function ensureInstruments(
+  inputs: OptionMetadataInstrumentInput[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const missingBySymbol = new Map<
+    string,
+    OptionMetadataInstrumentInput & { symbol: string }
+  >();
+  for (const input of inputs) {
+    const symbol = normalizeSymbol(input.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const cached = optionMetadataInstrumentIdCache.get(symbol);
+    if (cached) {
+      out.set(symbol, cached);
+      continue;
+    }
+    if (!missingBySymbol.has(symbol)) {
+      missingBySymbol.set(symbol, { ...input, symbol });
+    }
+  }
+
+  const missing = Array.from(missingBySymbol.values());
+  if (!missing.length) {
+    return out;
+  }
+
+  for (
+    let index = 0;
+    index < missing.length;
+    index += OPTION_METADATA_WRITE_BATCH_SIZE
+  ) {
+    if (!shouldContinueDurableOptionMetadataWrite()) {
+      break;
+    }
+    const batch = missing.slice(index, index + OPTION_METADATA_WRITE_BATCH_SIZE);
+    await runWithOptionMetadataContext("option-metadata-instrument", () =>
+      db
+        .insert(instrumentsTable)
+        .values(
+          batch.map((input) => ({
+            symbol: input.symbol,
+            assetClass: input.assetClass,
+            name: input.name?.trim() || input.symbol,
+            underlyingSymbol: input.underlyingSymbol
+              ? normalizeSymbol(input.underlyingSymbol)
+              : null,
+            currency: "USD",
+            isActive: true,
+          })),
+        )
+        .onConflictDoNothing({ target: instrumentsTable.symbol }),
+    );
+
+    const rows = await runWithOptionMetadataContext(
+      "option-metadata-instrument",
+      () =>
+        db
+          .select({ id: instrumentsTable.id, symbol: instrumentsTable.symbol })
+          .from(instrumentsTable)
+          .where(
+            inArray(
+              instrumentsTable.symbol,
+              batch.map((input) => input.symbol),
+            ),
+          ),
+    );
+    for (const row of rows) {
+      const symbol = normalizeSymbol(row.symbol);
+      if (!symbol) {
+        continue;
+      }
+      optionMetadataInstrumentIdCache.set(symbol, row.id);
+      out.set(symbol, row.id);
+    }
+  }
+  return out;
+}
+
+async function ensureInstrument(
+  input: OptionMetadataInstrumentInput,
+): Promise<string | null> {
   const symbol = normalizeSymbol(input.symbol);
   if (!symbol) {
     return null;
   }
-
-  const [existing] = await db
-    .select({ id: instrumentsTable.id })
-    .from(instrumentsTable)
-    .where(eq(instrumentsTable.symbol, symbol))
-    .limit(1);
-  if (existing?.id) {
-    return existing.id;
-  }
-
-  await db
-    .insert(instrumentsTable)
-    .values({
-      symbol,
-      assetClass: input.assetClass,
-      name: input.name?.trim() || symbol,
-      underlyingSymbol: input.underlyingSymbol
-        ? normalizeSymbol(input.underlyingSymbol)
-        : null,
-      currency: "USD",
-      isActive: true,
-    })
-    .onConflictDoNothing({ target: instrumentsTable.symbol });
-
-  const [created] = await db
-    .select({ id: instrumentsTable.id })
-    .from(instrumentsTable)
-    .where(eq(instrumentsTable.symbol, symbol))
-    .limit(1);
-  return created?.id ?? null;
+  return (await ensureInstruments([input])).get(symbol) ?? null;
 }
 
 async function upsertOptionContract(
@@ -400,63 +553,285 @@ async function upsertOptionContract(
     return null;
   }
 
-  const providerContractId =
+  const rawProviderContractId =
     contract.contract.providerContractId?.trim?.() || null;
-  const existingConditions = providerContractId
+  const providerContractId =
+    normalizeOpraOptionTicker(rawProviderContractId) ??
+    normalized.massiveTicker;
+  const brokerContractId =
+    rawProviderContractId && !isOpraOptionTicker(rawProviderContractId)
+      ? rawProviderContractId
+      : null;
+  const existingConditions = brokerContractId
     ? or(
         eq(optionContractsTable.massiveTicker, normalized.massiveTicker),
         eq(optionContractsTable.providerContractId, providerContractId),
+        eq(optionContractsTable.brokerContractId, brokerContractId),
       )
-    : eq(optionContractsTable.massiveTicker, normalized.massiveTicker);
-  const [existing] = await db
-    .select({ id: optionContractsTable.id })
-    .from(optionContractsTable)
-    .where(existingConditions)
-    .limit(1);
+    : or(
+        eq(optionContractsTable.massiveTicker, normalized.massiveTicker),
+        eq(optionContractsTable.providerContractId, providerContractId),
+      );
+  const [existing] = await runWithOptionMetadataContext(
+    "option-metadata-contract",
+    () =>
+      db
+        .select({ id: optionContractsTable.id })
+        .from(optionContractsTable)
+        .where(existingConditions)
+        .limit(1),
+  );
 
   if (existing?.id) {
-    await db
-      .update(optionContractsTable)
-      .set({
-        instrumentId: optionInstrumentId,
+    await runWithOptionMetadataContext("option-metadata-contract", () =>
+      db
+        .update(optionContractsTable)
+        .set({
+          instrumentId: optionInstrumentId,
+          underlyingInstrumentId,
+          massiveTicker: normalized.massiveTicker,
+          providerContractId,
+          brokerContractId,
+          expirationDate: normalized.expirationKey,
+          strike: String(normalized.strike),
+          right: normalized.right,
+          multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
+          sharesPerContract: Math.max(
+            1,
+            Math.trunc(contract.contract.sharesPerContract || 100),
+          ),
+          isActive: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(optionContractsTable.id, existing.id)),
+    );
+    return { id: existing.id, underlyingInstrumentId };
+  }
+
+  const [created] = await runWithOptionMetadataContext(
+    "option-metadata-contract",
+    () =>
+      db
+        .insert(optionContractsTable)
+        .values({
+          instrumentId: optionInstrumentId,
+          underlyingInstrumentId,
+          massiveTicker: normalized.massiveTicker,
+          providerContractId,
+          brokerContractId,
+          expirationDate: normalized.expirationKey,
+          strike: String(normalized.strike),
+          right: normalized.right,
+          multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
+          sharesPerContract: Math.max(
+            1,
+            Math.trunc(contract.contract.sharesPerContract || 100),
+          ),
+          isActive: true,
+        })
+        .returning({ id: optionContractsTable.id }),
+  );
+
+  return created?.id ? { id: created.id, underlyingInstrumentId } : null;
+}
+
+function optionContractIdentifiers(
+  contract: OptionChainContract,
+  normalized: NonNullable<ReturnType<typeof normalizeContractInput>>,
+): {
+  providerContractId: string;
+  brokerContractId: string | null;
+} {
+  const rawProviderContractId =
+    contract.contract.providerContractId?.trim?.() || null;
+  return {
+    providerContractId:
+      normalizeOpraOptionTicker(rawProviderContractId) ?? normalized.massiveTicker,
+    brokerContractId:
+      rawProviderContractId && !isOpraOptionTicker(rawProviderContractId)
+        ? rawProviderContractId
+        : null,
+  };
+}
+
+function isOptionContractBatchConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /duplicate key|unique constraint|violates.*constraint/i.test(message);
+}
+
+async function upsertOptionContracts(
+  contracts: OptionChainContract[],
+): Promise<SavedOptionContract[]> {
+  const normalizedItems = contracts
+    .map((contract) => {
+      const normalized = normalizeContractInput(contract);
+      return normalized ? { contract, normalized } : null;
+    })
+    .filter(
+      (item): item is {
+        contract: OptionChainContract;
+        normalized: NonNullable<ReturnType<typeof normalizeContractInput>>;
+      } => item !== null,
+    );
+  if (!normalizedItems.length) {
+    return [];
+  }
+
+  const instrumentIds = await ensureInstruments(
+    normalizedItems.flatMap(({ normalized }) => [
+      {
+        symbol: normalized.underlying,
+        assetClass: "equity" as const,
+        name: normalized.underlying,
+      },
+      {
+        symbol: normalized.massiveTicker,
+        assetClass: "option" as const,
+        name: normalized.massiveTicker,
+        underlyingSymbol: normalized.underlying,
+      },
+    ]),
+  );
+
+  type PreparedOptionContract = {
+    contract: OptionChainContract;
+    normalized: NonNullable<ReturnType<typeof normalizeContractInput>>;
+    underlyingInstrumentId: string;
+    optionInstrumentId: string;
+    providerContractId: string;
+    brokerContractId: string | null;
+    multiplier: number;
+    sharesPerContract: number;
+  };
+
+  const prepared: PreparedOptionContract[] = normalizedItems
+    .map(({ contract, normalized }) => {
+      const underlyingInstrumentId = instrumentIds.get(normalized.underlying);
+      const optionInstrumentId = instrumentIds.get(normalized.massiveTicker);
+      if (!underlyingInstrumentId || !optionInstrumentId) {
+        return null;
+      }
+      const { providerContractId, brokerContractId } = optionContractIdentifiers(
+        contract,
+        normalized,
+      );
+      return {
+        contract,
+        normalized,
         underlyingInstrumentId,
-        massiveTicker: normalized.massiveTicker,
+        optionInstrumentId,
         providerContractId,
-        expirationDate: normalized.expirationKey,
-        strike: String(normalized.strike),
-        right: normalized.right,
+        brokerContractId,
         multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
         sharesPerContract: Math.max(
           1,
           Math.trunc(contract.contract.sharesPerContract || 100),
         ),
-        isActive: true,
-        updatedAt: new Date(),
-      })
-      .where(eq(optionContractsTable.id, existing.id));
-    return { id: existing.id, underlyingInstrumentId };
+      };
+    })
+    .filter((item): item is PreparedOptionContract => item !== null);
+  if (!prepared.length) {
+    return [];
   }
 
-  const [created] = await db
-    .insert(optionContractsTable)
-    .values({
-      instrumentId: optionInstrumentId,
-      underlyingInstrumentId,
-      massiveTicker: normalized.massiveTicker,
-      providerContractId,
-      expirationDate: normalized.expirationKey,
-      strike: String(normalized.strike),
-      right: normalized.right,
-      multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
-      sharesPerContract: Math.max(
-        1,
-        Math.trunc(contract.contract.sharesPerContract || 100),
-      ),
-      isActive: true,
-    })
-    .returning({ id: optionContractsTable.id });
+  const latestByTicker = new Map<string, (typeof prepared)[number]>();
+  for (const item of prepared) {
+    latestByTicker.set(item.normalized.massiveTicker, item);
+  }
+  const values = Array.from(latestByTicker.values()).map((item) => ({
+    instrumentId: item.optionInstrumentId,
+    underlyingInstrumentId: item.underlyingInstrumentId,
+    massiveTicker: item.normalized.massiveTicker,
+    providerContractId: item.providerContractId,
+    brokerContractId: item.brokerContractId,
+    expirationDate: item.normalized.expirationKey,
+    strike: String(item.normalized.strike),
+    right: item.normalized.right,
+    multiplier: item.multiplier,
+    sharesPerContract: item.sharesPerContract,
+    isActive: true,
+  }));
 
-  return created?.id ? { id: created.id, underlyingInstrumentId } : null;
+  const rows: Array<{
+    id: string;
+    massiveTicker: string;
+    underlyingInstrumentId: string;
+  }> = [];
+  try {
+    for (
+      let index = 0;
+      index < values.length;
+      index += OPTION_METADATA_WRITE_BATCH_SIZE
+    ) {
+      if (!shouldContinueDurableOptionMetadataWrite()) {
+        break;
+      }
+      const batch = values.slice(index, index + OPTION_METADATA_WRITE_BATCH_SIZE);
+      rows.push(
+        ...(await runWithOptionMetadataContext("option-metadata-contract", () =>
+          db
+            .insert(optionContractsTable)
+            .values(batch)
+            .onConflictDoUpdate({
+              target: optionContractsTable.massiveTicker,
+              set: {
+                instrumentId: sql`excluded.instrument_id`,
+                underlyingInstrumentId: sql`excluded.underlying_instrument_id`,
+                providerContractId: sql`excluded.provider_contract_id`,
+                brokerContractId: sql`excluded.broker_contract_id`,
+                expirationDate: sql`excluded.expiration_date`,
+                strike: sql`excluded.strike`,
+                right: sql`excluded.right`,
+                multiplier: sql`excluded.multiplier`,
+                sharesPerContract: sql`excluded.shares_per_contract`,
+                isActive: true,
+                updatedAt: sql`now()`,
+              },
+            })
+            .returning({
+              id: optionContractsTable.id,
+              massiveTicker: optionContractsTable.massiveTicker,
+              underlyingInstrumentId: optionContractsTable.underlyingInstrumentId,
+            }),
+        )),
+      );
+    }
+  } catch (error) {
+    if (!isOptionContractBatchConflict(error)) {
+      throw error;
+    }
+    logger.debug(
+      { err: error },
+      "Durable option metadata batch upsert hit an alias conflict; falling back to per-contract reconciliation",
+    );
+    const fallbackRows: SavedOptionContract[] = [];
+    for (const contract of contracts) {
+      if (!shouldContinueDurableOptionMetadataWrite()) {
+        break;
+      }
+      const saved = await upsertOptionContract(contract);
+      if (saved) {
+        fallbackRows.push({ contract, ...saved });
+      }
+    }
+    return fallbackRows;
+  }
+
+  const rowsByTicker = new Map(rows.map((row) => [row.massiveTicker, row]));
+  return prepared
+    .map((item) => {
+      const row = rowsByTicker.get(item.normalized.massiveTicker);
+      return row
+        ? {
+            contract: item.contract,
+            id: row.id,
+            underlyingInstrumentId: row.underlyingInstrumentId,
+          }
+        : null;
+    })
+    .filter(
+      (item): item is SavedOptionContract => item !== null,
+    );
 }
 
 function hasSnapshotFields(contract: OptionChainContract): boolean {
@@ -484,10 +859,14 @@ async function pruneObsoleteLatestDecisionSnapshots(
   nextOptionMetadataDecisionPruneAtMs =
     nowMs + OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS;
 
-  const activeDeploymentRows = await db
-    .select({ id: algoDeploymentsTable.id })
-    .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.enabled, true));
+  const activeDeploymentRows = await runWithOptionMetadataContext(
+    "option-metadata-prune",
+    () =>
+      db
+        .select({ id: algoDeploymentsTable.id })
+        .from(algoDeploymentsTable)
+        .where(eq(algoDeploymentsTable.enabled, true)),
+  );
   const activeDecisionSources = activeDeploymentRows.map(
     (row) => `${OPTION_METADATA_DECISION_SOURCE_PREFIX}${row.id}`,
   );
@@ -504,10 +883,14 @@ async function pruneObsoleteLatestDecisionSnapshots(
           optionChainLatestTable.source,
           `${OPTION_METADATA_DECISION_SOURCE_PREFIX}%`,
         );
-  const deleted = await db
-    .delete(optionChainLatestTable)
-    .where(obsoleteDecisionSourceFilter)
-    .returning({ id: optionChainLatestTable.id });
+  const deleted = await runWithOptionMetadataContext(
+    "option-metadata-prune",
+    () =>
+      db
+        .delete(optionChainLatestTable)
+        .where(obsoleteDecisionSourceFilter)
+        .returning({ id: optionChainLatestTable.id }),
+  );
   counters.prunedRows += deleted.length;
 }
 
@@ -539,36 +922,55 @@ export async function persistDurableOptionChain(input: {
   ) {
     return;
   }
+  if (!shouldContinueDurableOptionMetadataWrite()) {
+    return;
+  }
+  if (!claimDurableOptionMetadataWriteSlot()) {
+    counters.writeSkippedConcurrency += 1;
+    return;
+  }
 
   try {
     const asOf = input.asOf ?? new Date();
     const snapshotRows = [];
-    for (const contract of input.contracts) {
-      const savedContract = await upsertOptionContract(contract);
-      if (!savedContract || !hasSnapshotFields(contract)) {
+    const savedContracts = await upsertOptionContracts(input.contracts);
+    for (const savedContract of savedContracts) {
+      if (!hasSnapshotFields(savedContract.contract)) {
         continue;
       }
       snapshotRows.push({
         underlyingInstrumentId: savedContract.underlyingInstrumentId,
         optionContractId: savedContract.id,
-        bid: decimalOrNull(contract.bid),
-        ask: decimalOrNull(contract.ask),
-        last: decimalOrNull(contract.last),
-        mark: decimalOrNull(contract.mark),
-        impliedVolatility: decimalOrNull(contract.impliedVolatility),
-        delta: decimalOrNull(contract.delta),
-        gamma: decimalOrNull(contract.gamma),
-        theta: decimalOrNull(contract.theta),
-        vega: decimalOrNull(contract.vega),
-        openInterest: integerValueOrNull(contract.openInterest),
-        volume: integerValueOrNull(contract.volume),
+        bid: decimalOrNull(savedContract.contract.bid),
+        ask: decimalOrNull(savedContract.contract.ask),
+        last: decimalOrNull(savedContract.contract.last),
+        mark: decimalOrNull(savedContract.contract.mark),
+        impliedVolatility: decimalOrNull(
+          savedContract.contract.impliedVolatility,
+        ),
+        delta: decimalOrNull(savedContract.contract.delta),
+        gamma: decimalOrNull(savedContract.contract.gamma),
+        theta: decimalOrNull(savedContract.contract.theta),
+        vega: decimalOrNull(savedContract.contract.vega),
+        openInterest: integerValueOrNull(savedContract.contract.openInterest),
+        volume: integerValueOrNull(savedContract.contract.volume),
         source: input.source ?? "ibkr",
         asOf,
       });
     }
 
-    for (let index = 0; index < snapshotRows.length; index += 500) {
-      const values = snapshotRows.slice(index, index + 500);
+    for (
+      let index = 0;
+      index < snapshotRows.length;
+      index += OPTION_METADATA_WRITE_BATCH_SIZE
+    ) {
+      if (!shouldContinueDurableOptionMetadataWrite()) {
+        break;
+      }
+      const values = snapshotRows.slice(
+        index,
+        index + OPTION_METADATA_WRITE_BATCH_SIZE,
+      );
       if (!values.length) {
         continue;
       }
@@ -577,31 +979,33 @@ export async function persistDurableOptionChain(input: {
       const upsertValues = [
         ...new Map(values.map((row) => [row.optionContractId, row])).values(),
       ];
-      await db
-        .insert(optionChainLatestTable)
-        .values(upsertValues)
-        .onConflictDoUpdate({
-          target: [
-            optionChainLatestTable.optionContractId,
-            optionChainLatestTable.source,
-          ],
-          set: {
-            bid: sql`excluded.bid`,
-            ask: sql`excluded.ask`,
-            last: sql`excluded.last`,
-            mark: sql`excluded.mark`,
-            impliedVolatility: sql`excluded.implied_volatility`,
-            delta: sql`excluded.delta`,
-            gamma: sql`excluded.gamma`,
-            theta: sql`excluded.theta`,
-            vega: sql`excluded.vega`,
-            openInterest: sql`excluded.open_interest`,
-            volume: sql`excluded.volume`,
-            asOf: sql`excluded.as_of`,
-            updatedAt: sql`now()`,
-          },
-          setWhere: sql`excluded.as_of >= ${optionChainLatestTable.asOf}`,
-        });
+      await runWithOptionMetadataContext("option-metadata-snapshot-write", () =>
+        db
+          .insert(optionChainLatestTable)
+          .values(upsertValues)
+          .onConflictDoUpdate({
+            target: [
+              optionChainLatestTable.optionContractId,
+              optionChainLatestTable.source,
+            ],
+            set: {
+              bid: sql`excluded.bid`,
+              ask: sql`excluded.ask`,
+              last: sql`excluded.last`,
+              mark: sql`excluded.mark`,
+              impliedVolatility: sql`excluded.implied_volatility`,
+              delta: sql`excluded.delta`,
+              gamma: sql`excluded.gamma`,
+              theta: sql`excluded.theta`,
+              vega: sql`excluded.vega`,
+              openInterest: sql`excluded.open_interest`,
+              volume: sql`excluded.volume`,
+              asOf: sql`excluded.as_of`,
+              updatedAt: sql`now()`,
+            },
+            setWhere: sql`excluded.as_of >= ${optionChainLatestTable.asOf}`,
+          }),
+      );
     }
     if (snapshotRows.length > 0) {
       await pruneObsoleteLatestDecisionSnapshotsBestEffort();
@@ -614,6 +1018,8 @@ export async function persistDurableOptionChain(input: {
       operation: "persist_option_chain",
       underlying,
     });
+  } finally {
+    releaseDurableOptionMetadataWriteSlot();
   }
 }
 
@@ -624,11 +1030,15 @@ async function getUnderlyingInstrumentId(
   if (!underlying || isDurableOptionMetadataDisabled()) {
     return null;
   }
-  const [instrument] = await db
-    .select({ id: instrumentsTable.id })
-    .from(instrumentsTable)
-    .where(eq(instrumentsTable.symbol, underlying))
-    .limit(1);
+  const [instrument] = await runWithOptionMetadataContext(
+    "option-metadata-instrument",
+    () =>
+      db
+        .select({ id: instrumentsTable.id })
+        .from(instrumentsTable)
+        .where(eq(instrumentsTable.symbol, underlying))
+        .limit(1),
+  );
   return instrument?.id ?? null;
 }
 
@@ -691,29 +1101,33 @@ export async function loadDurableOptionExpirations(input: {
       return recordLoadResult<Date[]>(null);
     }
 
-    const rows = await db
-      .select({
-        expirationDate: optionContractsTable.expirationDate,
-        updatedAt: optionContractsTable.updatedAt,
-      })
-      .from(optionContractsTable)
-      .where(
-        and(
-          eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
-          eq(optionContractsTable.isActive, true),
-          // Only current/future expirations. Contracts are never deactivated, so
-          // expired rows accumulate forever; without this filter, ORDER BY
-          // expiration_date ASC LIMIT N returns the OLDEST (expired) rows and the
-          // downstream today+ filter drops them all -> empty load -> cache miss ->
-          // slow bridge metadata hot path. (option_contracts grows unbounded.)
-          gte(
-            optionContractsTable.expirationDate,
-            dateKey(input.now ?? new Date()),
-          ),
-        ),
-      )
-      .orderBy(optionContractsTable.expirationDate)
-      .limit(OPTION_METADATA_QUERY_LIMIT);
+    const rows = await runWithOptionMetadataContext(
+      "option-metadata-read",
+      () =>
+        db
+          .select({
+            expirationDate: optionContractsTable.expirationDate,
+            updatedAt: optionContractsTable.updatedAt,
+          })
+          .from(optionContractsTable)
+          .where(
+            and(
+              eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
+              eq(optionContractsTable.isActive, true),
+              // Only current/future expirations. Contracts are never deactivated, so
+              // expired rows accumulate forever; without this filter, ORDER BY
+              // expiration_date ASC LIMIT N returns the OLDEST (expired) rows and the
+              // downstream today+ filter drops them all -> empty load -> cache miss ->
+              // slow bridge metadata hot path. (option_contracts grows unbounded.)
+              gte(
+                optionContractsTable.expirationDate,
+                dateKey(input.now ?? new Date()),
+              ),
+            ),
+          )
+          .orderBy(optionContractsTable.expirationDate)
+          .limit(OPTION_METADATA_QUERY_LIMIT),
+    );
 
     const todayKey = dateKey(input.now ?? new Date());
     const expirations = Array.from(
@@ -790,38 +1204,43 @@ export async function loadDurableOptionChain(input: {
       return recordLoadResult<OptionChainContract[]>(null);
     }
 
-    const rows = await db
-      .select({
-        id: optionContractsTable.id,
-        massiveTicker: optionContractsTable.massiveTicker,
-        providerContractId: optionContractsTable.providerContractId,
-        expirationDate: optionContractsTable.expirationDate,
-        strike: optionContractsTable.strike,
-        right: optionContractsTable.right,
-        multiplier: optionContractsTable.multiplier,
-        sharesPerContract: optionContractsTable.sharesPerContract,
-        updatedAt: optionContractsTable.updatedAt,
-      })
-      .from(optionContractsTable)
-      .where(
-        and(
-          eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
-          eq(optionContractsTable.isActive, true),
-          // Current/future expirations only — see loadDurableOptionExpirations.
-          // Without this, the LIMIT window fills with expired contracts and the
-          // today+ filter empties the result -> cache miss -> bridge hot path.
-          gte(
+    const rows = await runWithOptionMetadataContext(
+      "option-metadata-read",
+      () =>
+        db
+          .select({
+            id: optionContractsTable.id,
+            massiveTicker: optionContractsTable.massiveTicker,
+            providerContractId: optionContractsTable.providerContractId,
+            brokerContractId: optionContractsTable.brokerContractId,
+            expirationDate: optionContractsTable.expirationDate,
+            strike: optionContractsTable.strike,
+            right: optionContractsTable.right,
+            multiplier: optionContractsTable.multiplier,
+            sharesPerContract: optionContractsTable.sharesPerContract,
+            updatedAt: optionContractsTable.updatedAt,
+          })
+          .from(optionContractsTable)
+          .where(
+            and(
+              eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
+              eq(optionContractsTable.isActive, true),
+              // Current/future expirations only - see loadDurableOptionExpirations.
+              // Without this, the LIMIT window fills with expired contracts and the
+              // today+ filter empties the result -> cache miss -> bridge hot path.
+              gte(
+                optionContractsTable.expirationDate,
+                dateKey(input.now ?? new Date()),
+              ),
+            ),
+          )
+          .orderBy(
             optionContractsTable.expirationDate,
-            dateKey(input.now ?? new Date()),
-          ),
-        ),
-      )
-      .orderBy(
-        optionContractsTable.expirationDate,
-        optionContractsTable.strike,
-        optionContractsTable.right,
-      )
-      .limit(OPTION_METADATA_QUERY_LIMIT);
+            optionContractsTable.strike,
+            optionContractsTable.right,
+          )
+          .limit(OPTION_METADATA_QUERY_LIMIT),
+    );
 
     const todayKey = dateKey(input.now ?? new Date());
     const expirationFilter = input.expirationDate
@@ -886,34 +1305,38 @@ export async function loadDurableOptionChain(input: {
     >();
     for (let index = 0; index < filteredRows.length; index += 500) {
       const contractIds = filteredRows.slice(index, index + 500).map((row) => row.id);
-      const snapshotRows = await db
-        .select({
-          optionContractId: optionChainLatestTable.optionContractId,
-          bid: optionChainLatestTable.bid,
-          ask: optionChainLatestTable.ask,
-          last: optionChainLatestTable.last,
-          mark: optionChainLatestTable.mark,
-          impliedVolatility: optionChainLatestTable.impliedVolatility,
-          delta: optionChainLatestTable.delta,
-          gamma: optionChainLatestTable.gamma,
-          theta: optionChainLatestTable.theta,
-          vega: optionChainLatestTable.vega,
-          openInterest: optionChainLatestTable.openInterest,
-          volume: optionChainLatestTable.volume,
-          asOf: optionChainLatestTable.asOf,
-        })
-        .from(optionChainLatestTable)
-        .where(
-          and(
-            inArray(optionChainLatestTable.optionContractId, contractIds),
-            gte(
-              optionChainLatestTable.asOf,
-              new Date(Date.now() - input.staleMaxAgeMs),
-            ),
-          ),
-        )
-        .orderBy(desc(optionChainLatestTable.asOf))
-        .limit(contractIds.length * 8);
+      const snapshotRows = await runWithOptionMetadataContext(
+        "option-metadata-snapshot-read",
+        () =>
+          db
+            .select({
+              optionContractId: optionChainLatestTable.optionContractId,
+              bid: optionChainLatestTable.bid,
+              ask: optionChainLatestTable.ask,
+              last: optionChainLatestTable.last,
+              mark: optionChainLatestTable.mark,
+              impliedVolatility: optionChainLatestTable.impliedVolatility,
+              delta: optionChainLatestTable.delta,
+              gamma: optionChainLatestTable.gamma,
+              theta: optionChainLatestTable.theta,
+              vega: optionChainLatestTable.vega,
+              openInterest: optionChainLatestTable.openInterest,
+              volume: optionChainLatestTable.volume,
+              asOf: optionChainLatestTable.asOf,
+            })
+            .from(optionChainLatestTable)
+            .where(
+              and(
+                inArray(optionChainLatestTable.optionContractId, contractIds),
+                gte(
+                  optionChainLatestTable.asOf,
+                  new Date(Date.now() - input.staleMaxAgeMs),
+                ),
+              ),
+            )
+            .orderBy(desc(optionChainLatestTable.asOf))
+            .limit(contractIds.length * 8),
+      );
 
       for (const snapshot of snapshotRows) {
         if (!snapshotsByContractId.has(snapshot.optionContractId)) {
@@ -936,6 +1359,15 @@ export async function loadDurableOptionChain(input: {
         newestDataAtMs = updatedAtMs;
       }
       const ageMs = Math.max(0, Date.now() - updatedAt.getTime());
+      const providerContractId =
+        normalizeOpraOptionTicker(row.providerContractId) ??
+        normalizeOpraOptionTicker(row.massiveTicker) ??
+        row.massiveTicker;
+      const brokerContractId =
+        row.brokerContractId ??
+        (row.providerContractId && !isOpraOptionTicker(row.providerContractId)
+          ? row.providerContractId
+          : null);
       return [
         {
           contract: {
@@ -946,7 +1378,8 @@ export async function loadDurableOptionChain(input: {
             right: row.right,
             multiplier: row.multiplier ?? 100,
             sharesPerContract: row.sharesPerContract ?? 100,
-            providerContractId: row.providerContractId ?? null,
+            providerContractId,
+            brokerContractId,
           },
           bid: numberOrNull(snapshot?.bid),
           ask: numberOrNull(snapshot?.ask),
@@ -1020,7 +1453,10 @@ export function __resetDurableOptionMetadataStoreForTests(): void {
   counters.miss = 0;
   counters.writeSuccess = 0;
   counters.writeFailure = 0;
+  counters.writeSkippedPressure = 0;
+  counters.writeSkippedConcurrency = 0;
   counters.disabled = 0;
   counters.prunedRows = 0;
   nextOptionMetadataDecisionPruneAtMs = 0;
+  activeOptionMetadataWrites = 0;
 }

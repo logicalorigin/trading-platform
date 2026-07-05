@@ -2,6 +2,7 @@ import {
   CSS_COLOR,
   FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   cssColorMix,
   dim,
@@ -126,7 +127,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
             height: "100%",
             background: CSS_COLOR.green,
             opacity: 0.85,
-            borderRadius: dim(1),
+            borderRadius: dim(RADII.xs),
           }}
         />
       </div>
@@ -147,7 +148,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
             height: "100%",
             background: CSS_COLOR.red,
             opacity: 0.85,
-            borderRadius: dim(1),
+            borderRadius: dim(RADII.xs),
           }}
         />
       </div>

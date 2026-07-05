@@ -37,7 +37,7 @@ minPremium?: number;
  */
 maxDte?: number;
 /**
- * Maximum IBKR option quote lines this request may use.
+ * Maximum option quote subscriptions this request may use.
  * @minimum 1
  * @maximum 150
  */
@@ -49,15 +49,15 @@ lineBudget?: number;
  */
 historicalBucketSeconds?: number;
 /**
- * Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+ * Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
  */
 from?: Date;
 /**
- * Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
+ * Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.
  */
 to?: Date;
 /**
- * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+ * Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.
  */
 blocking?: boolean;
 /**

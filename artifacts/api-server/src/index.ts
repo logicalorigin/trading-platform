@@ -34,18 +34,21 @@ import {
 } from "./services/signal-monitor";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { startSignalMonitorEvaluationWorker } from "./services/signal-monitor-evaluation-worker";
+import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
 import { startSnapshotRetentionScheduler } from "./services/snapshot-retention-scheduler";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { listAlgoDeployments } from "./services/automation";
-import { startIbkrLineUsageGenerationCoordinator } from "./services/ibkr-line-usage";
 import {
   getPythonComputeDiagnostics,
   startPythonComputeRuntime,
   stopPythonComputeRuntime,
 } from "./services/python-compute";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
-import { getBridgeQuoteStreamDiagnostics } from "./services/bridge-quote-stream";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./services/ibkr-lanes";
+import {
+  diagnosticsPositionProbeForTarget,
+  selectDiagnosticsAccountProbeTarget,
+} from "./services/diagnostics-account-probes";
 
 const rawPort = process.env["PORT"];
 
@@ -130,40 +133,61 @@ async function collectDiagnosticsInput() {
   const accounts = accountsProbe.ok
     ? asArray(asRecord(accountsProbe.value).accounts)
     : [];
-  const firstAccount = asRecord(accounts[0]);
-  const accountId =
-    typeof firstAccount.providerAccountId === "string"
-      ? firstAccount.providerAccountId
-      : typeof firstAccount.id === "string"
-        ? firstAccount.id
-        : undefined;
-  const positionsProbe = await readOnlyProbe("positions probe", () =>
-    accountId
-      ? getAccountPositionVisibilityProbe({
-          accountId,
-          mode,
-          source: "diagnostics-collector",
-        })
-      : Promise.resolve({ count: 0 }),
+  const accountTarget = selectDiagnosticsAccountProbeTarget(accounts);
+  const accountId = accountTarget.accountId ?? undefined;
+  const readPositionProbe = (): Promise<unknown> => {
+    if (
+      accountTarget.positionProbeProvider === "snaptrade" ||
+      accountTarget.positionProbeProvider === "none" ||
+      !accountId
+    ) {
+      return Promise.resolve(diagnosticsPositionProbeForTarget(accountTarget));
+    }
+    return getAccountPositionVisibilityProbe({
+      accountId,
+      mode,
+      source: "diagnostics-collector",
+    });
+  };
+  const positionsProbe = await readOnlyProbe<unknown>(
+    "positions probe",
+    readPositionProbe,
   );
   const ordersProbe = await readOnlyProbe("orders probe", () =>
     Promise.resolve(getOrderVisibilityProbe({ accountId, mode })),
   );
+  const positionProbeValue = positionsProbe.ok ? asRecord(positionsProbe.value) : {};
   const ordersProbeValue = ordersProbe.ok ? asRecord(ordersProbe.value) : {};
 
   return {
     runtime,
     probes: {
       accounts: accountsProbe.ok
-        ? { ok: true, count: accounts.length }
+        ? {
+            ok: true,
+            count: accounts.length,
+            probeAccountId: accountId ?? null,
+            probeAccountProvider: accountTarget.provider,
+            snapTradeAccountCount: accountTarget.snapTradeAccountCount,
+          }
         : { ok: false, error: accountsProbe.error },
       positions: positionsProbe.ok
         ? {
             ok: true,
             count:
-              typeof asRecord(positionsProbe.value).count === "number"
-                ? asRecord(positionsProbe.value).count
+              typeof positionProbeValue.count === "number"
+                ? positionProbeValue.count
                 : 0,
+            provider:
+              typeof positionProbeValue.provider === "string"
+                ? positionProbeValue.provider
+                : null,
+            reason:
+              typeof positionProbeValue.reason === "string"
+                ? positionProbeValue.reason
+                : null,
+            skippedLegacyBridgeProbe:
+              positionProbeValue.skippedLegacyBridgeProbe === true,
           }
         : { ok: false, error: positionsProbe.error },
       orders: ordersProbe.ok
@@ -178,7 +202,6 @@ async function collectDiagnosticsInput() {
             stale: ordersProbeValue.stale === true,
           }
         : { ok: false, error: ordersProbe.error },
-      marketData: getBridgeQuoteStreamDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),
     },
   };
@@ -278,7 +301,6 @@ server.listen(port, () => {
     // removed: the matrix is now fed by the live ticker SSE producer
     // (startSignalMonitorServerOwnedProducer below). Do not re-add a scanning
     // or warmup worker here.
-    startIbkrLineUsageGenerationCoordinator,
     startSignalMonitorServerOwnedProducer,
     startSignalMonitorStateReconciliation,
     startSignalMonitorBreadthSnapshotWorker,
@@ -294,6 +316,7 @@ server.listen(port, () => {
     startSignalMonitorEvaluationWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
+    startSignalUniverseRankingScheduler,
     startRuntimeFlightRecorder,
     () => {
       void importRuntimeFlightRecorderIncidents(

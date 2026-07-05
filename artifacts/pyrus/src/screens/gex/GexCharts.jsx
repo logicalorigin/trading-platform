@@ -2,8 +2,9 @@
 // (~71 kB gzip) loads lazily with the charts instead of on GexScreen's cold
 // path. GexScreen lazy-imports these (StrikeProfileChart / ExpiryChart / OiChart
 // / IntradayCard) behind Suspense; the shared chart helpers (ChartShell,
-// SegmentControl, SectionTitle, formatters, tone constants) stay in GexScreen
-// and are imported back here. GexScreen only ever imports this module
+// SectionTitle, formatters, tone constants) stay in GexScreen and are imported
+// back here (the segmented toggle now comes from the shared primitive).
+// GexScreen only ever imports this module
 // dynamically, so there is no static import cycle.
 import { useMemo, useState } from "react";
 import {
@@ -22,7 +23,11 @@ import {
   YAxis,
 } from "recharts";
 import { MeasuredChartFrame } from "../../features/charting/MeasuredChartFrame.jsx";
-import { Card } from "../../components/platform/primitives.jsx";
+import {
+  Card,
+  ChartSkeleton,
+  SegmentedControl,
+} from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -52,12 +57,22 @@ import {
   GEX_CALL_TONE,
   GEX_PUT_TONE,
   SectionTitle,
-  SegmentControl,
   fmtCurrency,
   fmtNumber,
   fmtPercent,
   toneForNetGex,
 } from "../GexScreen.jsx";
+import { useValueFlash } from "../../lib/motion.jsx";
+
+// Item 13, D5 — ghost chart placeholder rendered while a MeasuredChartFrame
+// measures its box. Fills the frame at its final height (absolute overlay, so
+// no reflow on hydrate) with the frame's original copy centered on top.
+const GexChartPlaceholder = ({ label }) => (
+  <>
+    <ChartSkeleton fill style={{ position: "absolute", inset: 0 }} />
+    <span style={{ position: "relative" }}>{label}</span>
+  </>
+);
 
 const GexTooltip = ({ active, payload, spot }) => {
   if (!active || !payload?.length) return null;
@@ -102,7 +117,8 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
     <ChartShell
       title="Strike Profile"
       right={
-        <SegmentControl
+        <SegmentedControl
+          ariaLabel="Strike range"
           value={range}
           onChange={setRange}
           options={[
@@ -116,7 +132,7 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
       <MeasuredChartFrame
         height={286}
         minHeight={286}
-        placeholderLabel="Preparing strike profile"
+        placeholderLabel={<GexChartPlaceholder label="Preparing strike profile" />}
         testId="gex-strike-profile-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -181,7 +197,7 @@ const ExpiryChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing expiry chart"
+        placeholderLabel={<GexChartPlaceholder label="Preparing expiry chart" />}
         testId="gex-expiry-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -251,7 +267,8 @@ const OiChart = ({ rows, spot }) => {
       title="OI Strike Profile"
       subtitle="Open interest by strike price (in contracts)"
       right={
-        <SegmentControl
+        <SegmentedControl
+          ariaLabel="Strike range"
           value={range}
           onChange={setRange}
           options={[
@@ -264,7 +281,7 @@ const OiChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing OI strike profile"
+        placeholderLabel={<GexChartPlaceholder label="Preparing OI strike profile" />}
         testId="gex-oi-profile-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -311,6 +328,8 @@ const OiChart = ({ rows, spot }) => {
 const IntradayDeltaPill = ({ label, value, testId }) => {
   const tone =
     toneForNetGex(value);
+  // Item 13, D4 — quick tick flash on the raw metric when it updates.
+  const flash = useValueFlash(value, { enabled: value != null });
   const formatted =
     value == null
       ? "—"
@@ -339,7 +358,10 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
       >
         {label}
       </div>
-      <div style={{ color: tone, fontSize: fs(16), fontWeight: FONT_WEIGHTS.emphasis }}>
+      <div
+        className={flash ? `${flash} ra-value-flash--quick` : undefined}
+        style={{ color: tone, fontSize: fs(16), fontWeight: FONT_WEIGHTS.emphasis }}
+      >
         {formatted}
       </div>
     </div>
@@ -403,7 +425,7 @@ const IntradayCard = ({ snapshots }) => {
           <MeasuredChartFrame
             height={96}
             minHeight={96}
-            placeholderLabel="Preparing intraday GEX"
+            placeholderLabel={<GexChartPlaceholder label="Preparing intraday GEX" />}
             testId="gex-intraday-chart"
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -445,7 +467,7 @@ const IntradayCard = ({ snapshots }) => {
           </div>
         )}
         <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-          {snapshots.length} full-chain IBKR snapshot{snapshots.length === 1 ? "" : "s"}
+          {snapshots.length} full-chain Massive snapshot{snapshots.length === 1 ? "" : "s"}
           {intraday.isSparse && hasSeries
             ? " · sparse — Δ Recent uses last 5 points"
             : ""}
@@ -475,7 +497,8 @@ const DexProfileChart = ({ rows, spot, callWall, putWall }) => {
       title="Delta Exposure (DEX)"
       subtitle="Net dealer delta by strike — directional analog of GEX (Δ·OI·spot)"
       right={
-        <SegmentControl
+        <SegmentedControl
+          ariaLabel="Strike range"
           value={range}
           onChange={setRange}
           options={[
@@ -489,7 +512,7 @@ const DexProfileChart = ({ rows, spot, callWall, putWall }) => {
       <MeasuredChartFrame
         height={286}
         minHeight={286}
-        placeholderLabel="Preparing delta exposure"
+        placeholderLabel={<GexChartPlaceholder label="Preparing delta exposure" />}
         testId="gex-dex-profile-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -583,7 +606,7 @@ const IvSkewChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing IV skew"
+        placeholderLabel={<GexChartPlaceholder label="Preparing IV skew" />}
         testId="gex-iv-skew-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -646,7 +669,7 @@ const IvTermChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing IV term structure"
+        placeholderLabel={<GexChartPlaceholder label="Preparing IV term structure" />}
         testId="gex-iv-term-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -713,7 +736,8 @@ const VolumeProfileChart = ({ rows, spot }) => {
       title="Volume Profile"
       subtitle="Today's traded contract volume by strike (not buy/sell flow)"
       right={
-        <SegmentControl
+        <SegmentedControl
+          ariaLabel="Strike range"
           value={range}
           onChange={setRange}
           options={[
@@ -726,7 +750,7 @@ const VolumeProfileChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing volume profile"
+        placeholderLabel={<GexChartPlaceholder label="Preparing volume profile" />}
         testId="gex-volume-profile-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -787,7 +811,8 @@ const VexProfileChart = ({ rows, spot }) => {
       title="Vega Exposure (VEX)"
       subtitle="Dealer vol sensitivity by strike — vega·OI (where vol-of-vol risk sits)"
       right={
-        <SegmentControl
+        <SegmentedControl
+          ariaLabel="Strike range"
           value={range}
           onChange={setRange}
           options={[
@@ -800,7 +825,7 @@ const VexProfileChart = ({ rows, spot }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing vega exposure"
+        placeholderLabel={<GexChartPlaceholder label="Preparing vega exposure" />}
         testId="gex-vex-profile-frame"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -856,7 +881,7 @@ const ThetaDecayChart = ({ rows }) => {
       <MeasuredChartFrame
         height={220}
         minHeight={220}
-        placeholderLabel="Preparing theta decay"
+        placeholderLabel={<GexChartPlaceholder label="Preparing theta decay" />}
         testId="gex-theta-decay-frame"
       >
         <ResponsiveContainer width="100%" height="100%">

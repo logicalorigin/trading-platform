@@ -102,7 +102,15 @@ export const formatExpirationLabel = (value) => {
   const date = parseExpirationValue(value);
   if (!date) return value || MISSING_VALUE;
 
-  return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+  const monthDay = `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+  // Now that the DTE window allows multi-year (LEAP) expirations, MM/DD alone is
+  // ambiguous across years. Append a 2-digit year only when the expiration is not
+  // in the current year, so near-dated labels stay compact and unchanged.
+  const expirationYear = date.getUTCFullYear();
+  const currentYear = new Date().getUTCFullYear();
+  return expirationYear === currentYear
+    ? monthDay
+    : `${monthDay}/${String(expirationYear).slice(-2)}`;
 };
 
 export const normalizeOptionRightLabel = (value) => {

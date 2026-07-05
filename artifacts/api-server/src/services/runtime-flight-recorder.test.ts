@@ -9,6 +9,7 @@ import {
   recordApiRequest,
 } from "./request-metrics";
 import {
+  __appendPostgresPoolDiagnosticEventForTests,
   __recordMemorySampleForTests,
   appendFlightRecorderJsonLine,
   flushRuntimeFlightRecorderBuffersSync,
@@ -217,6 +218,68 @@ test("memory sample event captures process, system, and event-loop state in the 
       assert.equal(typeof event.system.totalMb, "number");
       assert.equal(typeof event.system.availableMb, "number");
     }
+  } finally {
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
+test("DB diagnostic flight-recorder events include request workload context", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-"));
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+
+  try {
+    __appendPostgresPoolDiagnosticEventForTests({
+      type: "query",
+      source: "pool",
+      durationMs: 2500,
+      sql: "select 1",
+      queryName: "test-query",
+      error: null,
+      pool: { max: 12, total: 12, idle: 0, active: 12, waiting: 4 },
+      stack: [],
+      context: {
+        requestId: "req-1",
+        method: "GET",
+        path: "/api/flow/events",
+        route: "GET /api/flow/events",
+        routeClass: "live-data",
+        requestFamily: "flow-events",
+        clientRole: "flow-screen",
+        fetchPriority: 5,
+        requestOrigin: "flow",
+        admissionAction: "allow",
+        workloadFamily: "live-data",
+      },
+    });
+    flushRuntimeFlightRecorderBuffersSync();
+
+    const file = path.join(
+      recorderDir,
+      `api-events-${new Date().toISOString().slice(0, 10)}.jsonl`,
+    );
+    const line = readFileSync(file, "utf8").trim().split("\n")[0];
+    const event = JSON.parse(line);
+
+    assert.equal(event.event, "api-db-query-slow");
+    assert.deepEqual(event.context, {
+      requestId: "req-1",
+      method: "GET",
+      path: "/api/flow/events",
+      route: "GET /api/flow/events",
+      routeClass: "live-data",
+      requestFamily: "flow-events",
+      clientRole: "flow-screen",
+      fetchPriority: 5,
+      requestOrigin: "flow",
+      admissionAction: "allow",
+      workloadFamily: "live-data",
+    });
   } finally {
     if (previousRecorderDir === undefined) {
       delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];

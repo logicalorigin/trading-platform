@@ -314,6 +314,13 @@ function breakevenMovePct(input: ScoreOptionGreekCandidateInput): number | null 
   return breakeven / input.spot;
 }
 
+// A directional options entry must carry real directional exposure. Below this
+// delta the contract barely tracks the underlying — it's a lottery ticket, not a
+// trade (the DIA 471P that triggered this work had |delta| ~= 0). Such a contract
+// is disqualified outright so the scorer never RANKS it as selectable, rather than
+// relying on a downstream moneyness guard to catch the pick after the fact.
+const MIN_TRADEABLE_ABS_DELTA = 0.15;
+
 export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput): OptionGreekScore {
   const notes: string[] = [];
   const absDelta = Math.abs(input.greeks.delta);
@@ -363,7 +370,14 @@ export function scoreOptionGreekCandidate(input: ScoreOptionGreekCandidateInput)
     liquidity: round(liquidity, 3),
     dataQuality: round(dataQuality, 3),
   };
-  const total = Object.values(components).reduce((sum, value) => sum + value, 0);
+  const rawTotal = Object.values(components).reduce((sum, value) => sum + value, 0);
+  // Disqualify a contract with no real directional exposure: drive the total
+  // strongly negative so it falls below any sane minScore and is never selected,
+  // instead of letting the baseline ivValue/dataQuality components float it above
+  // the threshold.
+  const disqualified = absDelta < MIN_TRADEABLE_ABS_DELTA;
+  if (disqualified) notes.push("below_min_tradeable_delta");
+  const total = disqualified ? Math.min(rawTotal, -100) : rawTotal;
   return {
     total: round(total, 3),
     components,

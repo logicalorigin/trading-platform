@@ -150,7 +150,10 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketSparklineQueryBlock,
     /queryFn:\s*\(\) =>\s*fetchSparklineSeedInChunks\(historySparklineSymbols/s,
   );
-  assert.match(marketSparklineQueryBlock, /enabled:\s*sparklineHistoryEnabled/);
+  assert.match(
+    marketSparklineQueryBlock,
+    /enabled:\s*sparklineHydrationGate\.enabled/,
+  );
   assert.doesNotMatch(marketSparklineQueryBlock, /getBarsRequest\(/);
   assert.doesNotMatch(marketDataSource, /const SPARKLINE_HISTORY_LIMIT = 720/);
   // Signal sparkline seed is a SINGLE concurrent chunked query over ALL signal
@@ -179,6 +182,10 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     /signalSparklineSeedQuery[\s\S]{0,900}placeholderData:\s*\(previousData\) => previousData/s,
   );
   assert.match(marketDataSource, /SPARKLINE_MIN_VISUAL_POINT_COUNT\s*=\s*2/);
+  assert.match(
+    marketDataSource,
+    /SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY\s*=\s*1/,
+  );
   // Chunks fan out concurrently with a bounded cap (reusing settleWithConcurrency).
   assert.match(
     marketDataSource,
@@ -206,7 +213,7 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
   );
   assert.match(
     marketDataSource,
-    /SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY\s*=\s*2/,
+    /SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY\s*=\s*1/,
   );
   assert.match(marketDataSource, /retry:\s*retryUnlessTimeout\(2\)/s);
   assert.match(
@@ -221,10 +228,7 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
     marketDataSource,
     /const signalSparklineSeedSettled = Boolean\(\s*!signalSparklineSeedSymbols\.length \|\| signalSparklineSeedQuery\.isSuccess,\s*\);/s,
   );
-  assert.doesNotMatch(
-    marketDataSource,
-    /signalSparklineSeedQuery\.isError/,
-  );
+  assert.doesNotMatch(marketDataSource, /signalSparklineSeedQuery\.isError/);
   assert.match(
     marketDataSource,
     /const clearAggregateOnlySparklineSymbols = useMemo\(\(\) => \{[\s\S]*!signalSparklineSeedSettled[\s\S]*aggregateOnlySparklineSymbolSet\.has\(symbol\)[\s\S]*!hasUsableSparklineBars\(sparklineBarsBySymbol\[symbol\]\)/s,
@@ -237,7 +241,13 @@ test("watchlist sparklines stay on sparkline data paths, not chart hydration", (
 
 test("signal matrix surfaces seed sparklines without the market history bars path", () => {
   const source = readLocalSource("./PlatformApp.jsx");
-  const marketDataSource = readLocalSource("./MarketDataSubscriptionProvider.jsx");
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+  const marketDataSource = readLocalSource(
+    "./MarketDataSubscriptionProvider.jsx",
+  );
+  const schedulerSource = readLocalSource("./appWorkScheduler.js");
+  const signalWorkFastScreenBlock =
+    /const signalWorkFastScreen = Boolean\([\s\S]*?\);/.exec(source)?.[0] ?? "";
 
   assert.equal(
     source.includes(
@@ -257,11 +267,44 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
   );
   assert.match(
     source,
-    /const runtimeHistorySparklineSymbols = useMemo\(\s*\(\) => \(signalMatrixRouteRequestActive \? \[\] : runtimeSparklineSymbols\)/,
+    /const runtimeHistorySparklineSymbols = useMemo\(\s*\(\) =>\s*signalMatrixRouteRequestActive \|\| screen === "trade"\s*\? \[\]\s*: runtimeSparklineSymbols/,
   );
   assert.match(
     source,
-    /const runtimePrioritySparklineSymbols = useMemo\(\s*\(\) => \(signalMatrixRouteRequestActive \? \[\] : prioritySparklineSymbols\)/,
+    /const runtimePrioritySparklineSymbols = useMemo\(\s*\(\) =>\s*signalMatrixRouteRequestActive \|\| screen === "trade"\s*\? \[\]\s*: prioritySparklineSymbols/,
+  );
+  assert.match(
+    source,
+    /Keep the full signal-scanning universe off the Trade screen quote[\s\S]*\.\.\.\(screen === "trade" \? \[\] : signalMonitorUniverseSymbols\)/,
+  );
+  assert.match(
+    source,
+    /const signalMatrixStreamReady = shouldRunSignalMatrixStream\(\{[\s\S]*screen,[\s\S]*backgroundAllowed: activeScreenBackgroundDataAllowed/s,
+  );
+  assert.match(
+    schedulerSource,
+    /activeScreen !== "trade"[\s\S]*\(backgroundAllowed \|\| foregroundSignalSurface\)/s,
+  );
+  assert.match(
+    shellSource,
+    /const tradeScreenConnectionPriority = activeScreen === "trade";[\s\S]*const algoFrameRuntimeEnabled = Boolean\([\s\S]*!tradeScreenConnectionPriority[\s\S]*const algoRealtimeStreamsEnabled = Boolean\([\s\S]*!tradeScreenConnectionPriority[\s\S]*!realtimeStreamGateReason/s,
+  );
+  assert.match(
+    shellSource,
+    /tradeScreenConnectionPriority\s*\?\s*"trade-chart-priority"/,
+  );
+  assert.match(
+    signalWorkFastScreenBlock,
+    /const signalWorkFastScreen = Boolean\([\s\S]*marketScreenActive[\s\S]*screen === "signals"[\s\S]*flowScreenActive[\s\S]*screen === "algo"[\s\S]*\);/,
+  );
+  assert.equal(signalWorkFastScreenBlock.includes('screen === "trade"'), false);
+  assert.match(
+    source,
+    /const signalMonitorEventsReady = Boolean\([\s\S]*screen !== "algo"[\s\S]*screen !== "trade"[\s\S]*!criticalApiMutationPaused/s,
+  );
+  assert.match(
+    source,
+    /const runtimeAggregateOnlySparklineSymbols = useMemo\(\s*\(\) =>\s*signalMatrixRouteRequestActive && screen !== "trade"\s*\?/,
   );
   assert.match(
     source,
@@ -273,7 +316,7 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
   );
   assert.match(
     source,
-    /prioritySparklineSymbols=\{safeQaMode \? \[\] : runtimePrioritySparklineSymbols\}/,
+    /prioritySparklineSymbols=\{\s*safeQaMode \? \[\] : runtimePrioritySparklineSymbols\s*\}/,
   );
   assert.match(
     source,
@@ -283,6 +326,8 @@ test("signal matrix surfaces seed sparklines without the market history bars pat
 
 test("platform auxiliary signal surfaces receive bounded matrix overlays", () => {
   const source = readLocalSource("./PlatformApp.jsx");
+  const schedulerSource = readLocalSource("./signalMatrixScheduler.js");
+  const routerSource = readLocalSource("./PlatformScreenRouter.jsx");
   const shellSource = readLocalSource("./PlatformShell.jsx");
   const headerSource = readLocalSource("./AppHeader.jsx");
   const shellCallStart = source.indexOf("<PlatformShell");
@@ -295,32 +340,89 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.equal(source.includes("readSignalMatrixSnapshotCache"), false);
   assert.equal(source.includes("writeSignalMatrixSnapshotCache"), false);
+  assert.match(
+    source,
+    /SIGNAL_MATRIX_RETIRED_SNAPSHOT_CACHE_KEYS[\s\S]*pyrus:signal-matrix-snapshot:v5/,
+  );
+  assert.match(
+    source,
+    /SIGNAL_MATRIX_RETIRED_SNAPSHOT_CACHE_KEYS\.forEach\(\(key\) => \{[\s\S]*storage\.removeItem\(key\);/,
+  );
   // Matrix truth is states only: the backend latches identity and reconciles
   // stored states from canonical events, so the client never overlays events
   // onto matrix cells.
   assert.match(
     source,
-    /const signalMonitorPublishedStates = useMemo\(\s*\(\) => \{\s*if \(signalMonitorStateRuntimeFallback\) \{\s*return EMPTY_SIGNAL_MONITOR_STATES;\s*\}\s*return mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*signalMonitorStates/s,
+    /const signalMonitorPublishedStates = useMemo\(\s*\(\) => \{\s*return mergeSignalMatrixStates\(\{\s*currentStates:\s*signalMatrixSnapshot\.states,\s*incomingStates:\s*EMPTY_SIGNAL_MONITOR_STATES/s,
   );
   assert.doesNotMatch(source, /mergeSignalEventsIntoMatrixStates/);
   assert.doesNotMatch(source, /canonicalSignalMonitorEventsForMatrixMerge/);
+  assert.doesNotMatch(source, /useGetSignalMonitorState/);
+  assert.doesNotMatch(source, /getGetSignalMonitorStateQueryKey/);
+  assert.doesNotMatch(source, /signalMonitorStateQuery/);
+  assert.doesNotMatch(source, /stateSource === "runtime-fallback"/);
+  assert.doesNotMatch(source, /signalMonitorStateUniverseSymbols/);
   assert.match(
     source,
-    /const signalMonitorStateRuntimeFallback = Boolean\(\s*signalMonitorStateQuery\.data\?\.stateSource === "runtime-fallback",?\s*\);/s,
+    /const signalMonitorUniverseSymbols = useMemo\(\(\) => \{[\s\S]*signalMonitorUniverseScope === "selected_watchlist"[\s\S]*signalMonitorUniverseScope === "all_watchlists"[\s\S]*SIGNAL_MONITOR_LOCAL_EXPANSION_SYMBOLS[\s\S]*normalizeSignalMonitorUniverseSymbols/s,
   );
   assert.match(
     source,
-    /const signalMonitorStates =\s*signalMonitorStateRuntimeFallback\s*\?\s*EMPTY_SIGNAL_MONITOR_STATES\s*:\s*signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES;/s,
+    /const signalMatrixUniverseDescriptor = useMemo\(\(\) => \{[\s\S]*source: resolveSignalMonitorUniverseSource\(signalMonitorUniverseScope\)[\s\S]*fallbackUsed: false/s,
+  );
+  assert.match(
+    source,
+    /const profileUniverseScopeSymbols = signalMatrixStreamUsesProfileUniverse[\s\S]*\? signalMonitorUniverseSymbolLimit[\s\S]*: 0;/,
+  );
+  assert.match(
+    source,
+    /const signalMatrixStaBootstrapTimeframes = useMemo\([\s\S]*buildSignalMatrixStaBootstrapTimeframes\(\{[\s\S]*staExecutionTimeframe: activeStaExecutionTimeframe,[\s\S]*staMtfTimeframes: activeStaMtfTimeframes,[\s\S]*profileTimeframe: signalMonitorProfile\?\.timeframe,/,
+  );
+  assert.match(source, /universe: signalMatrixUniverseDescriptor,/);
+  assert.match(
+    source,
+    /signalMatrixUniverse=\{signalMatrixUniverseDescriptor\}/,
+  );
+  assert.match(
+    routerSource,
+    /signalMonitorDataManagedByPlatform[\s\S]*\? signalMonitorSymbols[\s\S]*: signalMonitorDisplaySymbols\?\.length/s,
+  );
+  assert.match(routerSource, /signalMatrixUniverse=\{signalMatrixUniverse\}/);
+  assert.match(
+    source,
+    /useSignalMonitorMatrixStream\(\{[\s\S]*symbols: signalMatrixStreamUsesProfileUniverse[\s\S]*\? EMPTY_UNIVERSE_SYMBOLS[\s\S]*: signalMatrixUniverseSymbols,[\s\S]*profileUniverse: signalMatrixStreamUsesProfileUniverse/s,
+  );
+  assert.match(source, /timeframes: signalMatrixStreamTimeframes,/);
+  assert.match(
+    source,
+    /setSignalMatrixFullTimeframeStreamEnabled\(true\);[\s\S]*SIGNAL_MATRIX_FULL_TIMEFRAME_WIDEN_DELAY_MS/,
+  );
+  assert.match(
+    source,
+    /const handleSignalMatrixStreamStates = useCallback\(\s*\(incomingStates, kind, payload = null\)/,
+  );
+  assert.match(
+    source,
+    /mergeSignalMatrixStreamSnapshot\(\{[\s\S]*coverage: nextCoverage,[\s\S]*skippedSymbols: nextSkippedSymbols,[\s\S]*truncated: nextTruncated/s,
+  );
+  assert.match(
+    schedulerSource,
+    /coverage: coverage \?\? currentSnapshot\.coverage \?\? null/,
+  );
+  assert.match(
+    source,
+    /if \(signalMatrixStreamUsesProfileUniverse\) return current;/,
+  );
+  assert.match(
+    source,
+    /streamProfileUniverse: signalMatrixStreamUsesProfileUniverse/,
+  );
+  assert.doesNotMatch(source, /signalMonitorStateQuery\.data\?\.states/);
+  assert.doesNotMatch(
+    source,
+    /signalMonitorStateQuery\.data\?\.universeSymbols/,
   );
   assert.doesNotMatch(source, /lastSignalMonitorUniverseRef/);
-  assert.match(
-    source,
-    /if \(signalMonitorStateRuntimeFallback \|\| !fresh\) \{\s*return EMPTY_UNIVERSE_SYMBOLS;\s*\}/s,
-  );
-  assert.match(
-    source,
-    /if \(!signalMonitorStateRuntimeFallback\) \{\s*return;\s*\}[\s\S]*states: EMPTY_SIGNAL_MONITOR_STATES,\s*coverage: null,/s,
-  );
   assert.match(
     source,
     /buildHeaderSignalContextSymbols\(\{\s*states:\s*signalMonitorPublishedStates,\s*events:\s*signalMonitorEvents/s,
@@ -331,20 +433,12 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     source,
-    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*\(!signalMonitorStateRuntimeFallback &&\s*signalMonitorPublishedStates\.length > 0\)[\s\S]*\);/,
+    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*signalMatrixBootstrapComplete[\s\S]*signalMonitorPublishedStates\.length > 0[\s\S]*\);/,
   );
-  assert.match(
-    source,
-    /const signalMonitorStateBootstrapComplete = Boolean\([\s\S]*!signalMonitorStateRuntimeFallback[\s\S]*\);/,
-  );
-  assert.match(
-    source,
-    /signalMonitorState=\{\s*signalMonitorStateRuntimeFallback\s*\?\s*null\s*:\s*signalMonitorStateQuery\.data \|\| null\s*\}/s,
-  );
-  assert.match(
-    source,
-    /signalMonitorStateLoaded=\{Boolean\([\s\S]*!signalMonitorStateRuntimeFallback[\s\S]*\)\}/,
-  );
+  assert.match(source, /signalMonitorState=\{null\}/);
+  assert.match(source, /signalMonitorStateLoaded\s*\n/);
+  assert.match(source, /signalMonitorStateLoading=\{false\}/);
+  assert.match(source, /signalMonitorStateError=\{null\}/);
   assert.equal(
     source.match(/signalMatrixStates=\{signalMonitorPublishedStates\}/g)
       ?.length,
@@ -355,13 +449,14 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   assert.match(source, /const watchlistSignalMatrixStates = useMemo\(/);
   assert.match(
     source,
+    /applyRuntimeSignalStatePrices\(\s*watchlistSignalMonitorStates,\s*activeWatchlist\?\.items,/,
+  );
+  assert.match(
+    source,
     /const activitySignalMatrixStates = signalMonitorPublishedStates;/,
   );
   assert.equal(source.includes("activitySignalMatrixSymbols"), false);
-  assert.equal(
-    source.includes("symbols: activitySignalMatrixSymbols"),
-    false,
-  );
+  assert.equal(source.includes("symbols: activitySignalMatrixSymbols"), false);
   assert.match(source, /filterSignalMatrixStatesForSymbols\(\{/);
   assert.match(source, /signalMonitorStates=\{watchlistSignalMonitorStates\}/);
   assert.match(
@@ -394,7 +489,7 @@ test("platform auxiliary signal surfaces receive bounded matrix overlays", () =>
   );
   assert.match(
     shellSource,
-    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled,?\s*\);/s,
+    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&\s*\(desktopActivitySidebarVisible \|\|\s*mobileActivityVisible \|\|\s*algoFrameRuntimeEnabled\),?\s*\);/s,
   );
   assert.match(
     shellCallSource,
@@ -421,6 +516,117 @@ test("platform signal matrix subscription narrowing does not prune published row
     /Pressure caps narrow new Signal Matrix subscriptions[\s\S]*must not[\s\S]*prune rows/,
   );
   assert.doesNotMatch(source, /knownSymbols:\s*signalMatrixUniverseSymbols/);
+});
+
+test("platform prioritizes signal matrix bootstrap ahead of market streams", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+  const routerSource = readLocalSource("./PlatformScreenRouter.jsx");
+  const shellSource = readLocalSource("./PlatformShell.jsx");
+  const algoScreenSource = readFileSync(
+    new URL("../../screens/AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const algoSidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
+  const mobileActivitySource = readLocalSource("./MobileActivitySheet.jsx");
+
+  assert.match(
+    source,
+    /const signalMatrixStreamPriorityGateActive = Boolean\(\s*signalMatrixStreamReady &&[\s\S]*?!signalMatrixStaBootstrapReceived &&[\s\S]*?signalMonitorProfile\?\.enabled !== false,/,
+  );
+  assert.match(
+    source,
+    /const signalMatrixAuxiliaryStreamGateReason =\s*signalMatrixStreamPriorityGateActive \? "signal-matrix-bootstrap" : null;/,
+  );
+  assert.match(
+    source,
+    /const runtimeStreamedQuoteSymbols = useMemo\(\s*\(\) => \[\.\.\.new Set\(streamedQuoteSymbols\)\]/,
+  );
+  assert.match(
+    source,
+    /const runtimeStreamedAggregateSymbols = useMemo\(\s*\(\) =>\s*\[\s*\.\.\.new Set\(\[\s*\.\.\.baseStreamedAggregateSymbols,\s*\.\.\.runtimeAggregateOnlySparklineSymbols,/,
+  );
+  assert.match(
+    source,
+    /quoteStreamRuntimeEnabled=\{\s*!safeQaMode && workSchedule\.streams\.watchlistQuoteStream/,
+  );
+  assert.match(
+    source,
+    /quoteStreamDisabledReason=\{quoteStreamGateReason\}/,
+  );
+  assert.match(
+    source,
+    /marketStockAggregateStreamingEnabled=\{\s*!safeQaMode && workSchedule\.streams\.marketStockAggregates/,
+  );
+  assert.match(
+    source,
+    /realtimeStreamGateReason=\{signalMatrixAuxiliaryStreamGateReason\}/,
+  );
+  assert.doesNotMatch(source, /signalMatrixMarketDataStreamGateReason/);
+  assert.match(
+    routerSource,
+    /realtimeStreamGateReason = null,[\s\S]*<MemoAlgoScreen[\s\S]*realtimeStreamGateReason=\{realtimeStreamGateReason\}/,
+  );
+  assert.match(
+    shellSource,
+    /const tradeScreenConnectionPriority = activeScreen === "trade";[\s\S]*const algoFrameRuntimeEnabled = Boolean\(\s*frameAuxiliaryDataEnabled &&[\s\S]*!tradeScreenConnectionPriority &&[\s\S]*!criticalApiMutationPaused &&/,
+  );
+  assert.match(
+    shellSource,
+    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&/,
+  );
+  assert.match(
+    shellSource,
+    /const algoRealtimeStreamsEnabled = Boolean\(\s*algoFrameRuntimeEnabled &&[\s\S]*!tradeScreenConnectionPriority &&[\s\S]*!realtimeStreamGateReason,/,
+  );
+  assert.match(
+    shellSource,
+    /const shellAlgoRealtimeStreamsEnabled = Boolean\(\s*algoRealtimeStreamsEnabled && activeScreen !== "algo",/,
+  );
+  assert.match(
+    shellSource,
+    /const activitySidebarRealtimeStreamGateReason =\s*activeScreen === "algo"[\s\S]*\? "algo-screen-primary-stream"[\s\S]*tradeScreenConnectionPriority[\s\S]*\? "trade-chart-priority"[\s\S]*: realtimeStreamGateReason;/,
+  );
+  assert.match(
+    shellSource,
+    /useAlgoCockpitStream\(\{[\s\S]*enabled: shellAlgoRealtimeStreamsEnabled,/,
+  );
+  assert.match(
+    shellSource,
+    /<PlatformAlgoMonitorSidebar[\s\S]*realtimeStreamGateReason=\{activitySidebarRealtimeStreamGateReason\}/,
+  );
+  assert.match(
+    mobileActivitySource,
+    /<PlatformAlgoMonitorSidebar[\s\S]*realtimeStreamGateReason=\{realtimeStreamGateReason\}/,
+  );
+  assert.match(
+    algoScreenSource,
+    /const algoRealtimeStreamsEnabled = Boolean\(\s*algoLiveDataQueriesEnabled && !realtimeStreamGateReason,/,
+  );
+  assert.match(
+    algoScreenSource,
+    /useAlgoCockpitStream\(\{[\s\S]*enabled: algoRealtimeStreamsEnabled,/,
+  );
+  assert.match(
+    algoScreenSource,
+    /useShadowAccountSnapshotStream\(\{[\s\S]*enabled: algoRealtimeStreamsEnabled,/,
+  );
+  assert.match(
+    algoSidebarSource,
+    /useAlgoCockpitStream\(\{[\s\S]*!realtimeStreamGateReason,/,
+  );
+});
+
+test("platform does not query live accounts until broker accounts are ready", () => {
+  const source = readLocalSource("./PlatformApp.jsx");
+
+  assert.match(
+    source,
+    /const brokerAccountsReadyForBoot = Boolean\(\s*sessionQuery\.data\?\.ibkrBridge\?\.authenticated === true &&[\s\S]*?sessionQuery\.data\?\.ibkrBridge\?\.accountsLoaded !== false &&[\s\S]*?sessionQuery\.data\?\.ibkrBridge\?\.healthFresh !== false,/,
+  );
+  assert.match(
+    source,
+    /const accountsQueryEnabled = Boolean\(\s*sessionQuery\.data &&\s*!safeQaMode &&\s*brokerAccountsReadyForBoot,/,
+  );
 });
 
 test("watchlist sparklines hold the muted pending stroke until the row's signal state hydrates", () => {

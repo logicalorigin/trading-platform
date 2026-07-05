@@ -37,12 +37,22 @@ test("Rust worker option-chain persistence no longer appends snapshots", () => {
   assert.match(workerIngestSource, /upsert_option_chain_latest_tx/);
   assert.match(workerIngestSource, /insert into option_chain_latest/);
   assert.match(workerIngestSource, /on conflict \(option_contract_id, source\) do update/);
+  assert.match(workerIngestSource, /DEFAULT_OPTION_CHAIN_WRITE_BATCH_SIZE:\s*usize\s*=\s*128/);
+  assert.match(workerIngestSource, /on conflict \(symbol\) do nothing/);
+  assert.match(workerIngestSource, /on conflict \(massive_ticker\) do nothing/);
+  assert.match(workerIngestSource, /is distinct from/);
+  assert.doesNotMatch(workerIngestSource, /deactivate_stale_option_contracts/);
   assert.doesNotMatch(workerIngestSource, /insert into option_chain_snapshots/);
 });
 
 test("GEX hydration reads Massive rows from option_chain_latest", () => {
-  assert.match(gexSource, /from option_chain_latest snap/);
+  assert.match(gexSource, /latest_chain as/);
+  assert.match(gexSource, /max\(snap\.as_of\)/);
+  assert.match(gexSource, /join option_chain_latest snap/);
   assert.match(gexSource, /snap\.source = 'massive'/);
+  assert.match(gexSource, /contract\.is_active = true/);
+  assert.match(gexSource, /contract\.expiration_date >= current_date/);
+  assert.match(gexSource, /snap\.as_of >= latest_chain\.as_of - interval '5 seconds'/);
   assert.doesNotMatch(gexSource, /from option_chain_snapshots/);
 });
 

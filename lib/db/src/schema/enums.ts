@@ -4,7 +4,12 @@ export const environmentModeEnum = pgEnum("environment_mode", [
   "shadow",
   "live",
 ]);
-export const brokerProviderEnum = pgEnum("broker_provider", ["ibkr"]);
+export const brokerProviderEnum = pgEnum("broker_provider", [
+  "ibkr",
+  "snaptrade",
+  "robinhood",
+  "schwab",
+]);
 export const marketDataProviderEnum = pgEnum("market_data_provider", [
   "massive",
 ]);

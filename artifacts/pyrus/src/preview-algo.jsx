@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlgoSettingsRegion } from "./screens/algo/AlgoSettingsRegion.jsx";
 import { HaltStrip } from "./screens/algo/HaltStrip.jsx";
 import { SIGNAL_OPTIONS_DEFAULT_PROFILE } from "./screens/algo/algoHelpers.js";
+import { RADII } from "./lib/uiTokens.jsx";
 
 const setPath = (obj, path, value) => {
   const next = structuredClone(obj);
@@ -56,7 +57,7 @@ function Panel({ width }) {
         style={{
           width,
           border: "1px solid var(--ra-border-default)",
-          borderRadius: 8,
+          borderRadius: RADII.md,
           background: "var(--ra-surface-1)",
           overflow: "hidden",
         }}

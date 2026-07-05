@@ -3,6 +3,9 @@
     pkgs.python3
     pkgs.python3Packages.pip
     pkgs.github-cli
+    # Java runtime for the hosted IBKR Client Portal Gateway (clientportal.gw);
+    # durable across container rebuilds. See scripts/ensure-ibkr-portal-runtime.mjs.
+    pkgs.temurin-bin-17
     pkgs.poppler_utils
     pkgs.libreoffice
     pkgs.bubblewrap

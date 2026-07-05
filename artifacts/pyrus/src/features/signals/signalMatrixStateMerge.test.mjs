@@ -234,6 +234,71 @@ test("backend fields pass through the merge unrewritten", () => {
   assert.equal(result.actionBlocker, "data_stale");
 });
 
+test("older backend snapshot diagnostics do not replace a renderable matrix cell", () => {
+  const renderable = {
+    symbol: "SPY",
+    timeframe: "1m",
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: null,
+    latestBarAt: "2026-06-26T16:48:00.000Z",
+    lastEvaluatedAt: "2026-06-26T16:48:03.000Z",
+    indicatorSnapshot: { trendDirection: "bullish" },
+    fresh: false,
+  };
+  const backendSnapshotError = {
+    symbol: "SPY",
+    timeframe: "1m",
+    status: "unavailable",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    latestBarAt: null,
+    lastEvaluatedAt: "2026-06-26T16:49:00.000Z",
+    lastError: "Cell is from an older backend snapshot.",
+    fresh: false,
+  };
+
+  assert.equal(
+    preferSignalMatrixCellState(renderable, backendSnapshotError),
+    renderable,
+  );
+  assert.equal(
+    preferSignalMatrixCellState(backendSnapshotError, renderable),
+    renderable,
+  );
+});
+
+test("live stream diagnostics can still replace an older renderable cell", () => {
+  const olderRenderable = {
+    symbol: "SPY",
+    timeframe: "1m",
+    status: "ok",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    latestBarAt: "2026-06-26T16:48:00.000Z",
+    lastEvaluatedAt: "2026-06-26T16:48:03.000Z",
+    indicatorSnapshot: { trendDirection: "bullish" },
+    fresh: false,
+  };
+  const liveDiagnostic = {
+    symbol: "SPY",
+    timeframe: "1m",
+    status: "unavailable",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    latestBarAt: null,
+    lastEvaluatedAt: "2026-06-26T16:49:00.000Z",
+    lastError: "Live stream evaluation failed.",
+    displayHydrationSource: "stream-delta",
+    fresh: false,
+  };
+
+  assert.equal(
+    preferSignalMatrixCellState(olderRenderable, liveDiagnostic),
+    liveDiagnostic,
+  );
+});
+
 test("stale states keep their latched direction for display without rewrites", () => {
   // status "stale" styles a signal; it does not hide it. No client-side
   // stale->ok rewrite exists any more — the display helper reads the latched

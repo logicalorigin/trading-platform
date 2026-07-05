@@ -11,115 +11,85 @@ test("header status cluster does not reference an unbound React namespace", () =
   assert.doesNotMatch(source, /\bReact\./);
 });
 
-test("detach only waits on a Windows desktop shutdown when the gateway is connected", () => {
-  // Regression: detaching an already-off bridge must settle immediately. If the
-  // remote-shutdown wait is queued unconditionally, the "Desktop" step animates
-  // for 35s on a job no desktop will claim, which reads as "stuck detaching".
+test("header status cluster does not call retired IBKR desktop bridge APIs", () => {
   const source = readLocalSource("./HeaderStatusCluster.jsx");
 
+  assert.doesNotMatch(source, /\/api\/ibkr\/activation/);
+  assert.doesNotMatch(source, /\/api\/ibkr\/desktop/);
+  assert.doesNotMatch(source, /\/api\/ibkr\/bridge/);
+  assert.doesNotMatch(source, /\/api\/ibkr\/remote-/);
+  assert.doesNotMatch(source, /ibkr\.bridgeOverride\.clear/);
+});
+
+test("header status cluster renders SnapTrade broker status instead of retired IB Gateway controls", () => {
+  const source = readLocalSource("./HeaderStatusCluster.jsx");
+
+  assert.match(source, /HeaderSnapTradeBrokerStatus/);
   assert.match(
     source,
-    /action\.queueRemoteShutdown === true && gatewayConnectedForBridge/,
+    /<HeaderSnapTradeBrokerStatus[\s\S]*surfaceStyle=\{surfaceStyle\}/,
   );
+  assert.doesNotMatch(source, /SHOW_RETIRED_IBKR_GATEWAY_HEADER_UI/);
+  assert.doesNotMatch(source, /HeaderIbkrCredentialForm/);
+  assert.doesNotMatch(source, /Open IB Gateway connection details/);
+  assert.doesNotMatch(source, /IBKR username/);
+  assert.doesNotMatch(source, /IBKR password/);
+  assert.doesNotMatch(source, /Launch with credentials/);
 });
 
-test("every detach/clear request is bounded by the detach timeout so a stalled connection can't hang the control", () => {
-  // Regression: the clear-state "Detach bridge" path awaited platformJsonRequest
-  // with no timeout (timeoutMs:0 => no AbortController), so a stalled request
-  // (e.g. queued behind live SSE streams, or any transport latency) left the
-  // detach control animating forever. The bridge/detach call plus both
-  // bridgeOverride.clear calls must each pass a bounded timeout.
+test("retired bridge submit/deactivate paths clear local UI state without backend bridge calls", () => {
   const source = readLocalSource("./HeaderStatusCluster.jsx");
 
-  const boundedRequests =
-    source.match(/timeoutMs: IBKR_BRIDGE_DETACH_TIMEOUT_MS/g) ?? [];
-  assert.ok(
-    boundedRequests.length >= 3,
-    `expected the 3 detach/clear fetches to be bounded by the constant; found ${boundedRequests.length}`,
-  );
+  assert.match(source, /legacy IBKR desktop bridge has been retired/i);
+  assert.match(source, /clearBridgeLaunchSessionState\(\)/);
+  assert.match(source, /clearIbkrBridgeSessionValues\(\)/);
+  assert.doesNotMatch(source, /openIbkrProtocolLauncher\(/);
+  assert.doesNotMatch(source, /navigateIbkrProtocolLauncher\(/);
+  assert.doesNotMatch(source, /closeIbkrProtocolLauncher\(/);
 });
 
-test("detach timeout is generous and a timeout is treated as proceeding, not a hard failure", () => {
-  // The previous 15s budget was too tight: the clear competes with live SSE
-  // streams on the event loop, so a slow-but-successful detach was being cut off
-  // and surfaced as "Detach failed". The clear is idempotent and the teardown is
-  // already underway, so a timeout must fall through to the settle path (the
-  // state refresh confirms reality) instead of throwing into the error branch.
+test("header status cluster renders the account session control", () => {
   const source = readLocalSource("./HeaderStatusCluster.jsx");
 
-  assert.match(source, /const IBKR_BRIDGE_DETACH_TIMEOUT_MS = 40_000;/);
-  // A request_timeout is swallowed into detachTimedOut; any other error rethrows.
+  assert.match(source, /HeaderSessionStatus/);
   assert.match(
     source,
-    /if \(error\?\.code !== "request_timeout"\) \{\s*throw error;\s*\}\s*detachTimedOut = true;/,
-  );
-  // The user is told the detach is proceeding/verifying, not that it failed.
-  assert.match(source, /detach requested; verifying connection state/i);
-});
-
-test("update-only broker launch keeps activation visible until helper reports result", () => {
-  const source = readLocalSource("./HeaderStatusCluster.jsx");
-  const updateOnlyBranch = source.match(
-    /if \(!credentialsReady\) \{(?<body>[\s\S]*?)return \{ clearPassword: true \};\n      \}/,
-  )?.groups?.body;
-
-  assert.ok(updateOnlyBranch, "expected the update-only launch branch");
-  assert.doesNotMatch(updateOnlyBranch, /clearBridgeLaunchSessionState\(\)/);
-  assert.match(updateOnlyBranch, /launchResult\.useRemoteDesktopLaunch/);
-  assert.match(
-    updateOnlyBranch,
-    /Helper update request queued for the Windows desktop/,
-  );
-  assert.match(
-    updateOnlyBranch,
-    /Waiting for the helper to report the update result/,
+    /<HeaderSessionStatus[\s\S]*surfaceStyle=\{surfaceStyle\}/,
   );
 });
 
-test("broker launcher request preserves the known-good unbounded launch wait", () => {
-  const source = readLocalSource("./HeaderStatusCluster.jsx");
-  const launchRequest = source.match(
-    /payload = await platformJsonRequest\(\s+useRemoteDesktopLaunch[\s\S]*?signal: requestController\?\.signal,\s+timeoutMs: (?<timeout>\d+),/,
-  );
+test("header session control uses the documented auth endpoints", () => {
+  const source = readLocalSource("./HeaderSessionStatus.jsx");
 
-  assert.ok(launchRequest, "expected the broker launcher request");
-  assert.equal(launchRequest.groups.timeout, "0");
+  assert.match(source, /\/api\/auth\/login/);
+  assert.match(source, /\/api\/auth\/bootstrap/);
+  assert.match(source, /\/api\/auth\/logout/);
+  assert.match(source, /x-csrf-token/);
+  assert.match(source, /invalidateQueries\(/);
+  assert.match(source, /"current-password"/);
+  assert.match(source, /"new-password"/);
+  assert.doesNotMatch(source, /console\.(log|warn|error)/);
 });
 
-test("credential key wait starts before direct protocol launch can interrupt browser continuation", () => {
-  const source = readLocalSource("./HeaderStatusCluster.jsx");
+test("SnapTrade header broker control reads readiness fields that exist in the API schema", () => {
+  const source = readLocalSource("./HeaderSnapTradeBrokerStatus.jsx");
 
-  assert.match(
-    source,
-    /const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 25_000;/,
-  );
-  assert.match(
-    source,
-    /const pendingCredentialDelivery = startCredentialDelivery\(payload\);[\s\S]*?const launched = useRemoteDesktopLaunch/,
-  );
+  assert.match(source, /readiness\?\.configured === true/);
+  assert.doesNotMatch(source, /readiness\?\.credentials\?\.configured/);
 });
 
-test("broker credential form polls DOM values so browser autofill enables launch", () => {
-  const source = readLocalSource("./HeaderStatusCluster.jsx");
+test("SnapTrade header broker control uses the documented connection portal flow", () => {
+  const source = readLocalSource("./HeaderSnapTradeBrokerStatus.jsx");
 
-  assert.match(source, /const IBKR_CREDENTIAL_AUTOFILL_SYNC_MS = 250;/);
-  assert.match(
-    source,
-    /window\.setInterval\(\s+syncCredentialsReady,\s+IBKR_CREDENTIAL_AUTOFILL_SYNC_MS,\s+\)/,
-  );
-  assert.match(source, /syncCredentialsReady\(\);\s+const syncTimerId/);
-});
-
-test("broker launch does not show opening-helper before backend activation exists", () => {
-  const source = readLocalSource("./HeaderStatusCluster.jsx");
-  const preRequestBlock = source.match(
-    /setBridgeLauncherNotice\(\s+initialUseRemoteDesktopLaunch[\s\S]*?const payload = await platformJsonRequest/,
-  )?.[0];
-
-  assert.ok(preRequestBlock, "expected launch pre-request block");
-  assert.doesNotMatch(preRequestBlock, /appendBridgeActivationProgress/);
-  assert.match(
-    source,
-    /const launched = useRemoteDesktopLaunch[\s\S]*?if \(!launched\)[\s\S]*?setBridgeActivationActive\(true\);[\s\S]*?appendBridgeActivationProgress\({[\s\S]*?step: useRemoteDesktopLaunch/,
-  );
+  assert.match(source, /useRegisterSnapTradeCurrentUser/);
+  assert.match(source, /useGenerateSnapTradeConnectionPortal/);
+  assert.match(source, /useSyncSnapTradeBrokerageConnections/);
+  assert.match(source, /buildSnapTradeConnectionPortalBody\(selectedBroker\)/);
+  assert.match(source, /portal\.redirectUri/);
+  assert.match(source, /writeSnapTradeExecutionAccountState/);
+  assert.doesNotMatch(source, /IB Gateway/);
+  assert.doesNotMatch(source, /Bridge URL/);
+  assert.doesNotMatch(source, /IBKR username/);
+  assert.doesNotMatch(source, /IBKR password/);
+  assert.doesNotMatch(source, /Launch with credentials/);
 });

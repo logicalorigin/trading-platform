@@ -15,6 +15,7 @@ import {
   Card,
   CardTitle,
   DataUnavailableState,
+  Select,
   SeverityRail,
 } from "../../components/platform/primitives.jsx";
 import {
@@ -117,20 +118,6 @@ const activityRowStyle = (
   borderRadius: dim(RADII.xs),
   background: CSS_COLOR.bg1,
   textAlign: "left",
-});
-
-const compactControlStyle = (width = null, compactFrame = false) => ({
-  minHeight: dim(compactFrame ? 22 : 26),
-  width: width ? dim(width) : "100%",
-  background: CSS_COLOR.bg1,
-  border: `1px solid ${CSS_COLOR.borderLight}`,
-  borderRadius: dim(RADII.xs),
-  color: CSS_COLOR.textSec,
-  fontFamily: T.sans,
-  fontSize: textSize("caption"),
-  fontWeight: FONT_WEIGHTS.medium,
-  padding: sp(compactFrame ? "2px 4px" : "4px 5px"),
-  outline: "none",
 });
 
 const MarketActivityLaneSection = ({
@@ -939,9 +926,9 @@ export const MarketActivityPanel = ({
     String(flowSourceProvider || "").trim().toUpperCase() || "NONE";
   const flowSourceLabel =
     flowProviderSummary?.label ||
-    (flowStatus === "loading" ? "Loading flow" : "No IBKR flow");
+    (flowStatus === "loading" ? "Loading flow" : "No Massive flow");
   const flowSourceLive =
-    normalizedFlowSourceProvider === "IBKR" &&
+    normalizedFlowSourceProvider === "MASSIVE" &&
     !flowProviderSummary?.fallbackUsed &&
     flowStatus !== "offline";
 
@@ -1101,54 +1088,47 @@ export const MarketActivityPanel = ({
                 compactFrame={compactFrame}
               />
               {!compactFrame ? (
-                <select
+                <Select
                   value={monitorWatchlistId}
-                  onChange={(event) =>
-                    onChangeMonitorWatchlist?.(event.target.value || null)
+                  onChange={(next) =>
+                    onChangeMonitorWatchlist?.(next || null)
                   }
                   disabled={!watchlists.length}
-                  aria-label="Signal monitor watchlist"
-                  style={{
-                    minWidth: 0,
-                    flex: "1 1 auto",
-                    ...compactControlStyle(),
-                  }}
-                >
-                  <option value="">DEFAULT</option>
-                  {monitorWatchlistId && !monitorWatchlistKnown ? (
-                    <option value={monitorWatchlistId}>CURRENT</option>
-                  ) : null}
-                  {watchlists.map((watchlist) => (
-                    <option key={watchlist.id} value={watchlist.id}>
-                      {watchlist.name || watchlist.id}
-                    </option>
-                  ))}
-                </select>
+                  ariaLabel="Signal monitor watchlist"
+                  style={{ minWidth: 0, flex: "1 1 auto" }}
+                  options={[
+                    { value: "", label: "DEFAULT" },
+                    ...(monitorWatchlistId && !monitorWatchlistKnown
+                      ? [{ value: monitorWatchlistId, label: "CURRENT" }]
+                      : []),
+                    ...watchlists.map((watchlist) => ({
+                      value: watchlist.id,
+                      label: watchlist.name || watchlist.id,
+                    })),
+                  ]}
+                />
               ) : null}
             </MarketLaneToolbar>
             {compactFrame ? (
-              <select
+              <Select
                 value={monitorWatchlistId}
-                onChange={(event) =>
-                  onChangeMonitorWatchlist?.(event.target.value || null)
+                onChange={(next) =>
+                  onChangeMonitorWatchlist?.(next || null)
                 }
                 disabled={!watchlists.length}
-                aria-label="Signal monitor watchlist"
-                style={{
-                  marginBottom: sp(3),
-                  ...compactControlStyle(null, true),
-                }}
-              >
-                <option value="">DEFAULT</option>
-                {monitorWatchlistId && !monitorWatchlistKnown ? (
-                  <option value={monitorWatchlistId}>CURRENT</option>
-                ) : null}
-                {watchlists.map((watchlist) => (
-                  <option key={watchlist.id} value={watchlist.id}>
-                    {watchlist.name || watchlist.id}
-                  </option>
-                ))}
-              </select>
+                ariaLabel="Signal monitor watchlist"
+                style={{ marginBottom: sp(3) }}
+                options={[
+                  { value: "", label: "DEFAULT" },
+                  ...(monitorWatchlistId && !monitorWatchlistKnown
+                    ? [{ value: monitorWatchlistId, label: "CURRENT" }]
+                    : []),
+                  ...watchlists.map((watchlist) => ({
+                    value: watchlist.id,
+                    label: watchlist.name || watchlist.id,
+                  })),
+                ]}
+              />
             ) : null}
             {signalRows.length ? (
               <div
@@ -1205,24 +1185,16 @@ export const MarketActivityPanel = ({
                 tone={CSS_COLOR.amber}
                 compactFrame={compactFrame}
               />
-              <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual."><select
-                data-testid="market-flow-threshold-select"
+              <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual."><Select
+                selectProps={{ "data-testid": "market-flow-threshold-select" }}
                 value={String(unusualThreshold)}
-                onChange={(event) =>
-                  onChangeUnusualThreshold?.(Number(event.target.value))
+                onChange={(next) =>
+                  onChangeUnusualThreshold?.(Number(next))
                 }
-                aria-label="Flow threshold"
-                style={{
-                  flex: "0 0 auto",
-                  ...compactControlStyle(compactFrame ? 48 : 76, compactFrame),
-                }}
-              >
-                {UNUSUAL_THRESHOLD_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select></AppTooltip>
+                ariaLabel="Flow threshold"
+                style={{ flex: "0 0 auto", width: dim(compactFrame ? 48 : 76) }}
+                options={UNUSUAL_THRESHOLD_OPTIONS}
+              /></AppTooltip>
               {appliedThresholdLabel && !compactFrame ? (
                 <AppTooltip content={
                     thresholdMatches

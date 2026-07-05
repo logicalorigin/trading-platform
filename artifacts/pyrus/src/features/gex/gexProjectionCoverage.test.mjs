@@ -12,6 +12,10 @@ const tradeEquityPanelSource = readFileSync(
   new URL("../trade/TradeEquityPanel.jsx", import.meta.url),
   "utf8",
 );
+const tradeScreenSource = readFileSync(
+  new URL("../../screens/TradeScreen.jsx", import.meta.url),
+  "utf8",
+);
 const useGexProjectionSource = readFileSync(
   new URL("./useGexProjection.js", import.meta.url),
   "utf8",
@@ -55,7 +59,7 @@ test("market chart GEX projection stays disabled without a hydrated ticker", () 
   );
 });
 
-test("market chart GEX overlays use passive snapshot mode", () => {
+test("chart GEX overlays use passive snapshot mode", () => {
   assert.match(marketChartCellSource, /GEX_PROJECTION_MODE_SNAPSHOT/);
   assert.match(marketChartCellSource, /GEX_ZERO_GAMMA_MODE_SNAPSHOT/);
   assert.match(
@@ -63,8 +67,19 @@ test("market chart GEX overlays use passive snapshot mode", () => {
     /gexProjectionMode=\{GEX_PROJECTION_MODE_SNAPSHOT\}/,
   );
   assert.match(marketChartCellSource, /mode:\s*GEX_ZERO_GAMMA_MODE_SNAPSHOT/);
-  assert.match(tradeEquityPanelSource, /gexProjectionMode = "active"/);
+  assert.match(tradeEquityPanelSource, /GEX_PROJECTION_MODE_SNAPSHOT/);
+  assert.match(
+    tradeEquityPanelSource,
+    /gexProjectionMode = GEX_PROJECTION_MODE_SNAPSHOT/,
+  );
   assert.match(tradeEquityPanelSource, /mode: gexProjectionMode/);
+  assert.match(tradeScreenSource, /GEX_PROJECTION_MODE_SNAPSHOT/);
+  assert.match(tradeScreenSource, /GEX_ZERO_GAMMA_MODE_SNAPSHOT/);
+  assert.match(
+    tradeScreenSource,
+    /gexProjectionMode=\{GEX_PROJECTION_MODE_SNAPSHOT\}/,
+  );
+  assert.match(tradeScreenSource, /mode:\s*GEX_ZERO_GAMMA_MODE_SNAPSHOT/);
 });
 
 test("snapshot GEX overlay queries do not poll or retain stale placeholders", () => {

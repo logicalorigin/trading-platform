@@ -7,6 +7,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Select } from "../../components/platform/primitives.jsx";
 import {
   Activity,
   Layers,
@@ -158,26 +159,15 @@ const EmptyOperationsState = ({
           </div>
         ) : candidateDrafts.length ? (
           <div style={{ display: "grid", gap: sp(7) }}>
-            <select
+            <Select
               value={selectedDraft?.id || ""}
-              onChange={(event) => setSelectedDraftId(event.target.value)}
-              style={{
-                width: "100%",
-                background: CSS_COLOR.bg1,
-                border: "none",
-                borderRadius: dim(RADII.md),
-                padding: sp("8px 10px"),
-                color: CSS_COLOR.text,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-              }}
-            >
-              {candidateDrafts.map((draft) => (
-                <option key={draft.id} value={draft.id}>
-                  {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
-                </option>
-              ))}
-            </select>
+              onChange={(next) => setSelectedDraftId(next)}
+              options={candidateDrafts.map((draft) => ({
+                value: draft.id,
+                label: `${draft.name} · ${draft.mode} · ${draft.symbolUniverse.length} syms`,
+              }))}
+              style={{ width: "100%" }}
+            />
             <input
               value={deploymentName}
               onChange={(event) => setDeploymentName(event.target.value)}
@@ -658,7 +648,6 @@ export const AlgoLivePage = ({
   visibleSignalRows,
   signalMonitorEventsSourceStatus = "database",
   signalOptionsCandidates,
-  signalOptionsSourceHealth,
   signalMatrixStates = [],
   selectedCandidate,
   signalOptionsProfile,
@@ -802,6 +791,37 @@ export const AlgoLivePage = ({
         : snapshot,
     );
   }, []);
+  const effectiveMtfAlignmentConfig = useMemo(
+    () =>
+      resolveEffectiveStaMtfAlignmentConfig({
+        mtfAlignmentDraft,
+        signalOptionsProfile,
+      }),
+    [
+      mtfAlignmentDraft,
+      signalOptionsProfile,
+    ],
+  );
+  const indicatorSignalRows = staTableSnapshot.signalRows || [];
+  const indicatorTimelineBars = useMemo(() => {
+    const horizon = Number(strategySettingsDraft?.timeHorizon);
+    return Number.isFinite(horizon)
+      ? Math.max(1, Math.min(50, Math.round(horizon)))
+      : 8;
+  }, [strategySettingsDraft?.timeHorizon]);
+  const cockpitStageItemsForDisplay = useMemo(
+    () => alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),
+    [cockpitStageItems, staTableSnapshot],
+  );
+  // Keep the header cards tied to the rows computed by the STA table below.
+  // The table owns filtering; KPI consumers only read its published snapshot.
+  const liveIndicatorMetrics = useMemo(
+    () =>
+      buildSignalIndicatorMetrics(indicatorSignalRows, {
+        timelineBars: indicatorTimelineBars,
+      }),
+    [indicatorSignalRows, indicatorTimelineBars],
+  );
 
   const showEmptyOperationsState = Boolean(setupDataSettled && !deployments.length);
   if (showEmptyOperationsState) {
@@ -1047,29 +1067,6 @@ export const AlgoLivePage = ({
       severity: "neutral",
     },
   ];
-
-  const effectiveMtfAlignmentConfig = useMemo(
-    () =>
-      resolveEffectiveStaMtfAlignmentConfig({
-        mtfAlignmentDraft,
-        signalOptionsProfile,
-      }),
-    [
-      mtfAlignmentDraft,
-      signalOptionsProfile,
-    ],
-  );
-  const indicatorSignalRows = staTableSnapshot.signalRows || [];
-  const cockpitStageItemsForDisplay = useMemo(
-    () => alignSignalCycleStageWithStaTable(cockpitStageItems, staTableSnapshot),
-    [cockpitStageItems, staTableSnapshot],
-  );
-  // Keep the header cards tied to the rows computed by the STA table below.
-  // The table owns filtering; KPI consumers only read its published snapshot.
-  const liveIndicatorMetrics = useMemo(
-    () => buildSignalIndicatorMetrics(indicatorSignalRows),
-    [indicatorSignalRows],
-  );
 
   return (
     <div
@@ -1412,7 +1409,6 @@ export const AlgoLivePage = ({
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
             signalMonitorEventsSourceStatus={signalMonitorEventsSourceStatus}
-            signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             signalTimeframes={staSignalTimeframes}
             mtfAlignmentConfig={effectiveMtfAlignmentConfig}

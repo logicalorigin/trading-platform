@@ -2,6 +2,7 @@ import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage";
 
 export const PLATFORM_SCREEN_IDS = Object.freeze([
   "market",
+  "market-demo",
   "signals",
   "flow",
   "gex",

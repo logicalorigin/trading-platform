@@ -78,6 +78,5 @@ export interface RuntimeIbkrDiagnostics {
   /** @nullable */
   lastError: string | null;
   orderCapability: RuntimeOrderCapabilityDiagnostics;
-  governor: JsonObject;
   streams: JsonObject;
 }

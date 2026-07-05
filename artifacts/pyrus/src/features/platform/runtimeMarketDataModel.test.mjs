@@ -5,6 +5,8 @@ import { extractSparklinePoints } from "../../components/platform/primitives.jsx
 import { TRADE_TICKER_INFO } from "./runtimeTickerStore.js";
 import {
   applyRuntimeQuoteSnapshots,
+  applyRuntimeSignalStatePrices,
+  applyRuntimeStockAggregateSnapshots,
   syncRuntimeMarketData,
 } from "./runtimeMarketDataModel.js";
 
@@ -151,6 +153,291 @@ test("runtime quote snapshots advance same-timestamp live prices", () => {
   assert.equal(TRADE_TICKER_INFO.EQUAL_TS_TEST.price, 100.31);
 
   delete TRADE_TICKER_INFO.EQUAL_TS_TEST;
+});
+
+test("runtime quote snapshots derive display price from last-only live frames", () => {
+  delete TRADE_TICKER_INFO.LAST_ONLY_TEST;
+
+  const timestamp = "2026-06-09T18:45:00.000Z";
+  assert.equal(
+    applyRuntimeQuoteSnapshots([
+      {
+        symbol: "LAST_ONLY_TEST",
+        last: 42.75,
+        updatedAt: timestamp,
+        dataUpdatedAt: timestamp,
+        source: "massive",
+        transport: "massive_websocket",
+        freshness: "live",
+        marketDataMode: "live",
+      },
+    ]),
+    1,
+  );
+  assert.equal(TRADE_TICKER_INFO.LAST_ONLY_TEST.price, 42.75);
+  assert.equal(TRADE_TICKER_INFO.LAST_ONLY_TEST.last, 42.75);
+
+  delete TRADE_TICKER_INFO.LAST_ONLY_TEST;
+});
+
+test("runtime stock aggregates can hydrate ticker display prices without quote snapshots", () => {
+  delete TRADE_TICKER_INFO.AGG_PRICE_TEST;
+
+  assert.equal(
+    applyRuntimeStockAggregateSnapshots([
+      {
+        symbol: "AGG_PRICE_TEST",
+        open: 610,
+        high: 613,
+        low: 609,
+        close: 612.34,
+        volume: 10_000,
+        accumulatedVolume: 123_456,
+        startMs: Date.parse("2026-06-26T19:59:00.000Z"),
+        endMs: Date.parse("2026-06-26T20:00:00.000Z"),
+        delayed: false,
+        source: "massive-websocket",
+      },
+    ]),
+    1,
+  );
+
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.price, 612.34);
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.last, 612.34);
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.high, 613);
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.volume, 123_456);
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.freshness, "live");
+  assert.equal(TRADE_TICKER_INFO.AGG_PRICE_TEST.transport, "massive-websocket");
+
+  delete TRADE_TICKER_INFO.AGG_PRICE_TEST;
+});
+
+test("runtime stock aggregates do not future-stamp current bucket quote freshness", () => {
+  delete TRADE_TICKER_INFO.AGG_CURRENT_BUCKET_TEST;
+
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse("2026-06-26T20:00:20.000Z");
+  try {
+    assert.equal(
+      applyRuntimeStockAggregateSnapshots([
+        {
+          symbol: "AGG_CURRENT_BUCKET_TEST",
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 100.5,
+          volume: 10_000,
+          accumulatedVolume: 123_456,
+          startMs: Date.parse("2026-06-26T20:00:00.000Z"),
+          endMs: Date.parse("2026-06-26T20:01:00.000Z"),
+          delayed: false,
+          source: "massive-websocket",
+          latency: {
+            apiServerReceivedAt: "2026-06-26T20:00:20.000Z",
+          },
+        },
+      ]),
+      1,
+    );
+
+    assert.equal(
+      TRADE_TICKER_INFO.AGG_CURRENT_BUCKET_TEST.dataUpdatedAt,
+      "2026-06-26T20:00:20.000Z",
+    );
+
+    Date.now = () => Date.parse("2026-06-26T20:00:30.000Z");
+    assert.equal(
+      applyRuntimeQuoteSnapshots([
+        {
+          symbol: "AGG_CURRENT_BUCKET_TEST",
+          price: 100.9,
+          updatedAt: "2026-06-26T20:00:30.000Z",
+          dataUpdatedAt: "2026-06-26T20:00:30.000Z",
+          source: "massive",
+          transport: "massive_websocket",
+          latency: {
+            apiServerReceivedAt: "2026-06-26T20:00:30.000Z",
+          },
+        },
+      ]),
+      1,
+    );
+    assert.equal(TRADE_TICKER_INFO.AGG_CURRENT_BUCKET_TEST.price, 100.9);
+  } finally {
+    Date.now = realDateNow;
+    delete TRADE_TICKER_INFO.AGG_CURRENT_BUCKET_TEST;
+  }
+});
+
+test("runtime stock aggregates reject non-positive closes as ticker prices", () => {
+  delete TRADE_TICKER_INFO.AGG_BAD_CLOSE_TEST;
+
+  for (const badClose of [0, -3.2]) {
+    assert.equal(
+      applyRuntimeStockAggregateSnapshots([
+        {
+          symbol: "AGG_BAD_CLOSE_TEST",
+          open: 610,
+          high: 613,
+          low: 609,
+          close: badClose,
+          volume: 10_000,
+          accumulatedVolume: 123_456,
+          startMs: Date.parse("2026-06-26T19:59:00.000Z"),
+          endMs: Date.parse("2026-06-26T20:00:00.000Z"),
+          delayed: false,
+          source: "massive-websocket",
+        },
+      ]),
+      0,
+    );
+    assert.equal(TRADE_TICKER_INFO.AGG_BAD_CLOSE_TEST, undefined);
+  }
+
+  delete TRADE_TICKER_INFO.AGG_BAD_CLOSE_TEST;
+});
+
+test("older stock aggregates do not overwrite newer quote snapshots", () => {
+  delete TRADE_TICKER_INFO.AGG_OLDER_TEST;
+
+  applyRuntimeQuoteSnapshots([
+    {
+      symbol: "AGG_OLDER_TEST",
+      price: 100.25,
+      updatedAt: "2026-06-26T20:01:00.000Z",
+      dataUpdatedAt: "2026-06-26T20:01:00.000Z",
+      source: "massive",
+      transport: "massive_websocket",
+    },
+  ]);
+
+  assert.equal(
+    applyRuntimeStockAggregateSnapshots([
+      {
+        symbol: "AGG_OLDER_TEST",
+        open: 90,
+        high: 95,
+        low: 89,
+        close: 91,
+        volume: 1_000,
+        accumulatedVolume: 2_000,
+        startMs: Date.parse("2026-06-26T19:58:00.000Z"),
+        endMs: Date.parse("2026-06-26T19:59:00.000Z"),
+        delayed: false,
+        source: "massive-websocket",
+      },
+    ]),
+    0,
+  );
+  assert.equal(TRADE_TICKER_INFO.AGG_OLDER_TEST.price, 100.25);
+
+  delete TRADE_TICKER_INFO.AGG_OLDER_TEST;
+});
+
+test("runtime signal states hydrate ticker display prices from current bars", () => {
+  delete TRADE_TICKER_INFO.SIGNAL_PRICE_TEST;
+
+  assert.equal(
+    applyRuntimeSignalStatePrices([
+      {
+        symbol: "SIGNAL_PRICE_TEST",
+        currentPrice: null,
+        latestBarClose: 321.45,
+        latestBarAt: "2026-06-26T19:45:00.000Z",
+        currentSignalPrice: 300,
+        fresh: true,
+      },
+    ]),
+    1,
+  );
+
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.price, 321.45);
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.last, 321.45);
+  assert.equal(
+    TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.dataUpdatedAt,
+    "2026-06-26T19:45:00.000Z",
+  );
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.source, "signal-monitor");
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.transport, "signal-monitor");
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_PRICE_TEST.freshness, "live");
+
+  delete TRADE_TICKER_INFO.SIGNAL_PRICE_TEST;
+});
+
+test("runtime signal states do not use signal fire prices as ticker prices", () => {
+  delete TRADE_TICKER_INFO.SIGNAL_FIRE_TEST;
+
+  assert.equal(
+    applyRuntimeSignalStatePrices([
+      {
+        symbol: "SIGNAL_FIRE_TEST",
+        currentSignalPrice: 300,
+        signalPrice: 300,
+        currentSignalAt: "2026-06-26T19:30:00.000Z",
+        fresh: true,
+      },
+    ]),
+    0,
+  );
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_FIRE_TEST, undefined);
+});
+
+test("older signal states do not overwrite newer quote snapshots", () => {
+  delete TRADE_TICKER_INFO.SIGNAL_OLDER_TEST;
+
+  applyRuntimeQuoteSnapshots([
+    {
+      symbol: "SIGNAL_OLDER_TEST",
+      price: 100.25,
+      updatedAt: "2026-06-26T20:01:00.000Z",
+      dataUpdatedAt: "2026-06-26T20:01:00.000Z",
+      source: "massive",
+      transport: "massive_websocket",
+    },
+  ]);
+
+  assert.equal(
+    applyRuntimeSignalStatePrices([
+      {
+        symbol: "SIGNAL_OLDER_TEST",
+        currentPrice: 99.5,
+        latestBarAt: "2026-06-26T20:00:00.000Z",
+        fresh: true,
+      },
+    ]),
+    0,
+  );
+  assert.equal(TRADE_TICKER_INFO.SIGNAL_OLDER_TEST.price, 100.25);
+
+  delete TRADE_TICKER_INFO.SIGNAL_OLDER_TEST;
+});
+
+test("runtime market-data sync derives display price from quote midpoint", () => {
+  delete TRADE_TICKER_INFO.MIDPOINT_TEST;
+
+  syncRuntimeMarketData(
+    ["MIDPOINT_TEST"],
+    [],
+    [
+      {
+        symbol: "MIDPOINT_TEST",
+        bid: 99.5,
+        ask: 100.5,
+        updatedAt: "2026-06-09T18:45:00.000Z",
+        dataUpdatedAt: "2026-06-09T18:45:00.000Z",
+        source: "massive",
+        transport: "massive_websocket",
+        freshness: "live",
+        marketDataMode: "live",
+      },
+    ],
+  );
+
+  assert.equal(TRADE_TICKER_INFO.MIDPOINT_TEST.price, 100);
+  assert.equal(TRADE_TICKER_INFO.MIDPOINT_TEST.bid, 99.5);
+  assert.equal(TRADE_TICKER_INFO.MIDPOINT_TEST.ask, 100.5);
+
+  delete TRADE_TICKER_INFO.MIDPOINT_TEST;
 });
 
 test("runtime quote snapshots reject older numeric latency tie-breakers", () => {

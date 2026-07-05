@@ -1,5 +1,4 @@
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
-import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import {
   getMassiveProviderIdentity,
   getMassiveRuntimeConfig,
@@ -11,12 +10,8 @@ import { getMarketDataAdmissionDiagnostics } from "./market-data-admission";
 import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
-export function getRuntimeMarketDataDiagnostics(input: {
-  bridgeQuoteDiagnostics?: ReturnType<typeof getBridgeQuoteStreamDiagnostics> | null;
-} = {}) {
+export function getRuntimeMarketDataDiagnostics() {
   return {
-    bridgeQuote:
-      input.bridgeQuoteDiagnostics ?? getBridgeQuoteStreamDiagnostics(),
     massiveStockQuotes: getMassiveStockQuoteStreamDiagnostics(),
     signalMonitorLocalBars: getSignalMonitorLocalBarCacheDiagnostics(),
     optionQuotes: getBridgeOptionQuoteStreamDiagnostics(),

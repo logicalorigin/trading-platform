@@ -11,8 +11,8 @@
     "serve": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/}; vite preview --config vite.config.ts --host 0.0.0.0",
     "doctor:runtime": "node ./scripts/checkDevRuntime.mjs",
     "generate:research-theme-datasets": "node --experimental-specifier-resolution=node ./scripts/generateResearchThemeDatasets.mjs",
-    "browser:waterfall": "playwright test e2e/app-waterfall-audit.browser-validation.spec.ts --reporter=list",
-    "browser:waterfall:normal": "PYRUS_APP_URL=${PYRUS_APP_URL:-http://127.0.0.1:18747/} PYRUS_WATERFALL_SAFE_GUARDS=0 PYRUS_WATERFALL_SCREENS=${PYRUS_WATERFALL_SCREENS:-market,signals,flow,diagnostics,settings} playwright test e2e/app-waterfall-audit.browser-validation.spec.ts --reporter=list",
+    "browser:waterfall": "PYRUS_APP_URL=${PYRUS_APP_URL:-http://127.0.0.1:18747/} playwright test e2e/app-waterfall-audit.browser-validation.spec.ts --reporter=list",
+    "browser:waterfall:normal": "PYRUS_APP_URL=${PYRUS_APP_URL:-http://127.0.0.1:18747/} PYRUS_WATERFALL_SCREENS=${PYRUS_WATERFALL_SCREENS:-market,signals,flow,diagnostics,settings} playwright test e2e/app-waterfall-audit.browser-validation.spec.ts --reporter=list",
     "bundle:audit": "node ./scripts/bundleAudit.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -32,6 +32,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "catalog:",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/market-calendar": "workspace:*",
@@ -54,10 +55,13 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@react-three/fiber": "^9.6.1",
     "@workspace/account-math": "workspace:*",
     "hls.js": "^1.6.16",
-    "lightweight-charts": "^5.1.0"
+    "lightweight-charts": "^5.1.0",
+    "three": "^0.184.0"
   }
 }

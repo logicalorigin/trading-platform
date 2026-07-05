@@ -1,6 +1,7 @@
 import { Info } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { CSS_COLOR, dim, FONT_WEIGHTS, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { useViewport } from "../../lib/responsive";
 
 const formatTooltipBody = (entry) => {
   if (!entry) return null;
@@ -40,8 +41,14 @@ export const InfoTooltipIcon = ({
   side = "top",
   align = "center",
 }) => {
+  const isPhone = useViewport().flags.isPhone;
   const body = formatTooltipBody(entry);
   if (!body) return null;
+  // Hit-slop: grow the tap target (44px on phone, 24px desktop) without
+  // enlarging the glyph. Negative margin offsets the extra padding so the
+  // surrounding layout footprint stays identical to the original sp(2) box.
+  const hitPad = isPhone ? Math.round((44 - size) / 2) : Math.round((24 - size) / 2);
+  const hitInset = -(hitPad - sp(2));
   return (
     <AppTooltip content={body} side={side} align={align}>
       <button
@@ -51,8 +58,8 @@ export const InfoTooltipIcon = ({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: sp(2),
-          margin: 0,
+          padding: hitPad,
+          margin: hitInset,
           border: 0,
           background: "transparent",
           color: CSS_COLOR.textDim,

@@ -13,6 +13,7 @@ const commands = {
   service: ["run", "python", "-m", "pyrus_compute.service"],
   lint: ["run", "ruff", "check"],
   typecheck: ["run", "mypy", "src"],
+  test: ["run", "pytest"],
 };
 
 const command = process.argv[2] ?? "doctor";

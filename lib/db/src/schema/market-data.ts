@@ -117,6 +117,10 @@ export const optionChainLatestTable = pgTable(
       table.source,
     ),
     index("option_chain_latest_underlying_idx").on(table.underlyingInstrumentId),
+    index("option_chain_latest_underlying_source_idx").on(
+      table.underlyingInstrumentId,
+      table.source,
+    ),
   ],
 );
 

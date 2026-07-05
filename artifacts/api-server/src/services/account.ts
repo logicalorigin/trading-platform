@@ -38,10 +38,10 @@ import {
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import {
   assertIbkrGatewayTradingAvailable,
   getBars,
+  getOptionChain,
   getQuoteSnapshots,
   listOrders,
 } from "./platform";
@@ -62,6 +62,7 @@ import {
   getShadowAccountSummary,
   isShadowAccountId,
 } from "./shadow-account";
+import { getIbkrClientPortalClient } from "./ibkr-client-runtime";
 import {
   accountBenchmarkLimitForRange,
   accountBenchmarkTimeframeForRange,
@@ -159,9 +160,12 @@ import {
   releaseIbkrLiveDemand,
 } from "./ibkr-live-demand-coordinator";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
-import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
-import { recordRecentAccountPositionQuoteSymbols } from "./account-position-quote-symbols";
 import { releaseMarketDataLeases } from "./market-data-admission";
+import {
+  buildSnapTradeAccountPortfolioTotals,
+  getSnapTradeAccountPortfolio,
+  type SnapTradeAccountPortfolioResponse,
+} from "./snaptrade-account-portfolio";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -201,6 +205,13 @@ const OPTION_GREEK_CACHE_TTL_MS = 15_000;
 const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
 const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
+// Per-SnapTrade-account live balance cache. Balances are not persisted for
+// SnapTrade accounts, so the account list fetches them live from the SnapTrade
+// portfolio endpoint and caches the result briefly so repeated list builds (each
+// a cold miss on the 5s route-response cache) do not fan out to SnapTrade upstream
+// on every request.
+const SNAPTRADE_BALANCE_CACHE_TTL_MS = 45_000;
+const SNAPTRADE_BALANCE_FETCH_CONCURRENCY = 4;
 
 type AccountMetric = {
   value: number | null;
@@ -311,6 +322,15 @@ const accountFullRiskCache = new Map<
   }
 >();
 const accountFullRiskInflight = new Map<string, Promise<unknown>>();
+const snapTradeAccountBalanceCache = new Map<
+  string,
+  { value: SnapTradeAccountBalanceValues; expiresAt: number }
+>();
+const snapTradeAccountBalanceInflight = new Map<
+  string,
+  Promise<SnapTradeAccountBalanceValues | null>
+>();
+const snapTradeAccountBalanceErrorLogSuppressedUntil = new Map<string, number>();
 
 function readShortLivedAccountCache<T>(
   cache: Map<string, ShortLivedAccountCacheEntry<T>>,
@@ -476,10 +496,6 @@ let accountSchemaReadinessCache: AccountSchemaReadiness | null = null;
 let accountSchemaReadinessPromise: Promise<AccountSchemaReadiness> | null = null;
 const loggedMissingAccountSchemaTables = new Set<OptionalAccountSchemaTable>();
 let loggedAccountSchemaReadinessError: string | null = null;
-
-function getIbkrClient(): IbkrBridgeClient {
-  return new IbkrBridgeClient();
-}
 
 function metric(
   value: number | null | undefined,
@@ -1475,27 +1491,14 @@ async function fetchEquityQuoteSnapshotsForPositions(
 ): Promise<Map<string, QuoteSnapshot>> {
   const admissionOwner = accountPositionEquityQuoteOwner(positions, "mixed");
   const symbols = accountPositionEquityQuoteSymbols(positions);
-  const providerContractIdsBySymbol =
-    accountPositionEquityProviderContractIdsBySymbol(positions);
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
-  recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
 
   if (symbols.length) {
-    // Read the streamed/cached quotes without blocking on a live bridge
-    // hydration. The recorded symbols (above) are kept warm by the dedicated
-    // position-quote stream in bridge-streams.ts, and the account SSE patches
-    // live quotes on the client. Awaiting the hydration here added up to
-    // SNAPSHOT_BOOTSTRAP_TIMEOUT_MS (2.5s+, longer under quotes-lane backoff)
-    // to every /positions response while the bridge was slow. Mirror the
-    // non-blocking option-quote path. fallbackProvider stays "none" (equity
-    // position quotes must never fall back to Massive).
-    const payload = await fetchBridgeQuoteSnapshots(symbols, {
-      owner: admissionOwner,
-      intent: "account-monitor-live",
+    const payload = await getQuoteSnapshots({
+      symbols: symbols.join(","),
+      admissionOwner,
+      admissionIntent: "account-monitor-live",
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-      fallbackProvider: "none",
-      providerContractIdsBySymbol,
-      hydrate: false,
     }).catch(() => ({
       quotes: [],
     }));
@@ -1536,22 +1539,6 @@ function accountPositionEquityQuoteSymbols(
   );
 }
 
-function accountPositionEquityProviderContractIdsBySymbol(
-  positions: BrokerPositionSnapshot[],
-): Map<string, string> {
-  const providerContractIdsBySymbol = new Map<string, string>();
-  positions
-    .filter(canHydratePositionFromEquityQuote)
-    .forEach((position) => {
-      const symbol = normalizeSymbol(positionReferenceSymbol(position));
-      const providerContractId = equityProviderContractIdFromPosition(position);
-      if (symbol && providerContractId) {
-        providerContractIdsBySymbol.set(symbol, providerContractId);
-      }
-    });
-  return providerContractIdsBySymbol;
-}
-
 function declareAccountPositionEquityQuoteDemands(
   positions: BrokerPositionSnapshot[],
   fallbackAccountKey: string,
@@ -1561,33 +1548,18 @@ function declareAccountPositionEquityQuoteDemands(
     fallbackAccountKey,
   );
   const symbols = accountPositionEquityQuoteSymbols(positions);
-  const providerContractIdsBySymbol =
-    accountPositionEquityProviderContractIdsBySymbol(positions);
-  recordRecentAccountPositionQuoteSymbols(admissionOwner, symbols);
   if (symbols.length) {
-    void fetchBridgeQuoteSnapshots(symbols, {
-      owner: admissionOwner,
-      intent: "account-monitor-live",
+    void getQuoteSnapshots({
+      symbols: symbols.join(","),
+      admissionOwner,
+      admissionIntent: "account-monitor-live",
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-      fallbackProvider: "cache",
-      providerContractIdsBySymbol,
-      hydrate: false,
     }).catch(() => ({
       quotes: [],
     }));
   } else {
     releaseMarketDataLeases(admissionOwner, "account_position_set_empty");
   }
-}
-
-function equityProviderContractIdFromPosition(
-  position: BrokerPositionSnapshot,
-): string | null {
-  if (position.optionContract) {
-    return null;
-  }
-  const idTail = String(position.id ?? "").split(":").at(-1)?.trim() ?? "";
-  return /^[1-9]\d+$/.test(idTail) ? idTail : null;
 }
 
 type AccountPositionOptionQuoteDemandState = IbkrLiveDemandQuoteState;
@@ -1747,8 +1719,10 @@ function optionQuoteHasAnyGreek(quote: QuoteSnapshot | undefined | null): boolea
   );
 }
 
+type OptionQuoteSource = "ibkr" | "massive";
+
 function optionQuoteFreshnessState(
-  quote: QuoteSnapshot & { source?: "ibkr" },
+  quote: QuoteSnapshot & { source?: OptionQuoteSource },
 ): { status: IbkrLiveDemandStatus; reason: string | null } {
   const freshness = String(quote.freshness ?? "").trim();
   if (freshness === "unavailable") {
@@ -1764,7 +1738,7 @@ function optionQuoteFreshnessState(
 }
 
 function optionQuoteGreeksState(input: {
-  quote: QuoteSnapshot & { source?: "ibkr" };
+  quote: QuoteSnapshot & { source?: OptionQuoteSource };
   requiresGreeks: boolean;
 }): { status: IbkrLiveDemandStatus; reason: string | null } {
   const quoteState = optionQuoteFreshnessState(input.quote);
@@ -1787,7 +1761,7 @@ function optionQuoteGreeksState(input: {
 }
 
 function optionQuoteDemandStateFromSnapshot(
-  quote: QuoteSnapshot & { source?: "ibkr" },
+  quote: QuoteSnapshot & { source?: OptionQuoteSource },
   requiresGreeks: boolean,
 ): AccountPositionOptionQuoteDemandState | null {
   const providerContractId = String(quote.providerContractId ?? "").trim();
@@ -2094,6 +2068,7 @@ type AccountPositionOptionQuoteDemandRow = {
   accountId?: string | null;
   accounts?: string[] | null;
   optionContract?: {
+    ticker?: string | null;
     underlying?: string | null;
     expirationDate?: Date | string | null;
     strike?: number | string | null;
@@ -2142,38 +2117,6 @@ function optionRightCode(value: unknown): "C" | "P" | null {
   return null;
 }
 
-function structuredOptionProviderContractIdForRow(
-  row: AccountPositionOptionQuoteDemandRow,
-): string | null {
-  const contract = row.optionContract;
-  const underlying = normalizeSymbol(contract?.underlying ?? "");
-  const expiration = optionExpirationKey(contract?.expirationDate);
-  const strike = finiteOptionNumber(contract?.strike);
-  const right = optionRightCode(contract?.right);
-  if (!underlying || !expiration || strike === null || !right) {
-    return null;
-  }
-  const multiplier =
-    Math.trunc(
-      finiteOptionNumber(contract?.multiplier) ??
-        finiteOptionNumber(contract?.sharesPerContract) ??
-        100,
-    ) || 100;
-  return `twsopt:${Buffer.from(
-    JSON.stringify({
-      v: 1,
-      u: underlying,
-      e: expiration,
-      s: strike,
-      r: right,
-      x: "SMART",
-      tc: underlying,
-      m: multiplier,
-    }),
-    "utf8",
-  ).toString("base64url")}`;
-}
-
 function primaryOptionProviderContractIdForRow(
   row: AccountPositionOptionQuoteDemandRow,
 ): string | null {
@@ -2183,6 +2126,31 @@ function primaryOptionProviderContractIdForRow(
     null;
   const text = String(raw ?? "").trim();
   return text || null;
+}
+
+function opraOptionTickerForRow(
+  row: AccountPositionOptionQuoteDemandRow,
+): string | null {
+  const ticker = String(row.optionContract?.ticker ?? "").trim().toUpperCase();
+  if (/^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker)) {
+    return ticker;
+  }
+
+  const contract = row.optionContract;
+  const underlying = normalizeSymbol(contract?.underlying ?? "").replace(
+    /[^A-Z0-9]/g,
+    "",
+  );
+  const expiration = optionExpirationKey(contract?.expirationDate);
+  const strike = finiteOptionNumber(contract?.strike);
+  const right = optionRightCode(contract?.right);
+  if (!underlying || !expiration || strike === null || !right) {
+    return null;
+  }
+
+  const opraExpiration = expiration.length === 8 ? expiration.slice(2) : expiration;
+  const strikeKey = String(Math.round(strike * 1000)).padStart(8, "0");
+  return `O:${underlying}${opraExpiration}${right}${strikeKey}`;
 }
 
 function uniqueOptionProviderContractIds(
@@ -2200,16 +2168,13 @@ function uniqueOptionProviderContractIds(
 function optionQuoteDemandProviderContractIdsForPosition(
   row: AccountPositionOptionQuoteDemandRow,
 ): string[] {
-  const structuredProviderContractId =
-    structuredOptionProviderContractIdForRow(row);
-  if (structuredProviderContractId) {
-    return [structuredProviderContractId];
+  const opraOptionTicker = opraOptionTickerForRow(row);
+  if (opraOptionTicker) {
+    return [opraOptionTicker];
   }
 
   const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
-  return primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)
-    ? [primaryProviderContractId]
-    : [];
+  return primaryProviderContractId ? [primaryProviderContractId] : [];
 }
 
 function optionQuoteProviderContractIdsForPosition(
@@ -2217,12 +2182,10 @@ function optionQuoteProviderContractIdsForPosition(
 ): string[] {
   const demandProviderContractIds =
     optionQuoteDemandProviderContractIdsForPosition(row);
-  const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
   return uniqueOptionProviderContractIds([
     ...demandProviderContractIds,
-    primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)
-      ? primaryProviderContractId
-      : null,
+    opraOptionTickerForRow(row),
+    primaryOptionProviderContractIdForRow(row),
   ]);
 }
 
@@ -2285,11 +2248,6 @@ function declareAccountPositionOptionQuoteDemands(
       "Option positions excluded from account-monitor live quote lease (missing provider contract id / underlying)",
     );
   }
-  recordRecentAccountPositionQuoteSymbols(
-    owner,
-    Array.from(positionsByUnderlying.keys()),
-  );
-
   Array.from(positionsByUnderlying.entries()).forEach(
     ([underlying, underlyingProviderContractIds]) => {
       const ownerForUnderlying = `${owner}:${underlying}`;
@@ -3010,7 +2968,7 @@ async function getCachedOptionChainContracts(
   if (!refreshChains) {
     return {
       contracts: [],
-      error: `IBKR option-chain Greek refresh skipped for ${underlying} ${formatDateOnly(expirationDate)}; account positions use live option quote Greeks.`,
+      error: `Option-chain Greek refresh skipped for ${underlying} ${formatDateOnly(expirationDate)}; account positions use live option quote Greeks.`,
     };
   }
 
@@ -3018,26 +2976,26 @@ async function getCachedOptionChainContracts(
   let error: string | null = null;
 
   try {
-    const initialContracts = await getIbkrClient().getOptionChain({
+    const initialContracts = (await getOptionChain({
       underlying,
       expirationDate,
       maxExpirations: 1,
       strikesAroundMoney: OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY,
       quoteHydration: "metadata",
-    });
+    })).contracts;
     let resolvedContracts = initialContracts;
     const matchedInitial = positions.filter((position) =>
       matchOptionChainContract(initialContracts, position.optionContract),
     ).length;
 
     if (matchedInitial < positions.length) {
-      const fallbackContracts = await getIbkrClient().getOptionChain({
+      const fallbackContracts = (await getOptionChain({
         underlying,
         expirationDate,
         maxExpirations: 1,
         strikesAroundMoney: OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY,
         quoteHydration: "metadata",
-      });
+      })).contracts;
       resolvedContracts = mergeOptionChainContracts([
         initialContracts,
         fallbackContracts,
@@ -3049,14 +3007,14 @@ async function getCachedOptionChainContracts(
     error =
       fetchError instanceof Error
         ? fetchError.message
-        : `Unknown IBKR option-chain error for ${underlying} ${formatDateOnly(expirationDate)}.`;
+        : `Unknown option-chain error for ${underlying} ${formatDateOnly(expirationDate)}.`;
     logger.warn(
       {
         err: fetchError,
         underlying,
         expirationDate,
       },
-      "Unable to refresh IBKR option-chain greeks",
+      "Unable to refresh option-chain greeks",
     );
   }
 
@@ -3169,9 +3127,9 @@ async function enrichPositionGreeks(
     const hasAnyGreek =
       delta !== null || gamma !== null || theta !== null || vega !== null;
     const warning = !matchedContract
-      ? `No IBKR greek snapshot matched ${position.symbol}.`
+      ? `No Massive greek snapshot matched ${position.symbol}.`
       : !hasAnyGreek
-        ? `IBKR returned ${position.symbol} contract metadata without option greek values.`
+        ? `Massive returned ${position.symbol} contract metadata without option greek values.`
         : null;
 
     if (warning) {
@@ -4177,7 +4135,306 @@ type ListAccountsOptions = {
     mode: RuntimeMode,
   ) => Promise<BrokerAccountSnapshot[]>;
   recordSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
+  getSnapTradeAccounts?: (
+    mode: RuntimeMode,
+  ) => Promise<BrokerAccountSnapshot[]>;
 };
+
+const SNAPTRADE_LOCAL_ID_PREFIX = "snaptrade:";
+
+// Live portfolio balances for a single SnapTrade account.
+type SnapTradeAccountBalanceValues = {
+  netLiquidation: number;
+  cash: number;
+  buyingPower: number;
+  currency: string;
+};
+
+// A zero-filled SnapTrade snapshot paired with the app user that owns it, so the
+// live portfolio balance fetch can be user-scoped.
+type SnapTradeAccountRecord = {
+  snapshot: BrokerAccountSnapshot;
+  appUserId: string | null;
+};
+
+export type SnapTradeAccountPortfolioFetcher = (input: {
+  appUserId: string;
+  accountId: string;
+}) => Promise<SnapTradeAccountPortfolioResponse>;
+
+// Reads SnapTrade-linked brokerage accounts (e.g. E*TRADE) from the persisted
+// broker_accounts/broker_connections tables, then hydrates each with its live
+// portfolio balances (netLiquidation/cash/buyingPower/currency) via a short-lived
+// per-account cache. Only accounts whose connection is currently `connected`
+// (SnapTrade disabled/error connections are stored as `disconnected`/`error`) are
+// surfaced. A balance fetch failure degrades the account to zero-filled balances
+// rather than dropping it from the list.
+async function getSnapTradeBackedAccounts(
+  mode: RuntimeMode,
+): Promise<BrokerAccountSnapshot[]> {
+  const rows = await db
+    .select({
+      id: brokerAccountsTable.id,
+      appUserId: brokerAccountsTable.appUserId,
+      providerAccountId: brokerAccountsTable.providerAccountId,
+      displayName: brokerAccountsTable.displayName,
+      baseCurrency: brokerAccountsTable.baseCurrency,
+      mode: brokerAccountsTable.mode,
+      lastSyncedAt: brokerAccountsTable.lastSyncedAt,
+      updatedAt: brokerAccountsTable.updatedAt,
+    })
+    .from(brokerAccountsTable)
+    .innerJoin(
+      brokerConnectionsTable,
+      eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
+    )
+    .where(
+      and(
+        eq(brokerAccountsTable.mode, mode),
+        eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
+        eq(brokerConnectionsTable.status, "connected"),
+      ),
+    )
+    .limit(1_000);
+
+  const records: SnapTradeAccountRecord[] = rows.map((row) => {
+    const rawSnapTradeId = row.providerAccountId.startsWith(
+      SNAPTRADE_LOCAL_ID_PREFIX,
+    )
+      ? row.providerAccountId.slice(SNAPTRADE_LOCAL_ID_PREFIX.length).trim()
+      : row.providerAccountId;
+    const syncedAt = row.lastSyncedAt ? new Date(row.lastSyncedAt) : null;
+    return {
+      appUserId: row.appUserId,
+      snapshot: {
+        id: row.id,
+        providerAccountId: rawSnapTradeId || row.providerAccountId,
+        provider: "snaptrade" as const,
+        mode: row.mode,
+        displayName: row.displayName || "SnapTrade account",
+        currency: row.baseCurrency || "USD",
+        buyingPower: 0,
+        cash: 0,
+        netLiquidation: 0,
+        accountType: null,
+        totalCashValue: null,
+        settledCash: null,
+        accruedCash: null,
+        initialMargin: null,
+        maintenanceMargin: null,
+        excessLiquidity: null,
+        cushion: null,
+        sma: null,
+        dayTradingBuyingPower: null,
+        regTInitialMargin: null,
+        grossPositionValue: null,
+        leverage: null,
+        dayTradesRemaining: null,
+        isPatternDayTrader: null,
+        updatedAt:
+          syncedAt && !Number.isNaN(syncedAt.getTime())
+            ? syncedAt
+            : row.updatedAt ?? new Date(),
+      },
+    };
+  });
+
+  return applySnapTradeAccountBalances(records);
+}
+
+const SNAPTRADE_PRESENCE_CACHE_TTL_MS = 30_000;
+let snapTradePresenceCache: { value: boolean; expiresAtMs: number } | null =
+  null;
+let snapTradePresenceInFlight: Promise<boolean> | null = null;
+
+async function readSnapTradeAccountPresence(): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ id: brokerAccountsTable.id })
+      .from(brokerAccountsTable)
+      .innerJoin(
+        brokerConnectionsTable,
+        eq(brokerConnectionsTable.id, brokerAccountsTable.connectionId),
+      )
+      .where(
+        and(
+          eq(brokerConnectionsTable.brokerProvider, "snaptrade"),
+          eq(brokerConnectionsTable.status, "connected"),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "snaptrade account presence check failed; treating as absent",
+    );
+    return false;
+  }
+}
+
+export async function hasSnapTradeBackedAccounts(): Promise<boolean> {
+  const nowMs = Date.now();
+  if (snapTradePresenceCache && snapTradePresenceCache.expiresAtMs > nowMs) {
+    return snapTradePresenceCache.value;
+  }
+  if (!snapTradePresenceInFlight) {
+    snapTradePresenceInFlight = readSnapTradeAccountPresence()
+      .then((value) => {
+        snapTradePresenceCache = {
+          value,
+          expiresAtMs: Date.now() + SNAPTRADE_PRESENCE_CACHE_TTL_MS,
+        };
+        return value;
+      })
+      .finally(() => {
+        snapTradePresenceInFlight = null;
+      });
+  }
+  return snapTradePresenceInFlight;
+}
+
+function snapTradeBalanceValuesFromPortfolio(
+  portfolio: SnapTradeAccountPortfolioResponse,
+  fallbackCurrency: string,
+): SnapTradeAccountBalanceValues {
+  const normalizedTotals = buildSnapTradeAccountPortfolioTotals({
+    balances: portfolio.balances,
+    positions: portfolio.positions,
+  });
+  const cashValue = normalizedTotals.cash ?? portfolio.totals.cash;
+  const buyingPowerValue =
+    normalizedTotals.buyingPower ?? portfolio.totals.buyingPower;
+  const positionMarketValue =
+    normalizedTotals.positionMarketValue ?? portfolio.totals.positionMarketValue;
+  const netLiquidation =
+    positionMarketValue != null
+      ? (cashValue ?? 0) + (positionMarketValue ?? 0)
+      : (portfolio.totals.netLiquidation ??
+        normalizedTotals.netLiquidation ??
+        cashValue ??
+        0);
+  return {
+    netLiquidation,
+    cash: cashValue ?? 0,
+    buyingPower: buyingPowerValue ?? 0,
+    currency: portfolio.account.baseCurrency || fallbackCurrency,
+  };
+}
+
+// Logs a SnapTrade balance-fetch failure at most once per cache TTL window per
+// account so a persistent upstream outage does not flood the log on every list
+// build.
+function logSnapTradeBalanceFailureOncePerWindow(
+  accountId: string,
+  error: unknown,
+  now: () => number,
+): void {
+  const nowMs = now();
+  const suppressedUntil =
+    snapTradeAccountBalanceErrorLogSuppressedUntil.get(accountId) ?? 0;
+  if (suppressedUntil > nowMs) {
+    return;
+  }
+  snapTradeAccountBalanceErrorLogSuppressedUntil.set(
+    accountId,
+    nowMs + SNAPTRADE_BALANCE_CACHE_TTL_MS,
+  );
+  logger.warn(
+    { err: error, snapTradeAccountId: accountId },
+    "SnapTrade portfolio balance fetch failed; reporting zero balances for account",
+  );
+}
+
+// Resolves live balances for a single SnapTrade account, serving a cached value
+// while fresh, deduping concurrent in-flight fetches, and returning null (degrade
+// to zero-filled) on any failure.
+async function resolveSnapTradeAccountBalance(
+  record: SnapTradeAccountRecord,
+  fetchPortfolio: SnapTradeAccountPortfolioFetcher,
+  now: () => number,
+): Promise<SnapTradeAccountBalanceValues | null> {
+  const appUserId = record.appUserId;
+  if (!appUserId) {
+    return null;
+  }
+  const accountId = record.snapshot.id;
+  const cached = snapTradeAccountBalanceCache.get(accountId);
+  if (cached && cached.expiresAt > now()) {
+    return cached.value;
+  }
+  const inflight = snapTradeAccountBalanceInflight.get(accountId);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    try {
+      const portfolio = await fetchPortfolio({ appUserId, accountId });
+      const value = snapTradeBalanceValuesFromPortfolio(
+        portfolio,
+        record.snapshot.currency,
+      );
+      snapTradeAccountBalanceCache.set(accountId, {
+        value,
+        expiresAt: now() + SNAPTRADE_BALANCE_CACHE_TTL_MS,
+      });
+      return value;
+    } catch (error) {
+      logSnapTradeBalanceFailureOncePerWindow(accountId, error, now);
+      return null;
+    } finally {
+      snapTradeAccountBalanceInflight.delete(accountId);
+    }
+  })();
+  snapTradeAccountBalanceInflight.set(accountId, request);
+  return request;
+}
+
+// Hydrates zero-filled SnapTrade snapshots with live portfolio balances,
+// resolving accounts concurrently (bounded) and degrading any failed account to
+// its zero-filled snapshot. Exported for tests.
+export async function applySnapTradeAccountBalances(
+  records: SnapTradeAccountRecord[],
+  deps: {
+    fetchPortfolio?: SnapTradeAccountPortfolioFetcher;
+    now?: () => number;
+  } = {},
+): Promise<BrokerAccountSnapshot[]> {
+  if (records.length === 0) {
+    return [];
+  }
+  const fetchPortfolio = deps.fetchPortfolio ?? getSnapTradeAccountPortfolio;
+  const now = deps.now ?? Date.now;
+
+  const results = new Array<BrokerAccountSnapshot>(records.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(
+    records.length,
+    SNAPTRADE_BALANCE_FETCH_CONCURRENCY,
+  );
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= records.length) {
+          return;
+        }
+        const record = records[index];
+        const balances = await resolveSnapTradeAccountBalance(
+          record,
+          fetchPortfolio,
+          now,
+        );
+        results[index] = balances
+          ? { ...record.snapshot, ...balances }
+          : record.snapshot;
+      }
+    }),
+  );
+  return results;
+}
 
 export async function listAccounts(
   input: { mode?: RuntimeMode },
@@ -4206,6 +4463,19 @@ async function listAccountsUncached(
     options.getPersistedAccounts ?? getPersistedBackedAccounts;
   const getFlexAccounts = options.getFlexAccounts ?? getFlexBackedAccounts;
   const recordSnapshots = options.recordSnapshots ?? recordAccountSnapshots;
+  const getSnapTradeAccounts =
+    options.getSnapTradeAccounts ?? getSnapTradeBackedAccounts;
+
+  // SnapTrade accounts are additive to whatever IBKR source wins the waterfall
+  // below. Resolve them in parallel and degrade to IBKR-only on any failure so a
+  // SnapTrade outage never breaks the account list.
+  const snapTradeAccountsPromise = getSnapTradeAccounts(mode).catch((error) => {
+    logger.warn(
+      { err: error },
+      "SnapTrade account merge failed; returning brokers without SnapTrade accounts",
+    );
+    return [] as BrokerAccountSnapshot[];
+  });
 
   try {
     const liveAccounts = await listLiveAccounts(mode);
@@ -4216,7 +4486,9 @@ async function listAccountsUncached(
           "Account snapshot persistence failed after live account list",
         );
       });
-      return { accounts: liveAccounts };
+      return {
+        accounts: [...liveAccounts, ...(await snapTradeAccountsPromise)],
+      };
     }
   } catch {
     // A stale or unavailable bridge should not prevent persisted account views.
@@ -4229,15 +4501,20 @@ async function listAccountsUncached(
     run: () => getPersistedAccounts(COMBINED_ACCOUNT_ID, mode),
   });
   if (persistedAccounts.accounts.length) {
-    return { accounts: persistedAccounts.accounts };
+    return {
+      accounts: [
+        ...persistedAccounts.accounts,
+        ...(await snapTradeAccountsPromise),
+      ],
+    };
   }
 
   const flexAccounts = await getFlexAccounts(COMBINED_ACCOUNT_ID, mode);
   if (flexAccounts.length) {
-    return { accounts: flexAccounts };
+    return { accounts: [...flexAccounts, ...(await snapTradeAccountsPromise)] };
   }
 
-  return { accounts: [] };
+  return { accounts: await snapTradeAccountsPromise };
 }
 
 export async function getAccountSummary(input: {
@@ -7314,11 +7591,10 @@ export async function cancelAccountOrder(input: {
   }
 
   await assertIbkrGatewayTradingAvailable();
-  return getIbkrClient().cancelOrder({
+  return getIbkrClientPortalClient().cancelOrder({
     accountId: input.accountId,
     orderId: input.orderId,
     mode,
-    confirm: input.confirm,
   });
 }
 
@@ -7499,7 +7775,7 @@ async function getAccountRiskUncached(input: {
     greekEnrichment.matchedOptionPositions < totalOptionPositions
   ) {
     greekWarnings.unshift(
-      `Matched ${greekEnrichment.matchedOptionPositions} of ${totalOptionPositions} option positions to IBKR greek snapshots.`,
+      `Matched ${greekEnrichment.matchedOptionPositions} of ${totalOptionPositions} option positions to Massive greek snapshots.`,
     );
   }
 
@@ -8091,7 +8367,6 @@ export const __accountPositionInternalsForTests = {
   optionQuoteDemandProviderContractIdsForPosition,
   optionQuoteProviderContractIdsForPosition,
   stabilizeExecutionOpenDatesForPositions,
-  structuredOptionProviderContractIdForRow,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,
   withAccountPositionLotsReadFallback,

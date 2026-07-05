@@ -23,6 +23,7 @@ import {
   getMarketDataIngestDiagnostics,
   getLatestChartGexSnapshot,
   getLatestGexSnapshot,
+  getLatestGexSnapshotsForSymbols,
   isMarketDataIngestDatabaseConfigured,
   isMarketDataIngestConfigured,
   type EnqueueMarketDataJobInput,
@@ -150,6 +151,7 @@ export type GexZeroGammaResponse = {
   ticker: string;
   spot: number | null;
   zeroGamma: number | null;
+  zeroGammaMethod: "simulation" | "legacy" | null;
   asOf: string | null;
   isStale: boolean;
   simulation?: GexZeroGammaSimulation | null;
@@ -200,6 +202,10 @@ const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
   "GEX_DASHBOARD_LOAD_TIMEOUT_MS",
   10_000,
 );
+// Serve-gate for PERSISTED gex snapshots (getGexSnapshots, getGexDashboardData,
+// loadLatest*Snapshot): intentionally tighter than the 15-minute live-recompute
+// isStale flag (see loadGexDashboardData) and distinct from the Rust worker's
+// 120s ingest gate (GEX_STALE_AFTER_SECS in crates/market-data-worker/src/compute/gex.rs).
 const GEX_SNAPSHOT_MAX_AGE_MS = readPositiveIntegerEnv(
   "GEX_SNAPSHOT_MAX_AGE_MS",
   60_000,
@@ -659,16 +665,11 @@ async function queueGexSnapshotRefresh(
     {
       ...baseInput,
       priority: 1,
-      kind: "stock_snapshot" as const,
-    },
-    {
-      ...baseInput,
-      priority: 2,
       kind: "option_chain_snapshot" as const,
     },
     {
       ...baseInput,
-      priority: 3,
+      priority: 2,
       kind: "gex_snapshot" as const,
     },
   ];
@@ -722,7 +723,6 @@ function resolveGexSnapshotRefreshDedupeBucket(
 }
 
 type GexSnapshotRefreshJobKind =
-  | "stock_snapshot"
   | "option_chain_snapshot"
   | "gex_snapshot";
 
@@ -955,7 +955,8 @@ function deriveSpotFromOptionChain(
     .map((contract) => positiveOrNull(contract.underlyingPrice))
     .filter((price): price is number => price !== null);
   if (!prices.length) return null;
-  return prices[Math.floor((prices.length - 1) / 2)];
+  const sorted = [...prices].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
 function isLiveGexStockSpotQuote(quote: IbkrQuoteSnapshot): boolean {
@@ -1224,7 +1225,7 @@ function withGexDashboardTimeout<T>(
         new HttpError(504, `GEX dashboard load timed out for ${ticker}.`, {
           code: "gex_dashboard_timeout",
           detail:
-            "IBKR quote, expiration, or option-chain hydration did not finish inside the chart marker budget.",
+            "Massive quote, expiration, or option-chain hydration did not finish inside the chart marker budget.",
         }),
       );
     }, timeoutMs);
@@ -1531,7 +1532,7 @@ async function loadGexDashboardData(input: {
   if (expirationDates.length === 0) {
     throw new HttpError(503, `GEX option expirations unavailable for ${ticker}.`, {
       code: "gex_chain_unavailable",
-      detail: "IBKR returned no option expirations for this symbol.",
+      detail: "Massive returned no option expirations for this symbol.",
     });
   }
 
@@ -1563,7 +1564,7 @@ async function loadGexDashboardData(input: {
   };
   const chain = chainPayload.results.flatMap((result) => result.contracts);
   const mappedOptions = mapGexOptions(chain);
-  const sourceProvider: GexResponse["source"]["provider"] = "ibkr";
+  const sourceProvider: GexResponse["source"]["provider"] = "massive";
 
   const quoteRows = (quotePayload.quotes || []) as IbkrQuoteSnapshot[];
   const quote =
@@ -1582,7 +1583,7 @@ async function loadGexDashboardData(input: {
     throw new HttpError(503, `Spot price unavailable for ${ticker}.`, {
       code: "gex_spot_unavailable",
       detail:
-        "GEX requires a current IBKR or Massive underlying quote, option-chain underlying price, or reference-provider close.",
+        "GEX requires a current Massive underlying quote, option-chain underlying price, or reference-provider close.",
     });
   }
 
@@ -1609,6 +1610,10 @@ async function loadGexDashboardData(input: {
     .filter((date): date is Date => date instanceof Date)
     .sort((left, right) => right.getTime() - left.getTime())[0];
   const staleAgeMs = newestDataAt ? now.getTime() - newestDataAt.getTime() : Infinity;
+  // LIVE-recompute staleness flag (GexResponse.isStale, advisory to clients):
+  // intentionally wider than the persisted-snapshot serve-gate GEX_SNAPSHOT_MAX_AGE_MS
+  // (60s default) and the Rust worker's 120s ingest gate (GEX_STALE_AFTER_SECS in
+  // crates/market-data-worker/src/compute/gex.rs).
   const isStale = staleAgeMs > 15 * 60_000;
   const partialSource =
     mappedOptions.usableOptionCount < mappedOptions.optionCount ||
@@ -1617,7 +1622,7 @@ async function loadGexDashboardData(input: {
     expirationCoverage.failedCount > 0 ||
     !quote;
   const partialMessage =
-    "GEX is computed from IBKR option-chain snapshots with live IBKR or Massive stock spot. Source is partial when expiration discovery is incomplete or capped, an expiration batch fails, a live spot quote is missing, or contracts lack usable gamma/open interest.";
+    "GEX is computed from Massive option-chain snapshots with live Massive stock spot. Source is partial when expiration discovery is incomplete or capped, an expiration batch fails, a live spot quote is missing, or contracts lack usable gamma/open interest.";
   const flowBasisCounts = {
     quoteMatch: 0,
     tickTest: 0,
@@ -1670,6 +1675,37 @@ async function loadGexDashboardData(input: {
       flowClassificationConfidenceCounts: flowConfidenceCounts,
       message: partialSource ? partialMessage : null,
     },
+  };
+}
+
+export type GexSnapshotsServiceResponse = {
+  snapshots: Array<{
+    symbol: string;
+    netGex: number;
+    computedAt: string;
+    stale: boolean;
+  }>;
+};
+
+/**
+ * Bulk latest net GEX per symbol, backing `GET /api/gex-snapshots?symbols=`.
+ * Lets the market universe table render its Net γ column with one request
+ * instead of a per-row `/api/gex/{sym}` dashboard fetch.
+ */
+export async function getGexSnapshots(input: {
+  symbols: readonly string[];
+}): Promise<GexSnapshotsServiceResponse> {
+  const rows = await getLatestGexSnapshotsForSymbols(
+    input.symbols,
+    GEX_SNAPSHOT_MAX_AGE_MS,
+  );
+  return {
+    snapshots: rows.map((row) => ({
+      symbol: row.symbol,
+      netGex: row.netGex,
+      computedAt: row.computedAt.toISOString(),
+      stale: row.stale,
+    })),
   };
 }
 
@@ -1757,11 +1793,12 @@ function buildUnavailableGexZeroGammaData(
     ticker,
     spot: null,
     zeroGamma: null,
+    zeroGammaMethod: null,
     asOf: null,
     isStale: true,
     simulation: null,
     source: {
-      provider: "ibkr",
+      provider: "massive",
       status: "unavailable",
       optionCount: 0,
       usableOptionCount: 0,
@@ -1770,7 +1807,7 @@ function buildUnavailableGexZeroGammaData(
   };
 }
 
-function buildGexZeroGammaDataFromDashboard(
+export function buildGexZeroGammaDataFromDashboard(
   data: GexResponse,
 ): GexZeroGammaResponse {
   const spot = finiteOrNull(data.spot);
@@ -1787,11 +1824,18 @@ function buildGexZeroGammaDataFromDashboard(
   const legacyZeroGamma =
     spot != null ? findGexZeroGamma(data.options, spot) : null;
   const zeroGamma = simulation?.zeroGamma ?? legacyZeroGamma;
+  const zeroGammaMethod: GexZeroGammaResponse["zeroGammaMethod"] =
+    simulation?.zeroGamma != null
+      ? "simulation"
+      : legacyZeroGamma != null
+        ? "legacy"
+        : null;
 
   return {
     ticker: data.ticker,
     spot,
     zeroGamma,
+    zeroGammaMethod,
     asOf,
     isStale: Boolean(data.isStale),
     simulation,
@@ -1909,7 +1953,7 @@ function buildUnavailableGexProjection(input: {
     asOf: input.asOf || new Date().toISOString(),
     options: [],
     source: {
-      provider: "ibkr",
+      provider: "massive",
       status: "unavailable",
       expirationCoverage: {
         requestedCount: 0,
@@ -2342,7 +2386,7 @@ async function getChartGexProjectionData(input: {
       asOf: now.toISOString(),
       options: mappedOptions.rows,
       source: {
-        provider: "ibkr",
+        provider: "massive",
         status: partialSource ? "partial" : "ok",
         expirationCoverage,
         optionCount: mappedOptions.optionCount,

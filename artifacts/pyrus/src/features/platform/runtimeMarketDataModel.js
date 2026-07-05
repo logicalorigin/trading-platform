@@ -107,6 +107,74 @@ const computeTrailingReturnPercent = (currentPrice, baselinePrice) => {
   return ((currentPrice - baselinePrice) / baselinePrice) * 100;
 };
 
+const finiteNumberOrNull = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const timestampMsFromValue = (value) => {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    const abs = Math.abs(value);
+    if (abs >= 1e11) return value;
+    if (abs >= 1e9) return value * 1_000;
+    return value;
+  }
+  if (typeof value === "string") {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return null;
+};
+
+const firstTimestampMs = (...values) => {
+  for (const value of values) {
+    const timestamp = timestampMsFromValue(value);
+    if (timestamp != null) {
+      return timestamp;
+    }
+  }
+  return null;
+};
+
+const positiveNumberOrNull = (value) => {
+  const numeric = finiteNumberOrNull(value);
+  return numeric != null && numeric > 0 ? numeric : null;
+};
+
+const resolveRuntimeQuotePrice = (quote, current = {}) => {
+  const explicitPrice = finiteNumberOrNull(quote?.price);
+  if (explicitPrice != null) {
+    return explicitPrice;
+  }
+
+  const last = finiteNumberOrNull(quote?.last);
+  if (last != null) {
+    return last;
+  }
+
+  const mark = finiteNumberOrNull(quote?.mark);
+  if (mark != null) {
+    return mark;
+  }
+
+  const bid = positiveNumberOrNull(quote?.bid);
+  const ask = positiveNumberOrNull(quote?.ask);
+  if (bid != null && ask != null) {
+    return (bid + ask) / 2;
+  }
+  if (bid != null) {
+    return bid;
+  }
+  if (ask != null) {
+    return ask;
+  }
+
+  return current.price ?? null;
+};
+
 const genTradeFlowMarkers = (seed) => {
   const r = rng(seed);
   const n = 5 + Math.floor(r() * 4);
@@ -126,7 +194,9 @@ const TRADE_FLOW_MARKERS = Object.fromEntries(
 );
 
 const buildRuntimeQuotePatch = (quote, current = {}) => ({
-  price: quote?.price ?? current.price ?? null,
+  price: resolveRuntimeQuotePrice(quote, current),
+  last: quote?.last ?? current.last ?? null,
+  mark: quote?.mark ?? current.mark ?? null,
   bid: quote?.bid ?? current.bid ?? null,
   ask: quote?.ask ?? current.ask ?? null,
   chg: quote?.change ?? current.chg ?? null,
@@ -213,7 +283,7 @@ export const applyRuntimeQuoteSnapshots = (quotes = [], watchlistItems = []) => 
     );
     const currentTradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
     const prevClose = quote?.prevClose ?? currentTradeInfo.prevClose ?? null;
-    const price = quote?.price ?? currentTradeInfo.price ?? null;
+    const price = resolveRuntimeQuotePrice(quote, currentTradeInfo);
     const chg =
       Number.isFinite(price) && Number.isFinite(prevClose)
         ? price - prevClose
@@ -242,6 +312,135 @@ export const applyRuntimeQuoteSnapshots = (quotes = [], watchlistItems = []) => 
 
   return changedSymbols.size;
 };
+
+const isoTimestampFromMs = (value) =>
+  Number.isFinite(value) ? new Date(value).toISOString() : null;
+
+const isoTimestampFromValue = (value) =>
+  isoTimestampFromMs(timestampMsFromValue(value));
+
+const runtimeNowMs = () =>
+  typeof Date.now === "function" ? finiteNumberOrNull(Date.now()) : null;
+
+const aggregateObservedMs = (aggregate) => {
+  const latency = aggregate?.latency;
+  return firstTimestampMs(
+    latency && typeof latency === "object"
+      ? latency.apiServerReceivedAt
+      : null,
+    latency && typeof latency === "object"
+      ? latency.apiServerEmittedAt
+      : null,
+    aggregate?.receivedAt,
+    aggregate?.emittedAt,
+    aggregate?.updatedAt,
+    aggregate?.dataUpdatedAt,
+    aggregate?.timestamp,
+    aggregate?.time,
+    runtimeNowMs(),
+  );
+};
+
+const aggregateRuntimeUpdatedAt = (aggregate) => {
+  const startMs = finiteNumberOrNull(aggregate?.startMs);
+  const endMs = finiteNumberOrNull(aggregate?.endMs);
+  const candidateMs = endMs ?? startMs;
+  const observedMs = aggregateObservedMs(aggregate);
+  if (candidateMs != null && observedMs != null && candidateMs > observedMs) {
+    return isoTimestampFromMs(observedMs);
+  }
+  return isoTimestampFromMs(candidateMs);
+};
+
+const firstPositiveRuntimeNumber = (...values) => {
+  for (const value of values) {
+    const numeric = finiteNumberOrNull(value);
+    if (numeric != null && numeric > 0) {
+      return numeric;
+    }
+  }
+  return null;
+};
+
+const signalStateToRuntimeQuote = (state) => {
+  const symbol = state?.symbol?.toUpperCase?.();
+  const price = firstPositiveRuntimeNumber(
+    state?.currentPrice,
+    state?.latestBarClose,
+    state?.last,
+    state?.mark,
+  );
+  if (!symbol || price == null) {
+    return null;
+  }
+
+  const updatedAt =
+    isoTimestampFromValue(state?.latestBarAt) ??
+    isoTimestampFromValue(state?.lastEvaluatedAt) ??
+    isoTimestampFromValue(state?.currentSignalAt);
+  const freshness = state?.fresh === true ? "live" : "stale";
+
+  return {
+    symbol,
+    price,
+    last: price,
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+    freshness,
+    marketDataMode: freshness,
+    delayed: false,
+    source: "signal-monitor",
+    transport: "signal-monitor",
+  };
+};
+
+export const applyRuntimeSignalStatePrices = (
+  states = [],
+  watchlistItems = [],
+) =>
+  applyRuntimeQuoteSnapshots(
+    (states || []).map(signalStateToRuntimeQuote).filter(Boolean),
+    watchlistItems,
+  );
+
+const aggregateToRuntimeQuote = (aggregate) => {
+  const symbol = aggregate?.symbol?.toUpperCase?.();
+  const price = firstPositiveRuntimeNumber(aggregate?.close);
+  if (!symbol || price == null) {
+    return null;
+  }
+
+  const updatedAt = aggregateRuntimeUpdatedAt(aggregate);
+  const delayed = Boolean(aggregate?.delayed);
+  const source = aggregate?.source || "stock-aggregate";
+
+  return {
+    symbol,
+    price,
+    last: price,
+    open: aggregate?.open ?? null,
+    high: aggregate?.high ?? null,
+    low: aggregate?.low ?? null,
+    volume: aggregate?.accumulatedVolume ?? aggregate?.volume ?? null,
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+    freshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    delayed,
+    source,
+    transport: source,
+    latency: aggregate?.latency ?? null,
+  };
+};
+
+export const applyRuntimeStockAggregateSnapshots = (
+  aggregates = [],
+  watchlistItems = [],
+) =>
+  applyRuntimeQuoteSnapshots(
+    (aggregates || []).map(aggregateToRuntimeQuote).filter(Boolean),
+    watchlistItems,
+  );
 
 export const syncRuntimeMarketData = (
   symbols,
@@ -292,7 +491,7 @@ export const syncRuntimeMarketData = (
         ? []
         : (tradeInfo.sparkBars || base.sparkBars || []);
     const prevClose = quote?.prevClose ?? tradeInfo.prevClose ?? null;
-    const price = quote?.price ?? tradeInfo.price ?? null;
+    const price = resolveRuntimeQuotePrice(quote, tradeInfo);
     const chg =
       Number.isFinite(price) && Number.isFinite(prevClose)
         ? price - prevClose
@@ -421,7 +620,7 @@ export const syncRuntimeMarketData = (
     const incomingSparkBars = sparklineBarsBySymbol[normalized];
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
-    item.price = quote?.price ?? item.price ?? null;
+    item.price = resolveRuntimeQuotePrice(quote, item);
     item.chg =
       Number.isFinite(item.price) && Number.isFinite(prevClose)
         ? item.price - prevClose
@@ -465,7 +664,7 @@ export const syncRuntimeMarketData = (
     const incomingSparkBars = sparklineBarsBySymbol[normalized];
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
-    item.price = quote?.price ?? item.price ?? null;
+    item.price = resolveRuntimeQuotePrice(quote, item);
     item.chg =
       Number.isFinite(item.price) && Number.isFinite(prevClose)
         ? item.price - prevClose
@@ -511,11 +710,11 @@ export const syncRuntimeMarketData = (
   RATES_PROXIES.forEach((item) => {
     const normalized = item.sym.toUpperCase();
     const quote = quoteBySymbol[normalized];
-    const currentPrice = quote?.price ?? item.price;
+    const currentPrice = resolveRuntimeQuotePrice(quote, item);
     const baseline = performanceBaselineBySymbol[normalized] ?? null;
     const d5 = computeTrailingReturnPercent(currentPrice, baseline);
 
-    item.price = quote?.price ?? null;
+    item.price = currentPrice;
     item.chg = quote?.change ?? null;
     item.pct = quote?.changePercent ?? null;
     item.d5 = d5 ?? null;
@@ -524,8 +723,10 @@ export const syncRuntimeMarketData = (
   SECTORS.forEach((item) => {
     const normalized = item.sym.toUpperCase();
     const quote = quoteBySymbol[normalized];
-    const currentPrice =
-      quote?.price ?? TRADE_TICKER_INFO[normalized]?.price ?? null;
+    const currentPrice = resolveRuntimeQuotePrice(
+      quote,
+      TRADE_TICKER_INFO[normalized],
+    );
     const baseline = performanceBaselineBySymbol[normalized] ?? null;
     const d5 = computeTrailingReturnPercent(currentPrice, baseline);
 

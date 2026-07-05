@@ -20,7 +20,7 @@ export interface FlowEvent {
   basis: FlowEventBasis;
   optionTicker: string;
   /**
-   * Broker contract identifier, when the flow source can map the option to a broker-backed contract.
+   * Market-data contract identifier, typically the OPRA/Massive option ticker.
    * @nullable
    */
   providerContractId: string | null;

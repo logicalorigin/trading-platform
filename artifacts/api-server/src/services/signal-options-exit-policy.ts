@@ -9,10 +9,23 @@ export type SignalOptionsEntryQuality = {
   score: number;
   reasons: string[];
   components?: {
-    mtfAlignment: number;
-    trendStrength: number;
-    liquidity: number;
-    riskFit: number;
+    mtfAlignment?: number;
+    trendStrength?: number;
+    liquidity?: number;
+    riskFit?: number;
+    reversion?: number;
+    confirmation?: number;
+    extensionPenalty?: number;
+    volumeSupport?: number;
+    rangeReversion?: number;
+    atrCalm?: number;
+    adxCalm?: number;
+    volumeCalm?: number;
+    volatilityRegime?: number;
+    volumeParticipation?: number;
+    momentum?: number;
+    reversionTilt?: number;
+    conviction?: number;
     total: number;
   };
   raw?: Record<string, unknown>;
@@ -427,16 +440,8 @@ export function computeSignalOptionsPositionStop(input: {
   const trailActive = usesWireTrail || legacyTrailActive;
   const minLockedGainPct =
     progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
-  const legacyGivebackPct =
-    peakPrice >= entryPrice * 10
-      ? profile.exitPolicy.tightenAtTenXGivebackPct
-      : peakPrice >= entryPrice * 5
-        ? profile.exitPolicy.tightenAtFiveXGivebackPct
-        : (progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct);
   const givebackPct =
-    regimeFlipAgainstPosition && usesWireTrail
-      ? Math.min(legacyGivebackPct, profile.exitPolicy.tightenAtTenXGivebackPct)
-      : legacyGivebackPct;
+    progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct;
   const deltaSizedGiveback =
     profile.exitPolicy.wireGreekTrail.deltaSizingEnabled &&
     usesWireTrail &&

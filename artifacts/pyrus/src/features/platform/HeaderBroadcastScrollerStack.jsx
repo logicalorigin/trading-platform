@@ -30,6 +30,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
+import {
+  classifyRequestHealth,
+  requestHealthLabel,
+  requestHealthTone,
+} from "../../lib/requestHealthTone";
 import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, MISSING_VALUE, PYRUS_WORKSPACE_SETTINGS_EVENT, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatOptionContractLabel,
@@ -1695,7 +1700,21 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const signalHasError = Boolean(
     !signalBusy &&
-      (signalScanErrored || (signalSnapshot?.degraded && !signalRuntimeFallback)),
+      (signalScanErrored ||
+        // Matrix SSE repeatedly dead → hard transport failure (red).
+        signalSnapshot?.transportError ||
+        (signalSnapshot?.degraded && !signalRuntimeFallback)),
+  );
+  // Softer transport surfaces (amber): request pacing / 429 is retrying, and a
+  // failed profile fetch means we cannot confirm the real state (never OFF).
+  const signalRateLimited = Boolean(
+    !signalBusy && !signalHasError && signalSnapshot?.rateLimited,
+  );
+  const signalStreamUncertain = Boolean(
+    !signalBusy &&
+      !signalHasError &&
+      !signalRateLimited &&
+      signalSnapshot?.streamErrored,
   );
   const signalDegraded = Boolean(
     !signalBusy && !signalHasError && signalSnapshot?.degraded,
@@ -1719,6 +1738,10 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const signalEmptyLabel = signalHasError
     ? "SIGNALS ERROR"
+    : signalRateLimited
+      ? "SIGNALS RATE LIMITED"
+    : signalStreamUncertain
+      ? "SIGNALS UNAVAILABLE"
     : signalDegraded
       ? "SIGNALS DEGRADED"
     : signalNoTrackedSymbols
@@ -1853,6 +1876,10 @@ export const HeaderBroadcastScrollerStack = memo(({
         : "SCAN OFF";
   const signalScanTone = signalHasError
     ? CSS_COLOR.red
+    : signalRateLimited
+      ? requestHealthTone(classifyRequestHealth({ rateLimited: true }))
+    : signalStreamUncertain
+      ? requestHealthTone(classifyRequestHealth({ degraded: true }))
     : signalDegraded
       ? CSS_COLOR.amber
     : signalNoTrackedSymbols || signalNoFreshSignals
@@ -1864,7 +1891,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         : CSS_COLOR.textMuted;
   const signalWaveStatus = !onToggleSignalScan || signalHasError
     ? "offline"
-    : signalDegraded || signalNoTrackedSymbols || signalNoFreshSignals
+    : signalRateLimited ||
+        signalStreamUncertain ||
+        signalDegraded ||
+        signalNoTrackedSymbols ||
+        signalNoFreshSignals
       ? "stale"
     : signalBusy
       ? "checking"
@@ -1873,6 +1904,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       : "no-subscribers";
   const signalStatusLabel = signalHasError
     ? "STREAM ERROR"
+    : signalRateLimited
+      ? `${requestHealthLabel("rateLimited")} — RETRYING`
+    : signalStreamUncertain
+      ? "STREAM UNCERTAIN"
     : signalDegraded
       ? signalRuntimeFallback
         ? "RUNTIME"
@@ -2285,6 +2320,43 @@ export const HeaderBroadcastScrollerStack = memo(({
     padding: sp(8),
   };
 
+  // Phone-only compact strip: one row of three tappable chips (wave glyph +
+  // label + tone dot) that replace the stacked lane cards. Each chip mirrors the
+  // stacked lane's tone ladder + wave status and opens the same lane surface, so
+  // amber RATE LIMITED / red transport-error states stay visible via the dot.
+  const compactLanes = [
+    {
+      key: "signals",
+      label: "SIGNALS",
+      tone: signalScanTone,
+      waveStatus: signalWaveStatus,
+      waveTestId: "header-signal-scan-wave",
+      testId: "header-signal-strip-chip",
+      statusLabel: signalStatusLabel,
+      onTap: () => setOpenSettingsLane("signals"),
+    },
+    {
+      key: "unusual",
+      label: "FLOW",
+      tone: flowScanTone,
+      waveStatus: flowWaveStatus,
+      waveTestId: "header-unusual-broad-wave",
+      testId: "header-unusual-strip-chip",
+      statusLabel: flowScanStatusLabel,
+      onTap: () => setOpenSettingsLane("unusual"),
+    },
+    {
+      key: "algo",
+      label: "ALGO",
+      tone: algoLaneTone,
+      waveStatus: algoWaveStatus,
+      waveTestId: "header-algo-wave",
+      testId: "header-algo-strip-chip",
+      statusLabel: algoItems.length ? "LIVE" : "IDLE",
+      onTap: () => onAlgoAction?.(),
+    },
+  ];
+
   return (
     <div
       ref={rootRef}
@@ -2301,6 +2373,83 @@ export const HeaderBroadcastScrollerStack = memo(({
         boxShadow: isPhone ? `0 1px 0 ${CSS_COLOR.border}` : undefined,
       }}
     >
+      {isPhone ? (
+        <div
+          data-testid="header-broadcast-compact-strip"
+          role="group"
+          aria-label="Broadcast lanes"
+          style={{
+            display: "flex",
+            alignItems: "stretch",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {compactLanes.map((lane) => {
+            const active = openSettingsLane === lane.key;
+            return (
+              <button
+                key={lane.key}
+                type="button"
+                data-testid={lane.testId}
+                aria-label={`${lane.label} ${lane.statusLabel}`}
+                onClick={lane.onTap}
+                className="ra-interactive"
+                style={{
+                  ...motionVars({ accent: lane.tone }),
+                  flex: "1 1 0",
+                  minWidth: 0,
+                  minHeight: dim(44),
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: sp(5),
+                  padding: sp("0px 6px"),
+                  border: `1px solid ${active ? lane.tone : CSS_COLOR.border}`,
+                  borderRadius: dim(RADII.sm),
+                  background: active
+                    ? `${cssColorMix(lane.tone, 9)}`
+                    : CSS_COLOR.bg0,
+                  color: CSS_COLOR.textSec,
+                  cursor: "pointer",
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                }}
+              >
+                <HeaderLaneWaveIcon
+                  status={lane.waveStatus}
+                  dataTestId={lane.waveTestId}
+                />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    minWidth: 0,
+                  }}
+                >
+                  {lane.label}
+                </span>
+                <span
+                  aria-hidden="true"
+                  data-testid={`${lane.testId}-tone-dot`}
+                  style={{
+                    width: dim(8),
+                    height: dim(8),
+                    flexShrink: 0,
+                    borderRadius: dim(RADII.pill),
+                    background: lane.tone,
+                    boxShadow: `0 0 0 3px ${cssColorMix(lane.tone, 14)}`,
+                  }}
+                />
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <>
       <Popover
         open={!isPhone && signalTriggerActive}
         onOpenChange={(next) => setOpenSettingsLane(next ? "signals" : null)}
@@ -2457,6 +2606,8 @@ export const HeaderBroadcastScrollerStack = memo(({
           />
         )}
       </HeaderBroadcastLane>
+        </>
+      )}
 
       <BottomSheet
         open={isPhone && openSettingsLane === "signals"}

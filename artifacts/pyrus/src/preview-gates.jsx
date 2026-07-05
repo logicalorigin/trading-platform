@@ -4,7 +4,7 @@
 // Throwaway: delete with preview-gates.html.
 import { createRoot } from "react-dom/client";
 import "./index.css";
-import { CSS_COLOR, dim, sp, T, textSize } from "./lib/uiTokens.jsx";
+import { CSS_COLOR, dim, RADII, sp, T, textSize } from "./lib/uiTokens.jsx";
 import { buildAlgoTuningImpact } from "./features/platform/algoTuningImpactModel.js";
 import { GateLadder } from "./screens/algo/GateLadder.jsx";
 
@@ -49,7 +49,7 @@ const PANEL = {
   flexDirection: "column",
   gap: dim(8),
   border: `1px solid ${CSS_COLOR.border}`,
-  borderRadius: 8,
+  borderRadius: RADII.md,
   background: CSS_COLOR.bg1,
   padding: sp("12px"),
   boxSizing: "border-box",

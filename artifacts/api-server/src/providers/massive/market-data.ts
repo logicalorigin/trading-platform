@@ -168,6 +168,7 @@ export type OptionChainContract = {
   openInterest: number;
   volume: number;
   updatedAt: Date;
+  underlyingPrice: number | null;
 };
 
 export type HistoricalOptionContract = {
@@ -1144,12 +1145,17 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
     toDate(getNumberPath(dayBar, ["t"])),
     toDate(getNumberPath(dayBar, ["timestamp"])),
   );
+  // Overnight (20:00–03:50 ET) keeps measuring from the most recent regular
+  // close: today's close before midnight (dayClose), the prior session's close
+  // after it (prevClose), whichever is the latest completed regular session.
   const extendedBaselinePrice =
     marketSession === "pre"
       ? (prevClose ?? null)
       : marketSession === "after"
         ? (dayClose ?? null)
-        : null;
+        : marketSession === "overnight"
+          ? (dayClose ?? prevClose ?? null)
+          : null;
 
   return {
     symbol: normalizeSymbol(symbol),
@@ -1169,7 +1175,9 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
       extendedBaselinePrice !== null
         ? marketSession === "pre"
           ? (prevCloseAt ?? null)
-          : (dayCloseAt ?? null)
+          : marketSession === "overnight" && dayClose == null
+            ? (prevCloseAt ?? null)
+            : (dayCloseAt ?? null)
         : null,
     extendedBaselineSource:
       extendedBaselinePrice !== null ? "regular_close" : null,
@@ -1284,10 +1292,16 @@ function mapChainContract(
   const lastTrade = asRecord(record["last_trade"]);
   const day = asRecord(record["day"]);
   const greeks = asRecord(record["greeks"]);
+  const underlyingAsset = asRecord(record["underlying_asset"]);
 
   const bid =
     firstDefined(
       getNumberPath(lastQuote, ["bid_price"]),
+      getNumberPath(lastQuote, ["bidPrice"]),
+      // Massive's option last_quote sends the plain `bid`/`ask` keys; these were
+      // omitted here (unlike readQuoteBid), so live two-sided quotes collapsed to
+      // 0 and tripped `missing_bid_ask`, blocking otherwise-tradeable options.
+      getNumberPath(lastQuote, ["bid"]),
       getNumberPath(lastQuote, ["bp"]),
       getNumberPath(lastQuote, ["p"]),
     ) ?? 0;
@@ -1295,6 +1309,8 @@ function mapChainContract(
   const ask =
     firstDefined(
       getNumberPath(lastQuote, ["ask_price"]),
+      getNumberPath(lastQuote, ["askPrice"]),
+      getNumberPath(lastQuote, ["ask"]),
       getNumberPath(lastQuote, ["ap"]),
       getNumberPath(lastQuote, ["P"]),
     ) ?? bid;
@@ -1366,6 +1382,12 @@ function mapChainContract(
         getNumberPath(day, ["v"]),
       ) ?? 0,
     updatedAt,
+    underlyingPrice:
+      firstDefined(
+        getNumberPath(underlyingAsset, ["price"]),
+        getNumberPath(underlyingAsset, ["value"]),
+        getNumberPath(underlyingAsset, ["last", "price"]),
+      ) ?? null,
   };
 }
 
@@ -2621,12 +2643,16 @@ function mapFlowEvent(
   const bid =
     firstDefined(
       getNumberPath(lastQuote, ["bid_price"]),
+      getNumberPath(lastQuote, ["bidPrice"]),
+      getNumberPath(lastQuote, ["bid"]),
       getNumberPath(lastQuote, ["bp"]),
       getNumberPath(lastQuote, ["p"]),
     ) ?? 0;
   const ask =
     firstDefined(
       getNumberPath(lastQuote, ["ask_price"]),
+      getNumberPath(lastQuote, ["askPrice"]),
+      getNumberPath(lastQuote, ["ask"]),
       getNumberPath(lastQuote, ["ap"]),
       getNumberPath(lastQuote, ["P"]),
     ) ?? 0;
@@ -3998,6 +4024,27 @@ export class MassiveMarketDataClient {
     return contracts;
   }
 
+  async getOptionContractSnapshot(input: {
+    underlying: string;
+    optionTicker: string;
+    signal?: AbortSignal;
+  }): Promise<OptionChainContract | null> {
+    const underlying = normalizeSymbol(input.underlying);
+    const optionTicker = input.optionTicker.trim().toUpperCase();
+    if (!underlying || !optionTicker) {
+      return null;
+    }
+
+    const payload = await this.fetchJson<unknown>(
+      this.buildUrl(
+        `/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(optionTicker)}`,
+      ),
+      { signal: input.signal },
+    );
+    const record = asRecord(payload);
+    return mapChainContract(underlying, record?.["results"]);
+  }
+
   async getHistoricalOptionContracts(input: {
     underlying: string;
     asOf?: Date;
@@ -4512,12 +4559,16 @@ export class MassiveMarketDataClient {
         const quoteBid =
           firstDefined(
             getNumberPath(lastQuote, ["bid_price"]),
+            getNumberPath(lastQuote, ["bidPrice"]),
+            getNumberPath(lastQuote, ["bid"]),
             getNumberPath(lastQuote, ["bp"]),
             getNumberPath(lastQuote, ["p"]),
           ) ?? 0;
         const quoteAsk =
           firstDefined(
             getNumberPath(lastQuote, ["ask_price"]),
+            getNumberPath(lastQuote, ["askPrice"]),
+            getNumberPath(lastQuote, ["ask"]),
             getNumberPath(lastQuote, ["ap"]),
             getNumberPath(lastQuote, ["P"]),
           ) ?? 0;

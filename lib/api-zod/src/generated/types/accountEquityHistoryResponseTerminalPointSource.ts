@@ -16,4 +16,5 @@ export const AccountEquityHistoryResponseTerminalPointSource = {
   shadow_ledger: 'shadow_ledger',
   shadow_watchlist_backtest: 'shadow_watchlist_backtest',
   shadow_options_replay: 'shadow_options_replay',
+  snaptrade_balance_history: 'snaptrade_balance_history',
 } as const;

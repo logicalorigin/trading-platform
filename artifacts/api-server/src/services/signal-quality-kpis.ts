@@ -122,6 +122,21 @@ type SignalObservation = {
   realizedReturnPercent: number;
   mfePercent: number;
   maePercent: number;
+  // Optional audit enrichment (feature-discovery tooling): context the
+  // collector already computes for the gate/dataset but the KPI aggregation
+  // doesn't need. Serialized only by the env-gated observation dump.
+  audit?: {
+    signalAt: string;
+    barIndex: number;
+    // Per-timeframe trend directions at the signal bar, aligned with
+    // mtfTimeframes (1 buy, -1 sell, 0 unknown).
+    mtfTimeframes: string[];
+    mtfDirections: number[];
+    // Consecutive bars the regime direction had already held at the signal.
+    regimeAgeBars: number | null;
+    adxRaw: number | null;
+    volatilityScoreRaw: number | null;
+  } | null;
 };
 
 export type SignalScoreCalibrationObservation = {
@@ -139,7 +154,10 @@ export type SignalScoreModelKey =
   | "sot-outcome-v1"
   | "evidence-weighted-v2"
   | "trend-confirmation-v2"
-  | "balanced-sot-v2";
+  | "balanced-sot-v2"
+  | "reversion-sot-v3"
+  | "expected-move-v1"
+  | "expected-move-v2";
 
 export type SignalScoreModelAlignment = {
   populatedBucketCount: number;
@@ -252,6 +270,7 @@ const SIGNAL_DIRECTIONAL_FEATURES: Array<{ key: string; label: string }> = [
   { key: "volatilityComponent", label: "Volatility component" },
   { key: "mtfAlignment", label: "MTF alignment" },
   { key: "atrPct", label: "ATR percent" },
+  { key: "regimeAgeBars", label: "Regime age (bars)" },
 ];
 
 type SignalCalibrationFeature = {
@@ -277,11 +296,19 @@ const SIGNAL_OBSERVATION_FEATURES: SignalCalibrationFeature[] = [
 
 const SOT_OUTCOME_SCORE_MAX = 69.9;
 const SOT_BALANCED_SCORE_MAX = 74.9;
+const SOT_REVERSION_V3_SCORE_MAX = 74.9;
+const EXPECTED_MOVE_SCORE_MAX = 99;
 const SCORE_MODEL_RECOMMENDATION_MIN_OBSERVATIONS = 30;
 const SCORE_MODEL_RECOMMENDATION_MIN_TOP_BUCKET_SIGNALS = 5;
 const SCORE_MODEL_RECOMMENDATION_MIN_BASELINE_SIGNALS = 10;
 const SCORE_MODEL_RECOMMENDATION_MIN_POPULATED_BUCKETS = 2;
 const SCORE_MODEL_RECOMMENDATION_MIN_ALIGNMENT_SCORE = 0;
+// The qualified "top band" used to rank/recommend models is the highest-scored
+// signals accumulated until they reach this FRACTION of graded observations. A
+// fraction (not a tiny fixed count) keeps the top-band expectancy statistically
+// robust: the prior fixed-5 floor let a ~60-signal sliver of a 7,000-signal set
+// dictate the recommendation, which selected the wrong model out-of-sample.
+const SCORE_MODEL_RECOMMENDATION_TOP_BAND_FRACTION = 0.2;
 
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -414,6 +441,136 @@ function scoreFromBalancedSotFeatures(
   return roundTo(clampNumber(rawScore, 20, SOT_BALANCED_SCORE_MAX), 1);
 }
 
+// expected-move-v1: calibrated 2026-07 on 5m/15m/1h dumps. Direction proved
+// unpredictable at the 26-bar horizon (all directional features sign-flip
+// across timeframes/directions) while move magnitude is robustly predictable
+// (atrPct rho +0.30..+0.44, volumeRatio20 stable + in all 6 TF-direction
+// cells); this model ranks EXPECTED MOVE with a mild reversion tilt (rp20 the
+// only stable asymmetry feature, 5/6 cells). Scale-free terms (log-vol, log
+// volume ratio, ATR-unit momentum) keep one formula valid on every timeframe.
+// Shared by expected-move-v1 and expected-move-v2: the raw (pre-clamp,
+// pre-round) expected-move score. v2 adds the conviction bonus stack to this
+// same raw value before clamping/rounding once (see scoreFromExpectedMoveV2Features).
+function expectedMoveRawScore(
+  features: Record<string, number> | null,
+): number | null {
+  const rangePosition20 = finiteNumber(features?.rangePosition20);
+  const atrPct = finiteNumber(features?.atrPct);
+  const volumeRatio20 = finiteNumber(features?.volumeRatio20);
+  if (rangePosition20 == null || atrPct == null || volumeRatio20 == null) {
+    return null;
+  }
+  const featureValues = features ?? {};
+  const atr = Math.max(atrPct, 0.02);
+  const vr = Math.max(volumeRatio20, 0.25);
+  // Tail caps at 2.2/4 (not 3.5/7): the extreme-vol tail is adversely
+  // selected on realized return (halted/gapping names) -- beyond ~4.6x median
+  // volatility, more vol must not buy more score.
+  const volatilityRegime = 5.0 * clampNumber(Math.log2(atr / 0.6), -2, 2.2);
+  const volumeParticipation = 3.0 * clampNumber(Math.log2(vr), -2, 4);
+  const momentum =
+    0.6 *
+      clampNumber(
+        featureNumber(featureValues, "riskAdjustedMomentum"),
+        -8,
+        8,
+      ) +
+    0.5 *
+      clampNumber(
+        featureNumber(featureValues, "shortMomentumPct") / atr,
+        -8,
+        8,
+      );
+  const reversionTilt = 4.0 * (0.5 - clampNumber(rangePosition20, 0, 1));
+  return 42 + volatilityRegime + volumeParticipation + momentum + reversionTilt;
+}
+
+function scoreFromExpectedMoveFeatures(
+  features: Record<string, number> | null,
+): number | null {
+  const rawScore = expectedMoveRawScore(features);
+  if (rawScore == null) {
+    return null;
+  }
+  return roundTo(clampNumber(rawScore, 5, EXPECTED_MOVE_SCORE_MAX), 1);
+}
+
+// expected-move-v2 conviction bonus stack: conditions mined from 15.6k
+// observations with a temporal 70/30 split; survivors (train lift >=1.5x AND
+// test >=1.25x in >=4/6 TF-direction cells): volume spike >=10x, spike+fresh
+// regime flip (<=3 bars), spike+>=3-ATR thrust. Held-out 90+ band P(top-decile
+// MFE) = 0.38-0.41 (2.4-3.5x base) at 1.9-9.3% population. regimeAgeBars is
+// optional -- absent/null just means the "fresh" condition is false.
+function expectedMoveConvictionBonus(
+  features: Record<string, number> | null,
+): number {
+  const featureValues = features ?? {};
+  const atrPct = finiteNumber(featureValues.atrPct) ?? 0.02;
+  const atr = Math.max(atrPct, 0.02);
+  const volumeRatio20 = finiteNumber(featureValues.volumeRatio20) ?? 0;
+  const regimeAgeBars = finiteNumber(featureValues.regimeAgeBars);
+  const shortMomentumPct = featureNumber(featureValues, "shortMomentumPct");
+  const volumeSpike = volumeRatio20 >= 10;
+  const freshRegime = regimeAgeBars != null && regimeAgeBars <= 3;
+  const thrust = shortMomentumPct / atr >= 3;
+  return (
+    (volumeSpike ? 4 : 0) +
+    (volumeSpike && freshRegime ? 9 : 0) +
+    (volumeSpike && thrust ? 9 : 0) +
+    (volumeSpike && freshRegime && thrust ? 8 : 0)
+  );
+}
+
+function scoreFromExpectedMoveV2Features(
+  features: Record<string, number> | null,
+): number | null {
+  const rawScore = expectedMoveRawScore(features);
+  if (rawScore == null) {
+    return null;
+  }
+  const conviction = expectedMoveConvictionBonus(features);
+  return roundTo(
+    clampNumber(rawScore + conviction, 5, EXPECTED_MOVE_SCORE_MAX),
+    1,
+  );
+}
+
+// reversion-sot-v3: the calibrated (2026-07 window) reversion model. Data-driven
+// over the ROBUST features only -- oversold range position (dominant) plus calm
+// ATR, low ADX (trend exhaustion), and low volume expansion. Momentum terms were
+// deliberately dropped: their weights flipped sign between cross-validation folds
+// (overfit). Validated on clean held-out data to rank the tradeable top band
+// materially better than balanced-sot-v2 (top-decile realized directional move
+// ~+0.16% vs ~+0.10%). The intercept/gain below are an affine rescale
+// (27.8915 + 0.6547 * raw) that matches this model's display distribution to
+// balanced-sot-v2's (mean ~39, std ~6.2) so the shared 40/60/75 signal-options
+// entry-quality tier cutoffs keep their meaning. Re-derive the rescale if the
+// feature distribution shifts materially.
+function scoreFromReversionSotFeatures(
+  features: Record<string, number> | null,
+): number | null {
+  const rangePosition20 = finiteNumber(features?.rangePosition20);
+  if (rangePosition20 == null) {
+    return null;
+  }
+  const featureValues = features ?? {};
+  const rawScore =
+    50 +
+    (0.5 - clampNumber(rangePosition20, 0, 1)) * 40 +
+    -clampNumber(
+      (featureNumber(featureValues, "atrPct") - 0.2) / 0.2,
+      -1,
+      2,
+    ) * 6 +
+    -clampNumber(featureNumber(featureValues, "adxComponent"), -1, 2.5) * 6 +
+    -clampNumber(featureNumber(featureValues, "volumeExpansion"), -1, 2) * 6;
+  const displayScore = 27.8915 + 0.6547 * rawScore;
+  return roundTo(
+    clampNumber(displayScore, 20, SOT_REVERSION_V3_SCORE_MAX),
+    1,
+  );
+}
+
 function scoreFromEvidenceWeightedFeatures(
   features: Record<string, number> | null,
 ): number | null {
@@ -475,7 +632,16 @@ function scoreSignalWithModel(
   if (modelKey === "trend-confirmation-v2") {
     return scoreFromTrendConfirmationFeatures(features);
   }
-  return scoreFromBalancedSotFeatures(features);
+  if (modelKey === "reversion-sot-v3") {
+    return scoreFromReversionSotFeatures(features);
+  }
+  if (modelKey === "balanced-sot-v2") {
+    return scoreFromBalancedSotFeatures(features);
+  }
+  if (modelKey === "expected-move-v1") {
+    return scoreFromExpectedMoveFeatures(features);
+  }
+  return scoreFromExpectedMoveV2Features(features);
 }
 
 function aggregateObservations(
@@ -665,6 +831,9 @@ const DEFAULT_SCORE_MODEL_COMPARISON_KEYS: SignalScoreModelKey[] = [
   "sot-outcome-v1",
   "evidence-weighted-v2",
   "balanced-sot-v2",
+  "reversion-sot-v3",
+  "expected-move-v1",
+  "expected-move-v2",
   "trend-confirmation-v2",
   "observed-score",
 ];
@@ -843,6 +1012,12 @@ function buildScoreModelRecommendationSupport(
   };
 }
 
+// Qualified-lift gaps below this are sample noise on a ~7k-observation window
+// (observed: the h26 top-two flipped run-to-run on a 0.003pp gap). Within the
+// margin, the recommendation falls through to full-bucket alignment so a
+// statistically-tied but better-ordered model wins stably.
+const SCORE_MODEL_RECOMMENDATION_LIFT_MARGIN_PERCENT = 0.05;
+
 function sortScoreModelCandidates(
   left: SignalScoreModelComparison,
   right: SignalScoreModelComparison,
@@ -850,6 +1025,14 @@ function sortScoreModelCandidates(
   const scoreDelta =
     right.recommendationSupport.observed.qualifiedAlignmentScore -
     left.recommendationSupport.observed.qualifiedAlignmentScore;
+  if (Math.abs(scoreDelta) > SCORE_MODEL_RECOMMENDATION_LIFT_MARGIN_PERCENT) {
+    return scoreDelta;
+  }
+  const alignmentDelta =
+    right.alignment.alignmentScore - left.alignment.alignmentScore;
+  if (alignmentDelta !== 0) {
+    return alignmentDelta;
+  }
   if (scoreDelta !== 0) {
     return scoreDelta;
   }
@@ -914,6 +1097,18 @@ export function compareSignalScoreModels(
   options: SignalScoreModelComparisonOptions = {},
 ): SignalScoreModelComparisonResult {
   const recommendationOptions = normalizeScoreModelComparisonOptions(options);
+  // Robust top band: unless the caller pinned an explicit minTopBucketSignalCount,
+  // scale it to a fraction of the graded population so the qualified-top-band lift
+  // that ranks/recommends models is measured over a statistically-stable band
+  // rather than a tiny top-score sliver (which is dominated by noise out-of-sample).
+  if (options.minTopBucketSignalCount == null) {
+    recommendationOptions.minTopBucketSignalCount = Math.max(
+      recommendationOptions.minTopBucketSignalCount,
+      Math.round(
+        observations.length * SCORE_MODEL_RECOMMENDATION_TOP_BAND_FRACTION,
+      ),
+    );
+  }
   const models = modelKeys.map((modelKey) => {
     const scoredObservations: SignalObservation[] = observations.map(
       (observation) => ({
@@ -1167,11 +1362,14 @@ export type ComputeSignalQualityKpisInput = {
   sourceStrategy?: string;
   sourceProfile?: string;
   sourceTimeframe?: string;
+  // Optional tap on the raw realized observations (score-model calibration /
+  // audit tooling). This module stays side-effect free: the caller owns any IO.
+  onObservations?: (observations: SignalObservation[]) => void;
 };
 
-export function computeSignalQualityKpis(
+export function collectSignalQualityObservations(
   input: ComputeSignalQualityKpisInput,
-): SignalQualityKpiResult {
+): { observations: SignalObservation[]; mtfFilteredOutCount: number } {
   const horizonBars = Math.max(1, Math.round(input.horizonBars));
   const sourceStrategy = input.sourceStrategy ?? "signal-quality-kpi";
   const sourceProfile = input.sourceProfile ?? "preview";
@@ -1204,6 +1402,10 @@ export function computeSignalQualityKpis(
     // must cover the full scored/displayed population, not just the traded subset.
     const forwardSignals: SignalForwardReturnSignal[] = [];
     const featuresBySignalId = new Map<string, Record<string, number>>();
+    const auditBySignalId = new Map<
+      string,
+      NonNullable<SignalObservation["audit"]>
+    >();
     for (const event of evaluation.signalEvents) {
       const directionSign = event.direction === "long" ? 1 : -1;
       const mtfDirections = mtfDirectionsAtBar(
@@ -1222,6 +1424,33 @@ export function computeSignalQualityKpis(
       if (directionalFeatures) {
         featuresBySignalId.set(event.id, directionalFeatures);
       }
+      // Audit enrichment for the observation dump: signal-bar context already
+      // computed above plus regime age / raw indicator values at the bar.
+      const regimeAtSignal = evaluation.regimeDirection[event.barIndex];
+      let regimeAgeBars: number | null = null;
+      if (regimeAtSignal === 1 || regimeAtSignal === -1) {
+        regimeAgeBars = 1;
+        for (
+          let back = event.barIndex - 1;
+          back >= 0 && evaluation.regimeDirection[back] === regimeAtSignal;
+          back -= 1
+        ) {
+          regimeAgeBars += 1;
+        }
+      }
+      const adxRaw = evaluation.adx[event.barIndex];
+      const volatilityScoreRaw = evaluation.volatilityScore[event.barIndex];
+      auditBySignalId.set(event.id, {
+        signalAt: new Date(event.time * 1000).toISOString(),
+        barIndex: event.barIndex,
+        mtfTimeframes: [...input.mtf.timeframes],
+        mtfDirections,
+        regimeAgeBars,
+        adxRaw: Number.isFinite(adxRaw) ? adxRaw : null,
+        volatilityScoreRaw: Number.isFinite(volatilityScoreRaw)
+          ? volatilityScoreRaw
+          : null,
+      });
       forwardSignals.push({
         signalId: event.id,
         signalAt: new Date(event.time * 1000),
@@ -1251,9 +1480,20 @@ export function computeSignalQualityKpis(
       horizonBars,
       observations,
       featuresBySignalId,
+      auditBySignalId,
     );
   }
 
+  return { observations, mtfFilteredOutCount };
+}
+
+export function computeSignalQualityKpis(
+  input: ComputeSignalQualityKpisInput,
+): SignalQualityKpiResult {
+  const horizonBars = Math.max(1, Math.round(input.horizonBars));
+  const { observations, mtfFilteredOutCount } =
+    collectSignalQualityObservations(input);
+  input.onObservations?.(observations);
   return buildKpiResult(observations, horizonBars, mtfFilteredOutCount);
 }
 
@@ -1265,6 +1505,7 @@ function collectForwardObservations(
   horizonBars: number,
   observations: SignalObservation[],
   featuresBySignalId = new Map<string, Record<string, number>>(),
+  auditBySignalId?: Map<string, NonNullable<SignalObservation["audit"]>>,
 ): void {
   for (const row of dataset.rows) {
     const window = row.windows.find((item) => item.horizonBars === horizonBars);
@@ -1285,6 +1526,7 @@ function collectForwardObservations(
       realizedReturnPercent: window.realizedReturnPercent,
       mfePercent: window.maxFavorableExcursionPercent,
       maePercent: window.maxAdverseExcursionPercent,
+      audit: auditBySignalId?.get(row.signalId) ?? null,
     });
   }
 }
@@ -1446,6 +1688,7 @@ export function computeSignalQualityKpisFromPersistedSignals(
 // load-bearing pieces and are asserted directly against hand-computed fixtures.
 export const __signalQualityKpisInternalsForTests = {
   aggregateObservations,
+  sortScoreModelCandidates,
   buildKpiResult,
   passesMtfGate,
   populationStdDev,

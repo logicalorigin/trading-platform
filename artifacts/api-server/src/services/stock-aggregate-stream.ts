@@ -1,10 +1,6 @@
-import {
-  getProviderConfiguration,
-  isMassiveStocksRealtimeConfigured,
-} from "../lib/runtime";
+import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
-import { subscribeBridgeQuoteSnapshots } from "./bridge-quote-stream";
 import {
   getCurrentMassiveStockMinuteAggregates,
   getMassiveDelayedWebSocketDiagnostics,
@@ -56,9 +52,6 @@ export type StockMinuteAggregateSubscription = {
   setSymbols(symbols: string[]): void;
   unsubscribe(): void;
 };
-type BridgeQuoteSnapshotPayload = Parameters<
-  Parameters<typeof subscribeBridgeQuoteSnapshots>[1]
->[0];
 type MassiveQuoteSnapshotPayload = Parameters<
   Parameters<typeof subscribeMassiveStockQuoteSnapshots>[1]
 >[0];
@@ -120,7 +113,6 @@ const AGGREGATE_STALE_HEARTBEAT_MS = 5_000;
 const AGGREGATE_HISTORY_RETENTION_MS = 4 * 60 * 60_000;
 
 let nextSubscriberId = 1;
-let quoteUnsubscribe: (() => void) | null = null;
 let massiveUnsubscribe: (() => void) | null = null;
 let massiveQuoteUnsubscribe: (() => void) | null = null;
 let quoteSubscriptionSignature = "";
@@ -462,7 +454,7 @@ function updateAccumulator(input: {
       volume: Math.max(0, nextVolumeIncrement),
       accumulatedVolume: input.dayVolume,
       lastObservedDayVolume: input.dayVolume,
-      source: input.source ?? "ibkr-websocket-derived",
+      source: input.source ?? "massive-websocket",
       latency: input.latency,
     };
     accumulators.set(input.symbol, nextAccumulator);
@@ -489,30 +481,6 @@ function updateAccumulator(input: {
     toAggregateMessage(input.symbol, nextAccumulator),
     input.observedAt,
   );
-}
-
-function handleQuoteSnapshot(
-  payload: BridgeQuoteSnapshotPayload,
-  observedAt = Date.now(),
-) {
-
-  payload.quotes.forEach((quote) => {
-    const symbol = normalizeSymbol(quote.symbol);
-    recordQuoteEvent(symbol, observedAt);
-    const price = quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
-    if (!price || !Number.isFinite(price)) {
-      return;
-    }
-
-    updateAccumulator({
-      symbol,
-      price,
-      dayVolume: quote.volume ?? null,
-      observedAt,
-      source: "ibkr-websocket-derived",
-      latency: quote.latency,
-    });
-  });
 }
 
 function handleMassiveQuoteSnapshot(
@@ -562,7 +530,7 @@ function clearHeartbeatTimer() {
 
 function emitAggregateHeartbeats(now = Date.now()): void {
   const provider = getPreferredStockAggregateStreamSource();
-  if (provider !== "ibkr-websocket-derived" && provider !== "massive-websocket") {
+  if (provider !== "massive-websocket") {
     return;
   }
   getDesiredSymbols().forEach((symbol) => {
@@ -607,8 +575,6 @@ function refreshQuoteSubscription() {
     return;
   }
 
-  quoteUnsubscribe?.();
-  quoteUnsubscribe = null;
   massiveUnsubscribe?.();
   massiveUnsubscribe = null;
   massiveQuoteUnsubscribe?.();
@@ -640,8 +606,7 @@ function refreshQuoteSubscription() {
     return;
   }
 
-  ensureHeartbeatTimer();
-  quoteUnsubscribe = subscribeBridgeQuoteSnapshots(symbols, handleQuoteSnapshot);
+  clearHeartbeatTimer();
 }
 
 function scheduleRefreshQuoteSubscription(
@@ -663,18 +628,15 @@ export function getPreferredStockAggregateStreamSource():
   | StockMinuteAggregateSource
   | "none" {
   return resolvePreferredStockAggregateStreamSource({
-    ibkrConfigured: getProviderConfiguration().ibkr,
     massiveDelayedConfigured: isMassiveDelayedWebSocketConfigured(),
     massiveRealtimeConfigured: isMassiveStocksRealtimeConfigured(),
   });
 }
 
 export function resolvePreferredStockAggregateStreamSource({
-  ibkrConfigured,
   massiveDelayedConfigured,
   massiveRealtimeConfigured = false,
 }: {
-  ibkrConfigured: boolean;
   massiveDelayedConfigured: boolean;
   massiveRealtimeConfigured?: boolean;
 }): StockMinuteAggregateSource | "none" {
@@ -684,10 +646,13 @@ export function resolvePreferredStockAggregateStreamSource({
   if (massiveDelayedConfigured) {
     return "massive-delayed-websocket";
   }
-  if (ibkrConfigured) {
-    return "ibkr-websocket-derived";
-  }
   return "none";
+}
+
+export function getActiveStockAggregateStreamSource():
+  | StockMinuteAggregateSource
+  | "none" {
+  return activeStreamSource;
 }
 
 export function getStockAggregateStreamDiagnostics() {
@@ -715,7 +680,7 @@ export function getStockAggregateStreamDiagnostics() {
     lastAggregateAt: lastAggregateAt?.toISOString() ?? null,
     lastAggregateAgeMs,
     lastGapAt: lastAggregateGapAt?.toISOString() ?? null,
-    quoteSubscriptionActive: Boolean(quoteUnsubscribe ?? massiveUnsubscribe),
+    quoteSubscriptionActive: Boolean(massiveUnsubscribe ?? massiveQuoteUnsubscribe),
     quoteSubscriptionSignature,
     perSymbol: desiredSymbols.map((symbol) => {
       const stats = aggregateStatsBySymbol.get(symbol);
@@ -831,7 +796,6 @@ export function subscribeMutableStockMinuteAggregates(
 }
 
 export const __stockAggregateStreamTestInternals = {
-  handleQuoteSnapshot,
   handleMassiveQuoteSnapshot,
   emitAggregateHeartbeats,
   flushAggregateFanout,
@@ -856,7 +820,6 @@ export const __stockAggregateStreamTestInternals = {
     }
     clearHeartbeatTimer();
     nextSubscriberId = 1;
-    quoteUnsubscribe = null;
     massiveUnsubscribe = null;
     massiveQuoteUnsubscribe = null;
     quoteSubscriptionSignature = "";

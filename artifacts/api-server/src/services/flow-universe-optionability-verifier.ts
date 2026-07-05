@@ -203,9 +203,14 @@ function baseCandidateFilters(input: {
   >;
   return [
     eq(universeCatalogListingsTable.active, true),
-    eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
+    // The expiration probe is Massive-backed and keyed by symbol, so candidacy
+    // must not require IBKR contract hydration: with the IBKR bridge offline the
+    // hydration gate strands the catalog at 'pending' and optionability never
+    // converges (which in turn caps the signal-monitor expansion universe).
+    // Flow lane admission applies its own hydrated+conid filters
+    // (flow-universe.ts, flow-universe-planner.ts), so relaxing the sweep here
+    // cannot admit unhydrated symbols into IBKR-line work.
     inArray(universeCatalogListingsTable.market, markets),
-    sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
     sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
     input.force ? undefined : optionabilityResolvedFilter(),
   ].filter(Boolean);
@@ -359,7 +364,7 @@ export async function markFlowUniverseOptionability(
     .values({
       symbol,
       market: input.market,
-      source: "ibkr",
+      source: "massive",
       eligible: input.status === "verified",
       reason: input.reason,
       metadata: optionability,
@@ -370,7 +375,7 @@ export async function markFlowUniverseOptionability(
       set: {
         eligible: input.status === "verified",
         reason: input.reason,
-        source: "ibkr",
+        source: "massive",
         metadata: sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(optionability)}::jsonb`,
         updatedAt: input.verifiedAt,
       },

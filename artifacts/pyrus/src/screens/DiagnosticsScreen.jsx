@@ -11,6 +11,7 @@ import {
   listDiagnosticEvents,
   listDiagnosticHistory,
   recordClientDiagnosticEvent,
+  useListBrokerConnections,
 } from "@workspace/api-client-react";
 import {
   useChartHydrationStats,
@@ -89,7 +90,7 @@ import { isPyrusSafeQaMode } from "../app/qa-mode";
 
 const TABS = [
   "Overview",
-  "IBKR",
+  "Broker",
   "Market Data",
   "API",
   "Browser",
@@ -258,6 +259,12 @@ const providerStatusTone = (value) => {
   return CSS_COLOR.textSec;
 };
 
+const SNAPTRADE_BROKER_LABELS = Object.freeze({
+  ETRADE: "E*TRADE",
+  "INTERACTIVE-BROKERS-FLEX": "Interactive Brokers",
+  "ALPACA-PAPER": "Alpaca Paper",
+});
+
 const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -269,6 +276,50 @@ const formatList = (values) => {
     .filter(Boolean);
   return list.length ? list.join(", ") : MISSING_VALUE;
 };
+
+const brokerConnectionTone = (status) => {
+  const value = String(status || "").toLowerCase();
+  if (value === "connected") return CSS_COLOR.green;
+  if (value === "configured") return CSS_COLOR.amber;
+  if (value === "error") return CSS_COLOR.red;
+  if (value === "disconnected") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
+};
+
+const brokerConnectionSeverity = (connections, fallbackSeverity) => {
+  if (!connections.length) return fallbackSeverity;
+  if (connections.some((connection) => connection.status === "error")) return "error";
+  if (connections.some((connection) => connection.status === "configured")) return "warning";
+  if (connections.some((connection) => connection.status === "connected")) return "success";
+  return fallbackSeverity;
+};
+
+const brokerLabelFromSlug = (slug) => {
+  const value = String(slug || "").trim().toUpperCase();
+  if (!value) return "";
+  if (SNAPTRADE_BROKER_LABELS[value]) return SNAPTRADE_BROKER_LABELS[value];
+  return value
+    .toLowerCase()
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const brokerConnectionLabel = (connection) =>
+  brokerLabelFromSlug(connection?.brokerageSlug) ||
+  String(connection?.displayName || connection?.name || connection?.id || "Broker");
+
+const snapTradeBrokerConnections = (connections) =>
+  arrayOrEmpty(connections)
+    .map((connection) => safeRecord(connection))
+    .filter(
+      (connection) =>
+        connection.provider === "snaptrade" && connection.status !== "disconnected",
+    )
+    .sort((a, b) =>
+      brokerConnectionLabel(a).localeCompare(brokerConnectionLabel(b)),
+    );
 
 const formatMassiveRequestSummary = (request) => {
   const record = safeRecord(request);
@@ -642,7 +693,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
 
   return (
     <Panel
-      title="IBKR / TWS"
+      title="Legacy Broker Runtime"
       action={
         <span
           className={
@@ -694,6 +745,64 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
   );
 }
 
+function BrokerConnectionsPanel({
+  connections = [],
+  isError = false,
+  isLoading = false,
+}) {
+  const rows = snapTradeBrokerConnections(connections);
+  const actionTone = isError
+    ? CSS_COLOR.red
+    : isLoading
+      ? CSS_COLOR.textDim
+      : rows.length
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber;
+  return (
+    <Panel
+      title="SnapTrade Brokers"
+      action={
+        <span
+          style={{
+            color: actionTone,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
+          }}
+        >
+          {isError ? "Unavailable" : isLoading ? "Checking" : `${formatCount(rows.length)} active`}
+        </span>
+      }
+    >
+      {rows.length ? (
+        rows.map((connection) => {
+          const capabilities = arrayOrEmpty(connection.capabilities);
+          return (
+            <StateRow
+              key={connection.id || connection.brokerageSlug || connection.name}
+              label={brokerConnectionLabel(connection)}
+              value={[
+                connection.status || MISSING_VALUE,
+                connection.mode,
+                capabilities.includes("execution-ready") ? "execution-ready" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              tone={brokerConnectionTone(connection.status)}
+            />
+          );
+        })
+      ) : (
+        <StateRow
+          label="SnapTrade brokers"
+          value={isLoading ? "checking" : isError ? "unavailable" : "none connected"}
+          tone={isError ? CSS_COLOR.red : CSS_COLOR.amber}
+        />
+      )}
+    </Panel>
+  );
+}
+
 export default function DiagnosticsScreen({
   isVisible = false,
   onReadinessChange,
@@ -706,7 +815,7 @@ export default function DiagnosticsScreen({
   const [activeTab, setActiveTab] = useState("Overview");
   const diagnosticsVisible = Boolean(isVisible);
   const overviewTabActive = diagnosticsVisible && activeTab === "Overview";
-  const ibkrTabActive = diagnosticsVisible && activeTab === "IBKR";
+  const brokerTabActive = diagnosticsVisible && activeTab === "Broker";
   const marketDataTabActive = diagnosticsVisible && activeTab === "Market Data";
   const apiTabActive = diagnosticsVisible && activeTab === "API";
   const browserTabActive = diagnosticsVisible && activeTab === "Browser";
@@ -718,7 +827,7 @@ export default function DiagnosticsScreen({
     overviewTabActive || marketDataTabActive;
   const chartDiagnosticsActive =
     overviewTabActive || marketDataTabActive || browserTabActive;
-  const ibkrDiagnosticsActive = overviewTabActive || ibkrTabActive;
+  const ibkrDiagnosticsActive = overviewTabActive || brokerTabActive;
   const workloadDiagnosticsActive =
     overviewTabActive || apiTabActive || browserTabActive;
   const memoryDiagnosticsActive =
@@ -727,7 +836,7 @@ export default function DiagnosticsScreen({
     overviewTabActive || marketDataTabActive;
   const runtimeDiagnosticsActive =
     overviewTabActive ||
-    ibkrTabActive ||
+    brokerTabActive ||
     marketDataTabActive ||
     apiTabActive ||
     browserTabActive ||
@@ -745,6 +854,13 @@ export default function DiagnosticsScreen({
   const hydrationCoordinatorStats = useHydrationCoordinatorStats(
     hydrationCoordinatorDiagnosticsActive,
   );
+  const brokerConnectionsQuery = useListBrokerConnections({
+    query: {
+      enabled: overviewTabActive || brokerTabActive,
+      retry: false,
+      staleTime: 30_000,
+    },
+  });
   const [windowMinutes, setWindowMinutes] = useState(60);
   const [latest, setLatest] = useState(null);
   const [historyData, setHistoryData] = useState({ points: [], snapshots: [] });
@@ -1016,6 +1132,23 @@ export default function DiagnosticsScreen({
   const orderSnapshot = snapshotBySubsystem(latest, "orders");
   const apiMetrics = safeRecord(apiSnapshot?.metrics);
   const ibkrMetrics = safeRecord(ibkrSnapshot?.metrics);
+  const brokerConnections = brokerConnectionsQuery.data?.connections || [];
+  const brokerRows = snapTradeBrokerConnections(brokerConnections);
+  const connectedBrokerCount = brokerRows.filter(
+    (connection) => connection.status === "connected",
+  ).length;
+  const brokerOverviewValue = brokerRows.length
+    ? `${formatCount(connectedBrokerCount)}/${formatCount(brokerRows.length)}`
+    : formatMs(ibkrMetrics.heartbeatAgeMs);
+  const brokerOverviewSub = brokerRows.length
+    ? "SnapTrade brokers connected"
+    : ibkrMetrics.connected
+      ? "connected"
+      : "disconnected";
+  const brokerOverviewSeverity = brokerConnectionSeverity(
+    brokerRows,
+    ibkrSnapshot?.severity,
+  );
   const marketDataMetrics = safeRecord(marketDataSnapshot?.metrics);
   const marketDataRaw = safeRecord(marketDataSnapshot?.raw);
   const massiveDiagnostics = safeRecord(marketDataRaw.massive);
@@ -1027,6 +1160,17 @@ export default function DiagnosticsScreen({
     latest?.marketDataWorkPlan || marketDataRaw.marketDataWorkPlan,
   );
   const marketDataWorkPlanSummary = safeRecord(marketDataWorkPlan.summary);
+  const hasMassiveOptionSummary =
+    marketDataWorkPlanSummary.massiveOptionLineCount != null ||
+    marketDataWorkPlanSummary.massiveOptionSymbolCount != null;
+  const plannerMassiveOptionLineCount = hasMassiveOptionSummary
+    ? marketDataWorkPlanSummary.massiveOptionLineCount
+    : marketDataWorkPlanSummary.ibkrOptionLineCount;
+  const plannerMassiveOptionSymbolCount = hasMassiveOptionSummary
+    ? marketDataWorkPlanSummary.massiveOptionSymbolCount
+    : marketDataWorkPlanSummary.ibkrOptionSymbolCount;
+  const plannerIbkrOptionLineCount = marketDataWorkPlanSummary.ibkrOptionLineCount ?? 0;
+  const plannerIbkrOptionSymbolCount = marketDataWorkPlanSummary.ibkrOptionSymbolCount ?? 0;
   const persistClaimableQueuedJobCount =
     marketDataWorkPlanSummary.persistClaimableQueuedJobCount ?? 0;
   const persistWorkerInactive = Boolean(
@@ -1067,9 +1211,6 @@ export default function DiagnosticsScreen({
     memoryPressure: memoryPressureState,
   });
   const runtimeLineUsage = runtimeControl.lineUsage;
-  const governorRows = Object.entries(runtimeControl.bridgeGovernor || {}).filter(
-    ([, lane]) => lane && typeof lane === "object",
-  );
   const quoteCoverage =
     Number.isFinite(state.requestedQuotes) && state.requestedQuotes > 0
       ? `${state.returnedQuotes ?? state.acceptedQuotes ?? 0}/${state.requestedQuotes}`
@@ -1172,6 +1313,7 @@ export default function DiagnosticsScreen({
             latest,
             streamState,
             runtimeControl,
+            brokerConnections: brokerConnectionsQuery.data?.connections,
             footerSignal,
             memoryPressureState,
             gexClientState,
@@ -1183,6 +1325,7 @@ export default function DiagnosticsScreen({
       latest,
       streamState,
       runtimeControl,
+      brokerConnectionsQuery.data,
       footerSignal,
       memoryPressureState,
       gexClientState,
@@ -1362,9 +1505,38 @@ export default function DiagnosticsScreen({
           marginBottom: sp(diagnosticsIsPhone ? 8 : 0),
         }}
       >
-        <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
-          {statusLabel(latest?.status)}
-        </span>
+        {latest?.status === "degraded" || latest?.status === "down" ? (
+          (() => {
+            const bandTone =
+              latest?.status === "down" ? CSS_COLOR.red : providerStatusTone("degraded");
+            return (
+              <div
+                style={{
+                  flex: "1 1 100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(8),
+                  padding: sp("6px 10px"),
+                  borderRadius: dim(RADII.sm),
+                  border: `1px solid ${cssColorAlpha(bandTone, "40")}`,
+                  background: cssColorAlpha(bandTone, "14"),
+                  color: CSS_COLOR.text,
+                  fontFamily: T.sans,
+                  fontSize: fs(11),
+                  fontWeight: FONT_WEIGHTS.medium,
+                }}
+              >
+                <span style={{ color: bandTone, fontWeight: FONT_WEIGHTS.medium }}>
+                  {statusLabel(latest?.status)}
+                </span>
+              </div>
+            );
+          })()
+        ) : (
+          <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
+            {statusLabel(latest?.status)}
+          </span>
+        )}
         <span role="status" aria-live="polite" style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
         </span>
@@ -1440,7 +1612,7 @@ export default function DiagnosticsScreen({
           {activeAlertsPanel}
           <div className="ra-hide-scrollbar" style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", gap: sp(8), margin: sp("10px 0"), minWidth: 0 }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(apiSnapshot)} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
-            <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(ibkrSnapshot)} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
+            <MetricCard label="Broker health" value={brokerOverviewValue} sub={brokerOverviewSub} severity={brokerOverviewSeverity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(ibkrSnapshot)} onClick={() => setActiveTab("Broker")} />
             <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} failurePoint={buildFailurePointFromDiagnosticsSnapshot(marketDataSnapshot)} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
             <MetricCard label="Chart hydration" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} sub={`${formatCount(chartHydrationMetrics.activeScopeCount ?? chartStats.activeScopeCount ?? chartStats.scopes.length)} scopes / ${formatCount(chartHydrationMetrics.cursorFallbackCount ?? 0)} fallbacks`} severity={chartHydrationSeverity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(chartHydrationSnapshot)} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
             <MetricCard label="Browser events" value={formatCount(browserMetrics.warningCount5m ?? 0)} sub={`${formatCount(browserMetrics.eventCount5m ?? 0)} events / 5m`} severity={browserSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(browserSnapshot)} onClick={() => selectMetric("browser", "browser.events")} />
@@ -1453,7 +1625,7 @@ export default function DiagnosticsScreen({
             <Panel title="API Latency Trend">
               <Sparkline points={historyData.points || []} subsystem="api" metricKey="p95LatencyMs" />
             </Panel>
-            <Panel title="IBKR Heartbeat Trend">
+            <Panel title="Broker Heartbeat Trend">
               <Sparkline points={historyData.points || []} subsystem="ibkr" metricKey="heartbeatAgeMs" />
             </Panel>
             <Panel title="Recent Events">
@@ -1463,24 +1635,15 @@ export default function DiagnosticsScreen({
         </>
       )}
 
-      {activeTab === "IBKR" && (
+      {activeTab === "Broker" && (
         <div style={{ display: "grid", gap: sp(14) }}>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
+            <BrokerConnectionsPanel
+              connections={brokerConnections}
+              isError={brokerConnectionsQuery.isError}
+              isLoading={brokerConnectionsQuery.isLoading}
+            />
             <GatewayPanel latest={latest} latencyStats={latencyStats} onMetric={selectMetric} />
-            <Panel title="Bridge Governor">
-              {governorRows.length ? (
-                governorRows.map(([id, lane]) => (
-                  <StateRow
-                    key={id}
-                    label={id}
-                    value={`${formatCount(lane.active)} active / ${formatCount(lane.queued)} queued`}
-                    tone={lane.circuitOpen ? CSS_COLOR.amber : CSS_COLOR.textSec}
-                  />
-                ))
-              ) : (
-                <StateRow label="Governor" value={MISSING_VALUE} />
-              )}
-            </Panel>
             <Panel title="Account Realtime">
               <StateRow
                 label="Account stream"
@@ -1514,7 +1677,7 @@ export default function DiagnosticsScreen({
                 }
               />
             </Panel>
-            <Panel title="IBKR Raw Snapshot">
+            <Panel title="Legacy Broker Runtime Snapshot">
               <JsonBlock value={ibkrSnapshot} />
             </Panel>
           </div>
@@ -1538,7 +1701,7 @@ export default function DiagnosticsScreen({
             <StateRow label="Worst observed gap" value={formatMs(marketDataMetrics.rawMaxGapMs ?? marketDataMetrics.maxGapMs)} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
             <StateRow label="Last error" value={marketDataMetrics.lastError} tone={marketDataMetrics.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
-          <Panel title="Massive REST">
+          <Panel title="Massive HTTP">
             <StateRow
               label="Status"
               value={providerStatusLabel(massiveRest.status)}
@@ -1612,7 +1775,7 @@ export default function DiagnosticsScreen({
                       : row.id === "flow-scanner"
                         ? `${formatCount(row.used)} active · ${formatCount(row.effectiveCap ?? row.cap)} available`
                         : row.id === "total"
-                          ? `${formatCount(row.used)} of ${formatCount(row.cap)} active`
+                          ? `${formatCount(row.used)} of ${formatCount(row.cap)} IBKR-budgeted`
                           : formatCount(row.used)
                   }
                   tone={row.tone}
@@ -1629,9 +1792,15 @@ export default function DiagnosticsScreen({
               value={`${formatCount(marketDataWorkPlanSummary.ibkrEquityLineCount)} lines · ${formatCount(marketDataWorkPlanSummary.ibkrEquitySymbolCount)} symbols`}
             />
             <StateRow
-              label="IBKR options"
-              value={`${formatCount(marketDataWorkPlanSummary.ibkrOptionLineCount)} lines · ${formatCount(marketDataWorkPlanSummary.ibkrOptionSymbolCount)} symbols`}
+              label={hasMassiveOptionSummary ? "Massive options" : "Option demand"}
+              value={`${formatCount(plannerMassiveOptionLineCount)} lines · ${formatCount(plannerMassiveOptionSymbolCount)} symbols`}
             />
+            {hasMassiveOptionSummary && (plannerIbkrOptionLineCount > 0 || plannerIbkrOptionSymbolCount > 0) ? (
+              <StateRow
+                label="IBKR options"
+                value={`${formatCount(plannerIbkrOptionLineCount)} lines · ${formatCount(plannerIbkrOptionSymbolCount)} symbols`}
+              />
+            ) : null}
             <StateRow
               label="Persist queue"
               value={`${formatCount(marketDataWorkPlanSummary.persistQueuedJobCount)} queued · ${formatCount(marketDataWorkPlanSummary.persistRunningJobCount)} running`}

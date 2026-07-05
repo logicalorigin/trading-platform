@@ -1,28 +1,22 @@
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test, { afterEach } from "node:test";
 
 import {
-  closeIbkrProtocolLauncher,
-  navigateIbkrProtocolLauncher,
-  openIbkrProtocolLauncher,
-  shouldUseRemoteIbkrLaunchBrowser,
+  clearIbkrBridgeSessionValues,
+  IBKR_BRIDGE_SESSION_KEYS,
+  IBKR_RECONNECT_REQUEST_EVENT,
+  readIbkrBridgeSessionValue,
+  removeIbkrBridgeSessionValue,
+  requestIbkrReconnect,
+  writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession.js";
 
-const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
-  globalThis,
-  "navigator",
-);
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
   globalThis,
   "window",
 );
 
-after(() => {
-  if (originalNavigatorDescriptor) {
-    Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
-  } else {
-    delete globalThis.navigator;
-  }
+afterEach(() => {
   if (originalWindowDescriptor) {
     Object.defineProperty(globalThis, "window", originalWindowDescriptor);
   } else {
@@ -30,167 +24,63 @@ after(() => {
   }
 });
 
-function setNavigatorPlatform(platform) {
-  Object.defineProperty(globalThis, "navigator", {
-    configurable: true,
-    value: {
-      platform,
-      userAgent: platform.includes("Win") ? "Mozilla/5.0 Windows" : "Mozilla/5.0",
-      userAgentData: { platform },
+function createStorage() {
+  const values = new Map();
+  return {
+    getItem(key) {
+      return values.get(key) ?? null;
     },
-  });
+    removeItem(key) {
+      values.delete(key);
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    },
+  };
 }
 
 function installFakeWindow() {
-  const appended = [];
-  const timers = [];
-  const parent = {
-    appendChild(node) {
-      appended.push(node);
-      node.parentNode = parent;
-      return node;
-    },
-  };
-  const document = {
-    body: parent,
-    documentElement: parent,
-    createElement(tagName) {
-      return {
-        attributes: {},
-        removed: false,
-        src: "",
-        style: {},
-        tagName: String(tagName).toUpperCase(),
-        remove() {
-          this.removed = true;
-        },
-        setAttribute(name, value) {
-          this.attributes[name] = value;
-        },
-      };
-    },
-  };
+  const events = [];
+  const sessionStorage = createStorage();
+  const localStorage = createStorage();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      document,
-      location: {
-        assign() {
-          throw new Error("main page navigation should not be used");
-        },
+      CustomEvent: globalThis.CustomEvent,
+      Event: globalThis.Event,
+      dispatchEvent(event) {
+        events.push(event);
+        return true;
       },
-      setTimeout(callback, delay) {
-        timers.push({ callback, delay });
-        return timers.length;
-      },
+      localStorage,
+      sessionStorage,
     },
   });
-  return { appended, timers };
+  return { events, localStorage, sessionStorage };
 }
 
-test("Windows browsers use direct protocol when no desktop agent is online", () => {
-  setNavigatorPlatform("Win32");
+test("bridge session storage helpers write, read, remove, and clear stale local state", () => {
+  const { localStorage, sessionStorage } = installFakeWindow();
+  const key = IBKR_BRIDGE_SESSION_KEYS.activationId;
 
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentOnline: false,
-    }),
-    false,
-  );
+  writeIbkrBridgeSessionValue(key, "activation-1");
+  assert.equal(readIbkrBridgeSessionValue(key), "activation-1");
+
+  removeIbkrBridgeSessionValue(key);
+  assert.equal(readIbkrBridgeSessionValue(key), null);
+
+  sessionStorage.setItem(IBKR_BRIDGE_SESSION_KEYS.managementToken, "token-1");
+  localStorage.setItem(IBKR_BRIDGE_SESSION_KEYS.launchUrl, "retired-launch");
+  clearIbkrBridgeSessionValues();
+
+  assert.equal(sessionStorage.getItem(IBKR_BRIDGE_SESSION_KEYS.managementToken), null);
+  assert.equal(localStorage.getItem(IBKR_BRIDGE_SESSION_KEYS.launchUrl), null);
 });
 
-test("Windows browsers still use direct protocol when the paired desktop is stale", () => {
-  setNavigatorPlatform("Win32");
+test("requestIbkrReconnect emits the broker reconnect event without launcher dependencies", () => {
+  const { events } = installFakeWindow();
 
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentOnline: false,
-      desktopAgentRegistered: true,
-    }),
-    false,
-  );
-});
-
-test("Windows browsers use direct protocol even when the paired desktop agent is online", () => {
-  setNavigatorPlatform("Win32");
-
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentOnline: true,
-      desktopAgentRegistered: true,
-    }),
-    false,
-  );
-});
-
-test("Windows browsers use direct protocol when the paired desktop agent needs an update", () => {
-  setNavigatorPlatform("Win32");
-
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentCompatible: false,
-      desktopAgentOnline: true,
-      desktopAgentRegistered: true,
-      desktopAgentUpgradeRequired: true,
-    }),
-    false,
-  );
-});
-
-test("non-Windows browsers use direct protocol when no desktop agent is online", () => {
-  setNavigatorPlatform("MacIntel");
-
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentOnline: false,
-      desktopAgentRegistered: false,
-    }),
-    false,
-  );
-});
-
-test("non-Windows browsers queue remote launch when the paired desktop agent is online", () => {
-  setNavigatorPlatform("MacIntel");
-
-  assert.equal(
-    shouldUseRemoteIbkrLaunchBrowser({
-      desktopAgentCompatible: true,
-      desktopAgentOnline: true,
-      desktopAgentRegistered: true,
-      desktopAgentUpgradeRequired: false,
-    }),
-    true,
-  );
-});
-
-test("direct protocol launch uses an iframe so credential delivery can continue", () => {
-  const { appended, timers } = installFakeWindow();
-  const launcher = openIbkrProtocolLauncher();
-
-  assert.equal(appended.length, 1);
-  assert.equal(launcher.tagName, "IFRAME");
-  assert.equal(launcher.attributes["aria-hidden"], "true");
-
-  const launched = navigateIbkrProtocolLauncher(
-    launcher,
-    "pyrus-ibkr://launch?activationId=test",
-  );
-
-  assert.equal(launched, true);
-  assert.equal(launcher.src, "pyrus-ibkr://launch?activationId=test");
-  assert.equal(timers.length, 1);
-  assert.equal(timers[0].delay, 5_000);
-
-  timers[0].callback();
-  assert.equal(launcher.removed, true);
-});
-
-test("direct protocol launch rejects non-Pyrus URLs and cleans up the iframe", () => {
-  installFakeWindow();
-  const launcher = openIbkrProtocolLauncher();
-
-  assert.equal(navigateIbkrProtocolLauncher(launcher, "https://example.test"), false);
-  assert.equal(launcher.removed, true);
-
-  closeIbkrProtocolLauncher(launcher);
+  assert.equal(requestIbkrReconnect(), true);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, IBKR_RECONNECT_REQUEST_EVENT);
 });

@@ -1,6 +1,4 @@
-import {
-  useListExecutionEvents,
-} from "@workspace/api-client-react";
+import { useListExecutionEvents } from "@workspace/api-client-react";
 import {
   memo,
   Suspense,
@@ -28,7 +26,19 @@ import {
   Tv,
   WalletCards,
 } from "lucide-react";
-import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  dim,
+  ELEVATION,
+  FONT_WEIGHTS,
+  fs,
+  MISSING_VALUE,
+  RADII,
+  sp,
+  T,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppHeader } from "./AppHeader.jsx";
 import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
@@ -47,15 +57,17 @@ import {
   SCREEN_RENDER_POLICIES,
   preloadScreenModule,
 } from "./screenRegistry.jsx";
-import { useElementSize, useStableWidth, useViewport } from "../../lib/responsive";
+import {
+  useElementSize,
+  useStableWidth,
+  useViewport,
+} from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
 import { LoadingSpinner } from "../../components/platform/primitives";
 import { lazyWithRetry } from "../../lib/dynamicImport";
-import {
-  markScreenSwitchStart,
-} from "./performanceMetrics";
+import { markScreenSwitchStart } from "./performanceMetrics";
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "signals", "trade", "account"];
@@ -81,12 +93,18 @@ const screenHeadingStyle = {
 const clampWatchlistSidebarWidth = (value) =>
   Math.min(
     WATCHLIST_SIDEBAR_WIDTH_MAX,
-    Math.max(WATCHLIST_SIDEBAR_WIDTH_MIN, Number(value) || WATCHLIST_SIDEBAR_WIDTH_DEFAULT),
+    Math.max(
+      WATCHLIST_SIDEBAR_WIDTH_MIN,
+      Number(value) || WATCHLIST_SIDEBAR_WIDTH_DEFAULT,
+    ),
   );
 const clampActivitySidebarWidth = (value) =>
   Math.min(
     ACTIVITY_SIDEBAR_WIDTH_MAX,
-    Math.max(ACTIVITY_SIDEBAR_WIDTH_MIN, Number(value) || ACTIVITY_SIDEBAR_WIDTH_DEFAULT),
+    Math.max(
+      ACTIVITY_SIDEBAR_WIDTH_MIN,
+      Number(value) || ACTIVITY_SIDEBAR_WIDTH_DEFAULT,
+    ),
   );
 const MOBILE_PRIMARY_SCREEN_SET = new Set(MOBILE_PRIMARY_SCREEN_IDS);
 const MOBILE_NAV_ICONS = {
@@ -112,10 +130,9 @@ const DEFERRED_SCREEN_UNMOUNT_MS = 1_200;
 const SCREEN_FIT_DESIGN_WIDTH = 1280;
 const SCREEN_FIT_MIN_SCALE = 0.8;
 
-const BloombergLiveDock = lazyWithRetry(
-  () => import("./BloombergLiveDock"),
-  { label: "BloombergLiveDock" },
-);
+const BloombergLiveDock = lazyWithRetry(() => import("./BloombergLiveDock"), {
+  label: "BloombergLiveDock",
+});
 
 // The live dock is an optional overlay loaded as its own chunk. Contain a chunk
 // load failure / render throw locally so it silently drops out instead of
@@ -207,149 +224,149 @@ const ScreenTransitionHost = ({ screenId, screenLabel, active, children }) => {
 const screenCanRetainInactive = (screenId) => {
   const renderPolicy = SCREEN_RENDER_POLICIES[screenId] || {};
   return (
-    renderPolicy.retainInactive === true &&
-    !TRANSIENT_SCREEN_IDS.has(screenId)
+    renderPolicy.retainInactive === true && !TRANSIENT_SCREEN_IDS.has(screenId)
   );
 };
 
-const PlatformScreenStack = memo(({
-  activeScreen,
-  mountedScreens,
-  renderScreenById,
-}) => {
-  const previousActiveScreenRef = useRef(activeScreen);
-  const handoffTimersRef = useRef(new Map());
-  const [retainedInactiveScreens, setRetainedInactiveScreens] = useState([]);
-  const [deferredInactiveScreens, setDeferredInactiveScreens] = useState([]);
-  const [stackRef, stackSize] = useElementSize();
-  // zoom keeps this element's outer box parent-driven while its content lays
-  // out in width/zoom virtual space, so measurement never feeds back. Raw
-  // (non-deadbanded) width so the scale tracks resize continuously instead of
-  // jumping in steps; rounded to avoid sub-pixel churn.
-  const screenFitZoom =
-    stackSize.width > 0
-      ? Math.round(
-          Math.max(
-            SCREEN_FIT_MIN_SCALE,
-            Math.min(1, stackSize.width / SCREEN_FIT_DESIGN_WIDTH),
-          ) * 200,
-        ) / 200
-      : 1;
+const PlatformScreenStack = memo(
+  ({ activeScreen, mountedScreens, renderScreenById }) => {
+    const previousActiveScreenRef = useRef(activeScreen);
+    const handoffTimersRef = useRef(new Map());
+    const [retainedInactiveScreens, setRetainedInactiveScreens] = useState([]);
+    const [deferredInactiveScreens, setDeferredInactiveScreens] = useState([]);
+    const [stackRef, stackSize] = useElementSize();
+    // zoom keeps this element's outer box parent-driven while its content lays
+    // out in width/zoom virtual space, so measurement never feeds back. Raw
+    // (non-deadbanded) width so the scale tracks resize continuously instead of
+    // jumping in steps; rounded to avoid sub-pixel churn.
+    const screenFitZoom =
+      stackSize.width > 0
+        ? Math.round(
+            Math.max(
+              SCREEN_FIT_MIN_SCALE,
+              Math.min(1, stackSize.width / SCREEN_FIT_DESIGN_WIDTH),
+            ) * 200,
+          ) / 200
+        : 1;
 
-  useEffect(() => {
-    const previousScreen = previousActiveScreenRef.current;
-    previousActiveScreenRef.current = activeScreen;
-    if (!previousScreen || previousScreen === activeScreen) {
-      setRetainedInactiveScreens((current) =>
-        current.filter(
-          (screenId) =>
-            screenId !== activeScreen && screenCanRetainInactive(screenId),
-        ),
-      );
-      return undefined;
-    }
-
-    setRetainedInactiveScreens((current) => {
-      const next = current.filter(
-        (screenId) =>
-          screenId !== activeScreen &&
-          screenId !== previousScreen &&
-          screenCanRetainInactive(screenId),
-      );
-      if (screenCanRetainInactive(previousScreen)) {
-        next.unshift(previousScreen);
+    useEffect(() => {
+      const previousScreen = previousActiveScreenRef.current;
+      previousActiveScreenRef.current = activeScreen;
+      if (!previousScreen || previousScreen === activeScreen) {
+        setRetainedInactiveScreens((current) =>
+          current.filter(
+            (screenId) =>
+              screenId !== activeScreen && screenCanRetainInactive(screenId),
+          ),
+        );
+        return undefined;
       }
-      return next.slice(0, MAX_RETAINED_INACTIVE_SCREENS);
-    });
 
-    setDeferredInactiveScreens((current) =>
-      current.includes(previousScreen) ? current : [...current, previousScreen],
-    );
-    const existingTimer = handoffTimersRef.current.get(previousScreen);
-    if (existingTimer) {
-      window.clearTimeout(existingTimer);
-    }
-    const timer = window.setTimeout(() => {
-      handoffTimersRef.current.delete(previousScreen);
+      setRetainedInactiveScreens((current) => {
+        const next = current.filter(
+          (screenId) =>
+            screenId !== activeScreen &&
+            screenId !== previousScreen &&
+            screenCanRetainInactive(screenId),
+        );
+        if (screenCanRetainInactive(previousScreen)) {
+          next.unshift(previousScreen);
+        }
+        return next.slice(0, MAX_RETAINED_INACTIVE_SCREENS);
+      });
+
       setDeferredInactiveScreens((current) =>
-        current.filter((screenId) => screenId !== previousScreen),
+        current.includes(previousScreen)
+          ? current
+          : [...current, previousScreen],
       );
-    }, DEFERRED_SCREEN_UNMOUNT_MS);
-    handoffTimersRef.current.set(previousScreen, timer);
+      const existingTimer = handoffTimersRef.current.get(previousScreen);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+      const timer = window.setTimeout(() => {
+        handoffTimersRef.current.delete(previousScreen);
+        setDeferredInactiveScreens((current) =>
+          current.filter((screenId) => screenId !== previousScreen),
+        );
+      }, DEFERRED_SCREEN_UNMOUNT_MS);
+      handoffTimersRef.current.set(previousScreen, timer);
 
-    return undefined;
-  }, [activeScreen]);
+      return undefined;
+    }, [activeScreen]);
 
-  useEffect(
-    () => () => {
-      handoffTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-      handoffTimersRef.current.clear();
-    },
-    [],
-  );
+    useEffect(
+      () => () => {
+        handoffTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        handoffTimersRef.current.clear();
+      },
+      [],
+    );
 
-  return (
-    // Outer wrapper is measured and NEVER zoomed; the inner wrapper carries
-    // the zoom. Measuring the zoomed element itself feeds back (observed size
-    // is reported in the element's zoomed coordinate space) and oscillates.
-    <div
-      ref={stackRef}
-      data-testid="platform-screen-stack"
-      style={{
-        flex: 1,
-        minWidth: 0,
-        minHeight: 0,
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-        // Inverse of screenFitZoom, exposed so descendants that must run at the
-        // true (unzoomed) coordinate space — lightweight-charts, whose internal
-        // pointer mapping uses visual px and would otherwise draw the crosshair
-        // left of the cursor under zoom<1 — can counter-zoom back to net 1.
-        // Set on the OUTER (never-zoomed) wrapper so the value itself is stable
-        // and inherits down through the zoomed inner wrapper.
-        "--screen-fit-counter-zoom": screenFitZoom < 1 ? 1 / screenFitZoom : 1,
-      }}
-    >
+    return (
+      // Outer wrapper is measured and NEVER zoomed; the inner wrapper carries
+      // the zoom. Measuring the zoomed element itself feeds back (observed size
+      // is reported in the element's zoomed coordinate space) and oscillates.
       <div
+        ref={stackRef}
+        data-testid="platform-screen-stack"
         style={{
           flex: 1,
           minWidth: 0,
           minHeight: 0,
+          overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          ...(screenFitZoom < 1 ? { zoom: screenFitZoom } : {}),
+          // Inverse of screenFitZoom, exposed so descendants that must run at the
+          // true (unzoomed) coordinate space — lightweight-charts, whose internal
+          // pointer mapping uses visual px and would otherwise draw the crosshair
+          // left of the cursor under zoom<1 — can counter-zoom back to net 1.
+          // Set on the OUTER (never-zoomed) wrapper so the value itself is stable
+          // and inherits down through the zoomed inner wrapper.
+          "--screen-fit-counter-zoom":
+            screenFitZoom < 1 ? 1 / screenFitZoom : 1,
         }}
       >
-      {SCREENS.map(({ id, label }) => {
-        const active = activeScreen === id;
-        const shouldRender =
-          mountedScreens[id] &&
-          (active ||
-            retainedInactiveScreens.includes(id) ||
-            deferredInactiveScreens.includes(id));
-        return shouldRender ? (
-          <ScreenTransitionHost
-            key={id}
-            screenId={id}
-            screenLabel={label}
-            active={active}
-          >
-            <PlatformErrorBoundary
-              label={`${label} screen`}
-              reportCategory="screen-render"
-            >
-              <Suspense fallback={<ScreenSuspenseFallback />}>
-                {renderScreenById(id)}
-              </Suspense>
-            </PlatformErrorBoundary>
-          </ScreenTransitionHost>
-        ) : null;
-      })}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            ...(screenFitZoom < 1 ? { zoom: screenFitZoom } : {}),
+          }}
+        >
+          {SCREENS.map(({ id, label }) => {
+            const active = activeScreen === id;
+            const shouldRender =
+              mountedScreens[id] &&
+              (active ||
+                retainedInactiveScreens.includes(id) ||
+                deferredInactiveScreens.includes(id));
+            return shouldRender ? (
+              <ScreenTransitionHost
+                key={id}
+                screenId={id}
+                screenLabel={label}
+                active={active}
+              >
+                <PlatformErrorBoundary
+                  label={`${label} screen`}
+                  reportCategory="screen-render"
+                >
+                  <Suspense fallback={<ScreenSuspenseFallback />}>
+                    {renderScreenById(id)}
+                  </Suspense>
+                </PlatformErrorBoundary>
+              </ScreenTransitionHost>
+            ) : null;
+          })}
+        </div>
       </div>
-    </div>
-  );
-});
+    );
+  },
+);
 PlatformScreenStack.displayName = "PlatformScreenStack";
 
 const BloombergLiveDockLauncher = () => {
@@ -394,7 +411,12 @@ const BloombergLiveDockLauncher = () => {
   );
 };
 
-const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }) => {
+const MobileBottomNav = ({
+  activeScreen,
+  setScreen,
+  onOpenMore,
+  watchlistsBusy,
+}) => {
   const activeSecondaryScreen = MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
     ? null
     : SCREENS.find((item) => item.id === activeScreen);
@@ -404,117 +426,130 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
   const moreLabel = activeSecondaryScreen?.label || "More";
 
   return (
-  <nav
-    data-testid="mobile-bottom-nav"
-    aria-label="Primary mobile navigation"
-    className="ra-glass-surface ra-mobile-bottom-nav"
-    style={{
-      flexShrink: 0,
-      display: "grid",
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-      gap: sp(3),
-      padding: "6px 8px max(8px, env(safe-area-inset-bottom))",
-      borderTop: `1px solid ${CSS_COLOR.border}`,
-      minHeight: `calc(${dim(58)}px + env(safe-area-inset-bottom))`,
-    }}
-  >
-    {MOBILE_PRIMARY_SCREEN_IDS.map((screenId) => {
-      const screen = SCREENS.find((item) => item.id === screenId);
-      const Icon = MOBILE_NAV_ICONS[screenId] || Activity;
-      const active = activeScreen === screenId;
-      return (
-        <button
-          key={screenId}
-          type="button"
-          data-testid={`mobile-bottom-nav-${screenId}`}
-          aria-current={active ? "page" : undefined}
-          onClick={() => setScreen(screenId)}
-          className={joinMotionClasses(
-            "ra-interactive",
-            "ra-mobile-nav-item",
-            active && "ra-focus-rail",
-          )}
-          style={{
-            ...motionVars({ accent: CSS_COLOR.accent }),
-            minWidth: 0,
-            minHeight: dim(48),
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: sp(2),
-            border: "1px solid transparent",
-            borderRadius: dim(RADII.sm),
-            background: active ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
-            color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
-            cursor: "pointer",
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            position: "relative",
-          }}
-        >
-          <Icon size={17} strokeWidth={2.1} />
-          <span
-            style={{
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {screen?.label || screenId}
-          </span>
-        </button>
-      );
-    })}
-    <button
-      type="button"
-      data-testid="mobile-bottom-nav-more"
-      aria-current={!MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? "page" : undefined}
-      onClick={onOpenMore}
-      className={joinMotionClasses(
-        "ra-interactive",
-        "ra-mobile-nav-item",
-        !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) && "ra-focus-rail",
-      )}
+    <nav
+      data-testid="mobile-bottom-nav"
+      aria-label="Primary mobile navigation"
+      className="ra-glass-surface ra-mobile-bottom-nav"
       style={{
-        ...motionVars({ accent: CSS_COLOR.accent }),
-        minWidth: 0,
-        minHeight: dim(48),
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: sp(2),
-        border: "1px solid transparent",
-        borderRadius: dim(RADII.sm),
-        background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
-          ? `${cssColorMix(CSS_COLOR.accent, 7)}`
-          : "transparent",
-        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? CSS_COLOR.accent : CSS_COLOR.textDim,
-        cursor: "pointer",
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
+        flexShrink: 0,
+        display: "grid",
+        gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+        gap: sp(3),
+        padding: "6px 8px max(8px, env(safe-area-inset-bottom))",
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+        minHeight: `calc(${dim(58)}px + env(safe-area-inset-bottom))`,
       }}
     >
-      <MoreIcon size={17} strokeWidth={2.1} />
-      <span
+      {MOBILE_PRIMARY_SCREEN_IDS.map((screenId) => {
+        const screen = SCREENS.find((item) => item.id === screenId);
+        const Icon = MOBILE_NAV_ICONS[screenId] || Activity;
+        const active = activeScreen === screenId;
+        return (
+          <button
+            key={screenId}
+            type="button"
+            data-testid={`mobile-bottom-nav-${screenId}`}
+            aria-current={active ? "page" : undefined}
+            onClick={() => setScreen(screenId)}
+            className={joinMotionClasses(
+              "ra-interactive",
+              "ra-mobile-nav-item",
+              active && "ra-focus-rail",
+            )}
+            style={{
+              ...motionVars({ accent: CSS_COLOR.accent }),
+              minWidth: 0,
+              minHeight: dim(48),
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: sp(2),
+              border: "1px solid transparent",
+              borderRadius: dim(RADII.sm),
+              background: active
+                ? `${cssColorMix(CSS_COLOR.accent, 7)}`
+                : "transparent",
+              color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
+              cursor: "pointer",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              position: "relative",
+            }}
+          >
+            <Icon size={17} strokeWidth={2.1} />
+            <span
+              style={{
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {screen?.label || screenId}
+            </span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        data-testid="mobile-bottom-nav-more"
+        aria-current={
+          !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? "page" : undefined
+        }
+        onClick={onOpenMore}
+        className={joinMotionClasses(
+          "ra-interactive",
+          "ra-mobile-nav-item",
+          !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) && "ra-focus-rail",
+        )}
         style={{
-          maxWidth: "100%",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          ...motionVars({ accent: CSS_COLOR.accent }),
+          minWidth: 0,
+          minHeight: dim(48),
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(2),
+          border: "1px solid transparent",
+          borderRadius: dim(RADII.sm),
+          background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
+            ? `${cssColorMix(CSS_COLOR.accent, 7)}`
+            : "transparent",
+          color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
+            ? CSS_COLOR.accent
+            : CSS_COLOR.textDim,
+          cursor: "pointer",
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
         }}
       >
-        {moreLabel}
-      </span>
-    </button>
-  </nav>
+        <MoreIcon size={17} strokeWidth={2.1} />
+        <span
+          style={{
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {moreLabel}
+        </span>
+      </button>
+    </nav>
   );
 };
 
 const FooterField = ({ label, value, valueColor }) => (
-  <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
+  <span
+    style={{
+      display: "inline-flex",
+      alignItems: "baseline",
+      gap: sp(6),
+      minWidth: 0,
+    }}
+  >
     <span
       style={{
         color: CSS_COLOR.textMuted,
@@ -541,7 +576,14 @@ const FooterField = ({ label, value, valueColor }) => (
 );
 
 const FooterStatusField = ({ label, value, ok }) => (
-  <span style={{ display: "inline-flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+  <span
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(6),
+      minWidth: 0,
+    }}
+  >
     <span
       style={{
         width: dim(6),
@@ -612,7 +654,9 @@ const FrameSidebar = ({
           flexShrink: 0,
           overflow: "hidden",
           background: CSS_COLOR.bg1,
-          boxShadow: isLeft ? `1px 0 0 ${CSS_COLOR.border}` : `-1px 0 0 ${CSS_COLOR.border}`,
+          boxShadow: isLeft
+            ? `1px 0 0 ${CSS_COLOR.border}`
+            : `-1px 0 0 ${CSS_COLOR.border}`,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -651,12 +695,16 @@ const FrameSidebar = ({
       data-collapsed="false"
       style={{
         width,
-        transition: resizing ? "none" : "width var(--ra-motion-standard) var(--ra-motion-ease)",
+        transition: resizing
+          ? "none"
+          : "width var(--ra-motion-standard) var(--ra-motion-ease)",
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
         background: CSS_COLOR.bg0,
-        boxShadow: isLeft ? `1px 0 0 ${CSS_COLOR.border}` : `-1px 0 0 ${CSS_COLOR.border}`,
+        boxShadow: isLeft
+          ? `1px 0 0 ${CSS_COLOR.border}`
+          : `-1px 0 0 ${CSS_COLOR.border}`,
       }}
     >
       {children}
@@ -744,6 +792,7 @@ export const PlatformShell = ({
   theme,
   onToggleTheme,
   safeQaMode = false,
+  realtimeStreamGateReason = null,
   runtimeWatchlistSymbols,
   sessionMetadataSettled,
   auxiliarySurfacesReady = false,
@@ -849,15 +898,15 @@ export const PlatformShell = ({
     toastedEventIdsRef.current = new Set();
   }, [environment]);
 
+  const tradeScreenConnectionPriority = activeScreen === "trade";
   const algoFrameRuntimeEnabled = Boolean(
     frameAuxiliaryDataEnabled &&
+      !tradeScreenConnectionPriority &&
       !criticalApiMutationPaused &&
-      (
-        activeScreen === "algo" ||
+      (activeScreen === "algo" ||
         (!auxiliaryDrawerViewport && !activitySidebarCollapsed) ||
         (auxiliaryDrawerViewport && (mobileActivityOpen || mobilePulseOpen)) ||
-        notificationsOpen
-      ),
+        notificationsOpen),
   );
   const desktopActivitySidebarVisible = Boolean(
     !auxiliaryDrawerViewport && !activitySidebarCollapsed,
@@ -866,15 +915,31 @@ export const PlatformShell = ({
     auxiliaryDrawerViewport && mobileActivityOpen,
   );
   const algoMonitorSurfaceDataEnabled = Boolean(
-    desktopActivitySidebarVisible ||
-      mobileActivityVisible ||
-      algoFrameRuntimeEnabled,
+    !criticalApiMutationPaused &&
+      !tradeScreenConnectionPriority &&
+      (desktopActivitySidebarVisible ||
+        mobileActivityVisible ||
+        algoFrameRuntimeEnabled),
   );
+  const algoRealtimeStreamsEnabled = Boolean(
+    algoFrameRuntimeEnabled &&
+      !tradeScreenConnectionPriority &&
+      !realtimeStreamGateReason,
+  );
+  const shellAlgoRealtimeStreamsEnabled = Boolean(
+    algoRealtimeStreamsEnabled && activeScreen !== "algo",
+  );
+  const activitySidebarRealtimeStreamGateReason =
+    activeScreen === "algo"
+      ? "algo-screen-primary-stream"
+      : tradeScreenConnectionPriority
+        ? "trade-chart-priority"
+        : realtimeStreamGateReason;
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
     mode: environment || "shadow",
     eventLimit: 20,
-    enabled: algoFrameRuntimeEnabled,
+    enabled: shellAlgoRealtimeStreamsEnabled,
     onLiveEvents: handleAlgoLiveEvents,
   });
   const algoEventsQuery = useListExecutionEvents(
@@ -884,7 +949,8 @@ export const PlatformShell = ({
         enabled: algoFrameRuntimeEnabled,
         staleTime: 15_000,
         refetchInterval:
-          algoFrameRuntimeEnabled && !algoCockpitStreamFreshness.algoPrimaryFresh
+          algoFrameRuntimeEnabled &&
+          !algoCockpitStreamFreshness.algoPrimaryFresh
             ? 30_000
             : false,
         retry: false,
@@ -910,9 +976,8 @@ export const PlatformShell = ({
   const resolvedWatchlistSidebarWidth = clampWatchlistSidebarWidth(
     watchlistSidebarWidth,
   );
-  const resolvedActivitySidebarWidth = clampActivitySidebarWidth(
-    activitySidebarWidth,
-  );
+  const resolvedActivitySidebarWidth =
+    clampActivitySidebarWidth(activitySidebarWidth);
   const handleWatchlistResizeStart = useCallback(
     (event) => {
       if (isPhone || sidebarCollapsed || !setWatchlistSidebarWidth) {
@@ -1022,223 +1087,311 @@ export const PlatformShell = ({
     ? "minmax(0, 1fr)"
     : "minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content)";
   return (
-  <div
-    className="ra-shell"
-    data-layout={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
-    data-viewport={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
-    style={{
-      height: isPhone ? "100dvh" : "100vh",
-      display: "flex",
-      flexDirection: "column",
-      background: CSS_COLOR.bg0,
-      color: CSS_COLOR.text,
-      fontFamily: T.sans,
-      minWidth: 0,
-      overflow: "hidden",
-    }}
-  >
-    <style>{fontCss}</style>
-    <ToastStack
-      toasts={toasts}
-      onDismiss={onDismissToast}
-      bottomOffset={isPhone ? 76 : 20}
-    />
-    {latencyDebugEnabled && LatencyDebugStripComponent ? (
-      <LatencyDebugStripComponent
-        screen={activeScreen}
-        mountedScreens={mountedScreens}
+    <div
+      className="ra-shell"
+      data-layout={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
+      data-viewport={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
+      style={{
+        height: isPhone ? "100dvh" : "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      <style>{fontCss}</style>
+      <ToastStack
+        toasts={toasts}
+        onDismiss={onDismissToast}
+        bottomOffset={isPhone ? 76 : 20}
       />
-    ) : null}
+      {latencyDebugEnabled && LatencyDebugStripComponent ? (
+        <LatencyDebugStripComponent
+          screen={activeScreen}
+          mountedScreens={mountedScreens}
+        />
+      ) : null}
 
-    <AppHeader
-      headerRef={headerRef}
-      isPhone={isPhone}
-      headerTight={headerTight}
-      headerGridTemplate={headerGridTemplate}
-      headerShowKpis={headerShowKpis}
-      headerAccountMinimal={headerAccountMinimal}
-      headerCompactStatus={headerCompactStatus}
-      headerStatusMinimal={headerStatusMinimal}
-      activeScreen={activeScreen}
-      handleSetScreen={handleSetScreen}
-      watchlistsBusy={watchlistsBusy}
-      selectedSymbol={selectedSymbol}
-      session={session}
-      environment={environment}
-      bridgeTone={bridgeTone}
-      theme={theme}
-      onToggleTheme={onToggleTheme}
-      safeQaMode={safeQaMode}
-      accounts={accounts}
-      primaryAccountId={primaryAccountId}
-      primaryAccount={primaryAccount}
-      onSelectAccount={onSelectAccount}
-      maskAccountValues={maskAccountValues}
-      brokerAuthenticated={brokerAuthenticated}
-      onSelectSymbol={onSelectSymbol}
-      mobileActivityOpen={mobileActivityOpen}
-      mobileWatchlistOpen={mobileWatchlistOpen}
-      setMobileActivityOpen={setMobileActivityOpen}
-      setMobileWatchlistOpen={setMobileWatchlistOpen}
-      mobilePulseOpen={mobilePulseOpen}
-      setMobilePulseOpen={setMobilePulseOpen}
-      notificationsOpen={notificationsOpen}
-      setNotificationsOpen={setNotificationsOpen}
-      runtimeWatchlistSymbols={runtimeWatchlistSymbols}
-      sessionMetadataSettled={sessionMetadataSettled}
-      onSignalAction={onSignalAction}
-      onFlowAction={onFlowAction}
-      handleAlgoAction={handleAlgoAction}
-      algoEventsQuery={algoEventsQuery}
-      signalScanEnabled={signalScanEnabled}
-      signalScanPending={signalScanPending}
-      signalEvaluationPending={signalEvaluationPending}
-      signalScanErrored={signalScanErrored}
-      onToggleSignalScan={onToggleSignalScan}
-      onChangeSignalMonitorTimeframe={onChangeSignalMonitorTimeframe}
-      onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
-      onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
-      headerSignalMatrixStates={headerSignalMatrixStates}
-      HeaderKpiStripComponent={HeaderKpiStripComponent}
-      HeaderAccountStripComponent={HeaderAccountStripComponent}
-      HeaderStatusClusterComponent={HeaderStatusClusterComponent}
-      HeaderBroadcastScrollerStackComponent={HeaderBroadcastScrollerStackComponent}
-    />
-
-    <MobileMoreSheet
-      open={isPhone && mobileMoreOpen}
-      onClose={() => setMobileMoreOpen(false)}
-      activeScreen={activeScreen}
-      setScreen={handleSetScreen}
-      onOpenWatchlist={() => setMobileWatchlistOpen(true)}
-      onOpenActivity={() => setMobileActivityOpen(true)}
-      onOpenBloomberg={() => setMobileBloombergMounted(true)}
-      activeWatchlist={activeWatchlist}
-      selectedSymbol={selectedSymbol}
-      session={session}
-      memoryPressureSignal={memoryPressureSignal}
-      apiSourcePressureSnapshot={apiSourcePressureSnapshot}
-    />
-
-    <MobileActivitySheet
-      open={auxiliaryDrawerViewport && mobileActivityOpen}
-      onClose={() => setMobileActivityOpen(false)}
-      environment={environment}
-      dataEnabled={algoMonitorSurfaceDataEnabled}
-      signalMatrixStates={activitySignalMatrixStates}
-      signalMonitorEvents={signalMonitorEvents}
-      signalMonitorEventsLoaded={signalMonitorEventsLoaded}
-      signalActionTimeframe={signalActionTimeframe}
-      onOpenAlgo={(focus) => {
-        setMobileActivityOpen(false);
-        handleSetScreen("algo", focus);
-      }}
-      onOpenTradeSymbol={(symbol) => {
-        if (symbol) {
-          onSelectSymbol?.(symbol);
+      <AppHeader
+        headerRef={headerRef}
+        isPhone={isPhone}
+        headerTight={headerTight}
+        headerGridTemplate={headerGridTemplate}
+        headerShowKpis={headerShowKpis}
+        headerAccountMinimal={headerAccountMinimal}
+        headerCompactStatus={headerCompactStatus}
+        headerStatusMinimal={headerStatusMinimal}
+        activeScreen={activeScreen}
+        handleSetScreen={handleSetScreen}
+        watchlistsBusy={watchlistsBusy}
+        selectedSymbol={selectedSymbol}
+        session={session}
+        environment={environment}
+        bridgeTone={bridgeTone}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        safeQaMode={safeQaMode}
+        accounts={accounts}
+        primaryAccountId={primaryAccountId}
+        primaryAccount={primaryAccount}
+        onSelectAccount={onSelectAccount}
+        maskAccountValues={maskAccountValues}
+        brokerAuthenticated={brokerAuthenticated}
+        onSelectSymbol={onSelectSymbol}
+        mobileActivityOpen={mobileActivityOpen}
+        mobileWatchlistOpen={mobileWatchlistOpen}
+        setMobileActivityOpen={setMobileActivityOpen}
+        setMobileWatchlistOpen={setMobileWatchlistOpen}
+        mobilePulseOpen={mobilePulseOpen}
+        setMobilePulseOpen={setMobilePulseOpen}
+        notificationsOpen={notificationsOpen}
+        setNotificationsOpen={setNotificationsOpen}
+        runtimeWatchlistSymbols={runtimeWatchlistSymbols}
+        sessionMetadataSettled={sessionMetadataSettled}
+        onSignalAction={onSignalAction}
+        onFlowAction={onFlowAction}
+        handleAlgoAction={handleAlgoAction}
+        algoEventsQuery={algoEventsQuery}
+        signalScanEnabled={signalScanEnabled}
+        signalScanPending={signalScanPending}
+        signalEvaluationPending={signalEvaluationPending}
+        signalScanErrored={signalScanErrored}
+        onToggleSignalScan={onToggleSignalScan}
+        onChangeSignalMonitorTimeframe={onChangeSignalMonitorTimeframe}
+        onChangeSignalMonitorFreshWindowBars={
+          onChangeSignalMonitorFreshWindowBars
         }
-        setMobileActivityOpen(false);
-        handleSetScreen("trade");
-      }}
-    />
+        onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
+        headerSignalMatrixStates={headerSignalMatrixStates}
+        HeaderKpiStripComponent={HeaderKpiStripComponent}
+        HeaderAccountStripComponent={HeaderAccountStripComponent}
+        HeaderStatusClusterComponent={HeaderStatusClusterComponent}
+        HeaderBroadcastScrollerStackComponent={
+          HeaderBroadcastScrollerStackComponent
+        }
+      />
 
-    <NotificationsDrawer
-      open={notificationsOpen}
-      onClose={() => setNotificationsOpen(false)}
-      algoEvents={algoEventsQuery?.data?.events}
-      onAlgoEventClick={() => {
-        setNotificationsOpen(false);
-        handleSetScreen("algo");
-      }}
-    />
+      <MobileMoreSheet
+        open={isPhone && mobileMoreOpen}
+        onClose={() => setMobileMoreOpen(false)}
+        activeScreen={activeScreen}
+        setScreen={handleSetScreen}
+        onOpenWatchlist={() => setMobileWatchlistOpen(true)}
+        onOpenActivity={() => setMobileActivityOpen(true)}
+        onOpenBloomberg={() => setMobileBloombergMounted(true)}
+        activeWatchlist={activeWatchlist}
+        selectedSymbol={selectedSymbol}
+        session={session}
+        memoryPressureSignal={memoryPressureSignal}
+        apiSourcePressureSnapshot={apiSourcePressureSnapshot}
+      />
 
-    <MobilePortfolioPulseSheet
-      open={isPhone && mobilePulseOpen}
-      onClose={() => setMobilePulseOpen(false)}
-      accountId={primaryAccountId}
-      mode={environment}
-      maskValues={maskAccountValues}
-      brokerAuthenticated={brokerAuthenticated}
-      watchlistsBusy={watchlistsBusy}
-      algoEvents={algoEventsQuery?.data?.events}
-      enabled={sessionMetadataSettled && !safeQaMode}
-      onAlertClick={() => handleSetScreen("trade")}
-      onPositionsClick={() => handleSetScreen("trade")}
-      onOrdersClick={() => handleSetScreen("trade")}
-      onSignalsClick={() => handleSetScreen("flow")}
-      onFlowClick={() => handleSetScreen("flow")}
-      onAlgoClick={() => handleSetScreen("algo")}
-    />
+      <MobileActivitySheet
+        open={auxiliaryDrawerViewport && mobileActivityOpen}
+        onClose={() => setMobileActivityOpen(false)}
+        environment={environment}
+        dataEnabled={algoMonitorSurfaceDataEnabled}
+        realtimeStreamGateReason={activitySidebarRealtimeStreamGateReason}
+        signalMatrixStates={activitySignalMatrixStates}
+        signalMonitorEvents={signalMonitorEvents}
+        signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+        signalActionTimeframe={signalActionTimeframe}
+        onOpenAlgo={(focus) => {
+          setMobileActivityOpen(false);
+          handleSetScreen("algo", focus);
+        }}
+        onOpenTradeSymbol={(symbol) => {
+          if (symbol) {
+            onSelectSymbol?.(symbol);
+          }
+          setMobileActivityOpen(false);
+          handleSetScreen("trade");
+        }}
+      />
 
-    <MobileWatchlistDrawer
-      open={isPhone && mobileWatchlistOpen}
-      onClose={() => setMobileWatchlistOpen(false)}
-      WatchlistComponent={WatchlistComponent}
-      activeWatchlist={activeWatchlist}
-      watchlistSymbols={watchlistSymbols}
-      signalMonitorStates={signalMonitorStates}
-      signalMonitorProfile={signalMonitorProfile}
-      signalMonitorEvents={signalMonitorEvents}
-      signalMatrixStates={watchlistSignalMatrixStates}
-      selectedSymbol={selectedSymbol}
-      onSelectSymbol={onSelectSymbol}
-      onFocusMarketChart={onFocusMarketChart}
-      onSelectWatchlist={onSelectWatchlist}
-      onCreateWatchlist={onCreateWatchlist}
-      onRenameWatchlist={onRenameWatchlist}
-      onDeleteWatchlist={onDeleteWatchlist}
-      onSetDefaultWatchlist={onSetDefaultWatchlist}
-      onAddSymbolToWatchlist={onAddSymbolToWatchlist}
-      onReorderSymbolInWatchlist={onReorderSymbolInWatchlist}
-      onRemoveSymbolFromWatchlist={onRemoveSymbolFromWatchlist}
-      onSignalAction={onSignalAction}
-      watchlists={watchlists}
-      watchlistsBusy={watchlistsBusy}
-    />
-    {isPhone && mobileBloombergMounted ? renderBloombergLiveDock() : null}
+      <NotificationsDrawer
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        algoEvents={algoEventsQuery?.data?.events}
+        onAlgoEventClick={() => {
+          setNotificationsOpen(false);
+          handleSetScreen("algo");
+        }}
+      />
 
-    <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
-      {!isPhone ? (
-        <FrameSidebar
-          side="left"
-          label="watchlist sidebar"
-          testId="platform-watchlist-sidebar"
-          collapsed={sidebarCollapsed}
-          width={sidebarWidth}
-          resizing={watchlistResizing}
-          onExpand={() => setSidebarCollapsed(false)}
-          onResizeStart={handleWatchlistResizeStart}
-          ExpandIcon={PanelLeftOpen}
-        >
-          <div style={{ position: "relative", height: "100%" }}>
-            <WatchlistComponent
-              watchlists={watchlists}
-              activeWatchlist={activeWatchlist}
-              watchlistSymbols={watchlistSymbols}
-              signalStates={signalMonitorStates}
-              signalProfile={signalMonitorProfile}
-              signalEvents={signalMonitorEvents}
-              signalMatrixStates={watchlistSignalMatrixStates}
-              selected={selectedSymbol}
-              onSelect={onSelectSymbol}
-              onChartFocus={onFocusMarketChart}
-              onSelectWatchlist={onSelectWatchlist}
-              onCreateWatchlist={onCreateWatchlist}
-              onRenameWatchlist={onRenameWatchlist}
-              onDeleteWatchlist={onDeleteWatchlist}
-              onSetDefaultWatchlist={onSetDefaultWatchlist}
-              onAddSymbol={onAddSymbolToWatchlist}
-              onReorderSymbol={onReorderSymbolInWatchlist}
-              onRemoveSymbol={onRemoveSymbolFromWatchlist}
-              onSignalAction={onSignalAction}
-              busy={Boolean(watchlistsBusy?.mutating)}
+      <MobilePortfolioPulseSheet
+        open={isPhone && mobilePulseOpen}
+        onClose={() => setMobilePulseOpen(false)}
+        accountId={primaryAccountId}
+        mode={environment}
+        maskValues={maskAccountValues}
+        brokerAuthenticated={brokerAuthenticated}
+        watchlistsBusy={watchlistsBusy}
+        algoEvents={algoEventsQuery?.data?.events}
+        enabled={sessionMetadataSettled && !safeQaMode}
+        onAlertClick={() => handleSetScreen("trade")}
+        onPositionsClick={() => handleSetScreen("trade")}
+        onOrdersClick={() => handleSetScreen("trade")}
+        onSignalsClick={() => handleSetScreen("flow")}
+        onFlowClick={() => handleSetScreen("flow")}
+        onAlgoClick={() => handleSetScreen("algo")}
+      />
+
+      <MobileWatchlistDrawer
+        open={isPhone && mobileWatchlistOpen}
+        onClose={() => setMobileWatchlistOpen(false)}
+        WatchlistComponent={WatchlistComponent}
+        activeWatchlist={activeWatchlist}
+        watchlistSymbols={watchlistSymbols}
+        signalMonitorStates={signalMonitorStates}
+        signalMonitorProfile={signalMonitorProfile}
+        signalMonitorEvents={signalMonitorEvents}
+        signalMatrixStates={watchlistSignalMatrixStates}
+        selectedSymbol={selectedSymbol}
+        onSelectSymbol={onSelectSymbol}
+        onFocusMarketChart={onFocusMarketChart}
+        onSelectWatchlist={onSelectWatchlist}
+        onCreateWatchlist={onCreateWatchlist}
+        onRenameWatchlist={onRenameWatchlist}
+        onDeleteWatchlist={onDeleteWatchlist}
+        onSetDefaultWatchlist={onSetDefaultWatchlist}
+        onAddSymbolToWatchlist={onAddSymbolToWatchlist}
+        onReorderSymbolInWatchlist={onReorderSymbolInWatchlist}
+        onRemoveSymbolFromWatchlist={onRemoveSymbolFromWatchlist}
+        onSignalAction={onSignalAction}
+        watchlists={watchlists}
+        watchlistsBusy={watchlistsBusy}
+      />
+      {isPhone && mobileBloombergMounted ? renderBloombergLiveDock() : null}
+
+      <div
+        style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}
+      >
+        {!isPhone ? (
+          <FrameSidebar
+            side="left"
+            label="watchlist sidebar"
+            testId="platform-watchlist-sidebar"
+            collapsed={sidebarCollapsed}
+            width={sidebarWidth}
+            resizing={watchlistResizing}
+            onExpand={() => setSidebarCollapsed(false)}
+            onResizeStart={handleWatchlistResizeStart}
+            ExpandIcon={PanelLeftOpen}
+          >
+            <div style={{ position: "relative", height: "100%" }}>
+              <WatchlistComponent
+                watchlists={watchlists}
+                activeWatchlist={activeWatchlist}
+                watchlistSymbols={watchlistSymbols}
+                signalStates={signalMonitorStates}
+                signalProfile={signalMonitorProfile}
+                signalEvents={signalMonitorEvents}
+                signalMatrixStates={watchlistSignalMatrixStates}
+                selected={selectedSymbol}
+                onSelect={onSelectSymbol}
+                onChartFocus={onFocusMarketChart}
+                onSelectWatchlist={onSelectWatchlist}
+                onCreateWatchlist={onCreateWatchlist}
+                onRenameWatchlist={onRenameWatchlist}
+                onDeleteWatchlist={onDeleteWatchlist}
+                onSetDefaultWatchlist={onSetDefaultWatchlist}
+                onAddSymbol={onAddSymbolToWatchlist}
+                onReorderSymbol={onReorderSymbolInWatchlist}
+                onRemoveSymbol={onRemoveSymbolFromWatchlist}
+                onSignalAction={onSignalAction}
+                busy={Boolean(watchlistsBusy?.mutating)}
+                headerAccessory={
+                  <AppTooltip content="Collapse watchlist">
+                    <button
+                      type="button"
+                      data-testid="watchlist-sidebar-collapse"
+                      onClick={() => setSidebarCollapsed(true)}
+                      aria-label="Collapse watchlist"
+                      style={{
+                        width: dim(28),
+                        height: dim(32),
+                        display: "grid",
+                        placeItems: "center",
+                        border: `1px solid ${CSS_COLOR.border}`,
+                        borderRadius: dim(RADII.sm),
+                        background: "transparent",
+                        color: CSS_COLOR.textSec,
+                        cursor: "pointer",
+                        fontFamily: T.sans,
+                        fontSize: fs(11),
+                        lineHeight: 1,
+                      }}
+                      className="ra-interactive"
+                    >
+                      <PanelLeftClose size={14} strokeWidth={1.8} />
+                    </button>
+                  </AppTooltip>
+                }
+              />
+            </div>
+          </FrameSidebar>
+        ) : null}
+
+        <PlatformScreenStack
+          activeScreen={activeScreen}
+          mountedScreens={mountedScreens}
+          renderScreenById={renderScreenById}
+        />
+
+        {!isPhone ? (
+          <FrameSidebar
+            side="right"
+            label="algo monitor sidebar"
+            testId="platform-activity-sidebar"
+            collapsed={isTablet || activitySidebarCollapsed}
+            width={
+              isTablet || activitySidebarCollapsed
+                ? 40
+                : resolvedActivitySidebarWidth
+            }
+            resizing={activityResizing}
+            onExpand={() => {
+              if (isTablet) {
+                setMobileActivityOpen(true);
+                return;
+              }
+              setActivitySidebarCollapsed?.(false);
+            }}
+            onResizeStart={handleActivityResizeStart}
+            ExpandIcon={PanelRightOpen}
+          >
+            <PlatformAlgoMonitorSidebar
+              isVisible={desktopActivitySidebarVisible}
+              dataEnabled={algoMonitorSurfaceDataEnabled}
+              signalMatrixStates={activitySignalMatrixStates}
+              signalMonitorEvents={signalMonitorEvents}
+              signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+              signalActionTimeframe={signalActionTimeframe}
+              externalStreamFreshness={
+                shellAlgoRealtimeStreamsEnabled
+                  ? algoCockpitStreamFreshness
+                  : null
+              }
+              realtimeStreamGateReason={activitySidebarRealtimeStreamGateReason}
+              environment={environment}
+              onOpenAlgo={(focus) => handleSetScreen("algo", focus)}
+              onOpenTradeSymbol={(symbol) => {
+                if (symbol) {
+                  onSelectSymbol?.(symbol);
+                }
+                handleSetScreen("trade");
+              }}
               headerAccessory={
-                <AppTooltip content="Collapse watchlist">
+                <AppTooltip content="Collapse algo monitor">
                   <button
                     type="button"
-                    data-testid="watchlist-sidebar-collapse"
-                    onClick={() => setSidebarCollapsed(true)}
-                    aria-label="Collapse watchlist"
+                    data-testid="activity-sidebar-collapse"
+                    onClick={() => setActivitySidebarCollapsed?.(true)}
+                    aria-label="Collapse algo monitor"
                     style={{
                       width: dim(28),
                       height: dim(32),
@@ -1255,151 +1408,93 @@ export const PlatformShell = ({
                     }}
                     className="ra-interactive"
                   >
-                    <PanelLeftClose size={14} strokeWidth={1.8} />
+                    <PanelRightClose size={14} strokeWidth={1.8} />
                   </button>
                 </AppTooltip>
               }
             />
-          </div>
-        </FrameSidebar>
-      ) : null}
+          </FrameSidebar>
+        ) : null}
+      </div>
 
-      <PlatformScreenStack
-        activeScreen={activeScreen}
-        mountedScreens={mountedScreens}
-        renderScreenById={renderScreenById}
-      />
-
-      {!isPhone ? (
-        <FrameSidebar
-          side="right"
-          label="algo monitor sidebar"
-          testId="platform-activity-sidebar"
-          collapsed={isTablet || activitySidebarCollapsed}
-          width={isTablet || activitySidebarCollapsed ? 40 : resolvedActivitySidebarWidth}
-          resizing={activityResizing}
-          onExpand={() => {
-            if (isTablet) {
-              setMobileActivityOpen(true);
-              return;
-            }
-            setActivitySidebarCollapsed?.(false);
+      {isPhone ? (
+        <MobileBottomNav
+          activeScreen={activeScreen}
+          setScreen={handleSetScreen}
+          onOpenMore={() => setMobileMoreOpen(true)}
+          watchlistsBusy={watchlistsBusy}
+        />
+      ) : (
+        <div
+          data-testid="platform-bottom-status"
+          className="ra-hide-scrollbar"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            height: dim(34),
+            padding: sp("0 16px"),
+            background: CSS_COLOR.bg1,
+            borderTop: "none",
+            boxShadow: `0 -1px 0 ${CSS_COLOR.border}`,
+            flexShrink: 0,
+            fontFamily: T.sans,
+            gap: sp(14),
+            overflowX: "auto",
+            overflowY: "hidden",
+            whiteSpace: "nowrap",
           }}
-          onResizeStart={handleActivityResizeStart}
-          ExpandIcon={PanelRightOpen}
         >
-          <PlatformAlgoMonitorSidebar
-            isVisible={desktopActivitySidebarVisible}
-            dataEnabled={algoMonitorSurfaceDataEnabled}
-            signalMatrixStates={activitySignalMatrixStates}
-            signalMonitorEvents={signalMonitorEvents}
-            signalMonitorEventsLoaded={signalMonitorEventsLoaded}
-            signalActionTimeframe={signalActionTimeframe}
-            externalStreamFreshness={
-              algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
-            }
-            environment={environment}
-            onOpenAlgo={(focus) => handleSetScreen("algo", focus)}
-            onOpenTradeSymbol={(symbol) => {
-              if (symbol) {
-                onSelectSymbol?.(symbol);
-              }
-              handleSetScreen("trade");
-            }}
-            headerAccessory={
-              <AppTooltip content="Collapse algo monitor">
-                <button
-                  type="button"
-                  data-testid="activity-sidebar-collapse"
-                  onClick={() => setActivitySidebarCollapsed?.(true)}
-                  aria-label="Collapse algo monitor"
-                  style={{
-                    width: dim(28),
-                    height: dim(32),
-                    display: "grid",
-                    placeItems: "center",
-                    border: `1px solid ${CSS_COLOR.border}`,
-                    borderRadius: dim(RADII.sm),
-                    background: "transparent",
-                    color: CSS_COLOR.textSec,
-                    cursor: "pointer",
-                    fontFamily: T.sans,
-                    fontSize: fs(11),
-                    lineHeight: 1,
-                  }}
-                  className="ra-interactive"
-                >
-                  <PanelRightClose size={14} strokeWidth={1.8} />
-                </button>
-              </AppTooltip>
-            }
+          <FooterField
+            label="Watchlist"
+            value={activeWatchlist?.name || "Core"}
           />
-        </FrameSidebar>
-      ) : null}
-    </div>
-
-    {isPhone ? (
-      <MobileBottomNav
-        activeScreen={activeScreen}
-        setScreen={handleSetScreen}
-        onOpenMore={() => setMobileMoreOpen(true)}
-        watchlistsBusy={watchlistsBusy}
-      />
-    ) : (
-      <div
-        data-testid="platform-bottom-status"
-        className="ra-hide-scrollbar"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: dim(34),
-          padding: sp("0 16px"),
-          background: CSS_COLOR.bg1,
-          borderTop: "none",
-          boxShadow: `0 -1px 0 ${CSS_COLOR.border}`,
-          flexShrink: 0,
-          fontFamily: T.sans,
-          gap: sp(14),
-          overflowX: "auto",
-          overflowY: "hidden",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <FooterField label="Watchlist" value={activeWatchlist?.name || "Core"} />
-        <FooterDivider />
-        <FooterField label="Symbol" value={selectedSymbol} valueColor={CSS_COLOR.text} />
-        <FooterDivider />
-        <FooterStatusField
-          label="Historical"
-          value={session?.marketDataProviders?.historical || MISSING_VALUE}
-          ok={Boolean(session?.configured?.ibkr)}
-        />
-        <FooterDivider />
-        <FooterStatusField
-          label="Research"
-          value={session?.marketDataProviders?.research || MISSING_VALUE}
-          ok={Boolean(session?.configured?.research)}
-        />
-        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: sp(12) }}>
+          <FooterDivider />
+          <FooterField
+            label="Symbol"
+            value={selectedSymbol}
+            valueColor={CSS_COLOR.text}
+          />
+          <FooterDivider />
+          <FooterStatusField
+            label="Historical"
+            value={session?.marketDataProviders?.historical || MISSING_VALUE}
+            ok={Boolean(session?.configured?.ibkr)}
+          />
+          <FooterDivider />
+          <FooterStatusField
+            label="Research"
+            value={session?.marketDataProviders?.research || MISSING_VALUE}
+            ok={Boolean(session?.configured?.research)}
+          />
           <span
             style={{
-              color: CSS_COLOR.textMuted,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
+              marginLeft: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(12),
             }}
           >
-            v0.1.0
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              v0.1.0
+            </span>
+            <FooterMemoryPressureIndicator
+              signal={memoryPressureSignal}
+              runtimeControl={apiSourcePressureSnapshot}
+            />
           </span>
-          <FooterMemoryPressureIndicator
-            signal={memoryPressureSignal}
-            runtimeControl={apiSourcePressureSnapshot}
-          />
-        </span>
-      </div>
-    )}
-    {!isPhone && auxiliarySurfacesReady ? <BloombergLiveDockLauncher /> : null}
-  </div>
+        </div>
+      )}
+      {!isPhone && auxiliarySurfacesReady ? (
+        <BloombergLiveDockLauncher />
+      ) : null}
+    </div>
   );
 };

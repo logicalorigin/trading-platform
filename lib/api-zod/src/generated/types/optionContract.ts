@@ -16,4 +16,5 @@ export interface OptionContract {
   multiplier: number;
   sharesPerContract: number;
   providerContractId?: string | null;
+  brokerContractId?: string | null;
 }

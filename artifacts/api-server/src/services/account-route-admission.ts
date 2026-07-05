@@ -9,14 +9,16 @@ export const isShadowAccountRoute = (accountId: unknown): boolean =>
 export function shouldAdmitAccountRoute({
   accountId,
   ibkrConfigured,
+  snapTradeAccountsPresent = false,
 }: {
   accountId?: unknown;
   ibkrConfigured: boolean;
+  snapTradeAccountsPresent?: boolean;
 }): boolean {
   if (isShadowAccountRoute(accountId)) {
     return true;
   }
-  return Boolean(ibkrConfigured);
+  return Boolean(ibkrConfigured) || Boolean(snapTradeAccountsPresent);
 }
 
 export function buildRealAccountUnavailableProblem() {
@@ -25,7 +27,7 @@ export function buildRealAccountUnavailableProblem() {
     title: "IBKR is not configured",
     status: 503,
     detail:
-      "Real account data requires a configured IBKR bridge. Shadow account data remains available.",
+      "Real account data requires a configured IBKR Client Portal connection. Shadow account data remains available.",
     code: "ibkr_not_configured",
   };
 }

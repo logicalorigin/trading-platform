@@ -1,10 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const DEFAULT_APP_URL = "http://127.0.0.1:18747/?pyrusQa=safe";
+const DEFAULT_APP_URL = "http://127.0.0.1:18747/";
 const APP_URL = process.env.PYRUS_APP_URL || DEFAULT_APP_URL;
-const USE_SAFE_QA_RUNTIME_GUARDS = process.env.PYRUS_WATERFALL_SAFE_GUARDS !== "0";
-const WATERFALL_TEST_TIMEOUT_MS = USE_SAFE_QA_RUNTIME_GUARDS ? 90_000 : 210_000;
-const NAVIGATION_TIMEOUT_MS = USE_SAFE_QA_RUNTIME_GUARDS ? 15_000 : 30_000;
+const WATERFALL_TEST_TIMEOUT_MS = 210_000;
+const NAVIGATION_TIMEOUT_MS = 30_000;
 const SERVER_PROBE_TIMEOUT_MS = 2_500;
 
 const ALL_SCREENS = [
@@ -75,64 +74,6 @@ const appServerAvailable = async (url: string) => {
   }
 };
 
-const installSafeQaRuntimeGuards = async (page: Page) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "__PYRUS_PERF_WARMUP_OVERRIDES__", {
-      configurable: true,
-      value: {
-        disableBackgroundDataWarmup: true,
-        disableHiddenScreenWarmMount: true,
-      },
-    });
-
-    try {
-      const stateKey = "pyrus:state:v1";
-      const current = JSON.parse(window.localStorage.getItem(stateKey) || "{}");
-      window.localStorage.setItem(
-        stateKey,
-        JSON.stringify({ ...current, screen: "market", sym: "SPY" }),
-      );
-    } catch {
-      // Safe-QA state priming is best effort. The app has its own defaults.
-    }
-
-    class SafeQaEventSource extends EventTarget {
-      static readonly CONNECTING = 0;
-      static readonly OPEN = 1;
-      static readonly CLOSED = 2;
-
-      readonly url: string;
-      readonly withCredentials = false;
-      readyState = SafeQaEventSource.OPEN;
-      onopen: ((event: Event) => void) | null = null;
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-
-      constructor(url: string | URL) {
-        super();
-        this.url = String(url);
-        window.setTimeout(() => {
-          if (this.readyState !== SafeQaEventSource.OPEN) {
-            return;
-          }
-          const event = new Event("open");
-          this.onopen?.(event);
-          this.dispatchEvent(event);
-        }, 0);
-      }
-
-      close() {
-        this.readyState = SafeQaEventSource.CLOSED;
-      }
-    }
-
-    Object.defineProperty(window, "EventSource", {
-      configurable: true,
-      value: SafeQaEventSource,
-    });
-  });
-};
-
 const captureRecentResources = async (
   page: Page,
   startedAt: number,
@@ -193,9 +134,6 @@ test.describe("Pyrus app screen waterfall", () => {
       }
     });
 
-    if (USE_SAFE_QA_RUNTIME_GUARDS) {
-      await installSafeQaRuntimeGuards(page);
-    }
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.goto(APP_URL, { waitUntil: "domcontentloaded" });
 
@@ -253,7 +191,6 @@ test.describe("Pyrus app screen waterfall", () => {
       JSON.stringify(
         {
           appUrl: APP_URL,
-          safeQaRuntimeGuards: USE_SAFE_QA_RUNTIME_GUARDS,
           httpIssues,
           screens: screenTimings,
         },

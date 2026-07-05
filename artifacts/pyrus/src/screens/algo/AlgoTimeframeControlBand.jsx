@@ -32,7 +32,7 @@ const controlLabelStyle = {
 };
 
 const frameButtonStyle = ({ selected, dirty, disabled }) => ({
-  height: dim(26),
+  height: dim(24),
   width: "100%",
   minWidth: 0,
   boxSizing: "border-box",
@@ -197,7 +197,7 @@ export const AlgoTimeframeControlBand = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(7),
+        gap: sp(6),
         padding: `${sp(9)}px ${sp(10)}px`,
         background: CSS_COLOR.bg2,
         borderBottom: `1px solid ${CSS_COLOR.border}`,

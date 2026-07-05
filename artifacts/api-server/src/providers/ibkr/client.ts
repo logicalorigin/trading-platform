@@ -917,6 +917,8 @@ function toOptionChainContract(
       multiplier: optionContract.multiplier,
       sharesPerContract: optionContract.sharesPerContract,
       providerContractId: optionContract.providerContractId,
+      brokerContractId:
+        optionContract.brokerContractId ?? optionContract.providerContractId,
     },
     bid,
     ask,

@@ -2,8 +2,6 @@
 // the full-screen boot overlay immediately on a warm reload instead of waiting
 // for the cold `session` + `watchlists` round-trips. Overlay-only: the live
 // queries still fetch and all live gates keep using live session state.
-//
-// Modeled on features/signals/signalMatrixSnapshotCache.js.
 
 export const BOOT_WARM_START_CACHE_KEY = "pyrus:boot-warm-start:v1";
 export const BOOT_WARM_START_FRESH_MS = 12 * 60 * 60_000;

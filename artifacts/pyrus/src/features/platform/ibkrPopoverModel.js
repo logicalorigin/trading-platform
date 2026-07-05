@@ -45,23 +45,6 @@ const buildIssueLabel = (summary, detail) => {
   return `${summaryText}: ${detailText}`;
 };
 
-const GOVERNOR_FAILURE_LANES = ["health", "account", "quotes", "orders", "options"];
-
-const getGovernorLastFailure = (governor) => {
-  if (!governor || typeof governor !== "object") {
-    return null;
-  }
-
-  for (const lane of GOVERNOR_FAILURE_LANES) {
-    const failure = normalizeHeaderText(governor[lane]?.lastFailure);
-    if (failure) {
-      return failure;
-    }
-  }
-
-  return null;
-};
-
 const NO_ACTIVE_QUOTE_CONSUMERS_REASON = "no_active_quote_consumers";
 const MARKET_SESSION_QUIET_REASON = "market_session_quiet";
 const HEALTHY_STATUS_KEYS = new Set([
@@ -371,9 +354,9 @@ const buildCompactLineUsage = (lineUsage) => {
   // Full utilization (free === 0) is normal, not an issue: the background flow
   // scanner is designed to fill the line budget and yields its reserve to
   // higher-priority demand, so "no free lines" must NOT paint the chip amber.
-  // Flag amber only on GENUINE capacity pressure: the bridge reporting a real
-  // stream state, or a recent IBKR pressure shed (IBKR actually rejected/paced
-  // subscriptions) — not merely because the scanner filled the budget.
+  // Flag amber only on genuine capacity pressure: the bridge reporting a real
+  // stream state, or a legacy broker pressure shed. Mere full utilization stays
+  // healthy because the Massive-backed scanner is designed to fill spare budget.
   const state =
     source?.streamState ||
     (lineUsage.pressure?.recentIbkrPressureShed === true
@@ -541,25 +524,8 @@ const buildHeaderIbkrIssue = ({
   streamReconnecting = false,
 }) => {
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
-  const governorLastFailure = getGovernorLastFailure(runtime?.governor);
-  const healthErrorText = normalizeHeaderText(runtime?.healthError);
-  const healthBackoff =
-    /backoff|backed off/i.test(
-      `${runtime?.healthErrorCode || ""} ${healthErrorText || ""}`,
-    );
-  const bridgeReachable = headerDetailValue(
-    runtime?.bridgeReachable,
-    runtime?.reachable,
-    connection?.bridgeReachable,
-  );
-  const bridgeNotReachable = bridgeReachable === false;
-  const actionableBridgeError =
-    governorLastFailure && (bridgeNotReachable || healthBackoff)
-      ? governorLastFailure
-      : null;
   const lastError = headerDetailValue(
     runtime?.lastError,
-    actionableBridgeError,
     runtime?.healthError,
     connection?.lastError,
   );
@@ -745,25 +711,13 @@ export const buildHeaderIbkrPopoverModel = ({
       ? "mutating"
       : "read-only"
     : MISSING_VALUE;
-  const governorLastFailure = getGovernorLastFailure(runtime?.governor);
-  const healthErrorText = normalizeHeaderText(runtime?.healthError);
-  const healthBackoff =
-    /backoff|backed off/i.test(
-      `${runtime?.healthErrorCode || ""} ${healthErrorText || ""}`,
-    );
   const bridgeReachable = headerDetailValue(
     runtime?.bridgeReachable,
     runtime?.reachable,
     connection?.bridgeReachable,
   );
-  const bridgeNotReachable = bridgeReachable === false;
-  const actionableBridgeError =
-    governorLastFailure && (bridgeNotReachable || healthBackoff)
-      ? governorLastFailure
-      : null;
   const lastError = headerDetailValue(
     runtime?.lastError,
-    actionableBridgeError,
     runtime?.healthError,
     connection?.lastError,
   );
@@ -984,9 +938,10 @@ export const buildHeaderIbkrPopoverModel = ({
       ? accountCount
       : MISSING_VALUE;
   const lastErrorRow = normalizeHeaderText(lastError);
+  const healthErrorRow = normalizeHeaderText(runtime?.healthError);
   const healthStatusRow =
-    actionableBridgeError && healthErrorText && healthErrorText !== actionableBridgeError
-      ? healthErrorText
+    healthErrorRow && healthErrorRow !== lastErrorRow
+      ? healthErrorRow
       : null;
 
   const detailGroups = [

@@ -69,7 +69,6 @@ import {
   type SignalOptionsEntryQuality,
 } from "./signal-options-exit-policy";
 import {
-  assertIbkrGatewayTradingAvailable,
   batchOptionChains,
   getBars,
   getOptionChartBarsWithDebug,
@@ -184,10 +183,11 @@ const SHADOW_OPTION_DAY_CHANGE_BAR_LOOKBACK_WEEKDAYS = 5;
 const SHADOW_OPTION_DAY_CHANGE_BAR_LIMIT = 3_000;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
-const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
 const SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT = "signal_options_shadow_entry";
 const SIGNAL_OPTIONS_SHADOW_EXIT_EVENT = "signal_options_shadow_exit";
 const SIGNAL_OPTIONS_SHADOW_MARK_EVENT = "signal_options_shadow_mark";
+const SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE = sql`${executionEventsTable.eventType} IN ('signal_options_shadow_entry', 'signal_options_shadow_exit')`;
+const SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE = sql`${executionEventsTable.eventType} = 'signal_options_shadow_mark'`;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT = 10_000;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;
 
@@ -490,6 +490,8 @@ const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
 const SHADOW_DERIVED_READ_CACHE_TTL_MS = 10_000;
+const SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS = 30_000;
+const SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS = 300_000;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
 const SHADOW_OPTION_QUOTE_STALE_TTL_MS = 60_000;
 const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
@@ -1298,12 +1300,7 @@ async function repairSignalOptionsAutomationMirrorsForRead(
     const candidates = await db
       .select()
       .from(executionEventsTable)
-      .where(
-        inArray(executionEventsTable.eventType, [
-          SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT,
-          SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-        ]),
-      )
+      .where(SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE)
       .orderBy(desc(executionEventsTable.occurredAt))
       .limit(SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT);
     const events = candidates
@@ -2020,7 +2017,7 @@ async function latestShadowAutomationManagementEvents(
     .from(executionEventsTable)
     .where(
       and(
-        eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_MARK_EVENT),
+        SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE,
         inArray(executionEventsTable.symbol, symbols),
       ),
     )
@@ -2353,11 +2350,14 @@ function shadowOptionQuoteIdentifier(
     typeof contract?.providerContractId === "string"
       ? contract.providerContractId.trim()
       : "";
-  if (providerContractId) {
+  if (providerContractId && isOpraOptionTicker(providerContractId)) {
     return providerContractId;
   }
   const ticker = typeof contract?.ticker === "string" ? contract.ticker.trim() : "";
-  return ticker && isOpraOptionTicker(ticker) ? ticker : null;
+  if (ticker && isOpraOptionTicker(ticker)) {
+    return ticker;
+  }
+  return providerContractId || null;
 }
 
 function rememberShadowOptionQuote(
@@ -2775,55 +2775,7 @@ function shadowOptionProviderContractIdForContract(
   if (!isOpraOptionTicker(quoteIdentifier)) {
     return quoteIdentifier;
   }
-  const cachedProviderContractId =
-    readCachedShadowOptionProviderContractId(quoteIdentifier);
-  if (cachedProviderContractId) {
-    return cachedProviderContractId;
-  }
-  const structuredProviderContractId =
-    structuredShadowOptionProviderContractId(contract);
-  if (structuredProviderContractId) {
-    rememberShadowOptionProviderContractId(
-      quoteIdentifier,
-      structuredProviderContractId,
-    );
-    return structuredProviderContractId;
-  }
-  return null;
-}
-
-function structuredShadowOptionProviderContractId(
-  contract: ShadowOptionContract,
-): string | null {
-  const underlying = normalizeSymbol(contract.underlying);
-  const expiration = optionDateKey(contract.expirationDate).replace(/-/g, "");
-  const strike = toNumber(contract.strike);
-  const right = contract.right === "call" ? "C" : contract.right === "put" ? "P" : null;
-  const multiplier =
-    toNumber(contract.sharesPerContract) ?? toNumber(contract.multiplier) ?? 100;
-  if (
-    !underlying ||
-    !/^\d{8}$/.test(expiration) ||
-    strike == null ||
-    !right ||
-    multiplier <= 0
-  ) {
-    return null;
-  }
-  const payload = {
-    v: 1,
-    u: underlying,
-    e: expiration,
-    s: strike,
-    r: right,
-    x: "SMART",
-    tc: underlying,
-    m: multiplier,
-  };
-  return `${STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX}${Buffer.from(
-    JSON.stringify(payload),
-    "utf8",
-  ).toString("base64url")}`;
+  return quoteIdentifier;
 }
 
 function isExpiredOptionContractForShadowClose(
@@ -3003,7 +2955,7 @@ async function readOpenShadowPositionsForSourceCached(
     () => readOpenShadowPositionsForSource(source),
     {
       allowStale: shadowReadCacheValueHasRows,
-      staleStrategy: "never",
+      staleStrategy: "immediate",
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
@@ -3037,13 +2989,25 @@ async function readShadowFillsWithOrders() {
 // dashboard widgets. The account screen mounts ~10 widget endpoints at once,
 // several of which independently re-read the same fills+orders concurrently
 // against the 12-connection pool (the startup pool-saturation root cause).
-// Routing the dashboard reads through one withShadowReadCache entry (short TTL +
-// in-flight dedup) collapses them into a single read. The raw
-// readShadowFillsWithOrders above stays for write-adjacent recompute paths that
-// need an uncached fresh read.
+// Routing the dashboard reads through one withShadowReadCache entry collapses
+// them into a single read. The raw readShadowFillsWithOrders above stays for
+// write-adjacent recompute paths that need an uncached fresh read.
+//
+// Under a large signal universe the DB pool is saturated and this full
+// fills+orders scan (the dominant shadow-read cost in the flight recorder,
+// ~1.7s) was on the critical path for equity-history / positions / closed-trades
+// / cash-activity: the DEFAULT "wait" stale strategy blocked each stale miss for
+// up to staleWaitMs (1.5s) before serving the same cached value it would have
+// served anyway (the fresh read almost always exceeds 1.5s under load). Serve the
+// last cached fills+orders immediately and refresh in the background instead, and
+// widen the TTL to the derived-read cadence so the heavy scan recomputes ~4x less
+// often (10s vs 2.5s), cutting pool contention for every shadow route. Staleness
+// bound is unchanged (staleExpiresAt still SHADOW_READ_CACHE_STALE_TTL_MS = 60s);
+// trading logic never reads this cached path (it uses readShadowFillsWithOrders).
 function readShadowDashboardFillsWithOrders() {
   return withShadowReadCache("dashboard:fills-with-orders", readShadowFillsWithOrders, {
-    ttlMs: SHADOW_READ_CACHE_TTL_MS,
+    ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    staleStrategy: "immediate",
   });
 }
 
@@ -3375,24 +3339,39 @@ async function latestShadowPositionMarksAt(
   positions: ShadowPositionRow[],
   asOf: Date,
 ) {
-  if (!positions.length) {
+  const positionIds = Array.from(
+    new Set(positions.map((position) => position.id).filter(Boolean)),
+  );
+  if (!positionIds.length) {
     return new Map<string, ShadowPositionMarkRow>();
   }
-  const marks = await db
-    .select()
-    .from(shadowPositionMarksTable)
-    .where(
-      and(
-        eq(shadowPositionMarksTable.accountId, SHADOW_ACCOUNT_ID),
-        inArray(
-          shadowPositionMarksTable.positionId,
-          positions.map((position) => position.id),
-        ),
-        lte(shadowPositionMarksTable.asOf, asOf),
-      ),
-    )
-    .orderBy(asc(shadowPositionMarksTable.asOf), asc(shadowPositionMarksTable.createdAt));
-  return marks.reduce((map, mark) => {
+  const result = await pool.query<ShadowPositionMarkRow>(
+    `
+      select
+        mark.id,
+        mark.account_id as "accountId",
+        mark.position_id as "positionId",
+        mark.mark,
+        mark.market_value as "marketValue",
+        mark.unrealized_pnl as "unrealizedPnl",
+        mark.source,
+        mark.as_of as "asOf",
+        mark.created_at as "createdAt",
+        mark.updated_at as "updatedAt"
+      from unnest($2::uuid[]) as requested(position_id)
+      join lateral (
+        select *
+        from shadow_position_marks
+        where account_id = $1
+          and position_id = requested.position_id
+          and as_of <= $3
+        order by as_of desc, created_at desc
+        limit 1
+      ) mark on true
+    `,
+    [SHADOW_ACCOUNT_ID, positionIds, asOf],
+  );
+  return result.rows.reduce((map, mark) => {
     map.set(mark.positionId, mark);
     return map;
   }, new Map<string, ShadowPositionMarkRow>());
@@ -3706,25 +3685,7 @@ async function resolveOptionMark(contract: ShadowOptionContract): Promise<{
   if (isPriorOptionExpiration(contract)) {
     return { price: null, bid: null, ask: null, source: "expired_contract", asOf: new Date() };
   }
-  let providerContractId = quoteIdentifier;
-  if (isOpraOptionTicker(quoteIdentifier)) {
-    providerContractId =
-      readCachedShadowOptionProviderContractId(quoteIdentifier) ??
-      (
-        await resolveShadowIbkrOptionProviderIds([
-          {
-            underlying: normalizeSymbol(contract.underlying).toUpperCase(),
-            expirationDate: contract.expirationDate,
-            right: contract.right,
-            contracts: [contract],
-          },
-        ])
-      ).get(quoteIdentifier) ??
-      "";
-    if (!providerContractId) {
-      return { price: null, bid: null, ask: null, source: "missing_ibkr_contract_id", asOf: new Date() };
-    }
-  }
+  const providerContractId = quoteIdentifier;
   const owner = `shadow-option-mark:${providerContractId}`;
   declareIbkrLiveDemand({
     owner,
@@ -4314,9 +4275,6 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
 
 export async function previewShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
-  if (!isAutomatedShadowSource(normalized.source)) {
-    await assertIbkrGatewayTradingAvailable();
-  }
   await ensureShadowAccount();
   const plan = await buildShadowFillPlan(normalized);
   return {
@@ -4353,9 +4311,6 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
 
 export async function placeShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
-  if (!isAutomatedShadowSource(normalized.source)) {
-    await assertIbkrGatewayTradingAvailable();
-  }
   await ensureShadowAccount();
 
   if (normalized.sourceEventId) {
@@ -4629,17 +4584,18 @@ async function resolveSignalOptionsShadowMarkExitContext(
 async function readShadowPositionPeakMarkPrice(
   position: Pick<ShadowPositionRow, "id" | "openedAt" | "averageCost">,
 ) {
-  const [row] = await db
-    .select({
-      peak: sql<string | null>`max(${shadowPositionMarksTable.mark})`,
-    })
-    .from(shadowPositionMarksTable)
-    .where(
-      and(
-        eq(shadowPositionMarksTable.positionId, position.id),
-        gte(shadowPositionMarksTable.asOf, position.openedAt),
-      ),
-    );
+  const result = await pool.query<{ peak: string | null }>(
+    `
+      select mark as peak
+      from shadow_position_marks
+      where position_id = $1
+        and as_of >= $2
+      order by mark desc
+      limit 1
+    `,
+    [position.id, position.openedAt],
+  );
+  const row = result.rows[0];
   return Math.max(
     toNumber(row?.peak) ?? 0,
     toNumber(position.averageCost) ?? 0,
@@ -4649,27 +4605,33 @@ async function readShadowPositionPeakMarkPrice(
 async function readShadowPositionPeakMarkPrices(
   positions: Pick<ShadowPositionRow, "id" | "averageCost">[],
 ) {
-  if (!positions.length) {
+  const positionIds = Array.from(
+    new Set(positions.map((position) => position.id).filter(Boolean)),
+  );
+  if (!positionIds.length) {
     return new Map<string, number>();
   }
-  const rows = await db
-    .select({
-      positionId: shadowPositionMarksTable.positionId,
-      peak: sql<string | null>`max(${shadowPositionMarksTable.mark})`,
-    })
-    .from(shadowPositionMarksTable)
-    .where(
-      inArray(
-        shadowPositionMarksTable.positionId,
-        positions.map((position) => position.id),
-      ),
-    )
-    .groupBy(shadowPositionMarksTable.positionId);
+  const result = await pool.query<{ positionId: string; peak: string | null }>(
+    `
+      select
+        requested.position_id as "positionId",
+        mark.mark as peak
+      from unnest($1::uuid[]) as requested(position_id)
+      left join lateral (
+        select mark
+        from shadow_position_marks
+        where position_id = requested.position_id
+        order by mark desc
+        limit 1
+      ) mark on true
+    `,
+    [positionIds],
+  );
   const averageCostById = new Map(
     positions.map((position) => [position.id, toNumber(position.averageCost) ?? 0]),
   );
   const peakById = new Map<string, number>();
-  for (const row of rows) {
+  for (const row of result.rows) {
     peakById.set(
       row.positionId,
       Math.max(toNumber(row.peak) ?? 0, averageCostById.get(row.positionId) ?? 0),
@@ -5017,6 +4979,12 @@ async function detectShadowMaintenanceBreach(input: {
   if (
     stop.exitReason === "hard_stop" ||
     stop.exitReason === "runner_trail_stop" ||
+    // wire_structure_break is UNREACHABLE here: this sweep calls
+    // computeSignalOptionsPositionStop WITHOUT a wireContext, and structureBreak
+    // requires a selected wire (exit-policy.ts:393-406), so the exit reason can never
+    // be "wire_structure_break". The branch only satisfies the exhaustive union. If this
+    // sweep is ever given a wireContext, it MUST gate this reason on
+    // isSignalOptionsWireTrailEnforceEnabled() to preserve the shadow-first invariant.
     stop.exitReason === "wire_structure_break"
   ) {
     return { exitReason: stop.exitReason, markReturnPct: stop.markReturnPct };
@@ -5197,11 +5165,14 @@ export async function runShadowOptionMaintenance(input: {
       // expired position as phantom-open and unblocks same-direction re-entry.
       // Only real deployment positions get a ledger exit: backfill expirations
       // already emit their own exit elsewhere, and orphaned/missing-source
-      // positions have no entry event to reconcile against. The maintenance sell
-      // above already realized P&L in the shadow_positions/cash ledger, so this
-      // event carries NO `pnl` and we do NOT mirror it back through
-      // recordShadowAutomationEvent — it is ledger-sync-only and must not re-bank
-      // realized P&L into the daily-loss halt or place a second sell.
+      // positions have no entry event to reconcile against. This event carries
+      // `pnl` (like the force-close / live exit paths) so the realized loss lands
+      // in the daily-loss halt: at close-time the position leaves the open
+      // unrealized term, so WITHOUT `pnl` here its loss would vanish from the halt
+      // budget entirely (counted as neither realized nor unrealized) and the cap
+      // could un-trip and keep trading. It is the ONLY exit event for this
+      // position (the maintenance sell does not emit one), so `pnl` is banked
+      // exactly once; it stays ledger-sync-only (no second sell, not mirrored).
       const isRealDeploymentExit =
         !isBackfillOrder &&
         !orphanedDeployment &&
@@ -5218,6 +5189,13 @@ export async function runShadowOptionMaintenance(input: {
           null;
         const ledgerPositionId =
           readString(entryPosition.id) ?? position.id;
+        const expirationRealizedPnl = Number(
+          (
+            (exit.price - (toNumber(position.averageCost) ?? 0)) *
+            quantity *
+            (toNumber(contract.multiplier) ?? 100)
+          ).toFixed(2),
+        );
         await db.insert(executionEventsTable).values({
           deploymentId,
           providerAccountId: sourceEntryEvent?.providerAccountId ?? null,
@@ -5229,6 +5207,7 @@ export async function runShadowOptionMaintenance(input: {
             exitReason: "expiration",
             maintenance: true,
             exitPrice: exit.price,
+            pnl: expirationRealizedPnl,
             occurredAt: now.toISOString(),
             sourceOrderId: sourceOrder.id,
             sourceEventId: sourceOrder.sourceEventId,
@@ -5579,6 +5558,12 @@ async function reconcileShadowOptionClosedWithoutExit(input: {
           exitReason: "ledger_reconcile",
           maintenance: true,
           exitPrice: toNumber(position.mark) ?? 0,
+          // Carry the position's banked realized P&L so a SAME-DAY close-without-
+          // exit still lands in the daily-loss halt (the halt date-filters on
+          // occurredAt=closedAt, so prior-day reconciles are naturally excluded).
+          // The idempotency guard above guarantees this is the only exit event for
+          // the position, so the loss is banked exactly once — never doubled.
+          pnl: toNumber(position.realizedPnl) ?? 0,
           occurredAt: occurredAt.toISOString(),
           fillQuoteSource: "reconcile",
           candidateId,
@@ -6029,6 +6014,33 @@ function shadowQuoteText(
   return null;
 }
 
+// Backstop for the freshness LABEL: a quote can carry a "live" label yet be
+// minutes old (the stale durable-chain class). A valuation that drives stops must
+// also clear a WALL-CLOCK age bound, not just a string. Generous (5 min) so it
+// never over-blocks genuinely-live quotes — it only catches egregious staleness
+// the labels missed. Undated quotes are left to the label/mode checks (we can't
+// time them); they no longer get a fabricated "now" for valuation purposes.
+const SHADOW_OPTION_QUOTE_MAX_AGE_MS = 300_000;
+
+function shadowOptionQuoteRealAgeMs(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+  now: Date,
+): number | null {
+  const record = quote as Record<string, unknown> | null | undefined;
+  const raw =
+    record?.updatedAt ?? record?.quoteUpdatedAt ?? record?.dataUpdatedAt ?? null;
+  let timestampMs: number | null = null;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    timestampMs = raw.getTime();
+  } else if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) {
+      timestampMs = parsed;
+    }
+  }
+  return timestampMs == null ? null : now.getTime() - timestampMs;
+}
+
 function shadowOptionQuoteValuationBlockReason(
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
 ): string | null {
@@ -6047,6 +6059,10 @@ function shadowOptionQuoteValuationBlockReason(
   const marketDataMode = shadowQuoteText(quote, "marketDataMode")?.toLowerCase() ?? null;
   if (marketDataMode && marketDataMode !== "live") {
     return `market_data_${marketDataMode}`;
+  }
+  const ageMs = shadowOptionQuoteRealAgeMs(quote, new Date());
+  if (ageMs != null && ageMs > SHADOW_OPTION_QUOTE_MAX_AGE_MS) {
+    return "quote_stale_age";
   }
   return null;
 }
@@ -7583,10 +7599,14 @@ async function computeShadowEquityHistoryTerminalTotals(
 function compactShadowEquityHistoryRows<
   T extends Pick<ShadowBalanceSnapshotRow, "asOf" | "createdAt">,
 >(rows: T[]) {
+  // Dedup by asOf instant. The key only groups rows (it never surfaces in the
+  // output), so a numeric getTime() key is 1:1 with the prior toISOString() key
+  // and skips the per-row Date formatting — a measurable event-loop cost on the
+  // universe-wide history read.
   return Array.from(
     rows
       .reduce((map, row) => {
-        const key = row.asOf.toISOString();
+        const key = row.asOf.getTime();
         const current = map.get(key);
         if (
           !current ||
@@ -7595,7 +7615,7 @@ function compactShadowEquityHistoryRows<
           map.set(key, row);
         }
         return map;
-      }, new Map<string, T>())
+      }, new Map<number, T>())
       .values(),
   ).sort((left, right) => left.asOf.getTime() - right.asOf.getTime());
 }
@@ -7607,21 +7627,27 @@ function bucketShadowEquityHistoryRows<
     return rows;
   }
 
+  const MS_PER_DAY = 86_400_000;
   const byBucket = new Map<number, T>();
-  const firstByDay = new Map<string, T>();
+  const firstByDay = new Map<number, T>();
   rows.forEach((row) => {
-    byBucket.set(Math.floor(row.asOf.getTime() / bucketSizeMs), row);
+    const asOfMs = row.asOf.getTime();
+    byBucket.set(Math.floor(asOfMs / bucketSizeMs), row);
 
-    const dayKey = row.asOf.toISOString().slice(0, 10);
+    // UTC-day key as a number (whole days since epoch) is 1:1 with the prior
+    // toISOString().slice(0,10) date string, without the per-row Date formatting.
+    const dayKey = Math.floor(asOfMs / MS_PER_DAY);
     const currentFirst = firstByDay.get(dayKey);
-    if (!currentFirst || row.asOf.getTime() < currentFirst.asOf.getTime()) {
+    if (!currentFirst || asOfMs < currentFirst.asOf.getTime()) {
       firstByDay.set(dayKey, row);
     }
   });
 
-  const byTimestamp = new Map<string, T>();
-  byBucket.forEach((row) => byTimestamp.set(row.asOf.toISOString(), row));
-  firstByDay.forEach((row) => byTimestamp.set(row.asOf.toISOString(), row));
+  // Union keyed by the asOf instant. getTime() is 1:1 with the prior toISOString()
+  // key at ms resolution, so dedup is identical; keys never surface in output.
+  const byTimestamp = new Map<number, T>();
+  byBucket.forEach((row) => byTimestamp.set(row.asOf.getTime(), row));
+  firstByDay.forEach((row) => byTimestamp.set(row.asOf.getTime(), row));
 
   return Array.from(byTimestamp.values()).sort(
     (left, right) => left.asOf.getTime() - right.asOf.getTime(),
@@ -10711,16 +10737,26 @@ async function loadShadowAnalysisRows() {
 export async function computeShadowTradeDiagnostics(input: {
   range?: AccountRange | string | null;
 } = {}) {
-  await ensureShadowAccount();
   const range = normalizeAccountRange(input.range);
-  const window = shadowAnalysisRangeWindow(range);
-  const rows = await loadShadowAnalysisRows();
-  return buildShadowTradeDiagnosticsFromRows({
-    range,
-    ...window,
-    fills: rows.fills,
-    ordersById: rows.ordersById,
-  });
+  return withShadowReadCache(
+    `trade-diagnostics:${range}`,
+    async () => {
+      await ensureShadowAccount();
+      const window = shadowAnalysisRangeWindow(range);
+      const rows = await loadShadowAnalysisRows();
+      return buildShadowTradeDiagnosticsFromRows({
+        range,
+        ...window,
+        fills: rows.fills,
+        ordersById: rows.ordersById,
+      });
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS,
+      staleTtlMs: SHADOW_TRADE_DIAGNOSTICS_CACHE_STALE_TTL_MS,
+    },
+  );
 }
 
 async function getShadowTradeEquityEvents(input: {

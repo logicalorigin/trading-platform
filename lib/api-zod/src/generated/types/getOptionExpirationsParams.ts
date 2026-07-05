@@ -9,7 +9,7 @@
 export type GetOptionExpirationsParams = {
 underlying: string;
 /**
- * Optional cap. Omit to discover every expiration IBKR exposes.
+ * Optional cap. Omit to discover every Massive option expiration.
  * @minimum 1
  */
 maxExpirations?: number;

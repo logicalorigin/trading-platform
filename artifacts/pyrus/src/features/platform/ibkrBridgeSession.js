@@ -16,37 +16,6 @@ export const IBKR_BRIDGE_LAUNCH_COOLDOWN_MS = 90_000;
 export const IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS = 10 * 60_000;
 export const IBKR_RECONNECT_REQUEST_EVENT = "pyrus:ibkr-reconnect-request";
 
-export const openIbkrProtocolLauncher = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const documentRef = window.document;
-  const parent = documentRef?.body || documentRef?.documentElement;
-  if (!documentRef?.createElement || !parent?.appendChild) {
-    return null;
-  }
-
-  const iframe = documentRef.createElement("iframe");
-  iframe.setAttribute?.("aria-hidden", "true");
-  iframe.tabIndex = -1;
-  iframe.style.position = "absolute";
-  iframe.style.width = "1px";
-  iframe.style.height = "1px";
-  iframe.style.opacity = "0";
-  iframe.style.pointerEvents = "none";
-  iframe.style.left = "-9999px";
-  parent.appendChild(iframe);
-  return iframe;
-};
-
-export const closeIbkrProtocolLauncher = (launcher) => {
-  try {
-    launcher?.remove?.();
-  } catch {
-    // Best effort cleanup for browsers with unusual protocol prompt behavior.
-  }
-};
-
 export const requestIbkrReconnect = () => {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
     return false;
@@ -146,76 +115,6 @@ export const isReplitPreviewIbkrLaunchBrowser = () => {
 
   const referrer = window.document?.referrer;
   return isReplitHost(readHostname(referrer));
-};
-
-export const isWindowsIbkrLaunchBrowser = () => {
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-
-  const userAgentDataPlatform = navigator.userAgentData?.platform || "";
-  const platform = navigator.platform || "";
-  const userAgent = navigator.userAgent || "";
-  return /windows|win32|win64|wow64/i.test(
-    `${userAgentDataPlatform} ${platform} ${userAgent}`,
-  );
-};
-
-export const shouldUseRemoteIbkrLaunchBrowser = ({
-  desktopAgentCompatible = true,
-  desktopAgentOnline = false,
-  desktopAgentUpgradeRequired = false,
-} = {}) => {
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-
-  // A Windows browser can invoke the registered local protocol directly. The
-  // remote desktop-agent path intentionally starts the helper child hidden, so
-  // using it for local Windows clicks makes a valid launch look inert.
-  if (isWindowsIbkrLaunchBrowser()) {
-    return false;
-  }
-
-  // Remote launch only works when a desktop helper is actively polling Pyrus.
-  // A stale helper cannot claim the queued job, so use the direct protocol path
-  // for repair/update launches instead of leaving the UI waiting.
-  if (!desktopAgentOnline) {
-    return false;
-  }
-  if (desktopAgentUpgradeRequired || desktopAgentCompatible === false) {
-    return false;
-  }
-
-  return true;
-};
-
-export const navigateIbkrProtocolLauncher = (launcher, url) => {
-  if (!url || typeof window === "undefined") {
-    closeIbkrProtocolLauncher(launcher);
-    return false;
-  }
-
-  if (!/^pyrus-ibkr:\/\//i.test(String(url))) {
-    closeIbkrProtocolLauncher(launcher);
-    return false;
-  }
-
-  let target = launcher;
-  try {
-    target = launcher || openIbkrProtocolLauncher();
-    if (!target) {
-      return false;
-    }
-    target.src = url;
-    window.setTimeout?.(() => closeIbkrProtocolLauncher(target), 5_000);
-    return true;
-  } catch {
-    // Clean up the iframe we created here, not the (possibly null) argument,
-    // so a failed src assignment cannot orphan a freshly-created launcher.
-    closeIbkrProtocolLauncher(target);
-    return false;
-  }
 };
 
 export const readIbkrBridgeSessionValue = (key) => {

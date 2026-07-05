@@ -1,25 +1,19 @@
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import {
-  getIbkrBridgeRuntimeConfig,
+  getMassiveRuntimeConfig,
+  isMassiveOptionsRealtimeConfigured,
   onIbkrBridgeRuntimeChanged,
 } from "../lib/runtime";
-import {
-  IbkrBridgeClient,
-  describeIbkrBridgeRuntimeUnavailable,
-  type QuoteStreamSignal,
-} from "../providers/ibkr/bridge-client";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
-  isBridgeWorkBackedOff,
-  runBridgeWork,
-  type BridgeWorkCategory,
-} from "./bridge-governor";
+  MassiveMarketDataClient,
+  type OptionChainContract as MassiveOptionChainContract,
+} from "../providers/massive/market-data";
 import {
   admitMarketDataLeases,
   isMarketDataLeaseActive,
   recordMarketDataFallback,
-  recordMarketDataAdmissionIbkrPressure,
   releaseMarketDataLeaseIds,
   releaseMarketDataLeases,
   subscribeMarketDataLeaseChanges,
@@ -30,8 +24,17 @@ import {
 import { subscribeApiResourcePressureChanges } from "./resource-pressure";
 import { isHttpError } from "../lib/errors";
 
+type QuoteStreamSignal = {
+  type: "open" | "ready" | "heartbeat" | "status";
+  at: Date;
+  status?: {
+    state?: string;
+    [key: string]: unknown;
+  } | null;
+};
+
 type OptionQuoteWithSource = QuoteSnapshot & {
-  source: "ibkr";
+  source: "massive";
 };
 
 export type OptionQuoteSnapshotPayload = {
@@ -132,19 +135,32 @@ export type BridgeOptionQuoteSnapshotAdmissionOptions = {
   requiresGreeks?: boolean;
 };
 
-let bridgeClient: BridgeOptionQuoteClient = new IbkrBridgeClient();
+type MassiveOptionQuoteClientFactory = (
+  config: NonNullable<ReturnType<typeof getMassiveRuntimeConfig>>,
+) => MassiveMarketDataClient;
+let massiveOptionQuoteClientFactory: MassiveOptionQuoteClientFactory | null =
+  null;
+let optionQuoteSnapshotFetcherForTests:
+  | ((input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    }) => Promise<QuoteSnapshot[]>)
+  | null = null;
 const subscribers = new Map<number, Subscriber>();
 const retainedSnapshotDemands = new Map<string, RetainedSnapshotDemand>();
 const quoteCacheByProviderContractId = new Map<string, QuoteSnapshot>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const FLOW_SCANNER_STREAM_RECONFIGURE_DEBOUNCE_MS = 750;
-const ACCOUNT_MONITOR_OPTION_QUOTE_REFRESH_TIMEOUT_MS = 5_000;
 const RECONNECT_DELAY_MIN_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
 const UNCONFIGURED_OPTION_STREAM_RETRY_MS = Math.max(
   60_000,
   Number.parseInt(
-    process.env["IBKR_OPTION_QUOTE_STREAM_UNCONFIGURED_RETRY_MS"] ?? "60000",
+    process.env["MASSIVE_OPTION_QUOTE_STREAM_UNCONFIGURED_RETRY_MS"] ??
+      process.env["IBKR_OPTION_QUOTE_STREAM_UNCONFIGURED_RETRY_MS"] ??
+      "60000",
     10,
   ) || 60_000,
 );
@@ -188,33 +204,42 @@ function normalizeProviderContractIds(providerContractIds: string[]): string[] {
   ).sort();
 }
 
-function isIbkrResolvableOptionProviderContractId(
-  providerContractId: string,
-): boolean {
-  if (providerContractId.startsWith("O:")) {
-    return false;
+function normalizeOpraOptionTicker(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  if (!normalized) {
+    return null;
   }
-  if (!providerContractId.startsWith("twsopt:")) {
-    return true;
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : null;
+}
+
+function opraUnderlying(ticker: string): string | null {
+  const normalized = normalizeOpraOptionTicker(ticker);
+  if (!normalized) {
+    return null;
   }
-  try {
-    const payload = JSON.parse(
-      Buffer.from(providerContractId.slice("twsopt:".length), "base64url").toString(
-        "utf8",
-      ),
-    ) as Record<string, unknown>;
-    return payload["v"] === 1;
-  } catch {
-    return false;
-  }
+  const body = normalized.slice(2);
+  const match = body.match(/^(.+?)(\d{6}[CP]\d{8})$/);
+  return match?.[1] ? normalizeSymbol(match[1]) || null : null;
 }
 
 function normalizeResolvableProviderContractIds(
   providerContractIds: string[],
 ): string[] {
-  return normalizeProviderContractIds(providerContractIds).filter(
-    isIbkrResolvableOptionProviderContractId,
-  );
+  return Array.from(
+    new Set(
+      normalizeProviderContractIds(providerContractIds)
+        .map((providerContractId) =>
+          normalizeOpraOptionTicker(providerContractId),
+        )
+        .filter((providerContractId): providerContractId is string =>
+          Boolean(providerContractId),
+        ),
+    ),
+  ).sort();
 }
 
 function normalizeUnderlying(value: string | null | undefined): string | null {
@@ -223,7 +248,18 @@ function normalizeUnderlying(value: string | null | undefined): string | null {
 }
 
 function isBridgeRuntimeConfigured(): boolean {
-  return bridgeRuntimeConfiguredForTests ?? Boolean(getIbkrBridgeRuntimeConfig());
+  return bridgeRuntimeConfiguredForTests ?? Boolean(getMassiveRuntimeConfig());
+}
+
+function describeOptionQuoteRuntimeUnavailable(): {
+  code: string;
+  message: string;
+} {
+  return {
+    code: "massive_not_configured",
+    message:
+      "Massive options market data is not configured. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
+  };
 }
 
 function chunkValues<T>(values: T[], chunkSize: number): T[][] {
@@ -260,19 +296,13 @@ function readTimestampMs(value: unknown): number | null {
 function readErrorMessage(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
-    : String(error || "Unknown bridge option quote stream error.");
+    : String(error || "Unknown Massive option quote stream error.");
 }
 
 function isCapacityPressureState(
   value: unknown,
 ): value is "capacity_limited" | "backpressure" {
   return value === "capacity_limited" || value === "backpressure";
-}
-
-function isCapacityPressureStatus(
-  status: NonNullable<QuoteStreamSignal["status"]> | null,
-): boolean {
-  return isCapacityPressureState(status?.state);
 }
 
 function isIbkrBackpressureMessage(message: string): boolean {
@@ -295,12 +325,10 @@ function isCapacityPressureError(error: unknown): boolean {
   );
 }
 
-// A generic "upstream unavailable" result (HTTP 502 from the bridge proxy) means the
-// IBKR options upstream could not be reached — e.g. the options market is closed
-// off-hours. Market data legitimately runs 24/7 (quotes flow in all sessions), so this
-// is an expected data-availability condition, NOT a connection/transport fault. We keep
-// retrying but do not surface it as a hard option-stream `lastError`; real transport,
-// auth, and capacity problems are still reported.
+// A generic upstream-unavailable result can happen during provider maintenance
+// or transient market-data outages. Keep retrying without turning it into a
+// hard option-stream `lastError`; real transport, auth, and capacity problems
+// are still reported.
 function isUpstreamUnavailableError(error: unknown): boolean {
   if (isHttpError(error)) {
     return (
@@ -356,10 +384,9 @@ function resolveLiveOptionQuotePolicy(input: {
   intent: MarketDataIntent;
   providerContractIds: string[];
 }): LiveOptionQuotePolicy {
-  // Time-of-day no longer blocks option-quote / position-mark market data: quotes flow in
-  // all sessions (the bridge serves frozen/last-known data off-hours). Trade EXECUTION
-  // remains session-gated in signal-options-automation (entry/exit/overnight) and
-  // algo-gateway, not here. This is a market-data path.
+  // Time-of-day does not block option-quote / position-mark market data. Trade
+  // EXECUTION remains session-gated in signal-options-automation
+  // (entry/exit/overnight) and algo-gateway, not here.
   return {
     providerContractIds: normalizeProviderContractIds(input.providerContractIds),
     blockedReason: null,
@@ -658,7 +685,7 @@ function toPayloadQuote(quote: QuoteSnapshot): OptionQuoteWithSource {
       "apiServerEmittedAt",
       emittedAt,
     ),
-    source: "ibkr",
+    source: "massive",
   };
 }
 
@@ -867,7 +894,7 @@ function stopStream() {
     try {
       chunk.unsubscribe();
     } catch (error) {
-      logger.warn({ err: error }, "Bridge option quote stream unsubscribe failed");
+      logger.warn({ err: error }, "Massive option quote stream unsubscribe failed");
     }
   });
   streamChunks = [];
@@ -892,7 +919,7 @@ function subscribeOptionChunk(
     } catch (error) {
       logger.warn(
         { err: error },
-        "Bridge option quote stream chunk unsubscribe failed",
+        "Massive option quote stream chunk unsubscribe failed",
       );
     }
   }
@@ -903,29 +930,59 @@ function subscribeOptionChunk(
     reconnectTimer: null,
   };
   streamChunks[slot] = chunk;
-  chunk.unsubscribe = bridgeClient.streamOptionQuoteSnapshots(
-    { providerContractIds: contracts },
-    (quotes) => {
-      // A healthy quote batch clears this chunk's transient backoff.
-      chunk.reconnectAttempt = 0;
-      const cachedQuotes = quotes.flatMap((quote) => {
-        const cached = cacheQuote(quote);
-        return cached ? [cached] : [];
+  let stopped = false;
+  let pollTimer: NodeJS.Timeout | null = null;
+  const poll = () => {
+    if (stopped || streamSignature !== signature) {
+      return;
+    }
+    fetchMassiveOptionQuoteSnapshots({
+      underlying: null,
+      providerContractIds: contracts,
+    })
+      .then((quotes) => {
+        if (stopped || streamSignature !== signature) {
+          return;
+        }
+        chunk.reconnectAttempt = 0;
+        const cachedQuotes = quotes.flatMap((quote) => {
+          const cached = cacheQuote(quote);
+          return cached ? [cached] : [];
+        });
+        notifySubscribers(cachedQuotes);
+        lastSignalAt = nowProvider();
+        lastStreamStatus = {
+          state: "subscribed",
+          requestedCount: contracts.length,
+          admittedCount: contracts.length,
+          rejectedCount: 0,
+        };
+      })
+      .catch((error) => handleChunkStreamError(signature, slot, error))
+      .finally(() => {
+        // When a transient error already armed the per-chunk backoff reconnect
+        // (handleChunkStreamError), do not also re-arm the fixed-cadence poll —
+        // otherwise the ~2s poll races ahead of the exponential backoff and
+        // defeats it, hammering Massive every ~2s during a sustained outage.
+        if (stopped || streamSignature !== signature || chunk.reconnectTimer) {
+          return;
+        }
+        pollTimer = setTimeout(poll, Math.max(1_000, LIVE_OPTION_QUOTE_STALE_MS));
+        pollTimer.unref?.();
       });
-      notifySubscribers(cachedQuotes);
-    },
-    (error) => handleChunkStreamError(signature, slot, error),
-    recordStreamSignal,
-  );
+  };
+  chunk.unsubscribe = () => {
+    stopped = true;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+  poll();
 }
 
-// One chunk's bridge stream failed. For a transient fault (request timeout /
-// stall) re-establish ONLY that chunk with per-chunk backoff, leaving the other
-// chunks — and the live option quotes they carry, including the Trade Options
-// Chain — subscribed. Tearing down the whole stream on a single chunk's 30s
-// timeout was the self-sustaining flap: every timeout dropped all option lines,
-// then the mass re-subscribe under load timed out again. Non-transient faults
-// (capacity pressure, upstream-unavailable, fatal) keep stream-wide handling.
+// One chunk's Massive refresh failed. For a transient fault, re-establish only
+// that chunk with per-chunk backoff, leaving other option quote chunks active.
 function handleChunkStreamError(
   signature: string,
   slot: number,
@@ -985,20 +1042,6 @@ function scheduleReconnect() {
   reconnectTimer.unref?.();
 }
 
-function recordStreamSignal(signal: QuoteStreamSignal): void {
-  lastSignalAt = signal.at;
-  if ("status" in signal) {
-    lastStreamStatus = signal.status ?? null;
-  }
-  if (
-    signal.type === "ready" ||
-    (signal.type === "status" && !isCapacityPressureStatus(signal.status ?? null))
-  ) {
-    lastError = null;
-    lastErrorAt = null;
-  }
-}
-
 function handleStreamError(expectedSignature: string, error: unknown) {
   if (streamSignature !== expectedSignature) {
     return;
@@ -1008,15 +1051,9 @@ function handleStreamError(expectedSignature: string, error: unknown) {
   if (isCapacityPressureError(error)) {
     const state = capacityPressureFromError(error);
     const message = readErrorMessage(error);
-    recordMarketDataAdmissionIbkrPressure({
-      state,
-      reason: message,
-      source: "option-stream",
-      observedAt: now,
-    });
     lastStreamStatus = {
       state,
-      reason: "ibkr_option_stream_capacity_limited",
+      reason: "massive_option_stream_capacity_limited",
       message,
     };
     lastSignalAt = now;
@@ -1036,7 +1073,7 @@ function handleStreamError(expectedSignature: string, error: unknown) {
     lastErrorAt = null;
     logger.info(
       { err: error, providerContractIds: expectedSignature },
-      "IBKR bridge option quote upstream unavailable; will retry",
+      "Massive option quote upstream unavailable; will retry",
     );
     stopStream();
     scheduleReconnect();
@@ -1047,7 +1084,7 @@ function handleStreamError(expectedSignature: string, error: unknown) {
   lastErrorAt = now;
   logger.warn(
     { err: error, providerContractIds: expectedSignature },
-    "IBKR bridge option quote stream failed",
+    "Massive option quote stream failed",
   );
   stopStream();
   scheduleReconnect();
@@ -1058,7 +1095,7 @@ function refreshBridgeOptionQuoteStream() {
   clearRefreshTimer();
 
   if (!isBridgeRuntimeConfigured()) {
-    const unavailable = describeIbkrBridgeRuntimeUnavailable();
+    const unavailable = describeOptionQuoteRuntimeUnavailable();
     const requestedProviderContractIds = getRequestedProviderContractIds();
     stopStream();
     releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
@@ -1128,10 +1165,6 @@ function scheduleRefreshBridgeOptionQuoteStream(
   refreshTimer.unref?.();
 }
 
-onIbkrBridgeRuntimeChanged(() => {
-  scheduleRefreshBridgeOptionQuoteStream(0);
-});
-
 subscribeMarketDataLeaseChanges((event) => {
   if (!["released", "demoted", "expired"].includes(event.action)) {
     return;
@@ -1175,24 +1208,128 @@ async function getOptionQuoteProviderDebug(): Promise<{
   providerMode: string | null;
   liveMarketDataAvailable: boolean | null;
 }> {
-  try {
-    const health = await bridgeClient.getHealth();
-    const transport = health.transport || null;
-    const liveMarketDataAvailable = health.liveMarketDataAvailable ?? null;
-    const marketDataMode = health.marketDataMode || "unknown";
-    const providerMode =
-      transport === "tws" ? `tws-${marketDataMode}` : transport;
-
-    return {
-      providerMode,
-      liveMarketDataAvailable,
-    };
-  } catch {
+  const config = getMassiveRuntimeConfig();
+  if (!config) {
     return {
       providerMode: null,
       liveMarketDataAvailable: null,
     };
   }
+
+  const realtime = isMassiveOptionsRealtimeConfigured(config);
+  return {
+    providerMode: realtime ? "massive-options-realtime" : "massive-options-delayed",
+    liveMarketDataAvailable: realtime,
+  };
+}
+
+function getMassiveOptionQuoteClient(): MassiveMarketDataClient {
+  const config = getMassiveRuntimeConfig();
+  if (!config) {
+    throw new Error(
+      "Massive options market data is not configured. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
+    );
+  }
+  return massiveOptionQuoteClientFactory?.(config) ?? new MassiveMarketDataClient(config);
+}
+
+function massiveOptionSnapshotToQuoteSnapshot(
+  snapshot: MassiveOptionChainContract,
+  providerContractId: string,
+  delayed: boolean,
+): QuoteSnapshot {
+  const bid = finiteNumber(snapshot.bid) ?? 0;
+  const ask = finiteNumber(snapshot.ask) ?? 0;
+  const last = finiteNumber(snapshot.last);
+  const mark =
+    positiveNumber(snapshot.mark) ??
+    positiveNumber(last) ??
+    midpoint(bid, ask) ??
+    0;
+
+  return {
+    symbol: providerContractId,
+    price: mark,
+    last,
+    mark,
+    bid,
+    ask,
+    bidSize: 0,
+    askSize: 0,
+    change: finiteNumber(snapshot.change) ?? 0,
+    changePercent: finiteNumber(snapshot.changePercent) ?? 0,
+    open: null,
+    high: null,
+    low: null,
+    prevClose: finiteNumber(snapshot.prevClose),
+    volume: finiteNumber(snapshot.volume),
+    openInterest: finiteNumber(snapshot.openInterest),
+    impliedVolatility: finiteNumber(snapshot.impliedVolatility),
+    delta: finiteNumber(snapshot.delta),
+    gamma: finiteNumber(snapshot.gamma),
+    theta: finiteNumber(snapshot.theta),
+    vega: finiteNumber(snapshot.vega),
+    underlyingPrice: finiteNumber(snapshot.underlyingPrice),
+    updatedAt: snapshot.updatedAt,
+    providerContractId,
+    transport: "massive_rest",
+    delayed,
+    freshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    dataUpdatedAt: snapshot.updatedAt,
+    ageMs: Math.max(0, Date.now() - snapshot.updatedAt.getTime()),
+  };
+}
+
+async function fetchMassiveOptionQuoteSnapshots(input: {
+  underlying: string | null;
+  providerContractIds: string[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<QuoteSnapshot[]> {
+  if (optionQuoteSnapshotFetcherForTests) {
+    return optionQuoteSnapshotFetcherForTests({
+      underlying: input.underlying,
+      providerContractIds: input.providerContractIds,
+      signal: input.signal,
+      timeoutMs: input.timeoutMs,
+    });
+  }
+
+  const config = getMassiveRuntimeConfig();
+  if (!config) {
+    throw new Error(
+      "Massive options market data is not configured. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
+    );
+  }
+  const client = getMassiveOptionQuoteClient();
+  const delayed = !isMassiveOptionsRealtimeConfigured(config);
+  const providerContractIds = normalizeResolvableProviderContractIds(
+    input.providerContractIds,
+  );
+
+  const snapshots = await Promise.all(
+    providerContractIds.map(async (providerContractId) => {
+      const underlying = input.underlying ?? opraUnderlying(providerContractId);
+      if (!underlying) {
+        return null;
+      }
+      const snapshot = await client.getOptionContractSnapshot({
+        underlying,
+        optionTicker: providerContractId,
+        signal: input.signal,
+      });
+      return snapshot
+        ? massiveOptionSnapshotToQuoteSnapshot(
+            snapshot,
+            providerContractId,
+            delayed,
+          )
+        : null;
+    }),
+  );
+
+  return snapshots.filter((snapshot): snapshot is QuoteSnapshot => snapshot !== null);
 }
 
 function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
@@ -1201,7 +1338,7 @@ function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
   requestedProviderContractIds: string[];
   normalizedProviderContractIds: string[];
 }): OptionQuoteSnapshotPayload {
-  const unavailable = describeIbkrBridgeRuntimeUnavailable();
+  const unavailable = describeOptionQuoteRuntimeUnavailable();
   return {
     underlying: input.underlying,
     quotes: [],
@@ -1256,38 +1393,12 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const requestedProviderContractIds = normalizeProviderContractIds(
     input.providerContractIds,
   );
-  const normalizedProviderContractIds = requestedProviderContractIds.filter(
-    isIbkrResolvableOptionProviderContractId,
+  const normalizedProviderContractIds = normalizeResolvableProviderContractIds(
+    requestedProviderContractIds,
   );
   const owner =
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
-  const normalizedOwner = owner.toLowerCase();
-  const isAutomationLiveQuoteIntent =
-    intent === "automation-live" &&
-    (normalizedOwner.startsWith("signal-options-") ||
-      normalizedOwner.startsWith("signal-options:") ||
-      isAutomationDisplayOrPositionMarkOwner(owner));
-  const isLiveQuoteSnapshotIntent =
-    intent === "flow-scanner-live" ||
-    intent === "account-monitor-live" ||
-    isAutomationLiveQuoteIntent;
-  const bridgeWorkCategory: BridgeWorkCategory =
-    isLiveQuoteSnapshotIntent ? "quotes" : "options";
-  const bridgeWorkOptions = isLiveQuoteSnapshotIntent
-    ? { recordFailure: false }
-    : undefined;
-  const explicitTimeoutMs =
-    typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
-      ? Math.max(1, Math.floor(input.timeoutMs))
-      : undefined;
-  const bridgeOptionQuoteTimeoutMs =
-    explicitTimeoutMs ??
-    (intent === "account-monitor-live"
-      ? ACCOUNT_MONITOR_OPTION_QUOTE_REFRESH_TIMEOUT_MS
-      : intent === "visible-live"
-        ? 0
-        : undefined);
   const hydrateCached = input.hydrateCached === true;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "massive";
@@ -1312,7 +1423,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         providerMode: null,
         liveMarketDataAvailable: null,
         errorMessage: requestedProviderContractIds.length
-          ? "No IBKR-resolvable option providerContractIds were requested."
+          ? "No Massive/OPRA option providerContractIds were requested."
           : null,
         acceptedProviderContractIds: [],
         missingProviderContractIds: requestedProviderContractIds,
@@ -1450,12 +1561,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       quote,
     ]),
   );
-  // Read-path guard: a display/monitor read must never synchronously block on a cold
-  // bridge fetch when a (stale) cached quote already exists. Serve the cached value and
-  // let the durable demand stream refresh it in the background. Synchronous hydration is
-  // kept only when (a) there is nothing cached to serve, or (b) the intent/owner is
-  // execution-adjacent and needs a fresh quote for order sizing. This is what prevents a
-  // stale held-position read from triggering the ~20s cold getMarketDataSnapshot path.
+  // Display/monitor reads can serve a cached quote and let the retained demand
+  // refresher update it. Execution-adjacent reads still hydrate synchronously.
   const requiresFreshSynchronousQuote =
     (intent === "execution-live" || intent === "automation-live") &&
     !isAutomationDisplayOrPositionMarkOwner(owner);
@@ -1474,68 +1581,20 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     },
   );
 
-  if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
-    input.signal?.removeEventListener("abort", releaseOnAbort);
-    if (
-      releaseLeasesOnComplete ||
-      (input.signal?.aborted && releaseLeasesOnAbort)
-    ) {
-      releaseAdmittedLeases(
-        input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
-      );
-    }
-    return {
-      ...cachedQuotes,
-      debug: {
-        totalMs: Math.max(0, Date.now() - requestedAt),
-        upstreamMs: null,
-        requestedCount: requestedProviderContractIds.length,
-        acceptedCount: admittedProviderContractIds.length,
-        rejectedCount:
-          requestedProviderContractIds.length - admittedProviderContractIds.length,
-        returnedCount: cachedQuotes.quotes.length,
-        bridgeChunks: bridgeChunks.length,
-        ...providerDebug,
-        errorMessage: `IBKR bridge ${bridgeWorkCategory} work is backed off.`,
-        blockedReason: liveQuotePolicy.blockedReason,
-        acceptedProviderContractIds: admittedProviderContractIds,
-        missingProviderContractIds: normalizedProviderContractIds.filter(
-          (providerContractId) =>
-            !cachedQuotesByProviderContractId.has(providerContractId),
-        ),
-      },
-    };
-  }
-
   const upstreamStartedAt = Date.now();
   let upstreamErrorMessage: string | null = null;
   try {
     if (hydrateProviderContractIds.length > 0) {
-      const freshQuotes = (
-        await Promise.all(
-          chunkValues(
-            hydrateProviderContractIds,
-            OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
-          ).map((providerContractIds) =>
-            runBridgeWork(bridgeWorkCategory, () =>
-              bridgeClient.getOptionQuoteSnapshots({
-                underlying,
-                providerContractIds,
-                signal: input.signal,
-                timeoutMs: bridgeOptionQuoteTimeoutMs,
-              }),
-              { ...(bridgeWorkOptions ?? {}), signal: input.signal },
-            ),
-          ),
-        )
-      ).flat();
+      const freshQuotes = await fetchMassiveOptionQuoteSnapshots({
+        underlying,
+        providerContractIds: hydrateProviderContractIds,
+        signal: input.signal,
+        timeoutMs: input.timeoutMs,
+      });
       freshQuotes.forEach(cacheQuote);
     }
   } catch (error) {
     upstreamErrorMessage = readErrorMessage(error);
-    // An upstream-unavailable result (e.g. options market closed off-hours) is expected
-    // data unavailability, not a connection fault: keep it in this read's debug payload
-    // but do not pollute the option-stream `lastError`. Real errors still surface.
     if (!isUpstreamUnavailableError(error)) {
       lastError = upstreamErrorMessage;
       lastErrorAt = nowProvider();
@@ -1720,8 +1779,16 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
 export function __setBridgeOptionQuoteClientForTests(
   client: BridgeOptionQuoteClient | null,
 ): void {
-  bridgeClient = client ?? new IbkrBridgeClient();
+  optionQuoteSnapshotFetcherForTests = client
+    ? (input) => client.getOptionQuoteSnapshots(input)
+    : null;
   bridgeRuntimeConfiguredForTests = client ? true : null;
+}
+
+export function __setMassiveOptionQuoteClientFactoryForTests(
+  factory: MassiveOptionQuoteClientFactory | null,
+): void {
+  massiveOptionQuoteClientFactory = factory;
 }
 
 export function __setBridgeOptionQuoteRuntimeConfiguredForTests(
@@ -1769,5 +1836,7 @@ export function __resetBridgeOptionQuoteStreamForTests(): void {
   lastErrorAt = null;
   lastStreamStatus = null;
   bridgeRuntimeConfiguredForTests = null;
+  massiveOptionQuoteClientFactory = null;
+  optionQuoteSnapshotFetcherForTests = null;
   nowProvider = () => new Date();
 }

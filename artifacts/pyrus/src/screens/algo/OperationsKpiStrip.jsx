@@ -70,7 +70,8 @@ const Cell = ({
           <span
             style={{
               color: tone || CSS_COLOR.text,
-              fontFamily: T.sans,
+              fontFamily: T.data,
+              fontVariantNumeric: "tabular-nums",
               fontSize: fs(12),
               fontWeight: FONT_WEIGHTS.medium,
               lineHeight: 1.1,
@@ -138,7 +139,8 @@ const Cell = ({
         <span
           style={{
             color: tone || CSS_COLOR.text,
-            fontFamily: T.sans,
+            fontFamily: T.data,
+            fontVariantNumeric: "tabular-nums",
             fontSize: fs(14),
             fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.1,

@@ -37,15 +37,15 @@ providerContractId?: string | null;
 outsideRth?: boolean;
 source?: BarDataSource;
 /**
- * Allow Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+ * Allow Massive historical synthesis when cached/provider history is incomplete. Defaults to enabled for equities unless explicitly false.
  */
 allowHistoricalSynthesis?: boolean;
 /**
- * Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
+ * Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
  */
 allowStudyFallback?: boolean;
 /**
- * Limit broker-sourced recent history to this many minutes before falling back to Massive history.
+ * Equity-only broker fallback limit, in minutes, when Massive history is unavailable.
  * @minimum 0
  */
 brokerRecentWindowMinutes?: number;

@@ -37,7 +37,16 @@ test("options strategy execution is ready during regular options hours when the 
   const readiness = resolveAlgoGatewayReadiness(READY_IBKR, DURING_RTH);
   assert.equal(readiness.ready, true);
   assert.equal(readiness.reason, null);
-  assert.equal(readiness.message, "IB Gateway is ready for options strategy execution.");
+  assert.equal(readiness.message, "IBKR Client Portal is ready for options strategy execution.");
+});
+
+test("options strategy execution readiness does not require broker market-data mode", () => {
+  const readiness = resolveAlgoGatewayReadiness(
+    { ...READY_IBKR, configuredLiveMarketDataMode: false },
+    DURING_RTH,
+  );
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.reason, null);
 });
 
 test("non-session readiness failures take precedence over the session gate", () => {

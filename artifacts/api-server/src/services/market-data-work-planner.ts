@@ -148,7 +148,7 @@ export type MarketDataWorkPlanLine = {
   ownerClass: string | null;
   intent: MarketDataIntent | string;
   pool: MarketDataPoolId | string | null;
-  provider: "ibkr";
+  provider: "ibkr" | "massive";
   assetClass: "equity" | "option";
   state: "live" | "planned";
   priority: number | null;
@@ -224,6 +224,8 @@ export type MarketDataWorkPlan = {
     ibkrOptionLineCount: number;
     ibkrEquitySymbolCount: number;
     ibkrOptionSymbolCount: number;
+    massiveOptionLineCount: number;
+    massiveOptionSymbolCount: number;
     persistQueuedJobCount: number;
     persistRunningJobCount: number;
     persistClaimableQueuedJobCount: number;
@@ -240,6 +242,7 @@ export type MarketDataWorkPlan = {
   };
   ibkrEquityLive: MarketDataWorkPlanLine[];
   ibkrOptionLive: MarketDataWorkPlanLine[];
+  massiveOptionLive: MarketDataWorkPlanLine[];
   massiveSnapshot: MarketDataWorkPlanProviderJob[];
   massiveAggregateFallback: MarketDataWorkPlanProviderJob[];
   persistJobs: MarketDataWorkPlanProviderJob[];
@@ -317,19 +320,25 @@ function freshnessTargetMs(intent: string): number | null {
 }
 
 function liveLineReason(intent: string): string {
-  if (intent === "execution-live") return "execution and order decisions require live IBKR lines";
-  if (intent === "account-monitor-live") return "account and position surfaces require live broker marks";
-  if (intent === "visible-live") return "visible operator surfaces are eligible for live IBKR lines";
-  if (intent === "automation-live") return "automation signals require live marks before execution";
-  if (intent === "flow-scanner-live") return "options-flow scanner is using preemptible live IBKR lines";
+  if (intent === "execution-live") return "execution and order decisions require live market data";
+  if (intent === "account-monitor-live") return "account and position surfaces require live Massive marks";
+  if (intent === "visible-live") return "visible operator surfaces are eligible for live Massive market data";
+  if (intent === "automation-live") return "automation signals require Massive marks before execution";
+  if (intent === "flow-scanner-live") return "options-flow scanner is using Massive-backed option data";
   return "active API admission owns this live market-data line";
 }
 
 function linePlansForAsset(
   leases: MarketDataLease[],
   assetClass: "equity" | "option",
+  input: {
+    provider?: MarketDataWorkPlanLine["provider"];
+    includeLease?: (lease: MarketDataLease) => boolean;
+    includeLine?: (lease: MarketDataLease, lineId: string) => boolean;
+  } = {},
 ): MarketDataWorkPlanLine[] {
   const prefix = `${assetClass}:`;
+  const provider = input.provider ?? "ibkr";
   const groups = new Map<
     string,
     {
@@ -345,7 +354,14 @@ function linePlansForAsset(
   >();
 
   leases.forEach((lease) => {
-    const matchingLines = lease.lineIds.filter((lineId) => lineId.startsWith(prefix));
+    if (input.includeLease && !input.includeLease(lease)) {
+      return;
+    }
+    const matchingLines = lease.lineIds.filter(
+      (lineId) =>
+        lineId.startsWith(prefix) &&
+        (!input.includeLine || input.includeLine(lease, lineId)),
+    );
     if (!matchingLines.length) {
       return;
     }
@@ -389,7 +405,7 @@ function linePlansForAsset(
       ownerClass: group.ownerClass,
       intent: group.intent,
       pool: group.pool,
-      provider: "ibkr" as const,
+      provider,
       assetClass,
       state: "live" as const,
       priority: group.priority,
@@ -766,8 +782,17 @@ export function buildMarketDataWorkPlan(
     resolveUsEquityMarketStatus(new Date(generatedAt)),
   );
   const leases = input.admission.leases ?? [];
-  const ibkrEquityLive = linePlansForAsset(leases, "equity");
-  const ibkrOptionLive = linePlansForAsset(leases, "option");
+  const ibkrEquityLive = linePlansForAsset(leases, "equity", {
+    includeLine: (lease, lineId) =>
+      lease.lineRoles?.[lineId] !== "option-underlier-support",
+  });
+  const ibkrOptionLive = linePlansForAsset(leases, "option", {
+    provider: "ibkr",
+    includeLease: () => false,
+  });
+  const massiveOptionLive = linePlansForAsset(leases, "option", {
+    provider: "massive",
+  });
   const persistJobs = buildPersistJobs(input.ingest);
   const massiveAggregateFallback = buildAggregateFallbackJob(input.stockAggregates);
   const massiveSnapshot = persistJobs.filter(
@@ -795,10 +820,10 @@ export function buildMarketDataWorkPlan(
     evict.push({
       state: "evicting",
       owner: "flow-scanner",
-      provider: "ibkr",
+      provider: "massive",
       lineCount: input.admission.flowScannerLineCount ?? 0,
       lineSample: flowScannerLines,
-      reason: "NYSE is outside regular trading hours; flow scanner live option quotes are deferred",
+      reason: "NYSE is outside regular trading hours; Massive flow scanner live option quotes are deferred",
     });
   }
   if (
@@ -809,7 +834,7 @@ export function buildMarketDataWorkPlan(
     evict.push({
       state: "evicting",
       owner: "flow-scanner",
-      provider: "ibkr",
+      provider: "massive",
       lineCount: input.admission.flowScannerLineCount ?? 0,
       lineSample: flowScannerLines,
       reason: memoryAction.reason,
@@ -821,6 +846,9 @@ export function buildMarketDataWorkPlan(
   );
   const ibkrOptionSymbols = new Set(
     ibkrOptionLive.flatMap((entry) => entry.symbols),
+  );
+  const massiveOptionSymbols = new Set(
+    massiveOptionLive.flatMap((entry) => entry.symbols),
   );
   const signature = JSON.stringify({
     admissionGeneratedAt: input.admission.generatedAt,
@@ -842,15 +870,15 @@ export function buildMarketDataWorkPlan(
     marketSession,
     providerPolicy: {
       ibkr: [
-        "broker account, execution, visible live, automation live, and options-flow scanner lines",
-        "live option quotes and Greeks needed by trading workflows",
+        "broker account, order, execution, and broker contract-resolution workflows",
+        "no option market-data ownership; Massive owns option quotes, chains, bars, flow, and Greeks",
       ],
       massive: [
-        "stock snapshots, delayed/realtime aggregate fallback, historical research, and provider REST data across open equity sessions",
-        "option-chain and GEX source snapshots consumed by persisted ingest",
+        "websocket-only stock quotes, aggregate bars, and historical research across open equity sessions",
+        "option chains, quotes, Greeks, option bars, flow scanner snapshots, and GEX source snapshots",
       ],
       rustWorker: [
-        "persisted stock_snapshot, option_chain_snapshot, and gex_snapshot jobs only",
+        "persisted option_chain_snapshot and gex_snapshot jobs only",
         "forward refresh drain, supersede, and durable GEX materialization",
       ],
     },
@@ -868,6 +896,11 @@ export function buildMarketDataWorkPlan(
       ),
       ibkrEquitySymbolCount: ibkrEquitySymbols.size,
       ibkrOptionSymbolCount: ibkrOptionSymbols.size,
+      massiveOptionLineCount: massiveOptionLive.reduce(
+        (total, entry) => total + entry.lineCount,
+        0,
+      ),
+      massiveOptionSymbolCount: massiveOptionSymbols.size,
       persistQueuedJobCount: countQueuedJobs(input.ingest, "queued"),
       persistRunningJobCount: Math.max(
         countQueuedJobs(input.ingest, "running"),
@@ -891,6 +924,7 @@ export function buildMarketDataWorkPlan(
     },
     ibkrEquityLive,
     ibkrOptionLive,
+    massiveOptionLive,
     massiveSnapshot,
     massiveAggregateFallback,
     persistJobs,

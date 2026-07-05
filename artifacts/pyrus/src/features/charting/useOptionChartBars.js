@@ -42,8 +42,11 @@ export const OPTION_CHART_BARS_QUERY_DEFAULTS = {
 };
 
 export const normalizeBrokerProviderContractId = (value) => {
-  const normalized = value?.trim?.() || "";
-  return /^\d+$/.test(normalized) || normalized.startsWith("twsopt:")
+  const normalized =
+    typeof value === "string"
+      ? value.trim().toUpperCase().replace(/\s+/g, "")
+      : "";
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/i.test(normalized)
     ? normalized
     : null;
 };
@@ -70,7 +73,7 @@ export const normalizeApiBarForChart = (bar) => {
     c: bar.close,
     v: volume,
     volume,
-    source: bar.source || bar.transport || "ibkr-history",
+    source: bar.source || bar.transport || "massive-option-aggregates",
     freshness: bar.freshness,
     marketDataMode: bar.marketDataMode,
     dataUpdatedAt: bar.dataUpdatedAt,
@@ -467,6 +470,7 @@ export function useOptionChartBars({
     outsideRth,
     source: "midpoint",
     enabled: Boolean(liveEnabled && underlying && chartProviderContractId),
+    streamEnabled: false,
     fetchLatestBars,
     instrumentationScope: baseBarsScopeKey,
     streamPriority,

@@ -59,7 +59,7 @@ export const GetReadinessResponse = zod.object({
  */
 export const GetSessionResponse = zod.object({
   "environment": zod.enum(['shadow', 'live']),
-  "brokerProvider": zod.enum(['ibkr']),
+  "brokerProvider": zod.enum(['ibkr', 'snaptrade', 'robinhood']),
   "marketDataProvider": zod.enum(['massive', 'ibkr']),
   "marketDataProviders": zod.object({
   "live": zod.enum(['massive', 'ibkr']),
@@ -199,37 +199,37 @@ export const GetSessionResponse = zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "update": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "credentials": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "gateway": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "twoFactor": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "bridge": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-}),
+}).optional(),
   "tunnel": zod.object({
   "completedAt": zod.coerce.date().nullable(),
   "elapsedMs": zod.number().nullable(),
   "startedAt": zod.coerce.date().nullable()
-})
+}).optional()
 }),
   "recommendedAction": zod.string().nullable(),
   "severity": zod.enum(['idle', 'progress', 'attention', 'error', 'success']),
@@ -400,7 +400,6 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "liveActionConfirmationRequired": zod.boolean(),
   "diagnosticsMutateOrders": zod.boolean()
 }),
-  "governor": zod.record(zod.string(), zod.unknown()),
   "streams": zod.record(zod.string(), zod.unknown())
 }),
   "providers": zod.record(zod.string(), zod.unknown()),
@@ -649,642 +648,906 @@ export const ExportDiagnosticsResponse = zod.record(zod.string(), zod.unknown())
 
 
 /**
- * @summary Create an IBKR bridge one-click launcher payload
- */
-export const GetIbkrBridgeLauncherResponse = zod.object({
-  "activationId": zod.string(),
-  "apiBaseUrl": zod.string(),
-  "autoLoginConfigured": zod.boolean().nullable(),
-  "autoLoginLaunchUrl": zod.string(),
-  "autoLoginMode": zod.enum(['ib-gateway-live']),
-  "autoLoginSupported": zod.boolean(),
-  "bridgeToken": zod.string(),
-  "bundleUrl": zod.string().nullable(),
-  "credentialHandoff": zod.object({
-  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
-  "expiresAt": zod.coerce.date(),
-  "mode": zod.enum(['ui-onetime'])
-}),
-  "helperUrl": zod.string(),
-  "helperVersion": zod.string(),
-  "launchUrl": zod.string(),
-  "managementToken": zod.string()
-})
-
-
-/**
- * @summary Read paired IBKR helper metadata without starting a launch
- */
-export const GetIbkrBridgeHelperMetadataResponse = zod.object({
-  "desktops": zod.array(zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-})),
-  "helperVersion": zod.string(),
-  "latestDesktop": zod.union([zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),zod.null()]),
-  "onlineCount": zod.number(),
-  "onlineDesktop": zod.union([zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),zod.null()]),
-  "runtime": zod.object({
-  "desktopAgentCompatibility": zod.union([zod.literal('compatible'),zod.literal('known_bad'),zod.literal('update_required'),zod.literal(null)]).nullable(),
-  "desktopAgentCompatible": zod.boolean(),
-  "desktopAgentExpectedHelperVersion": zod.string(),
-  "desktopAgentHelperVersion": zod.string().nullable(),
-  "desktopAgentKnownBad": zod.boolean(),
-  "desktopAgentOnline": zod.boolean(),
-  "desktopAgentRegistered": zod.boolean(),
-  "desktopAgentRegisteredCount": zod.number(),
-  "desktopAgentUpgradeRequired": zod.boolean(),
-  "reconnectAvailable": zod.boolean(),
-  "runtimeOverrideActive": zod.boolean(),
-  "runtimeOverrideUpdatedAt": zod.coerce.date().nullable()
-})
-})
-
-
-/**
- * @summary List paired Windows desktop agents for remote IBKR bridge launch
- */
-export const ListIbkrRemoteDesktopsResponse = zod.object({
-  "desktops": zod.array(zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-})),
-  "helperVersion": zod.string(),
-  "onlineCount": zod.number()
-})
-
-
-/**
- * @summary Register a Windows desktop agent for remote IBKR bridge launch
- */
-export const RegisterIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unknown())
-
-export const RegisterIbkrRemoteDesktopResponse = zod.object({
-  "desktop": zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),
-  "helperVersion": zod.string(),
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Record a Windows desktop agent heartbeat
- */
-export const HeartbeatIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unknown())
-
-export const HeartbeatIbkrRemoteDesktopResponse = zod.object({
-  "desktop": zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),
-  "helperVersion": zod.string(),
-  "ok": zod.boolean(),
-  "pendingJobCount": zod.number()
-})
-
-
-/**
- * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
- */
-export const ClaimIbkrRemoteDesktopLaunchJobBody = zod.record(zod.string(), zod.unknown())
-
-export const ClaimIbkrRemoteDesktopLaunchJobResponse = zod.object({
-  "activationId": zod.string().optional(),
-  "expiresAt": zod.coerce.date().optional(),
-  "helperVersion": zod.string(),
-  "jobId": zod.string().optional(),
-  "launchUrl": zod.string().optional(),
-  "completionToken": zod.string().nullish(),
-  "action": zod.enum(['launch', 'shutdown']).optional(),
-  "ready": zod.boolean()
-})
-
-
-/**
- * @summary Mark an IBKR desktop job complete from the Windows helper
- */
-export const CompleteIbkrRemoteDesktopJobBody = zod.record(zod.string(), zod.unknown())
-
-export const CompleteIbkrRemoteDesktopJobResponse = zod.object({
-  "action": zod.enum(['launch', 'shutdown']),
-  "claimedAt": zod.coerce.date().nullable(),
-  "completedAt": zod.coerce.date().nullable(),
-  "createdAt": zod.coerce.date(),
-  "expiresAt": zod.coerce.date(),
-  "failedAt": zod.coerce.date().nullable(),
-  "jobId": zod.string(),
-  "message": zod.string().nullable(),
-  "ok": zod.boolean(),
-  "state": zod.enum(['queued', 'claimed', 'completed', 'failed', 'expired'])
-})
-
-
-/**
- * @summary Read a queued IBKR desktop job status
- */
-export const ReadIbkrRemoteDesktopJobStatusBody = zod.record(zod.string(), zod.unknown())
-
-export const ReadIbkrRemoteDesktopJobStatusResponse = zod.object({
-  "action": zod.enum(['launch', 'shutdown']),
-  "claimedAt": zod.coerce.date().nullable(),
-  "completedAt": zod.coerce.date().nullable(),
-  "createdAt": zod.coerce.date(),
-  "expiresAt": zod.coerce.date(),
-  "failedAt": zod.coerce.date().nullable(),
-  "jobId": zod.string(),
-  "message": zod.string().nullable(),
-  "ok": zod.boolean(),
-  "state": zod.enum(['queued', 'claimed', 'completed', 'failed', 'expired'])
-})
-
-
-/**
- * @summary Read the latest IBKR bridge activation diagnostics
- */
-export const GetIbkrBridgeActivationDiagnosticsResponse = zod.object({
-  "activeCount": zod.number(),
-  "desktopAgentRequests": zod.array(zod.object({
-  "at": zod.coerce.date(),
-  "code": zod.string().nullable(),
-  "contentType": zod.string().nullish(),
-  "desktopId": zod.string().nullable(),
-  "helperVersion": zod.string().nullable(),
-  "method": zod.string().nullish(),
-  "message": zod.string().nullable(),
-  "ok": zod.boolean(),
-  "path": zod.string().nullish(),
-  "route": zod.enum(['register', 'heartbeat', 'claim', 'raw']),
-  "userAgent": zod.string().nullish()
-})),
-  "latestActivation": zod.union([zod.object({
-  "canceled": zod.boolean(),
-  "expiresAt": zod.coerce.date(),
-  "issuedAt": zod.coerce.date(),
-  "lastLoginEnvelopeSubmitAttemptAt": zod.coerce.date().nullable(),
-  "lastLoginEnvelopeSubmitErrorCode": zod.string().nullable(),
-  "lastLoginKeyReadAt": zod.coerce.date().nullable(),
-  "lastLoginKeyReadReadyAt": zod.coerce.date().nullable(),
-  "loginEnvelopeSubmitAttemptCount": zod.number(),
-  "loginEnvelopeSubmitted": zod.boolean(),
-  "loginEnvelopeSubmittedAt": zod.coerce.date().nullable(),
-  "loginHandoffCreatedAt": zod.coerce.date().nullable(),
-  "loginHandoffReady": zod.boolean(),
-  "loginKeyReadCount": zod.number(),
-  "progressStepTimings": zod.record(zod.string(), zod.coerce.date()),
-  "timings": zod.record(zod.string(), zod.unknown())
-}),zod.null()]),
-  "latestActivationId": zod.string().nullable(),
-  "insight": zod.object({
-  "currentOwner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
-  "currentPhase": zod.enum(['idle', 'request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel', 'complete', 'canceled', 'error']),
-  "currentPhaseElapsedMs": zod.number().nullable(),
-  "currentPhaseStartedAt": zod.coerce.date().nullable(),
-  "detail": zod.string(),
-  "normalAfterMs": zod.number().nullable(),
-  "phaseDurations": zod.object({
-  "request": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "update": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "credentials": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "gateway": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "twoFactor": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "bridge": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "tunnel": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-})
-}),
-  "recommendedAction": zod.string().nullable(),
-  "severity": zod.enum(['idle', 'progress', 'attention', 'error', 'success']),
-  "stale": zod.boolean(),
-  "staleAfterMs": zod.number().nullable(),
-  "timeline": zod.array(zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}).and(zod.object({
-  "id": zod.enum(['request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel']),
-  "label": zod.string(),
-  "owner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
-  "status": zod.enum(['pending', 'active', 'complete', 'attention', 'error', 'canceled'])
-}))),
-  "title": zod.string()
-}),
-  "latestProgress": zod.union([zod.object({
-  "activationId": zod.string(),
-  "status": zod.string().nullable(),
-  "step": zod.string().nullable(),
-  "message": zod.string().nullable(),
-  "helperVersion": zod.string().nullable(),
-  "bridgeUrl": zod.string().nullable(),
-  "updatedAt": zod.coerce.date()
-}),zod.null()]),
-  "recentProgress": zod.array(zod.object({
-  "activationId": zod.string(),
-  "status": zod.string().nullable(),
-  "step": zod.string().nullable(),
-  "message": zod.string().nullable(),
-  "helperVersion": zod.string().nullable(),
-  "bridgeUrl": zod.string().nullable(),
-  "updatedAt": zod.coerce.date()
-}))
-})
-
-
-/**
- * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
- */
-export const CreateIbkrRemoteBridgeLaunchBody = zod.record(zod.string(), zod.unknown())
-
-export const CreateIbkrRemoteBridgeLaunchResponse = zod.object({
-  "activationId": zod.string(),
-  "apiBaseUrl": zod.string(),
-  "autoLoginConfigured": zod.boolean().nullable(),
-  "autoLoginLaunchUrl": zod.string(),
-  "autoLoginMode": zod.enum(['ib-gateway-live']),
-  "autoLoginSupported": zod.boolean(),
-  "bridgeToken": zod.string(),
-  "bundleUrl": zod.string().nullable(),
-  "credentialHandoff": zod.object({
-  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
-  "expiresAt": zod.coerce.date(),
-  "mode": zod.enum(['ui-onetime'])
-}),
-  "helperUrl": zod.string(),
-  "helperVersion": zod.string(),
-  "launchUrl": zod.string(),
-  "managementToken": zod.string()
-}).and(zod.object({
-  "remoteLaunch": zod.object({
-  "desktop": zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),
-  "expiresAt": zod.coerce.date(),
-  "jobId": zod.string(),
-  "mode": zod.enum(['desktop-agent'])
-})
-}))
-
-
-/**
- * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
- */
-export const CreateIbkrRemoteBridgeShutdownBody = zod.record(zod.string(), zod.unknown())
-
-export const CreateIbkrRemoteBridgeShutdownResponse = zod.object({
-  "helperVersion": zod.string(),
-  "shutdown": zod.object({
-  "action": zod.enum(['shutdown']),
-  "desktop": zod.object({
-  "desktopId": zod.string(),
-  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
-  "helperCompatible": zod.boolean(),
-  "helperKnownBad": zod.boolean(),
-  "helperUpdateRequired": zod.boolean(),
-  "helperVersion": zod.string().nullable(),
-  "label": zod.string().nullable(),
-  "lastSeenAt": zod.coerce.date(),
-  "online": zod.boolean(),
-  "registeredAt": zod.coerce.date()
-}),
-  "expiresAt": zod.coerce.date(),
-  "jobId": zod.string(),
-  "mode": zod.enum(['desktop-agent']),
-  "statusToken": zod.string()
-})
-})
-
-
-/**
- * @summary Record IBKR bridge activation progress
- */
-export const RecordIbkrBridgeActivationProgressParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const RecordIbkrBridgeActivationProgressBody = zod.record(zod.string(), zod.unknown())
-
-export const RecordIbkrBridgeActivationProgressResponse = zod.object({
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Read IBKR bridge activation cancellation status
- */
-export const ReadIbkrBridgeActivationStatusParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const ReadIbkrBridgeActivationStatusBody = zod.record(zod.string(), zod.unknown())
-
-export const ReadIbkrBridgeActivationStatusResponse = zod.object({
-  "active": zod.boolean(),
-  "canceled": zod.boolean(),
-  "expiresAt": zod.coerce.date(),
-  "insight": zod.object({
-  "currentOwner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
-  "currentPhase": zod.enum(['idle', 'request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel', 'complete', 'canceled', 'error']),
-  "currentPhaseElapsedMs": zod.number().nullable(),
-  "currentPhaseStartedAt": zod.coerce.date().nullable(),
-  "detail": zod.string(),
-  "normalAfterMs": zod.number().nullable(),
-  "phaseDurations": zod.object({
-  "request": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "update": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "credentials": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "gateway": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "twoFactor": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "bridge": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}),
-  "tunnel": zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-})
-}),
-  "recommendedAction": zod.string().nullable(),
-  "severity": zod.enum(['idle', 'progress', 'attention', 'error', 'success']),
-  "stale": zod.boolean(),
-  "staleAfterMs": zod.number().nullable(),
-  "timeline": zod.array(zod.object({
-  "completedAt": zod.coerce.date().nullable(),
-  "elapsedMs": zod.number().nullable(),
-  "startedAt": zod.coerce.date().nullable()
-}).and(zod.object({
-  "id": zod.enum(['request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel']),
-  "label": zod.string(),
-  "owner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
-  "status": zod.enum(['pending', 'active', 'complete', 'attention', 'error', 'canceled'])
-}))),
-  "title": zod.string()
-}),
-  "latestProgress": zod.union([zod.object({
-  "activationId": zod.string(),
-  "status": zod.string().nullable(),
-  "step": zod.string().nullable(),
-  "message": zod.string().nullable(),
-  "helperVersion": zod.string().nullable(),
-  "bridgeUrl": zod.string().nullable(),
-  "updatedAt": zod.coerce.date()
-}),zod.null()]),
-  "recentProgress": zod.array(zod.object({
-  "activationId": zod.string(),
-  "status": zod.string().nullable(),
-  "step": zod.string().nullable(),
-  "message": zod.string().nullable(),
-  "helperVersion": zod.string().nullable(),
-  "bridgeUrl": zod.string().nullable(),
-  "updatedAt": zod.coerce.date()
-}))
-})
-
-
-/**
- * @summary Cancel a pending IBKR bridge activation
- */
-export const CancelIbkrBridgeActivationParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const CancelIbkrBridgeActivationBody = zod.record(zod.string(), zod.unknown())
-
-export const CancelIbkrBridgeActivationResponse = zod.object({
-  "canceled": zod.boolean(),
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Publish the helper public key for one-time IBKR credential handoff
- */
-export const SubmitIbkrBridgeLoginKeyParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const SubmitIbkrBridgeLoginKeyBody = zod.record(zod.string(), zod.unknown())
-
-export const SubmitIbkrBridgeLoginKeyResponse = zod.object({
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Read the helper public key for one-time IBKR credential handoff
- */
-export const ReadIbkrBridgeLoginKeyParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const ReadIbkrBridgeLoginKeyBody = zod.record(zod.string(), zod.unknown())
-
-export const ReadIbkrBridgeLoginKeyResponse = zod.object({
-  "ready": zod.boolean(),
-  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']).optional(),
-  "expiresAt": zod.coerce.date().optional(),
-  "helperInstanceId": zod.string().optional(),
-  "publicKeyJwk": zod.record(zod.string(), zod.unknown()).optional()
-})
-
-
-/**
- * @summary Submit encrypted one-time IBKR credentials for the helper to claim
- */
-export const SubmitIbkrBridgeLoginEnvelopeParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const SubmitIbkrBridgeLoginEnvelopeBody = zod.record(zod.string(), zod.unknown())
-
-export const SubmitIbkrBridgeLoginEnvelopeResponse = zod.object({
-  "ok": zod.boolean()
-})
-
-
-/**
- * @summary Claim encrypted one-time IBKR credentials from the helper
- */
-export const ClaimIbkrBridgeLoginEnvelopeParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const ClaimIbkrBridgeLoginEnvelopeBody = zod.record(zod.string(), zod.unknown())
-
-export const ClaimIbkrBridgeLoginEnvelopeResponse = zod.object({
-  "ready": zod.boolean(),
-  "envelope": zod.object({
-  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
-  "ciphertextChunks": zod.array(zod.string())
-}).optional()
-})
-
-
-/**
- * @summary Complete IBKR bridge activation and attach runtime
- */
-export const CompleteIbkrBridgeActivationParams = zod.object({
-  "activationId": zod.coerce.string()
-})
-
-export const CompleteIbkrBridgeActivationBody = zod.record(zod.string(), zod.unknown())
-
-export const CompleteIbkrBridgeActivationResponse = zod.object({
-  "runtimeOverrideActive": zod.boolean(),
-  "bridgeUrl": zod.string(),
-  "tokenConfigured": zod.boolean(),
-  "bridge": zod.record(zod.string(), zod.unknown())
-})
-
-
-/**
- * @summary Attach an IBKR bridge runtime override
- */
-export const AttachIbkrBridgeRuntimeBody = zod.record(zod.string(), zod.unknown())
-
-export const AttachIbkrBridgeRuntimeResponse = zod.object({
-  "runtimeOverrideActive": zod.boolean(),
-  "bridgeUrl": zod.string(),
-  "tokenConfigured": zod.boolean(),
-  "bridge": zod.record(zod.string(), zod.unknown())
-})
-
-
-/**
- * @summary Detach the IBKR bridge runtime override
- */
-export const DetachIbkrBridgeRuntimeBody = zod.record(zod.string(), zod.unknown())
-
-export const DetachIbkrBridgeRuntimeResponse = zod.object({
-  "runtimeOverrideActive": zod.boolean()
-})
-
-
-/**
  * @summary List configured broker and market data connections
  */
 export const ListBrokerConnectionsResponse = zod.object({
   "connections": zod.array(zod.object({
   "id": zod.string(),
-  "provider": zod.union([zod.enum(['ibkr']),zod.enum(['massive', 'ibkr'])]),
+  "provider": zod.union([zod.enum(['ibkr', 'snaptrade', 'robinhood']),zod.enum(['massive', 'ibkr'])]),
   "name": zod.string(),
+  "brokerageSlug": zod.string().optional().describe('Optional SnapTrade brokerage slug for provider connections (e.g. ETRADE).'),
   "mode": zod.enum(['shadow', 'live']),
   "status": zod.enum(['configured', 'connected', 'disconnected', 'error']),
   "capabilities": zod.array(zod.string()),
+  "executionDecision": zod.object({
+  "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
+  "gateFamily": zod.enum(['scope', 'capability', 'provider']),
+  "outcome": zod.enum(['allowed', 'blocked']),
+  "customerMessageKey": zod.enum(['broker.provider.complianceReviewRequired', 'broker.provider.eligible', 'broker.provider.ibkrSpecialConnector', 'broker.provider.insufficientCapability', 'broker.provider.researchRequired', 'broker.provider.unsupported', 'broker.scope.automationTradingConnection.missingRequired', 'broker.scope.ready', 'capability.asset_class.single_leg_options.unsupported', 'capability.cancel_replace.unsupported', 'capability.order_shape.unsupported', 'capability.order_status_streaming.unavailable', 'capability.preview.unavailable', 'capability.ready', 'capability.sync.required', 'capability.sync.stale', 'capability.unsupported', 'provider.demo.unsupported', 'provider.paper.unsupported', 'provider.read_only.unsupported', 'provider.submit_only.unsupported']),
+  "severity": zod.enum(['info', 'action_required', 'blocked', 'security_blocked', 'provider_limitation']),
+  "auditEventHint": zod.string(),
+  "redactionClass": zod.enum(['customer_safe', 'support_safe', 'internal_only'])
+}).describe('Customer-safe execution decision metadata from the backend registry.').optional().describe('Optional registry-backed execution decision metadata for broker execution surfaces.'),
   "updatedAt": zod.coerce.date()
 }))
 })
+
+
+/**
+ * @summary Get sanitized SnapTrade execution readiness
+ */
+export const GetSnapTradeReadinessResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "configured": zod.boolean(),
+  "status": zod.enum(['unconfigured', 'research_required', 'upstream_error']),
+  "checkedAt": zod.coerce.date(),
+  "executionDecision": zod.object({
+  "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
+  "gateFamily": zod.enum(['scope', 'capability', 'provider']),
+  "outcome": zod.enum(['allowed', 'blocked']),
+  "customerMessageKey": zod.enum(['broker.provider.complianceReviewRequired', 'broker.provider.eligible', 'broker.provider.ibkrSpecialConnector', 'broker.provider.insufficientCapability', 'broker.provider.researchRequired', 'broker.provider.unsupported', 'broker.scope.automationTradingConnection.missingRequired', 'broker.scope.ready', 'capability.asset_class.single_leg_options.unsupported', 'capability.cancel_replace.unsupported', 'capability.order_shape.unsupported', 'capability.order_status_streaming.unavailable', 'capability.preview.unavailable', 'capability.ready', 'capability.sync.required', 'capability.sync.stale', 'capability.unsupported', 'provider.demo.unsupported', 'provider.paper.unsupported', 'provider.read_only.unsupported', 'provider.submit_only.unsupported']),
+  "severity": zod.enum(['info', 'action_required', 'blocked', 'security_blocked', 'provider_limitation']),
+  "auditEventHint": zod.string(),
+  "redactionClass": zod.enum(['customer_safe', 'support_safe', 'internal_only'])
+}).describe('Customer-safe execution decision metadata from the backend registry.'),
+  "credentials": zod.object({
+  "clientIdPresent": zod.boolean(),
+  "apiKeyPresent": zod.boolean()
+}),
+  "user": zod.object({
+  "registered": zod.boolean(),
+  "status": zod.enum(['not_registered', 'registered', 'disabled']),
+  "snapTradeUserIdPresent": zod.boolean(),
+  "userSecretStored": zod.boolean(),
+  "registeredAt": zod.coerce.date().nullable(),
+  "disabledAt": zod.coerce.date().nullable(),
+  "nextAction": zod.enum(['register_snaptrade_user', 'configure_redirect_uri', 'generate_connection_portal', 'manual_review'])
+}).describe('Sanitized current-user SnapTrade custody readiness. Never includes SnapTrade user secrets or provider user ids.'),
+  "clientInfo": zod.object({
+  "reachable": zod.boolean(),
+  "redirectUriConfigured": zod.boolean().nullable(),
+  "canAccessTrades": zod.boolean().nullable(),
+  "canAccessHoldings": zod.boolean().nullable(),
+  "canAccessAccountHistory": zod.boolean().nullable(),
+  "canAccessReferenceData": zod.boolean().nullable(),
+  "canAccessPortfolioManagement": zod.boolean().nullable(),
+  "canAccessOrders": zod.boolean().nullable()
+}).nullable(),
+  "brokerages": zod.object({
+  "total": zod.number(),
+  "enabled": zod.number(),
+  "allowsTrading": zod.number(),
+  "degradedOrMaintenance": zod.number()
+}).nullable(),
+  "limitations": zod.array(zod.string()),
+  "upstream": zod.object({
+  "status": zod.number(),
+  "code": zod.string(),
+  "message": zod.string()
+}).nullable()
+}).describe('Sanitized server-side SnapTrade readiness. Never includes SnapTrade secrets, client names, raw brokerage lists, or raw upstream payloads.')
+
+
+/**
+ * @summary Get sanitized IBKR OAuth execution readiness
+ */
+export const GetIbkrOAuthReadinessResponse = zod.object({
+  "provider": zod.enum(['ibkr_oauth']),
+  "configured": zod.boolean(),
+  "status": zod.enum(['unconfigured', 'approval_required', 'research_required']),
+  "checkedAt": zod.coerce.date(),
+  "executionDecision": zod.object({
+  "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
+  "gateFamily": zod.enum(['scope', 'capability', 'provider']),
+  "outcome": zod.enum(['allowed', 'blocked']),
+  "customerMessageKey": zod.enum(['broker.provider.complianceReviewRequired', 'broker.provider.eligible', 'broker.provider.ibkrSpecialConnector', 'broker.provider.insufficientCapability', 'broker.provider.researchRequired', 'broker.provider.unsupported', 'broker.scope.automationTradingConnection.missingRequired', 'broker.scope.ready', 'capability.asset_class.single_leg_options.unsupported', 'capability.cancel_replace.unsupported', 'capability.order_shape.unsupported', 'capability.order_status_streaming.unavailable', 'capability.preview.unavailable', 'capability.ready', 'capability.sync.required', 'capability.sync.stale', 'capability.unsupported', 'provider.demo.unsupported', 'provider.paper.unsupported', 'provider.read_only.unsupported', 'provider.submit_only.unsupported']),
+  "severity": zod.enum(['info', 'action_required', 'blocked', 'security_blocked', 'provider_limitation']),
+  "auditEventHint": zod.string(),
+  "redactionClass": zod.enum(['customer_safe', 'support_safe', 'internal_only'])
+}).describe('Customer-safe execution decision metadata from the backend registry.'),
+  "credentials": zod.object({
+  "consumerKeyPresent": zod.boolean(),
+  "signingKeyPresent": zod.boolean(),
+  "callbackUrlPresent": zod.boolean(),
+  "thirdPartyApprovalRecorded": zod.boolean()
+}),
+  "requirements": zod.object({
+  "oauthVersion": zod.enum(['oauth1a_third_party']),
+  "localGatewayRequired": zod.literal(false),
+  "clientPortalGatewayCustomerPath": zod.literal(false),
+  "approvalRequired": zod.literal(true),
+  "officialSources": zod.array(zod.string())
+}),
+  "limitations": zod.array(zod.string())
+}).describe('Sanitized server-side IBKR OAuth readiness. Never includes OAuth consumer keys, signing keys, callback URLs, access tokens, or raw upstream payloads.')
+
+
+/**
+ * @summary Register the authenticated user with SnapTrade
+ */
+export const RegisterSnapTradeCurrentUserResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "created": zod.boolean().describe('True when a new SnapTrade user credential was created during this request.'),
+  "user": zod.object({
+  "registered": zod.boolean(),
+  "status": zod.enum(['not_registered', 'registered', 'disabled']),
+  "snapTradeUserIdPresent": zod.boolean(),
+  "userSecretStored": zod.boolean(),
+  "registeredAt": zod.coerce.date().nullable(),
+  "disabledAt": zod.coerce.date().nullable(),
+  "nextAction": zod.enum(['register_snaptrade_user', 'configure_redirect_uri', 'generate_connection_portal', 'manual_review'])
+}).describe('Sanitized current-user SnapTrade custody readiness. Never includes SnapTrade user secrets or provider user ids.')
+}).describe('Sanitized result of registering the authenticated app user with SnapTrade. Never includes SnapTrade user secrets or provider user ids.')
+
+
+/**
+ * @summary Generate a SnapTrade Connection Portal URL for the authenticated user
+ */
+export const generateSnapTradeConnectionPortalBodyBrokerMax = 128;
+
+
+export const generateSnapTradeConnectionPortalBodyBrokerRegExp = new RegExp('^[A-Za-z0-9_-]+$');
+
+
+export const GenerateSnapTradeConnectionPortalBody = zod.object({
+  "broker": zod.string().min(1).max(generateSnapTradeConnectionPortalBodyBrokerMax).regex(generateSnapTradeConnectionPortalBodyBrokerRegExp).optional().describe('Optional SnapTrade brokerage slug. Leave empty to show SnapTrade\'s brokerage picker.'),
+  "reconnect": zod.string().uuid().optional().describe('Existing SnapTrade connection UUID to re-authorize. Only use for reconnect flows.'),
+  "connectionType": zod.enum(['read', 'trade', 'trade-if-available']).optional().describe('Defaults to trade-if-available so supported brokerages can grant trading while unsupported brokerages can still connect read-only.'),
+  "immediateRedirect": zod.boolean().optional().describe('Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted.'),
+  "showCloseButton": zod.boolean().optional().describe('Forwarded to SnapTrade. Defaults to true when omitted.'),
+  "darkMode": zod.boolean().optional().describe('Forwarded to SnapTrade. Defaults to SnapTrade behavior when omitted.')
+}).describe('Request for a short-lived SnapTrade Connection Portal URL. customRedirect is intentionally not accepted from clients.')
+
+export const GenerateSnapTradeConnectionPortalResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "redirectUri": zod.string().url().describe('SnapTrade Connection Portal URL. SnapTrade documents this URL as expiring in five minutes.'),
+  "sessionId": zod.string().describe('SnapTrade Connection Portal session identifier.'),
+  "expiresAt": zod.coerce.date(),
+  "requestedConnectionType": zod.enum(['read', 'trade', 'trade-if-available']),
+  "connectionPortalVersion": zod.enum(['v4']),
+  "broker": zod.string().nullable(),
+  "reconnect": zod.string().uuid().nullable()
+}).describe('Short-lived SnapTrade Connection Portal response for the current user. Contains the user-facing redirect URL but never includes SnapTrade userSecret or PYRUS user identifiers.')
+
+
+/**
+ * @summary Sync SnapTrade brokerage connections and accounts for the authenticated user
+ */
+export const SyncSnapTradeBrokerageConnectionsResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "syncedAt": zod.coerce.date(),
+  "connections": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker connection id.'),
+  "provider": zod.enum(['snaptrade']),
+  "snapTradeConnectionId": zod.string().describe('SnapTrade brokerage authorization id. This is not a credential.'),
+  "brokerageSlug": zod.string().nullable(),
+  "brokerageName": zod.string(),
+  "connectionType": zod.enum(['read', 'trade', 'unknown']).describe('Sanitized SnapTrade connection permission type returned by the connection list.'),
+  "status": zod.enum(['configured', 'connected', 'disconnected', 'error']),
+  "tradeEnabled": zod.boolean().nullable(),
+  "executionReady": zod.boolean().describe('True only when this connection is currently eligible for live order submission.'),
+  "executionBlockers": zod.array(zod.string()).describe('Machine-readable reasons this connection is not currently eligible for live order submission.'),
+  "accountCount": zod.number(),
+  "mode": zod.enum(['live'])
+}).describe('Sanitized SnapTrade brokerage connection stored in PYRUS. Never includes SnapTrade user ids, user secrets, or raw upstream payloads.')),
+  "accounts": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "brokerageName": zod.string().nullable(),
+  "status": zod.enum(['open', 'closed', 'archived']).nullable().describe('Sanitized SnapTrade account status. Null means unknown or not provided by the brokerage.'),
+  "baseCurrency": zod.string(),
+  "executionReady": zod.boolean().describe('True only when this account and its connection are currently eligible for live order submission.'),
+  "executionBlockers": zod.array(zod.string()).describe('Machine-readable reasons this account is not currently eligible for live order submission.'),
+  "mode": zod.enum(['live']),
+  "lastSyncedAt": zod.coerce.date()
+}).describe('Sanitized SnapTrade brokerage account stored in PYRUS. Account display names are redacted before persistence.')),
+  "totals": zod.object({
+  "upstreamConnections": zod.number(),
+  "upstreamAccounts": zod.number(),
+  "storedConnections": zod.number(),
+  "storedAccounts": zod.number()
+})
+}).describe('Sanitized result of syncing the authenticated user\'s SnapTrade brokerage connections and accounts. Never includes SnapTrade userSecret, PYRUS user ids, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary List SnapTrade brokerages available to this app with trading capability and logos
+ */
+export const ListSnapTradeBrokeragesResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "checkedAt": zod.coerce.date(),
+  "brokerages": zod.array(zod.object({
+  "slug": zod.string().describe('SnapTrade brokerage slug, for example ETRADE.'),
+  "displayName": zod.string(),
+  "description": zod.string().nullable(),
+  "url": zod.string().url().nullable().describe('Brokerage homepage URL.'),
+  "allowsTrading": zod.boolean().describe('True when SnapTrade supports order placement for this brokerage under this app\'s clientId.'),
+  "enabled": zod.boolean(),
+  "maintenanceMode": zod.boolean(),
+  "isDegraded": zod.boolean(),
+  "allowsFractionalUnits": zod.boolean().nullable(),
+  "logoUrl": zod.string().url().nullable().describe('SnapTrade-hosted wordmark logo image URL.'),
+  "squareLogoUrl": zod.string().url().nullable().describe('SnapTrade-hosted square logo image URL.'),
+  "authorizationTypes": zod.array(zod.object({
+  "type": zod.string(),
+  "authType": zod.string().nullable()
+})).describe('Connection access levels SnapTrade offers for this brokerage, for example trade or read.')
+}).describe('Sanitized SnapTrade brokerage entry from the partner-scoped allowed-brokerages list. Never includes credentials or upstream identifiers.'))
+}).describe('Partner-scoped SnapTrade brokerage listing, sorted trade-capable first.')
+
+
+/**
+ * @summary Get sanitized SnapTrade balances and positions for a synced local account
+ */
+export const GetSnapTradeAccountPortfolioParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const GetSnapTradeAccountPortfolioResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "syncedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Local account metadata for a synced SnapTrade brokerage account.'),
+  "balances": zod.array(zod.object({
+  "currency": zod.string(),
+  "cash": zod.number().nullable(),
+  "buyingPower": zod.number().nullable()
+})),
+  "positions": zod.array(zod.object({
+  "snapTradePositionId": zod.string(),
+  "symbol": zod.string(),
+  "rawSymbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "instrumentKind": zod.string(),
+  "assetClass": zod.enum(['equity', 'option', 'crypto', 'future', 'other']),
+  "optionContract": zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
+}).nullable(),
+  "quantity": zod.number().nullable(),
+  "side": zod.enum(['long', 'short', 'flat']),
+  "price": zod.number().nullable(),
+  "averagePurchasePrice": zod.number().nullable(),
+  "marketValue": zod.number().nullable(),
+  "costBasis": zod.number().nullable(),
+  "unrealizedPnl": zod.number().nullable(),
+  "currency": zod.string(),
+  "cashEquivalent": zod.boolean()
+}).describe('Normalized SnapTrade position row for account preview and future trading context.')),
+  "totals": zod.object({
+  "cash": zod.number().nullable(),
+  "buyingPower": zod.number().nullable(),
+  "positionMarketValue": zod.number().nullable(),
+  "netLiquidation": zod.number().nullable(),
+  "positionCount": zod.number()
+}),
+  "dataFreshness": zod.object({
+  "asOf": zod.coerce.date().nullable()
+})
+}).describe('Sanitized SnapTrade balances and positions for one synced account. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Backfill and read SnapTrade activities, closed trades, and equity history for a synced local account
+ */
+export const GetSnapTradeAccountHistoryParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const GetSnapTradeAccountHistoryQueryParams = zod.object({
+  "from": zod.date().optional().describe('Optional lower bound for returned closed trades.'),
+  "to": zod.date().optional().describe('Optional upper bound for activity fetch and returned closed trades.'),
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional()
+})
+
+export const GetSnapTradeAccountHistoryResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "syncedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Local account metadata for a synced SnapTrade brokerage account.'),
+  "activities": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "symbol": zod.string().nullable(),
+  "rawSymbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "type": zod.string(),
+  "optionType": zod.string().nullable(),
+  "optionTicker": zod.string().nullable(),
+  "tradeDate": zod.coerce.date(),
+  "settlementDate": zod.coerce.date().nullable(),
+  "quantity": zod.number().nullable(),
+  "price": zod.number().nullable(),
+  "amount": zod.number().nullable(),
+  "fee": zod.number().nullable(),
+  "currency": zod.string(),
+  "externalReferenceId": zod.string().nullable(),
+  "optionContract": zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
+}).nullable()
+}).describe('Normalized SnapTrade activity row persisted for account history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.')),
+  "closedTrades": zod.object({
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "trades": zod.array(zod.object({
+  "id": zod.string(),
+  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY']),
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "side": zod.string(),
+  "assetClass": zod.string().describe('Display label for the trade position type.'),
+  "positionType": zod.enum(['stock', 'etf', 'option']).describe('Canonical account position type used for filtering and grouping.'),
+  "quantity": zod.number(),
+  "openDate": zod.coerce.date().nullable(),
+  "closeDate": zod.coerce.date().nullable(),
+  "avgOpen": zod.number().nullable(),
+  "avgClose": zod.number().nullable(),
+  "realizedPnl": zod.number().nullable(),
+  "realizedPnlPercent": zod.number().nullable(),
+  "holdDurationMinutes": zod.number().nullable(),
+  "commissions": zod.number().nullable(),
+  "currency": zod.string(),
+  "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
+  "strategyLabel": zod.string().nullish(),
+  "candidateId": zod.string().nullish(),
+  "deploymentId": zod.string().nullish(),
+  "deploymentName": zod.string().nullish(),
+  "sourceEventId": zod.string().nullish(),
+  "exitReason": zod.string().nullish(),
+  "selectedContract": zod.record(zod.string(), zod.unknown()).nullish(),
+  "optionContract": zod.record(zod.string(), zod.unknown()).nullish(),
+  "optionRight": zod.enum(['call', 'put']).nullish(),
+  "expirationDate": zod.string().nullish(),
+  "dte": zod.number().nullish(),
+  "strike": zod.number().nullish(),
+  "strikeSlot": zod.number().nullish(),
+  "strikeDistancePct": zod.number().nullish(),
+  "signalPrice": zod.number().nullish(),
+  "filterState": zod.record(zod.string(), zod.unknown()).nullish(),
+  "adx": zod.number().nullish(),
+  "mtfDirections": zod.array(zod.number()).optional(),
+  "filterDirection": zod.number().nullish(),
+  "peakPrice": zod.number().nullish(),
+  "mfePercent": zod.number().nullish(),
+  "givebackPercent": zod.number().nullish(),
+  "premiumAtRisk": zod.number().nullish(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+})),
+  "summary": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
+}),
+  "equityHistory": zod.object({
+  "accountId": zod.string(),
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']),
+  "currency": zod.string(),
+  "flexConfigured": zod.boolean(),
+  "lastFlexRefreshAt": zod.coerce.date().nullable(),
+  "benchmark": zod.string().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "latestSnapshotAt": zod.coerce.date().nullable(),
+  "isStale": zod.boolean(),
+  "staleReason": zod.string().nullable(),
+  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay', 'snaptrade_balance_history']).nullable(),
+  "liveTerminalIncluded": zod.boolean(),
+  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay', 'runtime_fallback']).nullish(),
+  "selectedSnapshotSource": zod.string().nullish(),
+  "points": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "netLiquidation": zod.number(),
+  "currency": zod.string(),
+  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER', 'SHADOW_BACKTEST', 'SHADOW_OPTIONS_REPLAY', 'SNAPTRADE_BALANCE_HISTORY']),
+  "deposits": zod.number(),
+  "withdrawals": zod.number(),
+  "dividends": zod.number(),
+  "fees": zod.number(),
+  "returnPercent": zod.number().describe('Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L.'),
+  "benchmarkPercent": zod.number().nullable().describe('Benchmark return in percentage points, rebased to the first visible matched point.')
+})),
+  "events": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "type": zod.string(),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "source": zod.string()
+}))
+}),
+  "balanceHistory": zod.object({
+  "available": zod.boolean(),
+  "reason": zod.string().nullable(),
+  "pointCount": zod.number()
+}),
+  "backfill": zod.object({
+  "activitiesFetched": zod.number(),
+  "activitiesStored": zod.number(),
+  "balanceSnapshotsFetched": zod.number(),
+  "balanceSnapshotsStored": zod.number()
+})
+}).describe('Sanitized SnapTrade account history response assembled from activities and beta balance history. Never includes SnapTrade userSecret, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Search SnapTrade universal symbols tradable by a synced local account
+ */
+export const SearchSnapTradeAccountSymbolsParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const searchSnapTradeAccountSymbolsQueryQueryMax = 80;
+
+
+
+export const SearchSnapTradeAccountSymbolsQueryParams = zod.object({
+  "query": zod.coerce.string().min(1).max(searchSnapTradeAccountSymbolsQueryQueryMax).describe('Ticker or security-name substring to search within this account\'s brokerage-supported symbols.')
+})
+
+export const SearchSnapTradeAccountSymbolsResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "checkedAt": zod.coerce.date(),
+  "query": zod.string(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a SnapTrade order operation.'),
+  "symbols": zod.array(zod.object({
+  "id": zod.string().uuid().describe('SnapTrade universal symbol id used by order-impact requests.'),
+  "symbol": zod.string(),
+  "rawSymbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "currencyCode": zod.string().nullable(),
+  "exchangeCode": zod.string().nullable(),
+  "exchangeMicCode": zod.string().nullable(),
+  "exchangeName": zod.string().nullable(),
+  "exchangeSuffix": zod.string().nullable(),
+  "securityTypeCode": zod.string().nullable(),
+  "securityTypeDescription": zod.string().nullable()
+}).describe('Sanitized SnapTrade Universal Symbol available for one connected brokerage account.')),
+  "bestMatch": zod.object({
+  "id": zod.string().uuid().describe('SnapTrade universal symbol id used by order-impact requests.'),
+  "symbol": zod.string(),
+  "rawSymbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "currencyCode": zod.string().nullable(),
+  "exchangeCode": zod.string().nullable(),
+  "exchangeMicCode": zod.string().nullable(),
+  "exchangeName": zod.string().nullable(),
+  "exchangeSuffix": zod.string().nullable(),
+  "securityTypeCode": zod.string().nullable(),
+  "securityTypeDescription": zod.string().nullable()
+}).describe('Sanitized SnapTrade Universal Symbol available for one connected brokerage account.').nullable()
+}).describe('Sanitized account-scoped SnapTrade universal-symbol search response. Never includes user secrets, client credentials, raw account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Check SnapTrade equity order impact for a synced local account
+ */
+export const CheckSnapTradeEquityOrderImpactParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const CheckSnapTradeEquityOrderImpactBody = zod.object({
+  "action": zod.enum(['BUY', 'SELL']),
+  "universalSymbolId": zod.string().uuid().describe('SnapTrade universal symbol id required by the order-impact endpoint.'),
+  "symbol": zod.string().nullish().describe('Optional display\/trading symbol for PYRUS response context.'),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GTC', 'FOK', 'IOC']),
+  "units": zod.number().nullish().describe('Share quantity. Must be omitted\/null when notionalValue is provided.'),
+  "notionalValue": zod.number().nullish().describe('Notional order value. Only valid for Market + Day orders when supported by the brokerage.'),
+  "price": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
+  "stop": zod.number().nullish().describe('Required for Stop and StopLimit orders.')
+}).describe('Local PYRUS request for SnapTrade\'s equity order-impact endpoint. Uses camelCase locally and is translated to SnapTrade snake_case server-side.')
+
+export const CheckSnapTradeEquityOrderImpactResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "checkedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a SnapTrade order operation.'),
+  "order": zod.object({
+  "action": zod.enum(['BUY', 'SELL']),
+  "symbol": zod.string().nullable(),
+  "universalSymbolId": zod.string().nullable(),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GTC', 'FOK', 'IOC']),
+  "tradingSession": zod.enum(['REGULAR', 'EXTENDED']).nullable(),
+  "units": zod.number().nullable(),
+  "notionalValue": zod.number().nullable(),
+  "price": zod.number().nullable(),
+  "stop": zod.number().nullable(),
+  "clientOrderId": zod.string().nullable()
+}).describe('Sanitized order details accepted by PYRUS and translated to SnapTrade upstream fields.'),
+  "trade": zod.object({
+  "id": zod.string(),
+  "expiresAt": zod.coerce.date().describe('SnapTrade order-impact trades expire after approximately five minutes.')
+}),
+  "impact": zod.object({
+  "remainingCash": zod.number().nullable(),
+  "estimatedCommission": zod.number().nullable(),
+  "forexFees": zod.number().nullable()
+})
+}).describe('Sanitized response from SnapTrade\'s order-impact endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Get realtime SnapTrade recent orders for post-submit reconciliation
+ */
+export const GetSnapTradeRecentOrdersParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const GetSnapTradeRecentOrdersResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "checkedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a SnapTrade order operation.'),
+  "orders": zod.array(zod.object({
+  "brokerageOrderId": zod.string().nullable(),
+  "brokerageGroupOrderId": zod.string().nullable(),
+  "orderRole": zod.string().nullable(),
+  "status": zod.string(),
+  "symbol": zod.string().nullable(),
+  "rawSymbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "universalSymbolId": zod.string().nullable(),
+  "optionSymbolId": zod.string().nullable(),
+  "optionTicker": zod.string().nullable(),
+  "action": zod.string().nullable(),
+  "totalQuantity": zod.number().nullable(),
+  "openQuantity": zod.number().nullable(),
+  "canceledQuantity": zod.number().nullable(),
+  "filledQuantity": zod.number().nullable(),
+  "executionPrice": zod.number().nullable(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "orderType": zod.string().nullable(),
+  "timeInForce": zod.string().nullable(),
+  "timePlaced": zod.coerce.date().nullable(),
+  "timeUpdated": zod.coerce.date().nullable(),
+  "timeExecuted": zod.coerce.date().nullable(),
+  "expiryDate": zod.coerce.date().nullable()
+}).describe('Sanitized SnapTrade recent-order leg used for post-submit status reconciliation.'))
+}).describe('Sanitized SnapTrade realtime recent-order response. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Submit a confirmed SnapTrade equity order for a synced local account
+ */
+export const SubmitSnapTradeEquityOrderParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS broker account id returned by SnapTrade account sync.')
+})
+
+export const SubmitSnapTradeEquityOrderBody = zod.object({
+  "confirm": zod.boolean().describe('Must be true to submit the order to SnapTrade and the brokerage.'),
+  "action": zod.enum(['BUY', 'SELL']),
+  "symbol": zod.string().describe('Brokerage trading symbol. SnapTrade recommends symbol when placing equity orders.'),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GTC', 'FOK', 'IOC']),
+  "tradingSession": zod.enum(['REGULAR', 'EXTENDED']).nullish(),
+  "expiryDate": zod.string().nullish().describe('Future GTD support field passed through only when enabled by validation.'),
+  "units": zod.number().nullish().describe('Share quantity. Must be omitted\/null when notionalValue is provided.'),
+  "notionalValue": zod.number().nullish().describe('Notional order value. Only valid for Market + Day orders when supported by the brokerage.'),
+  "price": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
+  "stop": zod.number().nullish().describe('Required for Stop and StopLimit orders.'),
+  "clientOrderId": zod.string().uuid().nullish().describe('Optional idempotency\/correlation UUID passed through to SnapTrade.')
+}).describe('Local PYRUS request for SnapTrade\'s direct equity order endpoint. confirm=true is required because this can submit a live brokerage order.')
+
+export const SubmitSnapTradeEquityOrderResponse = zod.object({
+  "provider": zod.enum(['snaptrade']),
+  "submittedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "snapTradeAccountId": zod.string().describe('SnapTrade account id. This is not an account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a SnapTrade order operation.'),
+  "order": zod.object({
+  "action": zod.enum(['BUY', 'SELL']),
+  "symbol": zod.string().nullable(),
+  "universalSymbolId": zod.string().nullable(),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GTC', 'FOK', 'IOC']),
+  "tradingSession": zod.enum(['REGULAR', 'EXTENDED']).nullable(),
+  "units": zod.number().nullable(),
+  "notionalValue": zod.number().nullable(),
+  "price": zod.number().nullable(),
+  "stop": zod.number().nullable(),
+  "clientOrderId": zod.string().nullable()
+}).describe('Sanitized order details accepted by PYRUS and translated to SnapTrade upstream fields.').and(zod.object({
+  "brokerageOrderId": zod.string().nullable(),
+  "status": zod.string()
+}))
+}).describe('Sanitized response from SnapTrade\'s direct equity order endpoint. Never includes SnapTrade userSecret, client credentials, account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Get sanitized Robinhood Agentic Trading execution readiness
+ */
+export const GetRobinhoodReadinessResponse = zod.object({
+  "provider": zod.enum(['robinhood']),
+  "configured": zod.boolean(),
+  "status": zod.enum(['unconfigured', 'research_required', 'upstream_error']),
+  "checkedAt": zod.coerce.date(),
+  "executionDecision": zod.object({
+  "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
+  "gateFamily": zod.enum(['scope', 'capability', 'provider']),
+  "outcome": zod.enum(['allowed', 'blocked']),
+  "customerMessageKey": zod.enum(['broker.provider.complianceReviewRequired', 'broker.provider.eligible', 'broker.provider.ibkrSpecialConnector', 'broker.provider.insufficientCapability', 'broker.provider.researchRequired', 'broker.provider.unsupported', 'broker.scope.automationTradingConnection.missingRequired', 'broker.scope.ready', 'capability.asset_class.single_leg_options.unsupported', 'capability.cancel_replace.unsupported', 'capability.order_shape.unsupported', 'capability.order_status_streaming.unavailable', 'capability.preview.unavailable', 'capability.ready', 'capability.sync.required', 'capability.sync.stale', 'capability.unsupported', 'provider.demo.unsupported', 'provider.paper.unsupported', 'provider.read_only.unsupported', 'provider.submit_only.unsupported']),
+  "severity": zod.enum(['info', 'action_required', 'blocked', 'security_blocked', 'provider_limitation']),
+  "auditEventHint": zod.string(),
+  "redactionClass": zod.enum(['customer_safe', 'support_safe', 'internal_only'])
+}).describe('Customer-safe execution decision metadata from the backend registry.'),
+  "prerequisites": zod.object({
+  "credentialEncryptionKeyPresent": zod.boolean(),
+  "redirectBaseUrlPresent": zod.boolean()
+}),
+  "user": zod.object({
+  "connected": zod.boolean(),
+  "status": zod.enum(['not_connected', 'pending', 'connected', 'disabled']),
+  "oauthClientRegistered": zod.boolean(),
+  "refreshTokenStored": zod.boolean(),
+  "connectedAt": zod.coerce.date().nullable(),
+  "disabledAt": zod.coerce.date().nullable(),
+  "nextAction": zod.enum(['start_connect', 'complete_authorization', 'sync_accounts', 'manual_review'])
+}).describe('Sanitized current-user Robinhood Agentic OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.'),
+  "oauth": zod.object({
+  "reachable": zod.boolean(),
+  "authorizationEndpointPresent": zod.boolean().nullable(),
+  "tokenEndpointPresent": zod.boolean().nullable(),
+  "registrationEndpointPresent": zod.boolean().nullable(),
+  "pkceS256Supported": zod.boolean().nullable()
+}).describe('Live probe of Robinhood\'s published OAuth authorization-server metadata.').nullable(),
+  "limitations": zod.array(zod.string()),
+  "upstream": zod.object({
+  "status": zod.number(),
+  "code": zod.string(),
+  "message": zod.string()
+}).nullable()
+}).describe('Sanitized Robinhood Agentic Trading readiness. Never includes tokens or raw upstream payloads.')
+
+
+/**
+ * @summary Start the Robinhood Agentic OAuth authorization for the authenticated user
+ */
+export const StartRobinhoodConnectResponse = zod.object({
+  "provider": zod.enum(['robinhood']),
+  "authorizationUrl": zod.string().url(),
+  "state": zod.string(),
+  "redirectUri": zod.string().url(),
+  "expiresAt": zod.coerce.date()
+}).describe('Robinhood Agentic OAuth authorization start for the current user. The URL opens Robinhood\'s consent page; tokens are exchanged and stored server-side only.')
+
+
+/**
+ * @summary Sync Robinhood Agentic accounts for the authenticated user via the Trading MCP
+ */
+export const SyncRobinhoodConnectionsResponse = zod.object({
+  "provider": zod.enum(['robinhood']),
+  "syncedAt": zod.coerce.date(),
+  "connections": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker connection id.'),
+  "provider": zod.enum(['robinhood']),
+  "connectionKind": zod.enum(['agentic_oauth']),
+  "status": zod.enum(['connected', 'disconnected', 'error']),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "accountCount": zod.number(),
+  "mode": zod.enum(['live'])
+}).describe('Sanitized Robinhood Agentic OAuth connection stored in PYRUS.')),
+  "accounts": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "robinhoodAccountId": zod.string().describe('Robinhood account identifier as returned by the Trading MCP. May be redacted upstream.'),
+  "displayName": zod.string(),
+  "agentic": zod.boolean().nullable().describe('True when the account is the dedicated Agentic account. Null means the MCP payload did not identify it.'),
+  "status": zod.enum(['open', 'closed', 'archived']).nullable(),
+  "baseCurrency": zod.string(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "mode": zod.enum(['live']),
+  "lastSyncedAt": zod.coerce.date()
+}).describe('Sanitized Robinhood account stored in PYRUS. Account display names are redacted before persistence.')),
+  "totals": zod.object({
+  "upstreamAccounts": zod.number(),
+  "storedConnections": zod.number(),
+  "storedAccounts": zod.number()
+})
+}).describe('Sanitized result of syncing the authenticated user\'s Robinhood Agentic accounts. Never includes tokens, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Get sanitized Schwab Trader API execution readiness
+ */
+export const GetSchwabReadinessResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "configured": zod.boolean(),
+  "status": zod.enum(['unconfigured', 'research_required']),
+  "checkedAt": zod.coerce.date(),
+  "executionDecision": zod.object({
+  "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
+  "gateFamily": zod.enum(['scope', 'capability', 'provider']),
+  "outcome": zod.enum(['allowed', 'blocked']),
+  "customerMessageKey": zod.enum(['broker.provider.complianceReviewRequired', 'broker.provider.eligible', 'broker.provider.ibkrSpecialConnector', 'broker.provider.insufficientCapability', 'broker.provider.researchRequired', 'broker.provider.unsupported', 'broker.scope.automationTradingConnection.missingRequired', 'broker.scope.ready', 'capability.asset_class.single_leg_options.unsupported', 'capability.cancel_replace.unsupported', 'capability.order_shape.unsupported', 'capability.order_status_streaming.unavailable', 'capability.preview.unavailable', 'capability.ready', 'capability.sync.required', 'capability.sync.stale', 'capability.unsupported', 'provider.demo.unsupported', 'provider.paper.unsupported', 'provider.read_only.unsupported', 'provider.submit_only.unsupported']),
+  "severity": zod.enum(['info', 'action_required', 'blocked', 'security_blocked', 'provider_limitation']),
+  "auditEventHint": zod.string(),
+  "redactionClass": zod.enum(['customer_safe', 'support_safe', 'internal_only'])
+}).describe('Customer-safe execution decision metadata from the backend registry.'),
+  "prerequisites": zod.object({
+  "credentialEncryptionKeyPresent": zod.boolean(),
+  "redirectBaseUrlPresent": zod.boolean(),
+  "appCredentialsPresent": zod.boolean()
+}),
+  "user": zod.object({
+  "connected": zod.boolean(),
+  "status": zod.enum(['not_connected', 'pending', 'connected', 'expired', 'disabled']),
+  "refreshTokenStored": zod.boolean(),
+  "connectedAt": zod.coerce.date().nullable(),
+  "refreshTokenExpiresAt": zod.coerce.date().nullable().describe('Schwab refresh tokens hard-expire 7 days after issuance; users must reconnect weekly.'),
+  "disabledAt": zod.coerce.date().nullable(),
+  "nextAction": zod.enum(['start_connect', 'complete_authorization', 'sync_accounts', 'reconnect', 'manual_review'])
+}).describe('Sanitized current-user Schwab Trader API OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.'),
+  "limitations": zod.array(zod.string()),
+  "upstream": zod.object({
+  "status": zod.number(),
+  "code": zod.string(),
+  "message": zod.string()
+}).nullable()
+}).describe('Sanitized Schwab Trader API readiness. Never includes tokens, app secrets, or raw upstream payloads.')
+
+
+/**
+ * @summary Start the Schwab Trader API OAuth authorization for the authenticated user
+ */
+export const StartSchwabConnectResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "authorizationUrl": zod.string().url(),
+  "state": zod.string(),
+  "redirectUri": zod.string().url(),
+  "expiresAt": zod.coerce.date()
+}).describe('Schwab Trader API OAuth authorization start for the current user. The URL opens Schwab\'s consent page; tokens are exchanged and stored server-side only.')
+
+
+/**
+ * @summary Sync Schwab Trader API accounts for the authenticated user
+ */
+export const SyncSchwabConnectionsResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "syncedAt": zod.coerce.date(),
+  "connections": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker connection id.'),
+  "provider": zod.enum(['schwab']),
+  "connectionKind": zod.enum(['trader_api_oauth']),
+  "status": zod.enum(['connected', 'disconnected', 'error']),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "accountCount": zod.number(),
+  "mode": zod.enum(['live'])
+}).describe('Sanitized Schwab Trader API OAuth connection stored in PYRUS.')),
+  "accounts": zod.array(zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "schwabAccountHash": zod.string().describe('Schwab account hash value used in place of the account number.'),
+  "displayName": zod.string(),
+  "accountType": zod.string().nullable().describe('Schwab account type, e.g. CASH or MARGIN. Null means the upstream payload did not identify it.'),
+  "baseCurrency": zod.string(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "mode": zod.enum(['live']),
+  "lastSyncedAt": zod.coerce.date()
+}).describe('Sanitized Schwab account stored in PYRUS. Account display names are redacted before persistence.')),
+  "totals": zod.object({
+  "upstreamAccounts": zod.number(),
+  "storedConnections": zod.number(),
+  "storedAccounts": zod.number()
+})
+}).describe('Sanitized result of syncing the authenticated user\'s Schwab Trader API accounts. Never includes tokens, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Get IBKR Client Portal browser-login session readiness
+ */
+export const GetIbkrPortalReadinessResponse = zod.object({
+  "status": zod.enum(['unavailable', 'disconnected', 'gateway_starting', 'needs_login', 'competing', 'connected']),
+  "gatewayRunning": zod.boolean(),
+  "authenticated": zod.boolean(),
+  "selectedAccountId": zod.string().nullable(),
+  "accounts": zod.array(zod.string()),
+  "loginPath": zod.string().nullable(),
+  "message": zod.string()
+}).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
+
+
+/**
+ * @summary Get the current IBKR Client Portal browser-login session status
+ */
+export const GetIbkrPortalStatusResponse = zod.object({
+  "status": zod.enum(['unavailable', 'disconnected', 'gateway_starting', 'needs_login', 'competing', 'connected']),
+  "gatewayRunning": zod.boolean(),
+  "authenticated": zod.boolean(),
+  "selectedAccountId": zod.string().nullable(),
+  "accounts": zod.array(zod.string()),
+  "loginPath": zod.string().nullable(),
+  "message": zod.string()
+}).describe('IBKR Client Portal browser-login gateway and session readiness. Reflects the per-user gateway pool state, not an OAuth token.')
+
+
+/**
+ * @summary Start the IBKR Client Portal gateway and return the browser login path
+ */
+export const ConnectIbkrPortalResponse = zod.object({
+  "loginPath": zod.string(),
+  "status": zod.enum(['unavailable', 'disconnected', 'gateway_starting', 'needs_login', 'competing', 'connected'])
+}).describe('IBKR Client Portal gateway login path returned after starting (or reusing) the per-user gateway.')
+
+
+/**
+ * @summary Stop the IBKR Client Portal gateway and end the browser-login session
+ */
+export const DisconnectIbkrPortalResponse = zod.object({
+  "ok": zod.boolean()
+}).describe('Result of stopping the IBKR Client Portal gateway and ending the browser-login session.')
 
 
 /**
@@ -1298,7 +1561,7 @@ export const ListAccountsResponse = zod.object({
   "accounts": zod.array(zod.object({
   "id": zod.string(),
   "providerAccountId": zod.string(),
-  "provider": zod.enum(['ibkr']),
+  "provider": zod.enum(['ibkr', 'snaptrade', 'robinhood']),
   "mode": zod.enum(['shadow', 'live']),
   "displayName": zod.string(),
   "currency": zod.string(),
@@ -1555,7 +1818,7 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "latestSnapshotAt": zod.coerce.date().nullable(),
   "isStale": zod.boolean(),
   "staleReason": zod.string().nullable(),
-  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay']).nullable(),
+  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay', 'snaptrade_balance_history']).nullable(),
   "liveTerminalIncluded": zod.boolean(),
   "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay', 'runtime_fallback']).nullish(),
   "selectedSnapshotSource": zod.string().nullish(),
@@ -1563,7 +1826,7 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "timestamp": zod.coerce.date(),
   "netLiquidation": zod.number(),
   "currency": zod.string(),
-  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER', 'SHADOW_BACKTEST', 'SHADOW_OPTIONS_REPLAY']),
+  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER', 'SHADOW_BACKTEST', 'SHADOW_OPTIONS_REPLAY', 'SNAPTRADE_BALANCE_HISTORY']),
   "deposits": zod.number(),
   "withdrawals": zod.number(),
   "dividends": zod.number(),
@@ -1649,7 +1912,8 @@ export const GetAccountPositionsResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]).optional(),
   "marketDataSymbol": zod.string().nullish().describe('Canonical ticker used for quote and sparkline hydration.'),
   "sector": zod.string(),
@@ -1701,7 +1965,8 @@ export const GetAccountPositionsResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -1736,7 +2001,7 @@ export const GetAccountPositionsResponse = zod.object({
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   "automationContext": zod.record(zod.string(), zod.unknown()).nullish().describe('Existing automation trade-management state for this open position, when available.'),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -1865,7 +2130,8 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]).optional(),
   "marketDataSymbol": zod.string().nullish().describe('Canonical ticker used for quote and sparkline hydration.'),
   "sector": zod.string(),
@@ -1917,7 +2183,8 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -1952,7 +2219,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   "automationContext": zod.record(zod.string(), zod.unknown()).nullish().describe('Existing automation trade-management state for this open position, when available.'),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -2081,7 +2348,7 @@ export const GetAccountClosedTradesResponse = zod.object({
   "currency": zod.string(),
   "trades": zod.array(zod.object({
   "id": zod.string(),
-  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY']),
+  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY', 'SNAPTRADE_ACTIVITY']),
   "accountId": zod.string(),
   "symbol": zod.string(),
   "side": zod.string(),
@@ -2502,10 +2769,11 @@ export const ListPositionsResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "openedAt": zod.coerce.date().nullish(),
-  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'expiration_same_day', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
   "quote": zod.union([zod.object({
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -2588,7 +2856,8 @@ export const ListOrdersResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -2630,7 +2899,8 @@ export const PlaceOrderBody = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2666,7 +2936,8 @@ export const PreviewOrderBody = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2693,7 +2964,8 @@ export const PreviewOrderResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -2726,7 +2998,8 @@ export const PreviewShadowOrderBody = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2753,7 +3026,8 @@ export const PreviewShadowOrderResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -2786,7 +3060,8 @@ export const PlaceShadowOrderBody = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2822,7 +3097,8 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2856,7 +3132,8 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
@@ -2910,7 +3187,8 @@ export const ReplaceOrderResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
   "resolvedExchange": zod.string().nullish(),
@@ -3106,6 +3384,24 @@ export const GetGexDashboardResponse = zod.object({
 
 
 /**
+ * Bulk latest net gamma exposure per symbol from persisted GEX snapshots. Lets the universe table render its Net γ column with a single request instead of one dashboard fetch per row.
+ * @summary Get latest net GEX for multiple symbols (bulk)
+ */
+export const GetGexSnapshotsQueryParams = zod.object({
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+})
+
+export const GetGexSnapshotsResponse = zod.object({
+  "snapshots": zod.array(zod.object({
+  "symbol": zod.string(),
+  "netGex": zod.number(),
+  "computedAt": zod.coerce.date(),
+  "stale": zod.boolean()
+}))
+})
+
+
+/**
  * @summary Get latest option quotes for provider contract IDs
  */
 
@@ -3291,7 +3587,7 @@ export const ProxyUniverseLogoQueryParams = zod.object({
 
 
 /**
- * @summary Get broker-first historical bars for a symbol or contract
+ * @summary Get historical bars for a symbol
  */
 export const getBarsQueryLimitMax = 50000;
 
@@ -3312,9 +3608,9 @@ export const GetBarsQueryParams = zod.object({
   "providerContractId": zod.coerce.string().nullish(),
   "outsideRth": zod.coerce.boolean().optional(),
   "source": zod.enum(['trades', 'midpoint', 'bid_ask']).optional(),
-  "allowHistoricalSynthesis": zod.coerce.boolean().optional().describe('Allow Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.'),
-  "allowStudyFallback": zod.coerce.boolean().optional().describe('Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.'),
-  "brokerRecentWindowMinutes": zod.coerce.number().min(getBarsQueryBrokerRecentWindowMinutesMin).optional().describe('Limit broker-sourced recent history to this many minutes before falling back to Massive history.')
+  "allowHistoricalSynthesis": zod.coerce.boolean().optional().describe('Allow Massive historical synthesis when cached\/provider history is incomplete. Defaults to enabled for equities unless explicitly false.'),
+  "allowStudyFallback": zod.coerce.boolean().optional().describe('Allow chart-only synthetic option quote fallback bars when aggregate history is empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.'),
+  "brokerRecentWindowMinutes": zod.coerce.number().min(getBarsQueryBrokerRecentWindowMinutesMin).optional().describe('Equity-only broker fallback limit, in minutes, when Massive history is unavailable.')
 })
 
 export const GetBarsResponse = zod.object({
@@ -3400,7 +3696,8 @@ export const GetOptionChainResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -3414,11 +3711,15 @@ export const GetOptionChainResponse = zod.object({
   "openInterest": zod.number().nullable(),
   "volume": zod.number().nullable(),
   "updatedAt": zod.coerce.date(),
+  "prevClose": zod.number().nullish(),
+  "change": zod.number().nullish(),
+  "changePercent": zod.number().nullish(),
   "quoteFreshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
   "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
   "quoteUpdatedAt": zod.coerce.date().nullish(),
   "dataUpdatedAt": zod.coerce.date().nullish(),
-  "ageMs": zod.number().nullish()
+  "ageMs": zod.number().nullish(),
+  "underlyingPrice": zod.number().nullish()
 }))
 })
 
@@ -3468,7 +3769,8 @@ export const BatchOptionChainsResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),
   "bid": zod.number().nullable(),
   "ask": zod.number().nullable(),
@@ -3482,11 +3784,15 @@ export const BatchOptionChainsResponse = zod.object({
   "openInterest": zod.number().nullable(),
   "volume": zod.number().nullable(),
   "updatedAt": zod.coerce.date(),
+  "prevClose": zod.number().nullish(),
+  "change": zod.number().nullish(),
+  "changePercent": zod.number().nullish(),
   "quoteFreshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
   "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
   "quoteUpdatedAt": zod.coerce.date().nullish(),
   "dataUpdatedAt": zod.coerce.date().nullish(),
-  "ageMs": zod.number().nullish()
+  "ageMs": zod.number().nullish(),
+  "underlyingPrice": zod.number().nullish()
 })),
   "error": zod.string().nullish(),
   "debug": zod.object({
@@ -3535,7 +3841,7 @@ export const BatchOptionChainsResponse = zod.object({
 
 export const GetOptionExpirationsQueryParams = zod.object({
   "underlying": zod.coerce.string(),
-  "maxExpirations": zod.coerce.number().min(1).optional().describe('Optional cap. Omit to discover every expiration IBKR exposes.')
+  "maxExpirations": zod.coerce.number().min(1).optional().describe('Optional cap. Omit to discover every Massive option expiration.')
 })
 
 export const getOptionExpirationsResponseDebugRequestedCountMin = 0;
@@ -3572,7 +3878,7 @@ export const GetOptionExpirationsResponse = zod.object({
 
 
 /**
- * @summary Resolve an option contract to an IBKR broker contract id
+ * @summary Resolve an option contract to its market-data contract id
  */
 export const ResolveOptionContractQueryParams = zod.object({
   "underlying": zod.coerce.string(),
@@ -3604,7 +3910,8 @@ export const ResolveOptionContractResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "errorMessage": zod.string().nullable(),
   "debug": zod.object({
@@ -3724,11 +4031,12 @@ export const GetOptionChartBarsResponse = zod.object({
   "right": zod.enum(['call', 'put']),
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
-  "providerContractId": zod.string().nullish()
+  "providerContractId": zod.string().nullish(),
+  "brokerContractId": zod.string().nullish()
 }),zod.null()]),
   "providerContractId": zod.string().nullable(),
   "resolutionSource": zod.enum(['chain', 'provided', 'resolver', 'none']),
-  "dataSource": zod.enum(['ibkr-history', 'mixed-history', 'massive-option-aggregates', 'none']),
+  "dataSource": zod.enum(['massive-option-aggregates', 'none']),
   "feedIssue": zod.boolean(),
   "debug": zod.object({
   "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
@@ -3777,19 +4085,6 @@ export const StreamOptionQuoteSnapshotsQueryParams = zod.object({
 
 
 /**
- * @summary Stream latest historical bar snapshots over server-sent events
- */
-export const StreamBarsQueryParams = zod.object({
-  "symbol": zod.coerce.string(),
-  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
-  "assetClass": zod.enum(['equity', 'option']).optional(),
-  "providerContractId": zod.coerce.string().nullish(),
-  "outsideRth": zod.coerce.boolean().optional(),
-  "source": zod.enum(['trades', 'midpoint', 'bid_ask']).optional()
-})
-
-
-/**
  * @summary Stream order snapshots over server-sent events
  */
 export const StreamOrdersQueryParams = zod.object({
@@ -3833,22 +4128,6 @@ export const StreamExecutionsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).optional(),
   "symbol": zod.coerce.string().optional(),
   "providerContractId": zod.coerce.string().nullish()
-})
-
-
-/**
- * @summary Get a market depth snapshot
- */
-export const GetMarketDepthQueryParams = zod.object({
-  "symbol": zod.coerce.string(),
-  "accountId": zod.coerce.string().optional(),
-  "assetClass": zod.enum(['equity', 'option']).optional(),
-  "providerContractId": zod.coerce.string().nullish(),
-  "exchange": zod.coerce.string().nullish()
-})
-
-export const GetMarketDepthResponse = zod.object({
-  "depth": zod.record(zod.string(), zod.unknown())
 })
 
 
@@ -3934,18 +4213,6 @@ export const GetFootprintsResponse = zod.object({
   "rowSize": zod.number(),
   "capped": zod.boolean()
 })
-})
-
-
-/**
- * @summary Stream market depth snapshots over server-sent events
- */
-export const StreamMarketDepthQueryParams = zod.object({
-  "symbol": zod.coerce.string(),
-  "accountId": zod.coerce.string().optional(),
-  "assetClass": zod.enum(['equity', 'option']).optional(),
-  "providerContractId": zod.coerce.string().nullish(),
-  "exchange": zod.coerce.string().nullish()
 })
 
 
@@ -4324,11 +4591,11 @@ export const ListFlowEventsQueryParams = zod.object({
   "scope": zod.enum(['all', 'unusual']).optional().describe('Return all flow or only contracts that match the unusual-flow threshold.'),
   "minPremium": zod.coerce.number().min(listFlowEventsQueryMinPremiumMin).max(listFlowEventsQueryMinPremiumMax).optional().describe('Minimum option premium, in dollars, required for each returned flow row.'),
   "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.'),
-  "lineBudget": zod.coerce.number().min(1).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum IBKR option quote lines this request may use.'),
+  "lineBudget": zod.coerce.number().min(1).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum option quote subscriptions this request may use.'),
   "historicalBucketSeconds": zod.coerce.number().min(listFlowEventsQueryHistoricalBucketSecondsMin).max(listFlowEventsQueryHistoricalBucketSecondsMax).optional().describe('Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.'),
-  "from": zod.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.'),
-  "to": zod.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.'),
-  "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.'),
+  "from": zod.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.'),
+  "to": zod.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the snapshot scanner.'),
+  "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand Massive-backed flow refresh instead of returning a transient empty refreshing response.'),
   "queueRefresh": zod.coerce.boolean().optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
 })
 
@@ -4401,7 +4668,7 @@ export const ListFlowEventsResponse = zod.object({
   "provider": zod.enum(['ibkr', 'massive']),
   "basis": zod.enum(['snapshot', 'trade']),
   "optionTicker": zod.string(),
-  "providerContractId": zod.string().nullable().describe('Broker contract identifier, when the flow source can map the option to a broker-backed contract.'),
+  "providerContractId": zod.string().nullable().describe('Market-data contract identifier, typically the OPRA\/Massive option ticker.'),
   "strike": zod.number(),
   "expirationDate": zod.coerce.date(),
   "right": zod.enum(['call', 'put']),
@@ -4590,7 +4857,7 @@ export const ListAggregateFlowEventsResponse = zod.object({
   "provider": zod.enum(['ibkr', 'massive']),
   "basis": zod.enum(['snapshot', 'trade']),
   "optionTicker": zod.string(),
-  "providerContractId": zod.string().nullable().describe('Broker contract identifier, when the flow source can map the option to a broker-backed contract.'),
+  "providerContractId": zod.string().nullable().describe('Market-data contract identifier, typically the OPRA\/Massive option ticker.'),
   "strike": zod.number(),
   "expirationDate": zod.coerce.date(),
   "right": zod.enum(['call', 'put']),
@@ -5722,7 +5989,146 @@ export const GetAlgoDeploymentSignalQualityKpisResponse = zod.object({
   "avgMaePercent": zod.number(),
   "consistencyStdDevPercent": zod.number()
 }).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).')
-}).describe('The eight KPIs computed over only buy (long) signals and only sell (short) signals. Each side is a clean partition of the same observations (realized return \/ MFE \/ MAE are already signed in the signal direction).')
+}).describe('The eight KPIs computed over only buy (long) signals and only sell (short) signals. Each side is a clean partition of the same observations (realized return \/ MFE \/ MAE are already signed in the signal direction).'),
+  "byScoreRange": zod.record(zod.string(), zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).')),
+  "scoreBuckets": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "min": zod.number().nullable(),
+  "max": zod.number().nullable()
+}).describe('A 10-point score range used for signal-quality outcome audits.').and(zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).'))),
+  "scoreRangeBuckets": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "min": zod.number().nullable(),
+  "max": zod.number().nullable()
+}).describe('A 10-point score range used for signal-quality outcome audits.')),
+  "featureSummaries": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "count": zod.number(),
+  "avgValue": zod.number(),
+  "favorableAvgValue": zod.number(),
+  "adverseAvgValue": zod.number(),
+  "pointBiserial": zod.number(),
+  "auc": zod.number(),
+  "topQuartile": zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).'),
+  "bottomQuartile": zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).')
+}).describe('Signal-time feature diagnostics for outcome alignment. AUC is measured with higher feature values predicting positive directional returns.')),
+  "scoreModelComparisons": zod.object({
+  "observationCount": zod.number(),
+  "modelKeys": zod.array(zod.enum(['observed-score', 'sot-outcome-v1', 'evidence-weighted-v2', 'trend-confirmation-v2', 'balanced-sot-v2'])),
+  "recommendedModelKey": zod.enum(['observed-score', 'sot-outcome-v1', 'evidence-weighted-v2', 'trend-confirmation-v2', 'balanced-sot-v2']).nullable(),
+  "calibration": zod.object({
+  "state": zod.enum(['calibrated', 'needs_more_data', 'uncalibrated']),
+  "recommendedModelKey": zod.enum(['observed-score', 'sot-outcome-v1', 'evidence-weighted-v2', 'trend-confirmation-v2', 'balanced-sot-v2']).nullable(),
+  "candidateModelKey": zod.enum(['observed-score', 'sot-outcome-v1', 'evidence-weighted-v2', 'trend-confirmation-v2', 'balanced-sot-v2']).nullable(),
+  "supportedModelCount": zod.number(),
+  "reasons": zod.array(zod.enum(['min_observation_count', 'min_populated_bucket_count', 'min_top_bucket_signal_count', 'min_lower_baseline_signal_count', 'min_alignment_score', 'coverage_degraded']))
+}).describe('Overall score-formula calibration decision derived from the model recommendation support gates. calibrated means a support-qualified model can be recommended, needs_more_data means sample\/support gates are still sparse, and uncalibrated means data support exists but outcome alignment still fails.'),
+  "models": zod.array(zod.object({
+  "modelKey": zod.enum(['observed-score', 'sot-outcome-v1', 'evidence-weighted-v2', 'trend-confirmation-v2', 'balanced-sot-v2']),
+  "byScoreRange": zod.record(zod.string(), zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).')),
+  "scoreBuckets": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "min": zod.number().nullable(),
+  "max": zod.number().nullable()
+}).describe('A 10-point score range used for signal-quality outcome audits.').and(zod.object({
+  "signalCount": zod.number(),
+  "avgDirectionalMovePercent": zod.number(),
+  "correctnessPercent": zod.number(),
+  "expectancyPercent": zod.number(),
+  "payoffRatio": zod.number(),
+  "avgMfePercent": zod.number(),
+  "avgMaePercent": zod.number(),
+  "consistencyStdDevPercent": zod.number()
+}).describe('Eight signal-INDICATOR quality KPIs. Percentages are in percentage points (e.g. 0.42 = 0.42%).'))),
+  "alignment": zod.object({
+  "populatedBucketCount": zod.number(),
+  "topBucketKey": zod.string().nullable(),
+  "topBucketSignalCount": zod.number(),
+  "topBucketExpectancyPercent": zod.number().nullable(),
+  "lowerBaselineSignalCount": zod.number(),
+  "lowerBaselineExpectancyPercent": zod.number().nullable(),
+  "topBucketLiftPercent": zod.number(),
+  "monotonicPairCount": zod.number(),
+  "inversionCount": zod.number(),
+  "inversionSeverityPercent": zod.number(),
+  "alignmentScore": zod.number()
+}).describe('Outcome-alignment diagnostics for one scoring methodology. Positive topBucketLiftPercent means the highest populated score bucket beat the lower-score baseline expectancy.'),
+  "recommendationSupport": zod.object({
+  "supported": zod.boolean(),
+  "reasons": zod.array(zod.enum(['min_observation_count', 'min_populated_bucket_count', 'min_top_bucket_signal_count', 'min_lower_baseline_signal_count', 'min_alignment_score', 'coverage_degraded'])),
+  "observed": zod.object({
+  "observationCount": zod.number(),
+  "populatedBucketCount": zod.number(),
+  "topBucketSignalCount": zod.number(),
+  "lowerBaselineSignalCount": zod.number(),
+  "alignmentScore": zod.number(),
+  "qualifiedTopBandKey": zod.string().nullable(),
+  "qualifiedTopBandSignalCount": zod.number(),
+  "qualifiedTopBandExpectancyPercent": zod.number().nullable(),
+  "qualifiedLowerBaselineSignalCount": zod.number(),
+  "qualifiedLowerBaselineExpectancyPercent": zod.number().nullable(),
+  "qualifiedTopBandLiftPercent": zod.number(),
+  "qualifiedAlignmentScore": zod.number()
+}).describe('Observed sample\/support values used to gate formula recommendations.'),
+  "thresholds": zod.object({
+  "minObservationCount": zod.number(),
+  "minPopulatedBucketCount": zod.number(),
+  "minTopBucketSignalCount": zod.number(),
+  "minLowerBaselineSignalCount": zod.number(),
+  "minAlignmentScore": zod.number()
+}).describe('Minimum support gates required before a scoring model can be recommended.')
+}).describe('Recommendation eligibility diagnostics for one scoring methodology. supported=false means one or more sample\/alignment gates failed.')
+}))
+})
 })),
   "coverage": zod.object({
   "requestedTimeframe": zod.string(),

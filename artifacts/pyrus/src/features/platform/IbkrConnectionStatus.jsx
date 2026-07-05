@@ -6,7 +6,7 @@ import {
   CircleOff,
   PlugZap,
 } from "lucide-react";
-import { CSS_COLOR, cssColorAlpha, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorAlpha, cssColorMix, dim, FONT_WEIGHTS, fs, GLOW, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import {
   STREAM_STATE_LABEL,
@@ -1460,6 +1460,10 @@ export const IbkrConnectionLane = ({
     onReconnect && shouldShowIbkrReconnectAction(health),
   );
   const Icon = tone.Icon;
+  const toneAttention =
+    Boolean(tone.pulse) ||
+    tone.color === CSS_COLOR.red ||
+    tone.color === CSS_COLOR.amber;
 
   return (
     <AppTooltip content={<FailurePointContent point={failurePoint} compact />}><div
@@ -1486,6 +1490,9 @@ export const IbkrConnectionLane = ({
           borderRadius: dim(RADII.pill),
           background: cssColorMix(tone.color, 8),
           flexShrink: 0,
+          ...(toneAttention
+            ? { "--ra-glow-tone": tone.color, boxShadow: GLOW.sm }
+            : null),
         }}
       >
         <Icon size={dim(15)} strokeWidth={2.2} color={tone.color} />

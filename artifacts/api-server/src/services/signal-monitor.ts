@@ -81,7 +81,9 @@ import {
   type PythonComputeJobType,
 } from "./python-compute";
 import {
+  getActiveStockAggregateStreamSource,
   getCurrentStockMinuteAggregates,
+  getPreferredStockAggregateStreamSource,
   getRecentStockMinuteAggregateHistory,
   getStockAggregateStreamDiagnostics,
   isBackgroundStockAggregateStreamingEnabled,
@@ -230,7 +232,9 @@ type SignalMonitorMatrixStreamSourceState =
 export type SignalMonitorMatrixStreamScope = {
   environment: RuntimeMode;
   symbols: string[];
+  symbolSet: ReadonlySet<string>;
   timeframes: SignalMonitorMatrixTimeframe[];
+  timeframesBySymbol: ReadonlyMap<string, SignalMonitorMatrixTimeframe[]>;
   cells: SignalMonitorMatrixCellRequest[];
   exactCells: boolean;
   requestedSymbolCount: number;
@@ -830,11 +834,29 @@ export function normalizeSignalMonitorMatrixStreamScope(input: {
           SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(right),
       )
     : parseSignalMatrixTimeframes(input.timeframes);
+  const symbolSet = new Set(symbols);
+  const timeframesBySymbol = new Map<string, SignalMonitorMatrixTimeframe[]>();
+  if (exactCells) {
+    for (const symbol of symbols) {
+      timeframesBySymbol.set(
+        symbol,
+        scopedCells
+          .filter((cell) => cell.symbol === symbol)
+          .map((cell) => cell.timeframe),
+      );
+    }
+  } else {
+    for (const symbol of symbols) {
+      timeframesBySymbol.set(symbol, timeframes);
+    }
+  }
 
   return {
     environment,
     symbols,
+    symbolSet,
     timeframes,
+    timeframesBySymbol,
     cells: scopedCells,
     exactCells,
     requestedSymbolCount: requestedSymbols.length,
@@ -1202,6 +1224,7 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     stale: status !== "ok",
     staleBlocker: signalMonitorActionBlockerForStatus(status),
     freshWindowBars: 0,
+    marketClosed: isSignalMonitorQuietMarketSessionNow(),
   });
 
   return {
@@ -1297,6 +1320,7 @@ function stateToResponseForSnapshot(
     stale: true,
     staleBlocker: signalMonitorActionBlockerForStatus(nonCurrentStatus),
     freshWindowBars: 0,
+    marketClosed: isSignalMonitorQuietMarketSession(input.evaluatedAt),
   });
   return {
     ...response,
@@ -4081,6 +4105,32 @@ function isSignalMonitorQuietMarketSession(evaluatedAt: Date): boolean {
   return getSignalMonitorMarketSessionContext(evaluatedAt).quiet;
 }
 
+// REST/stream call sites have no evaluatedAt in scope; minute-bucket the
+// "now" lookup so per-row calls reuse the same ms key instead of missing the
+// evaluatedAt-keyed session context cache on every call.
+let signalMonitorQuietMarketNowMemo: { minuteBucket: number; quiet: boolean } | null = null;
+// Deterministic-test seam: blocker assertions must not depend on whether the
+// suite happens to run during a holiday/closed session.
+let signalMonitorQuietMarketNowOverride: boolean | null = null;
+function setSignalMonitorQuietMarketSessionNowForTests(
+  quiet: boolean | null,
+): void {
+  signalMonitorQuietMarketNowOverride = quiet;
+}
+export function isSignalMonitorQuietMarketSessionNow(): boolean {
+  if (signalMonitorQuietMarketNowOverride != null) {
+    return signalMonitorQuietMarketNowOverride;
+  }
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  if (signalMonitorQuietMarketNowMemo?.minuteBucket !== minuteBucket) {
+    signalMonitorQuietMarketNowMemo = {
+      minuteBucket,
+      quiet: isSignalMonitorQuietMarketSession(new Date(minuteBucket * 60_000)),
+    };
+  }
+  return signalMonitorQuietMarketNowMemo.quiet;
+}
+
 function isSignalMonitorMarketIdleSession(evaluatedAt: Date): boolean {
   return getSignalMonitorMarketSessionContext(evaluatedAt).marketIdle;
 }
@@ -4627,26 +4677,35 @@ function aggregateStockMinuteBarsForTimeframe(input: {
     .slice(-input.limit);
 }
 
-function aggregateStockMinuteAggregatesForSignalMonitorBars(input: {
-  aggregates: StockMinuteAggregateMessage[];
-  timeframe: SignalMonitorMatrixTimeframe;
-  evaluatedAt: Date;
-  limit: number;
-  includeProvisional?: boolean;
-}): SignalMonitorBarSnapshot[] {
-  const minuteBars = input.aggregates
-    .map((aggregate) =>
-      stockMinuteAggregateToSignalMonitorBar(aggregate, input.evaluatedAt),
-    )
-    .filter((bar): bar is SignalMonitorBarSnapshot => Boolean(bar));
+type SignalMonitorStreamSourceMinuteBarsMemoEntry = {
+  key: string;
+  minuteBars: SignalMonitorBarSnapshot[];
+};
 
-  return aggregateStockMinuteBarsForTimeframe({
-    bars: minuteBars,
-    timeframe: input.timeframe,
-    evaluatedAt: input.evaluatedAt,
-    limit: input.limit,
-    includeProvisional: input.includeProvisional,
-  });
+let signalMonitorStreamSourceMinuteBarsMemo: Map<
+  string,
+  SignalMonitorStreamSourceMinuteBarsMemoEntry
+> | null = null;
+let signalMonitorStreamSourceMinuteBarsMemoHits = 0;
+let signalMonitorStreamSourceMinuteBarsMemoMisses = 0;
+
+function withSignalMonitorStreamSourceMinuteBarsMemo<T>(run: () => T): T {
+  const previous = signalMonitorStreamSourceMinuteBarsMemo;
+  signalMonitorStreamSourceMinuteBarsMemo = new Map();
+  try {
+    return run();
+  } finally {
+    signalMonitorStreamSourceMinuteBarsMemo = previous;
+  }
+}
+
+function getSignalMonitorStreamSourceMinuteBarsMemoStats() {
+  return {
+    active: Boolean(signalMonitorStreamSourceMinuteBarsMemo),
+    size: signalMonitorStreamSourceMinuteBarsMemo?.size ?? 0,
+    hits: signalMonitorStreamSourceMinuteBarsMemoHits,
+    misses: signalMonitorStreamSourceMinuteBarsMemoMisses,
+  };
 }
 
 function mergeSignalMonitorStockMinuteAggregates(
@@ -4677,6 +4736,62 @@ function mergeSignalMonitorStockMinuteAggregates(
     .slice(-normalizedLimit);
 }
 
+function loadSignalMonitorStreamSourceMinuteBars(input: {
+  symbol: string;
+  evaluatedAt: Date;
+  historyLimit: number;
+  includeProvisional?: boolean;
+}): SignalMonitorBarSnapshot[] {
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  if (!symbol) {
+    return [];
+  }
+  const sinceMs =
+    input.evaluatedAt.getTime() -
+    Math.min(4 * 60 * 60_000, input.historyLimit * TIMEFRAME_MS["1m"]);
+  const untilMs = input.evaluatedAt.getTime();
+  const memo = input.includeProvisional
+    ? null
+    : signalMonitorStreamSourceMinuteBarsMemo;
+  const memoKey = `${symbol}:${input.historyLimit}`;
+  const dirtyKey = `${input.evaluatedAt.getTime()}:${sinceMs}:${untilMs}:${getSignalMonitorAggregateRevision(
+    symbol,
+  )}`;
+  const cached = memo?.get(memoKey);
+  if (cached && cached.key === dirtyKey) {
+    signalMonitorStreamSourceMinuteBarsMemoHits += 1;
+    return cached.minuteBars;
+  }
+  if (memo) {
+    signalMonitorStreamSourceMinuteBarsMemoMisses += 1;
+  }
+
+  const historyAggregates = getRecentStockMinuteAggregateHistory({
+    symbol,
+    sinceMs,
+    untilMs,
+    limit: input.historyLimit,
+  });
+  const currentAggregates = getCurrentStockMinuteAggregates([symbol]).filter(
+    (aggregate) => {
+      const startMs = Number(aggregate?.startMs);
+      return Number.isFinite(startMs) && startMs >= sinceMs && startMs <= untilMs;
+    },
+  );
+  const aggregates = mergeSignalMonitorStockMinuteAggregates(
+    [...historyAggregates, ...currentAggregates],
+    input.historyLimit,
+  );
+  const minuteBars = aggregates
+    .map((aggregate) =>
+      stockMinuteAggregateToSignalMonitorBar(aggregate, input.evaluatedAt),
+    )
+    .filter((bar): bar is SignalMonitorBarSnapshot => Boolean(bar));
+
+  memo?.set(memoKey, { key: dirtyKey, minuteBars });
+  return minuteBars;
+}
+
 function loadSignalMonitorStreamCompletedBars(input: {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
@@ -4697,28 +4812,15 @@ function loadSignalMonitorStreamCompletedBars(input: {
     120,
     Math.min(300, input.limit * childBarsPerOutput),
   );
-  const sinceMs =
-    input.evaluatedAt.getTime() -
-    Math.min(4 * 60 * 60_000, historyLimit * TIMEFRAME_MS["1m"]);
-  const untilMs = input.evaluatedAt.getTime();
-  const historyAggregates = getRecentStockMinuteAggregateHistory({
+  const minuteBars = loadSignalMonitorStreamSourceMinuteBars({
     symbol: input.symbol,
-    sinceMs,
-    untilMs,
-    limit: historyLimit,
-  });
-  const currentAggregates = getCurrentStockMinuteAggregates([input.symbol])
-    .filter((aggregate) => {
-      const startMs = Number(aggregate?.startMs);
-      return Number.isFinite(startMs) && startMs >= sinceMs && startMs <= untilMs;
-    });
-  const aggregates = mergeSignalMonitorStockMinuteAggregates(
-    [...historyAggregates, ...currentAggregates],
+    evaluatedAt: input.evaluatedAt,
     historyLimit,
-  );
+    includeProvisional: input.includeProvisional,
+  });
 
-  return aggregateStockMinuteAggregatesForSignalMonitorBars({
-    aggregates,
+  return aggregateStockMinuteBarsForTimeframe({
+    bars: minuteBars,
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
     limit: input.limit,
@@ -5576,13 +5678,24 @@ function computeSignalMonitorIndicatorSnapshotBase(input: {
   if (lastBarIndex < 0) {
     return null;
   }
-  const currentDirection =
-    normalizedIndicatorDirectionNumber(
-      input.evaluation.regimeDirection[lastBarIndex],
-    ) ??
-    normalizedIndicatorDirectionNumber(
-      input.evaluation.trendDirection[lastBarIndex],
-    );
+  // An unwarmed basis means trendDirection/regimeDirection still carry their
+  // bullish seed, not a measured trend (evaluation.trendBasisComputable is
+  // false below basisLength + 5 bars). Trust the last bar's direction only
+  // when the basis slope was actually evaluable, or when market structure
+  // (CHoCH) latched a real direction; otherwise the trend is unknown (null),
+  // which the MTF/entry gates already treat as non-confirming. Without this
+  // guard, short evaluation windows mark the whole book "bullish" and sell
+  // signals can never find bearish confluence.
+  const currentDirection = input.evaluation.trendBasisComputable
+    ? (normalizedIndicatorDirectionNumber(
+        input.evaluation.regimeDirection[lastBarIndex],
+      ) ??
+      normalizedIndicatorDirectionNumber(
+        input.evaluation.trendDirection[lastBarIndex],
+      ))
+    : normalizedIndicatorDirectionNumber(
+        input.evaluation.marketStructureDirection,
+      );
   const trendAgeBars = resolveTrendAgeBars(
     input.evaluation.regimeDirection,
     currentDirection,
@@ -6365,7 +6478,16 @@ function mergeFreshBarMetadataOntoPreservedSignalRow(
     currentSignalMfePercent: existing.currentSignalMfePercent,
     currentSignalMaePercent: existing.currentSignalMaePercent,
     filterState: existing.filterState,
-    trendDirection: existing.trendDirection,
+    // The trend is a per-evaluation measurement of the CURRENT bars, not part
+    // of the preserved signal identity. Pinning the stored value here froze
+    // trend_direction at the last full row replacement while lastEvaluatedAt
+    // kept advancing — rows holding an older signal could never flip trend
+    // (live symptom: sell-crossover rows stuck "bullish" all day, so bearish
+    // MTF confluence never formed and puts could not enter). The candidate
+    // just evaluated the fresh bars; its measured trend rides along with the
+    // advancing bar metadata, falling back to the stored value only when the
+    // candidate carries no measurement.
+    trendDirection: candidate.trendDirection ?? existing.trendDirection,
     // A preserved (older) signal is by definition not inside the fresh window.
     fresh: false,
     // Advance the bar metadata from the candidate (latestBarAt/Close, status,
@@ -6420,6 +6542,14 @@ async function resolveSignalMonitorSymbolStateUpsert(
         symbol: input.symbol,
         timeframe: input.timeframe,
       });
+  // Callers that persist without a full indicator evaluation (per-symbol
+  // status/error paths) leave trendDirection undefined — that means "not
+  // measured this write", not "no trend". Keep the stored trend instead of
+  // erasing it; an explicit null (measured but unwarmed/unknown) writes
+  // through.
+  if (input.trendDirection === undefined && existing) {
+    values.trendDirection = existing.trendDirection;
+  }
   const effectiveValues = applyStoredSignalDirectionLatch({
     existing: input.allowStoredSignalLatch === false ? null : existing,
     values,
@@ -7856,6 +7986,9 @@ function resetSignalMonitorMatrixHeavyEvaluationCache() {
   signalMonitorStreamCompletedBarsCache.clear();
   signalMonitorStreamCompletedBarsCacheHits = 0;
   signalMonitorStreamCompletedBarsCacheMisses = 0;
+  signalMonitorStreamSourceMinuteBarsMemo = null;
+  signalMonitorStreamSourceMinuteBarsMemoHits = 0;
+  signalMonitorStreamSourceMinuteBarsMemoMisses = 0;
   signalMonitorAggregateRevisionBySymbol.clear();
 }
 
@@ -8222,6 +8355,12 @@ function signalMonitorMatrixStateFromPython(input: {
   const latestBarEntry = chartBarEntries.at(-1);
   const latestBar = latestBarEntry?.chartBar ?? null;
   if (!latestBar || !latestBarEntry) {
+    return null;
+  }
+  if (input.pythonState.status === "unavailable") {
+    // The python side could not evaluate this cell; defer to
+    // evaluateSignalMonitorMatrixStateFromCompletedBars instead of serving a
+    // present-but-empty state that would suppress the JS fallback.
     return null;
   }
   const latestBarAt = latestBarEntry.closedAt;
@@ -9048,15 +9187,20 @@ function signalMonitorMatrixStreamTimeframesForSymbol(
   symbol: string,
 ): SignalMonitorMatrixTimeframe[] {
   const normalizedSymbol = normalizeSymbol(symbol).toUpperCase();
-  if (!normalizedSymbol || !scope.symbols.includes(normalizedSymbol)) {
+  return signalMonitorMatrixStreamTimeframesForNormalizedSymbol(
+    scope,
+    normalizedSymbol,
+  );
+}
+
+function signalMonitorMatrixStreamTimeframesForNormalizedSymbol(
+  scope: SignalMonitorMatrixStreamScope,
+  normalizedSymbol: string,
+): SignalMonitorMatrixTimeframe[] {
+  if (!normalizedSymbol || !scope.symbolSet.has(normalizedSymbol)) {
     return [];
   }
-  if (!scope.exactCells) {
-    return scope.timeframes;
-  }
-  return scope.cells
-    .filter((cell) => cell.symbol === normalizedSymbol)
-    .map((cell) => cell.timeframe);
+  return scope.timeframesBySymbol.get(normalizedSymbol) ?? [];
 }
 
 function signalMonitorMatrixStreamCellCount(
@@ -9111,6 +9255,7 @@ function withSignalMonitorMatrixStreamActionability<
     stale: state.status !== "ok",
     staleBlocker: signalMonitorActionBlockerForStatus(state.status),
     freshWindowBars: profile.freshWindowBars,
+    marketClosed: isSignalMonitorQuietMarketSessionNow(),
   });
   // fresh stays as authored by the eval/latch path: a latched refresh is
   // deliberately not fresh even when its bar age is inside the fresh window.
@@ -9288,11 +9433,33 @@ export function getSignalMonitorMatrixStreamStatus(
   };
 }
 
+function getSignalMonitorMatrixStreamCoverageStatus(): Pick<
+  SignalMonitorMatrixStreamCoverage,
+  "source" | "delayed" | "eventCount" | "lastEventAt" | "lastEventAgeMs"
+> {
+  const source = signalMonitorMatrixStreamSourceFromDiagnostics(
+    getPreferredStockAggregateStreamSource(),
+  );
+  const activeStreamSource = getActiveStockAggregateStreamSource();
+  const activeProvider = activeStreamSource
+    ? signalMonitorMatrixStreamSourceFromDiagnostics(activeStreamSource)
+    : null;
+  return {
+    source,
+    delayed:
+      source === "massive-delayed-websocket" ||
+      activeProvider === "massive-delayed-websocket",
+    eventCount: signalMonitorMatrixStreamAggregateEventCount,
+    lastEventAt: signalMonitorMatrixStreamLastAggregateAt?.toISOString() ?? null,
+    lastEventAgeMs: signalMonitorMatrixStreamLastEventAgeMs(),
+  };
+}
+
 export function buildSignalMonitorMatrixStreamCoverage(input: {
   scope: SignalMonitorMatrixStreamScope;
   states: SignalMonitorMatrixStreamState[];
 }): SignalMonitorMatrixStreamCoverage {
-  const status = getSignalMonitorMatrixStreamStatus(input.scope);
+  const status = getSignalMonitorMatrixStreamCoverageStatus();
   return {
     requestedSymbols: input.scope.requestedSymbolCount,
     activeScopeSymbols: input.scope.symbols.length,
@@ -9517,7 +9684,7 @@ export function evaluateSignalMonitorMatrixStreamScopeDelta(input: {
   evaluateState?: SignalMonitorMatrixStreamEvaluateState;
 }): SignalMonitorMatrixStateResult[] {
   const symbol = normalizeSymbol(input.symbol).toUpperCase();
-  const timeframes = signalMonitorMatrixStreamTimeframesForSymbol(
+  const timeframes = signalMonitorMatrixStreamTimeframesForNormalizedSymbol(
     input.scope,
     symbol,
   );
@@ -9673,12 +9840,14 @@ async function flushSignalMonitorMatrixStreamAggregates(): Promise<void> {
     let sinceYield = 0;
     for (const [environment, symbols] of pending) {
       for (const symbol of symbols) {
-        emitSignalMonitorMatrixStreamAggregateDelta({
-          message: {
-            symbol,
-          },
-          environment,
-          evaluatedAt,
+        withSignalMonitorStreamSourceMinuteBarsMemo(() => {
+          emitSignalMonitorMatrixStreamAggregateDelta({
+            message: {
+              symbol,
+            },
+            environment,
+            evaluatedAt,
+          });
         });
         sinceYield += 1;
         if (sinceYield >= SIGNAL_MONITOR_EVAL_YIELD_EVERY) {
@@ -9722,9 +9891,10 @@ function queueSignalMonitorMatrixStreamAggregate(
   recordSignalMonitorAggregateRevision(symbol, Number(message.startMs));
   for (const subscriber of signalMonitorMatrixStreamSubscribers.values()) {
     if (
-      subscriber.scope.symbols.includes(symbol) &&
-      signalMonitorMatrixStreamTimeframesForSymbol(subscriber.scope, symbol)
-        .length
+      signalMonitorMatrixStreamTimeframesForNormalizedSymbol(
+        subscriber.scope,
+        symbol,
+      ).length
     ) {
       const pending =
         pendingSignalMonitorMatrixStreamSymbolsByEnvironment.get(
@@ -9835,22 +10005,14 @@ function buildSignalMonitorServerOwnedProducerScope(input: {
   timeframes: SignalMonitorMatrixTimeframe[];
   truncated?: boolean;
 }): SignalMonitorMatrixStreamScope {
-  const symbols = Array.from(
-    new Set(
-      input.symbols
-        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
-        .filter(Boolean),
-    ),
-  );
-  return {
+  const scope = normalizeSignalMonitorMatrixStreamScope({
     environment: input.environment,
-    symbols,
+    symbols: input.symbols,
     timeframes: input.timeframes,
-    cells: [],
-    exactCells: false,
-    requestedSymbolCount: symbols.length,
-    skippedSymbols: [],
-    truncated: Boolean(input.truncated),
+  });
+  return {
+    ...scope,
+    truncated: scope.truncated || Boolean(input.truncated),
   };
 }
 
@@ -12889,6 +13051,8 @@ export async function updateSignalMonitorProfile(input: {
 }
 
 export const __signalMonitorInternalsForTests = {
+  setSignalMonitorQuietMarketSessionNowForTests,
+  computeSignalMonitorIndicatorSnapshotBase,
   resolveSignalMonitorUniverseFromWatchlists,
   resolveSignalMonitorUniverseSymbols,
   resolveSignalMonitorActiveUniverseSymbols,
@@ -12911,7 +13075,6 @@ export const __signalMonitorInternalsForTests = {
   filterSignalMonitorBarsForSourcePolicy,
   isSignalMonitorIbkrBar,
   isSignalMonitorDelayedBar,
-  aggregateStockMinuteAggregatesForSignalMonitorBars,
   mergeSignalMonitorStockMinuteAggregates,
   hydrateSignalMonitorMatrixStatesFromStoredStates,
   hasCompleteSignalMonitorMatrixCoverage,
@@ -12945,6 +13108,7 @@ export const __signalMonitorInternalsForTests = {
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
   normalizeSignalMonitorMatrixStreamScope,
+  signalMonitorMatrixStreamTimeframesForSymbol,
   signalMonitorMatrixStreamProfileSymbols,
   resolveSignalMonitorMatrixStreamProfileUniverseSymbols,
   resolveSignalMonitorMatrixStreamScope,
@@ -12959,6 +13123,8 @@ export const __signalMonitorInternalsForTests = {
   lruCacheSet,
   lruCacheTouch,
   getSignalMonitorStreamCompletedBarsCacheStats,
+  getSignalMonitorStreamSourceMinuteBarsMemoStats,
+  withSignalMonitorStreamSourceMinuteBarsMemo,
   recordSignalMonitorAggregateRevision,
   getSignalMonitorAggregateRevision,
   resetSignalMonitorMatrixHeavyEvaluationCache,

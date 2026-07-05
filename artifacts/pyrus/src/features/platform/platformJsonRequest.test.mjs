@@ -15,9 +15,8 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test("timeoutMs aborts a stalled request instead of hanging forever (the detach fix)", async () => {
-  // A fetch that never settles until its AbortSignal fires — exactly the
-  // stalled bridgeOverride.clear that left the detach control spinning.
+test("timeoutMs aborts a stalled request instead of hanging forever", async () => {
+  // A fetch that never settles until its AbortSignal fires.
   globalThis.fetch = (_path, init) =>
     new Promise((_resolve, reject) => {
       init.signal.addEventListener("abort", () => {
@@ -31,7 +30,7 @@ test("timeoutMs aborts a stalled request instead of hanging forever (the detach 
   await assert.rejects(
     () =>
       platformJsonRequest(
-        "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
+        "/api/settings/backend/actions/runtime.refresh",
         { method: "POST", body: { force: true }, timeoutMs: 80 },
       ),
     /timed out after 80ms/,
@@ -43,8 +42,7 @@ test("timeoutMs aborts a stalled request instead of hanging forever (the detach 
 });
 
 test("a timeout error is tagged code=request_timeout so callers can treat it as non-fatal", async () => {
-  // The detach handler relies on this tag to treat a slow-but-idempotent clear as
-  // "proceeding" rather than a hard failure — without parsing the message string.
+  // Callers can branch on this tag without parsing the message string.
   globalThis.fetch = (_path, init) =>
     new Promise((_resolve, reject) => {
       init.signal.addEventListener("abort", () => {

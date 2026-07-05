@@ -19,7 +19,6 @@ import {
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import {
   formatExecutionContractLabel,
-  getBrokerMarketDepthRequest,
   listBrokerExecutionsRequest,
 } from "./tradeBrokerRequests";
 import { buildMarketOrderFlowFromEvents } from "../flow/flowAnalytics";
@@ -46,6 +45,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { useListMotionKeys } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
@@ -97,7 +97,7 @@ export const TradeL2Panel = ({
   const [tab, setTab] = useState("book");
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
-  const brokerRuntimeEnabled = Boolean(
+  const brokerExecutionEnabled = Boolean(
     isVisible &&
       brokerConfigured &&
       brokerAuthenticated &&
@@ -105,27 +105,6 @@ export const TradeL2Panel = ({
       selectedContractMeta?.providerContractId &&
       !streamingPaused,
   );
-  const depthQuery = useQuery({
-    queryKey: [
-      "trade-market-depth",
-      accountId,
-      slot.ticker,
-      selectedContractMeta?.providerContractId,
-    ],
-    queryFn: () =>
-      getBrokerMarketDepthRequest({
-        accountId,
-        symbol: slot.ticker,
-        assetClass: "option",
-        providerContractId: selectedContractMeta?.providerContractId,
-        exchange: "SMART",
-      }),
-    enabled: brokerRuntimeEnabled,
-    staleTime: 5_000,
-    refetchInterval: false,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
   const tapeQuery = useQuery({
     queryKey: [
       "trade-contract-executions",
@@ -141,7 +120,7 @@ export const TradeL2Panel = ({
         days: 2,
         limit: 24,
       }),
-    enabled: brokerRuntimeEnabled,
+    enabled: brokerExecutionEnabled,
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
@@ -149,51 +128,7 @@ export const TradeL2Panel = ({
   });
   useEffect(() => {
     if (
-      !brokerRuntimeEnabled ||
-      typeof window === "undefined" ||
-      typeof window.EventSource === "undefined"
-    ) {
-      return undefined;
-    }
-
-    const params = new URLSearchParams({
-      accountId,
-      symbol: slot.ticker,
-      assetClass: "option",
-      providerContractId: selectedContractMeta.providerContractId,
-      exchange: "SMART",
-    });
-    const source = new EventSource(`/api/streams/market-depth?${params.toString()}`);
-    const handleDepth = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        queryClient.setQueryData(
-          [
-            "trade-market-depth",
-            accountId,
-            slot.ticker,
-            selectedContractMeta.providerContractId,
-          ],
-          payload,
-        );
-      } catch {}
-    };
-
-    source.addEventListener("depth", handleDepth);
-    return () => {
-      source.removeEventListener("depth", handleDepth);
-      source.close();
-    };
-  }, [
-    accountId,
-    brokerRuntimeEnabled,
-    queryClient,
-    selectedContractMeta?.providerContractId,
-    slot.ticker,
-  ]);
-  useEffect(() => {
-    if (
-      !brokerRuntimeEnabled ||
+      !brokerExecutionEnabled ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -230,21 +165,39 @@ export const TradeL2Panel = ({
     };
   }, [
     accountId,
-    brokerRuntimeEnabled,
+    brokerExecutionEnabled,
     queryClient,
     selectedContractMeta?.providerContractId,
     slot.ticker,
   ]);
-  const depthLevels = depthQuery.data?.depth?.levels || [];
   const contractExecutions = tapeQuery.data?.executions || [];
+  // Item 13, D4 — one-shot enter emphasis when a new broker fill lands on the
+  // tape. Keyed by execution id so only freshly-arrived rows animate in.
+  const executionMotionKeys = useListMotionKeys(
+    contractExecutions,
+    (execution) => execution.id,
+  );
+  const newExecutionIds = useMemo(
+    () =>
+      new Set(
+        executionMotionKeys.filter((entry) => entry.isNew).map((entry) => entry.key),
+      ),
+    [executionMotionKeys],
+  );
   const liveStatusLabel =
     tab === "flow"
       ? effectiveFlowEvents.length
         ? "flow: external options flow"
         : "flow unavailable"
-      : brokerConfigured
+      : tab === "tape"
+        ? brokerConfigured
+          ? brokerAuthenticated
+            ? "broker fills"
+            : "IBKR login required"
+          : "broker off"
+        : brokerConfigured
         ? brokerAuthenticated
-          ? "IBKR book + fills"
+          ? "option depth unavailable"
           : "IBKR login required"
         : "broker off";
 
@@ -287,216 +240,9 @@ export const TradeL2Panel = ({
       );
     }
 
-    if (!brokerConfigured) {
-      return renderBrokerGate(
-        "IBKR book unavailable",
-        "Depth-of-book is only available when the broker bridge is configured.",
-      );
-    }
-
-    if (!brokerAuthenticated) {
-      return renderBrokerGate(
-        "IBKR login required",
-        "Bring the local IBKR bridge online to load live price ladder data.",
-      );
-    }
-
-    if (!accountId) {
-      return renderBrokerGate(
-        "No broker account selected",
-        "Select an IBKR account to request contract depth.",
-      );
-    }
-
-    if (!selectedContractMeta?.providerContractId) {
-      return renderBrokerGate(
-        "Contract still loading",
-        "Wait for the selected option contract to resolve to a broker contract id.",
-        true,
-      );
-    }
-
-    if (depthQuery.isPending && !depthLevels.length) {
-      return (
-        <DataUnavailableState
-          title="Loading IBKR depth"
-          detail="Requesting the live contract price ladder from the broker bridge."
-          loading
-          loadingEndpoint="/api/ibkr/market-depth"
-          tone={CSS_COLOR.accent}
-        />
-      );
-    }
-
-    if (!depthLevels.length) {
-      return renderBrokerGate(
-        "No broker depth returned",
-        "IBKR did not return any price ladder rows for this contract yet. This panel shows live book depth, not synthetic levels.",
-      );
-    }
-
-    const bestBidLevel =
-      depthLevels.find(
-        (level) => typeof level.bidSize === "number" && level.bidSize > 0,
-      ) || null;
-    const bestAskLevel =
-      depthLevels.find(
-        (level) => typeof level.askSize === "number" && level.askSize > 0,
-      ) || null;
-
-    return (
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
-            gap: sp(4),
-            padding: sp("4px 0 6px"),
-            borderBottom: `1px solid ${CSS_COLOR.border}`,
-            fontFamily: T.sans,
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: textSize("caption"),
-                color: CSS_COLOR.textMuted,
-                letterSpacing: "0.04em",
-              }}
-            >
-              BEST BID
-            </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: TRADE_BUY_TONE }}>
-              {formatQuotePrice(bestBidLevel?.price ?? bid)}
-            </div>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div
-              style={{
-                fontSize: textSize("caption"),
-                color: CSS_COLOR.textMuted,
-                letterSpacing: "0.04em",
-              }}
-            >
-              LEVELS
-            </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
-              {depthLevels.length}
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div
-              style={{
-                fontSize: textSize("caption"),
-                color: CSS_COLOR.textMuted,
-                letterSpacing: "0.04em",
-              }}
-            >
-              BEST ASK
-            </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.red }}>
-              {formatQuotePrice(bestAskLevel?.price ?? ask)}
-            </div>
-          </div>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `${dim(42)}px ${dim(58)}px ${dim(42)}px ${dim(34)}px`,
-            gap: sp(4),
-            padding: sp("4px 0"),
-            fontSize: textSize("caption"),
-            color: CSS_COLOR.textMuted,
-            letterSpacing: "0.04em",
-            fontFamily: T.sans,
-          }}
-        >
-          <span style={{ textAlign: "right" }}>BID SZ</span>
-          <span style={{ textAlign: "right" }}>PRICE</span>
-          <span style={{ textAlign: "right" }}>ASK SZ</span>
-          <span style={{ textAlign: "right" }}>ROW</span>
-        </div>
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(2),
-          }}
-        >
-          {depthLevels.map((level) => (
-            <div
-              key={`${level.row}_${level.price}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: `${dim(42)}px ${dim(58)}px ${dim(42)}px ${dim(34)}px`,
-                gap: sp(4),
-                alignItems: "center",
-                padding: sp("3px 0"),
-                fontSize: textSize("caption"),
-                fontFamily: T.sans,
-                borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
-                background: level.isLastTrade ? `${cssColorMix(CSS_COLOR.accent, 6)}` : "transparent",
-              }}
-            >
-              <span
-                style={{
-                  color:
-                    typeof level.bidSize === "number" && level.bidSize > 0
-                      ? TRADE_BUY_TONE
-                      : CSS_COLOR.textDim,
-                  textAlign: "right",
-                  fontWeight: FONT_WEIGHTS.regular,
-                }}
-              >
-                {level.bidSize != null ? level.bidSize.toFixed(0) : MISSING_VALUE}
-              </span>
-              <span
-                style={{
-                  color: level.isLastTrade ? CSS_COLOR.accent : CSS_COLOR.text,
-                  textAlign: "right",
-                  fontWeight: FONT_WEIGHTS.regular,
-                }}
-              >
-                {formatQuotePrice(level.price)}
-              </span>
-              <span
-                style={{
-                  color:
-                    typeof level.askSize === "number" && level.askSize > 0
-                      ? CSS_COLOR.red
-                      : CSS_COLOR.textDim,
-                  textAlign: "right",
-                  fontWeight: FONT_WEIGHTS.regular,
-                }}
-              >
-                {level.askSize != null ? level.askSize.toFixed(0) : MISSING_VALUE}
-              </span>
-              <span
-                style={{
-                  color: CSS_COLOR.textDim,
-                  textAlign: "right",
-                  fontSize: textSize("body"),
-                }}
-              >
-                {level.isLastTrade && level.totalSize != null
-                  ? `T ${level.totalSize.toFixed(0)}`
-                  : level.row}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+    return renderBrokerGate(
+      "Option depth unavailable",
+      "Massive provides realtime option quotes and trades, but not depth-of-book. Broker market-data depth is disabled for options.",
     );
   };
 
@@ -518,7 +264,7 @@ export const TradeL2Panel = ({
     if (!brokerAuthenticated) {
       return renderBrokerGate(
         "IBKR login required",
-        "Bring the local IBKR bridge online to load broker executions.",
+        "Connect IBKR Client Portal to load broker executions.",
       );
     }
 
@@ -587,6 +333,7 @@ export const TradeL2Panel = ({
         {contractExecutions.map((execution) => (
           <AppTooltip key={execution.id} content={`${formatExecutionContractLabel(execution)}${execution.exchange ? ` · ${execution.exchange}` : ""}`}><div
             key={execution.id}
+            className={newExecutionIds.has(execution.id) ? "ra-row-enter" : undefined}
             style={{
               display: "grid",
               gridTemplateColumns: `${dim(28)}px ${dim(24)}px ${dim(52)}px ${dim(56)}px ${dim(44)}px`,
@@ -796,7 +543,7 @@ export const TradeL2Panel = ({
                         style={{
                           display: "flex",
                           height: dim(4),
-                          borderRadius: dim(2),
+                          borderRadius: dim(RADII.xs),
                           overflow: "hidden",
                           background: CSS_COLOR.bg1,
                         }}

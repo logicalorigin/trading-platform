@@ -33,8 +33,62 @@ test("real account positions queries request live quote snapshots", () => {
   );
 });
 
+test("SnapTrade account positions enable live Massive quote hydration", () => {
+  assert.match(
+    source,
+    /const accountLiveOptionQuotesEnabled = Boolean\(\s*\(genericAccountQueriesEnabled \|\| snapTradeAccountPanelsEnabled\) &&\s*accountPrimaryReady,?\s*\);/,
+    "SnapTrade account tabs must enable the shared positions quote hydrator",
+  );
+});
+
+test("SnapTrade account equity inspector uses provider-normalized positions", () => {
+  assert.match(
+    source,
+    /const positionsAtDateQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildIdleAccountQuery\(snapTradePanelData\?\.positionsAtDate\)\s*:\s*positionsAtDateQuery;/,
+    "SnapTrade equity chart inspector must not receive an empty positions placeholder",
+  );
+});
+
+test("SnapTrade account history query feeds closed trades and equity history", () => {
+  assert.match(
+    source,
+    /useGetSnapTradeAccountHistory/,
+    "AccountScreen must import the generated SnapTrade history hook",
+  );
+  assert.match(
+    source,
+    /const snapTradeHistoryQuery = useGetSnapTradeAccountHistory\(/,
+    "SnapTrade account tabs must request the read-only history endpoint",
+  );
+  assert.match(
+    source,
+    /history: snapTradeHistoryQuery\.data/,
+    "SnapTrade panel data must receive backend activity and balance history",
+  );
+  assert.match(
+    source,
+    /const tradesQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.closedTrades\)\s*:\s*tradesQuery;/,
+    "SnapTrade trading analysis must use history-backed closed trades",
+  );
+  assert.match(
+    source,
+    /const performanceCalendarTradesQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.closedTrades\)\s*:\s*performanceCalendarTradesQuery;/,
+    "SnapTrade returns calendar must use history-backed closed trades",
+  );
+  assert.match(
+    source,
+    /const performanceCalendarEquityQueryForDisplay = snapTradeAccountPanelsEnabled\s*\?\s*buildProviderAccountQuery\(snapTradeHistoryQuery, snapTradePanelData\?\.equityHistory\)\s*:\s*performanceCalendarEquityQuery;/,
+    "SnapTrade returns calendar must use history-backed equity points",
+  );
+});
+
 test("account positions trading actions use broker-safe account context", () => {
-  assert.match(source, /const positionManagementAccountId = shadowMode \? null : selectedAccountId;/);
+  // Shadow and the "All"/"combined" aggregate have no single manageable broker
+  // account, so live trading actions must receive null for both.
+  assert.match(
+    source,
+    /const positionManagementAccountId =\s*shadowMode \|\| activeAccountId === "combined" \? null : activeAccountId;/,
+  );
   assert.match(source, /const positionManagementGatewayReady = Boolean\(!shadowMode && gatewayTradingReady\);/);
   assert.match(
     source,

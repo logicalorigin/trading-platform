@@ -120,6 +120,12 @@ test("Signals rows sort by the displayed profile signal, not hidden interval act
   assert.equal(rows[1].signalActivityMs, ms("2026-06-10T23:55:00.000Z"));
 });
 
+const directionTrend = (direction) =>
+  direction === "buy" ? "bullish" : direction === "sell" ? "bearish" : null;
+
+// Real matrix cells carry a live trendDirection (the source the verdict and the
+// backend entry gate both trade on); the crossover is only a display latch. The
+// fixture mirrors that so the verdict is exercised against realistic cells.
 const matrixState = (timeframe, direction) => ({
   symbol: "MU",
   timeframe,
@@ -127,12 +133,10 @@ const matrixState = (timeframe, direction) => ({
   active: true,
   fresh: true,
   currentSignalDirection: direction,
+  trendDirection: directionTrend(direction),
   currentSignalAt: "2026-06-08T19:00:00.000Z",
   latestBarAt: "2026-06-08T19:10:00.000Z",
 });
-
-const directionTrend = (direction) =>
-  direction === "buy" ? "bullish" : direction === "sell" ? "bearish" : null;
 
 // The gate now reads the cell's current trend (mirroring the backend entry
 // gate), so the fixture carries a trendDirection that matches the frame's

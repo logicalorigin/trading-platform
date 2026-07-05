@@ -57,7 +57,7 @@ export const AlgoDiagnosticsTab = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(8),
+        gap: sp(6),
         minWidth: 0,
       }}
     >
@@ -124,7 +124,7 @@ export const AlgoDiagnosticsTab = ({
           border: "none",
           borderRadius: dim(RADII.md),
           background: CSS_COLOR.bg1,
-          padding: sp("8px 10px"),
+          padding: sp("6px 10px"),
         }}
       >
         {[
@@ -183,7 +183,7 @@ export const AlgoDiagnosticsTab = ({
               : algoIsNarrow
                 ? "repeat(2, minmax(0, 1fr))"
                 : "repeat(3, minmax(0, 1fr))",
-            gap: sp(8),
+            gap: sp(6),
             minWidth: 0,
           }}
         >

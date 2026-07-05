@@ -1,15 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-  clearIbkrBridgeRuntimeOverride,
-  getIbkrBridgeRuntimeOverride,
-  getProviderConfiguration,
-  getRuntimeMode,
-} from "../lib/runtime";
+import { getProviderConfiguration, getRuntimeMode } from "../lib/runtime";
 import { HttpError } from "../lib/errors";
-import { invalidateBridgeHealthCache } from "./platform-bridge-health";
-import { recordConnectionAuditEvent } from "./ibkr-connection-audit";
 import {
   getDiagnosticThresholds,
   getLatestDiagnostics,
@@ -190,7 +183,6 @@ function isolationSetting(
 
 export async function getBackendSettingsSnapshot() {
   const providers = getProviderConfiguration();
-  const bridgeOverride = getIbkrBridgeRuntimeOverride();
   const diagnostics = getLatestDiagnostics();
   const [
     thresholdsResult,
@@ -251,7 +243,6 @@ export async function getBackendSettingsSnapshot() {
       pendingRestartCount,
       thresholdCount: thresholds.length,
       ibkrLaneCount: laneSummary?.membershipCount ?? 0,
-      bridgeOverrideActive: Boolean(bridgeOverride),
       watchlistCount: watchlists.length,
       watchlistSymbolCount: watchlists.reduce(
         (count, watchlist) => count + (watchlist.items?.length ?? 0),
@@ -302,25 +293,6 @@ export async function getBackendSettingsSnapshot() {
         requiresRestart: true,
         risk: "operational",
       }),
-      setting({
-        key: "runtime.ibkrBridgeOverride",
-        group: "runtime",
-        label: "IBKR Bridge Override",
-        description: "Whether the current IBKR bridge endpoint is persisted from the local bridge attach flow.",
-        type: "status",
-        value: bridgeOverride
-          ? {
-              active: true,
-              baseUrl: bridgeOverride.baseUrl,
-              updatedAt: bridgeOverride.updatedAt.toISOString(),
-            }
-          : { active: false },
-        defaultValue: { active: false },
-        source: bridgeOverride ? "override" : "default",
-        editable: false,
-        requiresRestart: false,
-        risk: "operational",
-      }),
       isolationSetting(
         "mode",
         "Cross-Origin Isolation Mode",
@@ -347,13 +319,6 @@ export async function getBackendSettingsSnapshot() {
       ),
     ],
     actions: [
-      {
-        id: "ibkr.bridgeOverride.clear",
-        group: "ibkr",
-        label: "Clear IBKR Bridge Override",
-        risk: "risky",
-        dryRunDefault: false,
-      },
       {
         id: "diagnostics.storage.prune",
         group: "storage",
@@ -429,47 +394,6 @@ export async function applyBackendSettings(input: unknown) {
 
 export async function runBackendSettingsAction(actionId: string, input: unknown) {
   const body = readRecord(input);
-  if (actionId === "ibkr.bridgeOverride.clear") {
-    const current = getIbkrBridgeRuntimeOverride();
-    if (!current) {
-      return {
-        runtimeOverrideActive: false,
-        cleared: false,
-        reason: "no_override",
-      };
-    }
-
-    const force = body.force === true;
-    const isManualOverride =
-      current.bridgeId === null && current.managementTokenHash === null;
-    if (!force && !isManualOverride) {
-      throw new HttpError(409, "IBKR bridge override is managed by the active bridge launcher.", {
-        code: "managed_ibkr_bridge_override",
-        detail:
-          "Use the IB Gateway deactivate control or pass force=true after confirming the active bridge launcher is dead.",
-      });
-    }
-
-    clearIbkrBridgeRuntimeOverride();
-    invalidateBridgeHealthCache();
-    recordConnectionAuditEvent({
-      attemptId: null,
-      actor: "pyrus",
-      step: "bridge_override_cleared",
-      status: "disconnected",
-      message: "IBKR bridge override cleared via backend action (deactivate).",
-    });
-    return {
-      runtimeOverrideActive: false,
-      cleared: true,
-      previous: {
-        baseUrl: current.baseUrl,
-        updatedAt: current.updatedAt.toISOString(),
-        tokenConfigured: Boolean(current.apiToken),
-      },
-    };
-  }
-
   if (actionId !== "diagnostics.storage.prune") {
     throw new HttpError(404, "Backend settings action not found.", {
       code: "backend_settings_action_not_found",

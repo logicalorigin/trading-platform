@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Response } from "express";
 import { HttpError } from "../lib/errors";
+import { requireAdminCsrf } from "./auth";
 import {
   fetchAlgoCockpitPrimaryPayload,
   subscribeAlgoCockpitSnapshots,
@@ -25,6 +26,7 @@ import {
 import { runOvernightSpotSignalScan } from "../services/overnight-spot-execution";
 import {
   getDeploymentSignalQualityKpis,
+  refreshDeploymentSignalQualityKpiSnapshot,
   type SignalQualityDraftOverride,
 } from "../services/signal-quality-kpis-service";
 import {
@@ -152,6 +154,7 @@ router.get("/algo/deployments", async (req, res): Promise<void> => {
 });
 
 router.post("/algo/deployments", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const symbolUniverse = Array.isArray(req.body?.symbolUniverse)
     ? req.body.symbolUniverse.filter((value: unknown): value is string => typeof value === "string")
     : undefined;
@@ -173,6 +176,7 @@ router.post("/algo/deployments", async (req, res): Promise<void> => {
 });
 
 router.post("/algo/signal-options/default-paper-deployment", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const enabled =
     req.body?.enabled === false || req.body?.enabled === "false" ? false : true;
 
@@ -182,6 +186,7 @@ router.post("/algo/signal-options/default-paper-deployment", async (req, res): P
 });
 
 router.post("/algo/deployments/:deploymentId/enable", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   res.json(
     await setAlgoDeploymentEnabled({
       deploymentId: req.params.deploymentId,
@@ -191,6 +196,7 @@ router.post("/algo/deployments/:deploymentId/enable", async (req, res): Promise<
 });
 
 router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   res.json(
     await setAlgoDeploymentEnabled({
       deploymentId: req.params.deploymentId,
@@ -200,6 +206,7 @@ router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<v
 });
 
 router.post("/algo/deployments/:deploymentId/mode", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   res.json(
     await setAlgoDeploymentMode({
       deploymentId: req.params.deploymentId,
@@ -209,6 +216,7 @@ router.post("/algo/deployments/:deploymentId/mode", async (req, res): Promise<vo
 });
 
 router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -242,6 +250,8 @@ function readSignalQualityDraftOverride(
   const fields = [
     "signalTimeframe",
     "timeHorizon",
+    "outcomeHorizonBars",
+    "outcomeTimeframe",
     "bosConfirmation",
     "chochAtrBuffer",
     "chochBodyExpansionAtr",
@@ -262,6 +272,16 @@ function readSignalQualityDraftOverride(
 router.get("/algo/deployments/:deploymentId/signal-quality-kpis", async (req, res): Promise<void> => {
   res.json(
     await getDeploymentSignalQualityKpis({
+      deploymentId: req.params.deploymentId,
+      draft: readSignalQualityDraftOverride(req),
+    }),
+  );
+});
+
+router.post("/algo/deployments/:deploymentId/signal-quality-kpis/refresh", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
+  res.json(
+    await refreshDeploymentSignalQualityKpiSnapshot({
       deploymentId: req.params.deploymentId,
       draft: readSignalQualityDraftOverride(req),
     }),
@@ -313,6 +333,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/performance", async (
 });
 
 router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -352,6 +373,7 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
 });
 
 router.post("/algo/deployments/:deploymentId/overnight-spot/scan", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -391,6 +413,7 @@ router.post("/algo/deployments/:deploymentId/overnight-spot/scan", async (req, r
 });
 
 router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -420,6 +443,7 @@ router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (re
 });
 
 router.post("/algo/deployments/:deploymentId/signal-options/deviation", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const deviation =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -434,6 +458,7 @@ router.post("/algo/deployments/:deploymentId/signal-options/deviation", async (r
 });
 
 router.patch("/algo/deployments/:deploymentId/signal-options/profile", async (req, res): Promise<void> => {
+  await requireAdminCsrf(req);
   const patch =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body

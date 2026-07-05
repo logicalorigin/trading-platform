@@ -21,7 +21,7 @@ const SIGNAL_MATRIX_PRESSURE_LEVELS = Object.freeze({
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
   watch: 240,
-  high: 48,
+  high: 240,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
@@ -31,7 +31,7 @@ const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 240,
   watch: 240,
-  high: 48,
+  high: 240,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
@@ -856,6 +856,60 @@ export function mergeSignalMatrixStates({
   });
 
   return signalMatrixStatesEqual(currentStates, nextStates) ? currentStates : nextStates;
+}
+
+export function mergeSignalMatrixStreamSnapshot({
+  currentSnapshot = {},
+  incomingStates = [],
+  kind = "state-delta",
+  coverage = null,
+  skippedSymbols = null,
+  truncated = null,
+  knownSymbols = [],
+} = {}) {
+  const currentStates = Array.isArray(currentSnapshot.states)
+    ? currentSnapshot.states
+    : [];
+  const states = Array.isArray(incomingStates) ? incomingStates : [];
+  const hasMetadata =
+    coverage || skippedSymbols !== null || truncated !== null;
+  const nextMetadata = {
+    coverage: coverage ?? currentSnapshot.coverage ?? null,
+    skippedSymbols: skippedSymbols ?? currentSnapshot.skippedSymbols ?? [],
+    truncated: truncated ?? currentSnapshot.truncated ?? false,
+  };
+
+  if (!states.length) {
+    if (kind !== "bootstrap" || !hasMetadata) {
+      return currentSnapshot;
+    }
+    return {
+      ...currentSnapshot,
+      states: currentStates,
+      ...nextMetadata,
+    };
+  }
+
+  const nextStates = mergeSignalMatrixStates({
+    currentStates,
+    incomingStates: states,
+    knownSymbols,
+  });
+  if (
+    signalMatrixStatesEqual(currentStates, nextStates) &&
+    (
+      currentSnapshot.coverage === coverage ||
+      (!coverage && skippedSymbols === null && truncated === null)
+    )
+  ) {
+    return currentSnapshot;
+  }
+
+  return {
+    ...currentSnapshot,
+    states: nextStates,
+    ...nextMetadata,
+  };
 }
 
 export function signalMatrixStatesEqual(left = [], right = []) {

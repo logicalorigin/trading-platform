@@ -11,7 +11,10 @@ import {
 
 const {
   evaluateSignalMonitorMatrixStateFromStreamBars: evalStreamBars,
+  loadSignalMonitorStreamCompletedBars,
   getSignalMonitorStreamCompletedBarsCacheStats: barsCacheStats,
+  getSignalMonitorStreamSourceMinuteBarsMemoStats: sourceBarsMemoStats,
+  withSignalMonitorStreamSourceMinuteBarsMemo: withSourceBarsMemo,
   recordSignalMonitorAggregateRevision: recordRevision,
   getSignalMonitorAggregateRevision: getRevision,
   resetSignalMonitorMatrixHeavyEvaluationCache: resetCaches,
@@ -135,6 +138,34 @@ test("crossing the completed-bar boundary busts the cell (re-aggregates)", () =>
   evalAt("2026-06-09T15:01:00.000Z");
   assert.equal(barsCacheStats().misses, 2);
   assert.equal(barsCacheStats().hits, 0);
+});
+
+test("source minute bars memo reuses same-depth loads across stream timeframes", () => {
+  primeRing("2026-06-09T15:00:00.000Z", 300);
+
+  withSourceBarsMemo(() => {
+    const first = loadSignalMonitorStreamCompletedBars({
+      symbol: SYMBOL,
+      timeframe: "5m",
+      evaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+      limit: 240,
+    });
+    const second = loadSignalMonitorStreamCompletedBars({
+      symbol: SYMBOL,
+      timeframe: "15m",
+      evaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+      limit: 240,
+    });
+
+    assert.ok(first.length > 0, "first timeframe should produce bars");
+    assert.ok(second.length > 0, "second timeframe should produce bars");
+    assert.deepEqual(sourceBarsMemoStats(), {
+      active: true,
+      size: 1,
+      hits: 1,
+      misses: 1,
+    });
+  });
 });
 
 test("an out-of-order correction busts the cell even within the same boundary", () => {

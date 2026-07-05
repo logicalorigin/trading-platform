@@ -320,11 +320,7 @@ test("closed IBKR trigger treats active bridge health backoff as pending", () =>
         streamStateReason: "bridge_unreachable",
         strictReady: false,
         strictReason: "health_error",
-        governor: {
-          health: {
-            lastFailure: "HTTP 502 Bad Gateway: error code: 502",
-          },
-        },
+        lastError: "HTTP 502 Bad Gateway: error code: 502",
       },
     },
     runtimeError: null,
@@ -376,11 +372,7 @@ test("open IBKR popover does not call active bridge health backoff server offlin
         streamStateReason: "bridge_unreachable",
         strictReady: false,
         strictReason: "health_error",
-        governor: {
-          health: {
-            lastFailure: "HTTP 502 Bad Gateway: error code: 502",
-          },
-        },
+        lastError: "HTTP 502 Bad Gateway: error code: 502",
       },
     },
     runtimeError: null,
@@ -438,7 +430,8 @@ test("closed IBKR trigger still marks an unreachable inactive bridge offline", (
 
 test("line usage rows display shared app headroom instead of per-pool ceilings", () => {
   const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 30,
+    activeLineCount: 5,
+    grossActiveLineCount: 30,
     accountMonitorLineCount: 5,
     flowScannerLineCount: 25,
     automationExecutionLineCount: 0,
@@ -450,6 +443,10 @@ test("line usage rows display shared app headroom instead of per-pool ceilings",
     budget: {
       maxLines: 200,
       flowScannerLineCap: 200,
+    },
+    pressure: {
+      activeLineCount: 5,
+      grossActiveLineCount: 30,
     },
     poolUsage: {
       automation: {
@@ -500,7 +497,7 @@ test("line usage rows display shared app headroom instead of per-pool ceilings",
       usable: rows.visible.displayAvailable,
       headroom: rows.visible.displayFree,
     },
-    { active: 0, usable: 170, headroom: 170 },
+    { active: 0, usable: 195, headroom: 195 },
   );
   assert.deepEqual(
     {
@@ -516,8 +513,9 @@ test("line usage rows display shared app headroom instead of per-pool ceilings",
       usable: rows.total.displayAvailable,
       headroom: rows.total.displayFree,
     },
-    { active: 30, usable: 200, headroom: 170 },
+    { active: 5, usable: 200, headroom: 195 },
   );
+  assert.equal(normalized.total.grossActiveLineCount, 30);
 });
 
 test("line usage warning count ignores expected scanner rotation demotions", () => {

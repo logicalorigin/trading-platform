@@ -291,10 +291,75 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   filter: none;
 }
 
+/* Neural loading screen — opener overlay + looping loader.
+   The overlay backdrop colors match the pre-React boot loader exactly
+   (#F7FAFF / #050914) so the handoff is seamless. The WebGL canvas inside is
+   transparent; this backdrop sits behind it. */
+.neural-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: #F7FAFF;
+  transition: background-color 900ms ease;
+}
+
+html[data-pyrus-theme="dark"] .neural-overlay {
+  background: #050914;
+}
+
+/* During the disperse, fade the backdrop out so the live app shows through the
+   parting particles. */
+.neural-overlay--revealing {
+  background-color: transparent;
+  pointer-events: none;
+}
+
+/* Tight loader: fills its container (panel, card, page region), not the
+   viewport — the compact mark cloud centers within whatever space it is given. */
+.neural-loader {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  background: #F7FAFF;
+}
+
+html[data-pyrus-theme="dark"] .neural-loader {
+  background: #050914;
+}
+
+.neural-loader-caption {
+  position: absolute;
+  bottom: 12%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--ra-font-sans, 'IBM Plex Sans', system-ui, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: #2F4058;
+}
+
+html[data-pyrus-theme="dark"] .neural-loader-caption {
+  color: rgba(244, 248, 255, 0.86);
+}
+
+/* The opener is gated off under reduced motion, but if the overlay ever renders
+   there, never run the backdrop transition. */
+@media (prefers-reduced-motion: reduce) {
+  .neural-overlay {
+    transition: none;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .neural-overlay {
+  transition: none;
+}
+
 :root {
   --ra-font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ra-font-display: var(--ra-font-sans);
-  --ra-font-data: var(--ra-font-sans);
+  --ra-font-data: 'IBM Plex Mono', 'IBM Plex Sans', ui-monospace, SFMono-Regular, Menlo, monospace;
   --ra-font-code: var(--ra-font-data);
   --ra-accent-500: #168BFF;
   --ra-blue-500: #168BFF;
@@ -310,16 +375,16 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-pink-500: #FF5F9E;
   --ra-purple-400: #C39CFF;
   --ra-purple-500: #A14DFF;
-  --ra-grey-0: #050814;
-  --ra-grey-1: #090D18;
-  --ra-grey-2: #101624;
-  --ra-grey-3: #172033;
-  --ra-grey-4: #1F2B42;
-  --ra-grey-5: #1D2A3F;
-  --ra-grey-6: #2A3A54;
-  --ra-grey-7: #788AA0;
-  --ra-grey-8: #94A3BA;
-  --ra-grey-9: #B8C4D6;
+  --ra-grey-0: #080808;
+  --ra-grey-1: #0D0D0D;
+  --ra-grey-2: #161616;
+  --ra-grey-3: #1F1F1F;
+  --ra-grey-4: #2A2A2A;
+  --ra-grey-5: #292929;
+  --ra-grey-6: #383838;
+  --ra-grey-7: #888888;
+  --ra-grey-8: #A1A1A1;
+  --ra-grey-9: #C3C3C3;
   --ra-surface-0: var(--ra-grey-0);
   --ra-surface-1: var(--ra-grey-1);
   --ra-surface-2: var(--ra-grey-2);
@@ -346,7 +411,7 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-pnl-positive: var(--ra-green-500);
   --ra-pnl-negative: var(--ra-red-500);
   --ra-pnl-neutral: var(--ra-text-dim);
-  --ra-side-buy: var(--ra-green-500);
+  --ra-side-buy: var(--ra-blue-500);
   --ra-side-sell: var(--ra-red-500);
   --ra-position-long: var(--ra-green-500);
   --ra-position-short: var(--ra-red-500);
@@ -383,6 +448,7 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-color-sell: var(--ra-side-sell);
   --ra-color-status-warn: var(--ra-status-working);
   --ra-color-status-info: var(--ra-stream-checking);
+  --ra-color-cyan: var(--ra-cyan-500);
   --ra-table-row-bg-hover: color-mix(in srgb, var(--ra-surface-3) 72%, transparent);
   --ra-space-1: 2px;
   --ra-space-2: 3px;
@@ -409,10 +475,17 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ra-motion-enter: cubic-bezier(0, 0, 0.2, 1);
   --ra-motion-exit: cubic-bezier(0.4, 0, 1, 1);
-  --ra-motion-accent: #168BFF;
-  --ra-motion-up: #2ED889;
-  --ra-motion-down: #FF3048;
-  --ra-motion-warn: #E9B949;
+  --ra-motion-accent: var(--ra-accent-500);
+  --ra-motion-up: var(--ra-pnl-positive);
+  --ra-motion-down: var(--ra-pnl-negative);
+  --ra-motion-warn: var(--ra-amber-500);
+  /* Broker-connection lifecycle motion scale (docs/plans/broker-connection-ux-plan.md).
+     Named distinctly from --ra-motion-* so the broker cards can keep the plan's
+     snappier timings without disturbing the platform-wide motion scale. */
+  --motion-fast: 150ms;
+  --motion-base: 300ms;
+  --motion-slow: 600ms;
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ra-tooltip-bg: #090D18;
   --ra-tooltip-border: #2A3A54;
   --ra-tooltip-text: #F4F8FF;
@@ -491,6 +564,36 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-elevation-hover:
     0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 16%, transparent),
     0 4px 14px color-mix(in srgb, var(--ra-color-accent) 22%, transparent);
+
+  /* Status-glow tokens (design-audit item 13, D2). Glow is a STATUS channel,
+     never chrome decoration: tone must come from the semantic color layer
+     (--ra-color-*) so protan mode and accent presets propagate. Recipe vars
+     read --ra-glow-tone (set inline per element, like --ra-motion-*); the
+     semantic aliases are prebuilt full box-shadow values for the common
+     operational states. */
+  --ra-glow-tone: var(--ra-color-accent);
+  --ra-glow-sm: 0 0 4px color-mix(in srgb, var(--ra-glow-tone) 45%, transparent);
+  --ra-glow-md: 0 0 6px color-mix(in srgb, var(--ra-glow-tone) 55%, transparent);
+  --ra-glow-lg: 0 0 10px color-mix(in srgb, var(--ra-glow-tone) 60%, transparent);
+  --ra-glow-ring:
+    0 0 0 1px color-mix(in srgb, var(--ra-glow-tone) 60%, transparent),
+    0 0 6px color-mix(in srgb, var(--ra-glow-tone) 40%, transparent);
+  --ra-glow-live:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 55%, transparent),
+    0 0 6px color-mix(in srgb, var(--ra-color-accent) 40%, transparent);
+  --ra-glow-stale:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-status-warn) 55%, transparent),
+    0 0 6px color-mix(in srgb, var(--ra-color-status-warn) 40%, transparent);
+  --ra-glow-error:
+    0 0 0 1px color-mix(in srgb, var(--ra-red-500) 55%, transparent),
+    0 0 6px color-mix(in srgb, var(--ra-red-500) 40%, transparent);
+  --ra-glow-positive: 0 0 6px color-mix(in srgb, var(--ra-color-pnl-positive) 55%, transparent);
+  --ra-glow-negative: 0 0 6px color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent);
+
+  /* Luminance elevation (item 13, D3): surface tier + 1px lit top edge
+     replaces box strokes. page = surface-0, panel = surface-1,
+     focused = surface-2. */
+  --ra-edge-top: inset 0 1px 0 var(--ra-card-top-highlight);
 }
 
 :root[data-pyrus-theme="light"],
@@ -509,16 +612,16 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-pink-500: #C73374;
   --ra-purple-400: #9A6CFF;
   --ra-purple-500: #7A3FF0;
-  --ra-grey-0: #F7FAFF;
+  --ra-grey-0: #FAFAFA;
   --ra-grey-1: #FFFFFF;
-  --ra-grey-2: #F2F6FC;
-  --ra-grey-3: #E8EEF8;
-  --ra-grey-4: #DDE6F3;
-  --ra-grey-5: #D9E2F0;
-  --ra-grey-6: #EDF2F8;
-  --ra-grey-7: #6F7E92;
-  --ra-grey-8: #66758C;
-  --ra-grey-9: #33435A;
+  --ra-grey-2: #F5F5F5;
+  --ra-grey-3: #EDEDED;
+  --ra-grey-4: #E5E5E5;
+  --ra-grey-5: #E1E1E1;
+  --ra-grey-6: #F1F1F1;
+  --ra-grey-7: #7B7B7B;
+  --ra-grey-8: #737373;
+  --ra-grey-9: #414141;
   --ra-surface-0: var(--ra-grey-0);
   --ra-surface-1: var(--ra-grey-1);
   --ra-surface-2: var(--ra-grey-2);
@@ -578,6 +681,32 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-elevation-hover:
     0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 18%, transparent),
     0 4px 12px color-mix(in srgb, var(--ra-color-accent) 18%, transparent);
+
+  /* Status-glow tokens — light theme. Lower mix percentages + the 1px ring
+     dominates so glow reads as a crisp lit edge on white, not a blur wash. */
+  --ra-glow-tone: var(--ra-color-accent);
+  --ra-glow-sm: 0 0 3px color-mix(in srgb, var(--ra-glow-tone) 30%, transparent);
+  --ra-glow-md: 0 0 5px color-mix(in srgb, var(--ra-glow-tone) 35%, transparent);
+  --ra-glow-lg: 0 0 8px color-mix(in srgb, var(--ra-glow-tone) 40%, transparent);
+  --ra-glow-ring:
+    0 0 0 1px color-mix(in srgb, var(--ra-glow-tone) 55%, transparent),
+    0 0 4px color-mix(in srgb, var(--ra-glow-tone) 25%, transparent);
+  --ra-glow-live:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 50%, transparent),
+    0 0 4px color-mix(in srgb, var(--ra-color-accent) 25%, transparent);
+  --ra-glow-stale:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-status-warn) 50%, transparent),
+    0 0 4px color-mix(in srgb, var(--ra-color-status-warn) 25%, transparent);
+  --ra-glow-error:
+    0 0 0 1px color-mix(in srgb, var(--ra-red-500) 50%, transparent),
+    0 0 4px color-mix(in srgb, var(--ra-red-500) 25%, transparent);
+  --ra-glow-positive: 0 0 4px color-mix(in srgb, var(--ra-color-pnl-positive) 35%, transparent);
+  --ra-glow-negative: 0 0 4px color-mix(in srgb, var(--ra-color-pnl-negative) 35%, transparent);
+
+  /* Luminance elevation — light theme. Top edge uses a faint dark inset
+     line instead of a white highlight (light surfaces are already lighter
+     than the page). */
+  --ra-edge-top: inset 0 1px 0 rgba(16, 24, 39, 0.06);
 }
 
 /* Accent presets — rotate the brand accent only (preset CSS vars override theme-specified accent).
@@ -763,7 +892,7 @@ optgroup {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   min-width: 0;
-  row-gap: var(--ra-space-4);
+  row-gap: var(--ra-space-2);
 }
 
 @container (max-width: 640px) {
@@ -1060,31 +1189,31 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
 
 @keyframes raValueFlashUp {
   0% {
-    background-color: rgba(16, 185, 129, 0);
-    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+    background-color: color-mix(in srgb, var(--ra-motion-up) 0%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-up) 0%, transparent);
   }
   22% {
-    background-color: rgba(16, 185, 129, 0.18);
-    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.32);
+    background-color: color-mix(in srgb, var(--ra-motion-up) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-up) 32%, transparent);
   }
   100% {
-    background-color: rgba(16, 185, 129, 0);
-    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+    background-color: color-mix(in srgb, var(--ra-motion-up) 0%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-up) 0%, transparent);
   }
 }
 
 @keyframes raValueFlashDown {
   0% {
-    background-color: rgba(239, 68, 68, 0);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+    background-color: color-mix(in srgb, var(--ra-motion-down) 0%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-down) 0%, transparent);
   }
   22% {
-    background-color: rgba(239, 68, 68, 0.18);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.32);
+    background-color: color-mix(in srgb, var(--ra-motion-down) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-down) 32%, transparent);
   }
   100% {
-    background-color: rgba(239, 68, 68, 0);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+    background-color: color-mix(in srgb, var(--ra-motion-down) 0%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-down) 0%, transparent);
   }
 }
 
@@ -1210,7 +1339,7 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
   }
 }
 
-@keyframes raSkeletonShimmer {
+@keyframes raSkeletonSweep {
   from {
     transform: translateX(-100%);
   }
@@ -1560,7 +1689,7 @@ summary,
 .ra-deferred-render__placeholder {
   min-width: 0;
   border: 1px solid var(--ra-border-default);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--ra-surface-2);
 }
 
@@ -1591,6 +1720,57 @@ summary,
 
 .ra-value-flash-down {
   animation: raValueFlashDown 620ms var(--ra-motion-enter) both;
+}
+
+/* Item 13, D4 — quick tick-flash modifier (~150ms per the audit) for dense
+   live grids where the 620ms default would smear across updates. Compose:
+   className={`${flashClass} ra-value-flash--quick`}. */
+.ra-value-flash--quick.ra-value-flash-up,
+.ra-value-flash--quick.ra-value-flash-down {
+  animation-duration: 150ms;
+}
+
+/* Item 13, D4 — one-shot directional row flash when a flow print lands:
+   8% buy/sell wash that decays. Keyed to the semantic side tokens so protan
+   mode propagates. */
+@keyframes raRowFlashBuy {
+  0% {
+    background-color: color-mix(in srgb, var(--ra-color-buy) 8%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes raRowFlashSell {
+  0% {
+    background-color: color-mix(in srgb, var(--ra-color-sell) 8%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.ra-row-flash-buy {
+  animation: raRowFlashBuy 480ms var(--ra-motion-exit) 1;
+}
+
+.ra-row-flash-sell {
+  animation: raRowFlashSell 480ms var(--ra-motion-exit) 1;
+}
+
+/* Item 13, D4 — single cross-fade when a chart hydrates (one-shot). */
+@keyframes raChartHydrate {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ra-chart-hydrate {
+  animation: raChartHydrate var(--ra-motion-slow) var(--ra-motion-enter) 1;
 }
 
 .ra-status-pulse {
@@ -1628,6 +1808,28 @@ summary,
   opacity: 0.78;
 }
 
+/* D6.1: mid-path directional chevrons on machine-state edges. The march is a
+   slow staggered brightness wave (live-flow indicator) applied only to edges
+   that are animated with at least one fresh transport; static otherwise. */
+.ra-edge-chevron {
+  transition: stroke var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-edge-chevron-march {
+  opacity: 0.25;
+  animation: raEdgeChevronMarch 2800ms ease-in-out infinite;
+}
+
+@keyframes raEdgeChevronMarch {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 0.95;
+  }
+}
+
 @media (max-width: 700px) {
   .diagnostics-machine-diagram-workspace {
     max-width: none;
@@ -1653,8 +1855,10 @@ summary,
     transform var(--ra-motion-fast) var(--ra-motion-ease);
 }
 
+/* Item 13, D4 — evaluating pulses are one-shot-ish: 3 cycles then settle
+   (doctrine: motion must not loop against live data). */
 .ra-signal-cell-evaluating {
-  animation: raSignalCellEvaluating 1200ms var(--ra-motion-ease) infinite;
+  animation: raSignalCellEvaluating 1200ms var(--ra-motion-ease) 3;
 }
 
 .ra-signal-cell-ready {
@@ -1701,7 +1905,7 @@ summary,
 .ra-signal-status-pill-evaluating,
 .ra-signal-decision-pill-wait,
 .ra-verdict-glyph-wait {
-  animation: raSignalCellEvaluating 1450ms var(--ra-motion-ease) infinite;
+  animation: raSignalCellEvaluating 1450ms var(--ra-motion-ease) 3;
 }
 
 .ra-signal-status-pill-blocked,
@@ -1779,7 +1983,7 @@ summary,
     transparent
   );
   transform: translateX(-120%);
-  animation: raScanSweep 1450ms var(--ra-motion-ease) infinite;
+  animation: raScanSweep 1450ms var(--ra-motion-ease) 3;
 }
 
 .ra-skeleton {
@@ -1799,7 +2003,7 @@ summary,
     transparent
   );
   transform: translateX(-100%);
-  animation: raSkeletonShimmer 1450ms var(--ra-motion-ease) infinite;
+  animation: raSkeletonSweep 1450ms var(--ra-motion-ease) infinite;
 }
 
 .ra-interactive {
@@ -1920,7 +2124,7 @@ summary,
    <thead> row via tableHeaderStyle. */
 .ra-table-header-sticky {
   box-shadow: 0 1px 0 var(--ra-border-default),
-    0 6px 14px color-mix(in srgb, var(--ra-bg-0) 75%, transparent);
+    0 6px 14px color-mix(in srgb, var(--ra-surface-0) 75%, transparent);
 }
 
 .ra-hide-scrollbar {
@@ -2130,6 +2334,56 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   box-shadow: var(--ra-selected-glow);
 }
 
+/* Item 13, D3 — luminance elevation tiers. Surface separation via a lighter
+   background + 1px lit top edge instead of a box stroke. Panels sit on the
+   page (surface-0); the focused tier (active chart region, hovered workbench
+   pane) steps one tier brighter. */
+.ra-lum-panel {
+  background: var(--ra-surface-1);
+  border: none;
+  box-shadow: var(--ra-edge-top);
+}
+
+.ra-lum-focused {
+  background: var(--ra-surface-2);
+  border: none;
+  box-shadow: var(--ra-edge-top);
+}
+
+/* Item 13, D2 — status glow. Meaning-bearing only: set --ra-glow-tone inline
+   from a semantic tone (same idiom as --ra-motion-*), or compose the prebuilt
+   --ra-glow-live/stale/error aliases directly. Never attach to static chrome.
+   Static box-shadow (not animated) — cheap to paint, no reduced-motion gate
+   needed. */
+.ra-status-glow {
+  box-shadow: var(--ra-glow-md);
+}
+
+.ra-status-glow--sm {
+  box-shadow: var(--ra-glow-sm);
+}
+
+.ra-status-glow--lg {
+  box-shadow: var(--ra-glow-lg);
+}
+
+.ra-status-glow--ring {
+  box-shadow: var(--ra-glow-ring);
+}
+
+/* Item 13, D5 — designed resting state: idle looks like radar on standby,
+   not absence. A barely-visible static dot grid (no animation — doctrine
+   bans idle loops). Apply to sleeping data surfaces (signal matrix, empty
+   canvases) alongside their empty-state copy. */
+.ra-standby-grid {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--ra-text-dim) 14%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  background-position: center;
+}
+
 .ra-glass-surface {
   background: var(--ra-glass-nav-bg);
   backdrop-filter: blur(18px) saturate(160%);
@@ -2191,7 +2445,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   max-width: min(320px, calc(100vw - 24px));
   padding: 8px 12px;
   border: 1px solid var(--ra-tooltip-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--ra-tooltip-bg);
   box-shadow: var(--ra-tooltip-shadow);
   color: var(--ra-tooltip-text);
@@ -2568,7 +2822,11 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 @media (prefers-reduced-motion: reduce) {
   .ra-panel-enter,
   .ra-popover-enter,
+  .ra-tooltip-content,
   .ra-row-enter,
+  .ra-row-flash-buy,
+  .ra-row-flash-sell,
+  .ra-chart-hydrate,
   .ra-signal-row-glow,
   .ra-signal-glyph-fresh,
   .ra-status-pulse,
@@ -2595,8 +2853,13 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-sparkline path,
   .ra-sparkline-tail,
   .ra-bar-fill,
-  .ra-radial-gauge-active-tick--animate {
+  .ra-radial-gauge-active-tick--animate,
+  .ra-edge-chevron-march {
     animation: none !important;
+  }
+
+  .ra-edge-chevron-march {
+    opacity: 0.55;
   }
 
   .ra-sparkline-tail {
@@ -2639,7 +2902,11 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
 html[data-pyrus-reduced-motion="on"] .ra-panel-enter,
 html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
+html[data-pyrus-reduced-motion="on"] .ra-tooltip-content,
 html[data-pyrus-reduced-motion="on"] .ra-row-enter,
+html[data-pyrus-reduced-motion="on"] .ra-row-flash-buy,
+html[data-pyrus-reduced-motion="on"] .ra-row-flash-sell,
+html[data-pyrus-reduced-motion="on"] .ra-chart-hydrate,
 html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
 html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
 html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
@@ -2667,37 +2934,17 @@ html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
 html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
 html[data-pyrus-reduced-motion="on"] .ra-radial-gauge-active-tick--animate,
-html[data-pyrus-reduced-motion="on"] .ra-panel-enter,
-html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
-html[data-pyrus-reduced-motion="on"] .ra-row-enter,
-html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
-html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
-html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
-html[data-pyrus-reduced-motion="on"] .ra-signal-cell-evaluating,
-html[data-pyrus-reduced-motion="on"] .ra-signal-cell-ready,
-html[data-pyrus-reduced-motion="on"] .ra-signal-cell-blocked,
-html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-ready,
-html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-evaluating,
-html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-blocked,
-html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-try,
-html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-wait,
-html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-pass,
-html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-try,
-html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-wait,
-html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-pass,
-html[data-pyrus-reduced-motion="on"] .ra-signal-dot-fresh,
-html[data-pyrus-reduced-motion="on"] .ra-signal-action-button,
-html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-ready,
-html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-blocked,
-html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
-html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
-html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
-html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
-html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
-html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
-html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
-html[data-pyrus-reduced-motion="on"] .ra-radial-gauge-active-tick--animate {
+html[data-pyrus-reduced-motion="on"] .ra-edge-chevron-march {
   animation: none !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-skeleton-shimmer {
+  background: var(--ra-skeleton-base);
+  animation: none !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-edge-chevron-march {
+  opacity: 0.55;
 }
 
 html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,

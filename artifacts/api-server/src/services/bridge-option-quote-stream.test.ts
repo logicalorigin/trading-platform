@@ -3,7 +3,6 @@ import { afterEach, test } from "node:test";
 
 import {
   __resetBridgeGovernorForTests,
-  getBridgeGovernorSnapshot,
 } from "./bridge-governor";
 import {
   admitMarketDataLeases,
@@ -13,6 +12,7 @@ import {
 } from "./market-data-admission";
 import {
   __getBridgeOptionQuoteLastErrorForTests,
+  getBridgeOptionQuoteStreamDiagnostics,
   __resetBridgeOptionQuoteStreamForTests,
   __setBridgeOptionQuoteClientForTests,
   __setBridgeOptionQuoteRuntimeConfiguredForTests,
@@ -21,18 +21,18 @@ import {
   subscribeBridgeOptionQuoteSnapshots,
 } from "./bridge-option-quote-stream";
 import { HttpError } from "../lib/errors";
-import { setIbkrBridgeRuntimeAvailabilityProvider } from "../providers/ibkr/bridge-client";
 
 afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
   __setBridgeOptionQuoteClientForTests(null);
-  setIbkrBridgeRuntimeAvailabilityProvider(null);
   __setBridgeOptionQuoteStreamNowForTests(null);
 });
 
-test("algo operations automation live quote snapshots use the quote bridge lane", async () => {
+const SPY_OPRA = "O:SPY260608C00500000";
+
+test("algo operations automation live quote snapshots use Massive OPRA quotes", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
@@ -49,7 +49,7 @@ test("algo operations automation live quote snapshots use the quote bridge lane"
       return [
         {
           symbol: "SPY",
-          providerContractId: "contract-1",
+          providerContractId: SPY_OPRA,
           bid: 1,
           ask: 1.1,
           price: 1.05,
@@ -68,39 +68,33 @@ test("algo operations automation live quote snapshots use the quote bridge lane"
 
   const payload = await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "algo-operations:SPY",
     intent: "automation-live",
     requiresGreeks: true,
   });
 
   assert.equal(payload.quotes.length, 1);
-  const snapshot = getBridgeGovernorSnapshot();
-  assert.ok(snapshot.quotes.lastSuccessAt);
-  assert.equal(snapshot.options.lastSuccessAt, null);
+  assert.equal(payload.quotes[0]?.providerContractId, SPY_OPRA);
+  assert.equal(payload.quotes[0]?.source, "massive");
 });
 
-test("unattached desktop agent option snapshots report bridge runtime unattached", async () => {
+test("unconfigured Massive option snapshots report Massive runtime unavailable", async () => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
   __setBridgeOptionQuoteRuntimeConfiguredForTests(false);
-  setIbkrBridgeRuntimeAvailabilityProvider(() => ({
-    runtimeOverrideActive: false,
-    desktopAgentOnline: true,
-    desktopAgentCompatible: true,
-  }));
 
   const payload = await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
     intent: "flow-scanner-live",
     requiresGreeks: false,
   });
 
-  assert.equal(payload.debug?.errorCode, "ibkr_bridge_runtime_unattached");
-  assert.match(payload.debug?.errorMessage ?? "", /desktop agent is online/i);
+  assert.equal(payload.debug?.errorCode, "massive_not_configured");
+  assert.match(payload.debug?.errorMessage ?? "", /Massive options market data/i);
 });
 
 function makeThrowingOptionQuoteClient(error: unknown) {
@@ -121,17 +115,17 @@ function makeThrowingOptionQuoteClient(error: unknown) {
   };
 }
 
-async function waitForStreamErrorHook(
-  getHook: () => ((error: unknown) => void) | null,
-): Promise<(error: unknown) => void> {
+async function waitForLastOptionQuoteError(
+  pattern: RegExp,
+): Promise<string> {
   for (let index = 0; index < 20; index += 1) {
-    const hook = getHook();
-    if (hook) {
-      return hook;
+    const lastError = __getBridgeOptionQuoteLastErrorForTests();
+    if (lastError && pattern.test(lastError)) {
+      return lastError;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  assert.fail("Expected option quote stream hook to be registered");
+  assert.fail(`Expected option quote stream error matching ${pattern}`);
 }
 
 test("off-hours upstream-unavailable option fetch does not record a connection error", async () => {
@@ -149,7 +143,7 @@ test("off-hours upstream-unavailable option fetch does not record a connection e
 
   await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
     intent: "flow-scanner-live",
     requiresGreeks: false,
@@ -173,7 +167,7 @@ test("a genuine upstream error still records a connection error", async () => {
 
   await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "flow-scanner:SPY",
     intent: "flow-scanner-live",
     requiresGreeks: false,
@@ -208,7 +202,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
       return [
         {
           symbol: "SPY",
-          providerContractId: "contract-1",
+          providerContractId: SPY_OPRA,
           bid: snapshotCalls === 1 ? 1 : 2,
           ask: snapshotCalls === 1 ? 1.1 : 2.1,
           price: snapshotCalls === 1 ? 1.05 : 2.05,
@@ -230,7 +224,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
 
   await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:prime",
     intent: "account-monitor-live",
     requiresGreeks: false,
@@ -240,7 +234,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
 
   const cachedPayload = await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:cached",
     intent: "account-monitor-live",
     requiresGreeks: false,
@@ -251,7 +245,7 @@ test("account monitor can refresh stale cached option quotes with a bounded time
 
   const refreshedPayload = await fetchBridgeOptionQuoteSnapshots({
     underlying: "SPY",
-    providerContractIds: ["contract-1"],
+    providerContractIds: [SPY_OPRA],
     owner: "account-position-option-quotes:test:refresh",
     intent: "account-monitor-live",
     requiresGreeks: false,
@@ -270,7 +264,6 @@ test("option stream generic Output exceeded error does not shed scanner demand",
   __resetMarketDataAdmissionForTests();
   __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
 
-  let onStreamError: ((error: unknown) => void) | null = null;
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
       return {
@@ -279,11 +272,10 @@ test("option stream generic Output exceeded error does not shed scanner demand",
         liveMarketDataAvailable: true,
       };
     },
-    async getOptionQuoteSnapshots() {
-      return [];
+    async getOptionQuoteSnapshots(): Promise<never> {
+      throw new Error("Output exceeded limit (was: 100031)");
     },
-    streamOptionQuoteSnapshots(_input, _onQuotes, onError) {
-      onStreamError = onError ?? null;
+    streamOptionQuoteSnapshots() {
       return () => {};
     },
   });
@@ -305,7 +297,7 @@ test("option stream generic Output exceeded error does not shed scanner demand",
   const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
     {
       underlying: "SPY",
-      providerContractIds: ["visible-contract"],
+      providerContractIds: [SPY_OPRA],
       owner: "trade-option-chain:SPY",
       intent: "visible-live",
       requiresGreeks: true,
@@ -313,8 +305,7 @@ test("option stream generic Output exceeded error does not shed scanner demand",
     },
     () => {},
   );
-  const streamError = await waitForStreamErrorHook(() => onStreamError);
-  streamError(new Error("Output exceeded limit (was: 100031)"));
+  await waitForLastOptionQuoteError(/Output exceeded limit/);
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.pressure.ibkrPressure, null);
@@ -333,8 +324,6 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
   __resetMarketDataAdmissionForTests();
   __setBridgeOptionQuoteStreamNowForTests(new Date("2026-06-12T12:00:00.000Z"));
 
-  let onStreamError: ((error: unknown) => void) | null = null;
-  let unsubscribeCount = 0;
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
       return {
@@ -343,15 +332,13 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
         liveMarketDataAvailable: true,
       };
     },
-    async getOptionQuoteSnapshots() {
-      return [];
+    async getOptionQuoteSnapshots(): Promise<never> {
+      throw new Error(
+        "Massive option quote snapshot request timed out after 30000ms.",
+      );
     },
-    streamOptionQuoteSnapshots(_input, _onQuotes, onError) {
-      onStreamError = onError ?? null;
-      // The unsubscribe call is the teardown signal: the flap was every option
-      // line being unsubscribed on one chunk's timeout.
+    streamOptionQuoteSnapshots() {
       return () => {
-        unsubscribeCount += 1;
       };
     },
   });
@@ -373,7 +360,7 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
   const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
     {
       underlying: "SPY",
-      providerContractIds: ["visible-contract"],
+      providerContractIds: [SPY_OPRA],
       owner: "trade-option-chain:SPY",
       intent: "visible-live",
       requiresGreeks: true,
@@ -381,21 +368,13 @@ test("a transient option-stream timeout does not shed the scanner or tear down t
     },
     () => {},
   );
-  const streamError = await waitForStreamErrorHook(() => onStreamError);
-
-  streamError(
-    new Error(
-      "IBKR bridge request to /options/quotes timed out after 30000ms.",
-    ),
-  );
+  await waitForLastOptionQuoteError(/timed out/);
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
   // A transient request timeout must NOT be treated as capacity pressure, so the
   // one-shot scanner shed never fires (this was half the flap).
   assert.equal(diagnostics.pressure.ibkrPressure, null);
-  // ...and it must NOT tear down the live chunk: the other option lines (incl.
-  // the Trade Options Chain) stay subscribed while only the failed chunk retries.
-  assert.equal(unsubscribeCount, 0);
+  assert.equal(getBridgeOptionQuoteStreamDiagnostics().activeBridgeChunkCount, 1);
   // The timeout is still surfaced as the stream's lastError for visibility.
   assert.match(
     __getBridgeOptionQuoteLastErrorForTests() ?? "",

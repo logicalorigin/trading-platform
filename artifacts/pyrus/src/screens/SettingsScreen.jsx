@@ -26,6 +26,7 @@ import {
 import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
+import { SnapTradeConnectPanel } from "./settings/SnapTradeConnectPanel.jsx";
 import {
   LOCAL_ALERT_PREFERENCES_EVENT,
   readLocalAlertPreferences,
@@ -95,7 +96,7 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
-import { SurfacePanel } from "../components/platform/primitives.jsx";
+import { Select, SurfacePanel } from "../components/platform/primitives.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
@@ -128,8 +129,8 @@ const SETTINGS_TABS = [
   {
     id: "Data & Broker",
     label: "Data & Broker",
-    description: "Providers, runtime, IBKR",
-    keywords: "provider research ibkr broker lanes runtime massive data",
+    description: "Providers, runtime, brokerage",
+    keywords: "provider research broker snaptrade brokerage runtime massive data",
   },
   {
     id: "System",
@@ -521,18 +522,7 @@ function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
 }
 
 function SelectField({ label, value, onChange, options }) {
-  return (
-    <label style={labelStyle()}>
-      {label}
-      <select value={value ?? ""} onChange={(event) => onChange(event.target.value)} style={inputStyle()}>
-        {options.map((option) => (
-          <option key={option.value ?? option} value={option.value ?? option}>
-            {option.label ?? option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
+  return <Select label={label} value={value} onChange={onChange} options={options} />;
 }
 
 function NumberField({ label, value, onChange, min, max, step = 1 }) {
@@ -673,10 +663,8 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
   return (
     <div
       style={{
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
-        background: CSS_COLOR.bg1,
-        padding: sp("10px 12px"),
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+        padding: sp("10px 2px 4px"),
         display: "grid",
         gap: sp(6),
         alignSelf: "start",
@@ -692,17 +680,11 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
         {setting.description}
       </div>
       {editable ? (
-        <select
+        <Select
           value={draftValue ?? setting.pendingValue ?? setting.value ?? ""}
-          onChange={(event) => onDraftChange(setting.key, event.target.value)}
-          style={inputStyle()}
-        >
-          {setting.options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => onDraftChange(setting.key, next)}
+          options={setting.options}
+        />
       ) : (
         <div style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10), overflowWrap: "anywhere" }}>
           {displayValue ?? MISSING_VALUE}
@@ -1430,11 +1412,9 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         Number(right.rejected || 0) - Number(left.rejected || 0) ||
         Number(right.accepted || 0) - Number(left.accepted || 0),
     )[0];
-  const governor = safeRecord(snapshot?.governor || bridge.governor);
   const drift = safeRecord(snapshot?.drift);
   const driftReconciliation = safeRecord(drift.reconciliation);
   const streams = safeRecord(snapshot?.streams);
-  const quoteStreams = safeRecord(streams.quoteStreams);
   const optionQuoteStreams = safeRecord(streams.optionQuoteStreams);
   const stockAggregates = safeRecord(streams.stockAggregates);
   const lineUsage = runtimeControl.lineUsage;
@@ -1456,9 +1436,6 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       ? (Number(admission.activeLineCount) / Number(budget.usableLines)) * 100
       : null;
   const warmup = lineUsage.warmup || {};
-  const governorRows = Object.entries(governor).filter(
-    ([, lane]) => lane && typeof lane === "object",
-  );
 
   return (
     <Panel
@@ -1478,7 +1455,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         <div>
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
-          <StateRow label="Active app lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow label="IBKR budgeted lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow label="Total app demand" value={formatCount(admission.grossActiveLineCount)} />
           <StateRow
             label="Target fill"
             value={formatCount(policy.targetFillLines ?? budget.targetFillLines ?? allocation.targetFillLines)}
@@ -1551,7 +1529,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
         <div>
           <StateRow
-            label="Flow Scanner"
+            label="Massive Flow Scanner"
             value={`${formatCount(flowScanner.used)} active · ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)} available`}
           />
           {flowScanner.detail ? (
@@ -1625,7 +1603,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             label="Shadow demand owners"
             value={`${formatCount(shadowAccount.ownerCount)} owners · ${formatCount(shadowAccount.leaseCount)} leases`}
           />
-          <StateRow label="Scanner available lines" value={formatCount(flowScanner.effectiveCap)} />
+          <StateRow label="Massive scanner budget" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow
             label="Account covered"
             value={`${formatCount(accountMonitor.covered ?? accountMonitor.used)} of ${formatCount(accountMonitor.needed ?? accountMonitor.used)}`}
@@ -1642,7 +1620,6 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             tone={String(stockAggregates.activeProvider || "").includes("massive") ? CSS_COLOR.green : CSS_COLOR.textSec}
           />
           <StateRow label="Massive stock symbols" value={formatCount(stockAggregates.unionSymbolCount)} />
-          <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />
           <StateRow
@@ -1714,27 +1691,6 @@ function IbkrLineUsagePanel({ runtimeControl }) {
               <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
                 {pool.dynamic ? "dynamic option rotation" : pool.strict ? "reserved pool" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {governorRows.length > 0 && (
-        <div
-          className="ra-hide-scrollbar"
-          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.md), background: CSS_COLOR.bg1, marginTop: sp(12), minWidth: 0 }}
-        >
-          {governorRows.map(([id, lane], index) => (
-            <div
-              key={id}
-              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}` }}
-            >
-              <div style={{ color: CSS_COLOR.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{id}</div>
-              <div style={{ color: lane.circuitOpen ? CSS_COLOR.amber : CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
-                {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
-              </div>
-              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
-                {lane.circuitOpen ? `backoff ${formatCount(lane.backoffRemainingMs)}ms` : lane.lastFailure || "ready"}
               </div>
             </div>
           ))}
@@ -1933,7 +1889,7 @@ function AppPreferencesPanel({
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(8) }}>
         <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Theme" value={theme} />
-          <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
+          <button type="button" onClick={onToggleTheme} style={smallButton()}>
             Switch to {theme === "dark" ? "light" : "dark"}
           </button>
         </div>
@@ -3012,87 +2968,6 @@ function ResearchProviderPanel({ backendSnapshot, enabled }) {
   );
 }
 
-function IbkrBridgeOverridePanel({ active, onReload }) {
-  const toast = useToast();
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-
-  const clearOverride = () => {
-    const confirmed = window.confirm(
-      "Clear the persisted IBKR bridge override? This removes the current tunnel URL and requires a new Gateway bridge attach.",
-    );
-    if (!confirmed) return;
-
-    setRunning(true);
-    setError(null);
-    fetch("/api/settings/backend/actions/ibkr.bridgeOverride.clear", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ force: false }),
-    })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setResult(payload);
-        onReload?.();
-        toast.push({
-          kind: payload?.cleared ? "success" : "info",
-          title: payload?.cleared ? "IBKR bridge override cleared" : "No IBKR override active",
-        });
-      })
-      .catch((err) => {
-        const message = err?.detail || err?.message || "Failed to clear IBKR bridge override.";
-        setError(message);
-        toast.push({
-          kind: "error",
-          title: "IBKR override clear failed",
-          body: message,
-        });
-      })
-      .finally(() => setRunning(false));
-  };
-
-  return (
-    <Panel
-      title="IBKR Bridge Override"
-      action={
-        <button
-          type="button"
-          onClick={clearOverride}
-          disabled={running || !active}
-          style={smallButton({ danger: active })}
-        >
-          {running ? "Clearing" : "Clear"}
-        </button>
-      }
-    >
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
-        <StateRow label="Override" value={active ? "active" : "inactive"} tone={active ? CSS_COLOR.amber : CSS_COLOR.green} />
-        <StateRow
-          label="Last clear"
-          value={
-            result?.cleared
-              ? "cleared"
-              : result?.reason === "no_override"
-                ? "no override"
-                : MISSING_VALUE
-          }
-          tone={result?.cleared || result?.reason === "no_override" ? CSS_COLOR.green : CSS_COLOR.textSec}
-        />
-      </div>
-      {error ? (
-        <div style={{ marginTop: sp(8), color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
-          {error}
-        </div>
-      ) : null}
-    </Panel>
-  );
-}
-
 function SettingsInventoryPanel() {
   const rows = [
     ["Market", "Grid layout, ticker search filters, sector timeframe", "local workspace", "Visible here through app/flow preferences or in Market"],
@@ -3104,7 +2979,7 @@ function SettingsInventoryPanel() {
     ["Algo", "Deployments and signal-options execution profiles", "backend per deployment", "Keep edits in Algo to avoid accidental live deployment changes"],
     ["Backtest", "Studies, draft strategies, run options", "backend per run/study", "Keep in Backtest because settings are experiment-specific"],
     ["Diagnostics", "Thresholds, memory/cache alerts, storage prune", "backend persisted", "Wired here and duplicated in Diagnostics"],
-    ["IBKR", "Lanes, governor, scanner, bridge runtime", "backend persisted/runtime", "Settings-owned controls; Diagnostics is read-only"],
+    ["IBKR", "Lanes, scanner, client portal runtime", "backend persisted/runtime", "Settings-owned controls; Diagnostics is read-only"],
     ["Security", "COOP/COEP isolation target", "server persisted pending restart", "Wired here with restart-required state"],
   ];
 
@@ -3282,7 +3157,6 @@ export default function SettingsScreen({
   }, [activeTab, settingsVisible]);
   const backend = useBackendSettings({ enabled: backendSettingsEnabled });
   const userPreferences = useUserPreferences();
-  const ibkr = useIbkrLaneSettings({ enabled: dataBrokerTabActive });
   const runtimeControl = useRuntimeControlSnapshot({
     enabled: dataBrokerTabActive,
     runtimeDiagnosticsEnabled: false,
@@ -3520,33 +3394,14 @@ export default function SettingsScreen({
 
           {activeTab === "Data & Broker" && (
             <>
+              <SnapTradeConnectPanel enabled={dataBrokerTabActive} />
               <ResearchProviderPanel
                 backendSnapshot={backend.snapshot}
                 enabled={dataBrokerTabActive}
               />
               <Panel title="Runtime Settings">{renderSettingGrid("runtime")}</Panel>
-              <IbkrBridgeOverridePanel
-                active={Boolean(summary.bridgeOverrideActive)}
-                onReload={backend.reload}
-              />
               <IbkrLineUsagePanel
                 runtimeControl={runtimeControl}
-              />
-              <IbkrLaneArchitecturePanel
-                snapshot={ibkr.snapshot}
-                drafts={ibkr.drafts}
-                policyDrafts={ibkr.policyDrafts}
-                saving={ibkr.saving}
-                error={ibkr.error}
-                bridgeReady={ibkr.bridgeReady}
-                onChange={ibkr.onChange}
-                onReset={ibkr.onReset}
-                onPolicyChange={ibkr.onPolicyChange}
-                onResetPolicy={ibkr.onResetPolicy}
-                onApplyPreset={ibkr.onApplyPreset}
-                onDiscard={ibkr.onDiscard}
-                onSave={ibkr.onSave}
-                onReload={ibkr.onReload}
               />
             </>
           )}
@@ -3568,7 +3423,6 @@ export default function SettingsScreen({
                 <Panel title="Controls">
                   <StateRow label="Thresholds" value={summary.thresholdCount} />
                   <StateRow label="IBKR lanes" value={summary.ibkrLaneCount} />
-                  <StateRow label="Bridge override" value={summary.bridgeOverrideActive ? "active" : "inactive"} />
                 </Panel>
                 <Panel title="Workspace">
                   <StateRow label="Watchlists" value={summary.watchlistCount} />

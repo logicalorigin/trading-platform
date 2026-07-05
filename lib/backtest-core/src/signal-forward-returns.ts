@@ -5,6 +5,15 @@ export const SIGNAL_FORWARD_RETURN_DATASET_VERSION =
 
 export const DEFAULT_SIGNAL_FORWARD_RETURN_HORIZONS_BARS = [1, 3, 6] as const;
 
+// Cost/spread hurdle a forward return must EXCEED to count as a hit, expressed
+// in the same underlying-%-move units as realizedReturnPercent (e.g. 0.05 =
+// 0.05% = 5bps). A barely-positive underlying move does not survive real
+// trading frictions (bid/ask spread, slippage), so a hit requires clearing this
+// hurdle rather than merely being > 0. Overridable per dataset via
+// SignalForwardReturnDatasetInput.costHurdlePercent or per signal via
+// SignalForwardReturnSignal.spreadPctOfMid.
+export const DEFAULT_SIGNAL_FORWARD_RETURN_COST_HURDLE_PERCENT = 0.05;
+
 export type SignalForwardReturnDirection = "long" | "short";
 
 export type SignalForwardReturnReason =
@@ -34,6 +43,11 @@ export type SignalForwardReturnSignal = {
   sourceStrategy: string;
   sourceProfile: string;
   sourceTimeframe: string;
+  // Optional per-signal cost hurdle override, in the same underlying-%-move
+  // units as realizedReturnPercent. When present and finite (>= 0), this
+  // signal's own spread/cost is used as its hit hurdle instead of the
+  // dataset-wide or default hurdle.
+  spreadPctOfMid?: number | null;
 };
 
 export type SignalForwardReturnWindow = {
@@ -85,6 +99,11 @@ export type SignalForwardReturnDatasetInput = {
   signals: SignalForwardReturnSignal[];
   barsBySymbol: Record<string, BacktestBar[]>;
   horizonsBars?: readonly number[];
+  // Dataset-wide cost/spread hurdle (underlying-%-move units) a forward return
+  // must exceed to count as a hit. Defaults to
+  // DEFAULT_SIGNAL_FORWARD_RETURN_COST_HURDLE_PERCENT. Overridden per signal by
+  // spreadPctOfMid when that is present and finite.
+  costHurdlePercent?: number;
 };
 
 const TIMEFRAME_MS: Record<string, number> = {
@@ -159,6 +178,27 @@ function buildMissingEntryWindow(horizonBars: number): SignalForwardReturnWindow
   };
 }
 
+function resolveCostHurdlePercent(
+  signalSpreadPctOfMid: number | null | undefined,
+  datasetHurdlePercent: number | undefined,
+): number {
+  if (
+    signalSpreadPctOfMid != null &&
+    Number.isFinite(signalSpreadPctOfMid) &&
+    signalSpreadPctOfMid >= 0
+  ) {
+    return signalSpreadPctOfMid;
+  }
+  if (
+    datasetHurdlePercent != null &&
+    Number.isFinite(datasetHurdlePercent) &&
+    datasetHurdlePercent >= 0
+  ) {
+    return datasetHurdlePercent;
+  }
+  return DEFAULT_SIGNAL_FORWARD_RETURN_COST_HURDLE_PERCENT;
+}
+
 function calculateDirectionalReturn(
   direction: SignalForwardReturnDirection,
   entryPrice: number,
@@ -205,6 +245,7 @@ function buildWindow(input: {
   entryPrice: number;
   direction: SignalForwardReturnDirection;
   horizonBars: number;
+  costHurdlePercent: number;
 }): SignalForwardReturnWindow {
   const exitIndex = input.entryIndex + input.horizonBars;
   const availableBars = Math.max(0, input.bars.length - input.entryIndex - 1);
@@ -249,7 +290,7 @@ function buildWindow(input: {
     realizedReturnPercent,
     maxAdverseExcursionPercent: excursions.maxAdverseExcursionPercent,
     maxFavorableExcursionPercent: excursions.maxFavorableExcursionPercent,
-    hit: realizedReturnPercent > 0,
+    hit: realizedReturnPercent > input.costHurdlePercent,
   };
 }
 
@@ -315,6 +356,10 @@ export function buildSignalForwardReturnDataset(
       priorSignalAtBySource.set(key, item.signalAt.getTime());
     }
 
+    const costHurdlePercent = resolveCostHurdlePercent(
+      item.spreadPctOfMid,
+      input.costHurdlePercent,
+    );
     const windows = entryBar
       ? horizonsBars.map((horizonBars) =>
           buildWindow({
@@ -323,6 +368,7 @@ export function buildSignalForwardReturnDataset(
             entryPrice: entryBar.close,
             direction: item.direction,
             horizonBars,
+            costHurdlePercent,
           }),
         )
       : horizonsBars.map(buildMissingEntryWindow);

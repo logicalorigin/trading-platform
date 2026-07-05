@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildAlgoMonitorSignalActionRows,
   buildAlgoMonitorStaSignalRows,
+  filterAlgoMonitorStaSignalRowsForTable,
   resolveAlgoMonitorActionSignalTimeframes,
   resolveAlgoMonitorReadinessStatus,
   splitAlgoMonitorSignalRowsByMatrixHydration,
@@ -131,6 +133,86 @@ test("Algo monitor sidebar can render pushed matrix rows before deployment metad
   assert.equal(rows[0].sourceType, "signal_matrix_state");
 });
 
+test("Algo monitor action rows follow signal time before live matrix activity", () => {
+  const rows = buildAlgoMonitorSignalActionRows({
+    signals: [
+      {
+        signalKey: "aapu",
+        symbol: "AAPU",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-25T23:15:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        updatedAt: "2026-06-25T23:20:03.434Z",
+      },
+      {
+        signalKey: "aisp",
+        symbol: "AISP",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-24T19:20:00.000Z",
+        latestBarAt: "2026-06-25T23:20:00.000Z",
+        updatedAt: "2026-06-25T23:28:19.971Z",
+      },
+    ],
+    candidates: [],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => row.signal.symbol),
+    ["AAPU", "AISP"],
+  );
+});
+
+test("Algo monitor action rows use the STA table MTF-aligned subset", () => {
+  const rows = [
+    {
+      symbol: "FAST",
+      timeframe: "5m",
+      direction: "buy",
+      signalAt: "2026-06-25T23:20:00.000Z",
+      updatedAt: "2026-06-25T23:30:00.000Z",
+    },
+    {
+      symbol: "SLOW",
+      timeframe: "5m",
+      direction: "buy",
+      signalAt: "2026-06-25T23:10:00.000Z",
+      updatedAt: "2026-06-25T23:20:00.000Z",
+    },
+  ];
+
+  const staTableRows = filterAlgoMonitorStaSignalRowsForTable({
+    signals: rows,
+    signalMatrixBySymbol: {
+      FAST: {
+        "1m": { trendDirection: "bullish", status: "ok", active: true },
+        "2m": { trendDirection: "bearish", status: "ok", active: true },
+        "5m": { trendDirection: "bullish", status: "ok", active: true },
+      },
+      SLOW: {
+        "1m": { trendDirection: "bullish", status: "ok", active: true },
+        "2m": { trendDirection: "bullish", status: "ok", active: true },
+        "5m": { trendDirection: "bullish", status: "ok", active: true },
+      },
+    },
+    mtfAlignmentConfig: {
+      enabled: true,
+      timeframes: ["1m", "2m", "5m"],
+      requiredCount: 3,
+    },
+  });
+  const actionRows = buildAlgoMonitorSignalActionRows({
+    signals: staTableRows,
+    candidates: [],
+  });
+
+  assert.deepEqual(
+    actionRows.map((row) => row.signal.symbol),
+    ["SLOW"],
+  );
+});
+
 test("Algo monitor sidebar action timeframe follows the STA profile timeframe first", () => {
   assert.deepEqual(
     resolveAlgoMonitorActionSignalTimeframes({
@@ -182,19 +264,16 @@ test("Platform shells pass the STA profile timeframe into the algo monitor sideb
   );
   assert.match(
     algoScreenSource,
-    /clearAlgoStaExecutionTimeframe\(\)/,
+    /publishAlgoStaMtfAlignmentConfig\(profileDraft\?\.entryGate\?\.mtfAlignment \|\| null\)/,
   );
-  assert.match(
-    shellSource,
-    /signalActionTimeframe=\{signalActionTimeframe\}/,
-  );
-  assert.match(
-    mobileSource,
-    /signalActionTimeframe=\{signalActionTimeframe\}/,
-  );
+  assert.match(algoScreenSource, /clearAlgoStaExecutionTimeframe\(\)/);
+  assert.match(shellSource, /signalActionTimeframe=\{signalActionTimeframe\}/);
+  assert.match(mobileSource, /signalActionTimeframe=\{signalActionTimeframe\}/);
+  assert.match(sidebarSource, /useAlgoStaExecutionTimeframe\(\)/);
+  assert.match(sidebarSource, /useAlgoStaMtfAlignmentConfig\(\)/);
   assert.match(
     sidebarSource,
-    /useAlgoStaExecutionTimeframe\(\)/,
+    /activeStaMtfAlignmentConfig \?\?[\s\S]*automationState\?\.profile\?\.entryGate\?\.mtfAlignment/,
   );
   assert.match(
     sidebarSource,
@@ -206,13 +285,17 @@ test("Platform shells pass the STA profile timeframe into the algo monitor sideb
   );
 });
 
-test("Platform shell algo stream pauses during critical API mutations", () => {
+test("Platform shell algo stream pauses during blocking API mutations", () => {
   const shellSource = readLocalSource("./PlatformShell.jsx");
 
   assert.match(shellSource, /useCriticalApiMutationPause\(\)/);
   assert.match(
     shellSource,
-    /const algoFrameRuntimeEnabled = Boolean\(\s*frameAuxiliaryDataEnabled &&\s*!criticalApiMutationPaused &&/s,
+    /const algoFrameRuntimeEnabled = Boolean\(\s*frameAuxiliaryDataEnabled &&\s*!tradeScreenConnectionPriority &&\s*!criticalApiMutationPaused &&/s,
+  );
+  assert.match(
+    shellSource,
+    /const algoMonitorSurfaceDataEnabled = Boolean\(\s*!criticalApiMutationPaused &&\s*!tradeScreenConnectionPriority &&/s,
   );
 });
 
@@ -353,7 +436,10 @@ test("Algo monitor sidebar treats evaluated diagnostic signal bubbles as hydrate
     },
   });
 
-  assert.deepEqual(split.hydratedRows.map((row) => row.id), ["sta-diagnostic"]);
+  assert.deepEqual(
+    split.hydratedRows.map((row) => row.id),
+    ["sta-diagnostic"],
+  );
   assert.deepEqual(split.pendingRows, []);
 });
 

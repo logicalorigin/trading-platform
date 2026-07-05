@@ -38,6 +38,7 @@ import {
   fetchTranscript,
   fetchTranscriptList,
 } from "./lib/researchApi";
+import { useViewport } from "../../lib/responsive";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useUserPreferences } from "../preferences/useUserPreferences";
@@ -540,7 +541,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
       {hasAdj && (
         <div style={{
           background: toneAlpha(CSS_COLOR.accent, 0.08), border: `1px solid ${toneAlpha(CSS_COLOR.accent, 0.2)}`,
-          borderRadius: RADII.sm, padding: sp("6px 10px"), marginBottom: sp(10), fontSize: fs(12), color: CSS_COLOR.amber, display: "flex", alignItems: "center", gap: 6,
+          borderRadius: RADII.sm, padding: sp("6px 10px"), marginBottom: sp(10), fontSize: fs(12), color: CSS_COLOR.accent, display: "flex", alignItems: "center", gap: 6,
         }}>
           <span style={{ fontSize: fs(12) }}>!</span>
 	          Scenario adjustment applied: {scenarioAdj.revPct ? "Rev " + (scenarioAdj.revPct > 0 ? "+" : "") + scenarioAdj.revPct + "%" : ""} {scenarioAdj.gmAdj ? "GM " + (scenarioAdj.gmAdj > 0 ? "+" : "") + scenarioAdj.gmAdj + "bps" : ""}
@@ -618,7 +619,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                   {values.map((v, i) => (
                     <td key={i} style={{
                       padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10),
-                      color: v < 0 ? CSS_COLOR.red : (isAdjusted && i === 4 ? CSS_COLOR.amber : CSS_COLOR.textSec),
+                      color: v < 0 ? CSS_COLOR.red : (isAdjusted && i === 4 ? CSS_COLOR.accent : CSS_COLOR.textSec),
                       fontWeight: FONT_WEIGHTS.regular,
                     }}>
                       {isEPS ? (v < 0 ? "(" + Math.abs(v).toFixed(2) + ")" : v.toFixed(2)) : fmtFS(v)}
@@ -833,7 +834,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
             </div>
 
             {(aiR.revPct || aiR.gmBps) && (
-              <div style={{ marginTop: sp(8), fontSize: fs(11), color: CSS_COLOR.amber }}>
+              <div style={{ marginTop: sp(8), fontSize: fs(11), color: CSS_COLOR.accent }}>
                 \u2192 Adjustments applied to Financials tab (2026E column)
               </div>
             )}
@@ -844,7 +845,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
           <button onClick={() => onScenarioChange(null)} style={{
             marginTop: sp(8), width: "100%", background: toneAlpha(CSS_COLOR.accent, 0.08),
             border: `1px solid ${toneAlpha(CSS_COLOR.accent, 0.2)}`, borderRadius: RADII.xs, padding: sp(5),
-            color: CSS_COLOR.amber, fontSize: fs(11), cursor: "pointer",
+            color: CSS_COLOR.accent, fontSize: fs(11), cursor: "pointer",
           }}>CLEAR SCENARIO ADJUSTMENTS</button>
         )}
       </div>
@@ -927,7 +928,7 @@ function StackedBar({ data, color, height = 18 }) {
       <div style={{ display: "flex", gap: 10, marginTop: sp(5), flexWrap: "wrap" }}>
         {data.map(([label, val], i) => (
           <span key={label + i} style={{ fontSize: fs(10), color: CSS_COLOR.textSec, display: "inline-flex", alignItems: "center", gap: 3 }}>
-            <span style={{ width: 8, height: 8, background: shade(color, i), borderRadius: 1, display: "inline-block" }} />
+            <span style={{ width: 8, height: 8, background: shade(color, i), borderRadius: RADII.xs, display: "inline-block" }} />
             {label} <span style={{ color: CSS_COLOR.textDim }}>{(val / total * 100).toFixed(0)}%</span>
           </span>
         ))}
@@ -1023,6 +1024,7 @@ function PeerGrid({ co, color, onSelect }) {
 
 // Key Ratios strip — 4 columns, compact tile grid
 function KeyRatios({ ratios, co, color }) {
+  const { flags: { isPhone } } = useViewport();
   const latest = getLatestSeriesEntry(ratios) || {};
   const prior = ratios.length > 1 ? ratios[ratios.length - 2] || {} : {};
   const trend = (k, invert) => {
@@ -1042,7 +1044,7 @@ function KeyRatios({ ratios, co, color }) {
     { k: "netMargin", l: "Net Margin", fmt: v => v != null ? v + "%" : "—", invert: false, tip: "Net Income ÷ Revenue" },
   ];
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 4 }}>
       {rows.map(r => {
         const t = trend(r.k, r.invert);
         const trendValues = ratios.map(x => x[r.k]);
@@ -1332,7 +1334,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
         {/* Data status pill — shows interval (15m/1h/D) for live intraday */}
         {(() => {
           const intervalLabel = histInterval === "15min" ? " · 15M" : histInterval === "1hour" ? " · 1H" : histInterval === "daily" ? " · DAILY" : "";
-          const pill = loading ? { label: "LOADING", bg: toneAlpha(CSS_COLOR.amber, 0.10), fg: CSS_COLOR.amber, dot: CSS_COLOR.amber }
+          const pill = loading ? { label: "LOADING", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textDim }
             : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: toneAlpha(CSS_COLOR.green, 0.10), fg: CSS_COLOR.green, dot: CSS_COLOR.green, pulse: true }
             : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: toneAlpha(CSS_COLOR.red, 0.08), fg: CSS_COLOR.red, dot: CSS_COLOR.red }
             : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textDim }
@@ -1697,7 +1699,7 @@ function FilingsTab({ co, apiKey }) {
           </div>
         )}
         {apiKey && filings === null && (
-          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.amber, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             ⌛ Loading filings…
           </div>
         )}
@@ -1783,7 +1785,7 @@ function FilingsTab({ co, apiKey }) {
           </div>
         )}
         {apiKey && transcriptLoading && (
-          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.amber, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             ⌛ Loading transcript…
           </div>
         )}
@@ -2281,13 +2283,13 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
               <div style={STYLE_LABEL}>Quarterly EPS · actual vs estimate</div>
               <div style={{ display: "flex", gap: 10, fontSize: fs(10), color: CSS_COLOR.textDim }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: CSS_COLOR.bg1, borderRadius: 1 }} />Estimate
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.bg1, borderRadius: RADII.xs }} />Estimate
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: CSS_COLOR.green, borderRadius: 1 }} />Beat
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.green, borderRadius: RADII.xs }} />Beat
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: CSS_COLOR.red, borderRadius: 1 }} />Miss
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.red, borderRadius: RADII.xs }} />Miss
                 </span>
               </div>
             </div>
@@ -2586,6 +2588,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 // Extracted from MarketSummary Row 6 — the largest sub-block in the dashboard.
 // Owns its own sankeyExp (focused flow) + sankeyHover state.
 function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
+  const { flags: { isPhone } } = useViewport();
   const [sankeyExp, setSankeyExp] = useState(null);
   const [sankeyHover, setSankeyHover] = useState(null);
   return (
@@ -3114,7 +3117,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
                       background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
-                      padding: sp("10px 14px"), minWidth: 320, maxWidth: 480,
+                      padding: sp("10px 14px"), minWidth: isPhone ? 0 : 320, maxWidth: isPhone ? "calc(100vw - 24px)" : 480,
                       boxShadow: ELEVATION.lg, zIndex: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: sp(6), paddingBottom: sp(6), borderBottom: "2px solid " + focGrp.bc }}>
                         <span style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{focGrp.label}</span>
@@ -3159,7 +3162,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
                       background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
-                      padding: sp("10px 14px"), minWidth: 320, maxWidth: 440,
+                      padding: sp("10px 14px"), minWidth: isPhone ? 0 : 320, maxWidth: isPhone ? "calc(100vw - 24px)" : 440,
                       boxShadow: ELEVATION.lg, zIndex: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: sp(6) }}>
                         <Logo ticker={focused} size={28} />
@@ -3173,7 +3176,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         </div>
                       </div>
                       <div style={{ fontSize: fs(11), color: CSS_COLOR.textSec, lineHeight: 1.4, padding: sp("4px 0"), borderTop: `1px solid ${CSS_COLOR.border}`, fontStyle: "italic" }}>{activeCo.pr}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3, padding: sp("5px 0"), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                      <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 3, padding: sp("5px 0"), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
                         {[["MC", fmtMC(activeCo.mc)], ["P/E", activeCo.pe ? activeCo.pe + "x" : "—"], ["GM", activeCo.g + "%"], ["Growth", (activeCo.fin?.rg?.[4] > 0 ? "+" : "") + (activeCo.fin?.rg?.[4] || 0) + "%"]].map(([l, v]) => (
                           <div key={l} style={{ textAlign: "center" }}>
                             <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
@@ -3216,6 +3219,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
 }
 
 function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveFund = {} }) {
+  const { flags: { isPhone } } = useViewport();
   const lbl = { fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(6) };
   const card = { background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, boxShadow: ELEVATION.sm };
 
@@ -3279,17 +3283,17 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
   return (
     <div style={{ marginTop: sp(12) }}>
       {/* ═══ ROW 1: HEADLINE METRICS ═══ */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: sp(14) }}>
+      <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 6, marginBottom: sp(14) }}>
         {[
           ["Total Market Cap", fmtMC(totalMC), CSS_COLOR.text, CSS_COLOR.green],
           ["Combined Revenue", fmtMC(totalRev), CSS_COLOR.text, CSS_COLOR.blue],
-          ["Median P/E", medPE.toFixed(1) + "x", CSS_COLOR.text, CSS_COLOR.amber],
-          ["Avg " + primaryMacroName, avgMacro + "%", CSS_COLOR.amber, theme?.accent || CSS_COLOR.accent],
+          ["Median P/E", medPE.toFixed(1) + "x", CSS_COLOR.text, CSS_COLOR.accent],
+          ["Avg " + primaryMacroName, avgMacro + "%", CSS_COLOR.text, theme?.accent || CSS_COLOR.accent],
         ].map(([label, value, color, accent]) => (
           <div key={label} style={{ ...card, padding: sp("7px 10px") }}>
             <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: sp(3) }}>{label}</div>
             <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color }}>{value}</div>
-            <div style={{ height: 2, borderRadius: 1, background: accent, opacity: 0.3, marginTop: sp(4) }} />
+            <div style={{ height: 2, borderRadius: RADII.xs, background: accent, opacity: 0.3, marginTop: sp(4) }} />
           </div>
         ))}
       </div>
@@ -3302,7 +3306,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             <span style={{ fontSize: fs(10), color: CSS_COLOR.red }}>\u25C0 Declining</span>
             <div style={{ display: "flex", gap: 1 }}>
               {[-30,-15,0,15,30,60,100].map(g => (
-                <div key={g} style={{ width: 10, height: 6, borderRadius: 1,
+                <div key={g} style={{ width: 10, height: 6, borderRadius: RADII.xs,
                   background: g < 0 ? toneAlpha(CSS_COLOR.red, 0.3 + Math.abs(g) / 60) : g === 0 ? toneAlpha(CSS_COLOR.text, 0.1) : toneAlpha(CSS_COLOR.green, 0.2 + g / 150),
                 }} />
               ))}
@@ -3367,7 +3371,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       </div>
 
       {/* ═══ ROW 3: INTERACTIVE SVG DONUTS ═══ */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: sp(14) }}>
+      <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 10, marginBottom: sp(14) }}>
         {[["Market Cap Share", mcDonut, totalMC], ["Revenue Share", revDonut, totalRev]].map(([title, data, total]) => {
           // SVG arc builder
           const R = 42, r = 24, cx = 48, cy = 48;
@@ -3421,7 +3425,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       {/* ═══ ROW 4: VERTICAL FINANCIAL COMPARISON ═══ */}
       <div style={{ marginBottom: sp(14) }}>
         <div style={lbl}>Vertical comparison</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 6 }}>
           {[...verts].sort((a, b) => b.mc - a.mc).slice(0, 4).map(v => {
             const topCos = [...v.cos].sort((a, b) => b.mc - a.mc).slice(0, 4);
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
@@ -3456,7 +3460,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             );
           })}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: sp(6) }}>
+        <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(3, 1fr)", gap: 6, marginTop: sp(6) }}>
           {[...verts].sort((a, b) => b.mc - a.mc).slice(4).map(v => {
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
@@ -3514,7 +3518,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       <div>
         <div style={lbl}>Macro exposure by vertical</div>
         <div style={{ ...card, padding: sp(8), overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "100px repeat(" + macroAxes.length + ", 1fr)", gap: 2 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "100px repeat(" + macroAxes.length + ", 1fr)", gap: 2, minWidth: isPhone ? 100 + macroAxes.length * 56 : undefined }}>
             <div />
             {macroAxes.map(m => <div key={m.k} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{m.n}</div>)}
             {verts.map(v => [
@@ -4128,6 +4132,7 @@ function Comps({ cos, sel, onSel }) {
 }
 
 function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
+  const { flags: { isPhone } } = useViewport();
   const macroAxes = theme?.macro || AI_MACRO;
   const macroKeys = macroAxes.map(m => m.k);
   const macroNames = Object.fromEntries(macroAxes.map(m => [m.k, m.n]));
@@ -4156,7 +4161,8 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Macro sensitivity by vertical
       </div>
-      <div role="img" aria-label="Macro sensitivity heatmap by vertical" style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: sp(16) }}>
+      <div style={{ overflowX: isPhone ? "auto" : undefined, marginBottom: sp(16) }}>
+      <div role="img" aria-label="Macro sensitivity heatmap by vertical" style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, minWidth: isPhone ? 110 + macroKeys.length * 56 : undefined }}>
         <div />
         {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
         {vertSummary.map(v => [
@@ -4171,12 +4177,13 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
           )),
         ])}
       </div>
+      </div>
 
       {/* Most exposed companies per factor */}
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Most exposed companies
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(" + Math.min(4, macroKeys.length) + ", 1fr)", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(" + Math.min(4, macroKeys.length) + ", 1fr)", gap: 8 }}>
         {topExposed.map(({ mk, name, companies }) => (
           <div key={mk} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(7) }}>
             <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, marginBottom: sp(4) }}>{name}</div>
@@ -4278,6 +4285,7 @@ export default function PhotonicsObservatory({
   isVisible = false,
   onReadinessChange,
 }) {
+  const { flags: { isPhone } } = useViewport();
   const [themeId, setThemeId] = useState("ai");
   const {
     data: researchData,
@@ -4614,7 +4622,7 @@ export default function PhotonicsObservatory({
       `}</style>
 
       {/* Header */}
-      <div className="photonics-research-header" style={{ padding: sp("14px 14px 0"), position: "relative" }}>
+      <div className="photonics-research-header" style={{ padding: isPhone ? sp("10px 10px 0") : sp("14px 14px 0"), position: "relative" }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, ${toneAlpha(CSS_COLOR.blue, 0.03)} 0%, transparent 40%)`, pointerEvents: "none" }} />
 
         {researchMetaReady ? (
@@ -4628,12 +4636,12 @@ export default function PhotonicsObservatory({
           </div>
         )}
 
-        <div className="photonics-research-title-row" style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: sp(8) }}>
-          <div>
-            <div style={{ fontSize: fs(11), color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
+        <div className="photonics-research-title-row" style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: isPhone ? "wrap" : "nowrap", gap: isPhone ? sp(6) : 0, marginBottom: sp(8) }}>
+          <div style={{ minWidth: isPhone ? 0 : undefined }}>
+            <div style={{ fontSize: fs(11), color: currentTheme.accent, letterSpacing: isPhone ? 3 : 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
               {currentTheme.subtitle}
             </div>
-            <h1 style={{ fontFamily: T.display, fontSize: fs(28), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(2) }}>
+            <h1 style={{ fontFamily: T.display, fontSize: isPhone ? fs(20) : fs(28), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(2) }}>
               {currentTheme.title}
             </h1>
           </div>
@@ -4646,8 +4654,8 @@ export default function PhotonicsObservatory({
                 ? `${themeUniverse.length} cos / ${activeEdges.length} links`
                 : "Loading universe…"}
               <span style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                background: dataStatus === "live" ? toneAlpha(CSS_COLOR.green, 0.10) : dataStatus === "loading" ? toneAlpha(CSS_COLOR.amber, 0.10) : toneAlpha(CSS_COLOR.text, 0.04),
-                color: dataStatus === "live" ? CSS_COLOR.green : dataStatus === "loading" ? CSS_COLOR.amber : CSS_COLOR.textMuted,
+                background: dataStatus === "live" ? toneAlpha(CSS_COLOR.green, 0.10) : toneAlpha(CSS_COLOR.text, 0.04),
+                color: dataStatus === "live" ? CSS_COLOR.green : CSS_COLOR.textMuted,
               }}>{dataStatus === "live" ? "\u25CF LIVE" : dataStatus === "loading" ? "LOADING..." : "STATIC"}</span>
               {prefetchProgress.total > 0 && (
                 <AppTooltip content={prefetchProgress.active

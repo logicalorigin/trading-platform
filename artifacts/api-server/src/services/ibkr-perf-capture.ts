@@ -3,9 +3,7 @@ import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
-import { getBridgeGovernorSnapshot } from "./bridge-governor";
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
-import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import { getConnectionAuditSnapshot } from "./ibkr-connection-audit";
 import {
   appendFlightRecorderJsonLine,
@@ -24,7 +22,7 @@ import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
  * Before/after IBKR-data performance capture.
  *
  * A flag-gated sampler periodically bundles a consolidated server perf snapshot (windowed
- * event-loop delay, RSS, pressure, bridge/aggregate/SSE/governor stats, SSE serialization cost)
+ * event-loop delay, RSS, pressure, bridge/aggregate/SSE stats, SSE serialization cost)
  * plus the latest client-reported attribution metrics, tags each sample with the live broker
  * connection state, derives rates between samples, and writes a rolling document under the
  * flight-recorder dir:
@@ -80,12 +78,10 @@ type ServerPerfSnapshot = {
   eventLoopDelay: { meanMs: number; p95Ms: number; maxMs: number };
   memoryMb: { rss: number; heapUsed: number };
   apiPressure: unknown;
-  bridgeQuote: unknown;
   optionQuote: unknown;
   stockAggregate: unknown;
   sseStreams: unknown;
   sseEmit: { events: number; bytes: number; stringifyMs: number } | null;
-  governor: unknown;
 };
 
 type PerfSample = {
@@ -136,12 +132,10 @@ export function captureServerPerfSnapshot(): ServerPerfSnapshot {
     eventLoopDelay,
     memoryMb: { rss: bytesToMb(mem.rss), heapUsed: bytesToMb(mem.heapUsed) },
     apiPressure: safeCall(getApiResourcePressureSnapshot),
-    bridgeQuote: safeCall(getBridgeQuoteStreamDiagnostics),
     optionQuote: safeCall(getBridgeOptionQuoteStreamDiagnostics),
     stockAggregate: safeCall(getStockAggregateStreamDiagnostics),
     sseStreams: safeCall(getSseStreamDiagnostics),
     sseEmit: safeCall(getSseEmitCounters),
-    governor: safeCall(getBridgeGovernorSnapshot),
   };
   // Window the event-loop delay histogram so each sample reflects the interval since the last.
   elMonitor.reset();
@@ -164,13 +158,7 @@ function deriveRates(
   const set = (key: string, value: number | null) => {
     if (value !== null) out[key] = Math.round(value * 100) / 100;
   };
-  set(
-    "quoteEventsPerSec",
-    rate(
-      numericField(cur.bridgeQuote, "eventCount"),
-      numericField(prev.server.bridgeQuote, "eventCount"),
-    ),
-  );
+  set("quoteEventsPerSec", null);
   set(
     "aggregateEventsPerSec",
     rate(

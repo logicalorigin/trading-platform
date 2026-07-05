@@ -30,7 +30,6 @@ function hasLiveStreamReadinessProof(ibkr: Record<string, unknown>): boolean {
     ibkr.connected === true &&
       ibkr.authenticated === true &&
       ibkr.accountsLoaded === true &&
-      ibkr.configuredLiveMarketDataMode === true &&
       (ibkr.strictReady === true ||
         (ibkr.streamFresh === true && streamState === "live")),
   );
@@ -47,14 +46,12 @@ export function resolveAlgoGatewayReadiness(
   const connected = ibkr.connected === true;
   const authenticated = ibkr.authenticated === true;
   const accountsLoaded = ibkr.accountsLoaded === true;
-  const configuredLiveMarketDataMode =
-    ibkr.configuredLiveMarketDataMode === true;
 
   if (!configured) {
     return {
       ready: false,
       reason: "ibkr_not_configured",
-      message: "IB Gateway bridge is not configured for options strategy execution.",
+      message: "IBKR Client Portal is not configured for options strategy execution.",
       diagnostics: ibkr,
     };
   }
@@ -63,7 +60,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "bridge_health_unavailable",
-      message: "IB Gateway bridge health is unavailable or stale.",
+      message: "IBKR Client Portal health is unavailable or stale.",
       diagnostics: ibkr,
     };
   }
@@ -72,7 +69,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "gateway_socket_disconnected",
-      message: "IB Gateway bridge is reachable, but the TWS socket is disconnected.",
+      message: "IBKR Client Portal is disconnected.",
       diagnostics: ibkr,
     };
   }
@@ -81,7 +78,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "gateway_login_required",
-      message: "IB Gateway is connected, but the broker session is not authenticated.",
+      message: "IBKR Client Portal is connected, but the broker session is not authenticated.",
       diagnostics: ibkr,
     };
   }
@@ -90,16 +87,7 @@ export function resolveAlgoGatewayReadiness(
     return {
       ready: false,
       reason: "accounts_unavailable",
-      message: "IB Gateway is authenticated, but broker accounts are not loaded.",
-      diagnostics: ibkr,
-    };
-  }
-
-  if (!configuredLiveMarketDataMode) {
-    return {
-      ready: false,
-      reason: "live_market_data_not_configured",
-      message: "IB Gateway is authenticated, but live market-data mode is not configured.",
+      message: "IBKR Client Portal is authenticated, but broker accounts are not loaded.",
       diagnostics: ibkr,
     };
   }
@@ -122,7 +110,7 @@ export function resolveAlgoGatewayReadiness(
   return {
     ready: true,
     reason: null,
-    message: "IB Gateway is ready for options strategy execution.",
+    message: "IBKR Client Portal is ready for options strategy execution.",
     diagnostics: ibkr,
   };
 }
@@ -139,7 +127,7 @@ export async function getAlgoGatewayReadiness(): Promise<AlgoGatewayReadiness> {
 export function throwAlgoGatewayNotReady(
   readiness: AlgoGatewayReadiness,
 ): never {
-  throw new HttpError(503, "IB Gateway is required for options strategy execution.", {
+  throw new HttpError(503, "IBKR Client Portal is required for options strategy execution.", {
     code: "algo_gateway_not_ready",
     detail: readiness.message,
     data: {
