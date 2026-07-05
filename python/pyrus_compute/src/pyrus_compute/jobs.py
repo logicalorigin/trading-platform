@@ -443,17 +443,24 @@ def _aggregate_signal_bars(
 
 
 def _signal_trend_direction(bars: list[SignalMatrixBarInput], basis_length: int) -> int:
+    # Mirror lib/pyrus-signals-core/src/index.ts resolvePyrusSignalsTrendDirection:
+    # return 0 (neutral / non-confirming) when the WMA basis is never computable —
+    # empty bars, or fewer than basis_length bars so no finite basis comparison is
+    # ever evaluable. Consumers must treat 0 as non-confirming, never a bullish
+    # default.
     if not bars:
-        return 1
+        return 0
     basis = _signal_wma([bar.c for bar in bars], basis_length)
-    direction = 1
+    trend_direction = 1
+    basis_computable = False
     for index in range(len(bars)):
         if index >= 5 and math.isfinite(basis[index]) and math.isfinite(basis[index - 5]):
+            basis_computable = True
             if basis[index] > basis[index - 5]:
-                direction = 1
+                trend_direction = 1
             elif basis[index] < basis[index - 5]:
-                direction = -1
-    return direction
+                trend_direction = -1
+    return trend_direction if basis_computable else 0
 
 
 def _signal_session_key(bar: SignalMatrixBarInput) -> str | None:
@@ -527,6 +534,114 @@ def _has_hard_bar_gap(
     return index > 0 and median_interval > 0 and bars[index].time - bars[index - 1].time > median_interval * 2
 
 
+def _signal_round_feature(value: float) -> float:
+    # Mirrors buildPyrusSignalsDirectionalFeatures roundFeature: finite -> 6dp, else 0.
+    return round(value, 6) if math.isfinite(value) else 0.0
+
+
+def _signal_clamp(value: float, minimum: float, maximum: float) -> float:
+    return min(maximum, max(minimum, value))
+
+
+def _signal_directional_features(
+    bars: list[SignalMatrixBarInput],
+    index: int,
+    direction: int,
+    mtf_directions: list[int],
+    adx: float,
+    volatility_score: float,
+    atr: float,
+) -> dict[str, Any]:
+    # Deterministic port of buildPyrusSignalsDirectionalFeatures
+    # (lib/pyrus-signals-core/src/index.ts:958-1057). Keeps STA rows on the
+    # SOT-outcome score model instead of the setup-quality fallback.
+    if index < 0 or index >= len(bars):
+        return {
+            "version": "directional-features-v1",
+            "shortMomentumPct": 0,
+            "mediumMomentumPct": 0,
+            "longMomentumPct": 0,
+            "riskAdjustedMomentum": 0,
+            "rangePosition20": 0.5,
+            "rangeComponent": 0,
+            "volumeRatio20": 1,
+            "volumeExpansion": 0,
+            "adxComponent": -1,
+            "volatilityComponent": 0,
+            "mtfAlignment": 0,
+            "atrPct": 0,
+        }
+    current = bars[index]
+    normalized_direction = 1 if direction >= 0 else -1
+
+    def percent_change(lookback: int) -> float:
+        previous_index = index - lookback
+        if previous_index < 0:
+            return 0.0
+        previous = bars[previous_index]
+        if not math.isfinite(previous.c) or previous.c <= 0:
+            return 0.0
+        return ((current.c - previous.c) / previous.c) * 100 * normalized_direction
+
+    short_momentum = percent_change(6)
+    medium_momentum = percent_change(20)
+    long_momentum = percent_change(78)
+
+    range_bars = bars[max(0, index - 19) : index + 1]
+    range_high = max((bar.h for bar in range_bars), default=math.nan)
+    range_low = min((bar.l for bar in range_bars), default=math.nan)
+    if math.isfinite(range_high) and math.isfinite(range_low) and range_high > range_low:
+        range_position = (
+            (current.c - range_low) / (range_high - range_low)
+            if normalized_direction == 1
+            else (range_high - current.c) / (range_high - range_low)
+        )
+    else:
+        range_position = 0.5
+
+    prior_volumes = [
+        bar.v for bar in bars[max(0, index - 20) : index] if math.isfinite(bar.v)
+    ]
+    prior_volume_average = sum(prior_volumes) / len(prior_volumes) if prior_volumes else 0.0
+    volume_ratio = (
+        current.v / prior_volume_average
+        if prior_volume_average > 0 and current.v > 0
+        else 1.0
+    )
+
+    safe_adx = adx if math.isfinite(adx) else 0.0
+    safe_volatility = volatility_score if math.isfinite(volatility_score) else 0.0
+    mtf_alignment = (
+        sum(1 for value in mtf_directions if value == normalized_direction)
+        - sum(1 for value in mtf_directions if value == -normalized_direction) * 0.5
+    )
+    atr_pct = (
+        (atr / current.c) * 100
+        if math.isfinite(atr) and atr > 0 and current.c > 0
+        else 0.0
+    )
+    risk_adjusted_momentum = medium_momentum / max(0.25, atr_pct or 0.25)
+    clamped_range = _signal_clamp(range_position, 0, 1)
+
+    return {
+        "version": "directional-features-v1",
+        "shortMomentumPct": _signal_round_feature(short_momentum),
+        "mediumMomentumPct": _signal_round_feature(medium_momentum),
+        "longMomentumPct": _signal_round_feature(long_momentum),
+        "riskAdjustedMomentum": _signal_round_feature(risk_adjusted_momentum),
+        "rangePosition20": _signal_round_feature(clamped_range),
+        "rangeComponent": _signal_round_feature((clamped_range - 0.5) * 4),
+        "volumeRatio20": _signal_round_feature(volume_ratio),
+        "volumeExpansion": _signal_round_feature(_signal_clamp(volume_ratio - 1, -1, 2)),
+        "adxComponent": _signal_round_feature(_signal_clamp((safe_adx - 18) / 12, -1, 2.5)),
+        "volatilityComponent": _signal_round_feature(
+            _signal_clamp(1 - abs(safe_volatility - 6) / 6, -0.5, 1)
+        ),
+        "mtfAlignment": _signal_round_feature(mtf_alignment),
+        "atrPct": _signal_round_feature(atr_pct),
+    }
+
+
 def _build_signal_filter_state(
     bars: list[SignalMatrixBarInput],
     index: int,
@@ -534,6 +649,7 @@ def _build_signal_filter_state(
     settings: SignalMatrixSettingsInput,
     adx: list[float],
     volatility_score: list[float],
+    atr_smoothed: list[float],
 ) -> dict[str, Any]:
     mtf_directions = [
         _signal_trend_direction(_aggregate_signal_bars(bars[: index + 1], timeframe), settings.basisLength)
@@ -542,6 +658,15 @@ def _build_signal_filter_state(
     current_adx = adx[index]
     current_volatility_score = volatility_score[index]
     current_session_key = _signal_session_key(bars[index])
+    directional_features = _signal_directional_features(
+        bars,
+        index,
+        direction,
+        mtf_directions,
+        current_adx,
+        current_volatility_score,
+        atr_smoothed[index],
+    )
     mtf_pass = [
         (not settings.requireMtf1) or mtf_directions[0] == direction,
         (not settings.requireMtf2) or mtf_directions[1] == direction,
@@ -564,6 +689,7 @@ def _build_signal_filter_state(
         "mtfDirections": mtf_directions,
         "adx": current_adx if math.isfinite(current_adx) else None,
         "volatilityScore": current_volatility_score if math.isfinite(current_volatility_score) else None,
+        "directionalFeatures": directional_features,
         "sessionKey": current_session_key,
         "mtfPass": mtf_pass,
         "adxPass": adx_pass,
@@ -608,6 +734,7 @@ def _evaluate_signal_cell(
     regime_direction = [1] * len(bars)
     signal_events: list[dict[str, Any]] = []
     trend_direction = 1
+    trend_basis_computable = False
     market_structure_direction = 0
     last_swing_high = math.nan
     previous_swing_high = math.nan
@@ -645,6 +772,7 @@ def _evaluate_signal_cell(
     for index, current in enumerate(bars):
         hard_gap_bar = _has_hard_bar_gap(bars, index, median_interval)
         if index >= 5 and math.isfinite(basis[index]) and math.isfinite(basis[index - 5]):
+            trend_basis_computable = True
             if basis[index] > basis[index - 5]:
                 trend_direction = 1
             elif basis[index] < basis[index - 5]:
@@ -711,6 +839,7 @@ def _evaluate_signal_cell(
                 settings,
                 adx,
                 volatility_score,
+                atr_smoothed,
             )
             if filter_state["passes"] and actionable:
                 signal_price = (
@@ -740,6 +869,13 @@ def _evaluate_signal_cell(
         "volatilityScore": volatility_score,
         "trendDirection": trend_direction_series,
         "regimeDirection": regime_direction,
+        # False when the WMA basis slope was never evaluable (fewer than
+        # basisLength + 5 bars): the direction series then still carry their
+        # bullish seed, not a measured trend (mirrors pyrus-signals-core).
+        "trendBasisComputable": trend_basis_computable,
+        # Final latched market-structure (CHoCH) direction: 1, -1, or 0 when
+        # no structure break ever latched.
+        "marketStructureDirection": market_structure_direction,
         "signalEvents": signal_events,
     }
 
@@ -793,7 +929,23 @@ def _signal_indicator_snapshot(
     last_index = len(bars) - 1
     regime_direction = cast(list[int], evaluation["regimeDirection"])
     trend_direction = cast(list[int], evaluation["trendDirection"])
-    current_direction = regime_direction[last_index] if regime_direction[last_index] in {1, -1} else trend_direction[last_index]
+    # An unwarmed basis means the direction series still carry their bullish
+    # seed, not a measured trend. Trust the last bar's direction only when the
+    # basis slope was actually evaluable, or when market structure (CHoCH)
+    # latched a real direction; otherwise the trend is unknown (None), which
+    # downstream MTF/entry gates treat as non-confirming (mirrors
+    # computeSignalMonitorIndicatorSnapshotBase in signal-monitor.ts).
+    if evaluation.get("trendBasisComputable"):
+        current_direction: int | None = (
+            regime_direction[last_index]
+            if regime_direction[last_index] in {1, -1}
+            else trend_direction[last_index]
+        )
+    else:
+        structure_direction = evaluation.get("marketStructureDirection")
+        current_direction = (
+            structure_direction if structure_direction in {1, -1} else None
+        )
     if current_direction not in {1, -1}:
         current_direction = None
     trend_age_bars = _trend_age(regime_direction, current_direction)
