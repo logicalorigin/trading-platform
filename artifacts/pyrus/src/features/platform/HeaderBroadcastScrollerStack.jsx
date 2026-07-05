@@ -85,7 +85,6 @@ import {
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
-import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -1041,13 +1040,17 @@ const HeaderLaneWaveIcon = ({ status = "no-subscribers", dataTestId }) => {
   const state = canonicalizeStreamState(status, "no-subscribers");
 
   return (
-    <IbkrStatusWave
-      status={state}
-      color={streamStateTokenVar(state)}
-      wave={resolveHeaderLaneWaveMotion(state)}
-      width={20}
-      height={12}
-      dataTestId={dataTestId}
+    <span
+      data-testid={dataTestId}
+      aria-hidden="true"
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: streamStateTokenVar(state),
+        display: "inline-block",
+        flex: "0 0 auto",
+      }}
     />
   );
 };
