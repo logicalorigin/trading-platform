@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { PineScriptRecord } from "@workspace/api-client-react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartFrame,
   ResearchChartWidgetFooter,
@@ -37,22 +37,22 @@ type ResearchDrawing = {
 type LayoutMode = "desktop" | "narrow";
 
 const THEME = {
-  bg0: "#16151A",
-  bg1: "#1E1D22",
-  bg2: "#26252B",
-  bg3: "#2F2E35",
-  bg4: "#3A3940",
-  border: "#2F2E35",
-  text: "#F2EFE9",
-  textSec: "#B8B4AC",
-  textDim: "#86837D",
-  textMuted: "#605C57",
-  accent: "#E08F76",
-  accentDim: "#3F2A22",
-  green: "#4FB286",
-  red: "#EA5E5B",
-  amber: "#D9A864",
-  purple: "#A189CF",
+  bg0: CSS_COLOR.bg0,
+  bg1: CSS_COLOR.bg1,
+  bg2: CSS_COLOR.bg2,
+  bg3: CSS_COLOR.bg3,
+  bg4: CSS_COLOR.bg4,
+  border: CSS_COLOR.border,
+  text: CSS_COLOR.text,
+  textSec: CSS_COLOR.textSec,
+  textDim: CSS_COLOR.textDim,
+  textMuted: CSS_COLOR.textMuted,
+  accent: CSS_COLOR.accent,
+  accentDim: CSS_COLOR.accentDim,
+  green: CSS_COLOR.green,
+  red: CSS_COLOR.red,
+  amber: CSS_COLOR.amber,
+  purple: CSS_COLOR.purple,
   mono: FONT_CSS_VAR.data,
   sans: FONT_CSS_VAR.sans,
   display: FONT_CSS_VAR.display,

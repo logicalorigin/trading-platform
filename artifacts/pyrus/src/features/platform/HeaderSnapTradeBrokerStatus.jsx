@@ -28,6 +28,7 @@ import {
   useSyncSnapTradeBrokerageConnections,
 } from "@workspace/api-client-react";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Button } from "../../components/ui/Button.jsx";
 import { Select } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
@@ -211,52 +212,6 @@ function StatusRow({ label, value, tone = CSS_COLOR.textSec }) {
         {value ?? MISSING_VALUE}
       </span>
     </div>
-  );
-}
-
-function BrokerActionButton({
-  children,
-  disabled = false,
-  loading = false,
-  onClick,
-  tone = CSS_COLOR.textSec,
-  variant = "secondary",
-}) {
-  const primary = variant === "primary";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-disabled={disabled}
-      style={{
-        minHeight: dim(30),
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: sp(6),
-        padding: sp("6px 10px"),
-        border: `1px solid ${primary ? tone : CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: primary ? cssColorMix(tone, 10) : CSS_COLOR.bg1,
-        color: disabled ? CSS_COLOR.textMuted : tone,
-        cursor: disabled ? "default" : "pointer",
-        fontSize: textSize("paragraphMuted"),
-        fontWeight: FONT_WEIGHTS.medium,
-        fontFamily: T.sans,
-        letterSpacing: 0,
-      }}
-    >
-      {loading ? (
-        <RefreshCw
-          size={dim(12)}
-          strokeWidth={2.2}
-          aria-hidden="true"
-          style={{ animation: "premiumFlowSpin 820ms linear infinite" }}
-        />
-      ) : null}
-      {children}
-    </button>
   );
 }
 
@@ -887,24 +842,31 @@ export function HeaderSnapTradeBrokerStatus({
               flexWrap: "wrap",
             }}
           >
-            <BrokerActionButton
+            <Button
               variant="primary"
-              tone={CSS_COLOR.accent}
+              color={CSS_COLOR.accent}
+              size="md"
               onClick={launchPortal}
               disabled={connectDisabled}
               loading={registerMutation.isPending || portalMutation.isPending}
+              leftIcon={
+                <ExternalLink size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
+              }
             >
-              <ExternalLink size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
               {userRegistered ? "Open Portal" : "Activate"}
-            </BrokerActionButton>
-            <BrokerActionButton
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
               onClick={syncAccounts}
               disabled={syncDisabled}
               loading={syncMutation.isPending}
+              leftIcon={
+                <DatabaseZap size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
+              }
             >
-              <DatabaseZap size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
               Sync
-            </BrokerActionButton>
+            </Button>
           </div>
         </div>
       </div>
