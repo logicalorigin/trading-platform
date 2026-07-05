@@ -103,7 +103,7 @@ import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
-import { DataUnavailableState, Select } from "../../components/platform/primitives.jsx";
+import { DataUnavailableState, Select, StatusPill, StatTile } from "../../components/platform/primitives.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { cssColorAlpha, CSS_COLOR, RADII } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
@@ -1071,33 +1071,9 @@ function StatusBadge({
   );
 
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: scale.sp(4),
-        padding: scale.sp("2px 8px"),
-        borderRadius: scale.dim(RADII.pill),
-        border: `1px solid ${cssColorAlpha(color, "33")}`,
-        background: cssColorAlpha(color, "18"),
-        color,
-        fontSize: scale.fs(9),
-        fontWeight: 400,
-        fontFamily: theme.mono,
-        textTransform: "uppercase",
-      }}
-    >
-      <span
-        className={activeStatus ? "ra-status-pulse" : undefined}
-        style={{
-          width: scale.dim(6),
-          height: scale.dim(6),
-          borderRadius: "50%",
-          background: color,
-        }}
-      />
+    <StatusPill color={color} glow={activeStatus}>
       {status.replaceAll("_", " ")}
-    </span>
+    </StatusPill>
   );
 }
 
@@ -1114,35 +1090,7 @@ function MetricCard({
   theme: ThemeTokens;
   scale: ScaleHelpers;
 }) {
-  return (
-    <div
-      className="ra-panel-enter"
-      style={{
-        background: theme.bg0,
-        padding: scale.sp("10px 12px"),
-      }}
-    >
-      <div
-        style={{
-          fontSize: scale.fs(9),
-          color: theme.textMuted,
-          marginBottom: scale.sp(4),
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: scale.fs(16),
-          fontWeight: 400,
-          fontFamily: theme.mono,
-          color: accent,
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
+  return <StatTile label={label} value={value} tone={accent} />;
 }
 
 function DraftStrategiesList({
@@ -1160,19 +1108,10 @@ function DraftStrategiesList({
 }) {
   if (drafts.length === 0) {
     return (
-      <div
-        style={{
-          border: `1px dashed ${theme.border}`,
-          borderRadius: scale.dim(RADII.xs),
-          background: theme.bg0,
-          padding: scale.sp("14px 12px"),
-          color: theme.textDim,
-          fontSize: scale.fs(10),
-          textAlign: "center",
-        }}
-      >
-        No promoted draft strategies yet.
-      </div>
+      <DataUnavailableState
+        title="No promoted draft strategies yet."
+        detail="Promoted draft strategies from your backtests will appear here."
+      />
     );
   }
 

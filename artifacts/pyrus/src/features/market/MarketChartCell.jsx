@@ -23,6 +23,7 @@ import {
 } from "./chartInteractionSelectors.js";
 import { MarketChartPremiumFlowIndicator } from "./MarketChartPremiumFlowIndicator.jsx";
 import { CSS_COLOR, cssColorMix, RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
+import { Skeleton } from "../../components/platform/primitives.jsx";
 import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
 import {
   LazyMarketChartTickerSearch,
@@ -101,14 +102,7 @@ const MarketChartTickerSearchFallback = () => (
       }}
     >
       <span>Loading search</span>
-      <span
-        className="ra-skeleton-shimmer"
-        style={{
-          width: dim(76),
-          height: dim(9),
-          borderRadius: dim(RADII.xs),
-        }}
-      />
+      <Skeleton width={dim(76)} height={dim(9)} />
     </div>
     <div style={{ display: "grid", gap: sp(8), alignContent: "start" }}>
       {[0, 1, 2].map((index) => (
@@ -122,43 +116,16 @@ const MarketChartTickerSearchFallback = () => (
             padding: sp("8px 0"),
           }}
         >
-          <span
-            className="ra-skeleton-shimmer"
-            style={{
-              width: dim(24),
-              height: dim(24),
-              borderRadius: dim(RADII.pill),
-            }}
-          />
+          <Skeleton width={dim(24)} height={dim(24)} radius={RADII.pill} />
           <span>
-            <span
-              className="ra-skeleton-shimmer"
-              style={{
-                display: "block",
-                width: `${68 - index * 8}%`,
-                height: dim(10),
-                borderRadius: dim(RADII.xs),
-                marginBottom: sp(6),
-              }}
+            <Skeleton
+              width={`${68 - index * 8}%`}
+              height={dim(10)}
+              style={{ marginBottom: sp(6) }}
             />
-            <span
-              className="ra-skeleton-shimmer"
-              style={{
-                display: "block",
-                width: `${86 - index * 9}%`,
-                height: dim(8),
-                borderRadius: dim(RADII.xs),
-              }}
-            />
+            <Skeleton width={`${86 - index * 9}%`} height={dim(8)} />
           </span>
-          <span
-            className="ra-skeleton-shimmer"
-            style={{
-              width: dim(48),
-              height: dim(10),
-              borderRadius: dim(RADII.xs),
-            }}
-          />
+          <Skeleton width={dim(48)} height={dim(10)} />
         </div>
       ))}
     </div>

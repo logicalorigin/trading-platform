@@ -26,7 +26,7 @@ import { CalendarView } from "./components/ResearchCalendarView";
 import { Logo } from "./components/ResearchLogo";
 import { SettingsPanel } from "./components/ResearchSettingsPanel";
 import { ThemeSwitcher } from "./components/ResearchThemeSwitcher";
-import { MicroSparkline } from "../../components/platform/primitives.jsx";
+import { MicroSparkline, Skeleton, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   backgroundPrefetchFundamentals,
   fetchFinancials,
@@ -1334,16 +1334,15 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
         {/* Data status pill — shows interval (15m/1h/D) for live intraday */}
         {(() => {
           const intervalLabel = histInterval === "15min" ? " · 15M" : histInterval === "1hour" ? " · 1H" : histInterval === "daily" ? " · DAILY" : "";
-          const pill = loading ? { label: "LOADING", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textDim }
-            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: toneAlpha(CSS_COLOR.green, 0.10), fg: CSS_COLOR.green, dot: CSS_COLOR.green, pulse: true }
-            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: toneAlpha(CSS_COLOR.red, 0.08), fg: CSS_COLOR.red, dot: CSS_COLOR.red }
-            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textDim }
-            : { label: "WAITING", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textMuted };
+          const pill = loading ? { label: "LOADING", fg: CSS_COLOR.textDim }
+            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, fg: CSS_COLOR.green, live: true }
+            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", fg: CSS_COLOR.red }
+            : histStatus === "nodata" ? { label: "NO BROKER DATA", fg: CSS_COLOR.textDim }
+            : { label: "WAITING", fg: CSS_COLOR.textDim };
           return (
-            <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}><span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("2px 8px"), borderRadius: RADII.md, background: pill.bg, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, color: pill.fg, letterSpacing: 0.5 }}>
-              <span style={{ width: 5, height: 5, borderRadius: RADII.pill, background: pill.dot, animation: pill.pulse ? "researchObservatoryPulse 1.8s ease-in-out infinite" : "none" }} />
-              {pill.label}
-            </span></AppTooltip>
+            <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}>
+              <StatusPill color={pill.fg} glow={Boolean(pill.live)}>{pill.label}</StatusPill>
+            </AppTooltip>
           );
         })()}
         <span style={{ marginLeft: "auto", fontSize: fs(10), color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
@@ -4259,16 +4258,11 @@ function ResearchLoadingState({ theme }) {
             {[0, 1].map((column) => (
               <div key={column} style={{ display: "grid", gap: 10 }}>
                 {[0, 1, 2].map((row) => (
-                  <div
+                  <Skeleton
                     key={row}
-                    style={{
-                      height: column === 0 && row === 0 ? 180 : 84,
-                      borderRadius: RADII.md,
-                      border: `1px solid ${CSS_COLOR.border}`,
-                      background: `linear-gradient(90deg, ${toneAlpha(CSS_COLOR.text, 0.025)} 0%, ${toneAlpha(CSS_COLOR.text, 0.055)} 50%, ${toneAlpha(CSS_COLOR.text, 0.025)} 100%)`,
-                      backgroundSize: "220px 100%",
-                      animation: "shimmer 1.6s linear infinite",
-                    }}
+                    height={column === 0 && row === 0 ? 180 : 84}
+                    radius={RADII.md}
+                    style={{ border: `1px solid ${CSS_COLOR.border}` }}
                   />
                 ))}
               </div>
@@ -4617,8 +4611,6 @@ export default function PhotonicsObservatory({
         @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes edgeFlow { to { stroke-dashoffset: -12; } }
-        @keyframes shimmer { from { background-position: -200px 0; } to { background-position: 200px 0; } }
-        @keyframes researchObservatoryPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
       `}</style>
 
       {/* Header */}

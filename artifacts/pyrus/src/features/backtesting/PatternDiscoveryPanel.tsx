@@ -41,7 +41,7 @@ import { PatternVector } from "../../components/platform/signal-language/Pattern
 // @ts-expect-error JSX module imported into TypeScript context
 import { DenseVirtualTable } from "../../components/platform/DenseVirtualTable.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
-import { Select } from "../../components/platform/primitives.jsx";
+import { Badge, DataUnavailableState, Select, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   cssColorAlpha,
   cssColorMix,
@@ -208,33 +208,9 @@ function StatusBadge({ status }: { status: string }) {
     "pending",
   ].includes(status);
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(4),
-        padding: sp("2px 8px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${cssColorAlpha(color, "33")}`,
-        background: cssColorAlpha(color, "18"),
-        color,
-        fontSize: fs(9),
-        fontWeight: FONT_WEIGHTS.regular,
-        fontFamily: MONO,
-        textTransform: "uppercase",
-      }}
-    >
-      <span
-        className={activeStatus ? "ra-status-pulse" : undefined}
-        style={{
-          width: dim(6),
-          height: dim(6),
-          borderRadius: "50%",
-          background: color,
-        }}
-      />
+    <StatusPill color={color} glow={activeStatus}>
       {status.replaceAll("_", " ")}
-    </span>
+    </StatusPill>
   );
 }
 
@@ -251,30 +227,7 @@ function biasTone(bias: string): string {
 function BiasChip({ bias }: { bias: string }) {
   const tone = biasTone(bias);
   const label = bias === "long" ? "Long" : bias === "short" ? "Short" : "Neutral";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(2),
-        height: dim(16),
-        padding: sp("0 5px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${cssColorAlpha(tone, "55")}`,
-        background: cssColorAlpha(tone, "1A"),
-        color: tone,
-        fontFamily: SANS,
-        fontSize: fs(9),
-        fontWeight: FONT_WEIGHTS.medium,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-        textTransform: "uppercase",
-        letterSpacing: "0.03em",
-      }}
-    >
-      {label}
-    </span>
-  );
+  return <Badge color={tone}>{label}</Badge>;
 }
 
 function familyTone(familyId: PatternSetupFamilyId): string {
@@ -2147,18 +2100,25 @@ export function PatternDiscoveryPanel() {
           </div>
 
           {allResults.length === 0 ? (
-            <EmptyInline detail="No patterns returned for this study yet." />
+            <DataUnavailableState
+              title="No patterns yet"
+              detail="No patterns returned for this study yet."
+            />
           ) : qualifyingCount === 0 ? (
             <>
               {allLowN ? (
                 <CautionBanner detail="Every pattern is below the sample threshold; results shown are dimmed and statistically thin." />
               ) : null}
-              <EmptyInline
+              <DataUnavailableState
+                title="Below sample threshold"
                 detail={`No patterns met the threshold (n >= ${minSampleThreshold}). Lower the threshold or widen the date range.`}
               />
             </>
           ) : visibleRows.length === 0 ? (
-            <EmptyInline detail="No patterns match the current filters." />
+            <DataUnavailableState
+              title="No matches"
+              detail="No patterns match the current filters."
+            />
           ) : (
             <>
               {allLowN ? (
@@ -2341,25 +2301,6 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
       >
         {detail}
       </div>
-    </div>
-  );
-}
-
-function EmptyInline({ detail }: { detail: string }) {
-  return (
-    <div
-      style={{
-        border: `1px dashed ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg0,
-        padding: sp("18px 16px"),
-        textAlign: "center",
-        color: CSS_COLOR.textDim,
-        fontSize: fs(10),
-        fontFamily: SANS,
-      }}
-    >
-      {detail}
     </div>
   );
 }

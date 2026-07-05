@@ -1,5 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+// @ts-expect-error JSX module imported into TypeScript context
+import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
   DEFAULT_PYRUS_SIGNALS_SETTINGS,
   PYRUS_SIGNALS_DASHBOARD_SIZE_OPTIONS,
@@ -169,25 +171,6 @@ const resetButtonStyle = (theme: WidgetTheme): CSSProperties => ({
   border: `1px solid ${theme.border}`,
   background: theme.bg3,
   color: theme.text,
-  padding: "6px 10px",
-  fontSize: TYPE_CSS_VAR.bodyStrong,
-  fontFamily: theme.mono,
-  fontWeight: FONT_WEIGHTS.regular,
-  cursor: "pointer",
-});
-
-const tabsRowStyle: CSSProperties = {
-  display: "flex",
-  gap: 8,
-};
-
-const tabButtonStyle = (
-  theme: WidgetTheme,
-  active: boolean,
-): CSSProperties => ({
-  border: `1px solid ${active ? theme.accent || theme.text : theme.border}`,
-  background: active ? cssColorAlpha(theme.accent || theme.text, "22") : theme.bg3,
-  color: active ? theme.text : theme.textMuted,
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
@@ -661,18 +644,16 @@ export function PyrusSignalsSettingsMenu({
             </button>
           </div>
 
-          <div style={tabsRowStyle}>
-            {(["inputs", "style", "visibility"] as SettingsTab[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                style={tabButtonStyle(theme, activeTab === tab)}
-              >
-                {tab === "inputs" ? "Inputs" : tab === "style" ? "Style" : "Visibility"}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Pyrus Signals settings tab"
+            value={activeTab}
+            onChange={(next: SettingsTab) => setActiveTab(next)}
+            options={[
+              { value: "inputs", label: "Inputs" },
+              { value: "style", label: "Style" },
+              { value: "visibility", label: "Visibility" },
+            ]}
+          />
         </div>
 
         {activeTab === "inputs" ? (

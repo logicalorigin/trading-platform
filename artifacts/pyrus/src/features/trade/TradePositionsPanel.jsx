@@ -74,7 +74,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { DataUnavailableState, MicroSparkline } from "../../components/platform/primitives.jsx";
+import { DataUnavailableState, MicroSparkline, SegmentedControl } from "../../components/platform/primitives.jsx";
 import { useRegisterPositionMarketDataSymbols } from "../platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../platform/runtimeTickerStore";
 import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
@@ -1441,81 +1441,46 @@ export const TradePositionsPanel = ({
             minWidth: 0,
           }}
         >
-          <button
-            onClick={() => setTab("open")}
-            style={{
-              background: "transparent",
-              border: "none",
-              padding: sp(0),
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "open" ? CSS_COLOR.text : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              letterSpacing: "0.04em",
-              cursor: "pointer",
-              borderBottom:
-                tab === "open"
-                  ? `2px solid ${CSS_COLOR.accent}`
-                  : "2px solid transparent",
-              paddingBottom: sp(2),
-              whiteSpace: "nowrap",
-            }}
-          >
-            OPEN{" "}
-            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
-              {openPositions.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setTab("history")}
-            style={{
-              background: "transparent",
-              border: "none",
-              padding: sp(0),
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "history" ? CSS_COLOR.text : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              letterSpacing: "0.04em",
-              cursor: "pointer",
-              borderBottom:
-                tab === "history"
-                  ? `2px solid ${CSS_COLOR.accent}`
-                  : "2px solid transparent",
-              paddingBottom: sp(2),
-              whiteSpace: "nowrap",
-            }}
-          >
-            HIST{" "}
-            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
-              {historyCount}
-            </span>
-          </button>
-          <button
-            onClick={() => setTab("orders")}
-            style={{
-              background: "transparent",
-              border: "none",
-              padding: sp(0),
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "orders" ? CSS_COLOR.text : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              letterSpacing: "0.04em",
-              cursor: "pointer",
-              borderBottom:
-                tab === "orders"
-                  ? `2px solid ${CSS_COLOR.accent}`
-                  : "2px solid transparent",
-              paddingBottom: sp(2),
-              whiteSpace: "nowrap",
-            }}
-          >
-            ORDERS{" "}
-            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
-              {brokerConfigured ? liveOrders.length : 0}
-            </span>
-          </button>
+          <SegmentedControl
+            ariaLabel="Trade positions view"
+            value={tab}
+            onChange={setTab}
+            options={[
+              {
+                value: "open",
+                label: (
+                  <>
+                    OPEN{" "}
+                    <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+                      {openPositions.length}
+                    </span>
+                  </>
+                ),
+              },
+              {
+                value: "history",
+                label: (
+                  <>
+                    HIST{" "}
+                    <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+                      {historyCount}
+                    </span>
+                  </>
+                ),
+              },
+              {
+                value: "orders",
+                label: (
+                  <>
+                    ORDERS{" "}
+                    <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+                      {brokerConfigured ? liveOrders.length : 0}
+                    </span>
+                  </>
+                ),
+              },
+            ]}
+          />
         </div>
         <span
           style={{
@@ -1556,55 +1521,25 @@ export const TradePositionsPanel = ({
           }}
         >
           {brokerConfigured && !brokerAuthenticated ? (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: CSS_COLOR.amber,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                padding: sp(16),
-                textAlign: "center",
-                lineHeight: 1.45,
-              }}
-            >
-              IBKR is configured, but live positions stay hidden until Client
-              Portal authenticates.
-            </div>
+            <DataUnavailableState
+              fill
+              variant="warning"
+              title="IBKR authentication required"
+              detail="IBKR is configured, but live positions stay hidden until Client Portal authenticates."
+            />
           ) : brokerConfigured && !accountId ? (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: CSS_COLOR.amber,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                padding: sp(16),
-                textAlign: "center",
-                lineHeight: 1.45,
-              }}
-            >
-              The Client Portal session is authenticated, but no IBKR account is active yet.
-            </div>
+            <DataUnavailableState
+              fill
+              variant="warning"
+              title="No active IBKR account"
+              detail="The Client Portal session is authenticated, but no IBKR account is active yet."
+            />
           ) : openPositions.length === 0 ? (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: CSS_COLOR.textDim,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                padding: sp(16),
-              }}
-            >
-              No open positions
-            </div>
+            <DataUnavailableState
+              fill
+              title="No open positions"
+              detail="Open positions appear here once trades are filled on the active account."
+            />
           ) : (
             <div
               data-testid="trade-open-positions-table-scroll"

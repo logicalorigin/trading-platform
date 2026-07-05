@@ -17,6 +17,8 @@ import {
 } from "./pyrusSignalsPineAdapter";
 import { defaultIndicatorRegistry } from "./indicators";
 import { PyrusSignalsSettingsMenu } from "./PyrusSignalsSettingsMenu";
+// @ts-expect-error JSX module imported into TypeScript context
+import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import { useDrawingHistory } from "./useDrawingHistory";
 import type { ChartModel } from "./types";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
@@ -384,27 +386,16 @@ export const ChartParityLab = () => {
               );
             })}
             <span style={{ width: 8 }} />
-            {(["desktop", "narrow"] as LayoutMode[]).map((mode) => {
-              const active = layout === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={active}
-                  data-testid={`parity-layout-${mode}`}
-                  onClick={() => setLayout(mode)}
-                  style={{
-                    ...BUTTON_BASE,
-                    background: active ? THEME.amber : THEME.bg3,
-                    borderColor: active ? THEME.amber : THEME.border,
-                    color: active ? THEME.bg0 : THEME.textDim,
-                    fontWeight: FONT_WEIGHTS.regular,
-                  }}
-                >
-                  {mode}
-                </button>
-              );
-            })}
+            <SegmentedControl
+              ariaLabel="Layout mode"
+              value={layout}
+              onChange={(next: LayoutMode) => setLayout(next)}
+              buttonTestId="parity-layout"
+              options={[
+                { value: "desktop", label: "desktop" },
+                { value: "narrow", label: "narrow" },
+              ]}
+            />
             {isPyrusSignalsScenario ? (
               <PyrusSignalsSettingsMenu
                 theme={THEME}

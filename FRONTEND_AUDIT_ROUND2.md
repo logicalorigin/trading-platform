@@ -113,3 +113,11 @@ Watch-items for the fix crew: (1) Two findings need a DOCTRINE DECISION before a
 ## Next step - tiered remedial application
 
 Confirmed, mechanical, non-blocked findings go to a **Haiku fix workflow** (one agent per file, no write-conflicts): directional-green color routing, raw->token swaps, Skeleton/DataUnavailableState swaps, hand-rolled chip/pill/tile -> primitives. **Excluded from auto-fix:** the 2 doctrine tie-breaks above; `MarketUniverseTable:166` unless `BigDirectionGlyph` own green tone is fixed in the same change (else it re-imports the bug); surfaceStyle() + form-ARIA migrations (need per-site live-verify).
+
+## Remediation progress (2026-07-05, landed on `main`)
+
+- **Batch 1 — mechanical (commit `f654d5f`):** 18 items. Directional-green->blue (ranks 1-8), raw->token (48-52), a11y (14, 39). Ambiguities 9-11 resolved won't-fix (see the doctrine section above).
+- **Batch 2/3 — primitive migrations:** 16 migrated — empty-states -> DataUnavailableState (13, 15, 16, 17), toggle-groups -> SegmentedControl (18, 22, 41), StatusPill (26, 29, 32, 35), MetricChip (27), StatTile (33), Badge for BiasChip (36), Skeleton (21, 31). Typecheck + pyrus build green; Trade + Backtest live-verified.
+  - **4 skipped — primitive cannot replicate without a regression:** rank 20 QuoteStrip -> StatTile (StatTile hardcodes value size, no nowrap/ellipsis); rank 28 return-chip -> Pill (Pill is an interactive `<button>` toggle, not a static chip); rank 36 FamilyChip -> Badge (Badge has no `title` tooltip passthrough); rank 38 LevelPill -> StatusPill/Pill (premise inaccurate — not ever-present chrome; a `Badge` 1:1 is viable if re-scoped).
+  - **Canonical-adoption visual deltas (intended):** StatusPill uses static `glow` in place of the infinite `ra-status-pulse` (reduced-motion win); status labels shift uppercase-mono -> sentence-case sans; MetricCard -> StatTile drops per-tile bg + entrance animation.
+- **Still deferred (need live-eyeball / decisions):** surfaceStyle migrations (25, 30, 45, 46, 54), form-primitive/ARIA swaps (19, 23, 24, 34, 37, 40, 47), RES-13 decorative orbs (43, 44 — keep/remove call), rank 12 glyph-trap (needs BigDirectionGlyph tone fix in the same change), rank 42 ChartParityLab THEME->CSS_COLOR migration, rank 53 Button primitive. Plus 2 unranked directional-green sites found in `MarketActivityPanel` (~949, ~969-973).

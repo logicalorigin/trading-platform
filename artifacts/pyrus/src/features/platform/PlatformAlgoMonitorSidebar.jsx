@@ -21,6 +21,8 @@ import {
   Card,
   CardTitle,
   DataUnavailableState,
+  MetricChip,
+  StatusPill,
 } from "../../components/platform/primitives.jsx";
 import {
   BigDirectionGlyph,
@@ -36,7 +38,6 @@ import {
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
-  GLOW,
   MISSING_VALUE,
   RADII,
   T,
@@ -607,31 +608,7 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   const label = statusMeta.label || signalOptionsActionLabel("candidate");
   return (
     <AppTooltip content={label}>
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: sp(3),
-          minWidth: 0,
-          maxWidth: dim(88),
-          height: dim(22),
-          padding: sp("0 7px 0 3px"),
-          borderRadius: dim(RADII.pill),
-          border: `1px solid ${cssColorAlpha(tone, "44")}`,
-          background: cssColorAlpha(tone, "18"),
-          color: tone,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1,
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          ...(statusMeta.ready
-            ? { "--ra-glow-tone": tone, boxShadow: GLOW.sm }
-            : null),
-        }}
-      >
+      <StatusPill color={tone} dot={false} glow={Boolean(statusMeta.ready)}>
         <VerdictGlyph
           signal={signal}
           signalRecord={signal}
@@ -648,61 +625,13 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
         >
           {compactStatusLabel(label)}
         </span>
-      </span>
+      </StatusPill>
     </AppTooltip>
   );
 };
 
-const SignalActionMetaCell = ({
-  label,
-  value,
-  tone = CSS_COLOR.textSec,
-  tabular = false,
-}) => (
-  <span
-    style={{
-      display: "grid",
-      gridTemplateColumns: "max-content minmax(0, 1fr)",
-      alignItems: "center",
-      gap: sp(3),
-      minWidth: 0,
-      height: dim(22),
-      padding: sp("0 5px"),
-      border: `1px solid ${CSS_COLOR.borderLight}`,
-      borderRadius: dim(RADII.xs),
-      background: CSS_COLOR.bg1,
-      color: CSS_COLOR.textDim,
-      fontFamily: T.sans,
-      fontSize: textSize("caption"),
-      lineHeight: 1,
-      overflow: "hidden",
-      whiteSpace: "nowrap",
-    }}
-  >
-    <span
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-      }}
-    >
-      {label}
-    </span>
-    <span
-      title={typeof value === "string" ? value : undefined}
-      style={{
-        minWidth: 0,
-        color: tone,
-        fontVariantNumeric: tabular ? "tabular-nums" : undefined,
-        fontWeight: FONT_WEIGHTS.medium,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-      }}
-    >
-      {value}
-    </span>
-  </span>
+const SignalActionMetaCell = ({ label, value, tone = CSS_COLOR.textSec }) => (
+  <MetricChip label={label} value={value} tone={tone} />
 );
 
 const SignalActionRow = ({
@@ -844,13 +773,11 @@ const SignalActionRow = ({
               label="Age"
               value={activityLabel}
               tone={signalFreshnessRailColor(activityMs)}
-              tabular
             />
             <SignalActionMetaCell
               label="Score"
               value={scoreLabel}
               tone={scoreTone(score)}
-              tabular
             />
           </span>
           <span
