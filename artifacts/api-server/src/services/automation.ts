@@ -749,8 +749,13 @@ function readOrStartDeploymentListRequest(
   return request;
 }
 
+// `payload` is optional on the accepted row: the hot list read (listExecutionEvents)
+// projects scalar columns only and omits the jsonb `payload` unless includePayload
+// is set, so it is never read/parsed on the event loop for the common feed.
 function executionEventToResponse(
-  event: typeof executionEventsTable.$inferSelect,
+  event: Omit<typeof executionEventsTable.$inferSelect, "payload"> & {
+    payload?: typeof executionEventsTable.$inferSelect["payload"];
+  },
   input: { includePayload?: boolean } = {},
 ) {
   return {
@@ -761,7 +766,9 @@ function executionEventToResponse(
     symbol: event.symbol ?? null,
     eventType: event.eventType,
     summary: normalizeLegacyAlgoBrandText(event.summary),
-    payload: input.includePayload ? normalizeLegacyAlgoBranding(event.payload) : {},
+    payload: input.includePayload
+      ? normalizeLegacyAlgoBranding(event.payload ?? {})
+      : {},
     occurredAt: event.occurredAt,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
@@ -1188,6 +1195,41 @@ function mergeExecutionEventRows<T extends { occurredAt: Date }>(
 
 export async function listExecutionEvents(input: ListExecutionEventsInput) {
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+  const includePayload = input.includePayload === true;
+
+  // Project scalar columns only for the default feed and OMIT the jsonb `payload`
+  // unless the caller opted in (`view=full`/includePayload). The `candidate_skipped`
+  // firehose (~236K rows/day) previously read + JSON.parse'd payload per row on the
+  // event loop only to have executionEventToResponse discard it (payload:{}); the
+  // load-bearing payload consumer is the separate cached deployment-scoped path
+  // (signal-options-automation listDeploymentEvents), not this list. Both union
+  // branches keep an identical column set so the merge stays type-compatible.
+  const ledgerColumns = {
+    id: executionEventsTable.id,
+    deploymentId: executionEventsTable.deploymentId,
+    algoRunId: executionEventsTable.algoRunId,
+    providerAccountId: executionEventsTable.providerAccountId,
+    symbol: executionEventsTable.symbol,
+    eventType: executionEventsTable.eventType,
+    summary: executionEventsTable.summary,
+    occurredAt: executionEventsTable.occurredAt,
+    createdAt: executionEventsTable.createdAt,
+    updatedAt: executionEventsTable.updatedAt,
+    ...(includePayload ? { payload: executionEventsTable.payload } : {}),
+  };
+  const diagnosticsColumns = {
+    id: automationDiagnosticsTable.id,
+    deploymentId: automationDiagnosticsTable.deploymentId,
+    algoRunId: automationDiagnosticsTable.algoRunId,
+    providerAccountId: automationDiagnosticsTable.providerAccountId,
+    symbol: automationDiagnosticsTable.symbol,
+    eventType: automationDiagnosticsTable.eventType,
+    summary: automationDiagnosticsTable.summary,
+    occurredAt: automationDiagnosticsTable.occurredAt,
+    createdAt: automationDiagnosticsTable.createdAt,
+    updatedAt: automationDiagnosticsTable.updatedAt,
+    ...(includePayload ? { payload: automationDiagnosticsTable.payload } : {}),
+  };
 
   // Union the ledger (execution_events) with telemetry (automation_diagnostics)
   // so the feed is identical to before the split: the cockpit/operations UI and
@@ -1197,7 +1239,7 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
   // never be in the global top-`limit`. Columns mirror exactly, so the two table
   // selects are union-compatible and executionEventToResponse maps both.
   const ledgerQuery = db
-    .select()
+    .select(ledgerColumns)
     .from(executionEventsTable)
     .where(
       input.deploymentId
@@ -1207,7 +1249,7 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
     .orderBy(desc(executionEventsTable.occurredAt))
     .limit(limit);
   const diagnosticsQuery = db
-    .select()
+    .select(diagnosticsColumns)
     .from(automationDiagnosticsTable)
     .where(
       input.deploymentId
@@ -1225,9 +1267,7 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
 
   return {
     events: rows.map((event) =>
-      executionEventToResponse(event, {
-        includePayload: input.includePayload === true,
-      }),
+      executionEventToResponse(event, { includePayload }),
     ),
   };
 }

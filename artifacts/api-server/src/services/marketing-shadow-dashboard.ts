@@ -555,6 +555,10 @@ export async function fetchMarketingShadowDashboardSnapshot(
     events = await deps.listEvents({
       deploymentId: focusedDeployment.id,
       limit: normalized.eventLimit,
+      // This dashboard renders event payload (marketingAlgoEvents ->
+      // stripInternalAlgoPayload); the execution_events feed now omits jsonb
+      // payload unless asked, so opt in here to preserve prior output.
+      includePayload: true,
     });
   }
 
