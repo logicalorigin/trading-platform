@@ -36,7 +36,7 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **pyrus** (`artifacts/pyrus`, `/`) — PYRUS Platform. React + Vite trading terminal; code split under `src/features`, `src/screens`, `src/components/platform`. Entry is `src/app/App.tsx`, which lazy-loads `src/features/platform/PlatformApp.jsx`. `components/ui/` retains only `dropdown-menu.tsx` and `popover.tsx`; the rest of shadcn and its deps were removed.
 - **api-server** (`artifacts/api-server`) — Express API serving research, trading, market data, and backtesting routes.
 - **backtest-worker** (`artifacts/backtest-worker`) — background worker that claims queued backtest jobs, hydrates/caches datasets, runs studies/sweeps, and promotes run artifacts into the DB.
-- **ibkr-bridge** (`artifacts/ibkr-bridge`) — HTTP service that runs beside the user's local IB Gateway/TWS socket. Built to `dist/index.mjs`; the api-server's `IbkrBridgeClient` calls it for accounts, positions, bars, quotes, depth, orders, and contract search. Date fields are deserialized at the bridge-client boundary (`artifacts/api-server/src/providers/ibkr/bridge-client.ts`); HTTP JSON only carries strings.
+- The legacy desktop IBKR bridge artifact has been retired. Do not add a separate bridge artifact, workflow, helper bundle, or Windows-side bridge runtime back into app startup.
 
 ## Replit Run & startup invariants
 
@@ -52,36 +52,37 @@ The API dev script does not start Postgres; it uses Replit's managed DB by defau
 **Invariants — do not violate during routine work:**
 - Do not add repo-tracked `[[workflows.workflow]]` tasks, a root `run`, or a root workflow coordinator.
 - Do not add a separate API artifact service or a third root runner — competing owners for ports `8080`/`18747` caused prior reaper conflicts. The PYRUS supervisor owns both.
-- Do not add a separate Replit `IBKR Bridge` workflow; the bridge runs on the Windows machine via the activation helper.
-- `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. Only `REPLIT_MODE=workflow` may replace a supervisor or reap a foreign execution scope. The in-container agent is authorized to use this to restart the app (load code changes, runtime/preview verification): `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` in the background performs the controlled handoff (SIGTERM the live supervisor + children, rebuild, relaunch). Don't run two competing supervisors at once. Note: a clean SIGTERM shutdown of the supervisor is NOT auto-restarted by pid2 (it reads it as intentional and leaves the app down) — always (re)launch via the `REPLIT_MODE=workflow` command rather than killing and waiting. An abrupt kill can instead trigger a pid2 restart that cascades against a shell-launched supervisor.
+- Do not add a separate Replit `IBKR Bridge` workflow or any replacement desktop bridge runner. Broker connectivity is app-owned.
+- `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. Only `REPLIT_MODE=workflow` may replace a supervisor or reap a foreign execution scope. The in-container agent OWNS restarting the app (load code changes, runtime/preview verification) and must do it itself — never defer this to the user or tell them to click Run: `REPLIT_MODE=workflow pnpm --filter @workspace/pyrus run dev:replit` in the background performs the controlled handoff (SIGTERM the live supervisor + children, rebuild, relaunch). The launching background task therefore exits `143` / `signal "SIGTERM"` — that is the EXPECTED result of reaping the old supervisor, NOT a crash; do not report it as a failure, retry it, or spawn a second supervisor to recover. Run it ONCE per change-batch (overlapping launches flash the user's preview as crashed and leave the app on a scope they can't see); after one clean restart the preview reattaches. Don't run two competing supervisors at once. Note: a clean SIGTERM shutdown of the supervisor is NOT auto-restarted by pid2 (it reads it as intentional and leaves the app down) — always (re)launch via the `REPLIT_MODE=workflow` command rather than killing and waiting.
 - The PYRUS artifact TOML is the source of truth for dev/deploy service metadata.
 - `pnpm run audit:replit-startup` guards these invariants.
 
-Publishing: `pnpm run build:pyrus-app` builds the web app, the API, `@workspace/ibkr-bridge`, and packages `artifacts/ibgateway-bridge-windows-current.tar.gz`, which the API serves from `/api/ibkr/bridge/bundle.tar.gz` so a published app can launch the Windows helper without IDE workflow access.
+Publishing: `pnpm run build:pyrus-app` builds the web app and API only. The retired IBKR desktop bridge bundle is not part of build or deploy output.
 
-## IBKR Live Data Setup (User-Side)
+## IBKR Broker Connectivity
 
-### IB Gateway/TWS live mode
+### Hosted user path
 
-IBKR uses pure IB Gateway/TWS mode; Client Portal Gateway is not supported. Market-data line limits apply, so PYRUS streams watchlist/visible/selected instruments and falls back to vendor/cached data for over-budget symbols. Do not expose the raw TWS socket. Do not run Client Portal Gateway and IB Gateway/TWS at the same time with the same IBKR username (competing brokerage sessions).
+For normal hosted PYRUS users, do not require TWS, IB Gateway, Client Portal Gateway, cloudflared, or a local connector. The user-facing IBKR path is the broker-hosted OAuth candidate exposed through `/api/broker-execution/ibkr/oauth/readiness`; it remains blocked until IBKR third-party approval, OAuth implementation, and account capability fixtures are complete.
 
-Replit does not need IBKR bridge URL secrets for the normal flow: start activation from the PYRUS header; the Windows helper posts the current Cloudflare bridge URL and token back to the API runtime override. Delete stale URL secrets if present: `IBKR_BASE_URL`, `IBKR_API_BASE_URL`, `IB_GATEWAY_URL`, `IBKR_GATEWAY_URL`, `IBKR_BRIDGE_URL`, `IBKR_BRIDGE_BASE_URL`.
+Configure OAuth application placeholders with `IBKR_OAUTH_CONSUMER_KEY`, `IBKR_OAUTH_SIGNING_KEY` or `IBKR_OAUTH_PRIVATE_KEY`, `IBKR_OAUTH_CALLBACK_URL`, and `IBKR_OAUTH_THIRD_PARTY_APPROVED=true` only after approval is recorded. These values must never be returned to the browser.
+
+SnapTrade is the hosted broker-aggregation setup path. The server owns `SNAPTRADE_CLIENTID` and `SNAPTRADE_API_KEY`; each authenticated PYRUS user registers through `POST /api/broker-execution/snaptrade/users/current`, which stores the returned SnapTrade `userSecret` encrypted with `PYRUS_CREDENTIAL_ENCRYPTION_KEY`. The app then generates a short-lived Connection Portal URL through `POST /api/broker-execution/snaptrade/connection-portal`. The portal route requests `trade-if-available` by default but must not be treated as live-trading eligible until brokerage-specific capability fixtures prove positions, orders, fills, cancel/replace, and option support.
+
+### Client Portal special connector
+
+IBKR account and order routes can still use the app-owned Client Portal runtime for internal/dev or explicitly approved special-connector use. Configure the API with `IBKR_CLIENT_PORTAL_BASE_URL` or `IBKR_BASE_URL`; optional auth/account values are `IBKR_COOKIE`, `IBKR_BEARER_TOKEN`, `IBKR_ACCOUNT_ID`, and `IBKR_EXT_OPERATOR`.
+
+Delete stale desktop bridge secrets if present: `IBKR_BRIDGE_URL`, `IBKR_BRIDGE_BASE_URL`, `IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE`, and `PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE`.
 
 Keep non-URL secrets/config as needed:
-- `IBKR_TRANSPORT=tws` (shared runtime intent).
 - Optional account pin `IBKR_ACCOUNT_ID=<live-account-id>`.
 - Optional caps `IBKR_MAX_LIVE_EQUITY_LINES=80`, `IBKR_MAX_LIVE_OPTION_LINES=20`.
-- Flex secrets `IBKR_FLEX_TOKEN` / `IBKR_FLEX_QUERY_ID` (unrelated to bridge URL activation; do not remove).
-
-Security rule: when `IBKR_TRANSPORT=tws`, the bridge requires a token for every route except `/healthz`. The token is generated by activation and stored with the runtime override; browser clients must not call the Windows bridge directly.
+- Flex secrets `IBKR_FLEX_TOKEN` / `IBKR_FLEX_QUERY_ID` (unrelated to Client Portal; do not remove).
 
 ### Windows side
 
-1. **IB Gateway/TWS** — logged in live with API socket clients enabled on `127.0.0.1:4001`. Uncheck API read-only mode only when intentionally testing live order submission.
-2. **PYRUS IBKR bridge** — launched only by the one-click activation helper (`scripts/windows/pyrus-ibkr-helper.ps1`); listens on `http://localhost:3002`. Defaults: live mode, port `4001`, client id `101`, market data type `1`.
-3. **cloudflared** — launched by the helper. The helper checks the TWS socket, self-updates the protocol handler, opens the bridge with `IBKR_TRANSPORT=tws`, clears stale quick-tunnel state, opens cloudflared, and posts the bridge URL/token back to the API.
-
-Named tunnel (optional, not the one-click path): for a stable hostname, `cloudflared tunnel login` / `create ibkr` / `route dns ibkr ibkr.<userdomain>`, point ingress at `http://localhost:3002`, then activate from the PYRUS header.
+No PYRUS Windows bridge helper is required. Hosted users must not be asked to install local IBKR software. For internal Client Portal special-connector use, a manually authenticated Client Portal Gateway may still be used outside the default customer path.
 
 ### Verifying the chain from Replit
 
@@ -93,16 +94,15 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 
 - Polygon-style dotted tickers (`BRK.B`, `BF.B`) are translated to IBKR's space-separated form (`BRK B`) inside `resolveStockContract` in `artifacts/api-server/src/providers/ibkr/client.ts`. Add new mappings there if other symbol families fail.
 
-## Data sourcing (IBKR-primary, Polygon-fallback)
+## Data sourcing
 
-`artifacts/api-server/src/services/platform.ts` wires IBKR as primary with Polygon as fallback:
+`artifacts/api-server/src/services/platform.ts` uses app-owned market-data providers and broker clients:
 
-- **Bars** — IBKR historical bars merged with Polygon gap fill, tagged `ibkr-history` or `polygon-history`.
-- **News** — TWS does not expose the Client Portal news feed; `getNews` falls back to Polygon.
-- **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` (TWS `getMatchingSymbols()`) first, then falls back to Polygon.
-- **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. The mapper currently leaves `volume`/`openInterest` at 0, so size is synthesized as `volume || 1`; to get true volume/OI, add OPRA fields (e.g. 7762) to the snapshot field set in `client.ts`.
+- **Accounts/orders** — hosted user path is broker-hosted OAuth/SnapTrade-style per-user connections; IBKR Client Portal remains an app-owned special connector for internal/dev use.
+- **Bars/quotes/scanners** — Massive/cache first where configured; IBKR Client Portal can fill broker-specific gaps when configured.
+- **News/search/flow events** — use app-owned provider clients; do not reintroduce the deleted desktop bridge artifact.
   - **Expiry parsing** — IBKR returns expiries as compact `YYYYMMDD` strings. `toDate()` in `artifacts/api-server/src/lib/values.ts` handles 8-digit inputs as calendar dates *before* the numeric-ms branch (otherwise every contract collapsed to `1970-01-01`, breaking flow-event IDs/dedupe).
-- **Bridge surface** — `GET /news` (empty in TWS mode by design) and `GET /universe/search` (TWS contract search) live on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`).
+- **Retired bridge surface** — legacy `/api/ibkr/desktop/*`, `/api/ibkr/bridge/*`, `/api/ibkr/activation/*`, and `/api/ibkr/remote-*` routes may remain as API tombstones so stale helpers can self-remove, but they are not app dependencies.
 
 ## Snapshot quote pipeline (gray-screen fix)
 
@@ -115,7 +115,7 @@ TWS snapshots stream *partial* field updates per tick and prefix some prices wit
 
 ## Server log noise (dev server)
 
-API server and Windows bridge share a `pino-http` `customLogLevel` policy (`artifacts/api-server/src/app.ts`, `artifacts/ibkr-bridge/src/app.ts`): 5xx → `error`; 4xx → `warn`; any request `>=1000ms` → `warn`; `GET /healthz*` under 1s → `silent`; else `info`. `responseTime` is computed from a `req._startTime` middleware ahead of `pinoHttp` (pino-http 10.5.0 doesn't expose `res.responseTime` to `customLogLevel`). The dev supervisor pins API logging to warn-level via `LOG_LEVEL=warn`. To restore verbose per-request logging while debugging, drop that env override in `artifacts/pyrus/scripts/runDevApp.mjs` and restart the PYRUS web workflow (production is unaffected).
+The API server uses a `pino-http` `customLogLevel` policy (`artifacts/api-server/src/app.ts`): 5xx → `error`; 4xx → `warn`; any request `>=1000ms` → `warn`; `GET /healthz*` under 1s → `silent`; else `info`. `responseTime` is computed from a `req._startTime` middleware ahead of `pinoHttp` (pino-http 10.5.0 doesn't expose `res.responseTime` to `customLogLevel`). The dev supervisor pins API logging to warn-level via `LOG_LEVEL=warn`. To restore verbose per-request logging while debugging, drop that env override in `artifacts/pyrus/scripts/runDevApp.mjs` and restart the PYRUS web workflow (production is unaffected).
 
 ## Managed Postgres by default
 

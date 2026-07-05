@@ -1,6 +1,7 @@
 # Implementation Plan: Multi-Broker Trading Connections
 
-Last reviewed: 2026-05-30
+Last reviewed: 2026-07-02 (added Tasks 16-17: multi-account Accounts UI + IBKR
+de-hardcoding, after SnapTrade brought the first live multi-account connection)
 
 ## Overview
 
@@ -532,6 +533,96 @@ Use `tenant_id = "local"` until real multi-user auth exists, but design tables s
 **Dependencies:** Tasks 10 and 11
 
 **Estimated scope:** Medium
+
+### Task 16: Multi-Account Accounts Page (per-account tabs + "All" aggregate)
+
+**Description:** The Accounts page is currently single-account and IBKR-shaped
+(`artifacts/pyrus/src/screens/AccountScreen.jsx` renders one account via the
+`useGetAccount*` query family; `HeaderAccountStrip.jsx` assumes a single active
+account). Now that a user can hold multiple connections and multiple accounts
+per connection (SnapTrade already synced 3 execution-ready E*TRADE accounts —
+`broker_connections` `5e7749b1…`, `broker_accounts` × 3), the page needs to let
+the user view each account and an aggregated view.
+
+Add a tab system to the Accounts page, mirroring the algo page pattern
+(`artifacts/pyrus/src/screens/algo/AlgoDeploymentTabs.jsx` — a horizontal,
+scrollable tab strip with a per-tab status dot). One tab per connected account
+(grouped/labeled by broker provider, since a user may have several brokers),
+plus a leading **"All"** tab that aggregates every account onto one screen.
+
+**This tab strip REPLACES the existing real/shadow `SegmentedControl` toggle**
+(`AccountScreen.jsx` ~lines 585-700, driven by `useAccountSection.js`
+`accountSection`/`shadowMode` state, `SHADOW_ACCOUNT_ID = "shadow"`). Shadow is
+no longer a separate toggle — it becomes **one tab** in the strip (e.g. a
+trailing "Shadow" tab). So the tabs are: `All` (aggregate of real accounts) →
+one tab per real broker account → `Shadow`. Selecting the Shadow tab yields the
+old `shadowMode = true` behavior; selecting a real account tab yields
+`shadowMode = false` scoped to that `brokerAccountId`; the old segmented control
+is removed.
+
+**Acceptance criteria:**
+
+- The Accounts page renders one tab per `broker_accounts` row across all active
+  `broker_connections`, labeled with the account display name and its broker
+  provider; the active account's positions/orders/balances/returns render as
+  today.
+- The old real/shadow `SegmentedControl` toggle is removed; **Shadow is a tab**
+  in the same strip (selecting it drives the former `shadowMode = true` path).
+- A leading **"All"** tab aggregates positions, balances, equity/returns, and
+  orders across every account into one screen (aggregation is provider-neutral
+  and derived from normalized `brokerAccountId`/`providerAccountId` data, not
+  from any single provider's payload shape).
+- Tabs are driven by live connection/account data (not a hard-coded IBKR
+  account); zero accounts and single-account cases both render sensibly.
+- Account identifiers are masked in the tab labels per the Security
+  Requirements above.
+- Tab selection persists per user preference like other platform screens.
+
+**Verification:**
+
+- `pnpm --filter @workspace/pyrus run unit validation`
+- Browser QA with `?pyrusQa=safe`: switch tabs across ≥2 accounts and the "All"
+  view; confirm aggregation totals reconcile against per-account tabs.
+
+**Dependencies:** Tasks 7 and 8 (connection/account data + normalized surfaces)
+
+**Estimated scope:** Medium
+
+### Task 17: Remove Hard-Coded IBKR References (Accounts page + charts)
+
+**Description:** IBKR-specific assumptions are baked into UI that is now
+provider-neutral. Two known offenders, plus a sweep:
+
+- Charts render a hard-coded **"IBKR LIVE"** / "IBKR" provider label from the
+  bar source map (`artifacts/pyrus/src/features/charting/chartApiBars.js` — e.g.
+  the `"IBKR LIVE"` label at ~line 231 and the `ibkr-*` → label mapping around
+  lines 102-114 and 203-221; also `ResearchChartWidgets.tsx` ~lines 398-405).
+  These should reflect the actual market-data source/provider (or be
+  neutralized), not assert "IBKR" when data is Massive-derived or from another
+  provider.
+- The Accounts page and its header strip assume an IBKR account
+  (`AccountScreen.jsx`, `HeaderAccountStrip.jsx`, `screens/account/*`); provider
+  and capabilities must come from the account's `broker_connections` row.
+
+**Acceptance criteria:**
+
+- No user-visible "IBKR"/"IBKR LIVE" string is rendered for data that did not
+  come from IBKR; chart provider labels are derived from the bar/stream source.
+- Accounts page reads broker provider + capabilities from connection/account
+  data; no code path assumes `provider === "ibkr"` for display or gating.
+- `rg -n "\\bIBKR\\b" artifacts/pyrus/src` audited: every remaining literal is
+  either genuinely IBKR-specific (bridge/Flex screens) or removed.
+
+**Verification:**
+
+- `pnpm --filter @workspace/pyrus run unit validation`
+- Browser QA: load a chart whose bars are Massive-sourced and confirm the label
+  is not "IBKR LIVE"; load the Accounts page for the E*TRADE connection and
+  confirm no IBKR branding.
+
+**Dependencies:** Task 16 (shares the Accounts-page rework)
+
+**Estimated scope:** Small-Medium
 
 ## Checkpoints
 

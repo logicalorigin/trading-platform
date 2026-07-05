@@ -127,9 +127,9 @@ This replan is based on current workspace files only. No separate untracked tran
 - Closure validation passed: API server typecheck, API server build, diff-check, focused runtime diagnostics/order gateway readiness/market-data admission tests, and focused account position/margin/equity-history/order/risk/Flex tests.
 - Current status: complete.
 
-### Phase 6: Introduce shared bridge contracts
+### Phase 6: Introduce shared broker contracts
 
-- Add shared broker/bridge contract types that can be consumed by both `api-server` and `ibkr-bridge`.
+- Add shared broker contract types consumed by the app-owned API runtime.
 - Move health, session, market-data, account, order, and diagnostics payload shapes into the shared contract package/module.
 - Replace `api-server/src/*` imports of `ibkr-bridge` internals with shared contracts plus adapter functions.
 - Keep runtime diagnostics and connection-health payloads backward compatible while both sides migrate.
@@ -137,7 +137,7 @@ This replan is based on current workspace files only. No separate untracked tran
 - Current progress:
   - Created shared workspace package `@workspace/ibkr-contracts` with shared `HttpError`/`isHttpError`, IBKR value coercion/normalization utilities, TWS runtime config contracts/resolution, and IBKR broker snapshot/input contract types.
   - Moved `ibkr-bridge` imports off `api-server/src/lib/errors`, `api-server/src/lib/values`, `api-server/src/lib/runtime`, and `api-server/src/providers/ibkr/client`.
-  - Removed the `ibkr-bridge` tsconfig include of `../api-server/src/**/*.ts`; `rg "api-server/src" artifacts/ibkr-bridge` now returns no matches.
+  - Historical note: the old desktop `ibkr-bridge` artifact was later retired; shared broker contracts remain in `@workspace/ibkr-contracts`.
   - Updated `api-server/src/providers/ibkr/client.ts` to re-export the shared broker contract types from `@workspace/ibkr-contracts`.
   - Fixed the bridge `getOptionActivitySnapshots` timeout calculation to use an in-scope normalized symbol list, which was exposed by Phase 6 bridge typecheck.
   - Added Knip workspace coverage for `lib/ibkr-contracts` so dead-code checks include the shared contracts package.
