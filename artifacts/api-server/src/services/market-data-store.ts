@@ -510,13 +510,18 @@ export async function loadStoredMarketBars(
     // Node (pg `_parseRowAsArray` + drizzle per-column `mapFromDriverValue`) is
     // the dominant event-loop cost under the universe-wide read fan-out — the
     // Postgres query itself is ~13ms. Six columns ≈ halves the parse/GC cost.
+    // Read OHLCV as float8 so node-postgres decodes them natively (parseFloat in
+    // pg's own row loop) instead of returning numeric as strings that numberFromDb
+    // must Number() per cell on the event loop. Precision-neutral: the stored
+    // numeric(18,6) cast to float8 is the exact double numberFromDb already derived
+    // from the string (verified: to_char(x::float8,6) == to_char(x,6), 0 mismatch).
     const barColumns = {
       startsAt: barCacheTable.startsAt,
-      open: barCacheTable.open,
-      high: barCacheTable.high,
-      low: barCacheTable.low,
-      close: barCacheTable.close,
-      volume: barCacheTable.volume,
+      open: sql<number>`${barCacheTable.open}::float8`,
+      high: sql<number>`${barCacheTable.high}::float8`,
+      low: sql<number>`${barCacheTable.low}::float8`,
+      close: sql<number>`${barCacheTable.close}::float8`,
+      volume: sql<number>`${barCacheTable.volume}::float8`,
     };
     const readRows = (rowLimit: number) =>
       runWithMarketDataStoreContext("bar-cache-read", () =>
@@ -623,7 +628,7 @@ export async function loadStoredMarketBarsBySymbol(input: {
     const readRows = async (limit: number) => {
       const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
         db.execute(sql<BulkBarCacheRow>`
-          select b.symbol, b.starts_at, b.close
+          select b.symbol, b.starts_at, b.close::float8 as close
           from unnest(array[${symbolValues}]::text[]) as s(symbol)
           cross join lateral (
             select symbol, starts_at, close
@@ -825,7 +830,7 @@ export async function loadStoredMarketBarsForSymbols(
     const readRows = async (limit: number) => {
       const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
         db.execute(sql<StoredBarsBySymbolRow>`
-          select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+          select b.symbol, b.starts_at, b.open::float8 as open, b.high::float8 as high, b.low::float8 as low, b.close::float8 as close, b.volume::float8 as volume
           from unnest(array[${symbolValues}]::text[]) as s(symbol)
           cross join lateral (
             select symbol, starts_at, open, high, low, close, volume
@@ -897,7 +902,7 @@ export async function loadStoredMarketBarsForSymbolsSince(
     const readRows = async (limit: number) => {
       const result = await runWithMarketDataStoreContext("bar-cache-read", () =>
         db.execute(sql<StoredBarsBySymbolRow>`
-          select b.symbol, b.starts_at, b.open, b.high, b.low, b.close, b.volume
+          select b.symbol, b.starts_at, b.open::float8 as open, b.high::float8 as high, b.low::float8 as low, b.close::float8 as close, b.volume::float8 as volume
           from unnest(array[${symbolValues}]::text[]) as s(symbol)
           cross join lateral (
             select symbol, starts_at, open, high, low, close, volume
