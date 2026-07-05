@@ -53,6 +53,7 @@ import {
   getIbkrBridgeRuntimeSessionState,
 } from "./ibkr-bridge-runtime";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
+import { requireCurrentAppUserId } from "./app-user-context";
 import { normalizeSymbol } from "../lib/values";
 import {
   type BrokerBarSnapshot,
@@ -3969,6 +3970,11 @@ export async function createWatchlist(input: {
   const [watchlist] = await db
     .insert(watchlistsTable)
     .values({
+      // Stamp the creating user (Slice 4). createWatchlist is only reachable via
+      // the requireUser-gated POST /watchlists route, so the request ALS context
+      // is populated; requireCurrentAppUserId() fails closed otherwise. Reads
+      // stay global until Slice 5, so this is additive with no read change.
+      appUserId: requireCurrentAppUserId(),
       name,
       isDefault: Boolean(input.isDefault),
     })
