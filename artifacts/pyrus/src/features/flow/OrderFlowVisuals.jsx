@@ -10,6 +10,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { SEMANTIC_TONE } from "../platform/semanticToneModel.js";
 
 const rgba = (color, alpha) => cssColorMix(color, alpha * 100);
 
@@ -19,10 +20,10 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const total = totalBuy + totalSell || 1;
   const net = totalBuy - totalSell;
   const segs = [
-    { value: flow.buyXL, color: rgba(CSS_COLOR.green, 0.42) },
-    { value: flow.buyL, color: rgba(CSS_COLOR.green, 0.95) },
-    { value: flow.buyM, color: rgba(CSS_COLOR.green, 0.72) },
-    { value: flow.buyS, color: rgba(CSS_COLOR.green, 0.46) },
+    { value: flow.buyXL, color: rgba(SEMANTIC_TONE.directionBuy, 0.42) },
+    { value: flow.buyL, color: rgba(SEMANTIC_TONE.directionBuy, 0.95) },
+    { value: flow.buyM, color: rgba(SEMANTIC_TONE.directionBuy, 0.72) },
+    { value: flow.buyS, color: rgba(SEMANTIC_TONE.directionBuy, 0.46) },
     { value: flow.sellS, color: rgba(CSS_COLOR.red, 0.38) },
     { value: flow.sellM, color: rgba(CSS_COLOR.red, 0.58) },
     { value: flow.sellL, color: rgba(CSS_COLOR.red, 0.78) },
@@ -89,7 +90,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         textAnchor="middle"
         fontSize={fs(11)}
         fontWeight={400}
-        fill={net >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
+        fill={net >= 0 ? SEMANTIC_TONE.directionBuy : SEMANTIC_TONE.directionSell}
         fontFamily={T.sans}
       >
         {`${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(0)}M`}
@@ -114,7 +115,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         fontSize: textSize("caption"),
       }}
     >
-      <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
+      <span style={{ color: SEMANTIC_TONE.directionBuy, fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
         {Number.isFinite(buy) ? `$${buy.toFixed(1)}M` : MISSING_VALUE}
       </span>
       <div
@@ -125,7 +126,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           style={{
             width: `${buyPct}%`,
             height: "100%",
-            background: CSS_COLOR.green,
+            background: SEMANTIC_TONE.directionBuy,
             opacity: 0.85,
             borderRadius: dim(RADII.xs),
           }}

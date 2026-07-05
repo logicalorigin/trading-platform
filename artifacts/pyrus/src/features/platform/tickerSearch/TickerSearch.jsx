@@ -38,6 +38,7 @@ import {
 import { joinMotionClasses, motionVars } from "../../../lib/motion";
 import { _initialState, persistState } from "../../../lib/workspaceState";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Star } from "lucide-react";
 
 export {
   getTickerSearchRowStorageKey,
@@ -627,19 +628,22 @@ const TickerSearchRow = ({
         <span
           role="button"
           tabIndex={-1}
+          aria-label={favorite ? "Remove from watchlist" : "Add to watchlist"}
+          title={favorite ? "Remove from watchlist" : "Add to watchlist"}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
             if (!disabled) onToggleFavorite?.(result);
           }}
           style={{
+            display: "inline-flex",
+            alignItems: "center",
             color: favorite ? CSS_COLOR.amber : CSS_COLOR.textMuted,
-            fontSize: fs(12),
             cursor: disabled ? "default" : "pointer",
             lineHeight: 1,
           }}
         >
-          {favorite ? "★" : "☆"}
+          <Star size={12} fill={favorite ? "currentColor" : "none"} />
         </span>
       </span>
     </button></AppTooltip>

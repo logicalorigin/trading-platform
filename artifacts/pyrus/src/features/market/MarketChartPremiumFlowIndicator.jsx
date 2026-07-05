@@ -5,6 +5,7 @@ import {
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { SEMANTIC_TONE, toneForOptionSide } from "../platform/semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
 
@@ -106,7 +107,7 @@ export const MarketChartPremiumFlowIndicator = ({
   const normalizedSymbol = normalizeTickerSymbol(symbol);
   const tone =
     resolvedSummary.direction === "call"
-      ? CSS_COLOR.green
+      ? toneForOptionSide("c")
       : resolvedSummary.direction === "put"
         ? CSS_COLOR.red
         : CSS_COLOR.textMuted;
@@ -250,7 +251,7 @@ export const MarketChartPremiumFlowIndicator = ({
           aria-hidden="true"
           style={{
             width: `${callPct}%`,
-            background: hasFlow ? CSS_COLOR.green : CSS_COLOR.border,
+            background: hasFlow ? SEMANTIC_TONE.directionBuy : CSS_COLOR.border,
             opacity: hasFlow ? 0.78 : 0.45,
           }}
         />

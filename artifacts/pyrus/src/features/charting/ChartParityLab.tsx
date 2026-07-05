@@ -397,7 +397,7 @@ export const ChartParityLab = () => {
                     ...BUTTON_BASE,
                     background: active ? THEME.amber : THEME.bg3,
                     borderColor: active ? THEME.amber : THEME.border,
-                    color: active ? "#16151A" : THEME.textDim,
+                    color: active ? THEME.bg0 : THEME.textDim,
                     fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >

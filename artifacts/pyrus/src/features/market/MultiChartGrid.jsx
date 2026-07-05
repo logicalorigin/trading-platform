@@ -1070,8 +1070,8 @@ export const MultiChartGrid = ({
   const horizontalDividerHitThickness = dim(denseGrid ? 14 : 16);
   const intersectionHandleSize = dim(denseGrid ? 12 : 14);
   const crosshairStroke = 2;
-  const gridResizeIdleColor = "rgba(166, 174, 182, 0.38)";
-  const gridResizeHoverColor = "rgba(196, 203, 210, 0.74)";
+  const gridResizeIdleColor = cssColorMix(CSS_COLOR.textMuted, 38);
+  const gridResizeHoverColor = cssColorMix(CSS_COLOR.textMuted, 74);
   const gridScaleResetDisabled = useMemo(() => {
     const defaultColumnWeights = buildEqualTrackWeights(renderedCols);
     const defaultRowHeights = Array.from({ length: renderedRows }, () => baseCellHeight);
@@ -1741,7 +1741,7 @@ export const MultiChartGrid = ({
                       height: "100%",
                       background: dividerColor,
                       boxShadow: isActive
-                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px rgba(91,140,255,0.35)`
+                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px ${cssColorMix(CSS_COLOR.accent, 35)}`
                         : isHovered
                           ? `0 0 0 1px rgba(0,0,0,0.18)`
                           : "none",
@@ -1819,7 +1819,7 @@ export const MultiChartGrid = ({
                       height: crosshairStroke,
                       background: dividerColor,
                       boxShadow: isActive
-                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px rgba(91,140,255,0.35)`
+                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px ${cssColorMix(CSS_COLOR.accent, 35)}`
                         : isHovered
                           ? `0 0 0 1px rgba(0,0,0,0.18)`
                           : "none",
@@ -1894,9 +1894,9 @@ export const MultiChartGrid = ({
                           ? CSS_COLOR.accent
                           : isHovered
                             ? gridResizeHoverColor
-                            : "rgba(166, 174, 182, 0.48)",
+                            : cssColorMix(CSS_COLOR.textMuted, 48),
                         boxShadow: isActive
-                          ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 14px rgba(91,140,255,0.4)`
+                          ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 14px ${cssColorMix(CSS_COLOR.accent, 40)}`
                           : isHovered
                             ? `0 0 0 1px ${CSS_COLOR.bg0}`
                             : `0 0 0 1px rgba(0,0,0,0.28)`,

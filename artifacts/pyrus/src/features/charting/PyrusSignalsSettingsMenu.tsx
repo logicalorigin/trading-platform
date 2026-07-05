@@ -296,10 +296,10 @@ const miniLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   letterSpacing: "0.05em",
 });
 
-const swatchStyle = (color: string): CSSProperties => ({
+const swatchStyle = (theme: WidgetTheme, color: string): CSSProperties => ({
   width: 16,
   height: 16,
-  border: "1px solid rgba(255,255,255,0.15)",
+  border: `1px solid ${theme.border}`,
   background: color,
 });
 
@@ -433,7 +433,7 @@ function ColorControl({
           alignItems: "center",
         }}
       >
-        <span style={swatchStyle(value)} />
+        <span style={swatchStyle(theme, value)} />
         <input
           type="color"
           value={resolveSolidHex(value)}
@@ -1265,7 +1265,7 @@ export function PyrusSignalsSettingsMenu({
                     <div style={rowHelperStyle(theme)}>{entry.detail}</div>
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span style={swatchStyle(entry.color.includes("/") ? settings.bullColor : entry.color)} />
+                    <span style={swatchStyle(theme, entry.color.includes("/") ? settings.bullColor : entry.color)} />
                     <span style={rowHelperStyle(theme)}>{entry.color}</span>
                   </div>
                 </div>

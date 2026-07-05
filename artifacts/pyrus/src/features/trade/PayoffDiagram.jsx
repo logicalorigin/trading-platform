@@ -145,6 +145,8 @@ export const PayoffDiagram = ({
         height={H}
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
+        role="img"
+        aria-label={`${side} ${isCall ? "call" : "put"} option P&L at expiration. Strike ${strike}, breakeven ${breakeven.toFixed(2)}. Max profit ${maxProfitUnlimited ? "unlimited" : fmtMoney(visibleMaxProfit)}, max loss ${maxLossUnlimited ? "unlimited" : fmtMoney(visibleMaxLoss)}.`}
       >
         {/* Zero P&L line */}
         <line

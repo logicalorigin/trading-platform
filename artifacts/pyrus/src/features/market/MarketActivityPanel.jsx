@@ -49,6 +49,11 @@ import {
   isSignalMonitorDegradedProfile,
   isSignalMonitorRuntimeFallbackProfile,
 } from "../platform/signalMonitorStatusModel";
+import {
+  SEMANTIC_TONE,
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../platform/semanticToneModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -498,7 +503,7 @@ const getNotificationLaneTone = (item) => {
 const getSignalLaneTone = (item) =>
   item.direction === "sell"
     ? { label: "SELL", color: CSS_COLOR.red, background: activityToneBackground(CSS_COLOR.red) }
-    : { label: "BUY", color: CSS_COLOR.green, background: activityToneBackground(CSS_COLOR.green) };
+    : { label: "BUY", color: SEMANTIC_TONE.directionBuy, background: activityToneBackground(SEMANTIC_TONE.directionBuy) };
 
 const CompactRowText = ({ children }) => (
   <span
@@ -629,11 +634,11 @@ const getUnusualLaneTone = (item) => {
     isBearish && !isBullish
       ? CSS_COLOR.red
       : isBullish && !isBearish
-        ? CSS_COLOR.green
+        ? toneForDirectionalIntent("bullish")
         : isPut
           ? CSS_COLOR.red
           : isCall
-            ? CSS_COLOR.green
+            ? toneForOptionSide("c")
             : CSS_COLOR.amber;
   return {
     label: isPut ? "PUT" : isCall ? "CALL" : "FLOW",

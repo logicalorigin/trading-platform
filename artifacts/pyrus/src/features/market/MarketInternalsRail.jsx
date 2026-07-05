@@ -8,7 +8,10 @@ import {
   DataUnavailableState,
   SurfacePanel,
 } from "../../components/platform/primitives.jsx";
-import { toneForFinancialDelta } from "../platform/semanticToneModel.js";
+import {
+  toneForDirectionalIntent,
+  toneForFinancialDelta,
+} from "../platform/semanticToneModel.js";
 import { fmtM, formatSignedPercent, isFiniteNumber } from "../../lib/formatters.js";
 import { CSS_COLOR, RADII, T, cssColorMix, sp } from "../../lib/uiTokens.jsx";
 
@@ -44,7 +47,7 @@ const SectorFlowList = ({ sectorFlow }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: sp("4px") }}>
       {rows.map((sector) => {
         const widthPct = (Math.abs(sector.net) / absMax) * 50;
-        const tone = toneForFinancialDelta(sector.net);
+        const tone = toneForDirectionalIntent(sector.net >= 0 ? "bullish" : "bearish");
         return (
           <div
             key={sector.sector}

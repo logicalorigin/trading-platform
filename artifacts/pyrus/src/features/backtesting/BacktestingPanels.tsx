@@ -105,7 +105,7 @@ import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
 import { DataUnavailableState, Select } from "../../components/platform/primitives.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
-import { cssColorAlpha, RADII } from "../../lib/uiTokens.jsx";
+import { cssColorAlpha, CSS_COLOR, RADII } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
@@ -941,7 +941,9 @@ function buttonStyle(
           ? "transparent"
           : theme.bg0;
   const color =
-    variant === "secondary" || variant === "ghost" ? theme.textSec : "#ffffff";
+    variant === "secondary" || variant === "ghost"
+      ? theme.textSec
+      : CSS_COLOR.onAccent;
 
   return {
     border:
