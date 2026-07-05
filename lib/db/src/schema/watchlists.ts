@@ -9,14 +9,20 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { timestamps } from "./common";
+import { usersTable } from "./auth";
 import { instrumentsTable } from "./instruments";
 
-export const watchlistsTable = pgTable("watchlists", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  isDefault: boolean("is_default").notNull().default(false),
-  ...timestamps,
-});
+export const watchlistsTable = pgTable(
+  "watchlists",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    appUserId: uuid("app_user_id").references(() => usersTable.id),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [index("watchlists_app_user_idx").on(table.appUserId)],
+);
 
 export const watchlistItemsTable = pgTable(
   "watchlist_items",

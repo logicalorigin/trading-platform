@@ -1,8 +1,11 @@
 import type { PgTable } from "drizzle-orm/pg-core";
 import { brokerAccountsTable, brokerConnectionsTable } from "./broker";
+import { userPreferenceProfilesTable } from "./preferences";
 import { robinhoodUserCredentialsTable } from "./robinhood";
 import { schwabUserCredentialsTable } from "./schwab";
 import { snapTradeUserCredentialsTable } from "./snaptrade";
+import { shadowAccountsTable } from "./trading";
+import { watchlistsTable } from "./watchlists";
 
 // Single source of truth for the tables whose rows belong to one app user and
 // therefore MUST carry an `app_user_id` column and MUST be filtered by it on
@@ -13,14 +16,17 @@ import { snapTradeUserCredentialsTable } from "./snaptrade";
 // integration test both enumerate from this list. When a table gains its
 // `app_user_id` column in a migration, add it here in the SAME change.
 //
-// NOTE: as of Slice 1 this covers only the tables that are already user-scoped
-// (broker connections/accounts + the per-broker credential vaults). Slice 3
-// migrations append shadow_accounts, watchlists, user_preference_profiles, and
-// algo_deployments once their columns land.
+// NOTE: broker connections/accounts + the per-broker credential vaults were
+// scoped first; Slice 3 adds shadow_accounts, watchlists, and
+// user_preference_profiles. algo_deployments joins when automation is scoped
+// (Slice 5.5); saved_scans/alert_rules when they gain a service.
 export const USER_SCOPED_TABLES: readonly PgTable[] = [
   brokerConnectionsTable,
   brokerAccountsTable,
   snapTradeUserCredentialsTable,
   robinhoodUserCredentialsTable,
   schwabUserCredentialsTable,
+  shadowAccountsTable,
+  watchlistsTable,
+  userPreferenceProfilesTable,
 ];

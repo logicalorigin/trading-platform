@@ -1,4 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   integer,
   jsonb,
@@ -8,11 +9,13 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { timestamps } from "./common";
+import { usersTable } from "./auth";
 
 export const userPreferenceProfilesTable = pgTable(
   "user_preference_profiles",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    appUserId: uuid("app_user_id").references(() => usersTable.id),
     profileKey: text("profile_key").notNull(),
     version: integer("version").notNull().default(1),
     preferences: jsonb("preferences")
@@ -25,6 +28,9 @@ export const userPreferenceProfilesTable = pgTable(
     uniqueIndex("user_preference_profiles_profile_key_idx").on(
       table.profileKey,
     ),
+    uniqueIndex("user_preference_profiles_app_user_idx")
+      .on(table.appUserId)
+      .where(sql`${table.appUserId} IS NOT NULL`),
   ],
 );
 

@@ -50,6 +50,7 @@ test("bootstrap creates the first user and stores auth secrets hashed", async ()
         .where(eq(usersTable.id, result.user.id));
       assert.ok(user);
       assert.notEqual(user.passwordHash, "correct horse battery staple");
+      assert.ok(user.passwordHash);
       assert.match(user.passwordHash, /^scrypt:v1:/);
 
       const [session] = await db

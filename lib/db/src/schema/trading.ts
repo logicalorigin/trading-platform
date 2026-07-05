@@ -1,4 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   date,
   index,
@@ -20,6 +21,7 @@ import {
   timeInForceEnum,
 } from "./enums";
 import { brokerAccountsTable } from "./broker";
+import { usersTable } from "./auth";
 import { instrumentsTable, optionContractsTable } from "./instruments";
 
 export const orderRequestsTable = pgTable(
@@ -162,22 +164,45 @@ export const balanceSnapshotsTable = pgTable(
   ],
 );
 
-export const shadowAccountsTable = pgTable("shadow_accounts", {
-  id: varchar("id", { length: 64 }).primaryKey(),
-  displayName: text("display_name").notNull(),
-  currency: varchar("currency", { length: 16 }).notNull().default("USD"),
-  startingBalance: numeric("starting_balance", {
-    precision: 20,
-    scale: 6,
-  }).notNull(),
-  cash: numeric("cash", { precision: 20, scale: 6 }).notNull(),
-  realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
-    .notNull()
-    .default("0"),
-  fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
-  status: varchar("status", { length: 32 }).notNull().default("active"),
-  ...timestamps,
-});
+export const shadowAccountsTable = pgTable(
+  "shadow_accounts",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    // Owner (NULL = legacy global row, backfilled to the founding admin).
+    appUserId: uuid("app_user_id").references(() => usersTable.id),
+    // The connected broker account this paper account is paired with; NULL for
+    // the user's standalone paper account.
+    sourceBrokerAccountId: uuid("source_broker_account_id").references(
+      () => brokerAccountsTable.id,
+    ),
+    displayName: text("display_name").notNull(),
+    currency: varchar("currency", { length: 16 }).notNull().default("USD"),
+    startingBalance: numeric("starting_balance", {
+      precision: 20,
+      scale: 6,
+    }).notNull(),
+    cash: numeric("cash", { precision: 20, scale: 6 }).notNull(),
+    realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+    status: varchar("status", { length: 32 }).notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_accounts_app_user_idx").on(table.appUserId),
+    uniqueIndex("shadow_accounts_user_standalone_idx")
+      .on(table.appUserId)
+      .where(
+        sql`${table.appUserId} IS NOT NULL AND ${table.sourceBrokerAccountId} IS NULL AND ${table.status} = 'active'`,
+      ),
+    uniqueIndex("shadow_accounts_source_account_idx")
+      .on(table.sourceBrokerAccountId)
+      .where(
+        sql`${table.sourceBrokerAccountId} IS NOT NULL AND ${table.status} = 'active'`,
+      ),
+  ],
+);
 
 export const shadowOrdersTable = pgTable(
   "shadow_orders",

@@ -4,7 +4,7 @@ import {
   scrypt as scryptCallback,
   timingSafeEqual,
 } from "node:crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   authSessionsTable,
   db,
@@ -262,13 +262,27 @@ export async function loginUser(input: LoginInput): Promise<AuthResult> {
   const email = normalizeEmail(input.email);
   validateEmail(email);
 
+  // Password login only ever considers PASSWORD users. Launch (JIT) users have a
+  // null password_hash and authenticate via the parent-site handoff; excluding
+  // them here also prevents a launch user that shares an email from shadowing an
+  // admin's password login.
   const [user] = await db
     .select()
     .from(usersTable)
-    .where(and(eq(usersTable.email, email), isNull(usersTable.disabledAt)))
+    .where(
+      and(
+        eq(usersTable.email, email),
+        isNull(usersTable.disabledAt),
+        isNotNull(usersTable.passwordHash),
+      ),
+    )
     .limit(1);
 
-  if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
+  if (
+    !user ||
+    !user.passwordHash ||
+    !(await verifyPassword(input.password, user.passwordHash))
+  ) {
     throw new HttpError(401, "Invalid email or password", {
       code: "invalid_credentials",
     });

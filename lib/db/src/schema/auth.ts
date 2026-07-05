@@ -1,4 +1,5 @@
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import {
   index,
   pgTable,
@@ -16,12 +17,28 @@ export const usersTable = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     email: varchar("email", { length: 320 }).notNull(),
     displayName: text("display_name"),
-    passwordHash: text("password_hash").notNull(),
+    // Nullable: JIT "launch" users authenticate via the parent site (identity is
+    // (external_issuer, external_user_id)) and have no local password.
+    passwordHash: text("password_hash"),
+    externalUserId: text("external_user_id"),
+    externalIssuer: text("external_issuer"),
+    // Entitlements carried from the launch token (e.g. "broker_connect").
+    entitlements: text("entitlements").array().notNull().default([]),
+    plan: text("plan"),
     role: varchar("role", { length: 32 }).notNull().default("member"),
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [uniqueIndex("users_email_idx").on(table.email)],
+  (table) => [
+    // Email stays unique among PASSWORD users (login keys on email); launch users
+    // (null password) key on (issuer, sub) and may share an email.
+    uniqueIndex("users_email_idx")
+      .on(table.email)
+      .where(sql`${table.passwordHash} IS NOT NULL`),
+    uniqueIndex("users_external_identity_idx")
+      .on(table.externalIssuer, table.externalUserId)
+      .where(sql`${table.externalUserId} IS NOT NULL`),
+  ],
 );
 
 export const authSessionsTable = pgTable(
