@@ -1,5 +1,6 @@
 const DEFAULT_TONES = {
   buy: "var(--ra-green-500)",
+  directionBuy: "var(--ra-blue-500)",
   sell: "var(--ra-red-500)",
   hot: "var(--ra-green-500)",
   cold: "var(--ra-cyan-500)",

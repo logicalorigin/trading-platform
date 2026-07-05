@@ -12,7 +12,7 @@ const clampRatio = (value) => {
 
 const directionGlyphTone = (direction, tone) => {
   if (tone) return tone;
-  if (direction === "buy") return getTone("buy");
+  if (direction === "buy") return getTone("directionBuy");
   if (direction === "sell") return getTone("sell");
   return getTone("dim");
 };

@@ -52,7 +52,7 @@ export const resolveSignalVerdict = ({
       bucket: "try",
       label: "Try",
       reason: `fresh score ${score.toFixed(1)}`,
-      tone: getTone("buy"),
+      tone: getTone("directionBuy"),
       Icon: CheckCircle2,
     };
   }
