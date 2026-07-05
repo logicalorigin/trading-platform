@@ -1,7 +1,13 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type FocusEvent,
+  type ReactNode,
+} from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 // @ts-expect-error JSX module imported into TypeScript context
-import { SegmentedControl } from "../../components/platform/primitives.jsx";
+import { SegmentedControl, TextField, Select } from "../../components/platform/primitives.jsx";
 import {
   DEFAULT_PYRUS_SIGNALS_SETTINGS,
   PYRUS_SIGNALS_DASHBOARD_SIZE_OPTIONS,
@@ -227,18 +233,6 @@ const rowHelperStyle = (theme: WidgetTheme): CSSProperties => ({
   lineHeight: 1.35,
 });
 
-const inputStyle = (theme: WidgetTheme): CSSProperties => ({
-  width: "100%",
-  borderRadius: RADII.none,
-  border: `1px solid ${theme.border}`,
-  background: theme.bg3,
-  color: theme.text,
-  padding: "6px 8px",
-  fontSize: TYPE_CSS_VAR.bodyStrong,
-  fontFamily: theme.mono,
-  outline: "none",
-});
-
 const checkboxStyle = (theme: WidgetTheme): CSSProperties => ({
   width: 14,
   height: 14,
@@ -423,11 +417,11 @@ function ColorControl({
           onChange={(event) => onColorChange(event.target.value)}
           style={{ width: 36, height: 28, padding: 0, border: "none", background: "transparent" }}
         />
-        <input
+        <TextField
           type="text"
           value={value}
-          onChange={(event) => onTextChange(event.target.value)}
-          style={inputStyle(theme)}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => onTextChange(event.target.value)}
+          style={{ width: "100%" }}
         />
       </div>
     </div>
@@ -452,34 +446,36 @@ function NumericSettingInput({
   setNumber: (key: NumericSettingKey, value: string) => void;
 }) {
   return (
-    <input
+    <TextField
       type="number"
-      min={min}
-      max={max}
-      step={step}
       value={formatNumber(value)}
-      onChange={(event) => setNumber(settingKey, event.target.value)}
-      onBlur={(event) => {
-        const raw = event.target.value;
-        if (raw.trim() === "") {
-          return;
-        }
-        const parsed = Number(raw);
-        if (!Number.isFinite(parsed)) {
-          return;
-        }
-        let clamped = parsed;
-        if (min !== undefined && clamped < min) {
-          clamped = min;
-        }
-        if (max !== undefined && clamped > max) {
-          clamped = max;
-        }
-        if (clamped !== parsed) {
-          setNumber(settingKey, String(clamped));
-        }
+      onChange={(event: ChangeEvent<HTMLInputElement>) => setNumber(settingKey, event.target.value)}
+      style={{ width: "100%" }}
+      inputProps={{
+        min,
+        max,
+        step,
+        onBlur: (event: FocusEvent<HTMLInputElement>) => {
+          const raw = event.target.value;
+          if (raw.trim() === "") {
+            return;
+          }
+          const parsed = Number(raw);
+          if (!Number.isFinite(parsed)) {
+            return;
+          }
+          let clamped = parsed;
+          if (min !== undefined && clamped < min) {
+            clamped = min;
+          }
+          if (max !== undefined && clamped > max) {
+            clamped = max;
+          }
+          if (clamped !== parsed) {
+            setNumber(settingKey, String(clamped));
+          }
+        },
       }}
-      style={inputStyle(theme)}
     />
   );
 }
@@ -725,22 +721,17 @@ export function PyrusSignalsSettingsMenu({
                 />
               </Row>
               <Row theme={theme} label="BOS/CHOCH Line Style">
-                <select
+                <Select
                   value={settings.structureLineStyle}
-                  onChange={(event) =>
-                    update({
-                      structureLineStyle:
-                        event.target.value as PyrusSignalsRuntimeSettings["structureLineStyle"],
-                    })
+                  onChange={(next: PyrusSignalsRuntimeSettings["structureLineStyle"]) =>
+                    update({ structureLineStyle: next })
                   }
-                  style={inputStyle(theme)}
-                >
-                  {PYRUS_SIGNALS_LINE_STYLE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {titleCase(value)}
-                    </option>
-                  ))}
-                </select>
+                  options={PYRUS_SIGNALS_LINE_STYLE_OPTIONS.map((value) => ({
+                    value,
+                    label: titleCase(value),
+                  }))}
+                  style={{ width: "100%" }}
+                />
               </Row>
               <Row theme={theme} label="Structure Labels">
                 <div style={twoColumnInlineStyle}>
@@ -900,40 +891,30 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showKeyLevels} onChange={() => toggle("showKeyLevels")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Line Style">
-                <select
+                <Select
                   value={settings.keyLevelLineStyle}
-                  onChange={(event) =>
-                    update({
-                      keyLevelLineStyle:
-                        event.target.value as PyrusSignalsRuntimeSettings["keyLevelLineStyle"],
-                    })
+                  onChange={(next: PyrusSignalsRuntimeSettings["keyLevelLineStyle"]) =>
+                    update({ keyLevelLineStyle: next })
                   }
-                  style={inputStyle(theme)}
-                >
-                  {PYRUS_SIGNALS_LINE_STYLE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {titleCase(value)}
-                    </option>
-                  ))}
-                </select>
+                  options={PYRUS_SIGNALS_LINE_STYLE_OPTIONS.map((value) => ({
+                    value,
+                    label: titleCase(value),
+                  }))}
+                  style={{ width: "100%" }}
+                />
               </Row>
               <Row theme={theme} label="Label Size">
-                <select
+                <Select
                   value={settings.keyLevelLabelSize}
-                  onChange={(event) =>
-                    update({
-                      keyLevelLabelSize:
-                        event.target.value as PyrusSignalsRuntimeSettings["keyLevelLabelSize"],
-                    })
+                  onChange={(next: PyrusSignalsRuntimeSettings["keyLevelLabelSize"]) =>
+                    update({ keyLevelLabelSize: next })
                   }
-                  style={inputStyle(theme)}
-                >
-                  {PYRUS_SIGNALS_LABEL_SIZE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {titleCase(value)}
-                    </option>
-                  ))}
-                </select>
+                  options={PYRUS_SIGNALS_LABEL_SIZE_OPTIONS.map((value) => ({
+                    value,
+                    label: titleCase(value),
+                  }))}
+                  style={{ width: "100%" }}
+                />
               </Row>
               <Row theme={theme} label="Prior Day High / Prior Day Low">
                 <div style={twoColumnInlineStyle}>
@@ -1080,22 +1061,17 @@ export function PyrusSignalsSettingsMenu({
                 <input type="checkbox" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Strip Size">
-                <select
+                <Select
                   value={settings.dashboardSize}
-                  onChange={(event) =>
-                    update({
-                      dashboardSize:
-                        event.target.value as PyrusSignalsRuntimeSettings["dashboardSize"],
-                    })
+                  onChange={(next: PyrusSignalsRuntimeSettings["dashboardSize"]) =>
+                    update({ dashboardSize: next })
                   }
-                  style={inputStyle(theme)}
-                >
-                  {PYRUS_SIGNALS_DASHBOARD_SIZE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {titleCase(value)}
-                    </option>
-                  ))}
-                </select>
+                  options={PYRUS_SIGNALS_DASHBOARD_SIZE_OPTIONS.map((value) => ({
+                    value,
+                    label: titleCase(value),
+                  }))}
+                  style={{ width: "100%" }}
+                />
               </Row>
               <Row theme={theme} label="ADX Length">
                 <NumericSettingInput theme={theme} settingKey="adxLength" min={1} step={1} value={settings.adxLength} setNumber={setNumber} />
@@ -1105,27 +1081,24 @@ export function PyrusSignalsSettingsMenu({
               </Row>
               <Row theme={theme} label="MTF 1 / MTF 2 / MTF 3">
                 <div style={threeColumnStyle}>
-                  <select value={settings.mtf1} onChange={(event) => update({ mtf1: event.target.value as PyrusSignalsRuntimeSettings["mtf1"] })} style={inputStyle(theme)}>
-                    {PYRUS_SIGNALS_MTF_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                  <select value={settings.mtf2} onChange={(event) => update({ mtf2: event.target.value as PyrusSignalsRuntimeSettings["mtf2"] })} style={inputStyle(theme)}>
-                    {PYRUS_SIGNALS_MTF_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                  <select value={settings.mtf3} onChange={(event) => update({ mtf3: event.target.value as PyrusSignalsRuntimeSettings["mtf3"] })} style={inputStyle(theme)}>
-                    {PYRUS_SIGNALS_MTF_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    value={settings.mtf1}
+                    onChange={(next: PyrusSignalsRuntimeSettings["mtf1"]) => update({ mtf1: next })}
+                    options={PYRUS_SIGNALS_MTF_OPTIONS}
+                    style={{ width: "100%" }}
+                  />
+                  <Select
+                    value={settings.mtf2}
+                    onChange={(next: PyrusSignalsRuntimeSettings["mtf2"]) => update({ mtf2: next })}
+                    options={PYRUS_SIGNALS_MTF_OPTIONS}
+                    style={{ width: "100%" }}
+                  />
+                  <Select
+                    value={settings.mtf3}
+                    onChange={(next: PyrusSignalsRuntimeSettings["mtf3"]) => update({ mtf3: next })}
+                    options={PYRUS_SIGNALS_MTF_OPTIONS}
+                    style={{ width: "100%" }}
+                  />
                 </div>
               </Row>
             </Section>

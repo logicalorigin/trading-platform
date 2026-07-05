@@ -3,7 +3,6 @@ import {
   CSS_COLOR,
   cssColorMix,
   dim,
-  ELEVATION,
   FONT_WEIGHTS,
   fs,
   RADII,
@@ -12,6 +11,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { Button } from "../../components/ui/Button.jsx";
+import { surfaceStyle, TextField } from "../../components/platform/primitives.jsx";
 
 // Editor for a position's protective stop, opened from the Stop cell icon or the
 // row action menu's "Adjust". It places (or replaces) a real broker stop order
@@ -207,11 +207,8 @@ export const PositionProtectionEditor = ({
         aria-labelledby="position-protection-editor-title"
         tabIndex={-1}
         style={{
+          ...surfaceStyle({ elevated: true }),
           width: "min(100%, 460px)",
-          background: CSS_COLOR.bg1,
-          border: `1px solid ${cssColorMix(tone, 33)}`,
-          borderRadius: dim(RADII.md),
-          boxShadow: ELEVATION.lg,
           padding: sp("20px 22px"),
           display: "flex",
           flexDirection: "column",
@@ -297,69 +294,46 @@ export const PositionProtectionEditor = ({
           ))}
         </div>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
-          <span
-            style={{
-              fontSize: textSize("caption"),
-              color: CSS_COLOR.textMuted,
-              letterSpacing: "0.04em",
-              fontWeight: FONT_WEIGHTS.medium,
-              textTransform: "uppercase",
-            }}
-          >
-            Stop price
-          </span>
-          <input
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+          <TextField
+            label="Stop price"
             type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
+            size="md"
             value={stopInput}
             onChange={(event) => setStopInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") handleSubmit();
-            }}
             disabled={pending}
-            data-testid="position-protection-editor-stop-input"
-            style={{
-              height: dim(36),
-              padding: sp("0 12px"),
-              border: `1px solid ${wrongSide ? cssColorMix(CSS_COLOR.red, 50) : CSS_COLOR.border}`,
-              background: CSS_COLOR.bg0,
-              borderRadius: dim(RADII.sm),
-              color: CSS_COLOR.text,
-              fontFamily: T.data,
-              fontSize: fs(16),
-              fontVariantNumeric: "tabular-nums",
-              textAlign: "right",
+            error={wrongSide ? wrongSideMessage : undefined}
+            hint={`Distance ${fmtPct(distancePct)} · Risk ${fmtMoney(riskAmount)}`}
+            style={{ display: "flex" }}
+            inputProps={{
+              inputMode: "decimal",
+              step: "0.01",
+              min: "0",
+              "data-testid": "position-protection-editor-stop-input",
+              onKeyDown: (event) => {
+                if (event.key === "Enter") handleSubmit();
+              },
+              style: {
+                textAlign: "right",
+                fontFamily: T.data,
+                fontVariantNumeric: "tabular-nums",
+              },
             }}
           />
-          <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8) }}>
+          {existingStop?.price != null ? (
             <span
               style={{
+                alignSelf: "flex-end",
                 fontSize: fs(11),
-                color: wrongSide ? CSS_COLOR.red : CSS_COLOR.textMuted,
-                fontFamily: T.sans,
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.data,
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              {wrongSide
-                ? wrongSideMessage
-                : `Distance ${fmtPct(distancePct)} · Risk ${fmtMoney(riskAmount)}`}
+              Current {fmtPrice(existingStop.price)}
             </span>
-            {existingStop?.price != null ? (
-              <span
-                style={{
-                  fontSize: fs(11),
-                  color: CSS_COLOR.textMuted,
-                  fontFamily: T.data,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                Current {fmtPrice(existingStop.price)}
-              </span>
-            ) : null}
-          </div>
-        </label>
+          ) : null}
+        </div>
 
         {/* Trailing stop — disabled stub. No live write/enforce path exists yet. */}
         <div

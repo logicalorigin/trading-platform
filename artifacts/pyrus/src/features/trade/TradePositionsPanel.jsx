@@ -1495,20 +1495,11 @@ export const TradePositionsPanel = ({
         </span>
       </div>
       {gatewayActionDisabled ? (
-        <div
-          style={{
-            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
-            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
-            borderRadius: dim(RADII.xs),
-            padding: sp("6px 8px"),
-            color: CSS_COLOR.amber,
-            fontFamily: T.sans,
-            fontSize: textSize("body"),
-            lineHeight: 1.35,
-          }}
-        >
-          {gatewayTradingMessage}
-        </div>
+        <DataUnavailableState
+          variant="warning"
+          title={gatewayTradingMessage}
+          detail=""
+        />
       ) : null}
       {tab === "open" ? (
         <div

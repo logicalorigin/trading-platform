@@ -28,6 +28,7 @@ import {
   useSyncSnapTradeBrokerageConnections,
 } from "@workspace/api-client-react";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Select } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -764,41 +765,14 @@ export function HeaderSnapTradeBrokerStatus({
           <StatusRow label="Access" value="trade-if-available" />
         </div>
 
-        <label
-          style={{
-            display: "grid",
-            gap: sp(5),
-            marginBottom: sp(10),
-            color: CSS_COLOR.textDim,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-          }}
-        >
-          Broker target
-          <select
-            aria-label="SnapTrade broker target"
-            value={selectedBroker}
-            onChange={(event) => setSelectedBroker(event.target.value)}
-            style={{
-              height: dim(30),
-              width: "100%",
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.sm),
-              background: CSS_COLOR.bg1,
-              color: CSS_COLOR.text,
-              fontFamily: T.sans,
-              fontSize: textSize("paragraphMuted"),
-              padding: sp("0 8px"),
-            }}
-          >
-            {SNAPTRADE_BROKER_CHOICES.map((choice) => (
-              <option key={choice.value} value={choice.value}>
-                {choice.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          label="Broker target"
+          ariaLabel="SnapTrade broker target"
+          value={selectedBroker}
+          onChange={setSelectedBroker}
+          options={SNAPTRADE_BROKER_CHOICES}
+          style={{ display: "flex", width: "100%", marginBottom: sp(10) }}
+        />
 
         {visibleError ? (
           <div

@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ChangeEvent, CSSProperties, ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   Bar,
@@ -41,7 +41,7 @@ import { PatternVector } from "../../components/platform/signal-language/Pattern
 // @ts-expect-error JSX module imported into TypeScript context
 import { DenseVirtualTable } from "../../components/platform/DenseVirtualTable.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
-import { Badge, DataUnavailableState, Select, StatusPill } from "../../components/platform/primitives.jsx";
+import { Badge, CardTitle, DataUnavailableState, Select, StatusPill, surfaceStyle, TextField } from "../../components/platform/primitives.jsx";
 import {
   cssColorAlpha,
   cssColorMix,
@@ -125,13 +125,6 @@ const buttonStyle = (
   };
 };
 
-const cardStyle: CSSProperties = {
-  background: CSS_COLOR.bg2,
-  border: `1px solid ${CSS_COLOR.border}`,
-  borderRadius: dim(RADII.xs),
-  padding: sp("8px 10px"),
-};
-
 const fieldLabelStyle: CSSProperties = {
   fontSize: fs(9),
   fontWeight: FONT_WEIGHTS.regular,
@@ -153,28 +146,11 @@ function SectionCard({
   style?: CSSProperties;
 }) {
   return (
-    <div className="ra-panel-enter" style={{ ...cardStyle, ...style }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: sp(8),
-          marginBottom: sp(10),
-        }}
-      >
-        <div
-          style={{
-            fontSize: fs(12),
-            fontWeight: FONT_WEIGHTS.regular,
-            fontFamily: DISPLAY,
-            color: CSS_COLOR.text,
-          }}
-        >
-          {title}
-        </div>
-        {right}
-      </div>
+    <div
+      className="ra-panel-enter"
+      style={{ ...surfaceStyle({ radius: RADII.xs }), padding: sp("8px 10px"), ...style }}
+    >
+      <CardTitle right={right}>{title}</CardTitle>
       {children}
     </div>
   );
@@ -1837,18 +1813,18 @@ export function PatternDiscoveryPanel() {
           }}
         >
           <Field label="Study name">
-            <input
+            <TextField
               value={name}
-              onChange={(event) => setName(event.target.value)}
-              style={inputStyle}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setName(event.target.value)}
+              style={{ width: "100%" }}
             />
           </Field>
           <Field label="Symbols">
-            <input
+            <TextField
               value={symbolsRaw}
-              onChange={(event) => setSymbolsRaw(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setSymbolsRaw(event.target.value)}
               placeholder="SPY,QQQ"
-              style={inputStyle}
+              style={{ width: "100%" }}
             />
           </Field>
           <Field label="Base timeframe">
@@ -1860,38 +1836,38 @@ export function PatternDiscoveryPanel() {
             />
           </Field>
           <Field label="Forward horizons (bars)">
-            <input
+            <TextField
               value={horizonsRaw}
-              onChange={(event) => setHorizonsRaw(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setHorizonsRaw(event.target.value)}
               placeholder="3,6,12"
-              style={inputStyle}
+              style={{ width: "100%" }}
             />
           </Field>
           <Field label="Start">
-            <input
+            <TextField
               type="date"
               value={startsAt}
-              onChange={(event) => setStartsAt(event.target.value)}
-              style={inputStyle}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setStartsAt(event.target.value)}
+              style={{ width: "100%" }}
             />
           </Field>
           <Field label="End">
-            <input
+            <TextField
               type="date"
               value={endsAt}
-              onChange={(event) => setEndsAt(event.target.value)}
-              style={inputStyle}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setEndsAt(event.target.value)}
+              style={{ width: "100%" }}
             />
           </Field>
           <Field label="Min sample threshold">
-            <input
+            <TextField
               type="number"
-              min={1}
               value={minSampleThreshold}
-              onChange={(event) =>
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 setMinSampleThreshold(Math.max(1, Number(event.target.value) || 1))
               }
-              style={inputStyle}
+              inputProps={{ min: 1 }}
+              style={{ width: "100%" }}
             />
           </Field>
         </div>
@@ -2066,12 +2042,12 @@ export function PatternDiscoveryPanel() {
           >
             <label style={filterLabel}>
               n &gt;=
-              <input
+              <TextField
                 type="number"
-                min={0}
                 value={nFloor}
-                onChange={(event) => setNFloor(Math.max(0, Number(event.target.value) || 0))}
-                style={{ ...inputStyle, width: dim(56), padding: sp("3px 6px") }}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setNFloor(Math.max(0, Number(event.target.value) || 0))}
+                inputProps={{ min: 0 }}
+                style={{ width: dim(56) }}
               />
             </label>
             <label style={filterLabel}>

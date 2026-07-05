@@ -26,7 +26,7 @@ import { CalendarView } from "./components/ResearchCalendarView";
 import { Logo } from "./components/ResearchLogo";
 import { SettingsPanel } from "./components/ResearchSettingsPanel";
 import { ThemeSwitcher } from "./components/ResearchThemeSwitcher";
-import { MicroSparkline, Skeleton, StatusPill } from "../../components/platform/primitives.jsx";
+import { MicroSparkline, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   backgroundPrefetchFundamentals,
   fetchFinancials,
@@ -1049,16 +1049,15 @@ function KeyRatios({ ratios, co, color }) {
         const t = trend(r.k, r.invert);
         const trendValues = ratios.map(x => x[r.k]);
         return (
-          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, padding: sp("5px 7px") }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(2) }}>
-              <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>{r.l}</span>
-              {t && <span style={{ fontSize: textSize("caption"), color: t.good ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>{t.dir === "up" ? "▲" : "▼"}</span>}
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{r.fmt(latest[r.k])}</span>
-              <TrendSpark values={trendValues} color={color} width={40} height={16} suffix="" />
-            </div>
-          </div></AppTooltip>
+          <StatTile
+            key={r.k}
+            label={r.l}
+            value={r.fmt(latest[r.k])}
+            title={r.tip}
+            minWidth={0}
+            info={t ? <span style={{ fontSize: textSize("caption"), color: t.good ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>{t.dir === "up" ? "▲" : "▼"}</span> : null}
+            viz={<TrendSpark values={trendValues} color={color} width={40} height={16} suffix="" />}
+          />
         );
       })}
     </div>

@@ -103,7 +103,7 @@ import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
-import { DataUnavailableState, Select, StatusPill, StatTile } from "../../components/platform/primitives.jsx";
+import { DataUnavailableState, Select, StatusPill, StatTile, TextField, surfaceStyle } from "../../components/platform/primitives.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { cssColorAlpha, CSS_COLOR, RADII } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
@@ -905,24 +905,23 @@ function inputStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
 function BacktestTradeSearchInput({
   value,
   onCommit,
-  theme,
-  scale,
 }: {
   value: string;
   onCommit: (value: string) => void;
-  theme: ThemeTokens;
-  scale: ScaleHelpers;
 }) {
   const { inputProps } = useDebouncedTextCommit({
     value,
     onCommit,
   });
+  const { value: draftValue, onChange, ...restInputProps } = inputProps;
 
   return (
-    <input
-      {...inputProps}
+    <TextField
+      value={draftValue}
+      onChange={onChange}
       placeholder="Trade id, symbol, reason"
-      style={inputStyle(theme, scale)}
+      inputProps={restInputProps}
+      style={{ width: "100%" }}
     />
   );
 }
@@ -963,8 +962,7 @@ function buttonStyle(
 
 function cardStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
   return {
-    background: theme.bg2,
-    boxShadow: "var(--ra-edge-top)",
+    ...surfaceStyle(),
     padding: scale.sp("8px 10px"),
   };
 }
@@ -5493,8 +5491,6 @@ export function BacktestWorkspace({
                 <BacktestTradeSearchInput
                   value={tradeSearchText}
                   onCommit={setTradeSearchText}
-                  theme={theme}
-                  scale={scale}
                 />
               </div>
               <div>
