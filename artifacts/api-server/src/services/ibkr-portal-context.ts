@@ -1,17 +1,13 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-
-// Request-scoped "which app user is this request acting as" context, used to
-// route IBKR calls to that user's hosted Client Portal gateway when they have
-// one connected. Set once per authenticated /api request (see app.ts) and read
-// lazily by getIbkrClientPortalClient(). Background work (no request) has no
-// store and falls back to the global env-configured IBKR runtime.
-
-const store = new AsyncLocalStorage<{ appUserId: string }>();
+// Back-compat shim. The canonical request-scoped app-user context now lives in
+// app-user-context.ts; these IBKR-named exports are kept so existing IBKR
+// gateway-routing call sites (app.ts, ibkr-client-runtime.ts) keep working
+// without change. They share the single underlying AsyncLocalStorage store.
+import { getCurrentAppUserId, runAsAppUser } from "./app-user-context";
 
 export function runWithIbkrPortalUser<T>(appUserId: string, fn: () => T): T {
-  return store.run({ appUserId }, fn);
+  return runAsAppUser(appUserId, fn);
 }
 
 export function getIbkrPortalUserId(): string | null {
-  return store.getStore()?.appUserId ?? null;
+  return getCurrentAppUserId();
 }

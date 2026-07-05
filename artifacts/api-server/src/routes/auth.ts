@@ -166,6 +166,20 @@ export async function requireAdminCsrf(
   return assertAdmin(await requireAuthCsrf(req));
 }
 
+// Any authenticated, non-disabled user (a SaaS "member"). readAuthSessionFromToken
+// already excludes disabled users, so this is requireAuth with an explicit,
+// intent-revealing name that member-scoped routes use (broker connect/trade,
+// account/positions), reserving requireAdmin for platform-ops surfaces.
+export async function requireUser(req: Request): Promise<AuthenticatedSession> {
+  return requireAuth(req);
+}
+
+export async function requireUserCsrf(
+  req: Request,
+): Promise<AuthenticatedSession> {
+  return requireAuthCsrf(req);
+}
+
 router.get("/auth/session", async (req, res) => {
   const session = await readRequestAuthSession(req);
   if (!session) {

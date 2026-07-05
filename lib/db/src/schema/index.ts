@@ -17,4 +17,5 @@ export * from "./signal-monitor";
 export * from "./snaptrade";
 export * from "./trading";
 export * from "./universe";
+export * from "./user-scoped-tables";
 export * from "./watchlists";
