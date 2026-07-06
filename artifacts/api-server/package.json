@@ -20,6 +20,7 @@
     "cors": "catalog:",
     "drizzle-orm": "catalog:",
     "express": "catalog:",
+    "jose": "6.2.3",
     "pino": "catalog:",
     "pino-http": "catalog:",
     "ws": "catalog:",

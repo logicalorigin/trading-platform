@@ -241,6 +241,9 @@ importers:
       express:
         specifier: 'catalog:'
         version: 5.2.1
+      jose:
+        specifier: 6.2.3
+        version: 6.2.3
       pino:
         specifier: 'catalog:'
         version: 9.14.0

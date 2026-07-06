@@ -9,6 +9,7 @@ import {
   validateAuthCsrfToken,
   type AuthenticatedSession,
 } from "../services/auth";
+import { isLaunchAuthConfigured, launchSession } from "../services/auth-launch";
 
 export const AUTH_SESSION_COOKIE = "pyrus_session";
 export const AUTH_CSRF_HEADER = "x-csrf-token";
@@ -226,6 +227,55 @@ router.post("/auth/login", async (req, res) => {
     csrfToken: result.csrfToken,
     expiresAt: result.expiresAt.toISOString(),
   });
+});
+
+// "Launch Platform" handoff from the external parent site (Slice 6). Verifies a signed,
+// short-lived, one-time JWT and mints a pyrus_session. Public (unauthenticated) by design;
+// returns 503 when launch auth is not configured. POST (token in body) is preferred so the
+// token is not logged; GET (token in query) supports a plain-link launch button and 302s in.
+router.post("/auth/launch", async (req, res) => {
+  if (!isLaunchAuthConfigured()) {
+    throw new HttpError(503, "Launch authentication is not configured.", {
+      code: "launch_auth_not_configured",
+      expose: true,
+    });
+  }
+  enforceRateLimit(`launch:ip:${clientIp(req)}`, 30, 5 * 60_000);
+  const token = readString(asRecord(req.body), "token");
+  if (!token) {
+    throw new HttpError(400, "Missing launch token.", {
+      code: "launch_token_missing",
+      expose: true,
+    });
+  }
+  const result = await launchSession(token);
+  setSessionCookie(req, res, result.sessionToken);
+  res.json({
+    user: result.user,
+    csrfToken: result.csrfToken,
+    expiresAt: result.expiresAt.toISOString(),
+  });
+});
+
+router.get("/auth/launch", async (req, res) => {
+  if (!isLaunchAuthConfigured()) {
+    throw new HttpError(503, "Launch authentication is not configured.", {
+      code: "launch_auth_not_configured",
+      expose: true,
+    });
+  }
+  enforceRateLimit(`launch:ip:${clientIp(req)}`, 30, 5 * 60_000);
+  const token =
+    typeof req.query.token === "string" ? req.query.token : "";
+  if (!token) {
+    throw new HttpError(400, "Missing launch token.", {
+      code: "launch_token_missing",
+      expose: true,
+    });
+  }
+  const result = await launchSession(token);
+  setSessionCookie(req, res, result.sessionToken);
+  res.redirect(302, "/");
 });
 
 router.post("/auth/logout", async (req, res) => {

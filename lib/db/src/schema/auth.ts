@@ -62,6 +62,19 @@ export const authSessionsTable = pgTable(
   ],
 );
 
+// One-time replay guard for launch-token JWTs (Slice 6). A launch token's `jti` is
+// inserted here on first use; a second insert (replay) violates the PK and is rejected.
+// Rows past `expiresAt` (the token's own exp) are dead weight and swept periodically.
+export const launchTokenJtiTable = pgTable(
+  "launch_token_jti",
+  {
+    jti: text("jti").primaryKey(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [index("launch_token_jti_expires_at_idx").on(table.expiresAt)],
+);
+
 export const insertUserSchema = createInsertSchema(usersTable);
 export const insertAuthSessionSchema = createInsertSchema(authSessionsTable);
 
@@ -69,3 +82,5 @@ export type User = typeof usersTable.$inferSelect;
 export type InsertUser = typeof usersTable.$inferInsert;
 export type AuthSession = typeof authSessionsTable.$inferSelect;
 export type InsertAuthSession = typeof authSessionsTable.$inferInsert;
+export type LaunchTokenJti = typeof launchTokenJtiTable.$inferSelect;
+export type InsertLaunchTokenJti = typeof launchTokenJtiTable.$inferInsert;
