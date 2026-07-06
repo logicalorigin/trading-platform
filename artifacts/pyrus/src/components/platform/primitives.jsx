@@ -1070,7 +1070,6 @@ export const DataUnavailableState = ({
   detail = "This panel is waiting on a live provider response.",
   loading = false,
   loadingWaitItems,
-  loadingEndpoint,
   tone,
   variant = "neutral",
   icon,
@@ -1089,19 +1088,11 @@ export const DataUnavailableState = ({
   const accentBorder =
     variant === "neutral" ? CSS_COLOR.border : cssColorMix(variantTone, 33);
   const titleColor = resolvedTone || CSS_COLOR.text;
-  const waitItems =
-    loadingWaitItems ||
-    (loading
-      ? [
-          {
-            id: `${title}:wait`,
-            label: title,
-            status: "loading",
-            detail,
-            endpoint: loadingEndpoint,
-          },
-        ]
-      : []);
+  // Only surface the container wait-line list when a caller explicitly tracks
+  // multiple waits. For the simple `loading` case the title + detail (+ spinner)
+  // already are the loading message, so an auto-synthesized single wait item
+  // just re-emitted "<title> - <detail> - <elapsed>" verbatim beneath itself.
+  const waitItems = loadingWaitItems || [];
   return (
     <div
       role={variant === "error" ? "alert" : undefined}
@@ -1175,11 +1166,13 @@ export const DataUnavailableState = ({
         >
           {detail}
         </div>
-        <ContainerLoadingStatus
-          items={waitItems}
-          testId="data-unavailable-loading-waits"
-          style={{ textAlign: "left" }}
-        />
+        {waitItems.length ? (
+          <ContainerLoadingStatus
+            items={waitItems}
+            testId="data-unavailable-loading-waits"
+            style={{ textAlign: "left" }}
+          />
+        ) : null}
         {action ? (
           <div
             style={{

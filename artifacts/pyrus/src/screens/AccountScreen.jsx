@@ -53,7 +53,6 @@ import {
   useAccountSectionTransitionSnapshot,
 } from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
-import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { LoadingSpinner, StatTile, StatusPill } from "../components/platform/primitives.jsx";
@@ -406,10 +405,8 @@ const equityQueryWithLivePositionsTerminal = ({
 
 const AccountPanelSuspenseFallback = ({
   detail = "Preparing account data.",
-  endpoint,
   minHeight = 160,
   title = "Loading account panel",
-  waitItems,
 }) => (
   <div
     className="ra-deferred-render__placeholder"
@@ -447,20 +444,6 @@ const AccountPanelSuspenseFallback = ({
     >
       {detail}
     </div>
-    <ContainerLoadingStatus
-      items={
-        waitItems || [
-          {
-            id: `${title}:fallback`,
-            label: title,
-            status: "loading",
-            detail,
-            endpoint,
-          },
-        ]
-      }
-      testId="account-panel-fallback-waits"
-    />
     <span
       aria-hidden="true"
       className="ra-deferred-render__skeleton ra-skeleton-shimmer"
@@ -472,10 +455,8 @@ const AccountPanelSuspenseFallback = ({
 const DeferredPanelSuspense = ({
   children,
   detail,
-  endpoint,
   minHeight = 160,
   title,
-  waitItems,
 }) => (
   <PlatformErrorBoundary
     label={title || "Account deferred panel"}
@@ -487,10 +468,8 @@ const DeferredPanelSuspense = ({
       fallback={
         <AccountPanelSuspenseFallback
           detail={detail}
-          endpoint={endpoint}
           minHeight={minHeight}
           title={title}
-          waitItems={waitItems}
         />
       }
     >
@@ -2483,15 +2462,6 @@ const AccountScreenInner = ({
           minHeight={accountIsPhone ? 58 : 42}
           title="Loading account summary"
           detail="Preparing balances and account status."
-          waitItems={[
-            {
-              id: "account-summary-module",
-              label: "Account summary panel module",
-              status: "loading",
-              detail: "reads balances, equity, positions, trades, and cash",
-              endpoint: "src/screens/account/AccountHeroBlock",
-            },
-          ]}
         >
           <AccountHeroBlock
             summary={displaySummaryData}
@@ -2540,15 +2510,6 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 310 : 350}
               title="Loading returns calendar"
               detail="Preparing realized P&L and equity history."
-              waitItems={[
-                {
-                  id: "account-returns-module",
-                  label: "Returns calendar panel module",
-                  status: "loading",
-                  detail: "reads closed trades and equity history",
-                  endpoint: "src/screens/account/AccountReturnsPanel",
-                },
-              ]}
             >
               <AccountReturnsPanel
                 currency={currency}
@@ -2565,15 +2526,6 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 174 : 246}
               title="Loading exposure"
               detail="Preparing allocation and risk charts."
-              waitItems={[
-                {
-                  id: "account-exposure-module",
-                  label: "Exposure panel module",
-                  status: "loading",
-                  detail: "reads allocation, risk, and open positions",
-                  endpoint: "src/screens/account/PortfolioExposurePanel",
-                },
-              ]}
             >
               <LazyPortfolioExposurePanel
                 allocationQuery={allocationQueryForDisplay}
@@ -2605,15 +2557,6 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 280 : 314}
               title="Loading equity curve"
               detail="Preparing account chart and date inspector."
-              waitItems={[
-                {
-                  id: "account-equity-module",
-                  label: "Equity curve panel module",
-                  status: "loading",
-                  detail: "reads equity history and benchmark histories",
-                  endpoint: "src/screens/account/EquityCurvePanel",
-                },
-              ]}
             >
               <LazyEquityCurvePanel
                 query={equityQueryForDisplay}
@@ -2697,15 +2640,6 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 340 : 300}
             title="Loading today snapshot"
             detail="Preparing intraday P&L and position treemap."
-            waitItems={[
-              {
-                id: "account-today-module",
-                label: "Today snapshot panel module",
-                status: "loading",
-                detail: "reads positions and intraday P&L",
-                endpoint: "src/screens/account/TodaySnapshotPanel",
-              },
-            ]}
           >
             <TodaySnapshotPanel
               positionsQuery={positionsQueryForDisplay}
@@ -2732,15 +2666,6 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 760 : 540}
             title="Loading trading analysis"
             detail="Preparing trade lifecycle charts and filters."
-            waitItems={[
-              {
-                id: "account-analysis-module",
-                label: "Trading analysis workbench",
-                status: "loading",
-                detail: "reads closed trades, orders, positions, and calendar metrics",
-                endpoint: "src/screens/account/TradingAnalysisWorkbench",
-              },
-            ]}
           >
             <LazyTradingAnalysisWorkbench
               query={accountAnalysisQueryForDisplay}
@@ -2772,15 +2697,6 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 360 : 240}
             title="Loading orders"
             detail="Preparing working orders and order history."
-            waitItems={[
-              {
-                id: "account-orders-module",
-                label: "Orders panel module",
-                status: "loading",
-                detail: "reads working orders and order history",
-                endpoint: "src/screens/account/TradesOrdersPanel",
-              },
-            ]}
           >
             <OrdersPanel
               query={ordersQueryForDisplay}
@@ -2819,15 +2735,6 @@ const AccountScreenInner = ({
               minHeight={168}
               title="Loading cash activity"
               detail="Preparing deposits, withdrawals, and funding history."
-              waitItems={[
-                {
-                  id: "account-cash-module",
-                  label: "Cash activity panel module",
-                  status: "loading",
-                  detail: "reads deposits, withdrawals, and funding history",
-                  endpoint: "src/screens/account/CashFundingPanel",
-                },
-              ]}
             >
               <LazyCashFundingPanel
                 query={cashQueryForDisplay}
@@ -2910,15 +2817,6 @@ const AccountScreenInner = ({
               minHeight={130}
               title="Loading setup health"
               detail="Preparing broker and Flex health checks."
-              waitItems={[
-                {
-                  id: "account-setup-module",
-                  label: "Setup health panel module",
-                  status: "loading",
-                  detail: "reads broker authentication and Flex health",
-                  endpoint: "src/screens/account/SetupHealthPanel",
-                },
-              ]}
             >
               <LazySetupHealthPanel
                 session={session}
