@@ -1,4 +1,4 @@
-import { CSS_COLOR, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, sp, T, textSize } from "../../lib/uiTokens.jsx";
 
 /**
  * SectionHeader — the canonical in-card section title.
@@ -18,7 +18,7 @@ export const SectionHeader = ({
       : size === "sm"
         ? "paragraph"
         : "displaySmall";
-  const titleWeight = size === "sm" ? 500 : 600;
+  const titleWeight = size === "sm" ? FONT_WEIGHTS.medium : FONT_WEIGHTS.label;
   const titleTrack = size === "sm" ? "0em" : "-0.01em";
   const marginBottom =
     spacing === "none" ? 0 : spacing === "lg" ? sp(14) : sp(8);

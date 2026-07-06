@@ -1,7 +1,7 @@
 import React, { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, GLOW, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, GLOW, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars, useValueFlash } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
 import { ContainerLoadingStatus } from "./ContainerLoadingStatus.jsx";
@@ -982,7 +982,7 @@ export const StatTile = ({
         style={{
           color: tone,
           fontFamily: T.data,
-          fontSize: fs(16),
+          fontSize: textSize("displaySmall"),
           fontWeight: FONT_WEIGHTS.emphasis,
           fontVariantNumeric: "tabular-nums",
           lineHeight: 1.05,
@@ -1085,7 +1085,7 @@ export const DataUnavailableState = ({
   const accentBg =
     variant === "neutral"
       ? CSS_COLOR.bg1
-      : `linear-gradient(180deg, ${cssColorMix(variantTone, 5)} 0%, ${CSS_COLOR.bg1} 60%)`;
+      : cssColorMix(variantTone, 5);
   const accentBorder =
     variant === "neutral" ? CSS_COLOR.border : cssColorMix(variantTone, 33);
   const titleColor = resolvedTone || CSS_COLOR.text;

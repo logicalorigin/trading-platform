@@ -112,7 +112,7 @@ import { getChartTimeframeDefinition } from "./timeframes";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { CSS_COLOR, GLOW, THEMES, cssColorAlpha, cssColorMix, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, GLOW, THEMES, cssColorAlpha, cssColorMix, ELEVATION, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
@@ -12239,9 +12239,8 @@ const ResearchChartSurfaceComponent = ({
                 gap: surfaceToolbarIconOnly ? 3 : 6,
                 padding: surfaceToolbarIconOnly ? "4px 5px" : "5px 7px",
                 border: `1px solid ${withAlpha(theme.border, "b8")}`,
-                background: withAlpha(theme.bg2, "dc"),
-                backdropFilter: "blur(14px)",
-                boxShadow: `0 12px 28px ${withAlpha(theme.bg4, "52")}`,
+                background: theme.bg2,
+                boxShadow: ELEVATION.md,
                 maxWidth: isNarrowFrame ? "100%" : undefined,
               }}
             >
@@ -12279,7 +12278,7 @@ const ResearchChartSurfaceComponent = ({
                     style={{
                       border: `1px solid ${control.active ? withAlpha(theme.accent || theme.text, "88") : withAlpha(theme.border, "70")}`,
                       background: control.active
-                        ? `linear-gradient(180deg, ${withAlpha(theme.accent || theme.text, "20")} 0%, ${withAlpha(theme.accent || theme.text, "10")} 100%)`
+                        ? withAlpha(theme.accent || theme.text, "1a")
                         : withAlpha(theme.bg4, "d8"),
                       color: control.active
                         ? theme.text
@@ -13823,7 +13822,7 @@ const ResearchChartSurfaceComponent = ({
                         whiteSpace: "nowrap",
                         boxShadow: isSwing || isTriangle
                           ? "none"
-                          : `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
+                          : ELEVATION.sm,
                         letterSpacing:
                           isSignal || isStructure || isSwing ? "0.04em" : 0,
                       }}
@@ -13875,7 +13874,7 @@ const ResearchChartSurfaceComponent = ({
                       fontFamily: theme.mono,
                       fontWeight: FONT_WEIGHTS.regular,
                       whiteSpace: "nowrap",
-                      boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
+                      boxShadow: ELEVATION.sm,
                     }}
                   >
                     {badge.text}
@@ -13931,8 +13930,7 @@ const ResearchChartSurfaceComponent = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background:
-              "linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 100%)",
+            background: withAlpha(theme.text, "05"),
           }}
         >
           {emptyStateIsLoading ? (
@@ -13949,9 +13947,8 @@ const ResearchChartSurfaceComponent = ({
               maxWidth: 360,
               padding: "16px 18px",
               border: `1px solid ${withAlpha(theme.border, "b8")}`,
-              background: withAlpha(theme.bg2, "de"),
-              backdropFilter: "blur(14px)",
-              boxShadow: `0 18px 42px ${withAlpha(theme.bg4, "48")}`,
+              background: theme.bg2,
+              boxShadow: ELEVATION.lg,
             }}
           >
             <div

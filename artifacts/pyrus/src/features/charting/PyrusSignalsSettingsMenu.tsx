@@ -150,11 +150,10 @@ const headerStyle = (theme: WidgetTheme): CSSProperties => ({
   gap: 12,
   padding: "12px 14px",
   borderBottom: `1px solid ${theme.border}`,
-  background: cssColorAlpha(theme.bg3, "dd"),
+  background: theme.bg3,
   position: "sticky",
   top: 0,
   zIndex: 1,
-  backdropFilter: "blur(10px)",
 });
 
 const titleKickerStyle = (theme: WidgetTheme): CSSProperties => ({

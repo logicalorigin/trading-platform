@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
 import type { ChartDisplayType, ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
 import { Activity, AreaChart, BarChart3, CandlestickChart, ChevronDown, Search } from "lucide-react";
@@ -194,7 +194,7 @@ export const getPanelPalette = (theme: WidgetTheme): PanelPalette => {
       ? withAlpha(theme.border, "cc")
       : withAlpha(theme.border, "88"),
     shadow: lightSurface
-      ? `0 1px 2px ${withAlpha(theme.border, "55")}`
+      ? ELEVATION.sm
       : "none",
   };
 };
@@ -567,8 +567,7 @@ export const menuContentStyle = (
     border: `1px solid ${withAlpha(theme.border, "d9")}`,
     background: palette.panel,
     color: theme.text,
-    boxShadow:
-      "0 16px 32px rgba(0,0,0,0.36), 0 0 0 1px rgba(255,255,255,0.03)",
+    boxShadow: `${ELEVATION.lg}, 0 0 0 1px rgba(255,255,255,0.03)`,
     fontFamily: theme.display || FONT_CSS_VAR.sans,
   } as CSSProperties);
 

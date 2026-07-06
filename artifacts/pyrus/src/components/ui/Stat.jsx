@@ -73,7 +73,7 @@ export const Stat = ({
           fontSize: textSize(dims.value),
           fontVariantNumeric: "tabular-nums",
           fontWeight:
-            size === "hero" || size === "lg" ? 600 : 500,
+            size === "hero" || size === "lg" ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
           letterSpacing: size === "hero" ? "-0.02em" : "-0.01em",
           lineHeight: 1.1,
           textAlign: align,

@@ -104,8 +104,7 @@ export const ConfirmDialog = ({
         alignItems: "center",
         justifyContent: "center",
         padding: sp(16),
-        background: cssColorMix(CSS_COLOR.bg0, 72),
-        backdropFilter: "blur(8px)",
+        background: cssColorMix(CSS_COLOR.bg0, 88),
       }}
     >
       <div

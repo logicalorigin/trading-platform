@@ -90,7 +90,7 @@ const ToolbarButton = ({
             right: -dim(8),
             minWidth: dim(14),
             height: dim(14),
-            padding: "0 4px",
+            padding: sp("0 4px"),
             borderRadius: dim(RADII.pill),
             background: CSS_COLOR.accent,
             color: CSS_COLOR.onAccent,

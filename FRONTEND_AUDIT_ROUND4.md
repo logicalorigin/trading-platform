@@ -4,7 +4,8 @@ Fourth sweep — a **design-drift** pass hunting *stray old styling* that no lon
 
 - **Method:** hybrid dynamic workflow `wf_efcdbadb-daf` — 14 area agents, each doing a headless **screenshot** review + a **source** drift-scan, then per-area **adversarial verify**. Visual grounding used anonymous screenshots; an authenticated pass (all 11 screens populated via a temporary QA session, since revoked) was captured for follow-up.
 - **Result:** **46 confirmed drift findings** — **2 high**, **21 medium**, **23 low**, across 11 areas. Raw: `docs/audits/frontend-audit-round4-2026-07-05.raw.json`.
-- **Coverage gap:** the `charting` and `primitives-tokens` area verifiers failed on a model-quota limit, so their candidate findings are NOT in this confirmed set — re-run after quota reset to fold them in.
+- **Coverage gap — RESOLVED (2026-07-06):** the `charting` and `primitives-tokens` areas were originally quota-skipped. Re-run via workflow `wf_ed6c7b2c-880` (6 source-drift clusters incl. the 14k-LOC `ResearchChartSurface.tsx`, each candidate adversarially re-verified) → **19 candidates → 17 confirmed / 2 rejected** (0 high / 11 medium / 6 low). Remediated via `wf_5a058521-fec` (batched by file, model-tiered: mechanical→haiku, semantic→Opus, per-file adversarial verify), typecheck green. See **Coverage-gap findings (17)** below.
+- **Combined Round-4 total:** **63 confirmed findings** (46 original + 17 coverage-gap).
 
 ## By area
 
@@ -93,3 +94,27 @@ Fourth sweep — a **design-drift** pass hunting *stray old styling* that no lon
 | 44 | low | trade | `features/trade/TradePositionsPanel.jsx:2010` | spacing | Raw pixel padding "0 4px" hardcoded on the Broker-executions header row while the same style block uses token helpers (gap: sp(3), textSize("caption"), CSS_COLOR.textMuted). The li | padding: sp("0 4px") to track workspace density/scale like the neighboring sp(3) gap. |
 | 45 | low | trade | `features/trade/TradePositionsPanel.jsx:2204` | spacing | Raw pixel padding "0 4px" hardcoded on the Live-broker-orders header row, duplicate of line 2010, again beside gap: sp(3)/textSize/CSS_COLOR tokens. Bypasses sp(). | padding: sp("0 4px") to match the token-driven spacing used for gap in the same block. |
 | 46 | low | trade | `features/trade/TradeStrategyGreeksPanel.jsx:185` | spacing | Raw pixel padding string "2px 0" hardcoded inline on the GreekBar grid, bypassing sp(). The very same file routes multi-value padding through sp() (e.g. sp("8px 10px") at lines 103 | padding: sp("2px 0") — sp() accepts multi-value strings (uiTokens.jsx line 379), matching the file's existing sp("8px 10px") usage. |
+
+## Coverage-gap findings (17) — charting + primitives-tokens (re-run 2026-07-06)
+
+Areas originally quota-skipped, re-audited + remediated 2026-07-06. All applied and adversarially verified; `pnpm --filter @workspace/pyrus typecheck` green. **2 rejected** by the adversarial pass: `MarketChartPremiumFlowIndicator.jsx:112/262` put-branch `CSS_COLOR.red` — the canonical `directionSell` token (resolves identically to `SEMANTIC_TONE.directionSell`), not drift.
+
+| # | sev | area | file:line | theme | issue | fix applied |
+|---|---|---|---|---|---|---|
+| G1 | medium | primitives | `components/platform/primitives.jsx:1088` | shading | `DataUnavailableState` accentBg is a 2-stop `linear-gradient(180deg, cssColorMix(variantTone,5) 0%, CSS_COLOR.bg1 60%)` variant wash (info/error/warning tint, not data) | flat `cssColorMix(variantTone, 5)` (variant still reads via accentBorder) |
+| G2 | medium | primitives | `components/ui/ConfirmDialog.jsx:108` | surface | modal scrim decorative glass `backdropFilter: blur(8px)` over `cssColorMix(bg0,72)` | dropped blur; opaque scrim `cssColorMix(CSS_COLOR.bg0, 88)` |
+| G3 | medium | charting | `features/charting/chartWidgetShared.tsx:571` | shading | `menuContentStyle` popover raw depth `0 16px 32px rgba(0,0,0,0.36)` (+1px ring) | `ELEVATION.lg` (1px ring preserved) |
+| G4 | medium | charting | `features/charting/PyrusSignalsSettingsMenu.tsx:157` | shading | sticky popover header glass `backdropFilter: blur(10px)` over `cssColorAlpha(theme.bg3,"dd")` | dropped blur; opaque `theme.bg3` |
+| G5 | medium | charting | `features/charting/ResearchChartSurface.tsx:12243` | surface | floating toolbar panel glass `backdropFilter: blur(14px)` over `withAlpha(theme.bg2,"dc")` | dropped blur; opaque `theme.bg2` |
+| G6 | medium | charting | `features/charting/ResearchChartSurface.tsx:12244` | shading | toolbar-group chip raw `0 12px 28px withAlpha(theme.bg4,"52")` | `ELEVATION.md` |
+| G7 | medium | charting | `features/charting/ResearchChartSurface.tsx:13824` | shading | marker label raw `0 4px 12px withAlpha(theme.bg4,"88")` (elevated branch) | `ELEVATION.sm` |
+| G8 | medium | charting | `features/charting/ResearchChartSurface.tsx:13878` | shading | trade entry/exit badge raw `0 4px 12px withAlpha(theme.bg4,"88")` | `ELEVATION.sm` |
+| G9 | medium | charting | `features/charting/ResearchChartSurface.tsx:13935` | surface | empty-state container raw `linear-gradient(180deg, rgba(255,255,255,0.02)→0)` depth wash | flat `withAlpha(theme.text, "05")` (bg1 absent on ResearchChartTheme; bg2 collides with inner card) |
+| G10 | medium | charting | `features/charting/ResearchChartSurface.tsx:13953` | surface | empty-state panel glass `backdropFilter: blur(14px)` over `withAlpha(theme.bg2,"de")` | dropped blur; opaque `theme.bg2` |
+| G11 | medium | charting | `features/charting/ResearchChartSurface.tsx:13954` | shading | empty-state panel raw `0 18px 42px withAlpha(theme.bg4,"48")` | `ELEVATION.lg` |
+| G12 | low | primitives | `components/platform/primitives.jsx:985` | typography | `StatTile` value raw `fontSize: fs(16)` | `textSize("displaySmall")` (fs import removed — orphaned) |
+| G13 | low | primitives | `components/ui/SectionHeader.jsx:21` | typography | raw `titleWeight = size==="sm" ? 500 : 600` (FONT_WEIGHTS not imported) | `FONT_WEIGHTS.medium/label` (import added) |
+| G14 | low | primitives | `components/ui/Stat.jsx:76` | typography | raw value weight `... ? 600 : 500` | `FONT_WEIGHTS.label/medium` |
+| G15 | low | charting | `features/charting/ChartMobileToolbar.tsx:92` | spacing | badge pill raw `padding: "0 4px"` | `sp("0 4px")` |
+| G16 | low | charting | `features/charting/chartWidgetShared.tsx:197` | shading | `getPanelPalette` legend-chip raw `0 1px 2px withAlpha(theme.border,"55")` | `ELEVATION.sm` |
+| G17 | low | charting | `features/charting/ResearchChartSurface.tsx:12282` | surface | active toolbar toggle 2-stop accent `linear-gradient(180deg, withAlpha(accent,"20")→"10")` | flat `withAlpha(theme.accent || theme.text, "1a")` |
