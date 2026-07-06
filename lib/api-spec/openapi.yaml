@@ -815,6 +815,84 @@ paths:
               schema:
                 $ref: "#/components/schemas/SyncSchwabConnectionsResponse"
 
+  /broker-execution/schwab/accounts/{accountId}/orders/preview:
+    post:
+      operationId: previewSchwabEquityOrder
+      tags: [broker]
+      summary: Preview a Schwab equity order for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS Schwab broker account id returned by Schwab account sync.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchwabEquityOrderPreviewBody"
+      responses:
+        "200":
+          description: Sanitized Schwab order preview response. This does not place an order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchwabEquityOrderPreviewResponse"
+
+  /broker-execution/schwab/accounts/{accountId}/orders:
+    post:
+      operationId: submitSchwabEquityOrder
+      tags: [broker]
+      summary: Submit a confirmed Schwab equity order for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS Schwab broker account id returned by Schwab account sync.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchwabEquityOrderSubmitBody"
+      responses:
+        "200":
+          description: Sanitized Schwab equity order submission response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchwabEquityOrderSubmitResponse"
+
+  /broker-execution/schwab/accounts/{accountId}/orders/cancel:
+    post:
+      operationId: cancelSchwabEquityOrder
+      tags: [broker]
+      summary: Cancel a Schwab equity order for a synced local account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Local PYRUS Schwab broker account id returned by Schwab account sync.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchwabEquityOrderCancelBody"
+      responses:
+        "200":
+          description: Sanitized Schwab equity order cancellation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchwabEquityOrderCancelResponse"
+
   /broker-execution/ibkr-portal/readiness:
     get:
       operationId: getIbkrPortalReadiness
@@ -4511,7 +4589,11 @@ components:
 
     IbkrOAuthReadinessStatus:
       type: string
-      enum: [unconfigured, approval_required, research_required]
+      # self_service_ready: all first-party self-service credentials are present
+      # so the OAuth crypto core can obtain a live session token on our own IBKR
+      # account (no third-party approval needed). It does NOT imply execution is
+      # enabled — the unattended session/order layer is gated separately.
+      enum: [unconfigured, approval_required, research_required, self_service_ready]
 
     IbkrOAuthCredentialReadiness:
       type: object
@@ -4524,11 +4606,23 @@ components:
           type: boolean
         thirdPartyApprovalRecorded:
           type: boolean
+        encryptionKeyPresent:
+          type: boolean
+        dhParamPresent:
+          type: boolean
+        accessTokenPresent:
+          type: boolean
+        accessTokenSecretPresent:
+          type: boolean
       required:
         - consumerKeyPresent
         - signingKeyPresent
         - callbackUrlPresent
         - thirdPartyApprovalRecorded
+        - encryptionKeyPresent
+        - dhParamPresent
+        - accessTokenPresent
+        - accessTokenSecretPresent
 
     IbkrOAuthHostedConnectRequirements:
       type: object
@@ -6234,6 +6328,11 @@ components:
           nullable: true
         nextAction:
           $ref: "#/components/schemas/SchwabUserReadinessNextAction"
+        executionBlockers:
+          type: array
+          items:
+            type: string
+          description: User-specific broker execution blockers. Includes broker_reauth when the Schwab refresh-token wall is expired or within the reconnect window.
       required:
         - connected
         - status
@@ -6242,6 +6341,7 @@ components:
         - refreshTokenExpiresAt
         - disabledAt
         - nextAction
+        - executionBlockers
 
     SchwabReadinessResponse:
       type: object
@@ -6447,6 +6547,195 @@ components:
         - connections
         - accounts
         - totals
+
+    SchwabEquityOrderAction:
+      type: string
+      enum: [BUY, SELL, BUY_TO_COVER, SELL_SHORT]
+
+    SchwabEquityOrderType:
+      type: string
+      enum: [Market, Limit, Stop, StopLimit]
+
+    SchwabEquityTimeInForce:
+      type: string
+      enum: [Day, GoodTillCancel, FillOrKill]
+
+    SchwabEquityTradingSession:
+      type: string
+      enum: [Normal, Am, Pm, Seamless]
+
+    SchwabEquityOrderPreviewBody:
+      type: object
+      description: Local PYRUS request for a Schwab equity order preview. Uses camelCase locally and is translated to Schwab Trader API wire fields server-side.
+      properties:
+        symbol:
+          type: string
+          description: Brokerage trading symbol.
+        action:
+          $ref: "#/components/schemas/SchwabEquityOrderAction"
+        quantity:
+          type: number
+          description: Whole-share quantity.
+        orderType:
+          $ref: "#/components/schemas/SchwabEquityOrderType"
+        timeInForce:
+          $ref: "#/components/schemas/SchwabEquityTimeInForce"
+        session:
+          allOf:
+            - $ref: "#/components/schemas/SchwabEquityTradingSession"
+          nullable: true
+        limitPrice:
+          type: number
+          nullable: true
+          description: Required for Limit and StopLimit orders.
+        stopPrice:
+          type: number
+          nullable: true
+          description: Required for Stop and StopLimit orders.
+      required:
+        - symbol
+        - action
+        - quantity
+        - orderType
+        - timeInForce
+
+    SchwabEquityOrderSubmitBody:
+      allOf:
+        - $ref: "#/components/schemas/SchwabEquityOrderPreviewBody"
+        - type: object
+          description: Local PYRUS request for Schwab order submission. confirm=true is required because this can submit a live brokerage order once execution gates are lifted.
+          properties:
+            confirm:
+              type: boolean
+              description: Must be true to submit the order to Schwab and the brokerage account.
+          required:
+            - confirm
+
+    SchwabEquityOrderCancelBody:
+      type: object
+      description: Local PYRUS request for Schwab order cancellation.
+      properties:
+        orderId:
+          type: string
+          description: Schwab order id to cancel.
+      required:
+        - orderId
+
+    SchwabEquityOrderAccount:
+      type: object
+      description: Sanitized local account metadata for a Schwab order operation.
+      properties:
+        id:
+          type: string
+          description: Local PYRUS broker account id.
+        connectionId:
+          type: string
+          description: Local PYRUS broker connection id.
+        accountHash:
+          type: string
+          description: Schwab account hash value used in place of the account number.
+        displayName:
+          type: string
+        baseCurrency:
+          type: string
+        mode:
+          type: string
+          enum: [live]
+        accountStatus:
+          type: string
+          nullable: true
+        executionReady:
+          type: boolean
+        executionBlockers:
+          type: array
+          items:
+            type: string
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - connectionId
+        - accountHash
+        - displayName
+        - baseCurrency
+        - mode
+        - accountStatus
+        - executionReady
+        - executionBlockers
+        - lastSyncedAt
+
+    SchwabEquityOrderPreviewResponse:
+      type: object
+      description: Sanitized response from Schwab's order preview endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        checkedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SchwabEquityOrderAccount"
+        preview:
+          type: object
+          nullable: true
+          additionalProperties: true
+      required:
+        - provider
+        - checkedAt
+        - account
+        - preview
+
+    SchwabEquityOrderSubmitResponse:
+      type: object
+      description: Sanitized response from Schwab's order placement endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        submittedAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SchwabEquityOrderAccount"
+        orderId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [submitted]
+      required:
+        - provider
+        - submittedAt
+        - account
+        - orderId
+        - status
+
+    SchwabEquityOrderCancelResponse:
+      type: object
+      description: Sanitized response from Schwab's order cancellation endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+      properties:
+        provider:
+          type: string
+          enum: [schwab]
+        canceledAt:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/SchwabEquityOrderAccount"
+        orderId:
+          type: string
+        status:
+          type: string
+          enum: [canceled]
+      required:
+        - provider
+        - canceledAt
+        - account
+        - orderId
+        - status
 
     IbkrPortalConnectionStatus:
       type: string

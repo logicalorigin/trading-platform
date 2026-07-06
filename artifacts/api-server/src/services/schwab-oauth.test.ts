@@ -93,6 +93,7 @@ test("startSchwabConnect builds an authorization URL without any network call", 
       const readiness = await readSchwabUserReadiness(auth.user.id);
       assert.equal(readiness.status, "pending");
       assert.equal(readiness.nextAction, "complete_authorization");
+      assert.deepEqual(readiness.executionBlockers, []);
     }),
   );
 });
@@ -197,6 +198,7 @@ test("completeSchwabConnect exchanges the code with Basic auth and stores tokens
       assert.equal(readiness.status, "connected");
       assert.equal(readiness.refreshTokenStored, true);
       assert.equal(readiness.nextAction, "sync_accounts");
+      assert.deepEqual(readiness.executionBlockers, []);
       assert.ok(readiness.refreshTokenExpiresAt);
       const expiresAt = new Date(readiness.refreshTokenExpiresAt!).getTime();
       const expected = now.getTime() + 60_000 + SEVEN_DAYS_MS;
@@ -397,6 +399,11 @@ test("getSchwabAccessToken throws 409 schwab_reconnect_required when the refresh
         now,
       });
 
+      const readiness = await readSchwabUserReadiness(auth.user.id, now);
+      assert.equal(readiness.status, "expired");
+      assert.equal(readiness.nextAction, "reconnect");
+      assert.deepEqual(readiness.executionBlockers, ["broker_reauth"]);
+
       await assert.rejects(
         getSchwabAccessToken({
           appUserId: auth.user.id,
@@ -413,6 +420,37 @@ test("getSchwabAccessToken throws 409 schwab_reconnect_required when the refresh
           );
         },
       );
+    }),
+  );
+});
+
+test("readSchwabUserReadiness flags broker_reauth when the refresh token wall is near", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("owner@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginSchwabConnectCustody({
+        appUserId: auth.user.id,
+        oauthState: "state-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeSchwabTokens({
+        appUserId: auth.user.id,
+        accessToken: "fresh-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() + 1_800_000),
+        refreshTokenExpiresAt: new Date(now.getTime() + 23 * 60 * 60 * 1000),
+        scope: "api",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      const readiness = await readSchwabUserReadiness(auth.user.id, now);
+      assert.equal(readiness.connected, true);
+      assert.equal(readiness.status, "connected");
+      assert.equal(readiness.nextAction, "reconnect");
+      assert.deepEqual(readiness.executionBlockers, ["broker_reauth"]);
     }),
   );
 });

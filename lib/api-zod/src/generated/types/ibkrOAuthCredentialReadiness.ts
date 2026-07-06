@@ -11,4 +11,8 @@ export interface IbkrOAuthCredentialReadiness {
   signingKeyPresent: boolean;
   callbackUrlPresent: boolean;
   thirdPartyApprovalRecorded: boolean;
+  encryptionKeyPresent: boolean;
+  dhParamPresent: boolean;
+  accessTokenPresent: boolean;
+  accessTokenSecretPresent: boolean;
 }

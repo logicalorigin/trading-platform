@@ -20,4 +20,6 @@ export interface SchwabUserReadiness {
   refreshTokenExpiresAt: Date | null;
   disabledAt: Date | null;
   nextAction: SchwabUserReadinessNextAction;
+  /** User-specific broker execution blockers. Includes broker_reauth when the Schwab refresh-token wall is expired or within the reconnect window. */
+  executionBlockers: string[];
 }

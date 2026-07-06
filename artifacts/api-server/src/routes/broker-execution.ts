@@ -12,10 +12,16 @@ import {
   RegisterSnapTradeCurrentUserResponse,
   CheckSnapTradeEquityOrderImpactBody,
   CheckSnapTradeEquityOrderImpactResponse,
+  CancelSchwabEquityOrderBody,
+  CancelSchwabEquityOrderResponse,
   ListSnapTradeBrokeragesResponse,
   GetSchwabReadinessResponse,
+  PreviewSchwabEquityOrderBody,
+  PreviewSchwabEquityOrderResponse,
   StartRobinhoodConnectResponse,
   StartSchwabConnectResponse,
+  SubmitSchwabEquityOrderBody,
+  SubmitSchwabEquityOrderResponse,
   SubmitSnapTradeEquityOrderBody,
   SubmitSnapTradeEquityOrderResponse,
   SyncRobinhoodConnectionsResponse,
@@ -44,6 +50,11 @@ import {
 } from "../services/schwab-oauth";
 import { readSchwabReadiness } from "../services/schwab-readiness";
 import { readSchwabUserReadiness } from "../services/schwab-user-custody";
+import {
+  cancelSchwabEquityOrder,
+  previewSchwabEquityOrder,
+  submitSchwabEquityOrder,
+} from "../services/schwab-equity-orders";
 import { getSnapTradeAccountPortfolio } from "../services/snaptrade-account-portfolio";
 import { generateSnapTradeConnectionPortal } from "../services/snaptrade-connection-portal";
 import {
@@ -55,7 +66,10 @@ import {
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { getSnapTradeAccountHistory } from "../services/snaptrade-account-history";
-import { refreshSnapTradeAccountHistoryForUser } from "../services/snaptrade-history-scheduler";
+import {
+  refreshSnapTradeAccountHistoryForUser,
+  refreshSnapTradeAccountHistoryOnRead,
+} from "../services/snaptrade-history-scheduler";
 import { listSnapTradeBrokerages } from "../services/snaptrade-brokerages";
 import { syncSnapTradeBrokerageConnections } from "../services/snaptrade-account-sync";
 import { readSnapTradeReadiness } from "../services/snaptrade-readiness";
@@ -246,6 +260,54 @@ router.post("/broker-execution/schwab/sync", async (req, res) => {
   res.json(data);
 });
 
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/orders/preview",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = PreviewSchwabEquityOrderBody.parse(req.body ?? {});
+    const data = PreviewSchwabEquityOrderResponse.parse(
+      await previewSchwabEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/orders",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = SubmitSchwabEquityOrderBody.parse(req.body ?? {});
+    const data = SubmitSchwabEquityOrderResponse.parse(
+      await submitSchwabEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        input: body,
+      }),
+    );
+    res.json(data);
+  },
+);
+
+router.post(
+  "/broker-execution/schwab/accounts/:accountId/orders/cancel",
+  async (req, res) => {
+    const session = await requireAdminCsrf(req);
+    const body = CancelSchwabEquityOrderBody.parse(req.body ?? {});
+    const data = CancelSchwabEquityOrderResponse.parse(
+      await cancelSchwabEquityOrder({
+        appUserId: session.user.id,
+        accountId: req.params.accountId,
+        orderId: body.orderId,
+      }),
+    );
+    res.json(data);
+  },
+);
+
 router.get("/broker-execution/snaptrade/brokerages", async (req, res) => {
   await requireEntitlement("broker_connect")(req);
   const data = ListSnapTradeBrokeragesResponse.parse(
@@ -323,6 +385,12 @@ router.get(
         range: readOptionalHistoryRange(req.query.range),
       }),
     );
+    // Stored-first: the response above is served from persisted data (fast); keep
+    // it fresh with a throttled, non-blocking background refresh for next time.
+    refreshSnapTradeAccountHistoryOnRead({
+      appUserId: session.user.id,
+      accountId: req.params.accountId,
+    });
     res.json(data);
   },
 );

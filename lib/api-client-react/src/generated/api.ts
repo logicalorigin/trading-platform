@@ -185,6 +185,12 @@ import type {
   RunSignalOptionsShadowBackfillBody,
   RuntimeDiagnosticsResponse,
   SchwabConnectResponse,
+  SchwabEquityOrderCancelBody,
+  SchwabEquityOrderCancelResponse,
+  SchwabEquityOrderPreviewBody,
+  SchwabEquityOrderPreviewResponse,
+  SchwabEquityOrderSubmitBody,
+  SchwabEquityOrderSubmitResponse,
   SchwabReadinessResponse,
   SearchSnapTradeAccountSymbolsParams,
   SearchSnapTradeAccountSymbolsResponse,
@@ -3523,6 +3529,222 @@ export const useSyncSchwabConnections = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSyncSchwabConnectionsMutationOptions(options));
+    }
+
+/**
+ * @summary Preview a Schwab equity order for a synced local account
+ */
+export const getPreviewSchwabEquityOrderUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/schwab/accounts/${accountId}/orders/preview`
+}
+
+export const previewSchwabEquityOrder = async (accountId: string,
+    schwabEquityOrderPreviewBody: SchwabEquityOrderPreviewBody, options?: RequestInit): Promise<SchwabEquityOrderPreviewResponse> => {
+
+  return customFetch<SchwabEquityOrderPreviewResponse>(getPreviewSchwabEquityOrderUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      schwabEquityOrderPreviewBody,)
+  }
+);}
+
+
+
+
+export const getPreviewSchwabEquityOrderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderPreviewBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderPreviewBody>}, TContext> => {
+
+const mutationKey = ['previewSchwabEquityOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewSchwabEquityOrder>>, {accountId: string;data: BodyType<SchwabEquityOrderPreviewBody>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  previewSchwabEquityOrder(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewSchwabEquityOrderMutationResult = NonNullable<Awaited<ReturnType<typeof previewSchwabEquityOrder>>>
+    export type PreviewSchwabEquityOrderMutationBody = BodyType<SchwabEquityOrderPreviewBody>
+    export type PreviewSchwabEquityOrderMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Preview a Schwab equity order for a synced local account
+ */
+export const usePreviewSchwabEquityOrder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderPreviewBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewSchwabEquityOrder>>,
+        TError,
+        {accountId: string;data: BodyType<SchwabEquityOrderPreviewBody>},
+        TContext
+      > => {
+      return useMutation(getPreviewSchwabEquityOrderMutationOptions(options));
+    }
+
+/**
+ * @summary Submit a confirmed Schwab equity order for a synced local account
+ */
+export const getSubmitSchwabEquityOrderUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/schwab/accounts/${accountId}/orders`
+}
+
+export const submitSchwabEquityOrder = async (accountId: string,
+    schwabEquityOrderSubmitBody: SchwabEquityOrderSubmitBody, options?: RequestInit): Promise<SchwabEquityOrderSubmitResponse> => {
+
+  return customFetch<SchwabEquityOrderSubmitResponse>(getSubmitSchwabEquityOrderUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      schwabEquityOrderSubmitBody,)
+  }
+);}
+
+
+
+
+export const getSubmitSchwabEquityOrderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderSubmitBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderSubmitBody>}, TContext> => {
+
+const mutationKey = ['submitSchwabEquityOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitSchwabEquityOrder>>, {accountId: string;data: BodyType<SchwabEquityOrderSubmitBody>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  submitSchwabEquityOrder(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitSchwabEquityOrderMutationResult = NonNullable<Awaited<ReturnType<typeof submitSchwabEquityOrder>>>
+    export type SubmitSchwabEquityOrderMutationBody = BodyType<SchwabEquityOrderSubmitBody>
+    export type SubmitSchwabEquityOrderMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Submit a confirmed Schwab equity order for a synced local account
+ */
+export const useSubmitSchwabEquityOrder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderSubmitBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitSchwabEquityOrder>>,
+        TError,
+        {accountId: string;data: BodyType<SchwabEquityOrderSubmitBody>},
+        TContext
+      > => {
+      return useMutation(getSubmitSchwabEquityOrderMutationOptions(options));
+    }
+
+/**
+ * @summary Cancel a Schwab equity order for a synced local account
+ */
+export const getCancelSchwabEquityOrderUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/broker-execution/schwab/accounts/${accountId}/orders/cancel`
+}
+
+export const cancelSchwabEquityOrder = async (accountId: string,
+    schwabEquityOrderCancelBody: SchwabEquityOrderCancelBody, options?: RequestInit): Promise<SchwabEquityOrderCancelResponse> => {
+
+  return customFetch<SchwabEquityOrderCancelResponse>(getCancelSchwabEquityOrderUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      schwabEquityOrderCancelBody,)
+  }
+);}
+
+
+
+
+export const getCancelSchwabEquityOrderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderCancelBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderCancelBody>}, TContext> => {
+
+const mutationKey = ['cancelSchwabEquityOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelSchwabEquityOrder>>, {accountId: string;data: BodyType<SchwabEquityOrderCancelBody>}> = (props) => {
+          const {accountId,data} = props ?? {};
+
+          return  cancelSchwabEquityOrder(accountId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelSchwabEquityOrderMutationResult = NonNullable<Awaited<ReturnType<typeof cancelSchwabEquityOrder>>>
+    export type CancelSchwabEquityOrderMutationBody = BodyType<SchwabEquityOrderCancelBody>
+    export type CancelSchwabEquityOrderMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Cancel a Schwab equity order for a synced local account
+ */
+export const useCancelSchwabEquityOrder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelSchwabEquityOrder>>, TError,{accountId: string;data: BodyType<SchwabEquityOrderCancelBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelSchwabEquityOrder>>,
+        TError,
+        {accountId: string;data: BodyType<SchwabEquityOrderCancelBody>},
+        TContext
+      > => {
+      return useMutation(getCancelSchwabEquityOrderMutationOptions(options));
     }
 
 /**

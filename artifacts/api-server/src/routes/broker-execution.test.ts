@@ -12,6 +12,11 @@ import {
 import { withTestDb } from "@workspace/db/testing";
 import app from "../app";
 import { createAuthSession } from "../services/auth";
+import { ingestSnapTradeAccountHistory } from "../services/snaptrade-account-history";
+import {
+  beginSchwabConnectCustody,
+  storeSchwabTokens,
+} from "../services/schwab-user-custody";
 import {
   deriveSnapTradeUserId,
   loadSnapTradeUserCredential,
@@ -206,6 +211,68 @@ test("SnapTrade routes reject authenticated non-admin sessions", async () => {
             },
           );
           assert.equal(submit.status, 403);
+          // Trade submit is admin-only (requireAdminCsrf) — a member is stopped
+          // by the ADMIN guard, not the entitlement guard.
+          assert.equal(
+            ((await submit.json()) as { code?: string }).code,
+            "admin_required",
+          );
+          assert.equal(called, false);
+        } finally {
+          globalThis.fetch = previousFetch;
+        }
+      }),
+    ),
+  );
+});
+
+test("trade submission stays admin-only even for a broker_connect member", async () => {
+  // Regression guard: the connect/read lifecycle is requireEntitlement,
+  // but order submission must remain requireAdminCsrf. Without this, a future
+  // edit copying the sibling entitlement guard onto the submit routes would let
+  // any paid member place live orders — and every other test would stay green.
+  await withSnapTradeEnv(async () =>
+    withTestDb(async () =>
+      withServer(async (baseUrl) => {
+        const previousFetch = globalThis.fetch;
+        let called = false;
+        globalThis.fetch = (async () => {
+          called = true;
+          throw new Error("upstream fetch should not run for a non-admin submit");
+        }) as typeof fetch;
+        try {
+          const [member] = await db
+            .insert(usersTable)
+            .values({
+              email: "broker-connect-member@example.com",
+              passwordHash: "unused",
+              role: "member",
+              entitlements: ["broker_connect"],
+            })
+            .returning();
+          const session = await createAuthSession({ userId: member!.id });
+          const headers = {
+            cookie: `pyrus_session=${session.sessionToken}`,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: session.csrfToken,
+          };
+
+          for (const path of [
+            "/broker-execution/snaptrade/accounts/acct-1/orders/impact",
+            "/broker-execution/snaptrade/accounts/acct-1/orders",
+          ]) {
+            const resp = await previousFetch(`${baseUrl}${path}`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ confirm: true }),
+            });
+            assert.equal(resp.status, 403);
+            assert.equal(
+              ((await resp.json()) as { code?: string }).code,
+              "admin_required",
+              `${path} must reject a broker_connect member with admin_required`,
+            );
+          }
           assert.equal(called, false);
         } finally {
           globalThis.fetch = previousFetch;
@@ -331,6 +398,59 @@ test("IBKR portal stays off for members without the compliance flag (SPEC §6)",
           ((await plainResp.json()) as { code?: string }).code,
           "ibkr_member_connect_disabled",
         );
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+        } else {
+          process.env["IBKR_MEMBER_CONNECT_ENABLED"] = previousFlag;
+        }
+      }
+    }),
+  );
+});
+
+test("IBKR portal opens for admins (bypass) and for flag-on members with ibkr_access (SPEC §6 allow path)", async () => {
+  // The deny-path test above proves the gate stays shut; this pins the two ALLOW
+  // branches so a refactor that drops the admin short-circuit or inverts the flag
+  // check (locking everyone out after compliance approval) fails loudly.
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const previousFlag = process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+      const readinessUrl = `${baseUrl}/broker-execution/ibkr-portal/readiness`;
+      try {
+        // Admin bypasses the §6 kill-switch even while the flag is OFF.
+        delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
+        const [admin] = await db
+          .insert(usersTable)
+          .values({
+            email: "ibkr-admin@example.com",
+            passwordHash: "unused",
+            role: "admin",
+          })
+          .returning();
+        const adminSession = await createAuthSession({ userId: admin!.id });
+        const adminResp = await fetch(readinessUrl, {
+          headers: { cookie: `pyrus_session=${adminSession.sessionToken}` },
+        });
+        // Gate opened: the readiness handler ran (200), not the 403 §6 block.
+        assert.equal(adminResp.status, 200);
+
+        // Member WITH ibkr_access AND the flag ON passes the gate.
+        process.env["IBKR_MEMBER_CONNECT_ENABLED"] = "true";
+        const [member] = await db
+          .insert(usersTable)
+          .values({
+            email: "ibkr-enabled-member@example.com",
+            passwordHash: "unused",
+            role: "member",
+            entitlements: ["ibkr_access"],
+          })
+          .returning();
+        const memberSession = await createAuthSession({ userId: member!.id });
+        const memberResp = await fetch(readinessUrl, {
+          headers: { cookie: `pyrus_session=${memberSession.sessionToken}` },
+        });
+        assert.equal(memberResp.status, 200);
       } finally {
         if (previousFlag === undefined) {
           delete process.env["IBKR_MEMBER_CONNECT_ENABLED"];
@@ -489,6 +609,10 @@ test("IBKR OAuth readiness route returns sanitized hosted-connect status for aut
               signingKeyPresent: boolean;
               callbackUrlPresent: boolean;
               thirdPartyApprovalRecorded: boolean;
+              encryptionKeyPresent: boolean;
+              dhParamPresent: boolean;
+              accessTokenPresent: boolean;
+              accessTokenSecretPresent: boolean;
             };
             requirements: {
               localGatewayRequired: boolean;
@@ -508,6 +632,10 @@ test("IBKR OAuth readiness route returns sanitized hosted-connect status for aut
             signingKeyPresent: true,
             callbackUrlPresent: true,
             thirdPartyApprovalRecorded: false,
+            encryptionKeyPresent: false,
+            dhParamPresent: false,
+            accessTokenPresent: false,
+            accessTokenSecretPresent: false,
           });
           assert.equal(body.requirements.localGatewayRequired, false);
           assert.equal(body.requirements.clientPortalGatewayCustomerPath, false);
@@ -1181,6 +1309,23 @@ test("SnapTrade account history route returns sanitized backfilled history", asy
                 headers: { "content-type": "application/json" },
               });
             }) as typeof fetch;
+            // Seed stored history the way the scheduler / connect-hook would, so the
+            // stored-first read below has persisted data to serve. This is the live
+            // SnapTrade pull that used to run inline in the read (and time out).
+            await ingestSnapTradeAccountHistory({
+              appUserId: bootstrapBody.user.id,
+              accountId: account.id,
+              to: "2026-06-30T00:00:00.000Z",
+              now: new Date("2026-07-01T20:00:00.000Z"),
+            });
+            assert.deepEqual(
+              [...new Set(requestedPaths)].sort(),
+              [
+                "/api/v1/accounts/acct-history-route/activities",
+                "/api/v1/accounts/acct-history-route/balanceHistory",
+              ],
+            );
+            requestedPaths.length = 0;
             try {
               const response = await previousFetch(
                 `${baseUrl}/broker-execution/snaptrade/accounts/${account.id}/history?range=ALL&to=2026-06-30T00:00:00.000Z`,
@@ -1212,10 +1357,9 @@ test("SnapTrade account history route returns sanitized backfilled history", asy
                 backfill: { activitiesStored: number; balanceSnapshotsStored: number };
               };
 
-              assert.deepEqual(requestedPaths.sort(), [
-                "/api/v1/accounts/acct-history-route/activities",
-                "/api/v1/accounts/acct-history-route/balanceHistory",
-              ]);
+              // Stored-first read: the response is served from persisted data
+              // (seeded above). The route also fires a throttled background refresh,
+              // so the read's live-call inventory is not asserted here.
               assert.equal(body.provider, "snaptrade");
               assert.equal(body.account.id, account.id);
               assert.equal(body.account.snapTradeAccountId, "acct-history-route");
@@ -1741,7 +1885,18 @@ test("SnapTrade sync route returns sanitized synced brokerage inventory", async 
                 };
               };
 
-              assert.deepEqual(requestedPaths.sort(), [
+              // The sync route also kicks off a fire-and-forget history backfill
+              // (refreshSnapTradeAccountHistoryForUser), which pulls per-account
+              // /activities + /balanceHistory asynchronously. Those are a separate
+              // concern; assert only the sync-proper inventory so this stays
+              // deterministic regardless of whether the backfill has fired yet.
+              const syncRequestPaths = requestedPaths.filter(
+                (path) =>
+                  !/^\/api\/v1\/accounts\/[^/]+\/(activities|balanceHistory)$/.test(
+                    path,
+                  ),
+              );
+              assert.deepEqual(syncRequestPaths.sort(), [
                 "/api/v1/accounts",
                 "/api/v1/authorizations",
               ]);
@@ -2326,7 +2481,12 @@ test("Schwab readiness route returns sanitized readiness status for authenticate
               provider: string;
               configured: boolean;
               status: string;
-              user: { connected: boolean; status: string; nextAction: string };
+              user: {
+                connected: boolean;
+                status: string;
+                nextAction: string;
+                executionBlockers: string[];
+              };
             };
 
             assert.equal(body.provider, "schwab");
@@ -2335,7 +2495,72 @@ test("Schwab readiness route returns sanitized readiness status for authenticate
             assert.equal(body.user.connected, false);
             assert.equal(body.user.status, "not_connected");
             assert.equal(body.user.nextAction, "start_connect");
+            assert.deepEqual(body.user.executionBlockers, []);
             assert.doesNotMatch(bodyText, /app-key-abc|app-secret-xyz/);
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+test("Schwab readiness route flags broker_reauth when user refresh token is near expiry", async () => {
+  await withBootstrapToken(async () =>
+    withSchwabEnv(async () =>
+      withCredentialEncryptionEnv(async () =>
+        withTestDb(async () =>
+          withServer(async (baseUrl) => {
+            const now = new Date("2026-07-02T18:00:00.000Z");
+            const bootstrapResponse = await fetch(`${baseUrl}/auth/bootstrap`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                email: "owner@example.com",
+                password: "correct horse battery staple",
+                bootstrapToken: "setup-token",
+              }),
+            });
+            assert.equal(bootstrapResponse.status, 200);
+            const cookie = bootstrapResponse.headers.get("set-cookie") ?? "";
+            const bootstrapBody = (await bootstrapResponse.json()) as AuthRouteBody;
+
+            await beginSchwabConnectCustody({
+              appUserId: bootstrapBody.user.id,
+              oauthState: "state-1",
+              encryptionKey: TEST_ENCRYPTION_KEY,
+              now,
+            });
+            await storeSchwabTokens({
+              appUserId: bootstrapBody.user.id,
+              accessToken: "fresh-access",
+              refreshToken: "refresh-1",
+              accessTokenExpiresAt: new Date(now.getTime() + 1_800_000),
+              refreshTokenExpiresAt: new Date(Date.now() + 23 * 60 * 60 * 1000),
+              scope: "api",
+              encryptionKey: TEST_ENCRYPTION_KEY,
+              now,
+            });
+
+            const response = await fetch(
+              `${baseUrl}/broker-execution/schwab/readiness`,
+              { headers: { cookie } },
+            );
+            assert.equal(response.status, 200);
+            const bodyText = await response.text();
+            const body = JSON.parse(bodyText) as {
+              user: {
+                connected: boolean;
+                status: string;
+                nextAction: string;
+                executionBlockers: string[];
+              };
+            };
+
+            assert.equal(body.user.connected, true);
+            assert.equal(body.user.status, "connected");
+            assert.equal(body.user.nextAction, "reconnect");
+            assert.deepEqual(body.user.executionBlockers, ["broker_reauth"]);
+            assert.doesNotMatch(bodyText, /fresh-access|refresh-1|app-secret-xyz/);
           }),
         ),
       ),
@@ -2683,6 +2908,173 @@ test("Schwab sync route returns sanitized synced Schwab accounts", async () => {
                 storedAccounts: 1,
               });
               assert.doesNotMatch(bodyText, /12345678|app-secret-xyz/);
+            } finally {
+              globalThis.fetch = previousFetch;
+            }
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+test("Schwab equity order routes require CSRF before order handling", async () => {
+  await withBootstrapToken(async () =>
+    withSchwabEnv(async () =>
+      withCredentialEncryptionEnv(async () =>
+        withTestDb(async () =>
+          withServer(async (baseUrl) => {
+            const previousFetch = globalThis.fetch;
+            let called = false;
+            const bootstrapResponse = await previousFetch(`${baseUrl}/auth/bootstrap`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                email: "owner@example.com",
+                password: "correct horse battery staple",
+                bootstrapToken: "setup-token",
+              }),
+            });
+            assert.equal(bootstrapResponse.status, 200);
+            const cookie = bootstrapResponse.headers.get("set-cookie") ?? "";
+
+            globalThis.fetch = (async () => {
+              called = true;
+              throw new Error("fetch should not run");
+            }) as typeof fetch;
+            try {
+              for (const path of [
+                "/broker-execution/schwab/accounts/local-account-id/orders/preview",
+                "/broker-execution/schwab/accounts/local-account-id/orders",
+                "/broker-execution/schwab/accounts/local-account-id/orders/cancel",
+              ]) {
+                const response = await previousFetch(`${baseUrl}${path}`, {
+                  method: "POST",
+                  headers: {
+                    cookie,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    confirm: true,
+                    orderId: "order-1",
+                    symbol: "AAPL",
+                    action: "BUY",
+                    quantity: 1,
+                    orderType: "Market",
+                    timeInForce: "Day",
+                  }),
+                });
+                assert.equal(response.status, 403);
+              }
+              assert.equal(called, false);
+            } finally {
+              globalThis.fetch = previousFetch;
+            }
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+test("Schwab equity order routes stay blocked behind execution readiness", async () => {
+  await withBootstrapToken(async () =>
+    withSchwabEnv(async () =>
+      withCredentialEncryptionEnv(async () =>
+        withTestDb(async ({ db }) =>
+          withServer(async (baseUrl) => {
+            const previousFetch = globalThis.fetch;
+            let called = false;
+            const bootstrapResponse = await previousFetch(`${baseUrl}/auth/bootstrap`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                email: "owner@example.com",
+                password: "correct horse battery staple",
+                bootstrapToken: "setup-token",
+              }),
+            });
+            assert.equal(bootstrapResponse.status, 200);
+            const cookie = bootstrapResponse.headers.get("set-cookie") ?? "";
+            const bootstrapBody = (await bootstrapResponse.json()) as AuthRouteBody;
+
+            const [connection] = await db
+              .insert(brokerConnectionsTable)
+              .values({
+                appUserId: bootstrapBody.user.id,
+                name: "schwab:route-order-connection",
+                connectionType: "broker",
+                brokerProvider: "schwab",
+                mode: "live",
+                status: "connected",
+                capabilities: ["accounts", "positions", "schwab"],
+              })
+              .returning({ id: brokerConnectionsTable.id });
+            const [account] = await db
+              .insert(brokerAccountsTable)
+              .values({
+                appUserId: bootstrapBody.user.id,
+                connectionId: connection.id,
+                providerAccountId: "schwab:ABC123HASH",
+                displayName: "Schwab ...5678",
+                mode: "live",
+                accountStatus: "open",
+                baseCurrency: "USD",
+                capabilities: ["accounts", "positions", "schwab"],
+                executionBlockers: ["schwab.order_tooling_unverified"],
+                lastSyncedAt: "2026-07-06T17:10:00.000Z",
+              })
+              .returning({ id: brokerAccountsTable.id });
+
+            globalThis.fetch = (async () => {
+              called = true;
+              throw new Error("fetch should not run while execution is blocked");
+            }) as typeof fetch;
+            try {
+              const requests = [
+                {
+                  path: `/broker-execution/schwab/accounts/${account.id}/orders/preview`,
+                  body: {
+                    symbol: "AAPL",
+                    action: "BUY",
+                    quantity: 1,
+                    orderType: "Market",
+                    timeInForce: "Day",
+                  },
+                },
+                {
+                  path: `/broker-execution/schwab/accounts/${account.id}/orders`,
+                  body: {
+                    confirm: true,
+                    symbol: "AAPL",
+                    action: "BUY",
+                    quantity: 1,
+                    orderType: "Market",
+                    timeInForce: "Day",
+                  },
+                },
+                {
+                  path: `/broker-execution/schwab/accounts/${account.id}/orders/cancel`,
+                  body: { orderId: "schwab-order-1" },
+                },
+              ];
+
+              for (const request of requests) {
+                const response = await previousFetch(`${baseUrl}${request.path}`, {
+                  method: "POST",
+                  headers: {
+                    cookie,
+                    "content-type": "application/json",
+                    [AUTH_CSRF_HEADER]: bootstrapBody.csrfToken,
+                  },
+                  body: JSON.stringify(request.body),
+                });
+                assert.equal(response.status, 409);
+                const text = await response.text();
+                assert.match(text, /schwab_account_execution_blocked/);
+                assert.doesNotMatch(text, /ABC123HASH|app-secret-xyz|schwab-access/);
+              }
+              assert.equal(called, false);
             } finally {
               globalThis.fetch = previousFetch;
             }

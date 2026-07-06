@@ -13,4 +13,5 @@ export const IbkrOAuthReadinessStatus = {
   unconfigured: 'unconfigured',
   approval_required: 'approval_required',
   research_required: 'research_required',
+  self_service_ready: 'self_service_ready',
 } as const;

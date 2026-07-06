@@ -734,7 +734,7 @@ export const GetSnapTradeReadinessResponse = zod.object({
 export const GetIbkrOAuthReadinessResponse = zod.object({
   "provider": zod.enum(['ibkr_oauth']),
   "configured": zod.boolean(),
-  "status": zod.enum(['unconfigured', 'approval_required', 'research_required']),
+  "status": zod.enum(['unconfigured', 'approval_required', 'research_required', 'self_service_ready']),
   "checkedAt": zod.coerce.date(),
   "executionDecision": zod.object({
   "decisionCode": zod.enum(['BROKER_SCOPE_READY', 'BROKER_SCOPE_MISSING', 'BROKER_CAPABILITY_READY', 'BROKER_CAPABILITY_SYNC_REQUIRED', 'BROKER_CAPABILITY_STALE', 'BROKER_CAPABILITY_UNSUPPORTED', 'BROKER_ORDER_SHAPE_UNSUPPORTED', 'PROVIDER_ELIGIBLE', 'PROVIDER_RESEARCH_REQUIRED', 'PROVIDER_INSUFFICIENT_CAPABILITY', 'PROVIDER_UNSUPPORTED', 'PROVIDER_SPECIAL_CONNECTOR_REQUIRED', 'PROVIDER_COMPLIANCE_REVIEW_REQUIRED']),
@@ -749,7 +749,11 @@ export const GetIbkrOAuthReadinessResponse = zod.object({
   "consumerKeyPresent": zod.boolean(),
   "signingKeyPresent": zod.boolean(),
   "callbackUrlPresent": zod.boolean(),
-  "thirdPartyApprovalRecorded": zod.boolean()
+  "thirdPartyApprovalRecorded": zod.boolean(),
+  "encryptionKeyPresent": zod.boolean(),
+  "dhParamPresent": zod.boolean(),
+  "accessTokenPresent": zod.boolean(),
+  "accessTokenSecretPresent": zod.boolean()
 }),
   "requirements": zod.object({
   "oauthVersion": zod.enum(['oauth1a_third_party']),
@@ -1446,7 +1450,8 @@ export const GetSchwabReadinessResponse = zod.object({
   "connectedAt": zod.coerce.date().nullable(),
   "refreshTokenExpiresAt": zod.coerce.date().nullable().describe('Schwab refresh tokens hard-expire 7 days after issuance; users must reconnect weekly.'),
   "disabledAt": zod.coerce.date().nullable(),
-  "nextAction": zod.enum(['start_connect', 'complete_authorization', 'sync_accounts', 'reconnect', 'manual_review'])
+  "nextAction": zod.enum(['start_connect', 'complete_authorization', 'sync_accounts', 'reconnect', 'manual_review']),
+  "executionBlockers": zod.array(zod.string()).describe('User-specific broker execution blockers. Includes broker_reauth when the Schwab refresh-token wall is expired or within the reconnect window.')
 }).describe('Sanitized current-user Schwab Trader API OAuth custody readiness. Never includes tokens, PKCE material, or OAuth state values.'),
   "limitations": zod.array(zod.string()),
   "upstream": zod.object({
@@ -1503,6 +1508,114 @@ export const SyncSchwabConnectionsResponse = zod.object({
   "storedAccounts": zod.number()
 })
 }).describe('Sanitized result of syncing the authenticated user\'s Schwab Trader API accounts. Never includes tokens, full account numbers, or raw upstream payloads.')
+
+
+/**
+ * @summary Preview a Schwab equity order for a synced local account
+ */
+export const PreviewSchwabEquityOrderParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS Schwab broker account id returned by Schwab account sync.')
+})
+
+export const PreviewSchwabEquityOrderBody = zod.object({
+  "symbol": zod.string().describe('Brokerage trading symbol.'),
+  "action": zod.enum(['BUY', 'SELL', 'BUY_TO_COVER', 'SELL_SHORT']),
+  "quantity": zod.number().describe('Whole-share quantity.'),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GoodTillCancel', 'FillOrKill']),
+  "session": zod.enum(['Normal', 'Am', 'Pm', 'Seamless']).nullish(),
+  "limitPrice": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
+  "stopPrice": zod.number().nullish().describe('Required for Stop and StopLimit orders.')
+}).describe('Local PYRUS request for a Schwab equity order preview. Uses camelCase locally and is translated to Schwab Trader API wire fields server-side.')
+
+export const PreviewSchwabEquityOrderResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "checkedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "accountHash": zod.string().describe('Schwab account hash value used in place of the account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a Schwab order operation.'),
+  "preview": zod.record(zod.string(), zod.unknown()).nullable()
+}).describe('Sanitized response from Schwab\'s order preview endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.')
+
+
+/**
+ * @summary Submit a confirmed Schwab equity order for a synced local account
+ */
+export const SubmitSchwabEquityOrderParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS Schwab broker account id returned by Schwab account sync.')
+})
+
+export const SubmitSchwabEquityOrderBody = zod.object({
+  "symbol": zod.string().describe('Brokerage trading symbol.'),
+  "action": zod.enum(['BUY', 'SELL', 'BUY_TO_COVER', 'SELL_SHORT']),
+  "quantity": zod.number().describe('Whole-share quantity.'),
+  "orderType": zod.enum(['Market', 'Limit', 'Stop', 'StopLimit']),
+  "timeInForce": zod.enum(['Day', 'GoodTillCancel', 'FillOrKill']),
+  "session": zod.enum(['Normal', 'Am', 'Pm', 'Seamless']).nullish(),
+  "limitPrice": zod.number().nullish().describe('Required for Limit and StopLimit orders.'),
+  "stopPrice": zod.number().nullish().describe('Required for Stop and StopLimit orders.')
+}).describe('Local PYRUS request for a Schwab equity order preview. Uses camelCase locally and is translated to Schwab Trader API wire fields server-side.').and(zod.object({
+  "confirm": zod.boolean().describe('Must be true to submit the order to Schwab and the brokerage account.')
+}).describe('Local PYRUS request for Schwab order submission. confirm=true is required because this can submit a live brokerage order once execution gates are lifted.'))
+
+export const SubmitSchwabEquityOrderResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "submittedAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "accountHash": zod.string().describe('Schwab account hash value used in place of the account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a Schwab order operation.'),
+  "orderId": zod.string().nullable(),
+  "status": zod.enum(['submitted'])
+}).describe('Sanitized response from Schwab\'s order placement endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.')
+
+
+/**
+ * @summary Cancel a Schwab equity order for a synced local account
+ */
+export const CancelSchwabEquityOrderParams = zod.object({
+  "accountId": zod.coerce.string().describe('Local PYRUS Schwab broker account id returned by Schwab account sync.')
+})
+
+export const CancelSchwabEquityOrderBody = zod.object({
+  "orderId": zod.string().describe('Schwab order id to cancel.')
+}).describe('Local PYRUS request for Schwab order cancellation.')
+
+export const CancelSchwabEquityOrderResponse = zod.object({
+  "provider": zod.enum(['schwab']),
+  "canceledAt": zod.coerce.date(),
+  "account": zod.object({
+  "id": zod.string().describe('Local PYRUS broker account id.'),
+  "connectionId": zod.string().describe('Local PYRUS broker connection id.'),
+  "accountHash": zod.string().describe('Schwab account hash value used in place of the account number.'),
+  "displayName": zod.string(),
+  "baseCurrency": zod.string(),
+  "mode": zod.enum(['live']),
+  "accountStatus": zod.string().nullable(),
+  "executionReady": zod.boolean(),
+  "executionBlockers": zod.array(zod.string()),
+  "lastSyncedAt": zod.coerce.date().nullable()
+}).describe('Sanitized local account metadata for a Schwab order operation.'),
+  "orderId": zod.string(),
+  "status": zod.enum(['canceled'])
+}).describe('Sanitized response from Schwab\'s order cancellation endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.')
 
 
 /**

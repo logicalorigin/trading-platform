@@ -4,7 +4,8 @@ import type { ExecutionDecisionResponse } from "./execution-decision-response";
 export type IbkrOAuthReadinessStatus =
   | "unconfigured"
   | "approval_required"
-  | "research_required";
+  | "research_required"
+  | "self_service_ready";
 
 export type IbkrOAuthReadinessResponse = {
   provider: "ibkr_oauth";
@@ -17,6 +18,10 @@ export type IbkrOAuthReadinessResponse = {
     signingKeyPresent: boolean;
     callbackUrlPresent: boolean;
     thirdPartyApprovalRecorded: boolean;
+    encryptionKeyPresent: boolean;
+    dhParamPresent: boolean;
+    accessTokenPresent: boolean;
+    accessTokenSecretPresent: boolean;
   };
   requirements: {
     oauthVersion: "oauth1a_third_party";
@@ -55,6 +60,12 @@ const approvalEnvNames = [
   "IBKR_OAUTH_THIRD_PARTY_APPROVED",
   "IBKR_OAUTH_COMPLIANCE_APPROVED",
 ] as const;
+// Self-service (first-party) OAuth credentials — obtaining a live session token
+// on our OWN IBKR account needs no third-party approval and no callback URL.
+const encryptionKeyEnvNames = ["IBKR_OAUTH_ENCRYPTION_KEY"] as const;
+const dhParamEnvNames = ["IBKR_OAUTH_DH_PARAM"] as const;
+const accessTokenEnvNames = ["IBKR_OAUTH_ACCESS_TOKEN"] as const;
+const accessTokenSecretEnvNames = ["IBKR_OAUTH_ACCESS_TOKEN_SECRET"] as const;
 
 function readFirstPresent(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -96,30 +107,52 @@ export function readIbkrOAuthReadiness(
   const signingKeyPresent = Boolean(readFirstPresent(env, signingKeyEnvNames));
   const callbackUrlPresent = Boolean(readFirstPresent(env, callbackUrlEnvNames));
   const thirdPartyApprovalRecorded = readBooleanFlag(env, approvalEnvNames);
-  const configured =
+  const encryptionKeyPresent = Boolean(readFirstPresent(env, encryptionKeyEnvNames));
+  const dhParamPresent = Boolean(readFirstPresent(env, dhParamEnvNames));
+  const accessTokenPresent = Boolean(readFirstPresent(env, accessTokenEnvNames));
+  const accessTokenSecretPresent = Boolean(
+    readFirstPresent(env, accessTokenSecretEnvNames),
+  );
+
+  // Self-service needs the full first-party credential set (no callback URL, no
+  // approval). When present, the OAuth crypto core can mint a live session token
+  // on our own account — but execution stays gated: the unattended session/order
+  // layer is a separate build, so the decision remains non-executable.
+  const selfServiceReady =
+    consumerKeyPresent &&
+    signingKeyPresent &&
+    encryptionKeyPresent &&
+    dhParamPresent &&
+    accessTokenPresent &&
+    accessTokenSecretPresent;
+  const thirdPartyConfigured =
     consumerKeyPresent && signingKeyPresent && callbackUrlPresent;
-  const status: IbkrOAuthReadinessStatus = !configured
-    ? "unconfigured"
-    : thirdPartyApprovalRecorded
-      ? "research_required"
-      : "approval_required";
-  const limitations = [
-    !consumerKeyPresent ? "ibkr.oauth.consumer_key_missing" : null,
-    !signingKeyPresent ? "ibkr.oauth.signing_key_missing" : null,
-    !callbackUrlPresent ? "ibkr.oauth.callback_url_missing" : null,
-    !thirdPartyApprovalRecorded && configured
-      ? "ibkr.oauth.third_party_approval_required"
-      : null,
-    !thirdPartyApprovalRecorded && !configured
-      ? "ibkr.oauth.third_party_approval_required"
-      : null,
-    thirdPartyApprovalRecorded && configured
-      ? "ibkr.oauth.implementation_not_complete"
-      : null,
-    thirdPartyApprovalRecorded && configured
-      ? "ibkr.oauth.account_capability_fixture_required"
-      : null,
-  ].filter((value): value is string => Boolean(value));
+  const configured = selfServiceReady || thirdPartyConfigured;
+
+  const status: IbkrOAuthReadinessStatus = selfServiceReady
+    ? "self_service_ready"
+    : !thirdPartyConfigured
+      ? "unconfigured"
+      : thirdPartyApprovalRecorded
+        ? "research_required"
+        : "approval_required";
+
+  const limitations = selfServiceReady
+    ? ["ibkr.oauth.self_service_session_not_implemented"]
+    : [
+        !consumerKeyPresent ? "ibkr.oauth.consumer_key_missing" : null,
+        !signingKeyPresent ? "ibkr.oauth.signing_key_missing" : null,
+        !callbackUrlPresent ? "ibkr.oauth.callback_url_missing" : null,
+        !thirdPartyApprovalRecorded
+          ? "ibkr.oauth.third_party_approval_required"
+          : null,
+        thirdPartyApprovalRecorded && thirdPartyConfigured
+          ? "ibkr.oauth.implementation_not_complete"
+          : null,
+        thirdPartyApprovalRecorded && thirdPartyConfigured
+          ? "ibkr.oauth.account_capability_fixture_required"
+          : null,
+      ].filter((value): value is string => Boolean(value));
 
   return {
     provider: "ibkr_oauth",
@@ -127,7 +160,7 @@ export function readIbkrOAuthReadiness(
     status,
     checkedAt: checkedAt.toISOString(),
     executionDecision: toExecutionDecisionResponse(
-      status === "research_required"
+      status === "research_required" || status === "self_service_ready"
         ? "PROVIDER_RESEARCH_REQUIRED"
         : "PROVIDER_COMPLIANCE_REVIEW_REQUIRED",
     ),
@@ -136,6 +169,10 @@ export function readIbkrOAuthReadiness(
       signingKeyPresent,
       callbackUrlPresent,
       thirdPartyApprovalRecorded,
+      encryptionKeyPresent,
+      dhParamPresent,
+      accessTokenPresent,
+      accessTokenSecretPresent,
     },
     requirements: baseRequirements(),
     limitations,

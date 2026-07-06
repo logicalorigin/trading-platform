@@ -31,6 +31,7 @@ export type SchwabUserReadiness = {
   refreshTokenExpiresAt: string | null;
   disabledAt: string | null;
   nextAction: SchwabUserReadinessNextAction;
+  executionBlockers: string[];
 };
 
 export type BeginSchwabConnectCustodyInput = {
@@ -78,6 +79,7 @@ const CIPHER = "aes-256-gcm";
 const CIPHERTEXT_VERSION = "v1";
 const IV_BYTES = 12;
 const DEFAULT_KEY_VERSION = "v1";
+const REFRESH_TOKEN_REAUTH_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function readCredentialEncryptionKey(input?: string): Buffer {
   const raw =
@@ -206,6 +208,17 @@ function refreshTokenExpired(
   );
 }
 
+function refreshTokenNeedsReauth(
+  credential: SchwabUserCredential,
+  now: Date,
+): boolean {
+  return Boolean(
+    credential.refreshTokenExpiresAt &&
+      credential.refreshTokenExpiresAt.getTime() - now.getTime() <=
+        REFRESH_TOKEN_REAUTH_WINDOW_MS,
+  );
+}
+
 function readinessFromCredential(
   credential: SchwabUserCredential | undefined,
   now: Date,
@@ -219,6 +232,7 @@ function readinessFromCredential(
       refreshTokenExpiresAt: null,
       disabledAt: null,
       nextAction: "start_connect",
+      executionBlockers: [],
     };
   }
 
@@ -235,6 +249,10 @@ function readinessFromCredential(
       : connected
         ? "connected"
         : "pending";
+  const reauthRequired =
+    !disabled &&
+    credential.status === "connected" &&
+    refreshTokenNeedsReauth(credential, now);
   return {
     connected,
     status,
@@ -245,13 +263,14 @@ function readinessFromCredential(
     disabledAt: credential.disabledAt?.toISOString() ?? null,
     nextAction: disabled
       ? "manual_review"
-      : expired
+      : expired || reauthRequired
         ? "reconnect"
         : connected
           ? "sync_accounts"
           : credential.status === "pending"
             ? "complete_authorization"
             : "start_connect",
+    executionBlockers: reauthRequired ? ["broker_reauth"] : [],
   };
 }
 

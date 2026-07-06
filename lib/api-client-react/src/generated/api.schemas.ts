@@ -237,6 +237,7 @@ export const IbkrOAuthReadinessStatus = {
   unconfigured: 'unconfigured',
   approval_required: 'approval_required',
   research_required: 'research_required',
+  self_service_ready: 'self_service_ready',
 } as const;
 
 export interface IbkrOAuthCredentialReadiness {
@@ -244,6 +245,10 @@ export interface IbkrOAuthCredentialReadiness {
   signingKeyPresent: boolean;
   callbackUrlPresent: boolean;
   thirdPartyApprovalRecorded: boolean;
+  encryptionKeyPresent: boolean;
+  dhParamPresent: boolean;
+  accessTokenPresent: boolean;
+  accessTokenSecretPresent: boolean;
 }
 
 export type IbkrOAuthHostedConnectRequirementsOauthVersion = typeof IbkrOAuthHostedConnectRequirementsOauthVersion[keyof typeof IbkrOAuthHostedConnectRequirementsOauthVersion];
@@ -1516,6 +1521,8 @@ export interface SchwabUserReadiness {
   refreshTokenExpiresAt: string | null;
   disabledAt: string | null;
   nextAction: SchwabUserReadinessNextAction;
+  /** User-specific broker execution blockers. Includes broker_reauth when the Schwab refresh-token wall is expired or within the reconnect window. */
+  executionBlockers: string[];
 }
 
 export type SchwabReadinessResponseProvider = typeof SchwabReadinessResponseProvider[keyof typeof SchwabReadinessResponseProvider];
@@ -1664,6 +1671,171 @@ export interface SyncSchwabConnectionsResponse {
   connections: SchwabConnectionSyncConnection[];
   accounts: SchwabConnectionSyncAccount[];
   totals: SyncSchwabConnectionsResponseTotals;
+}
+
+export type SchwabEquityOrderAction = typeof SchwabEquityOrderAction[keyof typeof SchwabEquityOrderAction];
+
+
+export const SchwabEquityOrderAction = {
+  BUY: 'BUY',
+  SELL: 'SELL',
+  BUY_TO_COVER: 'BUY_TO_COVER',
+  SELL_SHORT: 'SELL_SHORT',
+} as const;
+
+export type SchwabEquityOrderType = typeof SchwabEquityOrderType[keyof typeof SchwabEquityOrderType];
+
+
+export const SchwabEquityOrderType = {
+  Market: 'Market',
+  Limit: 'Limit',
+  Stop: 'Stop',
+  StopLimit: 'StopLimit',
+} as const;
+
+export type SchwabEquityTimeInForce = typeof SchwabEquityTimeInForce[keyof typeof SchwabEquityTimeInForce];
+
+
+export const SchwabEquityTimeInForce = {
+  Day: 'Day',
+  GoodTillCancel: 'GoodTillCancel',
+  FillOrKill: 'FillOrKill',
+} as const;
+
+export type SchwabEquityTradingSession = typeof SchwabEquityTradingSession[keyof typeof SchwabEquityTradingSession];
+
+
+export const SchwabEquityTradingSession = {
+  Normal: 'Normal',
+  Am: 'Am',
+  Pm: 'Pm',
+  Seamless: 'Seamless',
+} as const;
+
+/**
+ * Local PYRUS request for a Schwab equity order preview. Uses camelCase locally and is translated to Schwab Trader API wire fields server-side.
+ */
+export interface SchwabEquityOrderPreviewBody {
+  /** Brokerage trading symbol. */
+  symbol: string;
+  action: SchwabEquityOrderAction;
+  /** Whole-share quantity. */
+  quantity: number;
+  orderType: SchwabEquityOrderType;
+  timeInForce: SchwabEquityTimeInForce;
+  session?: SchwabEquityTradingSession | null;
+  /** Required for Limit and StopLimit orders. */
+  limitPrice?: number | null;
+  /** Required for Stop and StopLimit orders. */
+  stopPrice?: number | null;
+}
+
+export type SchwabEquityOrderSubmitBody = SchwabEquityOrderPreviewBody & {
+  /** Must be true to submit the order to Schwab and the brokerage account. */
+  confirm: boolean;
+};
+
+/**
+ * Local PYRUS request for Schwab order cancellation.
+ */
+export interface SchwabEquityOrderCancelBody {
+  /** Schwab order id to cancel. */
+  orderId: string;
+}
+
+export type SchwabEquityOrderAccountMode = typeof SchwabEquityOrderAccountMode[keyof typeof SchwabEquityOrderAccountMode];
+
+
+export const SchwabEquityOrderAccountMode = {
+  live: 'live',
+} as const;
+
+/**
+ * Sanitized local account metadata for a Schwab order operation.
+ */
+export interface SchwabEquityOrderAccount {
+  /** Local PYRUS broker account id. */
+  id: string;
+  /** Local PYRUS broker connection id. */
+  connectionId: string;
+  /** Schwab account hash value used in place of the account number. */
+  accountHash: string;
+  displayName: string;
+  baseCurrency: string;
+  mode: SchwabEquityOrderAccountMode;
+  accountStatus: string | null;
+  executionReady: boolean;
+  executionBlockers: string[];
+  lastSyncedAt: string | null;
+}
+
+export type SchwabEquityOrderPreviewResponseProvider = typeof SchwabEquityOrderPreviewResponseProvider[keyof typeof SchwabEquityOrderPreviewResponseProvider];
+
+
+export const SchwabEquityOrderPreviewResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SchwabEquityOrderPreviewResponsePreview = { [key: string]: unknown } | null;
+
+/**
+ * Sanitized response from Schwab's order preview endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+ */
+export interface SchwabEquityOrderPreviewResponse {
+  provider: SchwabEquityOrderPreviewResponseProvider;
+  checkedAt: string;
+  account: SchwabEquityOrderAccount;
+  preview: SchwabEquityOrderPreviewResponsePreview;
+}
+
+export type SchwabEquityOrderSubmitResponseProvider = typeof SchwabEquityOrderSubmitResponseProvider[keyof typeof SchwabEquityOrderSubmitResponseProvider];
+
+
+export const SchwabEquityOrderSubmitResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SchwabEquityOrderSubmitResponseStatus = typeof SchwabEquityOrderSubmitResponseStatus[keyof typeof SchwabEquityOrderSubmitResponseStatus];
+
+
+export const SchwabEquityOrderSubmitResponseStatus = {
+  submitted: 'submitted',
+} as const;
+
+/**
+ * Sanitized response from Schwab's order placement endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+ */
+export interface SchwabEquityOrderSubmitResponse {
+  provider: SchwabEquityOrderSubmitResponseProvider;
+  submittedAt: string;
+  account: SchwabEquityOrderAccount;
+  orderId: string | null;
+  status: SchwabEquityOrderSubmitResponseStatus;
+}
+
+export type SchwabEquityOrderCancelResponseProvider = typeof SchwabEquityOrderCancelResponseProvider[keyof typeof SchwabEquityOrderCancelResponseProvider];
+
+
+export const SchwabEquityOrderCancelResponseProvider = {
+  schwab: 'schwab',
+} as const;
+
+export type SchwabEquityOrderCancelResponseStatus = typeof SchwabEquityOrderCancelResponseStatus[keyof typeof SchwabEquityOrderCancelResponseStatus];
+
+
+export const SchwabEquityOrderCancelResponseStatus = {
+  canceled: 'canceled',
+} as const;
+
+/**
+ * Sanitized response from Schwab's order cancellation endpoint. Never includes OAuth tokens, full account numbers, or raw credentials.
+ */
+export interface SchwabEquityOrderCancelResponse {
+  provider: SchwabEquityOrderCancelResponseProvider;
+  canceledAt: string;
+  account: SchwabEquityOrderAccount;
+  orderId: string;
+  status: SchwabEquityOrderCancelResponseStatus;
 }
 
 export type IbkrPortalConnectionStatus = typeof IbkrPortalConnectionStatus[keyof typeof IbkrPortalConnectionStatus];
