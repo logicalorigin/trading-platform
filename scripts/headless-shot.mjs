@@ -20,6 +20,10 @@
  *                       holds open SSE streams, so `networkidle` never fires — use a
  *                       fixed wait or --wait-for.
  *   --wait-for <css>    Wait for a selector to appear instead of the fixed wait.
+ *   --settle <ms>       Extra settle wait AFTER --wait-for resolves (for data to
+ *                       paint once the loaded-shell selector appears). Default 0.
+ *   --storage-state <p> Playwright storageState JSON (cookies) to load an
+ *                       authenticated session. Default: anonymous.
  *   --viewport <WxH>    Viewport size (default: 1440x900).
  *   --full              Capture the full scrollable page (default: viewport only).
  *   --match <substr>    Repeatable. Count network request paths containing <substr>
@@ -37,12 +41,14 @@ import path from "node:path";
 
 const argv = process.argv.slice(2);
 const positional = [];
-const opts = { wait: 6000, viewport: "1440x900", out: null, waitFor: null, full: false, json: false, failOnConsole: false, match: [] };
+const opts = { wait: 6000, viewport: "1440x900", out: null, waitFor: null, settle: 0, storageState: null, full: false, json: false, failOnConsole: false, match: [] };
 for (let i = 0; i < argv.length; i += 1) {
   const arg = argv[i];
   if (arg === "--out") opts.out = argv[++i];
   else if (arg === "--wait") opts.wait = Number(argv[++i]);
   else if (arg === "--wait-for") opts.waitFor = argv[++i];
+  else if (arg === "--settle") opts.settle = Number(argv[++i]);
+  else if (arg === "--storage-state") opts.storageState = argv[++i];
   else if (arg === "--viewport") opts.viewport = argv[++i];
   else if (arg === "--match") opts.match.push(argv[++i]);
   else if (arg === "--full") opts.full = true;
@@ -72,7 +78,11 @@ const browser = await chromium.launch({
 
 const result = { url, executablePath: executablePath || "(playwright default)", screenshot: out };
 try {
-  const page = await browser.newPage({ viewport: { width: vw || 1440, height: vh || 900 } });
+  const context = await browser.newContext({
+    viewport: { width: vw || 1440, height: vh || 900 },
+    ...(opts.storageState ? { storageState: opts.storageState } : {}),
+  });
+  const page = await context.newPage();
   const consoleErrors = [];
   page.on("console", (m) => {
     if (m.type() === "error") consoleErrors.push(m.text().slice(0, 300));
@@ -93,6 +103,7 @@ try {
     await page.waitForSelector(opts.waitFor, { timeout: Math.max(opts.wait, 15000) }).catch(() => {
       result.waitForMissed = opts.waitFor;
     });
+    if (opts.settle) await page.waitForTimeout(opts.settle);
   } else {
     await page.waitForTimeout(opts.wait);
   }
