@@ -100,6 +100,7 @@ import {
 import { resolveAccountPortfolioRisk } from "./account-portfolio-risk";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import { currentShadowAccountId } from "./shadow-account-context";
 import {
   accountPositionTypeDisplayLabel,
   accountPositionTypeMatchesFilter,
@@ -475,13 +476,17 @@ type WatchlistBacktestPreparedBar = {
   atMs: number;
 };
 
-let shadowFreshStateCache:
-  | {
-      totals: ShadowTotals;
-      expiresAt: number;
-    }
-  | null = null;
-let shadowFreshStateInFlight: Promise<ShadowTotals> | null = null;
+// Slice 5.5: per-account (keyed by the resolved shadow account id) so a user's
+// fresh totals + in-flight compute can never be served to another. Platform-scoped
+// callers (background/marketing) share the "shadow" key, matching prior behavior.
+const shadowFreshStateCache = new Map<
+  string,
+  {
+    totals: ShadowTotals;
+    expiresAt: number;
+  }
+>();
+const shadowFreshStateInFlight = new Map<string, Promise<ShadowTotals>>();
 let shadowFreshStateCacheVersion = 0;
 let shadowPositionMarkRefreshInFlight:
   | Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
@@ -617,8 +622,10 @@ const shadowBenchmarkBarsInFlight = new Map<
 >();
 
 function invalidateShadowFreshStateCache() {
-  shadowFreshStateCache = null;
-  shadowFreshStateInFlight = null;
+  // Global clear across accounts is correct (never serves wrong data); per-account
+  // invalidation is a later perf optimization, not a leak fix.
+  shadowFreshStateCache.clear();
+  shadowFreshStateInFlight.clear();
   shadowFreshStateCacheVersion += 1;
   shadowReadCache.clear();
   shadowReadInFlight.clear();
@@ -626,7 +633,7 @@ function invalidateShadowFreshStateCache() {
 }
 
 function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
-  shadowFreshStateCache = null;
+  shadowFreshStateCache.clear();
   shadowFreshStateCacheVersion += 1;
   const now = Date.now();
   for (const [key, entry] of shadowReadCache) {
@@ -790,10 +797,14 @@ function resetShadowAccountReadDiagnosticsForTests() {
 }
 
 async function withShadowReadCache<T>(
-  key: string,
+  rawKey: string,
   factory: () => Promise<T>,
   options: ShadowReadCacheOptions = {},
 ): Promise<T> {
+  // Slice 5.5: partition every read cache + in-flight join by the resolved account
+  // so one user's cached ledger can never be served to another. Defaults to the
+  // platform account (background/marketing/unauthenticated), preserving prior keys.
+  const key = `${currentShadowAccountId()} ${rawKey}`;
   const now = Date.now();
   const cached = shadowReadCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -1005,25 +1016,26 @@ function shadowReadCacheValueHasRows(value: unknown): boolean {
 }
 
 function trackShadowFreshStateRefresh(
+  accountId: string,
   request: Promise<ShadowTotals>,
   version = shadowFreshStateCacheVersion,
 ) {
   const trackedRequest = request
     .then((totals) => {
       if (version === shadowFreshStateCacheVersion) {
-        shadowFreshStateCache = {
+        shadowFreshStateCache.set(accountId, {
           totals,
           expiresAt: Date.now() + SHADOW_STATE_REFRESH_TTL_MS,
-        };
+        });
       }
       return totals;
     })
     .finally(() => {
-      if (shadowFreshStateInFlight === trackedRequest) {
-        shadowFreshStateInFlight = null;
+      if (shadowFreshStateInFlight.get(accountId) === trackedRequest) {
+        shadowFreshStateInFlight.delete(accountId);
       }
     });
-  shadowFreshStateInFlight = trackedRequest;
+  shadowFreshStateInFlight.set(accountId, trackedRequest);
   return trackedRequest;
 }
 
@@ -2820,7 +2832,7 @@ async function ensureShadowAccount(): Promise<ShadowAccountRow> {
   const [inserted] = await db
     .insert(shadowAccountsTable)
     .values({
-      id: SHADOW_ACCOUNT_ID,
+      id: currentShadowAccountId(),
       displayName: SHADOW_ACCOUNT_DISPLAY_NAME,
       currency: SHADOW_CURRENCY,
       startingBalance: money(SHADOW_STARTING_BALANCE),
@@ -2852,7 +2864,7 @@ async function readShadowAccount(): Promise<ShadowAccountRow | null> {
   const [row] = await db
     .select()
     .from(shadowAccountsTable)
-    .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID))
+    .where(eq(shadowAccountsTable.id, currentShadowAccountId()))
     .limit(1);
   return row ?? null;
 }
@@ -2863,7 +2875,7 @@ async function readOpenShadowPositions(): Promise<ShadowPositionRow[]> {
     .from(shadowPositionsTable)
     .where(
       and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.accountId, currentShadowAccountId()),
         eq(shadowPositionsTable.status, "open"),
       ),
     )
@@ -2895,7 +2907,7 @@ async function readOpenShadowPositionsForKeys(
         .from(shadowPositionsTable)
         .where(
           and(
-            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowPositionsTable.accountId, currentShadowAccountId()),
             eq(shadowPositionsTable.status, "open"),
             inArray(shadowPositionsTable.positionKey, chunk),
           ),
@@ -2978,7 +2990,7 @@ async function readShadowFillsWithOrders() {
   const fills = await db
     .select()
     .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
+    .where(eq(shadowFillsTable.accountId, currentShadowAccountId()));
   return {
     fills,
     ordersById: await readShadowOrdersByFillOrderId(fills),
@@ -3029,7 +3041,7 @@ async function readShadowFillsForOrderIds(
         .from(shadowFillsTable)
         .where(
           and(
-            eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowFillsTable.accountId, currentShadowAccountId()),
             inArray(shadowFillsTable.orderId, chunk),
           ),
         ),
@@ -3042,7 +3054,7 @@ async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
   return await db
     .select()
     .from(shadowOrdersTable)
-    .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID));
+    .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()));
 }
 
 async function readShadowOrdersForSource(
@@ -3059,7 +3071,7 @@ async function readShadowOrdersForSource(
     .from(shadowOrdersTable)
     .where(
       and(
-        eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowOrdersTable.accountId, currentShadowAccountId()),
         eq(shadowOrdersTable.source, "automation"),
       ),
     );
@@ -3369,7 +3381,7 @@ async function latestShadowPositionMarksAt(
         limit 1
       ) mark on true
     `,
-    [SHADOW_ACCOUNT_ID, positionIds, asOf],
+    [currentShadowAccountId(), positionIds, asOf],
   );
   return result.rows.reduce((map, mark) => {
     map.set(mark.positionId, mark);
@@ -3424,7 +3436,7 @@ async function computeShadowSnapshotTotalsAt(
         .from(shadowPositionsTable)
         .where(
           and(
-            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowPositionsTable.accountId, currentShadowAccountId()),
             inArray(shadowPositionsTable.positionKey, Array.from(openKeys)),
           ),
         )
@@ -3599,7 +3611,7 @@ async function writeShadowBalanceSnapshot(
   const changeReason = options.changeReason ?? "ledger";
   const totals = await computeShadowSnapshotTotalsAt(source, asOf);
   await db.insert(shadowBalanceSnapshotsTable).values({
-    accountId: SHADOW_ACCOUNT_ID,
+    accountId: currentShadowAccountId(),
     currency: SHADOW_CURRENCY,
     cash: money(totals.cash),
     buyingPower: money(Math.max(0, totals.cash)),
@@ -4220,7 +4232,7 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
     .from(shadowPositionsTable)
     .where(
       and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.accountId, currentShadowAccountId()),
         eq(shadowPositionsTable.positionKey, key),
       ),
     )
@@ -4369,7 +4381,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   await db.transaction(async (tx) => {
     await tx.insert(shadowOrdersTable).values({
       id: orderId,
-      accountId: SHADOW_ACCOUNT_ID,
+      accountId: currentShadowAccountId(),
       source: normalized.source ?? "manual",
       sourceEventId: normalized.sourceEventId ?? null,
       clientOrderId:
@@ -4396,7 +4408,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
 
     await tx.insert(shadowFillsTable).values({
       id: fillId,
-      accountId: SHADOW_ACCOUNT_ID,
+      accountId: currentShadowAccountId(),
       orderId,
       sourceEventId: normalized.sourceEventId ?? null,
       symbol,
@@ -5612,7 +5624,7 @@ async function upsertPositionForFill(
     .from(shadowPositionsTable)
     .where(
       and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.accountId, currentShadowAccountId()),
         eq(shadowPositionsTable.positionKey, input.positionKey),
       ),
     )
@@ -5658,7 +5670,7 @@ async function upsertPositionForFill(
         .where(eq(shadowPositionsTable.id, current.id));
     } else {
       await tx.insert(shadowPositionsTable).values({
-        accountId: SHADOW_ACCOUNT_ID,
+        accountId: currentShadowAccountId(),
         positionKey: input.positionKey,
         symbol: input.symbol,
         assetClass: input.assetClass,
@@ -5895,27 +5907,31 @@ async function ensureFreshShadowState(refreshMarks = false) {
       return buildFallbackShadowTotals();
     }
 
+    const accountId = currentShadowAccountId();
     await ensureShadowAccount();
     if (!refreshMarks) {
-      if (shadowFreshStateInFlight) {
-        return shadowFreshStateInFlight;
+      const pending = shadowFreshStateInFlight.get(accountId);
+      if (pending) {
+        return pending;
       }
       return computeShadowTotals();
     }
 
     const now = Date.now();
-    if (shadowFreshStateCache && shadowFreshStateCache.expiresAt > now) {
-      return shadowFreshStateCache.totals;
+    const cached = shadowFreshStateCache.get(accountId);
+    if (cached && cached.expiresAt > now) {
+      return cached.totals;
     }
-    if (shadowFreshStateInFlight) {
-      return await shadowFreshStateInFlight;
+    const pending = shadowFreshStateInFlight.get(accountId);
+    if (pending) {
+      return await pending;
     }
 
     kickShadowPositionMarkRefresh();
     const version = shadowFreshStateCacheVersion;
     const request = computeShadowTotals();
 
-    return await trackShadowFreshStateRefresh(request, version);
+    return await trackShadowFreshStateRefresh(accountId, request, version);
   } catch (error) {
     if (isTransientPostgresError(error)) {
       markShadowAccountDbUnavailable(error);
@@ -6759,7 +6775,7 @@ async function readLatestShadowPositionBaselineMarks(
         limit 1
       ) mark on true
     `,
-    [SHADOW_ACCOUNT_ID, uniquePositionIds, maxDayStart],
+    [currentShadowAccountId(), uniquePositionIds, maxDayStart],
   );
   return result.rows;
 }
@@ -7809,7 +7825,7 @@ type ShadowAccountEquityEvent = {
 };
 
 type ShadowAccountEquityHistory = {
-  accountId: typeof SHADOW_ACCOUNT_ID;
+  accountId: string;
   range: AccountRange;
   currency: string;
   flexConfigured: boolean;
@@ -7953,7 +7969,7 @@ export async function getShadowAccountEquityHistory(input: {
           (await readShadowAccount()) ?? (await ensureShadowAccount());
         const start = accountRangeStart(range);
         const conditions: SQL<unknown>[] = [
-          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowBalanceSnapshotsTable.accountId, currentShadowAccountId()),
         ];
         if (start) {
           conditions.push(gte(shadowBalanceSnapshotsTable.asOf, start));
@@ -9447,7 +9463,7 @@ export async function getShadowAccountPositionsAtDate(input: {
     .from(shadowFillsTable)
     .where(
       and(
-        eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowFillsTable.accountId, currentShadowAccountId()),
         lte(shadowFillsTable.occurredAt, window.end),
       ),
     )
@@ -10719,7 +10735,7 @@ async function loadShadowAnalysisRows() {
   const fills = await db
     .select()
     .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
+    .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
     .orderBy(shadowFillsTable.occurredAt);
   const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
   const orders = orderIds.length
@@ -10765,7 +10781,7 @@ async function getShadowTradeEquityEvents(input: {
   sources?: string[];
 }) {
   const conditions: SQL<unknown>[] = [
-    eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+    eq(shadowFillsTable.accountId, currentShadowAccountId()),
   ];
   if (input.start) {
     conditions.push(gte(shadowFillsTable.occurredAt, input.start));
@@ -10825,7 +10841,7 @@ export async function getShadowAccountOrders(input: {
         const orders = await db
           .select()
           .from(shadowOrdersTable)
-          .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
+          .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
           .orderBy(desc(shadowOrdersTable.placedAt))
           .limit(SHADOW_ORDER_HISTORY_LIMIT);
         const sourceOrders = source
@@ -13680,7 +13696,7 @@ export async function recomputeShadowAccountFromLedger(
   const [account] = await tx
     .select()
     .from(shadowAccountsTable)
-    .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID))
+    .where(eq(shadowAccountsTable.id, currentShadowAccountId()))
     .limit(1);
   if (!account) {
     throw new HttpError(500, "Shadow account is missing.", {
@@ -13699,7 +13715,7 @@ export async function recomputeShadowAccountFromLedger(
   const orderIdRows = await tx
     .selectDistinct({ orderId: shadowFillsTable.orderId })
     .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
+    .where(eq(shadowFillsTable.accountId, currentShadowAccountId()));
   const orderIds = orderIdRows.map((row) => row.orderId);
   const orders = orderIds.length
     ? await tx
@@ -13724,7 +13740,7 @@ export async function recomputeShadowAccountFromLedger(
       .from(shadowFillsTable)
       .where(
         and(
-          eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowFillsTable.accountId, currentShadowAccountId()),
           inArray(shadowFillsTable.orderId, ledgerOrderIds),
         ),
       );
@@ -13740,7 +13756,7 @@ export async function recomputeShadowAccountFromLedger(
       fees: money(fees),
       updatedAt,
     })
-    .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID));
+    .where(eq(shadowAccountsTable.id, currentShadowAccountId()));
 }
 
 function compactMarketDateForSource(value: string) {
@@ -14311,8 +14327,10 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   filterShadowAccountPositionsResponseForAssetClass,
   applyShadowAccountPositionWeights,
   trackShadowFreshStateRefresh,
-  getShadowFreshStateInFlight: () => shadowFreshStateInFlight,
-  getShadowFreshStateCache: () => shadowFreshStateCache,
+  getShadowFreshStateInFlight: () =>
+    shadowFreshStateInFlight.get(currentShadowAccountId()) ?? null,
+  getShadowFreshStateCache: () =>
+    shadowFreshStateCache.get(currentShadowAccountId()) ?? null,
   resolveWatchlistBacktestWindow,
   isWatchlistBacktestRegularSessionTime,
   watchlistBacktestOrderMatchesRange,
