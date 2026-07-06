@@ -36,6 +36,38 @@ const resolveVariant = (variant, color) => {
         border: "none",
         boxShadow: ELEVATION.none,
       };
+    case "soft":
+      // Neutral utility chip (flat bg2 fill, no border) — the shared form of the
+      // former hand-rolled smallButton() default.
+      return {
+        background: CSS_COLOR.bg2,
+        color: CSS_COLOR.text,
+        hoverBackground: cssColorMix(CSS_COLOR.accent, 4),
+        border: "none",
+        boxShadow: ELEVATION.none,
+        fontWeight: FONT_WEIGHTS.medium,
+      };
+    case "soft-selected":
+      // Selected/active chip: accent TINT + accent text (selection = accent, never
+      // a solid fill; green stays reserved for financial-gain/operational-health).
+      return {
+        background: CSS_COLOR.accentActiveBg,
+        color: CSS_COLOR.accent,
+        hoverBackground: CSS_COLOR.accentActiveBg,
+        border: "none",
+        boxShadow: ELEVATION.none,
+        fontWeight: FONT_WEIGHTS.label,
+      };
+    case "soft-danger":
+      // Subtle danger chip: red tint + red text (not the loud solid danger fill).
+      return {
+        background: cssColorMix(CSS_COLOR.red, 9),
+        color: CSS_COLOR.red,
+        hoverBackground: cssColorMix(CSS_COLOR.red, 14),
+        border: "none",
+        boxShadow: ELEVATION.none,
+        fontWeight: FONT_WEIGHTS.label,
+      };
     case "secondary":
     default:
       return {
@@ -146,7 +178,7 @@ export const Button = forwardRef(function Button(
           boxShadow: v.boxShadow,
           fontFamily: T.sans,
           fontSize: textSize(dims.font),
-          fontWeight: FONT_WEIGHTS.medium,
+          fontWeight: v.fontWeight || FONT_WEIGHTS.medium,
           letterSpacing: "0.01em",
           cursor: isDisabled ? "not-allowed" : "pointer",
           opacity: isDisabled && !loading ? 0.55 : 1,

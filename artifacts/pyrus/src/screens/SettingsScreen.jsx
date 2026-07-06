@@ -372,24 +372,6 @@ function writeWorkspaceState(patch) {
   }
 }
 
-function smallButton({ active = false, danger = false } = {}) {
-  return {
-    border: "none",
-    // Doctrine (selection/active = ACCENT, not green): active is a selection
-    // highlight (and the dirty Save state), so it emphasizes with the accent
-    // token — green stays reserved for operational-health / financial-gain.
-    background: danger ? `${cssColorMix(CSS_COLOR.red, 9)}` : active ? CSS_COLOR.accentActiveBg : CSS_COLOR.bg2,
-    color: danger ? CSS_COLOR.red : active ? CSS_COLOR.accent : CSS_COLOR.text,
-    borderRadius: dim(RADII.pill),
-    padding: sp("6px 12px"),
-    fontFamily: T.sans,
-    fontSize: fs(10),
-    fontWeight: active || danger ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
-    letterSpacing: "0.02em",
-    cursor: "pointer",
-  };
-}
-
 function labelStyle() {
   return {
     display: "flex",
@@ -1419,9 +1401,9 @@ function IbkrLineUsagePanel({ runtimeControl }) {
     <Panel
       title="IBKR Line Usage"
       action={
-        <button type="button" onClick={runtimeControl.reload} style={smallButton()}>
+        <Button size="sm" variant="soft" onClick={runtimeControl.reload}>
           Refresh
-        </button>
+        </Button>
       }
     >
       {error && (
@@ -1731,14 +1713,14 @@ function StoragePrunePanel() {
     <Panel
       title="Diagnostic Storage Prune"
       action={
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant={dryRun ? "soft-selected" : "soft-danger"}
           onClick={run}
           disabled={running}
-          style={smallButton({ active: dryRun, danger: !dryRun })}
         >
           {running ? "Running" : dryRun ? "Dry Run" : "Prune"}
-        </button>
+        </Button>
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(160)}px, ${dim(220)}px) 1fr`, gap: sp(10), alignItems: "end" }}>
@@ -1777,9 +1759,9 @@ function BrowserStorageFootprintPanel() {
     <Panel
       title="Browser Storage Footprint"
       action={
-        <button type="button" onClick={storage.refresh} style={smallButton()}>
+        <Button size="sm" variant="soft" onClick={storage.refresh}>
           Refresh
-        </button>
+        </Button>
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8), marginBottom: sp(8) }}>
@@ -1827,37 +1809,37 @@ function BrowserStorageFootprintPanel() {
         </div>
       </div>
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginTop: sp(12) }}>
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant="soft"
           onClick={() =>
             storage.clearLocalKeys(
               (key) => key.startsWith(CHART_SCALE_PREFS_STORAGE_PREFIX),
             )
           }
-          style={smallButton()}
         >
           Clear chart scale prefs
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
+          variant="soft"
           onClick={() =>
             storage.clearLocalKeys(
               (key) => key === OPTION_HYDRATION_HISTORY_STORAGE_KEY,
             )
           }
-          style={smallButton()}
         >
           Clear option hydration history
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
+          variant="soft"
           onClick={() =>
             storage.clearSessionKeys([MARKET_GRID_TRACK_SESSION_KEY])
           }
-          style={smallButton()}
         >
           Reset market grid sizing
-        </button>
+        </Button>
       </div>
     </Panel>
   );
@@ -1961,12 +1943,12 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         title="Synced Preferences"
         action={
           <div style={{ display: "flex", gap: sp(7), flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button type="button" onClick={userPreferences.reload} disabled={userPreferences.loading} style={smallButton()}>
+            <Button size="sm" variant="soft" onClick={userPreferences.reload} disabled={userPreferences.loading}>
               Refresh
-            </button>
-            <button type="button" onClick={userPreferences.reset} disabled={userPreferences.saving} style={smallButton({ danger: true })}>
+            </Button>
+            <Button size="sm" variant="soft-danger" onClick={userPreferences.reset} disabled={userPreferences.saving}>
               Reset
-            </button>
+            </Button>
           </div>
         }
       >
@@ -2400,9 +2382,9 @@ function ChartTimeframeFavoritesPanel() {
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(10) }}>
                 <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.medium, fontSize: textSize("paragraphMuted") }}>{role.label}</div>
-                <button type="button" onClick={() => resetRole(role.value)} style={smallButton()}>
+                <Button size="sm" variant="soft" onClick={() => resetRole(role.value)}>
                   Reset
-                </button>
+                </Button>
               </div>
               <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
                 {options.map((option) => {
@@ -2439,9 +2421,9 @@ function DiagnosticAlertPreferencesPanel() {
     <Panel
       title="Diagnostic Alert Preferences"
       action={
-        <button type="button" onClick={alerts.reset} style={smallButton({ danger: true })}>
+        <Button size="sm" variant="soft-danger" onClick={alerts.reset}>
           Reset alerts
-        </button>
+        </Button>
       }
     >
       <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
@@ -2468,18 +2450,18 @@ function DiagnosticAlertPreferencesPanel() {
         <StateRow label="Dismissed alerts" value={dismissedCount} tone={dismissedCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
       </div>
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginTop: sp(12) }}>
-        <button type="button" onClick={() => alerts.snooze(15)} style={smallButton()}>
+        <Button size="sm" variant="soft" onClick={() => alerts.snooze(15)}>
           Snooze 15m
-        </button>
-        <button type="button" onClick={() => alerts.snooze(60)} style={smallButton()}>
+        </Button>
+        <Button size="sm" variant="soft" onClick={() => alerts.snooze(60)}>
           Snooze 1h
-        </button>
-        <button type="button" onClick={() => alerts.snooze(0)} style={smallButton({ active: mutedActive })}>
+        </Button>
+        <Button size="sm" variant={mutedActive ? "soft-selected" : "soft"} onClick={() => alerts.snooze(0)}>
           Clear snooze
-        </button>
-        <button type="button" onClick={alerts.clearDismissals} style={smallButton({ danger: dismissedCount > 0 })}>
+        </Button>
+        <Button size="sm" variant={dismissedCount > 0 ? "soft-danger" : "soft"} onClick={alerts.clearDismissals}>
           Clear dismissals
-        </button>
+        </Button>
       </div>
     </Panel>
   );
@@ -2510,8 +2492,9 @@ function WorkspaceDefaultsPanel() {
       <Panel
         title="Workspace Defaults"
         action={
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="soft-danger"
             onClick={() => {
               if (!window.confirm("Reset all workspace defaults? This clears your saved layout, filters, and view preferences across every screen and cannot be undone.")) return;
               workspace.resetKeys([
@@ -2539,10 +2522,9 @@ function WorkspaceDefaultsPanel() {
                 "tradeChainHeatmapEnabled",
               ]);
             }}
-            style={smallButton({ danger: true })}
           >
             Reset defaults
-          </button>
+          </Button>
         }
       >
         <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
@@ -2693,8 +2675,9 @@ function WorkspaceDefaultsPanel() {
       </Panel>
       <Panel title="Local Workspace Cleanup">
         <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap" }}>
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="soft"
             onClick={() =>
               workspace.resetKeys([
                 "marketGridTickerSearchCache",
@@ -2703,12 +2686,12 @@ function WorkspaceDefaultsPanel() {
                 "marketGridRecentTickers",
               ])
             }
-            style={smallButton()}
           >
             Clear ticker search history
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            variant="soft"
             onClick={() =>
               workspace.resetKeys([
                 "tradeRecentTickers",
@@ -2716,12 +2699,12 @@ function WorkspaceDefaultsPanel() {
                 "tradeContracts",
               ])
             }
-            style={smallButton()}
           >
             Clear trade recents
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            variant="soft"
             onClick={() => {
               if (!window.confirm("Clear all saved Flow scans? Your saved scans and presets will be permanently removed.")) return;
               workspace.resetKeys([
@@ -2730,10 +2713,9 @@ function WorkspaceDefaultsPanel() {
                 "flowActivePresetId",
               ]);
             }}
-            style={smallButton()}
           >
             Clear Flow saved scans
-          </button>
+          </Button>
         </div>
       </Panel>
     </div>
@@ -2756,13 +2738,13 @@ function FlowScannerSettingsPanel() {
     <Panel
       title="Flow Scanner"
       action={
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant={control.enabled ? "soft-selected" : "soft"}
           onClick={() => setFlowScannerControlState({ enabled: !control.enabled })}
-          style={smallButton({ active: control.enabled })}
         >
           {control.enabled ? "Broad Scan On" : "Broad Scan Off"}
-        </button>
+        </Button>
       }
     >
       <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
@@ -2826,18 +2808,18 @@ function SignalMonitorSettingsPanel({ enabled, watchlists }) {
         title="Signal Monitor"
         action={
           <div style={{ display: "flex", gap: sp(7), flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button type="button" onClick={monitor.reload} disabled={monitor.loading} style={smallButton()}>
+            <Button size="sm" variant="soft" onClick={monitor.reload} disabled={monitor.loading}>
               Refresh
-            </button>
-            <button type="button" onClick={() => monitor.evaluate("incremental")} disabled={monitor.evaluating} style={smallButton()}>
+            </Button>
+            <Button size="sm" variant="soft" onClick={() => monitor.evaluate("incremental")} disabled={monitor.evaluating}>
               {monitor.evaluating ? "Scanning" : "Scan Now"}
-            </button>
-            <button type="button" onClick={monitor.discard} disabled={!monitor.dirty || monitor.saving} style={smallButton()}>
+            </Button>
+            <Button size="sm" variant="soft" onClick={monitor.discard} disabled={!monitor.dirty || monitor.saving}>
               Discard
-            </button>
-            <button type="button" onClick={monitor.save} disabled={!monitor.dirty || monitor.saving} style={smallButton({ active: monitor.dirty })}>
+            </Button>
+            <Button size="sm" variant={monitor.dirty ? "soft-selected" : "soft"} onClick={monitor.save} disabled={!monitor.dirty || monitor.saving}>
               {monitor.saving ? "Saving" : "Save"}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -2980,7 +2962,7 @@ function ResearchProviderPanel({ backendSnapshot, enabled }) {
     research.status?.highBetaUniverse,
   );
   return (
-    <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
+    <Panel title="Research / Provider Wiring" action={<Button size="sm" variant="soft" onClick={research.reload}>Refresh</Button>}>
       {research.error && (
         <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {research.error}
