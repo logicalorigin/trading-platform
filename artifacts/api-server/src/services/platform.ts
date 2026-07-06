@@ -551,7 +551,7 @@ async function ensureDefaultWatchlistSeeded(): Promise<void> {
   });
 }
 
-async function selectWatchlistRows(watchlistId?: string) {
+async function selectWatchlistRows(watchlistId?: string, appUserId?: string) {
   await ensureDefaultWatchlistSeeded();
 
   const query = db
@@ -578,9 +578,11 @@ async function selectWatchlistRows(watchlistId?: string) {
       eq(watchlistItemsTable.instrumentId, instrumentsTable.id),
     );
 
-  const filteredQuery = watchlistId
-    ? query.where(eq(watchlistsTable.id, watchlistId))
-    : query;
+  const filter = and(
+    watchlistId ? eq(watchlistsTable.id, watchlistId) : undefined,
+    appUserId ? eq(watchlistsTable.appUserId, appUserId) : undefined,
+  );
+  const filteredQuery = filter ? query.where(filter) : query;
 
   return filteredQuery.orderBy(
     desc(watchlistsTable.isDefault),
@@ -679,18 +681,21 @@ export function listWatchlistsRuntimeFallback() {
   return buildBuiltInWatchlistSnapshot();
 }
 
-async function listWatchlistsFromDb() {
-  return mapWatchlistRows(await selectWatchlistRows());
+async function listWatchlistsFromDb(appUserId?: string) {
+  return mapWatchlistRows(await selectWatchlistRows(undefined, appUserId));
 }
 
 export async function listWatchlistsForDiagnostics() {
   return listWatchlistsFromDb();
 }
 
+// Ownership-scoped fetch: returns null for a watchlist the current user does not
+// own, so every mutation that funnels through it enforces [OWN] via its existing
+// 404. Only called from request-path mutations (ALS is populated).
 async function getWatchlistById(
   watchlistId: string,
 ): Promise<WatchlistRecord | null> {
-  const rows = await selectWatchlistRows(watchlistId);
+  const rows = await selectWatchlistRows(watchlistId, requireCurrentAppUserId());
   const [watchlist] = mapWatchlistRows(rows).watchlists;
   return watchlist ?? null;
 }
@@ -1820,11 +1825,22 @@ async function rebalanceWatchlistSortOrder(watchlistId: string) {
 }
 
 async function setDefaultWatchlistIfNeeded(watchlistId: string) {
-  await db.update(watchlistsTable).set({ isDefault: false });
+  const userId = requireCurrentAppUserId();
+  // Only clear the default among THIS user's watchlists (a missing WHERE here
+  // would reset every other user's default).
+  await db
+    .update(watchlistsTable)
+    .set({ isDefault: false })
+    .where(eq(watchlistsTable.appUserId, userId));
   await db
     .update(watchlistsTable)
     .set({ isDefault: true })
-    .where(eq(watchlistsTable.id, watchlistId));
+    .where(
+      and(
+        eq(watchlistsTable.id, watchlistId),
+        eq(watchlistsTable.appUserId, userId),
+      ),
+    );
 }
 
 type MassiveMarketDataClientFactory = (
@@ -3811,6 +3827,29 @@ async function listRobinhoodBrokerConnections(): Promise<
   }
 }
 
+// Route-facing read: only the current user's watchlists. listWatchlists() itself
+// stays GLOBAL because the shared signal pipeline / shadow / automation read the
+// full watched-symbol universe across all users — so we filter the (globally
+// cached) snapshot down to the caller's owned rows here, per request.
+export async function listWatchlistsForCurrentUser(): Promise<WatchlistSnapshot> {
+  const userId = requireCurrentAppUserId();
+  const snapshot = await listWatchlists();
+  const ownedIds = new Set(
+    (
+      await db
+        .select({ id: watchlistsTable.id })
+        .from(watchlistsTable)
+        .where(eq(watchlistsTable.appUserId, userId))
+    ).map((row) => row.id),
+  );
+  return {
+    ...snapshot,
+    watchlists: snapshot.watchlists.filter((watchlist) =>
+      ownedIds.has(watchlist.id),
+    ),
+  };
+}
+
 export async function listWatchlists() {
   const nowMs = Date.now();
   if (watchlistListCache && watchlistListCache.freshUntil > nowMs) {
@@ -4052,7 +4091,8 @@ export async function deleteWatchlist(watchlistId: string) {
     });
   }
 
-  const all = await listWatchlistsFromDb();
+  const userId = requireCurrentAppUserId();
+  const all = await listWatchlistsFromDb(userId);
   if (all.watchlists.length <= 1) {
     throw new HttpError(400, "At least one watchlist must remain.", {
       code: "watchlist_last_delete_blocked",
@@ -4068,6 +4108,7 @@ export async function deleteWatchlist(watchlistId: string) {
     const nextDefault = await db
       .select({ id: watchlistsTable.id })
       .from(watchlistsTable)
+      .where(eq(watchlistsTable.appUserId, userId))
       .orderBy(asc(watchlistsTable.name))
       .limit(1);
     if (nextDefault[0]) {
@@ -4130,6 +4171,14 @@ export async function removeWatchlistSymbol(
   watchlistId: string,
   itemId: string,
 ) {
+  // [OWN]: reject if the watchlist isn't the caller's (getWatchlistById is
+  // user-scoped). The other item mutations already funnel through it.
+  if (!(await getWatchlistById(watchlistId))) {
+    throw new HttpError(404, "Watchlist not found.", {
+      code: "watchlist_not_found",
+    });
+  }
+
   const item = await db
     .select({
       id: watchlistItemsTable.id,

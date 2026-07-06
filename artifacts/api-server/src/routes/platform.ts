@@ -71,7 +71,7 @@ import {
   listAggregateFlowEvents,
   listFlowEvents,
   listOrders,
-  listWatchlists,
+  listWatchlistsForCurrentUser,
   addWatchlistSymbol,
   placeOrder,
   previewOrder,
@@ -2239,7 +2239,7 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
 });
 
 router.get("/watchlists", async (_req, res) => {
-  res.json(await listWatchlists());
+  res.json(await listWatchlistsForCurrentUser());
 });
 
 router.post("/watchlists", async (req, res) => {
