@@ -13,6 +13,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -103,7 +104,7 @@ import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 // @ts-expect-error JSX module imported into TypeScript context
-import { DataUnavailableState, Select, StatusPill, StatTile, TextField, surfaceStyle } from "../../components/platform/primitives.jsx";
+import { DataUnavailableState, SegmentedControl, Select, StatusPill, StatTile, TextField, surfaceStyle } from "../../components/platform/primitives.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { cssColorAlpha, CSS_COLOR, RADII } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
@@ -2789,37 +2790,16 @@ export function BacktestWorkspace({
                 charts side by side, then work downward through summary,
                 trades, diagnostics, and history.
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: scale.sp(4),
-                  marginTop: scale.sp(8),
-                }}
-              >
-                <button
-                  type="button"
-                  aria-pressed={workbenchView === "strategy"}
-                  onClick={() => setWorkbenchView("strategy")}
-                  style={buttonStyle(
-                    theme,
-                    scale,
-                    workbenchView === "strategy" ? "primary" : "ghost",
-                  )}
-                >
-                  Strategy
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={workbenchView === "discovery"}
-                  onClick={() => setWorkbenchView("discovery")}
-                  style={buttonStyle(
-                    theme,
-                    scale,
-                    workbenchView === "discovery" ? "primary" : "ghost",
-                  )}
-                >
-                  Pattern Discovery
-                </button>
+              <div style={{ marginTop: scale.sp(8) }}>
+                <SegmentedControl
+                  options={[
+                    { value: "strategy", label: "Strategy" },
+                    { value: "discovery", label: "Pattern Discovery" },
+                  ]}
+                  value={workbenchView}
+                  onChange={setWorkbenchView}
+                  ariaLabel="Workbench view"
+                />
               </div>
             </div>
             <div
@@ -3084,40 +3064,16 @@ export function BacktestWorkspace({
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={fieldLabelStyle(theme, scale)}>Universe</div>
-              <div
-                style={{
-                  display: "inline-flex",
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: scale.dim(RADII.pill),
-                  padding: scale.sp(2),
-                  background: theme.bg0,
-                  marginBottom: scale.sp(8),
-                }}
-              >
-                <button
-                  type="button"
-                  aria-pressed={universeMode === "watchlist"}
-                  onClick={() => setUniverseMode("watchlist")}
-                  style={buttonStyle(
-                    theme,
-                    scale,
-                    universeMode === "watchlist" ? "primary" : "ghost",
-                  )}
-                >
-                  Watchlist
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={universeMode === "symbols"}
-                  onClick={() => setUniverseMode("symbols")}
-                  style={buttonStyle(
-                    theme,
-                    scale,
-                    universeMode === "symbols" ? "primary" : "ghost",
-                  )}
-                >
-                  Symbols
-                </button>
+              <div style={{ marginBottom: scale.sp(8) }}>
+                <SegmentedControl
+                  options={[
+                    { value: "watchlist", label: "Watchlist" },
+                    { value: "symbols", label: "Symbols" },
+                  ]}
+                  value={universeMode}
+                  onChange={setUniverseMode}
+                  ariaLabel="Universe mode"
+                />
               </div>
               {universeMode === "watchlist" ? (
                 <Select
@@ -4425,49 +4381,41 @@ export function BacktestWorkspace({
                     >
                       Trade Lens
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: scale.sp(6),
-                      }}
-                    >
-                      {(
-                        [
-                          ["all", "All"],
-                          ["winners", "Winners"],
-                          ["losers", "Losers"],
-                          ["long", "Long"],
-                          ["short", "Short"],
-                          ["recent", "Recent"],
-                        ] as Array<[SummaryTradeLens, string]>
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={summaryTradeLens === value}
-                          onClick={() => setSummaryTradeLens(value)}
-                          style={{
-                            ...buttonStyle(
-                              theme,
-                              scale,
-                              summaryTradeLens === value ? "primary" : "ghost",
-                            ),
-                            padding: scale.sp("5px 9px"),
-                          }}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      options={[
+                        { value: "all", label: "All" },
+                        { value: "winners", label: "Winners" },
+                        { value: "losers", label: "Losers" },
+                        { value: "long", label: "Long" },
+                        { value: "short", label: "Short" },
+                        { value: "recent", label: "Recent" },
+                      ]}
+                      value={summaryTradeLens}
+                      onChange={setSummaryTradeLens}
+                      ariaLabel="Trade lens"
+                    />
                   </div>
                   <div style={{ display: "grid", gap: scale.sp(6) }}>
                     {summaryLensTrades.length === 0 ? (
-                      <div
-                        style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                      >
-                        No trades match the selected lens.
-                      </div>
+                      <DataUnavailableState
+                        title="No trades match this lens"
+                        detail={
+                          summaryTradeLens === "all"
+                            ? "No trades were recorded for this run."
+                            : "No trades match the selected lens. Reset the lens to All to view every trade."
+                        }
+                        action={
+                          summaryTradeLens === "all" ? undefined : (
+                            <button
+                              type="button"
+                              onClick={() => setSummaryTradeLens("all")}
+                              style={buttonStyle(theme, scale, "primary")}
+                            >
+                              Show all trades
+                            </button>
+                          )
+                        }
+                      />
                     ) : (
                       summaryLensTrades.map((trade) => (
                         <button
@@ -5298,11 +5246,16 @@ export function BacktestWorkspace({
                         <Tooltip
                           contentStyle={chartTooltipContentStyle}
                         />
-                        <Bar
-                          dataKey="netPnl"
-                          fill={theme.green}
-                          radius={[4, 4, 0, 0]}
-                        />
+                        <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
+                          {pnlDistribution.map((entry, index) => (
+                            <Cell
+                              key={index}
+                              fill={
+                                entry.netPnl >= 0 ? theme.green : theme.red
+                              }
+                            />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
@@ -5644,15 +5597,28 @@ export function BacktestWorkspace({
                   <tbody>
                     {paginatedTradeRows.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={12}
-                          style={{
-                            padding: scale.sp("14px 12px"),
-                            color: theme.textDim,
-                            fontSize: scale.fs(10),
-                          }}
-                        >
-                          No executed trades match the current filters.
+                        <td colSpan={12} style={{ padding: scale.sp("14px 12px") }}>
+                          <DataUnavailableState
+                            title="No executed trades match the current filters"
+                            detail="Adjust or clear the trade filters above to see executed trades."
+                            action={
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTradeSearchText("");
+                                  setTradeSymbolFilter("all");
+                                  setTradeSideFilter("all");
+                                  setTradeOutcomeFilter("all");
+                                  setTradeExitReasonFilter("all");
+                                  setTradeDateFrom("");
+                                  setTradeDateTo("");
+                                }}
+                                style={buttonStyle(theme, scale, "ghost")}
+                              >
+                                Clear filters
+                              </button>
+                            }
+                          />
                         </td>
                       </tr>
                     ) : (

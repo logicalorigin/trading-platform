@@ -1,12 +1,5 @@
+import { useMemo } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  ChevronDown,
   Gauge,
   Power,
   RefreshCw,
@@ -26,8 +19,6 @@ import {
 import {
   CSS_COLOR,
   cssColorAlpha,
-  cssColorMix,
-  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -211,200 +202,20 @@ const MarketActivityLaneSection = ({
   </section>
 );
 
-const SignalTimeframeTypeahead = ({ value, onChange, compactFrame = false }) => {
-  const rootRef = useRef(null);
-  const inputRef = useRef(null);
-  const listboxIdRef = useRef(
-    `signal-timeframe-listbox-${Math.random().toString(36).slice(2)}`,
-  );
+const SignalTimeframeSelect = ({ value, onChange, compactFrame = false }) => {
   const selected = normalizeSignalMonitorTimeframe(value);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(
-    SIGNAL_TIMEFRAME_LABELS[selected] || selected,
-  );
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  useEffect(() => {
-    if (!open) {
-      setQuery(SIGNAL_TIMEFRAME_LABELS[selected] || selected.toUpperCase());
-      setActiveIndex(0);
-    }
-  }, [open, selected]);
-
-  useEffect(() => {
-    if (!open || typeof document === "undefined") return undefined;
-    const handlePointerDown = (event) => {
-      if (rootRef.current?.contains(event.target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  const normalizedQuery = query.trim().toLowerCase();
-  const options =
-    !normalizedQuery || normalizedQuery === selected
-      ? SIGNAL_MONITOR_TIMEFRAMES
-      : SIGNAL_MONITOR_TIMEFRAMES.filter((timeframe) =>
-          timeframe.toLowerCase().includes(normalizedQuery),
-        );
-  const visibleOptions = options.length ? options : SIGNAL_MONITOR_TIMEFRAMES;
-
-  const commit = useCallback(
-    (timeframe) => {
-      const normalized = normalizeSignalMonitorTimeframe(timeframe);
-      setOpen(false);
-      setQuery(SIGNAL_TIMEFRAME_LABELS[normalized] || normalized.toUpperCase());
-      onChange?.(normalized);
-    },
-    [onChange],
-  );
-
-  const handleKeyDown = useCallback(
-    (event) => {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setOpen(true);
-        setActiveIndex((current) =>
-          Math.min(current + 1, visibleOptions.length - 1),
-        );
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setOpen(true);
-        setActiveIndex((current) => Math.max(current - 1, 0));
-        return;
-      }
-      if (event.key === "Enter") {
-        event.preventDefault();
-        commit(visibleOptions[activeIndex] || selected);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-      }
-    },
-    [activeIndex, commit, selected, visibleOptions],
-  );
-
   return (
-    <div
-      ref={rootRef}
-      style={{
-        position: "relative",
-        width: dim(compactFrame ? 40 : 56),
-        minWidth: dim(compactFrame ? 40 : 56),
-      }}
-    >
-      <input
-        ref={inputRef}
-        data-testid="market-signal-interval-input"
-        role="combobox"
-        aria-label="Signal monitor interval"
-        aria-expanded={open}
-        aria-controls={listboxIdRef.current}
-        aria-autocomplete="list"
-        aria-activedescendant={
-          open ? `${listboxIdRef.current}-option-${activeIndex}` : undefined
-        }
-        value={query}
-        onFocus={(event) => {
-          setOpen(true);
-          event.currentTarget.select();
-        }}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setOpen(true);
-          setActiveIndex(0);
-        }}
-        onKeyDown={handleKeyDown}
-        style={{
-          width: "100%",
-          background: CSS_COLOR.bg1,
-          border: `1px solid ${CSS_COLOR.borderLight}`,
-          color: CSS_COLOR.textSec,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.medium,
-          padding: sp(compactFrame ? "3px 14px 3px 5px" : "4px 18px 4px 7px"),
-          borderRadius: dim(RADII.xs),
-          outline: "none",
-          textTransform: "uppercase",
-        }}
-      />
-      <ChevronDown
-        aria-hidden="true"
-        size={dim(11)}
-        strokeWidth={2.4}
-        style={{
-          position: "absolute",
-          right: compactFrame ? 3 : 5,
-          top: "50%",
-          transform: "translateY(-50%)",
-          color: CSS_COLOR.textDim,
-          pointerEvents: "none",
-        }}
-      />
-      {open ? (
-        <div
-          id={listboxIdRef.current}
-          role="listbox"
-          style={{
-            position: "absolute",
-            zIndex: 100,
-            left: 0,
-            right: 0,
-            top: "calc(100% + 4px)",
-            background: CSS_COLOR.bg1,
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            borderRadius: dim(RADII.xs),
-            boxShadow: ELEVATION.md,
-            maxHeight: dim(200),
-            overflowY: "auto",
-            padding: sp(4),
-          }}
-        >
-          {visibleOptions.map((timeframe, index) => {
-            const active = index === activeIndex;
-            const selectedOption = timeframe === selected;
-            return (
-              <button
-                key={timeframe}
-                id={`${listboxIdRef.current}-option-${index}`}
-                data-testid={`market-signal-interval-option-${timeframe}`}
-                type="button"
-                role="option"
-                aria-selected={selectedOption}
-                onMouseEnter={() => setActiveIndex(index)}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => commit(timeframe)}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
-                  background: active
-                    ? CSS_COLOR.accentHoverBg
-                    : selectedOption
-                      ? `${cssColorMix(CSS_COLOR.accent, 7)}`
-                      : "transparent",
-                  color: selectedOption ? CSS_COLOR.accent : CSS_COLOR.textSec,
-                  cursor: "pointer",
-                  fontFamily: T.sans,
-                  fontSize: textSize("body"),
-                  fontWeight: FONT_WEIGHTS.medium,
-                  padding: sp("5px 6px"),
-                  textAlign: "left",
-                }}
-              >
-                {SIGNAL_TIMEFRAME_LABELS[timeframe]}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
+    <Select
+      value={selected}
+      onChange={(next) => onChange?.(normalizeSignalMonitorTimeframe(next))}
+      ariaLabel="Signal monitor interval"
+      selectProps={{ "data-testid": "market-signal-interval-input" }}
+      style={{ flex: "0 0 auto", width: dim(compactFrame ? 48 : 64) }}
+      options={SIGNAL_MONITOR_TIMEFRAMES.map((timeframe) => ({
+        value: timeframe,
+        label: SIGNAL_TIMEFRAME_LABELS[timeframe] || timeframe.toUpperCase(),
+      }))}
+    />
   );
 };
 
@@ -1078,7 +889,7 @@ export const MarketActivityPanel = ({
                 onClick={onToggleMonitor}
                 compactFrame={compactFrame}
               />
-              <SignalTimeframeTypeahead
+              <SignalTimeframeSelect
                 value={monitorTimeframe}
                 onChange={onChangeMonitorTimeframe}
                 compactFrame={compactFrame}

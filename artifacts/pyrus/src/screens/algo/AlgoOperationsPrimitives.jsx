@@ -14,10 +14,12 @@ import {
   FailurePointInlineIcon,
   FailurePointTooltip,
 } from "../../components/platform/FailurePointTooltip.jsx";
+import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import {
   buildAlgoMetricFailurePoint,
   buildPipelineStageFailurePoint,
 } from "../../features/platform/failurePointModel.js";
+import { toneForDirectionalIntent } from "../../features/platform/semanticToneModel.js";
 import { SIGNAL_SCORE_RANGE_BUCKETS, formatPct } from "./algoHelpers";
 
 const overviewSeverityBackground = (severity) => {
@@ -486,9 +488,9 @@ export const buildScoreOutcomeGroupedTable = (
 
 const indicatorKpiRowLabelTone = (key) =>
   key === "buy"
-    ? CSS_COLOR.green
+    ? toneForDirectionalIntent("buy")
     : key === "sell"
-      ? CSS_COLOR.red
+      ? toneForDirectionalIntent("sell")
       : CSS_COLOR.text;
 
 // Indicator-signal KPIs as a compact table: score buckets are columns and
@@ -763,16 +765,10 @@ export const AlgoIndicatorKpiTable = ({
         </tbody>
       </table>
       {!hasSignals ? (
-        <div
-          style={{
-            color: CSS_COLOR.textDim,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            padding: cellPad,
-          }}
-        >
-          No signals yet
-        </div>
+        <DataUnavailableState
+          title="No signals yet"
+          detail="Indicator KPIs populate once the Signal Options engine records scored signals."
+        />
       ) : null}
     </div>
   );

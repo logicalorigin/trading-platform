@@ -65,7 +65,8 @@ import {
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
-import { LoadingSpinner } from "../../components/platform/primitives";
+import { LoadingSpinner, StatusPill } from "../../components/platform/primitives";
+import { SEMANTIC_TONE, toneForOperationalState } from "./semanticToneModel.js";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import { markScreenSwitchStart } from "./performanceMetrics";
 
@@ -163,7 +164,7 @@ const ScreenSuspenseFallback = () => (
       minHeight: 0,
       display: "grid",
       placeItems: "center",
-      background: "var(--ra-surface-0, #F7FAFF)",
+      background: CSS_COLOR.bg0,
     }}
   >
     <LoadingSpinner size={22} />
@@ -575,47 +576,37 @@ const FooterField = ({ label, value, valueColor }) => (
   </span>
 );
 
-const FooterStatusField = ({ label, value, ok }) => (
-  <span
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: sp(6),
-      minWidth: 0,
-    }}
-  >
+const FooterStatusField = ({ label, value, status }) => {
+  const tone = toneForOperationalState(
+    status,
+    SEMANTIC_TONE.operationalAttention,
+  );
+  return (
     <span
       style={{
-        width: dim(6),
-        height: dim(6),
-        borderRadius: dim(RADII.pill),
-        background: ok ? CSS_COLOR.green : CSS_COLOR.red,
-        flexShrink: 0,
-      }}
-    />
-    <span
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(6),
+        minWidth: 0,
       }}
     >
-      {label}
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </span>
+      <StatusPill color={tone} variant="ghost">
+        {value}
+      </StatusPill>
     </span>
-    <span
-      style={{
-        color: CSS_COLOR.text,
-        fontSize: textSize("body"),
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: 0,
-      }}
-    >
-      {value}
-    </span>
-  </span>
-);
+  );
+};
 
 const FooterDivider = () => (
   <span
@@ -1458,13 +1449,17 @@ export const PlatformShell = ({
           <FooterStatusField
             label="Historical"
             value={session?.marketDataProviders?.historical || MISSING_VALUE}
-            ok={Boolean(session?.configured?.ibkr)}
+            status={
+              session?.configured?.ibkr ? "connected" : "not-configured"
+            }
           />
           <FooterDivider />
           <FooterStatusField
             label="Research"
             value={session?.marketDataProviders?.research || MISSING_VALUE}
-            ok={Boolean(session?.configured?.research)}
+            status={
+              session?.configured?.research ? "connected" : "not-configured"
+            }
           />
           <span
             style={{

@@ -1654,7 +1654,7 @@ export const buildMachineStateDiagramModel = ({
               ? `${formatCount(unavailableSignalCount)} unavailable`
               : null,
             degradedSignalInputRatio >= 0.1
-              ? `${Math.round(degradedSignalInputRatio * 100)}% degraded inputs`
+              ? `${Math.round(degradedSignalInputRatio * 100)}% inputs stale/unavailable`
               : null,
             latestScanAgeMs !== null ? `${formatMs(latestScanAgeMs)} scan age` : null,
           ])

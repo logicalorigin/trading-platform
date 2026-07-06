@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { MetricChip } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -97,45 +98,18 @@ const QuoteStrip = ({ items = [] }) => {
       }}
     >
       {visibleItems.map((item) => (
-        <div
+        <MetricChip
           key={item.label}
+          label={item.label}
+          value={item.value}
+          tone={item.tone || CSS_COLOR.textSec}
+          title={item.value}
           style={{
-            minWidth: 0,
-            padding: sp("4px 5px"),
-            border: `1px solid ${cssColorMix(item.tone || CSS_COLOR.border, item.tone ? 24 : 100)}`,
-            borderRadius: dim(RADII.xs),
-            background: item.tone ? cssColorMix(item.tone, 7) : CSS_COLOR.bg0,
+            flexDirection: "column",
+            alignItems: "stretch",
+            gap: sp(1),
           }}
-        >
-          <div
-            style={{
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: fs(8),
-              letterSpacing: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.label}
-          </div>
-          <AppTooltip content={item.value}>
-            <div
-              style={{
-                color: item.tone || CSS_COLOR.textSec,
-                fontFamily: T.data,
-                fontSize: textSize("caption"),
-                fontVariantNumeric: "tabular-nums",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.value}
-            </div>
-          </AppTooltip>
-        </div>
+        />
       ))}
     </div>
   );

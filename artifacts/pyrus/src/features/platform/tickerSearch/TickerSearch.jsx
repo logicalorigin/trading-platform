@@ -35,6 +35,10 @@ import {
   sp,
   textSize,
 } from "../../../lib/uiTokens.jsx";
+import {
+  DataUnavailableState,
+  SegmentedControl,
+} from "../../../components/platform/primitives.jsx";
 import { joinMotionClasses, motionVars } from "../../../lib/motion";
 import { _initialState, persistState } from "../../../lib/workspaceState";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -1359,32 +1363,13 @@ export const MarketChartTickerSearch = ({
           background: CSS_COLOR.bg1,
         }}
       >
-        {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {
-          const active = marketFilter === filter.value;
-          return (
-            <button
-              key={filter.value}
-              type="button"
-              data-testid={`ticker-search-filter-${filter.value}`}
-              aria-pressed={active}
-              className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
-              onClick={() => setMarketFilter(filter.value)}
-              style={{
-                ...motionVars({ accent: CSS_COLOR.accent }),
-                border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
-                background: active ? `${cssColorMix(CSS_COLOR.accent, 13)}` : CSS_COLOR.bg1,
-                color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-                padding: sp("2px 6px"),
-                cursor: "pointer",
-                textTransform: "uppercase",
-              }}
-            >
-              {filter.label}
-            </button>
-          );
-        })}
+        <SegmentedControl
+          options={TICKER_SEARCH_MARKET_FILTERS}
+          value={marketFilter}
+          onChange={setMarketFilter}
+          ariaLabel="Filter results by market"
+          buttonTestId="ticker-search-filter"
+        />
       </div>
       <div
         style={{
@@ -1504,16 +1489,10 @@ export const MarketChartTickerSearch = ({
         !hasDisplayableSearchError &&
         !results.length &&
         !suggestionRowCount ? (
-          <div
-            style={{
-              padding: sp("12px 10px"),
-              fontSize: textSize("caption"),
-              color: CSS_COLOR.textDim,
-              fontFamily: T.sans,
-            }}
-          >
-            No results for "{deferredQuery}".
-          </div>
+          <DataUnavailableState
+            title={`No matches for "${deferredQuery}"`}
+            detail="Try a different symbol or company name — or widen the market filter to All."
+          />
         ) : null}
         {searchEnabled && !hasDisplayableSearchError && results.length ? (
           <div
@@ -2068,30 +2047,13 @@ export const TickerUniverseSearchPanel = ({
           </button></AppTooltip>
         </div>
         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-          {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {
-            const active = marketFilter === filter.value;
-            return (
-              <button
-                key={filter.value}
-                type="button"
-                data-testid={`ticker-search-filter-${filter.value}`}
-                aria-pressed={active}
-                onClick={() => setMarketFilter(filter.value)}
-                style={{
-                  border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
-                  background: active ? `${cssColorMix(CSS_COLOR.accent, 13)}` : CSS_COLOR.bg1,
-                  color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
-                  fontFamily: T.sans,
-                  fontSize: textSize("body"),
-                  padding: sp("2px 6px"),
-                  cursor: "pointer",
-                  textTransform: "uppercase",
-                }}
-              >
-                {filter.label}
-              </button>
-            );
-          })}
+          <SegmentedControl
+            options={TICKER_SEARCH_MARKET_FILTERS}
+            value={marketFilter}
+            onChange={setMarketFilter}
+            ariaLabel="Filter results by market"
+            buttonTestId="ticker-search-filter"
+          />
         </div>
         <input
           ref={inputRef}
@@ -2205,16 +2167,10 @@ export const TickerUniverseSearchPanel = ({
           !hasDisplayableSearchError &&
           !results.length &&
           !suggestionRowCount ? (
-            <div
-              style={{
-                padding: sp("12px 10px"),
-                fontSize: fs(10),
-                color: CSS_COLOR.textDim,
-                fontFamily: T.sans,
-              }}
-            >
-              No results for "{deferredQuery}".
-            </div>
+            <DataUnavailableState
+              title={`No matches for "${deferredQuery}"`}
+              detail="Try a different symbol or company name — or widen the market filter to All."
+            />
           ) : null}
           {searchEnabled &&
             !hasDisplayableSearchError &&

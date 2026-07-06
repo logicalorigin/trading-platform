@@ -10,6 +10,7 @@ import {
   Landmark,
 } from "lucide-react";
 import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T } from "../../lib/uiTokens";
+import { Badge } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const EXCHANGE_COUNTRY_BY_KEY = {
@@ -585,26 +586,11 @@ export function MarketIdentityChips({
       }}
     >
       {chips.map((chip) => (
-        <AppTooltip key={chip.key} content={chip.title}><span
-          key={chip.key}
-          style={{
-            border: "none",
-            color: CSS_COLOR.textMuted,
-            background: compact ? "transparent" : CSS_COLOR.bg2,
-            fontSize: fs(compact ? 7 : 8),
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
-            lineHeight: 1,
-            padding: sp(compact ? "2px 3px" : "2px 4px"),
-            textTransform: chip.key === "country" ? "none" : "uppercase",
-            whiteSpace: "nowrap",
-            maxWidth: dim(compact ? 76 : 112),
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {chip.label}
-        </span></AppTooltip>
+        <AppTooltip key={chip.key} content={chip.title}>
+          <Badge color={CSS_COLOR.textDim} variant={compact ? "ghost" : "solid"}>
+            {chip.label}
+          </Badge>
+        </AppTooltip>
       ))}
     </span>
   );

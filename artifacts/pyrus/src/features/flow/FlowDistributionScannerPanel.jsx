@@ -4,7 +4,7 @@ import {
   useState,
 } from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { Card, DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { Card, DataUnavailableState, SegmentedControl } from "../../components/platform/primitives.jsx";
 import { useViewportBelow } from "../../lib/responsive";
 import { CSS_COLOR, cssColorMix, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { FlowScannerStatusPanel } from "./FlowScannerStatusPanel.jsx";
@@ -22,53 +22,6 @@ const COVERAGE_MODE_OPTIONS = [
   ["ranked", "Ranked"],
   ["universe", "Universe"],
 ];
-
-const SegmentedToggle = ({
-  options,
-  value,
-  onChange,
-  ariaLabel,
-  testId,
-}) => (
-  <div
-    data-testid={testId}
-    aria-label={ariaLabel}
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: sp(2),
-      padding: sp(2),
-      border: `1px solid ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.xs),
-      background: CSS_COLOR.bg1,
-    }}
-  >
-    {options.map(([optionValue, label]) => {
-      const active = value === optionValue;
-      return (
-        <button
-          key={optionValue}
-          type="button"
-          aria-pressed={active}
-          onClick={() => onChange?.(optionValue)}
-          style={{
-            border: "none",
-            borderRadius: dim(RADII.sm),
-            background: active ? `${cssColorMix(CSS_COLOR.accent, 8)}` : "transparent",
-            color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
-            cursor: "pointer",
-            fontFamily: T.sans,
-            fontSize: fs(8),
-            fontWeight: FONT_WEIGHTS.regular,
-            padding: sp("3px 7px"),
-          }}
-        >
-          {label}
-        </button>
-      );
-    })}
-  </div>
-);
 
 const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
   <div
@@ -293,21 +246,23 @@ export const FlowDistributionScannerPanel = ({
       }}
     >
       {timeframeOptions ? (
-        <SegmentedToggle
-          options={timeframeOptions}
+        <SegmentedControl
+          options={timeframeOptions.map(([value, label]) => ({ value, label }))}
           value={timeframe}
           onChange={onTimeframeChange}
           ariaLabel="Premium distribution timeframe"
-          testId="flow-premium-distribution-timeframe"
+          radioGroup
+          buttonTestId="flow-premium-distribution-timeframe"
         />
       ) : null}
       {showCoverageMode ? (
-        <SegmentedToggle
-          options={COVERAGE_MODE_OPTIONS}
+        <SegmentedControl
+          options={COVERAGE_MODE_OPTIONS.map(([value, label]) => ({ value, label }))}
           value={coverageMode}
           onChange={onCoverageModeChange}
           ariaLabel="Premium distribution coverage mode"
-          testId="flow-premium-distribution-coverage-mode"
+          radioGroup
+          buttonTestId="flow-premium-distribution-coverage-mode"
         />
       ) : null}
       <BucketVisibilityToggle

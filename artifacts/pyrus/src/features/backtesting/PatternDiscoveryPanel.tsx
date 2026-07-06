@@ -57,6 +57,8 @@ import {
   // @ts-expect-error JSX module imported into TypeScript context
 } from "../../lib/uiTokens.jsx";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
+// @ts-expect-error JS module imported into TypeScript context
+import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
 import {
   classifyPatternBiasAlignment,
   classifyPatternSetup,
@@ -213,9 +215,9 @@ function familyTone(familyId: PatternSetupFamilyId): string {
     case "bear_confluence":
       return CSS_COLOR.red;
     case "fast_bullish_reversal":
-      return CSS_COLOR.cyan;
+      return toneForDirectionalIntent("bullish");
     case "fast_bearish_reversal":
-      return CSS_COLOR.amber;
+      return toneForDirectionalIntent("bearish");
     case "mixed_divergence":
       return CSS_COLOR.purple;
     case "inactive":

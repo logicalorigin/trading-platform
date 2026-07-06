@@ -578,20 +578,13 @@ const HeatmapCard = ({ rows, spot, callWall, putWall, zeroGamma }) => {
           }}
         >
           <HeatmapColorLegend compact />
-          <button
-            type="button"
-            className="ra-touch-target"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setExpanded((value) => !value)}
-            style={{
-              ...fieldStyle,
-              height: dim(26),
-              padding: sp("0 8px"),
-              cursor: "pointer",
-              color: CSS_COLOR.textSec,
-            }}
           >
             {expanded ? "Collapse" : `Expand (${displayStrikes.length} strikes)`}
-          </button>
+          </Button>
         </div>
       }
       minHeight={280}
@@ -1722,7 +1715,7 @@ export default function GexScreen({
                     onClick={() => setExpirationFilter(option.value)}
                     style={{
                       flex: "0 0 auto",
-                      minHeight: dim(36),
+                      minHeight: dim(44),
                       padding: sp("0 10px"),
                       border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
                       borderRadius: dim(RADII.xs),
@@ -1744,7 +1737,7 @@ export default function GexScreen({
                   onClick={() => setMobileFiltersOpen(true)}
                   style={{
                     flex: "0 0 auto",
-                    minHeight: dim(36),
+                    minHeight: dim(44),
                     padding: sp("0 10px"),
                     border: `1px solid ${
                       hiddenMobileExpirationSelected ? CSS_COLOR.accent : CSS_COLOR.border
@@ -2118,23 +2111,16 @@ export default function GexScreen({
 }
 
 const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
-  <div style={{ background: CSS_COLOR.bg0, border: "none", padding: sp(8) }}>
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        color: CSS_COLOR.textDim,
-        fontSize: textSize("caption"),
-      }}
-    >
-      {label}
-      {glossaryKey ? (
+  <StatTile
+    label={label}
+    value={`${(value * 100).toFixed(1)}%`}
+    tone={color}
+    align="start"
+    minWidth={0}
+    info={
+      glossaryKey ? (
         <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
-      ) : null}
-    </div>
-    <div style={{ color, fontSize: fs(17), fontWeight: FONT_WEIGHTS.emphasis }}>
-      {(value * 100).toFixed(1)}%
-    </div>
-  </div>
+      ) : null
+    }
+  />
 );

@@ -31,7 +31,7 @@ export const HeaderAccountStrip = ({
       label: "Buying Power",
       shortLabel: "BP",
       value: maskAccountValue(primaryAccount?.buyingPower),
-      color: CSS_COLOR.green,
+      color: CSS_COLOR.text,
     },
     {
       label: "Cash",

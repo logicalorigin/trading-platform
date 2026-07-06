@@ -22,7 +22,9 @@ import {
   Pin,
   PinOff,
   Play,
+  Star,
   Tag,
+  Zap,
 } from "lucide-react";
 import {
   useGetFlowPremiumDistribution,
@@ -67,7 +69,9 @@ import {
   Card,
   CardTitle,
   DataUnavailableState,
+  Icon,
   Pill,
+  SegmentedControl,
   Skeleton,
 } from "../components/platform/primitives.jsx";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
@@ -3079,7 +3083,17 @@ const FlowOverviewPanel = ({
     if (columnId === "ticker") {
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
-          {event.golden ? <span style={{ color: CSS_COLOR.amber }}>★</span> : null}
+          {event.golden ? (
+            <AppTooltip content="Golden setup">
+              <Icon
+                as={Star}
+                size={13}
+                color={CSS_COLOR.amber}
+                role="img"
+                aria-label="Golden setup"
+              />
+            </AppTooltip>
+          ) : null}
           <MarketIdentityInline
             ticker={event.ticker}
             size={14}
@@ -3236,7 +3250,7 @@ const FlowOverviewPanel = ({
             <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
               B {formatOptionPrice(bid)}
             </span>
-            <span style={{ color: event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: toneForOptionSide(event.cp), fontWeight: FONT_WEIGHTS.regular }}>
               A {formatOptionPrice(ask)}
             </span>
           </div>
@@ -3254,7 +3268,7 @@ const FlowOverviewPanel = ({
               style={{
                 position: "absolute",
                 inset: 0,
-                background: `linear-gradient(90deg, ${cssColorMix(CSS_COLOR.red, 33)} 0%, ${cssColorMix(CSS_COLOR.textDim, 27)} 50%, ${cssColorAlpha(event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, "66")} 100%)`,
+                background: `linear-gradient(90deg, ${cssColorMix(CSS_COLOR.red, 33)} 0%, ${cssColorMix(CSS_COLOR.textDim, 27)} 50%, ${cssColorAlpha(toneForOptionSide(event.cp), "66")} 100%)`,
               }}
             />
             {fillPosition !== null ? (
@@ -3790,42 +3804,35 @@ const FlowOverviewPanel = ({
       >
         <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
           <span style={panelLabelStyle}>Density</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
-            {[
-              ["compact", "Compact"],
-              ["comfortable", "Comfort"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => {
-                  setDensity(value);
-                  markScannerEdited();
-                }}
-                style={toolbarChipStyle(density === value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            radioGroup
+            ariaLabel="Density"
+            value={density}
+            onChange={(value) => {
+              setDensity(value);
+              markScannerEdited();
+            }}
+            options={[
+              { value: "compact", label: "Compact" },
+              { value: "comfortable", label: "Comfort" },
+            ]}
+          />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
           <span style={panelLabelStyle}>Rows</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
-            {FLOW_ROWS_OPTIONS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => {
-                  setRowsPerPage(value);
-                  markScannerEdited();
-                }}
-                style={toolbarChipStyle(rowsPerPage === value)}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            radioGroup
+            ariaLabel="Rows per page"
+            value={rowsPerPage}
+            onChange={(value) => {
+              setRowsPerPage(value);
+              markScannerEdited();
+            }}
+            options={FLOW_ROWS_OPTIONS.map((value) => ({
+              value,
+              label: String(value),
+            }))}
+          />
         </div>
       </div>
 
@@ -5003,6 +5010,7 @@ const FlowOverviewPanel = ({
                           type="button"
                           className="ra-touch-target"
                           aria-label={`Sort Flow tape by ${label}`}
+                          aria-pressed={sortBy === key}
                           onClick={() => applyFlowSort(key)}
                           style={{
                             ...toolbarChipStyle(sortBy === key),
@@ -6431,7 +6439,13 @@ const FlowOverviewPanel = ({
                     >
                       <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>
                         {bucket.bucket === "0DTE" ? (
-                          <span style={{ color: CSS_COLOR.amber, marginRight: 3 }}>⚡</span>
+                          <Icon
+                            as={Zap}
+                            size={11}
+                            color={CSS_COLOR.amber}
+                            aria-hidden="true"
+                            style={{ marginRight: sp(3), verticalAlign: "middle" }}
+                          />
                         ) : null}
                         {bucket.bucket}
                       </span>

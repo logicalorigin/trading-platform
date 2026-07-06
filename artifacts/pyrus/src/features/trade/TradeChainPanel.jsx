@@ -6,8 +6,11 @@ import {
   useRef,
 } from "react";
 import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
-import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
-import { Select } from "../../components/platform/primitives.jsx";
+import {
+  DataUnavailableState,
+  LoadingSpinner,
+  Select,
+} from "../../components/platform/primitives.jsx";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -205,124 +208,6 @@ export const buildHeatmapModel = (chain) => {
     },
   };
 };
-
-const ChainStatePanel = ({
-  title,
-  detail,
-  loading = false,
-  actionLabel = null,
-  loadingWaitItems = null,
-  onAction = null,
-  tone = CSS_COLOR.textSec,
-}) => (
-  <div
-    className={loading ? "ra-scan-sweep" : "ra-panel-enter"}
-    style={{
-      width: "100%",
-      height: "100%",
-      minHeight: dim(120),
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: sp(10),
-      color: CSS_COLOR.textDim,
-      fontFamily: T.sans,
-      background: CSS_COLOR.bg0,
-      border: `1px dashed ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.xs),
-    }}
-  >
-    <style>
-      {"@keyframes tradeChainSpin { to { transform: rotate(360deg); } }"}
-    </style>
-    {loading ? (
-      <span
-        data-testid="loading-spinner"
-        role="status"
-        aria-label="Loading"
-        style={{
-          width: dim(18),
-          height: dim(18),
-          borderRadius: dim(RADII.pill),
-          border: `2px solid ${CSS_COLOR.border}`,
-          borderTopColor: CSS_COLOR.accent,
-          animation: "tradeChainSpin 900ms linear infinite",
-          flexShrink: 0,
-        }}
-      />
-    ) : null}
-    <span style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-      <span
-        style={{
-          fontSize: fs(10),
-          fontWeight: FONT_WEIGHTS.regular,
-          color: tone,
-        }}
-      >
-        {title}
-      </span>
-      <span style={{ fontSize: textSize("caption"), fontFamily: T.sans }}>{detail}</span>
-      {loading ? (
-        <ContainerLoadingStatus
-          items={
-            loadingWaitItems || [
-              {
-                id: `${title}:wait`,
-                label: title,
-                status: "loading",
-                detail,
-                endpoint: "/api/options/chains",
-              },
-            ]
-          }
-          testId="trade-chain-loading-waits"
-        />
-      ) : null}
-    </span>
-    {actionLabel && onAction ? (
-      <button
-        type="button"
-        onClick={onAction}
-        style={{
-          border: `1px solid ${CSS_COLOR.border}`,
-          background: CSS_COLOR.bg1,
-          color: CSS_COLOR.textSec,
-          borderRadius: dim(RADII.xs),
-          padding: sp("4px 8px"),
-          fontSize: textSize("caption"),
-          fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.regular,
-          cursor: "pointer",
-        }}
-      >
-        {actionLabel}
-      </button>
-    ) : null}
-  </div>
-);
-
-const ChainRefreshSpinner = () => (
-  <>
-    <style>
-      {"@keyframes tradeChainSpin { to { transform: rotate(360deg); } }"}
-    </style>
-    <span
-      data-testid="chain-refreshing-spinner"
-      role="status"
-      aria-label="Refreshing option chain"
-      className="ra-status-pulse"
-      style={{
-        width: dim(12),
-        height: dim(12),
-        borderRadius: dim(RADII.pill),
-        border: `2px solid ${CSS_COLOR.border}`,
-        borderTopColor: CSS_COLOR.amber,
-        animation: "tradeChainSpin 900ms linear infinite",
-        flexShrink: 0,
-      }}
-    />
-  </>
-);
 
 const ChainSideHeader = forwardRef(function ChainSideHeader({
   side,
@@ -904,6 +789,25 @@ export const TradeChainPanel = ({
     statusLabel = "queued selected";
     statusColor = CSS_COLOR.amber;
   }
+  const retryAction = onRetryExpiration ? (
+    <button
+      type="button"
+      onClick={() => onRetryExpiration(expInfo)}
+      style={{
+        border: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textSec,
+        borderRadius: dim(RADII.xs),
+        padding: sp("4px 8px"),
+        fontSize: textSize("caption"),
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.regular,
+        cursor: "pointer",
+      }}
+    >
+      Retry
+    </button>
+  ) : null;
   const emptyChainState = (() => {
     if (showLoading) {
       return {
@@ -927,8 +831,7 @@ export const TradeChainPanel = ({
       return {
         title: "Option chain failed",
         detail: "Retry this expiration or choose another expiration.",
-        actionLabel: onRetryExpiration ? "Retry" : null,
-        onAction: onRetryExpiration ? () => onRetryExpiration(expInfo) : null,
+        action: retryAction,
         tone: CSS_COLOR.red,
       };
     }
@@ -936,8 +839,7 @@ export const TradeChainPanel = ({
       return {
         title: "No contracts returned",
         detail: "The provider returned no contracts for this expiration.",
-        actionLabel: onRetryExpiration ? "Retry" : null,
-        onAction: onRetryExpiration ? () => onRetryExpiration(expInfo) : null,
+        action: retryAction,
         tone: CSS_COLOR.textSec,
       };
     }
@@ -1031,7 +933,9 @@ export const TradeChainPanel = ({
           }))}
         />
         <span style={{ flex: 1 }} />
-        {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
+        {isResolvedExpirationRefreshing ? (
+          <LoadingSpinner size={12} color={CSS_COLOR.amber} />
+        ) : null}
         <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
           IMP{" "}
           <span style={{ color: impMove != null ? CSS_COLOR.cyan : CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
@@ -1140,7 +1044,12 @@ export const TradeChainPanel = ({
             </div>
           </div>
         ) : (
-          <ChainStatePanel {...emptyChainState} />
+          <DataUnavailableState
+            fill
+            minHeight={120}
+            loadingEndpoint="/api/options/chains"
+            {...emptyChainState}
+          />
         )}
       </div>
     </div>

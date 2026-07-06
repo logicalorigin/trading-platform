@@ -13,6 +13,7 @@ import {
 } from "../tickerUniverseRows";
 import {
   CSS_COLOR,
+  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -22,6 +23,7 @@ import {
   sp,
   textSize,
 } from "../../../lib/uiTokens.jsx";
+import { surfaceStyle } from "../../../components/platform/primitives.jsx";
 
 const EMPTY_SEARCH_STATE = Object.freeze({
   results: [],
@@ -296,13 +298,10 @@ export const MarketChartTickerSearch = ({
     <div
       data-testid="ticker-search-popover"
       style={{
+        ...surfaceStyle({ radius: RADII.xs }),
         width: embedded ? "100%" : dim(430),
         maxWidth: "calc(100vw - 24px)",
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.xs),
-        background: CSS_COLOR.bg1,
-        boxShadow: "0 18px 46px rgba(15, 23, 42, 0.18)",
-        overflow: "hidden",
+        boxShadow: ELEVATION.lg,
         fontFamily: T.sans,
       }}
     >

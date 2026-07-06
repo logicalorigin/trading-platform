@@ -81,7 +81,6 @@ import {
 } from "../features/account/accountPositionTypes";
 import {
   CSS_COLOR,
-  cssColorAlpha,
   cssColorMix,
   ELEVATION,
   FONT_WEIGHTS,
@@ -96,7 +95,18 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
-import { Select, SurfacePanel } from "../components/platform/primitives.jsx";
+import {
+  Badge,
+  DataUnavailableState,
+  MetricChip,
+  Pill,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  SurfacePanel,
+  TextField as PlatformTextField,
+} from "../components/platform/primitives.jsx";
+import { SEMANTIC_TONE } from "../features/platform/semanticToneModel.js";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { useDebouncedTextCommit } from "../lib/useDebouncedTextCommit";
@@ -365,8 +375,11 @@ function writeWorkspaceState(patch) {
 function smallButton({ active = false, danger = false } = {}) {
   return {
     border: "none",
-    background: danger ? `${cssColorMix(CSS_COLOR.red, 9)}` : active ? CSS_COLOR.greenBg : CSS_COLOR.bg2,
-    color: danger ? CSS_COLOR.red : active ? CSS_COLOR.green : CSS_COLOR.text,
+    // Doctrine (selection/active = ACCENT, not green): active is a selection
+    // highlight (and the dirty Save state), so it emphasizes with the accent
+    // token — green stays reserved for operational-health / financial-gain.
+    background: danger ? `${cssColorMix(CSS_COLOR.red, 9)}` : active ? CSS_COLOR.accentActiveBg : CSS_COLOR.bg2,
+    color: danger ? CSS_COLOR.red : active ? CSS_COLOR.accent : CSS_COLOR.text,
     borderRadius: dim(RADII.pill),
     padding: sp("6px 12px"),
     fontFamily: T.sans,
@@ -374,23 +387,6 @@ function smallButton({ active = false, danger = false } = {}) {
     fontWeight: active || danger ? 600 : 500,
     letterSpacing: "0.02em",
     cursor: "pointer",
-  };
-}
-
-function inputStyle() {
-  return {
-    minHeight: dim(30),
-    border: `1px solid ${CSS_COLOR.borderLight}`,
-    background: CSS_COLOR.bg1,
-    color: CSS_COLOR.text,
-    borderRadius: dim(RADII.xs),
-    padding: sp("5px 7px"),
-    fontFamily: T.sans,
-    fontSize: textSize("body"),
-    fontWeight: FONT_WEIGHTS.medium,
-    minWidth: 0,
-    width: "100%",
-    outline: "none",
   };
 }
 
@@ -527,18 +523,13 @@ function SelectField({ label, value, onChange, options }) {
 
 function NumberField({ label, value, onChange, min, max, step = 1 }) {
   return (
-    <label style={labelStyle()}>
-      {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={value ?? ""}
-        onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))}
-        style={inputStyle()}
-      />
-    </label>
+    <PlatformTextField
+      label={label}
+      type="number"
+      value={value ?? ""}
+      onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))}
+      inputProps={{ min, max, step }}
+    />
   );
 }
 
@@ -550,15 +541,13 @@ function TextField({ label, value, onChange, placeholder = "", transformInput })
   });
 
   return (
-    <label style={labelStyle()}>
-      {label}
-      <input
-        type="text"
-        {...inputProps}
-        placeholder={placeholder}
-        style={inputStyle()}
-      />
-    </label>
+    <PlatformTextField
+      label={label}
+      value={inputProps.value}
+      onChange={inputProps.onChange}
+      placeholder={placeholder}
+      inputProps={{ onBlur: inputProps.onBlur, onKeyDown: inputProps.onKeyDown }}
+    />
   );
 }
 
@@ -569,13 +558,17 @@ function SettingsSearchInput({ value, onCommit }) {
   });
 
   return (
-    <input
-      data-testid="settings-search-input"
+    <PlatformTextField
       type="search"
-      aria-label="Search settings"
-      {...inputProps}
+      value={inputProps.value}
+      onChange={inputProps.onChange}
       placeholder="Search settings"
-      style={inputStyle()}
+      inputProps={{
+        "data-testid": "settings-search-input",
+        "aria-label": "Search settings",
+        onBlur: inputProps.onBlur,
+        onKeyDown: inputProps.onKeyDown,
+      }}
     />
   );
 }
@@ -628,32 +621,17 @@ function JsonBlock({ value }) {
 
 function SourceBadge({ setting }) {
   const source = setting?.source || "default";
+  // Doctrine (semantic color + no category colors): the source is not a
+  // decorative category — tone reflects operational meaning. pending_restart
+  // is a "waiting" state (amber), env/override are actively-set values
+  // (accent emphasis), default is inert (muted). Green is not a category tag.
   const color =
     source === "pending_restart"
-      ? CSS_COLOR.amber
-      : source === "override"
-        ? CSS_COLOR.green
-        : source === "env"
-          ? CSS_COLOR.accent
-          : CSS_COLOR.textDim;
-  return (
-    <span
-      style={{
-        border: `1px solid ${cssColorAlpha(color, "66")}`,
-        color,
-        background: cssColorAlpha(color, "10"),
-        borderRadius: dim(RADII.pill),
-        padding: sp("2px 8px"),
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-      }}
-    >
-      {source.replace(/_/g, " ")}
-    </span>
-  );
+      ? SEMANTIC_TONE.operationalAttention
+      : source === "env" || source === "override"
+        ? CSS_COLOR.accent
+        : SEMANTIC_TONE.neutral;
+  return <Badge color={color}>{source.replace(/_/g, " ")}</Badge>;
 }
 
 function SettingCard({ setting, draftValue, onDraftChange }) {
@@ -1764,16 +1742,13 @@ function StoragePrunePanel() {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(160)}px, ${dim(220)}px) 1fr`, gap: sp(10), alignItems: "end" }}>
-        <label style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
-          Older Than Days
-          <input
-            type="number"
-            min="1"
-            value={olderThanDays}
-            onChange={(event) => setOlderThanDays(Number(event.target.value))}
-            style={{ ...inputStyle(), marginTop: sp(4) }}
-          />
-        </label>
+        <PlatformTextField
+          label="Older Than Days"
+          type="number"
+          value={olderThanDays}
+          onChange={(event) => setOlderThanDays(Number(event.target.value))}
+          inputProps={{ min: 1 }}
+        />
         <label style={{ display: "flex", alignItems: "center", gap: sp(7), color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10) }}>
           <input
             type="checkbox"
@@ -1783,7 +1758,7 @@ function StoragePrunePanel() {
           Dry-run only
         </label>
       </div>
-      {error && <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(10) }}>{error}</div>}
+      {error && <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(10) }}>{error}</div>}
       {result && (
         <div style={{ marginTop: sp(12) }}>
           <JsonBlock value={result} />
@@ -1827,7 +1802,13 @@ function BrowserStorageFootprintPanel() {
           {localEntries.map((entry) => (
             <StateRow key={entry.key} label={entry.key} value={formatBytes(entry.bytes)} />
           ))}
-          {!localEntries.length && <StateRow label="No local storage keys" value="empty" />}
+          {!localEntries.length && (
+            <DataUnavailableState
+              title="No local storage keys"
+              detail="This browser has nothing stored in local storage yet."
+              minHeight={56}
+            />
+          )}
         </div>
         <div>
           <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
@@ -1836,7 +1817,13 @@ function BrowserStorageFootprintPanel() {
           {sessionEntries.map((entry) => (
             <StateRow key={entry.key} label={entry.key} value={formatBytes(entry.bytes)} />
           ))}
-          {!sessionEntries.length && <StateRow label="No session storage keys" value="empty" />}
+          {!sessionEntries.length && (
+            <DataUnavailableState
+              title="No session storage keys"
+              detail="This browser has nothing stored in session storage yet."
+              minHeight={56}
+            />
+          )}
         </div>
       </div>
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginTop: sp(12) }}>
@@ -1884,26 +1871,68 @@ function AppPreferencesPanel({
   activitySidebarCollapsed = false,
   onToggleActivitySidebar,
 }) {
+  // Unframed rows (no card-inside-card): each preference is a labeled row with
+  // a SegmentedControl carrying the current + alternate state, replacing the
+  // nested mini-card + single toggle button.
+  const rowStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: sp(10),
+    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
+    padding: sp("7px 0"),
+    fontFamily: T.sans,
+    fontSize: fs(10),
+  };
+  const rowLabelStyle = { color: CSS_COLOR.textDim, minWidth: 0 };
   return (
     <Panel title="App Preferences">
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(8) }}>
-        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
-          <StateRow label="Theme" value={theme} />
-          <button type="button" onClick={onToggleTheme} style={smallButton()}>
-            Switch to {theme === "dark" ? "light" : "dark"}
-          </button>
+      <div style={{ display: "grid", gap: sp(2) }}>
+        <div style={rowStyle}>
+          <span style={rowLabelStyle}>Theme</span>
+          <SegmentedControl
+            radioGroup
+            ariaLabel="Theme"
+            value={theme}
+            onChange={(value) => {
+              if (value !== theme) onToggleTheme?.();
+            }}
+            options={[
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+            ]}
+          />
         </div>
-        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
-          <StateRow label="Watchlist sidebar" value={sidebarCollapsed ? "collapsed" : "expanded"} />
-          <button type="button" onClick={onToggleSidebar} style={smallButton()}>
-            {sidebarCollapsed ? "Expand watchlist" : "Collapse watchlist"}
-          </button>
+        <div style={rowStyle}>
+          <span style={rowLabelStyle}>Watchlist sidebar</span>
+          <SegmentedControl
+            radioGroup
+            ariaLabel="Watchlist sidebar"
+            value={sidebarCollapsed ? "collapsed" : "expanded"}
+            onChange={(value) => {
+              if ((value === "collapsed") !== sidebarCollapsed) onToggleSidebar?.();
+            }}
+            options={[
+              { value: "expanded", label: "Expanded" },
+              { value: "collapsed", label: "Collapsed" },
+            ]}
+          />
         </div>
-        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
-          <StateRow label="Algo monitor sidebar" value={activitySidebarCollapsed ? "collapsed" : "expanded"} />
-          <button type="button" onClick={onToggleActivitySidebar} style={smallButton()}>
-            {activitySidebarCollapsed ? "Expand algo monitor" : "Collapse algo monitor"}
-          </button>
+        <div style={rowStyle}>
+          <span style={rowLabelStyle}>Algo monitor sidebar</span>
+          <SegmentedControl
+            radioGroup
+            ariaLabel="Algo monitor sidebar"
+            value={activitySidebarCollapsed ? "collapsed" : "expanded"}
+            onChange={(value) => {
+              if ((value === "collapsed") !== activitySidebarCollapsed)
+                onToggleActivitySidebar?.();
+            }}
+            options={[
+              { value: "expanded", label: "Expanded" },
+              { value: "collapsed", label: "Collapsed" },
+            ]}
+          />
         </div>
       </div>
     </Panel>
@@ -1942,7 +1971,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         }
       >
         {userPreferences.error && (
-          <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+          <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {userPreferences.error}
           </div>
         )}
@@ -2348,20 +2377,25 @@ function ChartTimeframeFavoritesPanel() {
       <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the quick-pick timeframe buttons used by the primary chart, market grid charts, and option charts.
       </div>
-      <div style={{ display: "grid", gap: sp(12) }}>
-        {CHART_TIMEFRAME_ROLES.map((role) => {
+      <div style={{ display: "grid", gap: sp(14) }}>
+        {CHART_TIMEFRAME_ROLES.map((role, roleIndex) => {
           const options = getChartTimeframeOptions(role.value);
           const favorites = resolveChartTimeframeFavorites(favoritesState[role.value], role.value);
+          const atCap = favorites.length >= 8;
           return (
             <div
               key={role.value}
               style={{
-                border: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg1,
-                borderRadius: dim(RADII.md),
-                padding: sp(12),
                 display: "grid",
                 gap: sp(8),
+                // Unframed labeled band (no card-inside-card): roles separate
+                // with a hairline divider instead of a nested bordered surface.
+                ...(roleIndex > 0
+                  ? {
+                      borderTop: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
+                      paddingTop: sp(12),
+                    }
+                  : null),
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(10) }}>
@@ -2374,17 +2408,14 @@ function ChartTimeframeFavoritesPanel() {
                 {options.map((option) => {
                   const active = favorites.includes(option.value);
                   return (
-                    <button
+                    <span
                       key={option.value}
-                      type="button"
-                      onClick={() => toggle(role.value, option.value)}
-                      style={{
-                        ...smallButton({ active }),
-                        opacity: !active && favorites.length >= 8 ? 0.75 : 1,
-                      }}
+                      style={{ display: "inline-flex", opacity: !active && atCap ? 0.75 : 1 }}
                     >
-                      {option.label}
-                    </button>
+                      <Pill active={active} onClick={() => toggle(role.value, option.value)}>
+                        {option.label}
+                      </Pill>
+                    </span>
                   );
                 })}
               </div>
@@ -2811,13 +2842,22 @@ function SignalMonitorSettingsPanel({ enabled, watchlists }) {
         }
       >
         {monitor.error && (
-          <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+          <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {monitor.error}
           </div>
         )}
         {!draft ? (
-          <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
-            Loading signal monitor profile.
+          <div
+            role="status"
+            aria-label="Loading signal monitor profile"
+            style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(8) }}
+          >
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+                <Skeleton width="45%" height={dim(8)} />
+                <Skeleton width="100%" height={dim(24)} radius={RADII.sm} />
+              </div>
+            ))}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(8) }}>
@@ -2919,26 +2959,14 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
       }}
     >
       {items.map((item) => (
-        <div
+        <MetricChip
           key={item.label}
-          style={{
-            border: "none",
-            background: CSS_COLOR.bg1,
-            borderRadius: dim(compact ? RADII.sm : RADII.md),
-            padding: sp(compact ? "6px 10px" : "10px 12px"),
-            display: "grid",
-            gap: sp(compact ? 1 : 3),
-            minWidth: compact ? dim(92) : 0,
-            flex: compact ? "0 0 auto" : undefined,
-          }}
-        >
-          <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
-            {item.label}
-          </span>
-          <span style={{ color: item.tone, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>
-            {item.value}
-          </span>
-        </div>
+          label={item.label}
+          value={item.value}
+          tone={item.tone}
+          dot
+          style={compact ? { flex: "0 0 auto", minWidth: dim(92) } : { width: "100%" }}
+        />
       ))}
     </div>
   );
@@ -2954,7 +2982,7 @@ function ResearchProviderPanel({ backendSnapshot, enabled }) {
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
-        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {research.error}
         </div>
       )}
@@ -3014,8 +3042,6 @@ function FooterMemorySignalSettingsPanel() {
   const { preferences, updatePreferences } = useMemoryPressurePreferences();
   const memoryPressure = useMemoryPressureSnapshot(true);
 
-  const thresholdOptions = ["watch", "high"];
-
   return (
     <Panel title="Footer Memory Signal">
       <div style={{ display: "grid", gap: sp(10) }}>
@@ -3045,56 +3071,44 @@ function FooterMemorySignalSettingsPanel() {
         <div style={{ display: "grid", gap: sp(6) }}>
           <div style={{ ...labelStyle(), gap: sp(6) }}>
             Animation
-            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-              {[
-                ["on", true],
-                ["off", false],
-              ].map(([label, value]) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => updatePreferences({ animationEnabled: value })}
-                  style={smallButton({ active: preferences.animationEnabled === value })}
-                >
-                  {String(label).toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              radioGroup
+              ariaLabel="Animation"
+              value={preferences.animationEnabled}
+              onChange={(value) => updatePreferences({ animationEnabled: value })}
+              options={[
+                { value: true, label: "On" },
+                { value: false, label: "Off" },
+              ]}
+            />
           </div>
 
           <div style={{ ...labelStyle(), gap: sp(6) }}>
             Compact label
-            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-              {[
-                ["on", true],
-                ["off", false],
-              ].map(([label, value]) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => updatePreferences({ showCompactLabel: value })}
-                  style={smallButton({ active: preferences.showCompactLabel === value })}
-                >
-                  {String(label).toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              radioGroup
+              ariaLabel="Compact label"
+              value={preferences.showCompactLabel}
+              onChange={(value) => updatePreferences({ showCompactLabel: value })}
+              options={[
+                { value: true, label: "On" },
+                { value: false, label: "Off" },
+              ]}
+            />
           </div>
 
           <div style={{ ...labelStyle(), gap: sp(6) }}>
             Pulse threshold
-            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-              {thresholdOptions.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => updatePreferences({ alertThreshold: level })}
-                  style={smallButton({ active: preferences.alertThreshold === level })}
-                >
-                  {level.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              radioGroup
+              ariaLabel="Pulse threshold"
+              value={preferences.alertThreshold}
+              onChange={(value) => updatePreferences({ alertThreshold: value })}
+              options={[
+                { value: "watch", label: "Watch" },
+                { value: "high", label: "High" },
+              ]}
+            />
           </div>
         </div>
 
@@ -3258,7 +3272,7 @@ export default function SettingsScreen({
       </div>
 
       {backend.error && (
-        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {backend.error}
         </div>
       )}

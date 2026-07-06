@@ -3,6 +3,7 @@ import {
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { toneForOptionSide } from "../platform/semanticToneModel";
 import { isFiniteNumber } from "../../lib/formatters";
 import {
   CSS_COLOR,
@@ -26,7 +27,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: CSS_COLOR.green,
+    color: toneForOptionSide("C"),
   },
   {
     id: "long_put_atm",
@@ -46,7 +47,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.3,
     qty: 5,
     dte: 7,
-    color: CSS_COLOR.green,
+    color: toneForOptionSide("C"),
   },
   {
     id: "0dte_lotto",
@@ -66,7 +67,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.7,
     qty: 2,
     dte: 14,
-    color: CSS_COLOR.green,
+    color: toneForOptionSide("C"),
   },
   {
     id: "long_put_otm",

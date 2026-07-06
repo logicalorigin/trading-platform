@@ -11,6 +11,7 @@ import {
   Tv,
 } from "lucide-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { StatTile } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -24,6 +25,7 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
+import { SEMANTIC_TONE } from "./semanticToneModel.js";
 
 const SECONDARY_SCREEN_IDS = new Set([
   "flow",
@@ -101,45 +103,6 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
       ) : null}
     </span>
   </button>
-);
-
-const StatusChip = ({ label, value, tone = CSS_COLOR.textSec }) => (
-  <div
-    style={{
-      minWidth: 0,
-      padding: sp("5px 7px"),
-      border: `1px solid ${CSS_COLOR.borderLight}`,
-      borderRadius: dim(RADII.xs),
-      background: CSS_COLOR.bg1,
-      fontFamily: T.sans,
-    }}
-  >
-    <div
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontSize: textSize("caption"),
-        lineHeight: 1.05,
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: 0,
-      }}
-    >
-      {label}
-    </div>
-    <div
-      style={{
-        marginTop: sp(2),
-        color: tone,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        lineHeight: 1.1,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {value || MISSING_VALUE}
-    </div>
-  </div>
 );
 
 export const MobileMoreSheet = ({
@@ -246,27 +209,46 @@ export const MobileMoreSheet = ({
             gap: sp(5),
           }}
         >
-          <StatusChip
+          <StatTile
             label="WL"
             value={(activeWatchlist?.name || "Core").toUpperCase()}
+            tone={CSS_COLOR.textSec}
+            minWidth={0}
           />
-          <StatusChip label="SYM" value={selectedSymbol} tone={CSS_COLOR.text} />
-          <StatusChip
+          <StatTile
+            label="SYM"
+            value={selectedSymbol || MISSING_VALUE}
+            tone={CSS_COLOR.text}
+            minWidth={0}
+          />
+          <StatTile
             label="IBKR"
             value={session?.configured?.ibkr ? "READY" : "OFF"}
-            tone={session?.configured?.ibkr ? CSS_COLOR.green : CSS_COLOR.red}
+            tone={
+              session?.configured?.ibkr
+                ? SEMANTIC_TONE.operationalGood
+                : SEMANTIC_TONE.operationalAttention
+            }
+            minWidth={0}
           />
-          <StatusChip
+          <StatTile
             label="HIST"
             value={String(historicalProvider).toUpperCase()}
             tone={session?.configured?.ibkr ? CSS_COLOR.green : CSS_COLOR.textDim}
+            minWidth={0}
           />
-          <StatusChip
+          <StatTile
             label="RSCH"
             value={String(researchProvider).toUpperCase()}
             tone={session?.configured?.research ? CSS_COLOR.green : CSS_COLOR.textDim}
+            minWidth={0}
           />
-          <StatusChip label="APP" value="v0.1.0" />
+          <StatTile
+            label="APP"
+            value="v0.1.0"
+            tone={CSS_COLOR.textSec}
+            minWidth={0}
+          />
         </div>
 
         <div
@@ -323,6 +305,7 @@ export const MobileMoreSheet = ({
             />
           </span>
           <FlaskConical
+            aria-hidden="true"
             size={14}
             strokeWidth={2}
             style={{ color: CSS_COLOR.textMuted, flexShrink: 0 }}

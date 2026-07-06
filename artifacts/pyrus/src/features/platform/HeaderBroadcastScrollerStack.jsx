@@ -40,6 +40,7 @@ import {
   formatOptionContractLabel,
   formatQuotePrice,
   formatRelativeTimeShort,
+  signalBarsSinceTokens,
 } from "../../lib/formatters";
 import { joinMotionClasses, motionRowStyle, motionVars } from "../../lib/motion.jsx";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
@@ -88,6 +89,7 @@ import { useSignalMonitorSnapshot } from "./signalMonitorStore";
 import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
+import { toneForDirectionalIntent, toneForOptionSide } from "./semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const HEADER_FLOW_LANE_ITEM_LIMIT = 32;
@@ -238,9 +240,9 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
   const isDirectional = item.direction === "buy" || item.direction === "sell";
   // A not-fresh directional broadcast recolors the arrow amber in its last-known
   // direction, matching the SignalDots / Signals-screen arrows. Fresh keeps the
-  // broadcast scheme (buy = green, sell = red).
+  // broadcast scheme (buy = blue, sell = red).
   const stale = isDirectional && item.fresh === false;
-  const tone = stale ? CSS_COLOR.amber : isSell ? CSS_COLOR.red : CSS_COLOR.green;
+  const tone = stale ? CSS_COLOR.amber : isSell ? CSS_COLOR.red : toneForDirectionalIntent(item.direction);
   const DirectionIcon = isSell ? ArrowDown : ArrowUp;
   const priceLabel =
     item.price != null && Number.isFinite(Number(item.price))
@@ -399,13 +401,16 @@ const HeaderSignalIntervalContext = ({
       const hasDirection = Boolean(direction);
       const pending = !state || status === "pending";
       const color =
-        direction === "buy" ? CSS_COLOR.green : direction === "sell" ? CSS_COLOR.red : CSS_COLOR.textMuted;
+        direction === "buy" ? toneForDirectionalIntent(direction) : direction === "sell" ? CSS_COLOR.red : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
       const selected = timeframe === resolveHeaderSignalTimeframe(selectedTimeframe);
       const label = pending
         ? `${timeframe} pending`
         : hasDirection
-          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          ? [
+              `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"}`,
+              ...signalBarsSinceTokens(state),
+            ].join(" · ")
           : `${timeframe} no signal - ${status}`;
       const pelletFill = hasDirection
         ? colorWithAlpha(color, fresh ? 0.24 : 0.18)
@@ -467,7 +472,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
   const isPut =
     item.right === "P" ||
     String(item.sentiment || "").toLowerCase() === "bearish";
-  const tone = isPut ? CSS_COLOR.red : CSS_COLOR.green;
+  const tone = toneForOptionSide(item.right, toneForDirectionalIntent(item.sentiment));
   const SentimentIcon = isPut ? TrendingDown : TrendingUp;
   const formattedContractLabel = formatOptionContractLabel(item, {
     includeSymbol: false,

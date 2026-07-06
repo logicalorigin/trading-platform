@@ -1237,14 +1237,7 @@ const MarketScreenInner = ({
             </CardTitle>
             {calendarItems.length ? (
               calendarItems.map((ev, i) => {
-                const tc =
-                  ev.type === "fomc" || ev.type === "cpi"
-                    ? CSS_COLOR.amber
-                    : ev.type === "earnings"
-                      ? CSS_COLOR.green
-                      : ev.type === "holiday"
-                        ? CSS_COLOR.red
-                        : CSS_COLOR.accent;
+                const tc = CSS_COLOR.accent;
                 return (
                   <div
                     key={ev.id}

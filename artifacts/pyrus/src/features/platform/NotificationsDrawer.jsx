@@ -19,6 +19,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "../../components/ui/tooltip";
+import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 import {
   markNotificationsRead,
@@ -350,19 +351,6 @@ const NotificationRow = ({
   );
 };
 
-const EmptyState = ({ children }) => (
-  <div
-    style={{
-      padding: sp("14px 16px"),
-      fontSize: textSize("caption"),
-      color: CSS_COLOR.textMuted,
-      textAlign: "center",
-    }}
-  >
-    {children}
-  </div>
-);
-
 const NotificationsDrawerInner = ({
   open,
   onClose,
@@ -476,7 +464,11 @@ const NotificationsDrawerInner = ({
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           <SectionHeader title="Toasts" count={groupedToasts.length} />
           {groupedToasts.length === 0 ? (
-            <EmptyState>No recent toasts.</EmptyState>
+            <DataUnavailableState
+              title="No recent toasts"
+              detail="Toast notifications appear here as they fire."
+              minHeight={64}
+            />
           ) : (
             groupedToasts.map((group) => (
               <NotificationRow
@@ -492,7 +484,11 @@ const NotificationsDrawerInner = ({
           )}
           <SectionHeader title="Algo events" count={algoList.length} />
           {algoList.length === 0 ? (
-            <EmptyState>No recent algo events.</EmptyState>
+            <DataUnavailableState
+              title="No recent algo events"
+              detail="Algo execution events appear here as they fire."
+              minHeight={64}
+            />
           ) : (
             algoList.map((event, index) => {
               const symbol =

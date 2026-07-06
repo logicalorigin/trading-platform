@@ -80,6 +80,7 @@ import {
 import {
   DataUnavailableState,
   MetricChip,
+  SegmentedControl,
   SeverityRail,
 } from "../../components/platform/primitives.jsx";
 
@@ -663,40 +664,17 @@ export const TradeOrderTicket = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedNonce, requestedSide]);
   const renderTicketAssetModeControls = () => (
-    <div
-      data-testid="trade-ticket-asset-mode"
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${TICKET_ASSET_MODES.length}, minmax(0, 1fr))`,
-        gap: sp(3),
-      }}
-    >
-      {TICKET_ASSET_MODES.map((mode) => {
-        const active = normalizedTicketAssetMode === mode;
-        const color = mode === "equity" ? CSS_COLOR.cyan : CSS_COLOR.accent;
-        return (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setTicketAssetMode(mode)}
-            data-testid={`trade-ticket-asset-mode-${mode}`}
-            style={{
-              border: `1px solid ${active ? color : CSS_COLOR.border}`,
-              background: active ? color : "transparent",
-              color: active ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              borderRadius: dim(RADII.xs),
-              padding: sp("6px 0"),
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >
-            {mode === "equity" ? "SHARES" : "OPTIONS"}
-          </button>
-        );
-      })}
+    <div data-testid="trade-ticket-asset-mode">
+      <SegmentedControl
+        ariaLabel="Asset mode"
+        options={TICKET_ASSET_MODES.map((mode) => ({
+          value: mode,
+          label: mode === "equity" ? "SHARES" : "OPTIONS",
+        }))}
+        value={normalizedTicketAssetMode}
+        onChange={setTicketAssetMode}
+        buttonTestId="trade-ticket-asset-mode"
+      />
     </div>
   );
   const renderExecutionModeControls = () => (
@@ -724,39 +702,15 @@ export const TradeOrderTicket = ({
           {selectedExecutionAccount}
         </span>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${TRADING_EXECUTION_MODES.length}, minmax(0, 1fr))`,
-          gap: sp(3),
-        }}
-      >
-        {TRADING_EXECUTION_MODES.map((mode) => {
-          const active = executionMode === mode;
-          const color = mode === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
-          return (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setExecutionMode(mode)}
-              style={{
-                border: `1px solid ${active ? color : CSS_COLOR.border}`,
-                background: active ? color : "transparent",
-                color: active ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-                borderRadius: dim(RADII.xs),
-                padding: sp("5px 0"),
-                fontFamily: T.sans,
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.regular,
-                cursor: "pointer",
-                letterSpacing: "0.04em",
-              }}
-            >
-              {mode === "shadow" ? "SHADOW" : "REAL"}
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl
+        ariaLabel="Execution mode"
+        options={TRADING_EXECUTION_MODES.map((mode) => ({
+          value: mode,
+          label: mode === "shadow" ? "SHADOW" : "REAL",
+        }))}
+        value={executionMode}
+        onChange={setExecutionMode}
+      />
       {!executionIsShadow && liveUsesSnapTrade && !snapTradeAccountReady ? (
         <div
           style={{
@@ -856,34 +810,15 @@ export const TradeOrderTicket = ({
           );
         })}
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: sp(4),
-        }}
-      >
-        {ticketTypeOptions.map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setOrderType(value)}
-            style={{
-              border: `1px solid ${orderType === value ? CSS_COLOR.accent : CSS_COLOR.border}`,
-              background: orderType === value ? CSS_COLOR.accent : "transparent",
-              color: orderType === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              borderRadius: dim(RADII.xs),
-              padding: sp("5px 0"),
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor: "pointer",
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Order type"
+        options={ticketTypeOptions.map(([value, label]) => ({
+          value,
+          label,
+        }))}
+        value={orderType}
+        onChange={setOrderType}
+      />
       <div
         style={{
           display: "grid",
@@ -995,36 +930,12 @@ export const TradeOrderTicket = ({
           />
         </label>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: sp(4),
-        }}
-      >
-        {["DAY", "GTC", "IOC", "FOK"].map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setTif(value)}
-            style={{
-              border: `1px solid ${tif === value ? CSS_COLOR.accent : CSS_COLOR.border}`,
-              background: tif === value ? CSS_COLOR.accent : "transparent",
-              color: tif === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              borderRadius: dim(RADII.sm),
-              padding: sp("8px 0"),
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.04em",
-              cursor: "pointer",
-              transition: "border-color var(--ra-motion-fast) ease, background var(--ra-motion-fast) ease",
-            }}
-          >
-            {value}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Time in force"
+        options={["DAY", "GTC", "IOC", "FOK"]}
+        value={tif}
+        onChange={setTif}
+      />
       <div
         style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(4) }}
       >
@@ -2763,28 +2674,12 @@ export const TradeOrderTicket = ({
             {sellCallIntent.applies ? sellCallIntent.actionLabel : "SELL"}
           </button>
         </div>
-        <div style={{ display: "flex", gap: sp(2) }}>
-          {TICKET_ORDER_TYPES.map((t) => (
-            <button
-              key={t}
-              onClick={() => setOrderType(t)}
-              style={{
-                flex: 1,
-                padding: sp("4px 0"),
-                background: orderType === t ? CSS_COLOR.accent : "transparent",
-                border: `1px solid ${orderType === t ? CSS_COLOR.accent : CSS_COLOR.border}`,
-                borderRadius: dim(RADII.xs),
-                color: orderType === t ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-                fontSize: fs(t === "STP_LMT" ? 7 : 9),
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.regular,
-                cursor: "pointer",
-              }}
-            >
-              {formatTicketOrderType(t)}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Order type"
+          options={TICKET_ORDER_TYPES.map((t) => ({ value: t, label: formatTicketOrderType(t) }))}
+          value={orderType}
+          onChange={setOrderType}
+        />
       </div>
       {sellCallIntent.applies ? (
         <div
@@ -3147,28 +3042,12 @@ export const TradeOrderTicket = ({
         </div>
       </div>
       {/* TIF */}
-      <div style={{ display: "flex", gap: sp(2) }}>
-        {["DAY", "GTC", "IOC", "FOK"].map((t) => (
-          <button
-            key={t}
-            onClick={() => setTif(t)}
-            style={{
-              flex: 1,
-              padding: sp("3px 0"),
-              background: tif === t ? CSS_COLOR.accent : "transparent",
-              border: `1px solid ${tif === t ? CSS_COLOR.accent : CSS_COLOR.border}`,
-              borderRadius: dim(RADII.xs),
-              color: tif === t ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              fontSize: textSize("body"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor: "pointer",
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Time in force"
+        options={["DAY", "GTC", "IOC", "FOK"]}
+        value={tif}
+        onChange={setTif}
+      />
       {ticketIsOptions ? (
         <>
           <PayoffDiagram

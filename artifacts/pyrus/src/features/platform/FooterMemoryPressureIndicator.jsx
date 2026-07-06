@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/popover";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
+import { StatusPill } from "../../components/platform/primitives.jsx";
 import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, MISSING_VALUE, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
@@ -692,21 +693,9 @@ const rowValueStyle = {
 };
 
 const LevelPill = ({ level }) => (
-  <span
-    style={{
-      justifySelf: "start",
-      color: pressureTone(level),
-      border: `1px solid ${pressureBorder(level)}`,
-      background: pressureBackground(level),
-      borderRadius: dim(RADII.pill),
-      padding: sp("2px 7px"),
-      fontSize: textSize("caption"),
-      fontWeight: FONT_WEIGHTS.medium,
-      textTransform: "uppercase",
-    }}
-  >
-    {level}
-  </span>
+  <StatusPill color={pressureTone(level)}>
+    {level ? level.charAt(0).toUpperCase() + level.slice(1) : level}
+  </StatusPill>
 );
 
 const DetailRows = ({ rows }) => (

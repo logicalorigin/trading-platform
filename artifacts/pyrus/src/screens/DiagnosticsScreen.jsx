@@ -67,7 +67,16 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
-import { MicroSparkline, SeverityRail, SurfacePanel } from "../components/platform/primitives.jsx";
+import {
+  Badge,
+  DataUnavailableState,
+  MicroSparkline,
+  SegmentedControl,
+  SeverityRail,
+  StatTile,
+  StatusPill,
+  SurfacePanel,
+} from "../components/platform/primitives.jsx";
 import {
   FailurePointInlineIcon,
   FailurePointTooltip,
@@ -217,21 +226,6 @@ const severityBorder = (severity) =>
 
 const alertToneBackground = (severity) => cssColorAlpha(severityTone(severity), "0d");
 const alertToneHoverBackground = (severity) => cssColorAlpha(severityTone(severity), "12");
-
-const alertChipStyle = (severity, minWidth = 58) => ({
-  minWidth: dim(minWidth),
-  color: severityTone(severity),
-  border: `1px solid ${severityBorder(severity)}`,
-  background: cssColorAlpha(severityTone(severity), "0f"),
-  borderRadius: dim(RADII.xs),
-  fontFamily: T.sans,
-  fontSize: textSize("caption"),
-  fontWeight: FONT_WEIGHTS.medium,
-  lineHeight: 1,
-  padding: sp("3px 4px"),
-  textAlign: "center",
-  whiteSpace: "nowrap",
-});
 
 const statusLabel = (value) =>
   value === "down"
@@ -429,11 +423,6 @@ const StateRow = ({ label, value, tone = CSS_COLOR.textSec, onClick }) => (
 
 const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoint }) => {
   const showFailurePoint = failurePoint && failurePoint.severity !== "info";
-  const valueNode = (
-    <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: FONT_WEIGHTS.regular }}>
-      {value ?? MISSING_VALUE}
-    </span>
-  );
   return (
     <button
       type="button"
@@ -444,10 +433,8 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoin
         border: `1px solid ${severityBorder(severity)}`,
         borderRadius: dim(RADII.sm),
         background: CSS_COLOR.bg1,
-        padding: sp("7px 8px"),
+        padding: 0,
         display: "flex",
-        flexDirection: "column",
-        gap: sp(4),
         flex: "1 0 auto",
         minWidth: dim(140),
         alignSelf: "start",
@@ -455,33 +442,18 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoin
         textAlign: "left",
       }}
     >
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(6),
-          minWidth: 0,
-          color: CSS_COLOR.textDim,
-          fontSize: textSize("caption"),
-          fontFamily: T.sans,
-        }}
-      >
-        <span>{label}</span>
-        {showFailurePoint ? (
-          <FailurePointInlineIcon point={failurePoint} side="bottom" size={12} />
-        ) : null}
-      </span>
-      {showFailurePoint ? (
-        <FailurePointTooltip point={failurePoint} side="bottom" align="start" compact>
-          {valueNode}
-        </FailurePointTooltip>
-      ) : (
-        valueNode
-      )}
-      <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontFamily: T.sans }}>
-        {sub || MISSING_VALUE}
-      </span>
+      <StatTile
+        label={label}
+        value={value ?? MISSING_VALUE}
+        sub={sub || MISSING_VALUE}
+        tone={severityTone(severity)}
+        minWidth={140}
+        info={
+          showFailurePoint ? (
+            <FailurePointInlineIcon point={failurePoint} side="bottom" size={12} />
+          ) : null
+        }
+      />
     </button>
   );
 };
@@ -497,9 +469,11 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
     .filter((point) => Number.isFinite(point.value));
   if (!data.length) {
     return (
-      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
-        No samples in selected window.
-      </div>
+      <DataUnavailableState
+        title="No samples"
+        detail="No samples recorded in the selected window."
+        standby
+      />
     );
   }
   const values = data.map((point) => point.value);
@@ -507,9 +481,11 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
   const height = 78;
   if (values.length < 2) {
     return (
-      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
-        Waiting for more samples.
-      </div>
+      <DataUnavailableState
+        title="Collecting samples"
+        detail="Waiting for more samples to plot a trend."
+        loading
+      />
     );
   }
   const tone = data.some((point) => point.severity === "warning")
@@ -565,9 +541,9 @@ const EventList = ({ events, onSelect }) => (
           >
             <SeverityRail tone={severityTone(event.severity)} />
             <FailurePointTooltip point={failurePoint} side="right" align="start" compact>
-              <span style={alertChipStyle(event.severity, 74)}>
-                {event.severity.toUpperCase()}
-              </span>
+              <Badge color={severityTone(event.severity)}>
+                {event.severity}
+              </Badge>
             </FailurePointTooltip>
             <span style={{ minWidth: 0 }}>
               <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
@@ -584,9 +560,10 @@ const EventList = ({ events, onSelect }) => (
         );
       })
     ) : (
-      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
-        No diagnostic events in this window.
-      </div>
+      <DataUnavailableState
+        title="No events"
+        detail="No diagnostic events in this window."
+      />
     )}
   </div>
 );
@@ -627,9 +604,9 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => {
         }}
       >
         <FailurePointTooltip point={failurePoint} side="right" align="start" compact>
-          <span style={alertChipStyle(alert.severity, 74)}>
-            {alert.severity.toUpperCase()}
-          </span>
+          <Badge color={severityTone(alert.severity)}>
+            {alert.severity}
+          </Badge>
         </FailurePointTooltip>
         <span style={{ minWidth: 0 }}>
           <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
@@ -647,9 +624,9 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => {
       <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "nowrap" }}>
         {formatAgo(alert.lastSeenAt)}
       </span>
-      <button type="button" onClick={() => onDismiss(alert)} style={smallButton()}>
+      <Button variant="ghost" size="sm" onClick={() => onDismiss(alert)}>
         Dismiss
-      </button>
+      </Button>
     </div>
     </div>
   );
@@ -695,24 +672,12 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
     <Panel
       title="Legacy Broker Runtime"
       action={
-        <span
-          className={
-            health.status && health.status !== "ready"
-              ? "ra-status-pulse"
-              : undefined
-          }
-          style={{
-            border: `1px solid ${cssColorAlpha(health.color, "66")}`,
-            background: CSS_COLOR.bg1,
-            color: health.color,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
-            padding: sp("3px 6px"),
-          }}
+        <StatusPill
+          color={health.color}
+          glow={health.status && health.status !== "ready"}
         >
           {health.label}
-        </span>
+        </StatusPill>
       }
     >
       <StateRow label="Bridge URL" value={ibkr.bridgeUrlConfigured ? "configured" : "missing"} tone={ibkr.bridgeUrlConfigured ? CSS_COLOR.green : CSS_COLOR.amber} />
@@ -1416,40 +1381,40 @@ export default function DiagnosticsScreen({
         title="Active Alerts"
         action={
           <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() =>
                 setAlertPreferences((current) => ({
                   ...current,
                   audioEnabled: !current.audioEnabled,
                 }))
               }
-              style={smallButton()}
             >
               {audioEnabled ? "Audio On" : "Audio Off"}
-            </button>
+            </Button>
             {AUDIO_SNOOZE_OPTIONS.map((option) => (
-              <button
+              <Button
                 key={option.label}
-                type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => setAudioMutedUntilPreference(option.ms === Number.POSITIVE_INFINITY ? Number.MAX_SAFE_INTEGER : Date.now() + option.ms)}
-                style={smallButton()}
               >
                 Snooze {option.label}
-              </button>
+              </Button>
             ))}
-            <button type="button" onClick={() => setAudioMutedUntilPreference(0)} style={smallButton()}>
+            <Button variant="ghost" size="sm" onClick={() => setAudioMutedUntilPreference(0)}>
               Unsnooze
-            </button>
+            </Button>
             {activeLocalAlerts.length > 0 && (
-              <button type="button" onClick={dismissAllVisibleAlerts} style={smallButton()}>
+              <Button variant="ghost" size="sm" onClick={dismissAllVisibleAlerts}>
                 Dismiss all
-              </button>
+              </Button>
             )}
             {dismissedLocalAlerts.length > 0 && (
-              <button type="button" onClick={restoreDismissedAlerts} style={smallButton()}>
+              <Button variant="ghost" size="sm" onClick={restoreDismissedAlerts}>
                 Restore
-              </button>
+              </Button>
             )}
           </div>
         }
@@ -1526,16 +1491,20 @@ export default function DiagnosticsScreen({
                   fontWeight: FONT_WEIGHTS.medium,
                 }}
               >
-                <span style={{ color: bandTone, fontWeight: FONT_WEIGHTS.medium }}>
+                <StatusPill
+                  color={bandTone}
+                  variant="ghost"
+                  glow={latest?.status === "down"}
+                >
                   {statusLabel(latest?.status)}
-                </span>
+                </StatusPill>
               </div>
             );
           })()
         ) : (
-          <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
+          <StatusPill color={severityTone(topSeverity)} dot={false}>
             {statusLabel(latest?.status)}
-          </span>
+          </StatusPill>
         )}
         <span role="status" aria-live="polite" style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
@@ -1546,7 +1515,6 @@ export default function DiagnosticsScreen({
             <Button
               key={option.label}
               variant={active ? "primary" : "secondary"}
-              color={active ? CSS_COLOR.green : undefined}
               size="sm"
               onClick={() => setWindowMinutes(option.minutes)}
             >
@@ -1575,33 +1543,15 @@ export default function DiagnosticsScreen({
           minWidth: 0,
         }}
       >
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            data-testid={`diagnostics-tab-${tab.toLowerCase().replace(/\s+/g, "-")}`}
-            type="button"
-            aria-pressed={activeTab === tab}
-            className={joinMotionClasses(
-              "ra-interactive",
-              activeTab === tab && "ra-focus-rail",
-            )}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              ...motionVars({ accent: CSS_COLOR.green }),
-              border: `1px solid ${activeTab === tab ? CSS_COLOR.green : CSS_COLOR.border}`,
-              background: activeTab === tab ? CSS_COLOR.greenBg : CSS_COLOR.bg1,
-              color: activeTab === tab ? CSS_COLOR.green : CSS_COLOR.textSec,
-              borderRadius: dim(RADII.xs),
-              padding: sp("7px 10px"),
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor: "pointer",
-            }}
-          >
-            {tab}
-          </button>
-        ))}
+        <SegmentedControl
+          options={TABS}
+          value={activeTab}
+          onChange={setActiveTab}
+          ariaLabel="Diagnostics sections"
+          buttonTestId={(tab) =>
+            `diagnostics-tab-${tab.toLowerCase().replace(/\s+/g, "-")}`
+          }
+        />
       </div>
 
       {activeTab !== "Overview" && activeAlertsPanel}
@@ -1927,7 +1877,10 @@ export default function DiagnosticsScreen({
                 </div>
               ))
             ) : (
-              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>No chart scopes observed.</div>
+              <DataUnavailableState
+                title="No chart scopes"
+                detail="No chart scopes observed in the current session."
+              />
             )}
           </Panel>
           <Panel title="Current Option Session">
@@ -1939,7 +1892,7 @@ export default function DiagnosticsScreen({
             <StateRow label="Backpressure" value={state.degraded ? "degraded" : "normal"} tone={state.degraded ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Pause reason" value={state.pauseReason} />
           </Panel>
-          <Panel title="Local Rollups" action={<button type="button" onClick={clearOptionHydrationDiagnosticsHistory} style={smallButton()}>Clear History</button>}>
+          <Panel title="Local Rollups" action={<Button variant="ghost" size="sm" onClick={clearOptionHydrationDiagnosticsHistory}>Clear History</Button>}>
             {history.length ? (
               history.slice(-8).reverse().map((entry) => (
                 <div key={entry.id} style={{ borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`, padding: sp("7px 0"), fontFamily: T.sans, fontSize: textSize("caption"), color: CSS_COLOR.textSec }}>
@@ -1947,7 +1900,10 @@ export default function DiagnosticsScreen({
                 </div>
               ))
             ) : (
-              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>No local rollups yet.</div>
+              <DataUnavailableState
+                title="No rollups"
+                detail="No local option-hydration rollups recorded yet."
+              />
             )}
           </Panel>
           <Panel title="Browser Events">
@@ -2068,9 +2024,11 @@ export default function DiagnosticsScreen({
             {selectedEvent ? (
               <JsonBlock value={eventDetail || selectedEvent} />
             ) : (
-              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
-                Select an event or metric to inspect raw context.
-              </div>
+              <DataUnavailableState
+                title="No selection"
+                detail="Select an event or metric to inspect raw context."
+                standby
+              />
             )}
           </Panel>
         </div>
@@ -2081,18 +2039,4 @@ export default function DiagnosticsScreen({
       <div style={{ height: sp(16) }} />
     </div>
   );
-}
-
-function smallButton() {
-  return {
-    border: `1px solid ${CSS_COLOR.borderLight}`,
-    background: "transparent",
-    color: CSS_COLOR.textSec,
-    borderRadius: dim(RADII.xs),
-    padding: sp("4px 7px"),
-    fontFamily: T.sans,
-    fontSize: textSize("caption"),
-    fontWeight: FONT_WEIGHTS.medium,
-    cursor: "pointer",
-  };
 }

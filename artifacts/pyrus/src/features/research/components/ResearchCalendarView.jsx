@@ -6,10 +6,10 @@ import {
 import { fetchEarningsCalendar } from "../lib/researchApi";
 import { Logo } from "./ResearchLogo";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { DataUnavailableState, SegmentedControl, Skeleton } from "../../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   cssColorMix,
-  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -139,18 +139,12 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* ── FILTERS ── */}
       <div style={{ display: "flex", gap: sp(10), alignItems: "center", marginBottom: sp(12), flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", gap: sp(2), background: CSS_COLOR.bg1, borderRadius: RADII.sm, padding: sp(2) }}>
-          {[["7d", "7 days"], ["30d", "30 days"], ["90d", "90 days"]].map(([k, lb]) => (
-            <button key={k} onClick={() => setRangeFilter(k)} style={{
-              background: rangeFilter === k ? CSS_COLOR.bg1 : "transparent",
-              border: "none", borderRadius: RADII.sm, padding: sp("5px 12px"),
-              fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
-              color: rangeFilter === k ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer",
-              boxShadow: rangeFilter === k ? ELEVATION.sm : "none",
-              transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease",
-            }}>{lb}</button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Calendar range"
+          options={[{ value: "7d", label: "7d" }, { value: "30d", label: "30d" }, { value: "90d", label: "90d" }]}
+          value={rangeFilter}
+          onChange={setRangeFilter}
+        />
 
         {/* Theme filter */}
         <div style={{ display: "inline-flex", gap: sp(3), alignItems: "center", flexWrap: "wrap" }}>
@@ -183,32 +177,59 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* ── STATE: LOADING / NO KEY / EMPTY / LIST ── */}
       {!apiKey && (
-        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(32), opacity: 0.3, marginBottom: sp(8) }}>🔑</div>
-          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: CSS_COLOR.textSec }}>FMP API key required</div>
-          <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>Add a key in settings (gear icon) to load the earnings calendar.</div>
-        </div>
+        <DataUnavailableState
+          variant="warning"
+          title="FMP API key required"
+          detail="Add a key in settings (gear icon) to load the earnings calendar."
+        />
       )}
 
       {apiKey && entries === null && (
-        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(11), color: CSS_COLOR.amber, marginBottom: sp(6) }}>⌛ Fetching calendar…</div>
-          <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>Calling FMP earnings calendar endpoint for next 90 days.</div>
+        <div aria-hidden="true">
+          {[0, 1].map(g => (
+            <div key={g} style={{ marginBottom: sp(14) }}>
+              <div style={{ display: "flex", alignItems: "center", gap: sp(8), padding: sp("5px 8px"), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                <Skeleton width={140} height={13} />
+                <Skeleton width={48} height={10} style={{ marginLeft: "auto" }} />
+              </div>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderTop: "none", borderRadius: `0 0 ${RADII.md}px ${RADII.md}px`, overflow: "hidden" }}>
+                {[0, 1, 2].map(r => (
+                  <div key={r} style={{
+                    display: "grid", gridTemplateColumns: "52px 1fr auto auto auto",
+                    gap: sp(12), alignItems: "center", padding: sp("9px 10px"),
+                    borderBottom: r < 2 ? `1px solid ${CSS_COLOR.border}` : "none",
+                  }}>
+                    <Skeleton width={34} height={16} />
+                    <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+                      <Skeleton width={18} height={18} radius={RADII.sm} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+                        <Skeleton width={120} height={11} />
+                        <Skeleton width={70} height={8} />
+                      </div>
+                    </div>
+                    <Skeleton width={56} height={24} />
+                    <Skeleton width={48} height={24} />
+                    <Skeleton width={10} height={14} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       {apiKey && entries && entries.length === 0 && (
-        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(32), opacity: 0.3, marginBottom: sp(8) }}>📅</div>
-          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: CSS_COLOR.textSec }}>No earnings data returned</div>
-          <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>Either no companies in our universe report in the next 90 days, or the API response was empty.</div>
-        </div>
+        <DataUnavailableState
+          title="No earnings data returned"
+          detail="Either no companies in our universe report in the next 90 days, or the API response was empty."
+        />
       )}
 
       {apiKey && entries && entries.length > 0 && grouped.length === 0 && (
-        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>No events match the current filters — try widening the range or clearing the theme filter.</div>
-        </div>
+        <DataUnavailableState
+          title="No matching events"
+          detail="No events match the current filters — try widening the range or clearing the theme filter."
+        />
       )}
 
       {/* ── GROUPED EVENTS ── */}
@@ -243,7 +264,18 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                 const themeChips = (co.themes || []).slice(0, 2).map(tid => themes[tid]).filter(Boolean);
 
                 return (
-                  <div key={row.internalTicker + "-" + i} onClick={() => onSelect(row.internalTicker)}
+                  <div key={row.internalTicker + "-" + i}
+                    className="ra-table-row"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${co.cc} ${co.t} earnings detail`}
+                    onClick={() => onSelect(row.internalTicker)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelect(row.internalTicker);
+                      }
+                    }}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "52px 1fr auto auto auto",

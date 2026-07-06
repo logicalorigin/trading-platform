@@ -60,6 +60,8 @@ import {
   type ExtendedHoursQuoteDisplay,
   type ExtendedHoursQuoteInput,
 } from "../platform/extendedHoursQuote";
+// @ts-expect-error JS module imported into TypeScript context
+import { SEMANTIC_TONE } from "../platform/semanticToneModel.js";
 import { useFootprintCandles } from "./useFootprintCandles";
 import type {
   ChartEvent,
@@ -830,7 +832,7 @@ const resolveFlowToneColor = (
   tone: ChartEventOverlay["tone"],
   theme: ResearchChartTheme,
 ): string =>
-  tone === "bullish" ? theme.green : tone === "bearish" ? theme.red : theme.amber;
+  tone === "bullish" ? SEMANTIC_TONE.directionBuy : tone === "bearish" ? theme.red : theme.amber;
 
 const resolveChartEventToneColor = (
   overlay: ChartEventOverlay,
@@ -840,7 +842,7 @@ const resolveChartEventToneColor = (
     return resolveFlowToneColor(overlay.tone, theme);
   }
 
-  if (overlay.tone === "bullish") return theme.green;
+  if (overlay.tone === "bullish") return SEMANTIC_TONE.directionBuy;
   if (overlay.tone === "bearish") return theme.red;
   if (overlay.placement === "timescale") return theme.amber;
   return theme.accent || theme.text;
@@ -4734,11 +4736,11 @@ const buildZoneOverlays = (
       const defaultFill =
         zone.direction === "short"
           ? withAlpha(theme.red, "1c")
-          : withAlpha(theme.green, "1c");
+          : withAlpha(SEMANTIC_TONE.directionBuy, "1c");
       const defaultBorder =
         zone.direction === "short"
           ? withAlpha(theme.red, "70")
-          : withAlpha(theme.green, "70");
+          : withAlpha(SEMANTIC_TONE.directionBuy, "70");
       const style = meta.style as string | undefined;
       const border = (meta.borderColor as string | undefined) || defaultBorder;
       const fill = (meta.fillColor as string | undefined) || defaultFill;
@@ -4976,7 +4978,7 @@ const buildBoxDrawingOverlays = (
 const resolvePositionDirectionColor = (
   direction: "long" | "short",
   theme: ResearchChartTheme,
-): string => (direction === "long" ? theme.green : theme.red);
+): string => (direction === "long" ? SEMANTIC_TONE.directionBuy : theme.red);
 
 const resolvePositionPnlColor = (
   pnl: number,
@@ -5275,7 +5277,7 @@ const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
         barIndex: group.barIndex ?? 0,
         position: group.dir === "long" ? "belowBar" : "aboveBar",
         shape: group.dir === "long" ? "arrowUp" : "arrowDown",
-        color: group.dir === "long" ? theme.green : theme.red,
+        color: group.dir === "long" ? SEMANTIC_TONE.directionBuy : theme.red,
         text: resolveGroupedMarkerText(group.label, tradeCount),
         size: tradeCount > 1 ? 1 : undefined,
       };
@@ -13459,7 +13461,7 @@ const ResearchChartSurfaceComponent = ({
                     const toneColor = resolveFlowToneColor(model.tone, theme);
                     const statCells = buildFlowTooltipStatCells(model);
                     const biasSegments = [
-                      { key: "bull", percent: model.bullishPercent, color: theme.green, label: model.bullishPremiumLabel, prefix: "B" },
+                      { key: "bull", percent: model.bullishPercent, color: SEMANTIC_TONE.directionBuy, label: model.bullishPremiumLabel, prefix: "B" },
                       { key: "bear", percent: model.bearishPercent, color: theme.red, label: model.bearishPremiumLabel, prefix: "R" },
                       { key: "mix", percent: model.neutralPercent, color: theme.amber, label: model.neutralPremiumLabel, prefix: "M" },
                     ];

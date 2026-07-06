@@ -56,7 +56,8 @@ import { useToast } from "../features/platform/platformContexts.jsx";
 import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { LoadingSpinner } from "../components/platform/primitives.jsx";
+import { LoadingSpinner, StatTile, StatusPill } from "../components/platform/primitives.jsx";
+import { Button } from "../components/ui/Button.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
@@ -70,7 +71,6 @@ import {
   RADII,
   T,
   dim,
-  fs,
   sp,
   textSize,
 } from "../lib/uiTokens.jsx";
@@ -608,28 +608,21 @@ const AccountSectionTransitionStatus = ({ compact = false }) => {
   const label = `Loading ${targetSection}...`;
   const tone = targetSection === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
   return (
-    <span
-      data-testid="account-section-transition"
-      aria-live="polite"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(5),
-        minHeight: dim(compact ? 22 : 24),
-        padding: sp("0 8px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${CSS_COLOR.border}`,
-        background: CSS_COLOR.bg1,
-        color: CSS_COLOR.textSec,
-        fontFamily: T.sans,
-        fontSize: textSize("label"),
-        whiteSpace: "nowrap",
-        flex: "0 0 auto",
-      }}
-    >
-      <LoadingSpinner size={14} color={tone} />
-      {label}
-    </span>
+    <StatusPill color={tone} dot={false}>
+      <span
+        data-testid="account-section-transition"
+        aria-live="polite"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(5),
+          minHeight: dim(compact ? 22 : 24),
+        }}
+      >
+        <LoadingSpinner size={14} color={tone} />
+        {label}
+      </span>
+    </StatusPill>
   );
 };
 
@@ -684,20 +677,6 @@ const ShadowWatchlistBacktestPanel = ({
     run?.marketDateFrom && run?.marketDateTo && run.marketDateFrom !== run.marketDateTo
       ? `${run.marketDateFrom} -> ${run.marketDateTo}`
       : run?.marketDate || "One-off ledger run";
-  const runButtonStyle = {
-    minHeight: dim(32),
-    padding: sp("6px 14px"),
-    border: `1px solid ${running ? CSS_COLOR.textMuted : CSS_COLOR.pink}`,
-    borderRadius: dim(RADII.sm),
-    background: running ? CSS_COLOR.bg1 : `${cssColorMix(CSS_COLOR.pink, 13)}`,
-    color: running ? CSS_COLOR.textMuted : CSS_COLOR.pink,
-    fontSize: fs(10),
-    fontFamily: T.sans,
-    fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.04em",
-    cursor: running ? "wait" : "pointer",
-    textTransform: "uppercase",
-  };
   return (
     <Panel
       title="Watchlist Backtest"
@@ -706,56 +685,56 @@ const ShadowWatchlistBacktestPanel = ({
       error={error}
       action={
         <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap" }}>
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            color={CSS_COLOR.pink}
+            size="sm"
             onClick={() => mutation.mutate({ timeframe: "15m" })}
-            disabled={running}
-            data-testid="shadow-watchlist-backtest-run-today"
-            style={runButtonStyle}
+            loading={running}
+            dataTestId="shadow-watchlist-backtest-run-today"
           >
             {running ? "Running" : "Today"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            color={CSS_COLOR.pink}
+            size="sm"
             onClick={() => mutation.mutate({ timeframe: "15m", range: "past_week" })}
             disabled={running}
-            data-testid="shadow-watchlist-backtest-run-week"
-            style={runButtonStyle}
+            dataTestId="shadow-watchlist-backtest-run-week"
           >
             Week
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            color={CSS_COLOR.pink}
+            size="sm"
             onClick={() => mutation.mutate({ timeframe: "15m", range: "last_month" })}
             disabled={running}
-            data-testid="shadow-watchlist-backtest-run-month"
-            style={runButtonStyle}
+            dataTestId="shadow-watchlist-backtest-run-month"
           >
             Month
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            color={CSS_COLOR.pink}
+            size="sm"
             onClick={() => mutation.mutate({ timeframe: "15m", range: "ytd" })}
             disabled={running}
-            data-testid="shadow-watchlist-backtest-run-ytd"
-            style={runButtonStyle}
+            dataTestId="shadow-watchlist-backtest-run-ytd"
           >
             YTD
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            color={CSS_COLOR.cyan}
+            size="sm"
             onClick={() => mutation.mutate({ timeframe: "5m", range: "ytd", sweep: true })}
             disabled={running}
-            data-testid="shadow-watchlist-backtest-run-ytd-5m-sweep"
-            style={{
-              ...runButtonStyle,
-              borderColor: running ? CSS_COLOR.textMuted : CSS_COLOR.cyan,
-              background: running ? CSS_COLOR.bg2 : `${cssColorMix(CSS_COLOR.cyan, 13)}`,
-              color: running ? CSS_COLOR.textMuted : CSS_COLOR.cyan,
-            }}
+            dataTestId="shadow-watchlist-backtest-run-ytd-5m-sweep"
           >
             5m Sweep
-          </button>
+          </Button>
         </div>
       }
     >
@@ -790,23 +769,15 @@ const ShadowWatchlistBacktestPanel = ({
                 ["Orders", summary.ordersCreated, CSS_COLOR.text],
                 ["Open", summary.openSyntheticPositions, CSS_COLOR.purple],
                 ["Skipped", summary.skippedSignals, CSS_COLOR.amber],
-              ].map(([label, value, color], index) => (
-                <div
+              ].map(([label, value, tone], index, arr) => (
+                <StatTile
                   key={label}
-                  style={{
-                    flex: "1 1 auto",
-                    minWidth: dim(64),
-                    padding: sp("4px 9px"),
-                    borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
-                  }}
-                >
-                  <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
-                    {label.toUpperCase()}
-                  </div>
-                  <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
-                    {formatNumber(value || 0, 0)}
-                  </div>
-                </div>
+                  label={label}
+                  value={formatNumber(value || 0, 0)}
+                  tone={tone}
+                  minWidth={64}
+                  divider={index < arr.length - 1}
+                />
               ))}
             </div>
             <div
@@ -2914,23 +2885,15 @@ const AccountScreenInner = ({
                     ["Backtest Pos", shadowAutomationAudit.backtestPositions, CSS_COLOR.purple],
                     ["Auto Orders", shadowAutomationAudit.automationOrders, CSS_COLOR.cyan],
                     ["Backtest Orders", shadowAutomationAudit.backtestOrders, CSS_COLOR.pink],
-                  ].map(([label, value, color], index) => (
-                    <div
+                  ].map(([label, value, tone], index, arr) => (
+                    <StatTile
                       key={label}
-                      style={{
-                        flex: "1 1 auto",
-                        minWidth: dim(80),
-                        padding: sp("4px 9px"),
-                        borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
-                      }}
-                    >
-                      <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
-                        {label.toUpperCase()}
-                      </div>
-                      <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
-                        {value}
-                      </div>
-                    </div>
+                      label={label}
+                      value={value}
+                      tone={tone}
+                      minWidth={80}
+                      divider={index < arr.length - 1}
+                    />
                   ))}
                 </div>
               </div>

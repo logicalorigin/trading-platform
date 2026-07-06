@@ -26,7 +26,7 @@ import { CalendarView } from "./components/ResearchCalendarView";
 import { Logo } from "./components/ResearchLogo";
 import { SettingsPanel } from "./components/ResearchSettingsPanel";
 import { ThemeSwitcher } from "./components/ResearchThemeSwitcher";
-import { MicroSparkline, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
+import { MicroSparkline, Pill, SegmentedControl, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   backgroundPrefetchFundamentals,
   fetchFinancials,
@@ -79,6 +79,16 @@ import {
 } from "recharts";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Settings as SettingsIcon } from "lucide-react";
+
+// Enter/Space keyboard activation for clickable rows/cells that are not native
+// buttons (a11y: pair with role="button" + tabIndex=0). The visible focus ring
+// comes from the global [tabindex]:focus-visible outline rule in index.css.
+const activateOnKey = (handler) => (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    handler(e);
+  }
+};
 
 
 let {
@@ -991,6 +1001,9 @@ function PeerGrid({ co, color, onSelect }) {
             const isSelf = c.t === co.t;
             return (
               <tr key={c.t} onClick={() => !isSelf && onSelect && onSelect(c.t)}
+                role={!isSelf ? "button" : undefined}
+                tabIndex={!isSelf ? 0 : undefined}
+                onKeyDown={!isSelf ? activateOnKey(() => onSelect && onSelect(c.t)) : undefined}
                 style={{ cursor: isSelf ? "default" : "pointer", borderBottom: ci < allCos.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none", background: isSelf ? toneAlpha(CSS_COLOR.accent, 0.06) : "transparent" }}
                 onMouseEnter={e => { if (!isSelf) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.022); }}
                 onMouseLeave={e => { if (!isSelf) e.currentTarget.style.background = "transparent"; }}>
@@ -2081,7 +2094,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
             <div style={{ marginBottom: sp(8) }}>
               <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginBottom: sp(3) }}>SUPPLIERS → ({sup.length})</div>
               {sup.length > 0 ? sup.map(sx => (
-                <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
+                <div key={sx.t + sx.l} role="button" tabIndex={0} onClick={() => onSelect && onSelect(sx.t)} onKeyDown={activateOnKey(() => onSelect && onSelect(sx.t))} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
                   onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <Logo ticker={sx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === sx.t) || COMPANIES[0]).v].c }}>${sx.t}</span>
@@ -2092,7 +2105,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
             <div>
               <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginBottom: sp(3) }}>→ CUSTOMERS ({cust.length})</div>
               {cust.length > 0 ? cust.map(cx => (
-                <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
+                <div key={cx.t + cx.l} role="button" tabIndex={0} onClick={() => onSelect && onSelect(cx.t)} onKeyDown={activateOnKey(() => onSelect && onSelect(cx.t))} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
                   onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <Logo ticker={cx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === cx.t) || COMPANIES[0]).v].c }}>${cx.t}</span>
@@ -2227,7 +2240,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
                 {sup.length > 0 ? sup.map(sx => {
                   const sCo = COMPANIES.find(c => c.t === sx.t);
                   return (
-                    <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
+                    <div key={sx.t + sx.l} role="button" tabIndex={0} onClick={() => onSelect && onSelect(sx.t)} onKeyDown={activateOnKey(() => onSelect && onSelect(sx.t))} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
                       onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={sx.t} size={14} />
@@ -2244,7 +2257,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
                 {cust.length > 0 ? cust.map(cx => {
                   const cCo = COMPANIES.find(c => c.t === cx.t);
                   return (
-                    <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
+                    <div key={cx.t + cx.l} role="button" tabIndex={0} onClick={() => onSelect && onSelect(cx.t)} onKeyDown={activateOnKey(() => onSelect && onSelect(cx.t))} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
                       onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={cx.t} size={14} />
@@ -2544,15 +2557,19 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
       <div style={{ padding: sp("10px 14px 14px"), maxHeight: "70vh", overflowY: "auto" }}>
         {/* ── TAB BAR ── */}
-        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${CSS_COLOR.border}`, marginBottom: sp(10), marginTop: -2 }}>
-          {[["overview", "Overview"], ["business", "Business"], ["financials", "Financials"], ["valuation", "Valuation"], ["filings", "📄 Filings"]].map(([id, lb]) => (
-            <button key={id} onClick={() => setDetailTab(id)} style={{
-              background: "none", border: "none",
-              borderBottom: detailTab === id ? "2px solid " + vc.c : "2px solid transparent",
-              padding: sp("6px 14px"), color: detailTab === id ? vc.c : CSS_COLOR.textDim,
-              fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3,
-            }}>{lb}</button>
-          ))}
+        <div style={{ marginBottom: sp(10), marginTop: -2 }}>
+          <SegmentedControl
+            ariaLabel="Company detail sections"
+            value={detailTab}
+            onChange={setDetailTab}
+            options={[
+              { value: "overview", label: "Overview" },
+              { value: "business", label: "Business" },
+              { value: "financials", label: "Financials" },
+              { value: "valuation", label: "Valuation" },
+              { value: "filings", label: "Filings" },
+            ]}
+          />
         </div>
 
         {detailTab === "overview" && <OverviewTab co={co} vc={vc} price={price} apiKey={apiKey} wkLow={wkLow} wkHigh={wkHigh} live={live} focalFund={focalFund} dayLow={dayLow} dayHigh={dayHigh} sup={sup} cust={cust} fd={fd} onSelect={onSelect} />}
@@ -3283,15 +3300,15 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       {/* ═══ ROW 1: HEADLINE METRICS ═══ */}
       <div style={{ display: "grid", gridTemplateColumns: isPhone ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 6, marginBottom: sp(14) }}>
         {[
-          ["Total Market Cap", fmtMC(totalMC), CSS_COLOR.text, CSS_COLOR.green],
-          ["Combined Revenue", fmtMC(totalRev), CSS_COLOR.text, CSS_COLOR.blue],
-          ["Median P/E", medPE.toFixed(1) + "x", CSS_COLOR.text, CSS_COLOR.accent],
-          ["Avg " + primaryMacroName, avgMacro + "%", CSS_COLOR.text, theme?.accent || CSS_COLOR.accent],
-        ].map(([label, value, color, accent]) => (
+          ["Total Market Cap", fmtMC(totalMC), CSS_COLOR.text],
+          ["Combined Revenue", fmtMC(totalRev), CSS_COLOR.text],
+          ["Median P/E", medPE.toFixed(1) + "x", CSS_COLOR.text],
+          ["Avg " + primaryMacroName, avgMacro + "%", CSS_COLOR.text],
+        ].map(([label, value, color]) => (
           <div key={label} style={{ ...card, padding: sp("7px 10px") }}>
             <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: sp(3) }}>{label}</div>
             <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color }}>{value}</div>
-            <div style={{ height: 2, borderRadius: RADII.xs, background: accent, opacity: 0.3, marginTop: sp(4) }} />
+            <div style={{ height: 2, borderRadius: RADII.xs, background: CSS_COLOR.border, marginTop: sp(4) }} />
           </div>
         ))}
       </div>
@@ -3725,7 +3742,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("stroke-dasharray", "3,3")
       .attr("stroke-opacity", 0.5)
       .attr("fill", "none")
-      .style("animation", "edgeFlow 1.5s linear infinite");
+      .attr("class", "photonics-edge-flow");
 
     // Edge product labels (hidden until hover/select)
     const edgeLabels = g.append("g").selectAll("text").data(links).join("text")
@@ -4109,7 +4126,7 @@ function Comps({ cos, sel, onSel }) {
           const vc = VX[c.v];
           const gr = c.fin?.rg?.[4] || 0;
           return (
-            <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background var(--ra-motion-micro)" }}
+            <tr key={c.t} role="button" tabIndex={0} onClick={() => onSel(c.t)} onKeyDown={activateOnKey(() => onSel(c.t))} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background var(--ra-motion-micro)" }}
               onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.025); }}
               onMouseLeave={e => { if (c.t !== sel) e.currentTarget.style.background = "transparent"; }}>
               <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
@@ -4189,7 +4206,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
               const vc = VX[c.v] || { c: CSS_COLOR.textDim };
               const val = Math.round((c.ms?.[mk] || 0) * 100);
               return (
-                <div key={c.t} onClick={() => onSel(c.t)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 0"), cursor: "pointer", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                <div key={c.t} role="button" tabIndex={0} onClick={() => onSel(c.t)} onKeyDown={activateOnKey(() => onSel(c.t))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 0"), cursor: "pointer", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
                   <Logo ticker={c.t} size={11} style={{ marginRight: sp(2) }} /><span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: c.t === sel ? vc.c : CSS_COLOR.textSec }}>{c.cc} ${c.t}</span>
                   <span style={{ fontSize: fs(11), color: val > 70 ? CSS_COLOR.red : val > 40 ? CSS_COLOR.amber : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>{val}</span>
                 </div>
@@ -4610,6 +4627,9 @@ export default function PhotonicsObservatory({
         @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes edgeFlow { to { stroke-dashoffset: -12; } }
+        .photonics-edge-flow { animation: edgeFlow 1.5s linear infinite; }
+        @media (prefers-reduced-motion: reduce) { .photonics-edge-flow { animation: none; } }
+        html[data-pyrus-reduced-motion="on"] .photonics-edge-flow { animation: none; }
       `}</style>
 
       {/* Header */}
@@ -4701,11 +4721,11 @@ export default function PhotonicsObservatory({
         {/* Vertical filter pills */}
         {researchMetaReady && (
         <div className="photonics-research-filter-row" style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
-          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? CSS_COLOR.bg1 : "transparent", border: !vf ? `1px solid ${CSS_COLOR.borderLight}` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? ELEVATION.sm : "none" }}>ALL</button>
+          <Pill active={!vf} onClick={() => { setVf(null); setSf(null); }}>ALL</Pill>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
-            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? CSS_COLOR.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease" }}>
+            <Pill key={k} active={vf === k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }}>
               {v.n}
-            </button>
+            </Pill>
           ))}
         </div>
         )}
@@ -4713,23 +4733,30 @@ export default function PhotonicsObservatory({
         {/* Sub-layer pills */}
         {subs.length > 0 && (
           <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4), animation: "fadeIn var(--ra-motion-standard) ease" }}>
-            <button onClick={() => setSf(null)} style={{ background: !sf ? toneAlpha(CSS_COLOR.text, 0.06) : toneAlpha(CSS_COLOR.text, 0.03), border: "none", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: !sf ? CSS_COLOR.textMuted : CSS_COLOR.text, cursor: "pointer" }}>All layers</button>
+            <Pill active={!sf} onClick={() => setSf(null)}>All layers</Pill>
             {subs.map(s => (
-              <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : toneAlpha(CSS_COLOR.text, 0.03), border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: sf === s ? currentTheme.verticals[vf]?.c : CSS_COLOR.textSec, cursor: "pointer" }}>
+              <Pill key={s} active={sf === s} onClick={() => setSf(sf === s ? null : s)}>
                 {s}
-              </button>
+              </Pill>
             ))}
           </div>
         )}
 
         {/* View tabs */}
         {researchMetaReady && (
-        <div className="photonics-research-view-tabs" style={{ display: "flex", gap: 0, borderBottom: `1px solid ${CSS_COLOR.border}`, marginTop: sp(8) }}>
-          {[["graph", "Graph"], ["comps", "Comps"], ["macro", "Macro"], ["calendar", "📅 Calendar"]].map(([id, lb]) => (
-            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? `2px solid ${currentTheme.accent}` : "2px solid transparent", padding: sp("6px 12px"), color: view === id ? CSS_COLOR.text : CSS_COLOR.textDim, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3 }}>
-              {lb}
-            </button>
-          ))}
+        <div className="photonics-research-view-tabs" style={{ marginTop: sp(8) }}>
+          <SegmentedControl
+            ariaLabel="Research view"
+            value={view}
+            onChange={setView}
+            buttonTestId="research-view"
+            options={[
+              { value: "graph", label: "Graph" },
+              { value: "comps", label: "Comps" },
+              { value: "macro", label: "Macro" },
+              { value: "calendar", label: "Calendar" },
+            ]}
+          />
         </div>
         )}
       </div>

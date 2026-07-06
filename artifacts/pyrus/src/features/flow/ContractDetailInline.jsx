@@ -43,6 +43,8 @@ import {
   Badge,
   Card,
   DataUnavailableState,
+  Icon,
+  StatTile,
 } from "../../components/platform/primitives.jsx";
 import {
   fmtCompactNumber,
@@ -72,61 +74,10 @@ import {
   toneForOptionSide,
 } from "../platform/semanticToneModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { useValueFlash } from "../../lib/motion.jsx";
+import { Bell, Star } from "lucide-react";
 
 
 const OPTION_CHART_TIMEFRAMES = getChartTimeframeOptions("option");
-
-// Item 13, D4 — execution-quality tile with a quick (150ms) tick flash on the
-// raw numeric quote value (fill/bid/ask). Kept as a subcomponent so the hook
-// runs per-tile rather than in the parent map callback.
-const ExecutionQualityTile = ({ item }) => {
-  const flash = useValueFlash(item.flashValue, {
-    enabled: isFiniteNumber(item.flashValue),
-  });
-  return (
-    <AppTooltip
-      content={item.label === "FILL" ? item.tooltip : undefined}
-    >
-      <div
-        data-testid={item.testId}
-        style={{
-          padding: sp("6px 8px"),
-          background: CSS_COLOR.bg1,
-          border: `1px solid ${CSS_COLOR.border}`,
-          borderRadius: dim(RADII.xs),
-          minWidth: 0,
-        }}
-      >
-        <div
-          style={{
-            fontSize: fs(8),
-            color: CSS_COLOR.textMuted,
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
-            marginBottom: sp(2),
-          }}
-        >
-          {item.label}
-        </div>
-        <div
-          className={flash ? `${flash} ra-value-flash--quick` : undefined}
-          style={{
-            fontSize: fs(10),
-            color: item.color,
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {item.value}
-        </div>
-      </div>
-    </AppTooltip>
-  );
-};
 
 const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
   if (requestFailed) {
@@ -699,7 +650,7 @@ export const ContractDetailInline = ({
           }}
         >
           {evt.golden && (
-            <span style={{ color: CSS_COLOR.amber, fontSize: fs(14) }}>★</span>
+            <Icon as={Star} color={CSS_COLOR.amber} aria-label="Golden setup" />
           )}
           <span
             style={{
@@ -822,6 +773,9 @@ export const ContractDetailInline = ({
             });
           }}
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(4),
             padding: sp("5px 10px"),
             background: alertSet ? `${cssColorMix(CSS_COLOR.amber, 13)}` : "transparent",
             color: alertSet ? CSS_COLOR.amber : CSS_COLOR.textSec,
@@ -834,7 +788,8 @@ export const ContractDetailInline = ({
             flexShrink: 0,
           }}
         >
-          🔔 {alertSet ? "Alert active" : "Set alert"}
+          <Icon as={Bell} size={12} aria-hidden />
+          {alertSet ? "Alert active" : "Set alert"}
         </button>
       </div>
 
@@ -890,7 +845,15 @@ export const ContractDetailInline = ({
             color: flowProviderColor(evt.provider),
           },
         ].map((item) => (
-          <ExecutionQualityTile key={item.label} item={item} />
+          <StatTile
+            key={item.label}
+            label={item.label}
+            value={item.value}
+            tone={item.color}
+            flashValue={item.flashValue}
+            testId={item.testId}
+            title={item.tooltip}
+          />
         ))}
       </div>
 

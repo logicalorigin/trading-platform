@@ -1,4 +1,5 @@
 import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+import { Button } from "../../../components/ui/Button.jsx";
 
 export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatus }) {
   return (
@@ -15,11 +16,9 @@ export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatu
                 : "No live quote snapshot loaded"}
           </div>
         </div>
-        <button onClick={refreshData} disabled={dataStatus === "loading"} style={{
-          background: dataStatus === "loading" ? CSS_COLOR.bg2 : CSS_COLOR.green, border: "none", borderRadius: RADII.sm,
-          padding: sp("5px 10px"), fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: dataStatus === "loading" ? "default" : "pointer",
-          color: dataStatus === "loading" ? CSS_COLOR.textMuted : CSS_COLOR.onAccent,
-        }}>{dataStatus === "loading" ? "Fetching..." : "Refresh"}</button>
+        <Button variant="primary" size="sm" onClick={refreshData} disabled={dataStatus === "loading"}>
+          {dataStatus === "loading" ? "Fetching..." : "Refresh"}
+        </Button>
       </div>
       <div style={{ marginTop: sp(10) }}>
         <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Research provider</div>

@@ -44,7 +44,11 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import {
+  DataUnavailableState,
+  SegmentedControl,
+  surfaceStyle,
+} from "../../components/platform/primitives.jsx";
 import { useListMotionKeys } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -200,28 +204,6 @@ export const TradeL2Panel = ({
           ? "option depth unavailable"
           : "IBKR login required"
         : "broker off";
-
-  const TabBtn = ({ id, label }) => (
-    <button
-      onClick={() => setTab(id)}
-      style={{
-        background: "transparent",
-        border: "none",
-        padding: 0,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.regular,
-        color: tab === id ? CSS_COLOR.text : CSS_COLOR.textMuted,
-        fontFamily: T.sans,
-        letterSpacing: "0.04em",
-        cursor: "pointer",
-        borderBottom:
-          tab === id ? `2px solid ${CSS_COLOR.accent}` : "2px solid transparent",
-        paddingBottom: sp(2),
-      }}
-    >
-      {label}
-    </button>
-  );
 
   const renderBrokerGate = (title, detail, loading = false) => (
     <DataUnavailableState
@@ -396,14 +378,11 @@ export const TradeL2Panel = ({
   return (
     <div
       style={{
-        background: CSS_COLOR.bg1,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
+        ...surfaceStyle(),
         padding: sp("12px 14px"),
         display: "flex",
         flexDirection: "column",
         gap: sp(8),
-        overflow: "hidden",
         fontVariantNumeric: "tabular-nums",
       }}
     >
@@ -416,11 +395,16 @@ export const TradeL2Panel = ({
           paddingBottom: sp(4),
         }}
       >
-        <div style={{ display: "flex", gap: sp(8), alignItems: "center" }}>
-          <TabBtn id="book" label="BOOK" />
-          <TabBtn id="flow" label="FLOW" />
-          <TabBtn id="tape" label="TAPE" />
-        </div>
+        <SegmentedControl
+          ariaLabel="Market data view"
+          options={[
+            { value: "book", label: "BOOK" },
+            { value: "flow", label: "FLOW" },
+            { value: "tape", label: "TAPE" },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
         <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
           <span
             style={{

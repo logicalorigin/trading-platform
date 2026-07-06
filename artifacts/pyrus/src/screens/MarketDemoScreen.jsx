@@ -26,7 +26,10 @@ import {
   MACRO_TICKERS,
   buildTrackedBreadthSummary,
 } from "../features/market/marketReferenceData.js";
-import { toneForFinancialDelta } from "../features/platform/semanticToneModel.js";
+import {
+  toneForDirectionalIntent,
+  toneForFinancialDelta,
+} from "../features/platform/semanticToneModel.js";
 import { CSS_COLOR, RADII, T, sp } from "../lib/uiTokens.jsx";
 
 const SORT_OPTIONS = [
@@ -117,7 +120,11 @@ const HeroBand = ({ flow, sortMode, onSortModeChange, filterText, onFilterChange
         <MetricChip
           label="P/C"
           value={flow.putCall != null ? flow.putCall.toFixed(2) : "—"}
-          tone={toneForFinancialDelta(flow.putCall == null ? 0 : 1 - flow.putCall)}
+          tone={
+            flow.putCall == null
+              ? CSS_COLOR.textDim
+              : toneForDirectionalIntent(flow.putCall <= 1 ? "bullish" : "bearish")
+          }
           title="Put premium / call premium across the flow tape (>1 = puts lead)"
         />
         <MetricChip
@@ -129,7 +136,7 @@ const HeroBand = ({ flow, sortMode, onSortModeChange, filterText, onFilterChange
         <MetricChip
           label="Net flow"
           value={fmtM(flow.net)}
-          tone={toneForFinancialDelta(flow.net)}
+          tone={toneForDirectionalIntent(flow.net >= 0 ? "bullish" : "bearish")}
           title="Net call−put premium across the flow tape"
         />
       </div>

@@ -19,10 +19,9 @@ import {
   dim,
   fs,
   sp,
-  textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
-import { Badge, Card, MicroSparkline, Pill } from "../../components/platform/primitives.jsx";
+import { Badge, Card, MicroSparkline, Pill, StatTile } from "../../components/platform/primitives.jsx";
 import {
   lineUsageTone,
 } from "../platform/runtimeControlModel.js";
@@ -92,83 +91,6 @@ const ProgressBar = ({ ratio, color = CSS_COLOR.accent, height = 4 }) => {
     </div>
   );
 };
-
-const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = CSS_COLOR.textSec }) => (
-  <div
-    style={{
-      minWidth: 0,
-      padding: sp("8px 10px"),
-      background: CSS_COLOR.bg1,
-      border: "none",
-      borderRadius: dim(RADII.sm),
-      transition:
-        "background-color var(--ra-motion-fast) var(--ra-motion-ease)",
-    }}
-  >
-    <div
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-        lineHeight: 1,
-      }}
-    >
-      {label}
-    </div>
-    <div
-      style={{
-        marginTop: sp(4),
-        display: "flex",
-        alignItems: "center",
-        gap: sp(5),
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: fs(13),
-        fontWeight: FONT_WEIGHTS.label,
-        letterSpacing: 0,
-        lineHeight: 1.1,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {dotColor ? (
-        <span
-          style={{
-            width: dim(6),
-            height: dim(6),
-            borderRadius: dim(RADII.pill),
-            background: dotColor,
-            flexShrink: 0,
-          }}
-        />
-      ) : null}
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-        {value ?? MISSING_VALUE}
-      </span>
-    </div>
-    {chart ? <div style={{ marginTop: sp(3) }}>{chart}</div> : null}
-    {detail ? (
-      <div
-        style={{
-          marginTop: sp(3),
-          color: CSS_COLOR.textDim,
-          fontFamily: T.sans,
-          fontSize: fs(7),
-          lineHeight: 1.1,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {detail}
-      </div>
-    ) : null}
-  </div>
-);
 
 const TickerChip = ({ symbol, label, tone, title }) => (
   <AppTooltip content={title}>
@@ -411,49 +333,66 @@ export const FlowScannerStatusPanel = ({
           gap: sp(6),
         }}
       >
-        <ScannerMetric
+        <StatTile
           label="Coverage"
           value={`${formatCount(scannedCoverageSymbols)}/${formatCount(totalCoverageSymbols || scannedCoverageSymbols)}`}
-          chart={
+          viz={
             totalCoverageSymbols > 0 ? (
               <ProgressBar ratio={coverageRatio} color={CSS_COLOR.accent} />
             ) : null
           }
-          detail={selectedDetail}
+          sub={selectedDetail}
           tone={CSS_COLOR.textSec}
+          minWidth={0}
         />
-        <ScannerMetric
+        <StatTile
           label="Scanning now"
           value={currentBatch.length ? currentBatch.slice(0, 3).join(" ") : MISSING_VALUE}
-          detail={
+          sub={
             currentBatch.length > 3
               ? `+${currentBatch.length - 3} active`
               : `${formatCount(displayBatchSize)} batch / ${formatCount(displayConcurrency)} conc`
           }
           tone={currentBatch.length ? CSS_COLOR.accent : CSS_COLOR.textDim}
+          minWidth={0}
         />
-        <ScannerMetric
+        <StatTile
           label="Lines"
           value={
             Number.isFinite(scannerUsed)
               ? `${formatCount(scannerUsed)} active`
               : MISSING_VALUE
           }
-          chart={<Sparkline values={linesHistory} color={linesTone} />}
-          detail={
+          viz={<Sparkline values={linesHistory} color={linesTone} />}
+          sub={
             scannerRuntimeDetail ||
             (Number.isFinite(totalUsed) || Number.isFinite(totalCap)
               ? `acct ${formatCount(accountMonitorUsed)} of ${formatCount(accountMonitorNeeded ?? accountMonitorUsed)} · app ${formatCount(totalUsed)} of ${formatCount(totalCap)}`
               : "runtime diagnostics")
           }
           tone={linesTone}
+          minWidth={0}
         />
-        <ScannerMetric
+        <StatTile
           label="Quality"
-          value={flowQuality?.label || MISSING_VALUE}
-          dotColor={flowQuality?.color || CSS_COLOR.textDim}
-          detail={flowQuality?.detail}
+          value={
+            <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5) }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: dim(6),
+                  height: dim(6),
+                  borderRadius: dim(RADII.pill),
+                  background: flowQuality?.color || CSS_COLOR.textDim,
+                  flexShrink: 0,
+                }}
+              />
+              {flowQuality?.label || MISSING_VALUE}
+            </span>
+          }
+          sub={flowQuality?.detail}
           tone={flowQuality?.color || CSS_COLOR.textDim}
+          minWidth={0}
         />
       </div>
 

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "../../components/ui/Button.jsx";
 import {
   CSS_COLOR,
+  ELEVATION,
   RADII,
   T,
   dim,
@@ -49,7 +50,7 @@ export const AlgoSaveBar = ({
         padding: sp("10px 16px"),
         background: CSS_COLOR.bg1,
         borderTop: `1px solid ${CSS_COLOR.border}`,
-        boxShadow: "0 -8px 16px -12px rgba(0,0,0,0.4)",
+        boxShadow: ELEVATION.md,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
@@ -109,7 +110,7 @@ export const AlgoSaveBar = ({
               maxHeight: dim(240),
               overflowY: "auto",
               minWidth: dim(280),
-              boxShadow: "0 12px 28px rgba(0,0,0,0.35)",
+              boxShadow: ELEVATION.lg,
               display: "grid",
               gap: sp(2),
             }}

@@ -700,7 +700,7 @@ const buildPressureLinks = (rects, pressureSources) => {
 
 // Pressure attribution accent — distinct from status colors so a "pressure
 // source" marker reads as a cause, not just another degraded card.
-const PRESSURE_TONE = "#e8a13a";
+const PRESSURE_TONE = CSS_COLOR.amber;
 
 const FOOTER_ABBREVIATIONS = [
   [" of ", "/"],

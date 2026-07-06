@@ -45,8 +45,11 @@ import {
   MicroSparkline,
   Select,
   Skeleton,
+  StatTile,
   StatusPill,
+  TextField,
   extractSparklinePoints,
+  surfaceStyle,
 } from "../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
@@ -381,7 +384,7 @@ const toneForMatrixReadiness = (readiness) => {
     case "ready":
       return CSS_COLOR.green;
     case "watch":
-      return CSS_COLOR.blue;
+      return CSS_COLOR.amber;
     case "wait":
       return CSS_COLOR.amber;
     case "avoid":
@@ -597,21 +600,22 @@ function NumberField({ label, value, min, max, step = 1, round = true, onCommit 
   );
 }
 
-function SignalsTickerSearchInput({ value, onCommit, style }) {
+function SignalsTickerSearchInput({ value, onCommit, compact = false }) {
   const { inputProps } = useDebouncedTextCommit({
     value,
     onCommit,
   });
+  const { value: fieldValue, onChange, ...restInputProps } = inputProps;
 
   return (
-    <input
-      {...inputProps}
+    <TextField
+      label="Search"
       placeholder="Ticker"
-      style={{
-        ...style,
-        width: "100%",
-        paddingLeft: dim(30),
-      }}
+      value={fieldValue}
+      onChange={onChange}
+      leadingIcon={<Search size={14} strokeWidth={2} aria-hidden="true" />}
+      inputProps={restInputProps}
+      style={{ minWidth: compact ? "100%" : dim(210) }}
     />
   );
 }
@@ -1538,10 +1542,7 @@ function SignalsOverviewPanel({
         gap: sp(7),
         minWidth: 0,
         padding: sp(10),
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
-        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 8)}`,
+        ...surfaceStyle({ radius: RADII.sm }),
       }}
     >
       <div
@@ -2086,25 +2087,9 @@ function MatrixVerdictSummary({ row }) {
           }}
         >
           {reasons.slice(0, 5).map((reason) => (
-            <span
-              key={reason}
-              style={{
-                minHeight: dim(20),
-                display: "inline-flex",
-                alignItems: "center",
-                padding: sp("0 7px"),
-                border: `1px solid ${cssColorMix(tone, 38)}`,
-                borderRadius: dim(RADII.pill),
-                background: cssColorMix(tone, 9),
-                color: CSS_COLOR.textSec,
-                fontSize: fs(10),
-                fontWeight: FONT_WEIGHTS.label,
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <Badge key={reason} color={tone}>
               {formatEnumLabel(reason)}
-            </span>
+            </Badge>
           ))}
         </div>
       ) : null}
@@ -2328,6 +2313,24 @@ function SignalDenseFact({
   variant = "divider",
 }) {
   const tile = variant === "tile";
+  if (tile) {
+    return (
+      <StatTile
+        label={label}
+        value={value || MISSING_VALUE}
+        tone={tone}
+        align={align === "center" ? "center" : "start"}
+        minWidth={0}
+        title={String(value || MISSING_VALUE)}
+        style={{
+          padding: sp("7px 8px"),
+          border: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: dim(RADII.xs),
+          background: CSS_COLOR.bg2,
+        }}
+      />
+    );
+  }
   return (
     <div
       style={{
@@ -2335,11 +2338,8 @@ function SignalDenseFact({
         display: "grid",
         alignContent: "center",
         gap: sp(2),
-        padding: tile ? sp("7px 8px") : sp("6px 8px"),
-        border: tile ? `1px solid ${CSS_COLOR.border}` : "none",
-        borderLeft: tile ? `1px solid ${CSS_COLOR.border}` : `1px solid ${CSS_COLOR.border}`,
-        borderRadius: tile ? dim(RADII.xs) : 0,
-        background: tile ? CSS_COLOR.bg2 : "transparent",
+        padding: sp("6px 8px"),
+        borderLeft: `1px solid ${CSS_COLOR.border}`,
         textAlign: align,
       }}
     >
@@ -2381,11 +2381,8 @@ function SignalDenseSection({ title, action, children, testId, style }) {
         display: "grid",
         alignContent: "start",
         gap: sp(8),
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
+        ...surfaceStyle({ radius: RADII.sm }),
         padding: sp(10),
-        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 8)}`,
         ...style,
       }}
     >
@@ -2950,9 +2947,7 @@ function SignalProvenanceStrip({ row, onJumpToTrade, phone }) {
         gap: sp(10),
         alignItems: "center",
         minWidth: 0,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.sm),
-        background: CSS_COLOR.bg1,
+        ...surfaceStyle({ radius: RADII.sm }),
         padding: sp(10),
       }}
     >
@@ -3266,10 +3261,7 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
             display: "grid",
             gridTemplateColumns: phone ? "1fr" : "minmax(132px, 0.8fr) repeat(6, minmax(82px, 1fr))",
             minWidth: 0,
-            border: `1px solid ${CSS_COLOR.border}`,
-            borderRadius: dim(RADII.sm),
-            background: CSS_COLOR.bg1,
-            overflow: "hidden",
+            ...surfaceStyle({ radius: RADII.sm }),
           }}
         >
           <div
@@ -4715,39 +4707,11 @@ export default function SignalsScreen({
             padding: sp(10),
           }}
         >
-          <label
-            style={{
-              display: "inline-grid",
-              gap: sp(4),
-              minWidth: compact ? "100%" : dim(210),
-              color: CSS_COLOR.textMuted,
-              fontSize: fs(10),
-              fontWeight: FONT_WEIGHTS.label,
-              letterSpacing: 0,
-              textTransform: "uppercase",
-            }}
-          >
-            <span>Search</span>
-            <span style={{ position: "relative", display: "block" }}>
-              <Search
-                size={14}
-                strokeWidth={2}
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: dim(9),
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: CSS_COLOR.textMuted,
-                }}
-              />
-              <SignalsTickerSearchInput
-                value={query}
-                onCommit={setQuery}
-                style={selectStyle}
-              />
-            </span>
-          </label>
+          <SignalsTickerSearchInput
+            value={query}
+            onCommit={setQuery}
+            compact={compact}
+          />
 
           <FieldSelect
             label="Status"
