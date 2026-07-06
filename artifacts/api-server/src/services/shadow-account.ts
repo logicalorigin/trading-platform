@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
   DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
@@ -100,7 +100,11 @@ import {
 import { resolveAccountPortfolioRisk } from "./account-portfolio-risk";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
-import { currentShadowAccountId } from "./shadow-account-context";
+import {
+  currentShadowAccountId,
+  runWithShadowAccountId,
+} from "./shadow-account-context";
+import { requireCurrentAppUserId } from "./app-user-context";
 import {
   accountPositionTypeDisplayLabel,
   accountPositionTypeMatchesFilter,
@@ -2823,10 +2827,115 @@ export function computeShadowOrderFees(input: {
   return cents(Math.max(STOCK_FIXED_COMMISSION_MIN, capped));
 }
 
+// Slice 5.5: per-user shadow resolution.
+//
+// A user's own standalone shadow (source_broker_account_id IS NULL) is found/created
+// by app_user_id. Until they have a persisted row, reads run against a per-user
+// VIRTUAL id ("u:<uid>") that matches no rows -> the caller sees an empty $25k book,
+// without a GET writing a row (create-on-first-trade mode). The founding admin's
+// backfilled row ("shadow") is their standalone, so their view === the platform ledger.
+const VIRTUAL_SHADOW_ACCOUNT_PREFIX = "u:";
+
+function virtualUserShadowAccountId(appUserId: string): string {
+  return `${VIRTUAL_SHADOW_ACCOUNT_PREFIX}${appUserId}`;
+}
+
+function isVirtualShadowAccountId(id: string): boolean {
+  return id.startsWith(VIRTUAL_SHADOW_ACCOUNT_PREFIX);
+}
+
+// Auto-create the caller's shadow row on first VIEW (default), vs. defer creation to
+// their first trade. Configurable via SHADOW_ACCOUNT_AUTOCREATE_ON_VIEW.
+function shadowAutoCreateOnView(): boolean {
+  return process.env["SHADOW_ACCOUNT_AUTOCREATE_ON_VIEW"] !== "false";
+}
+
+function buildSyntheticShadowAccountRow(id: string): ShadowAccountRow {
+  const now = new Date();
+  return {
+    id,
+    appUserId: null,
+    sourceBrokerAccountId: null,
+    displayName: SHADOW_ACCOUNT_DISPLAY_NAME,
+    currency: SHADOW_CURRENCY,
+    startingBalance: money(SHADOW_STARTING_BALANCE),
+    cash: money(SHADOW_STARTING_BALANCE),
+    realizedPnl: money(0),
+    fees: money(0),
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// Resolve the shadow account the CURRENT authenticated user operates on. Only call at
+// gated boundaries (requireCurrentAppUserId is fail-closed). create=true finds-or-creates
+// the persisted standalone row; create=false returns the existing id or a virtual id.
+export async function resolveCurrentUserShadowAccountId(
+  opts: { create?: boolean } = {},
+): Promise<string> {
+  const appUserId = requireCurrentAppUserId();
+  const [existing] = await db
+    .select({ id: shadowAccountsTable.id })
+    .from(shadowAccountsTable)
+    .where(
+      and(
+        eq(shadowAccountsTable.appUserId, appUserId),
+        isNull(shadowAccountsTable.sourceBrokerAccountId),
+        eq(shadowAccountsTable.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    return existing.id;
+  }
+  if (!opts.create) {
+    return virtualUserShadowAccountId(appUserId);
+  }
+  const id = randomUUID();
+  const [inserted] = await db
+    .insert(shadowAccountsTable)
+    .values({
+      id,
+      appUserId,
+      displayName: SHADOW_ACCOUNT_DISPLAY_NAME,
+      currency: SHADOW_CURRENCY,
+      startingBalance: money(SHADOW_STARTING_BALANCE),
+      cash: money(SHADOW_STARTING_BALANCE),
+      status: "active",
+    })
+    .onConflictDoNothing()
+    .returning({ id: shadowAccountsTable.id });
+  return inserted?.id ?? (await resolveCurrentUserShadowAccountId({ create: false }));
+}
+
+// Bind the caller's shadow scope around a shadow-account read/write. For non-shadow
+// account ids it is a passthrough (never creates a shadow row when viewing an IBKR/
+// SnapTrade account). create defaults to the auto-create-on-view flag.
+export async function withCallerShadowScope<T>(
+  accountId: string | null | undefined,
+  fn: () => Promise<T>,
+  opts: { create?: boolean } = {},
+): Promise<T> {
+  if (!isShadowAccountId(accountId)) {
+    return fn();
+  }
+  const create = opts.create ?? shadowAutoCreateOnView();
+  const id = await resolveCurrentUserShadowAccountId({ create });
+  return runWithShadowAccountId(id, fn);
+}
+
 async function ensureShadowAccount(): Promise<ShadowAccountRow> {
   const existing = await readShadowAccount();
   if (existing) {
     return existing;
+  }
+
+  // create-on-first-trade: a per-user virtual scope has no persisted row on reads.
+  // Return a synthetic empty $25k book; the real row is created on first write.
+  const scopedId = currentShadowAccountId();
+  if (isVirtualShadowAccountId(scopedId)) {
+    return buildSyntheticShadowAccountRow(scopedId);
   }
 
   const [inserted] = await db

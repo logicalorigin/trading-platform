@@ -165,9 +165,12 @@ import {
 import {
   placeShadowOrder,
   previewShadowOrder,
+  resolveCurrentUserShadowAccountId,
   runShadowWatchlistBacktest,
   SHADOW_ACCOUNT_ID,
+  withCallerShadowScope,
 } from "../services/shadow-account";
+import { runWithShadowAccountId } from "../services/shadow-account-context";
 import {
   attachLegacyIbkrBridgeRuntime,
   attachIbkrBridgeRuntime,
@@ -2014,11 +2017,13 @@ router.get("/accounts/:accountId/summary", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountSummary({
-      accountId: req.params.accountId,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountSummary({
+        accountId: req.params.accountId,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2026,17 +2031,19 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountEquityHistory({
-      accountId: req.params.accountId,
-      range:
-        typeof req.query.range === "string"
-          ? (req.query.range as AccountRange)
-          : undefined,
-      benchmark:
-        typeof req.query.benchmark === "string" ? req.query.benchmark : null,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountEquityHistory({
+        accountId: req.params.accountId,
+        range:
+          typeof req.query.range === "string"
+            ? (req.query.range as AccountRange)
+            : undefined,
+        benchmark:
+          typeof req.query.benchmark === "string" ? req.query.benchmark : null,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2044,11 +2051,13 @@ router.get("/accounts/:accountId/allocation", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountAllocation({
-      accountId: req.params.accountId,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountAllocation({
+        accountId: req.params.accountId,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2063,15 +2072,17 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
         : undefined;
   const detail = req.query.detail === "fast" ? "fast" : undefined;
   res.json(
-    await getAccountPositions({
-      accountId: req.params.accountId,
-      assetClass:
-        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-      liveQuotes,
-      detail,
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountPositions({
+        accountId: req.params.accountId,
+        assetClass:
+          typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+        liveQuotes,
+        detail,
+      }),
+    ),
   );
 });
 
@@ -2079,17 +2090,19 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountPositionsAtDate({
-      accountId: req.params.accountId,
-      date:
-        typeof req.query.date === "string" && req.query.date.trim()
-          ? req.query.date
-          : "",
-      assetClass:
-        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountPositionsAtDate({
+        accountId: req.params.accountId,
+        date:
+          typeof req.query.date === "string" && req.query.date.trim()
+            ? req.query.date
+            : "",
+        assetClass:
+          typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2097,27 +2110,29 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountClosedTrades({
-      accountId: req.params.accountId,
-      from:
-        typeof req.query.from === "string" && req.query.from.trim()
-          ? new Date(req.query.from)
-          : null,
-      to:
-        typeof req.query.to === "string" && req.query.to.trim()
-          ? new Date(req.query.to)
-          : null,
-      symbol: typeof req.query.symbol === "string" ? req.query.symbol : null,
-      assetClass:
-        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
-      pnlSign: typeof req.query.pnlSign === "string" ? req.query.pnlSign : null,
-      holdDuration:
-        typeof req.query.holdDuration === "string"
-          ? req.query.holdDuration
-          : null,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountClosedTrades({
+        accountId: req.params.accountId,
+        from:
+          typeof req.query.from === "string" && req.query.from.trim()
+            ? new Date(req.query.from)
+            : null,
+        to:
+          typeof req.query.to === "string" && req.query.to.trim()
+            ? new Date(req.query.to)
+            : null,
+        symbol: typeof req.query.symbol === "string" ? req.query.symbol : null,
+        assetClass:
+          typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+        pnlSign: typeof req.query.pnlSign === "string" ? req.query.pnlSign : null,
+        holdDuration:
+          typeof req.query.holdDuration === "string"
+            ? req.query.holdDuration
+            : null,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2125,15 +2140,17 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountOrders({
-      accountId: req.params.accountId,
-      tab:
-        req.query.tab === "history" || req.query.tab === "working"
-          ? req.query.tab
-          : undefined,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountOrders({
+        accountId: req.params.accountId,
+        tab:
+          req.query.tab === "history" || req.query.tab === "working"
+            ? req.query.tab
+            : undefined,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2141,12 +2158,17 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const body = CancelAccountOrderBody.parse(req.body);
   res.json(
-    await cancelAccountOrder({
-      accountId: req.params.accountId,
-      orderId: req.params.orderId,
-      mode: body.mode,
-      confirm: body.confirm ?? false,
-    }),
+    await withCallerShadowScope(
+      req.params.accountId,
+      () =>
+        cancelAccountOrder({
+          accountId: req.params.accountId,
+          orderId: req.params.orderId,
+          mode: body.mode,
+          confirm: body.confirm ?? false,
+        }),
+      { create: true },
+    ),
   );
 });
 
@@ -2156,12 +2178,14 @@ router.get("/accounts/:accountId/risk", async (req, res) => {
   const detail =
     req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
   res.json(
-    await getAccountRisk({
-      accountId: req.params.accountId,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-      detail,
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountRisk({
+        accountId: req.params.accountId,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+        detail,
+      }),
+    ),
   );
 });
 
@@ -2169,19 +2193,21 @@ router.get("/accounts/:accountId/cash-activity", async (req, res) => {
   if (!(await admitAccountRoute(res, req.params.accountId))) return;
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "shadow" ? "shadow" : undefined;
   res.json(
-    await getAccountCashActivity({
-      accountId: req.params.accountId,
-      from:
-        typeof req.query.from === "string" && req.query.from.trim()
-          ? new Date(req.query.from)
-          : null,
-      to:
-        typeof req.query.to === "string" && req.query.to.trim()
-          ? new Date(req.query.to)
-          : null,
-      mode,
-      source: readOptionalString(req.query.source, 80),
-    }),
+    await withCallerShadowScope(req.params.accountId, () =>
+      getAccountCashActivity({
+        accountId: req.params.accountId,
+        from:
+          typeof req.query.from === "string" && req.query.from.trim()
+            ? new Date(req.query.from)
+            : null,
+        to:
+          typeof req.query.to === "string" && req.query.to.trim()
+            ? new Date(req.query.to)
+            : null,
+        mode,
+        source: readOptionalString(req.query.source, 80),
+      }),
+    ),
   );
 });
 
@@ -2276,11 +2302,13 @@ router.get("/positions", async (req, res) => {
   const query = ListPositionsQueryParams.parse(req.query);
   const data = ListPositionsResponse.parse(
     mapAccountPositionsToLegacyPositions(
-      await getAccountPositions({
-        accountId: legacyPositionsAccountId(query.accountId),
-        mode: query.mode,
-        liveQuotes: false,
-      }),
+      await withCallerShadowScope(legacyPositionsAccountId(query.accountId), () =>
+        getAccountPositions({
+          accountId: legacyPositionsAccountId(query.accountId),
+          mode: query.mode,
+          liveQuotes: false,
+        }),
+      ),
     ),
   );
 
@@ -2301,7 +2329,12 @@ router.post("/shadow/orders/preview", async (req, res) => {
     mode: "shadow",
   });
 
-  res.json(await previewShadowOrder(body));
+  res.json(
+    await runWithShadowAccountId(
+      await resolveCurrentUserShadowAccountId({ create: false }),
+      () => previewShadowOrder(body),
+    ),
+  );
 });
 
 router.post("/shadow/orders", async (req, res) => {
@@ -2311,7 +2344,12 @@ router.post("/shadow/orders", async (req, res) => {
     mode: "shadow",
   });
 
-  res.status(201).json(await placeShadowOrder(body));
+  res.status(201).json(
+    await runWithShadowAccountId(
+      await resolveCurrentUserShadowAccountId({ create: true }),
+      () => placeShadowOrder(body),
+    ),
+  );
 });
 
 router.post("/orders", async (req, res) => {
@@ -3500,7 +3538,10 @@ router.get("/streams/accounts/page", async (req, res) => {
         : null,
   };
 
-  await startSse(req, res, "account-page", async ({ writeEvent }) => {
+  // Slice 5.5: bind the caller's shadow scope for the whole connection (shadow mode).
+  // ALS propagates into the per-connection poll timers created inside subscribe*.
+  await startSse(req, res, "account-page", async ({ writeEvent }) =>
+    withCallerShadowScope(accountId, async () => {
     const streamStartedAt = Date.now();
     const initialPrimaryPayload = await fetchAccountPagePrimaryPayload(input);
     await writeEvent("primary", initialPrimaryPayload);
@@ -3537,7 +3578,7 @@ router.get("/streams/accounts/page", async (req, res) => {
           }),
       },
     );
-  });
+  }));
 });
 
 router.get("/streams/accounts", async (req, res) => {
@@ -3576,7 +3617,9 @@ router.get("/streams/accounts", async (req, res) => {
 });
 
 router.get("/streams/accounts/shadow", async (req, res) => {
-  await startSse(req, res, "shadow-accounts", async ({ writeEvent }) => {
+  // Slice 5.5: bind the caller's shadow scope for the whole connection.
+  await startSse(req, res, "shadow-accounts", async ({ writeEvent }) =>
+    withCallerShadowScope(SHADOW_ACCOUNT_ID, async () => {
     await writeEvent("accounts", await fetchShadowAccountSnapshotPayload());
     await writeEvent("ready", {
       accountId: SHADOW_ACCOUNT_ID,
@@ -3599,7 +3642,7 @@ router.get("/streams/accounts/shadow", async (req, res) => {
           }),
       },
     );
-  });
+  }));
 });
 
 router.get("/streams/stocks/aggregates", async (req, res) => {

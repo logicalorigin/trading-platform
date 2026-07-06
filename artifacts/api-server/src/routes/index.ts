@@ -48,6 +48,11 @@ const REQUIRE_USER_PATHS = [
   /^\/orders(\/|$)/,
   /^\/watchlists(\/|$)/,
   /^\/shadow\/orders(\/|$)/,
+  // Per-user shadow (paper-trading) SSE streams (Slice 5.5): these reach shadow
+  // account readers per-connection and must be scoped to the authenticated caller.
+  // (/streams/accounts — the IBKR bridge snapshot — stays public; it has no shadow reader.)
+  /^\/streams\/accounts\/page(\/|$)/,
+  /^\/streams\/accounts\/shadow(\/|$)/,
   // Member data routers (distinct prefixes; mutations still call requireAdminCsrf).
   /^\/algo(\/|$)/,
   /^\/streams\/algo(\/|$)/,

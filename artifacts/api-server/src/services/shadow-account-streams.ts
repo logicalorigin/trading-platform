@@ -11,6 +11,7 @@ import {
   subscribeShadowAccountChanges,
   type ShadowAccountChange,
 } from "./shadow-account-events";
+import { currentShadowAccountId } from "./shadow-account-context";
 
 type Unsubscribe = () => void;
 const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 15_000;
@@ -26,19 +27,24 @@ type ShadowAccountSnapshotBase = {
   updatedAt: string;
 };
 
-let shadowAccountSnapshotBaseCache:
-  | {
-      value: ShadowAccountSnapshotBase;
-      expiresAt: number;
-    }
-  | null = null;
-let shadowAccountSnapshotBaseInFlight: Promise<ShadowAccountSnapshotBase> | null =
-  null;
+// Slice 5.5: per-account (keyed by the resolved shadow account id) so one user's
+// stream snapshot is never served to another. Platform callers share "shadow".
+const shadowAccountSnapshotBaseCache = new Map<
+  string,
+  {
+    value: ShadowAccountSnapshotBase;
+    expiresAt: number;
+  }
+>();
+const shadowAccountSnapshotBaseInFlight = new Map<
+  string,
+  Promise<ShadowAccountSnapshotBase>
+>();
 let shadowAccountSnapshotBaseVersion = 0;
 
 export function invalidateShadowAccountSnapshotBaseCache() {
-  shadowAccountSnapshotBaseCache = null;
-  shadowAccountSnapshotBaseInFlight = null;
+  shadowAccountSnapshotBaseCache.clear();
+  shadowAccountSnapshotBaseInFlight.clear();
   shadowAccountSnapshotBaseVersion += 1;
 }
 
@@ -172,15 +178,15 @@ export async function fetchShadowAccountSnapshotPayload(): Promise<{
 }
 
 export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSnapshotBase> {
+  const accountId = currentShadowAccountId();
   const now = Date.now();
-  if (
-    shadowAccountSnapshotBaseCache &&
-    shadowAccountSnapshotBaseCache.expiresAt > now
-  ) {
-    return shadowAccountSnapshotBaseCache.value;
+  const cached = shadowAccountSnapshotBaseCache.get(accountId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
   }
-  if (shadowAccountSnapshotBaseInFlight) {
-    return shadowAccountSnapshotBaseInFlight;
+  const pending = shadowAccountSnapshotBaseInFlight.get(accountId);
+  if (pending) {
+    return pending;
   }
 
   const version = shadowAccountSnapshotBaseVersion;
@@ -219,20 +225,20 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
       updatedAt,
     } satisfies ShadowAccountSnapshotBase;
     if (version === shadowAccountSnapshotBaseVersion) {
-      shadowAccountSnapshotBaseCache = {
+      shadowAccountSnapshotBaseCache.set(accountId, {
         value,
         expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
-      };
+      });
     }
     return value;
   })();
-  shadowAccountSnapshotBaseInFlight = request;
+  shadowAccountSnapshotBaseInFlight.set(accountId, request);
 
   try {
     return await request;
   } finally {
-    if (shadowAccountSnapshotBaseInFlight === request) {
-      shadowAccountSnapshotBaseInFlight = null;
+    if (shadowAccountSnapshotBaseInFlight.get(accountId) === request) {
+      shadowAccountSnapshotBaseInFlight.delete(accountId);
     }
   }
 }
